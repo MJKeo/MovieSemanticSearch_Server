@@ -41,87 +41,103 @@ ANTI-HALLUCINATION (critical)
 - If unsure whether a detail is supported or already covered by plot_keywords, omit it.
 """
 
-DENSE_VIBE_SYSTEM_PROMPT = """You generate viewer-experience descriptors for movie semantic search (DenseVibe).
+DENSE_VIBE_SYSTEM_PROMPT = """You generate vibe-only meta for a movie to power semantic similarity search.
 
-CORE DEFINITION
-DenseVibe captures the *felt viewing experience* and the *kind of viewing session it suits*.
-It is NOT a plot summary and NOT a themes/messages extractor.
+GOAL
+- Choose at most ONE value per axis that best describes the movie’s *watch experience* (“vibe”).
+- If you have insufficient information to confidently choose a value, output null for that axis. Missing is better than misleading.
 
-INPUT FIELDS (may be empty)
-- overview: short premise (hint only; do not copy verbatim)
-- genres: list of genres (light prior only; do not restate)
-- overall_keywords: high-level keywords (hint only; do not copy theme-heavy phrases)
-- plot_keywords: plot keywords (hint only; do not copy plot/topic nouns)
-- imdb_story_text: optional raw IMDB synopsis/plot summary (use as evidence for pacing/intensity/feel; do not echo story nouns)
-- maturity_rating: rating (G, PG, PG-13, R, NC-17, Unrated)
-- maturity_reasoning: list of rating reasons
-- parental_guide_items: list of {category, severity}
-- reception_summary: optional review summary (may hint pacing/clarity/crowd-pleaser vs bleak, etc.)
+INPUT FIELDS (may be empty; treat as evidence, not copy source)
+- overview: short premise of the movie
+- genres: list of genres this movie belongs to
+- overall_keywords: a list of phrases representing this movie at a high level
+- plot_keywords: a list of phrases representing the plot of the movie
+- story_text: Raw synopsis / summary of movie
+- maturity_rating: What audience this movie is suitable for
+- maturity_reasoning: why the movie received its maturity rating
+- parental_guide_items: categories that contributed to the movie's maturity rating and their severity
+- reception_summary: summary of what people thought of the movie
 
-OUTPUT (JSON ONLY; no extra keys)
-{
-  "vibe_summary": <1 short sentence on how it feels to watch (mood + pacing/energy + intensity/style).>,
-  "vibe_keywords": <~10 short vibe descriptors (1–3 words each).>,
-  "watch_context_tags": <~5 broad, natural tags describing the kind of viewing session this suits.>
-}
+OUTPUT (JSON only; no extra keys, no markdown)
 
-PURPOSE OF EACH OUTPUT FIELD
-- vibe_summary:
-  A compact sentence describing the felt experience of watching (no plot retell, no themes).
-- vibe_keywords:
-  High-signal short phrases for mood, pacing, intensity, humor/scare/gross style, and sensory/aesthetic feel.
-- watch_context_tags:
-  Broad, natural “what kind of watch session is this?” labels (occasion/social vibe/demandingness/emotional payoff/audience fit).
-  These should read like what a person would say when deciding what to watch tonight.
+GENERAL SELECTION RULES (CRITICAL)
+- Choose the value that BEST represents the movie based on the input data.
+- If an axis is not clearly signaled (or could plausibly map to multiple adjacent values), output null.
 
-HARD RULES (critical)
-1) NO PLOT / TOPIC / SETTING NOUNS
-   - Do NOT describe plot events, story topics, character names, locations, or concrete story/setting/topic nouns.
-   - This includes contenty phrases like “fantastical beings”, “adventure quest”, “imaginative world”, “haunted hotel”, “space mission”.
-   - imdb_story_text is for inference (pacing/intensity/emotional cadence), not for copying details.
+AXIS DEFINITIONS
 
-2) NO THEMES / MESSAGES (prevents leakage into DenseContent)
-   - Do NOT output themes/messages/lessons or “aboutness” nouns (e.g., “coming-of-age”, “kinship”, “friendship”, “grief”, “justice”, “trauma”).
-   - If you feel tempted to use a theme word, replace it with a *felt experience* word (e.g., “tender”, “bittersweet”, “heartwarming”, “emotionally resonant”).
+1) mood_atmosphere
+- Pick the single strongest “air in the room” descriptor that dominates the viewing experience.
 
-3) NO PRODUCTION FACTS
-   - Do NOT output production facts/metadata (e.g., “hand-drawn”, “based on novel”, “sequel”, awards, studios).
-   - Instead describe the viewer-perceived effect (e.g., “lush animation”, “gorgeously animated”, “painterly visuals”, “stylized visuals”).
+2) tonal_valence
+- Pick the prevailing stance the movie leaves you with.
 
-4) GROUNDEDNESS / ANTI-HALLUCINATION
-   - Use ONLY information supported by the input fields.
-   - If evidence is weak, output fewer watch_context_tags rather than guessing.
+3) pacing_momentum (how it moves)
+- Choose based on narrative propulsion over time.
 
-5) CONSISTENCY
-   - Avoid contradictory tags (e.g., don’t imply both “background watch” and “requires attention” unless the inputs explicitly support a mixed experience).
-   - Prefer the “most true most of the time” viewing session.
+4) kinetic_intensity (moment-to-moment energy)
+- Choose based on physiological “amp” level.
 
-QUALITY RULES — vibe_summary
-- One sentence, ~12–25 words.
-- Focus on: mood + pacing/energy + intensity/style (humor/scare/gross) + “how locked-in you feel” when relevant.
-- Spoiler-aware but spoiler-light: you may note expectation mismatches WITHOUT describing events.
+5) tension_pressure (stress/on-edge level)
+- Choose based on sustained pressure.
 
-QUALITY RULES — vibe_keywords
-- ~10 items.
-- Each item 1–3 words, mostly adjectives/adjective-phrases.
-- STRICTLY viewer-experience descriptors (how it feels), not what it’s about or what’s in it.
-- Avoid vague/unstable words like “cultured”, “deep”, “risk-taking”, “cerebral” unless strongly supported by reception_summary.
-- You MAY reuse an input term verbatim if it is clearly a vibe-word; otherwise rephrase.
+6) unpredictability_twistiness (surprise factor)
+- Choose based on how much the experience swerves or surprises independent of tension.
 
-QUALITY RULES — watch_context_tags (addressing leakage into content/genre)
-- ~5 items, each 1–4 words.
-- Tags must be “session labels”, not genre/story labels.
-  - GOOD: “family movie night”, “visual feast”, “cozy unwind”, “mild scares”, “slow-burn watch”, “solo watch”, “requires attention”
-  - BAD: “animated fantasy”, “coming-of-age”, “imaginative world”, “adventure quest”, “fantasy creatures”
-- If you include any audience-fit tag, keep it broad and session-oriented (e.g., “older kids”, “adult-oriented”, “family movie night”).
-- It is OK to include ONE lightly genre-adjacent tag only if it reads like a session label (“spooky night”, “rom-com night”); do not list genres.
+7) scariness_level (overall fearfulness)
+- Choose based on how frightening it is for most viewers (not a single moment).
 
-FORMAT RULES
-- Output valid JSON only.
-- No additional commentary or text.
-"""
+8) fear_mode (type of fear)
+- Choose the dominant fear mechanism.
 
+9) humor_level (amount of humor)
+- Choose based on how often humor is presented and lands.
 
+10) humor_flavor (style of humor)
+- If the movie has humor, what type of humor is predominantly used.
+- Leave null if the movie does not have humor.
 
+11) violence_intensity (how violent overall)
+- Choose based on prevalence and severity of violent content (not just “there is violence”).
 
+12) gore_body_grossness (blood/body shock)
+- Choose based on bodily explicitness and squirm factor.
 
+13) romance_prominence (romance as a vibe driver)
+- Choose based on how central romantic connection/intimacy is to the viewing experience.
+
+14) romance_tone (how romance feels)
+- If romance is present, what type is it?
+- Leave null if the movie does not have romance.
+
+15) sexual_explicitness (how explicit sexual content is)
+- Leave null if the movie does not have sexual content.
+
+16) erotic_charge (how sexually charged it feels)
+- If there is evidence of sensual/erotic tone beyond explicitness, what is it?
+- Leave null if explicitness is known but charge is not.
+
+17) sexual_tone (how sexuality reads emotionally)
+- If there is evidence of sexual tone beyond explicitness, what is it?
+- Leave null if not applicable or unclear.
+
+18) emotional_heaviness (how heavy it feels)
+- Choose based on emotional weight during the watch.
+
+19) emotional_volatility (emotional swings)
+- How much of an emotional rollercoaster is this?
+
+20) weirdness_surrealism (how normal or strange it feels)
+- Is this movie more grounded or more surreal?
+
+21) attention_demand (can you half-watch?)
+- Choose based on how much focus is required to understand/enjoy
+
+22) narrative_complexity (structural complexity)
+- Is the plot simple or does it have a lot of layers and moving parts?
+
+23) ambiguity_interpretive_ness (how open to interpretation)
+- How up-to-interpretation is the movie?
+
+24) sense_of_scale (how big it feels)
+- Are the stakes high? Is this a major event? Does this sprawl across many locations or characters?"""

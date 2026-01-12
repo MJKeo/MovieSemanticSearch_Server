@@ -376,17 +376,17 @@ def create_interface():
             with gr.Column(scale=1):
                 gr.Markdown("### Model Settings")
                 n_anchor_input = gr.Number(
-                    value=50,
+                    value=10,
                     label="n_anchor",
                     info="Top-K to retrieve from anchor collection. Higher values increase recall but may add noise."
                 )
                 n_content_input = gr.Number(
-                    value=50,
+                    value=10,
                     label="n_content",
                     info="Top-K to retrieve from content collection. Higher values increase recall but may add noise."
                 )
                 n_vibe_input = gr.Number(
-                    value=50,
+                    value=10,
                     label="n_vibe",
                     info="Top-K to retrieve from vibe collection. Higher values increase recall but may add noise."
                 )

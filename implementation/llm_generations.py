@@ -109,7 +109,7 @@ def generate_vibe_summary(
     reception_summary: Optional[str] = None
 ) -> VibeMetadata:
     """
-    Generates DenseVibe metadata (vibe_summary, vibe_keywords, watch_context_tags) using gpt-5-nano.
+    Generates DenseVibe metadata using gpt-5-nano.
     
     This function generates LLM-derived vibe metadata for vector search (section 5.3 of the
     movie search guide). It creates viewer experience descriptors that capture how it feels
@@ -141,17 +141,13 @@ def generate_vibe_summary(
         reception_summary: Optional reception summary text
         
     Returns:
-        VibeMetadata instance containing:
-        - vibe_summary: 1 short sentence describing how it feels to watch (mood + pacing/energy + intensity + style). No plot retell, no themes.
-        - vibe_keywords: 12–20 short phrases (1–3 words) capturing viewer-experience descriptors (mood, pacing, intensity, humor/scare/gross style, sensory/aesthetic feel).
-        - watch_context_tags: 4–10 broad tags that together answer: what kind of night, how social, how demanding, what emotional payoff, and audience fit.
+        VibeMetadata instance containing one nullable field per enum from vibe_enums.py.
+        Each field can be None if that attribute is not applicable or cannot be determined
+        for the movie. Enum values are automatically validated by Pydantic.
         
     Raises:
         ValueError: If the model refuses to generate output
         Exception: If the API call fails
-        
-    Post-processing:
-        All fields are lowercased and stripped as specified in section 5.3.3 of the guide.
     """
     
     # Determine imdb_story_text according to guide section 5.3.2:
@@ -180,7 +176,7 @@ def generate_vibe_summary(
     
     # Optional IMDB story text (use whole string if provided)
     if imdb_story_text:
-        vibe_info_parts.append(f"IMDB story text: {imdb_story_text}")
+        vibe_info_parts.append(f"Story text: {imdb_story_text}")
     
     # Maturity information (for suitability hints)
     if maturity_rating:
@@ -226,16 +222,10 @@ def generate_vibe_summary(
     )
     
     # Extract the parsed response - OpenAI automatically validates structure matches VibeMetadata
+    # Enum values are automatically validated by Pydantic, so no post-processing is needed
     message = response.choices[0].message
     if message.parsed:
-        vibe_metadata = message.parsed
-        
-        # Post-processing: lowercase and strip all fields (section 5.3.3)
-        vibe_metadata.vibe_summary = vibe_metadata.vibe_summary.strip().lower()
-        vibe_metadata.vibe_keywords = [kw.strip().lower() for kw in vibe_metadata.vibe_keywords]
-        vibe_metadata.watch_context_tags = [tag.strip().lower() for tag in vibe_metadata.watch_context_tags]
-        
-        return vibe_metadata
+        return message.parsed
     else:
         # Handle case where model refuses to generate output
         raise ValueError(f"Model refused to generate output: {message.refusal}")

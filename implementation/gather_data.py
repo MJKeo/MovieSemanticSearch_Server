@@ -255,9 +255,7 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
             metacritic_rating=imdb_data["metacritic_rating"],
             reception_summary=imdb_data.get("user_review_summary"),  # Optional field, defaults to None
             # Vibe (LLM-generated viewer experience descriptors)
-            vibe_summary=generated_vibe_metadata.vibe_summary,
-            vibe_keywords=generated_vibe_metadata.vibe_keywords,
-            watch_context_tags=generated_vibe_metadata.watch_context_tags,
+            vibe_metadata=generated_vibe_metadata,
             # DEBUG
             debug_synopses=summary_data["synopsis"],
             debug_plot_summaries=summary_data["plot_summaries"]

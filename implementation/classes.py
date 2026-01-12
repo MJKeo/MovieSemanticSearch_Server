@@ -6,6 +6,7 @@ representation across the project.
 """
 
 from enum import Enum
+from schemas import VibeMetadata
 from pydantic import BaseModel, ConfigDict
 import re
 
@@ -121,9 +122,7 @@ class IMDBMovie(BaseModel):
     metacritic_rating: float
     reception_summary: str | None = None
     # Vibe (LLM-generated viewer experience descriptors)
-    vibe_summary: str | None = None
-    vibe_keywords: list[str] = []
-    watch_context_tags: list[str] = []
+    vibe_metadata: VibeMetadata = None
     # ONLY FOR DEBUGGING
     debug_synopses: list[str] = []
     debug_plot_summaries: list[str] = []

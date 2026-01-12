@@ -349,22 +349,22 @@ def create_gradio_interface(db_path: str | Path = "./chroma_db"):
                 # Return top_n
                 gr.Markdown("### Model Settings")
                 return_top_n_input = gr.Number(
-                    value=20,
+                    value=5,
                     label="return_top_n",
                     info="Number of top results to return and display. Higher values show more candidates but may include less relevant results."
                 )
                 n_anchor_input = gr.Number(
-                    value=50,
+                    value=10,
                     label="n_anchor",
                     info="Top-K to retrieve from anchor collection. Higher values increase recall but may add noise."
                 )
                 n_content_input = gr.Number(
-                    value=50,
+                    value=10,
                     label="n_content",
                     info="Top-K to retrieve from content collection. Higher values increase recall but may add noise."
                 )
                 n_vibe_input = gr.Number(
-                    value=50,
+                    value=10,
                     label="n_vibe",
                     info="Top-K to retrieve from vibe collection. Higher values increase recall but may add noise."
                 )

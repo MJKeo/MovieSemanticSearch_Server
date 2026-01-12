@@ -231,33 +231,90 @@ def create_dense_vibe_vector_text(movie: IMDBMovie) -> str:
         Formatted text string ready for embedding as DenseVibe vector
         
     Note:
-        If vibe_summary, vibe_keywords, or watch_context_tags are not available
-        (None or empty), those sections will be omitted from the output.
+        If vibe_metadata is not available (None), that section will be omitted from the output.
     """
     # Build the text components according to the DenseVibe template (section 5.3.4)
     parts = []
     
-    # Vibe summary (LLM-generated, may be None if not yet generated)
-    if movie.vibe_summary:
-        parts.append(f"Vibe summary: {movie.vibe_summary}")
-        parts.append("")  # Empty line separator
-    
-    # Vibe keywords as comma-separated values
-    if movie.vibe_keywords:
-        vibe_keywords_csv = ", ".join(movie.vibe_keywords)
-        parts.append(f"Vibe keywords: {vibe_keywords_csv}")
-        parts.append("")
-    
-    # Watch context tags as comma-separated values
-    if movie.watch_context_tags:
-        watch_context_tags_csv = ", ".join(movie.watch_context_tags)
-        parts.append(f"Watch context: {watch_context_tags_csv}")
-        parts.append("")
-    
-    # Maturity guidance
-    maturity_guidance = movie.maturity_guidance_text()
-    if maturity_guidance:
-        parts.append(f"Maturity guidance: {maturity_guidance}")
+    # Extract all non-None enum values from vibe_metadata and combine into comma-separated list
+    if movie.vibe_metadata is not None:
+        # Collect all enum fields with their attribute names and values
+        enum_fields = [
+            ("mood_atmosphere", movie.vibe_metadata.mood_atmosphere),
+            ("tonal_valence", movie.vibe_metadata.tonal_valence),
+            ("pacing_momentum", movie.vibe_metadata.pacing_momentum),
+            ("kinetic_intensity", movie.vibe_metadata.kinetic_intensity),
+            ("tension_pressure", movie.vibe_metadata.tension_pressure),
+            ("unpredictability_twistiness", movie.vibe_metadata.unpredictability_twistiness),
+            ("scariness_level", movie.vibe_metadata.scariness_level),
+            ("fear_mode", movie.vibe_metadata.fear_mode),
+            ("humor_level", movie.vibe_metadata.humor_level),
+            ("humor_flavor", movie.vibe_metadata.humor_flavor),
+            ("violence_intensity", movie.vibe_metadata.violence_intensity),
+            ("gore_body_grossness", movie.vibe_metadata.gore_body_grossness),
+            ("romance_prominence", movie.vibe_metadata.romance_prominence),
+            ("romance_tone", movie.vibe_metadata.romance_tone),
+            ("sexual_explicitness", movie.vibe_metadata.sexual_explicitness),
+            ("erotic_charge", movie.vibe_metadata.erotic_charge),
+            ("sexual_tone", movie.vibe_metadata.sexual_tone),
+            ("emotional_heaviness", movie.vibe_metadata.emotional_heaviness),
+            ("emotional_volatility", movie.vibe_metadata.emotional_volatility),
+            ("weirdness_surrealism", movie.vibe_metadata.weirdness_surrealism),
+            ("attention_demand", movie.vibe_metadata.attention_demand),
+            ("narrative_complexity", movie.vibe_metadata.narrative_complexity),
+            ("ambiguity_interpretive_ness", movie.vibe_metadata.ambiguity_interpretive_ness),
+            ("sense_of_scale", movie.vibe_metadata.sense_of_scale),
+        ]
+        
+        # Filter out None values and format as "{attribute_name}: {value}"
+        vibe_values = [
+            f"{attr_name}: {value}" 
+            for attr_name, value in enum_fields 
+            if value is not None
+        ]
+        
+        # Add vibe keywords as comma-separated values if any exist
+        if vibe_values:
+            vibe_keywords_csv = ", ".join(vibe_values)
+            parts.append(f"Vibe keywords: {vibe_keywords_csv}")
+            parts.append("")
+
+        # # Collect all non-None enum values from VibeMetadata
+        # enum_values = [
+        #     movie.vibe_metadata.mood_atmosphere,
+        #     movie.vibe_metadata.tonal_valence,
+        #     movie.vibe_metadata.pacing_momentum,
+        #     movie.vibe_metadata.kinetic_intensity,
+        #     movie.vibe_metadata.tension_pressure,
+        #     movie.vibe_metadata.unpredictability_twistiness,
+        #     movie.vibe_metadata.scariness_level,
+        #     movie.vibe_metadata.fear_mode,
+        #     movie.vibe_metadata.humor_level,
+        #     movie.vibe_metadata.humor_flavor,
+        #     movie.vibe_metadata.violence_intensity,
+        #     movie.vibe_metadata.gore_body_grossness,
+        #     movie.vibe_metadata.romance_prominence,
+        #     movie.vibe_metadata.romance_tone,
+        #     movie.vibe_metadata.sexual_explicitness,
+        #     movie.vibe_metadata.erotic_charge,
+        #     movie.vibe_metadata.sexual_tone,
+        #     movie.vibe_metadata.emotional_heaviness,
+        #     movie.vibe_metadata.emotional_volatility,
+        #     movie.vibe_metadata.weirdness_surrealism,
+        #     movie.vibe_metadata.attention_demand,
+        #     movie.vibe_metadata.narrative_complexity,
+        #     movie.vibe_metadata.ambiguity_interpretive_ness,
+        #     movie.vibe_metadata.sense_of_scale,
+        # ]
+        
+        # # Filter out None values and convert enum values to strings
+        # vibe_values = [value for value in enum_values if value is not None]
+        
+        # # Add vibe keywords as comma-separated values if any exist
+        # if vibe_values:
+        #     vibe_keywords_csv = ", ".join(vibe_values)
+        #     parts.append(f"Vibe keywords: {vibe_keywords_csv}")
+        #     parts.append("")
     
     # Genres as comma-separated values
     genres_csv = ", ".join(movie.genres_string()) if movie.genres_string() else ""
@@ -314,7 +371,7 @@ def save_vector_to_chroma(
     )
     
     # Add the embedding to the collection
-    collection.add(
+    collection.upsert(
         ids=[vector_id],
         embeddings=[embedding],
         documents=[document],
@@ -502,6 +559,61 @@ def search_similar_vectors(
         metadatas=filtered_metadatas[:n_results],
         distances=filtered_distances[:n_results] if result_distances is not None else None
     )
+
+def clear_collections_from_chroma(
+    collection_names: list[str],
+    db_path: str | Path = "./chroma_db"
+) -> None:
+    """
+    Deletes all vectors from each of the provided ChromaDB collections.
+    
+    This function removes all vectors from the specified collections while
+    preserving the collection structure itself. If a collection doesn't exist,
+    it will be skipped with a warning message.
+    
+    Args:
+        collection_names: List of ChromaDB collection names to clear
+        db_path: Path to the local ChromaDB database directory
+        
+    Raises:
+        ValueError: If the database directory doesn't exist
+        Exception: If database operations fail
+    """
+    # Initialize ChromaDB client with persistent storage
+    # Convert db_path to Path if it's a string for consistency
+    db_path = Path(db_path) if isinstance(db_path, str) else db_path
+    
+    # Check if database directory exists
+    if not db_path.exists():
+        raise ValueError(f"ChromaDB database not found at path: {db_path}")
+    
+    chroma_client = chromadb.PersistentClient(
+        path=str(db_path),
+        settings=Settings(anonymized_telemetry=False)
+    )
+    
+    # Process each collection name
+    for collection_name in collection_names:
+        try:
+            # Get the collection (will raise error if it doesn't exist)
+            collection = chroma_client.get_collection(name=collection_name)
+            
+            # Get all vector IDs from the collection
+            # We only need IDs for deletion, so we don't need to fetch embeddings/documents/metadata
+            all_results = collection.get()
+            all_ids = all_results["ids"]
+            
+            # Delete all vectors if there are any
+            if all_ids:
+                collection.delete(ids=all_ids)
+                print(f"✓ Cleared {len(all_ids)} vector(s) from collection '{collection_name}'")
+            else:
+                print(f"✓ Collection '{collection_name}' is already empty")
+                
+        except Exception as e:
+            # If collection doesn't exist or other error occurs, print warning and continue
+            print(f"⚠ Warning: Could not clear collection '{collection_name}': {str(e)}")
+            continue
 
 
 def create_and_save_dense_anchor_vector(
