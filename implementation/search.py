@@ -14,10 +14,14 @@ from typing import TypedDict, Optional
 import numpy as np
 from dotenv import load_dotenv
 
-from vectorize import search_similar_vectors, openai_client, normalize_vector
+from .vectorize import search_similar_vectors, openai_client, normalize_vector
+from .enums import VectorCollectionName
 
 # Load environment variables
 load_dotenv()
+
+# Default database path: implementation/chroma_db/ relative to this file
+_DEFAULT_DB_PATH = Path(__file__).parent / "chroma_db"
 
 
 # ===== DATA STRUCTURES =====
@@ -26,8 +30,17 @@ class RankedResult(TypedDict):
     """Represents a single result from a ranked list."""
     movie_id: str
     rank: int
-    similarity: float
+    distance: float
     metadata: dict
+    document: str
+    document: str
+
+
+class AxisScoreResults(TypedDict):
+    """Represents scoring results for a single collection axis."""
+    rank: int
+    rrf_term: float
+    similarity: float
 
 
 class CandidateScore(TypedDict):
@@ -35,15 +48,7 @@ class CandidateScore(TypedDict):
     movie_id: str
     rrf_score: float
     avg_sim: float
-    rank_anchor: Optional[int]
-    rank_content: Optional[int]
-    rank_vibe: Optional[int]
-    term_anchor: float
-    term_content: float
-    term_vibe: float
-    sim_anchor: float
-    sim_content: float
-    sim_vibe: float
+    axes: dict[str, AxisScoreResults]
     metadata: dict
 
 
@@ -83,9 +88,9 @@ def embed_query(query_text: str) -> list[float]:
 
 def search_collection_and_build_ranks(
     query_vector: list[float],
-    collection_name: str,
+    collection_name: VectorCollectionName,
     n_results: int,
-    db_path: str | Path = "./chroma_db",
+    db_path: str | Path = _DEFAULT_DB_PATH,
     ids_to_filter_out: Optional[list[str]] = None
 ) -> dict[str,RankedResult]:
     """
@@ -116,12 +121,13 @@ def search_collection_and_build_ranks(
     # Build ranked list and rank map
     ranks_map: dict[str, RankedResult] = {}
 
-    for i, (movie_id, metadata, distance) in enumerate(zip(results.ids, results.metadatas, results.distances), start=1):        
+    for i, (movie_id, metadata, distance, document) in enumerate(zip(results.ids, results.metadatas, results.distances, results.documents), start=1):        
         ranks_map[movie_id] = {
             "movie_id": movie_id,
             "rank": i,
-            "similarity": float(distance) if distance is not None else 0.0,
-            "metadata": metadata
+            "distance": float(distance) if distance is not None else 0.0,
+            "metadata": metadata,
+            "document": document if document else ""
         }
     
     return ranks_map
@@ -158,8 +164,8 @@ def cosine_similarity(vec1: list[float], vec2: list[float], eps: float = 1e-8) -
 
 def get_movie_embeddings(
     movie_ids: list[str],
-    collection_name: str,
-    db_path: str | Path = "./chroma_db"
+    collection_name: VectorCollectionName,
+    db_path: str | Path = _DEFAULT_DB_PATH
 ) -> Optional[list[float]]:
     """
     Retrieves the stored embedding vector for a movie from a collection.
@@ -178,6 +184,7 @@ def get_movie_embeddings(
     db_path = Path(db_path) if isinstance(db_path, str) else db_path
     
     if not db_path.exists():
+        print(f"Database not found at path: {db_path}")
         return None
     
     try:
@@ -185,10 +192,10 @@ def get_movie_embeddings(
             path=str(db_path),
             settings=Settings(anonymized_telemetry=False)
         )
-        collection = chroma_client.get_collection(name=collection_name)
+        collection = chroma_client.get_collection(name=collection_name.value)
         
         # Fetch the specific vector by ID
-        results = collection.get(ids=movie_ids, include=['embeddings'])
+        results = collection.get(ids=list(movie_ids), include=['embeddings'])
         
         if results["ids"] and len(results["embeddings"]) > 0:
             embeddings = results["embeddings"]
@@ -197,118 +204,91 @@ def get_movie_embeddings(
                 return embeddings.tolist()
             return list(embeddings) if embeddings else None
         return None
-    except Exception:
+    except Exception as e:
+        print(f"Exception in get_movie_embeddings: {e}")
         return None
 
 
 def compute_cosine_similarities_for_candidates(
-    query_vector_anchor: list[float],
-    query_vector_content: list[float],
-    query_vector_vibe: list[float],
+    query_vectors_by_axis: dict[str, list[float]],
     candidate_ids: list[str],
-    db_path: str | Path = "./chroma_db"
+    db_path: str | Path = _DEFAULT_DB_PATH
 ) -> dict[str, dict[str, float]]:
     """
-    Computes cosine similarities for all candidates across all three collections.
+    Computes cosine similarities for all candidates across all collections.
     
     For each candidate movie, this function retrieves its embeddings from all
-    three collections and computes cosine similarity with the appropriate query vector.
+    collections and computes cosine similarity with the appropriate query vector.
     Uses strict policy: missing embeddings are treated as 0.0 similarity.
     
     Args:
-        query_vector_anchor: The query embedding vector for anchor collection
-        query_vector_content: The query embedding vector for content collection
-        query_vector_vibe: The query embedding vector for vibe collection
-        candidate_ids: Set of movie IDs to compute similarities for
+        query_vectors_by_axis: Dictionary mapping collection names to their query embedding vectors
+        candidate_ids: List of movie IDs to compute similarities for
         db_path: Path to the ChromaDB database directory
         
     Returns:
-        Dictionary mapping movie_id to a dict with keys:
-        - 'sim_anchor': cosine similarity with anchor collection (or 0.0 if missing)
-        - 'sim_content': cosine similarity with content collection (or 0.0 if missing)
-        - 'sim_vibe': cosine similarity with vibe collection (or 0.0 if missing)
-        - 'avg_sim': average of the three similarities
+        Dictionary mapping movie_id to a dictionary of similarity scores for each axis (floats, defaults to 0.0)
     """
-    collection_configs = [
-        ('anchor', 'dense_anchor_vectors', query_vector_anchor),
-        ('content', 'dense_content_vectors', query_vector_content),
-        ('vibe', 'dense_vibe_vectors', query_vector_vibe)
-    ]
     
     similarities: dict[str, dict[str, float]] = {}
 
-    # search for all candidate vectors simultaneously rather than one by one
-    embeddings = get_movie_embeddings(candidate_ids, collection_configs, db_path)
+    # Fetch embeddings of every candidate from each collection
+    embeddings_by_collection: dict[str, dict[str, list[float]]] = {}
+    for collection_name, query_vector in query_vectors_by_axis.items():
+        embeddings = get_movie_embeddings(candidate_ids, VectorCollectionName(collection_name), db_path)
+        collection_embeddings = {}
+        for movie_id, embedding in zip(candidate_ids, embeddings):
+            collection_embeddings[movie_id] = embedding
+        embeddings_by_collection[collection_name] = collection_embeddings
 
-    if not embeddings:
-        return {}
 
-    for movie_id, embedding in zip(candidate_ids, embeddings):
-        sims = {}
-        
-        # Compute average similarity
-        sim_anchor = sims.get('sim_anchor', 0.0)
-        sim_content = sims.get('sim_content', 0.0)
-        sim_vibe = sims.get('sim_vibe', 0.0)
-        
-        # Strict policy: always average all three (even if some are 0.0)
-        avg_sim = (sim_anchor + sim_content + sim_vibe) / 3.0
-        
-        sims['avg_sim'] = avg_sim
-        similarities[movie_id] = sims
+    # Compute cosine similarities for each candidate
+    for movie_id in candidate_ids:
+        axes_similarities: dict[str, float] = {}
+        running_similarity_sum = 0.0
+
+        # step 1 - convert embeddings per axis to similarities per axis
+        for collection_name, query_vector in query_vectors_by_axis.items():
+            candidate_embedding_for_axis = embeddings_by_collection[collection_name].get(movie_id)
+            similarity = cosine_similarity(query_vector, candidate_embedding_for_axis) if candidate_embedding_for_axis else 0.0
+            axes_similarities[collection_name] = similarity
+            running_similarity_sum += similarity
+
+        # step 2 - save to overall dict to return
+        similarities[movie_id] = axes_similarities
     
     return similarities
 
 
 # ===== RRF CALCULATION =====
 
-def compute_rrf_score(
-    rank_anchor: Optional[int],
-    rank_content: Optional[int],
-    rank_vibe: Optional[int],
-    rrf_k: float,
-    w_anchor: float,
-    w_content: float,
-    w_vibe: float
+def compute_rrf_terms(
+    ranks_by_axis: dict[str, Optional[int]],
+    weights_by_axis: dict[str, float],
+    rrf_k: float
 ) -> dict[str, float]:
     """
-    Computes Weighted Reciprocal Rank Fusion (RRF) score for a candidate movie.
+    Computes Weighted Reciprocal Rank Fusion (RRF) terms for each axis.
     
     RRF uses ranks only (not cosine values) for the fused score. The formula is:
     termX = wX / (rrf_k + rX) if present, else 0
-    rrf_score = termA + termC + termV
     
     Args:
-        movie_id: The movie ID (for reference)
-        rank_anchor: 1-indexed rank in anchor collection, or None if missing
-        rank_content: 1-indexed rank in content collection, or None if missing
-        rank_vibe: 1-indexed rank in vibe collection, or None if missing
+        ranks_by_axis: Dictionary mapping axis names to their ranks (1-indexed, or None if missing)
+        weights_by_axis: Dictionary mapping axis names to their weights
         rrf_k: Rank dampening constant (smaller = more top-heavy)
-        w_anchor: Weight for anchor collection
-        w_content: Weight for content collection
-        w_vibe: Weight for vibe collection
         
     Returns:
-        Dictionary with keys:
-        - 'rrf_score': total RRF score
-        - 'term_anchor': RRF term for anchor collection
-        - 'term_content': RRF term for content collection
-        - 'term_vibe': RRF term for vibe collection
+        Dictionary mapping axis names to their RRF terms (float values)
     """
-    # Compute per-list RRF terms
-    term_anchor = w_anchor / (rrf_k + rank_anchor) if rank_anchor is not None else 0.0
-    term_content = w_content / (rrf_k + rank_content) if rank_content is not None else 0.0
-    term_vibe = w_vibe / (rrf_k + rank_vibe) if rank_vibe is not None else 0.0
+    rrf_terms: dict[str, float] = {}
     
-    # Sum to get total RRF score
-    rrf_score = term_anchor + term_content + term_vibe
+    # Compute RRF term for each axis
+    for axis_name, rank in ranks_by_axis.items():
+        weight = weights_by_axis.get(axis_name, 0.0)
+        rrf_terms[axis_name] = weight / (rrf_k + rank) if rank is not None else 0.0
     
-    return {
-        'rrf_score': rrf_score,
-        'term_anchor': term_anchor,
-        'term_content': term_content,
-        'term_vibe': term_vibe
-    }
+    return rrf_terms
 
 
 # ===== MAIN SEARCH FUNCTION =====
@@ -316,18 +296,19 @@ def compute_rrf_score(
 def fused_vector_search(
     query_text: Optional[str] = None,
     query_movie_id: Optional[str] = None,
-    n_anchor: int = 50,
-    n_content: int = 50,
-    n_vibe: int = 50,
+    n_candidates_per_axis: int = 50,
     rrf_k: float = 60.0,
     w_anchor: float = 1.0,
-    w_content: float = 1.0,
-    w_vibe: float = 1.0,
+    w_plot_events: float = 1.0,
+    w_plot_analysis: float = 1.0,
+    w_viewer_experience: float = 1.0,
+    w_watch_context: float = 1.0,
+    w_production: float = 1.0,
     return_top_n: int = 20,
-    db_path: str | Path = "./chroma_db"
+    db_path: str | Path = _DEFAULT_DB_PATH
 ) -> dict:
     """
-    Performs fused vector search across three Chroma collections using Weighted RRF.
+    Performs fused vector search across six Chroma collections using Weighted RRF.
     
     This is the main search function that implements the complete algorithm:
     1. Embeds the query (text) or fetches movie vectors (movie mode)
@@ -340,13 +321,14 @@ def fused_vector_search(
     Args:
         query_text: User's search query (required if query_movie_id is None)
         query_movie_id: Movie ID to use for "more like this" search (required if query_text is None)
-        n_anchor: Top-K to retrieve from anchor collection
-        n_content: Top-K to retrieve from content collection
-        n_vibe: Top-K to retrieve from vibe collection
+        n_candidates_per_axis: Top-K to retrieve from each collection (default 50)
         rrf_k: Rank dampening constant for RRF (default 60.0)
         w_anchor: Weight for anchor collection (default 1.0)
-        w_content: Weight for content collection (default 1.0)
-        w_vibe: Weight for vibe collection (default 1.0)
+        w_plot_events: Weight for plot events collection (default 1.0)
+        w_plot_analysis: Weight for plot analysis collection (default 1.0)
+        w_viewer_experience: Weight for viewer experience collection (default 1.0)
+        w_watch_context: Weight for watch context collection (default 1.0)
+        w_production: Weight for production collection (default 1.0)
         return_top_n: Number of final results to return (default 20)
         db_path: Path to ChromaDB database directory
         
@@ -354,8 +336,11 @@ def fused_vector_search(
         Dictionary with keys:
         - 'fused_results': List of CandidateScore dictionaries, sorted by (rrf_score desc, avg_sim desc, movie_id asc)
         - 'raw_anchor': List of RankedResult dictionaries from anchor collection
-        - 'raw_content': List of RankedResult dictionaries from content collection
-        - 'raw_vibe': List of RankedResult dictionaries from vibe collection
+        - 'raw_plot_events': List of RankedResult dictionaries from plot events collection
+        - 'raw_plot_analysis': List of RankedResult dictionaries from plot analysis collection
+        - 'raw_viewer_experience': List of RankedResult dictionaries from viewer experience collection
+        - 'raw_watch_context': List of RankedResult dictionaries from watch context collection
+        - 'raw_production': List of RankedResult dictionaries from production collection
         
     Raises:
         ValueError: If neither query_text nor query_movie_id is provided, or both are provided
@@ -368,101 +353,128 @@ def fused_vector_search(
     
     # Determine which IDs to filter out (exclude the query movie itself in movie mode)
     ids_to_filter_out = [query_movie_id] if query_movie_id else None
+
+    collection_names = list(VectorCollectionName)
+    query_vectors_by_collection = {}
     
     # Step 1: Get query vectors
     if query_movie_id:
         # Movie mode: fetch stored vectors for each collection
-        query_vector_anchor = get_movie_embeddings([query_movie_id], 'dense_anchor_vectors', db_path)[0]
-        query_vector_content = get_movie_embeddings([query_movie_id], 'dense_content_vectors', db_path)[0]
-        query_vector_vibe = get_movie_embeddings([query_movie_id], 'dense_vibe_vectors', db_path)[0]
-        
-        if query_vector_anchor is None or query_vector_content is None or query_vector_vibe is None:
-            raise ValueError(f"Movie {query_movie_id} not found in one or more collections")
+        for collection_name in collection_names:
+            embedding = get_movie_embeddings([query_movie_id], collection_name, db_path)[0]
+            if not embedding:
+                raise ValueError(f"Movie {query_movie_id} not found in one or more collections")
+            query_vectors_by_collection[collection_name.value] = embedding
     else:
         # Text mode: embed query once and use for all collections
-        query_vector_anchor = query_vector_content = query_vector_vibe = embed_query(query_text)
+        embedded_text = embed_query(query_text)
+        for collection_name in collection_names:
+            query_vectors_by_collection[collection_name.value] = embedded_text
     
-    # Step 2: Search each collection independently with collection-specific query vectors
-    ranks_map_anchor = search_collection_and_build_ranks(
-        query_vector_anchor, 'dense_anchor_vectors', n_anchor, db_path, ids_to_filter_out
-    )
-    ranks_map_content = search_collection_and_build_ranks(
-        query_vector_content, 'dense_content_vectors', n_content, db_path, ids_to_filter_out
-    )
-    ranks_map_vibe = search_collection_and_build_ranks(
-        query_vector_vibe, 'dense_vibe_vectors', n_vibe, db_path, ids_to_filter_out
-    )
-    
-    # For cosine similarity computation, use the anchor vector as the reference
-    # (or average of all three if in movie mode - but anchor is fine for consistency)
-    query_vector_for_similarity = query_vector_anchor
 
+    # Step 2: Search each collection independently with collection-specific query vectors
+    rank_maps_by_collection = {}
+    for collection_name in collection_names:
+        rank_maps_by_collection[collection_name.value] = search_collection_and_build_ranks(
+            query_vectors_by_collection[collection_name.value], collection_name, n_candidates_per_axis, db_path, ids_to_filter_out
+        )
     
+
     # Step 3: Build candidate pool (union)
     candidate_ids = set()
-    candidate_ids.update(ranks_map_anchor.keys())
-    candidate_ids.update(ranks_map_content.keys())
-    candidate_ids.update(ranks_map_vibe.keys())
+    for rank_map_by_collection in rank_maps_by_collection.values():
+        candidate_ids.update(rank_map_by_collection.keys())
     
+
     # Step 4: Compute RRF scores for all candidates
     candidate_scores: list[CandidateScore] = []
-
     
     # Get metadata from any collection (they should be consistent)
     metadata_map: dict[str, dict] = {}
-    for candidate_id in candidate_ids:
+    for candidate_id in candidate_ids: 
         if candidate_id not in metadata_map:
-            if candidate_id in ranks_map_anchor:
-                metadata_map[candidate_id] = ranks_map_anchor[candidate_id]['metadata']
-            elif candidate_id in ranks_map_content:
-                metadata_map[candidate_id] = ranks_map_content[candidate_id]['metadata']
-            elif candidate_id in ranks_map_vibe:
-                metadata_map[candidate_id] = ranks_map_vibe[candidate_id]['metadata']
+            for rank_map_by_collection in rank_maps_by_collection.values():
+                if candidate_id in rank_map_by_collection:
+                    metadata_map[candidate_id] = rank_map_by_collection[candidate_id]['metadata']
 
     
-    for movie_id in candidate_ids:
-        rank_a = ranks_map_anchor.get(movie_id, {}).get('rank')
-        rank_c = ranks_map_content.get(movie_id, {}).get('rank')
-        rank_v = ranks_map_vibe.get(movie_id, {}).get('rank')
-        
-        # Compute RRF score
-        rrf_result = compute_rrf_score(
-            rank_a, rank_c, rank_v,
-            rrf_k, w_anchor, w_content, w_vibe
-        )
-        
-        candidate_scores.append({
-            'movie_id': movie_id,
-            'rrf_score': rrf_result['rrf_score'],
-            'avg_sim': 0.0,  # Will be filled in Step 5
-            'rank_anchor': rank_a,
-            'rank_content': rank_c,
-            'rank_vibe': rank_v,
-            'term_anchor': rrf_result['term_anchor'],
-            'term_content': rrf_result['term_content'],
-            'term_vibe': rrf_result['term_vibe'],
-            'sim_anchor': 0.0,  # Will be filled in Step 5
-            'sim_content': 0.0,  # Will be filled in Step 5
-            'sim_vibe': 0.0,  # Will be filled in Step 5
-            'metadata': metadata_map.get(movie_id, {})
-        })
+    # Define axis names and their corresponding weights
+    weights_by_axis = {
+        VectorCollectionName.DENSE_ANCHOR_VECTORS.value: w_anchor,
+        VectorCollectionName.PLOT_EVENTS_VECTORS.value: w_plot_events,
+        VectorCollectionName.PLOT_ANALYSIS_VECTORS.value: w_plot_analysis,
+        VectorCollectionName.VIEWER_EXPERIENCE_VECTORS.value: w_viewer_experience,
+        VectorCollectionName.WATCH_CONTEXT_VECTORS.value: w_watch_context,
+        VectorCollectionName.PRODUCTION_VECTORS.value: w_production
+    }
     
+    
+    # Step 4: Compute RRF scores for all candidates
+    rrf_terms_by_candidate: dict[str, dict[str, float]] = {}
+    ranks_by_candidate: dict[str, dict[str, Optional[int]]] = {}
+
+    print()
+
+    for collection_name in collection_names:
+        if collection_name.value in set([VectorCollectionName.DENSE_ANCHOR_VECTORS.value, VectorCollectionName.PLOT_EVENTS_VECTORS.value]):
+            print(f"rank maps by collection {collection_name.value}: {rank_maps_by_collection[collection_name.value]}")
+    
+    print()
+    for movie_id in candidate_ids:
+        # Build ranks_by_axis dictionary
+        ranks_by_axis = {}
+        for collection_name in collection_names:
+            rank = rank_maps_by_collection[collection_name.value].get(movie_id, {}).get('rank')
+            if collection_name.value in set([VectorCollectionName.DENSE_ANCHOR_VECTORS.value, VectorCollectionName.PLOT_EVENTS_VECTORS.value]):
+                print(f"rank for {collection_name.value} {movie_id}: {rank}")
+            ranks_by_axis[collection_name.value] = rank
+        
+        ranks_by_candidate[movie_id] = ranks_by_axis
+        print(f"ranks by axis for {movie_id}: {ranks_by_axis}")
+        
+        # Compute RRF terms
+        rrf_terms = compute_rrf_terms(ranks_by_axis, weights_by_axis, rrf_k)
+        rrf_terms_by_candidate[movie_id] = rrf_terms
+
+        print(f"rrf terms for {movie_id}: {rrf_terms}")
+        print()
+    
+
     # Step 5: Compute cosine similarities for tie-breaking
     cosine_sims = compute_cosine_similarities_for_candidates(
-        query_vector_anchor, query_vector_content, query_vector_vibe,
+        query_vectors_by_collection,
         candidate_ids, db_path
     )
 
-    
-    # Update candidate scores with cosine similarities
-    for candidate in candidate_scores:
-        movie_id = candidate['movie_id']
-        if movie_id in cosine_sims:
-            sims = cosine_sims[movie_id]
-            candidate['sim_anchor'] = sims['sim_anchor']
-            candidate['sim_content'] = sims['sim_content']
-            candidate['sim_vibe'] = sims['sim_vibe']
-            candidate['avg_sim'] = sims['avg_sim']
+    # Combine ranks, RRF terms, and similarities into AxisScoreResults structure
+    for movie_id in candidate_ids:
+        axes_results: dict[str, AxisScoreResults] = {}
+        
+        for collection_name in collection_names:
+            rank = ranks_by_candidate[movie_id].get(collection_name.value)
+            rrf_term = rrf_terms_by_candidate[movie_id].get(collection_name.value, 0.0)
+            similarity = cosine_sims.get(movie_id, {}).get(collection_name.value, 0.0)
+            
+            axes_results[collection_name.value] = {
+                'rank': rank,
+                'rrf_term': rrf_term,
+                'similarity': similarity
+            }
+        
+        # Compute total RRF score from all axes
+        rrf_score = sum(axis_result['rrf_term'] for axis_result in axes_results.values())
+
+        # Compute average similarity across all axes
+        similarities = [axis_result['similarity'] for axis_result in axes_results.values()]
+        avg_sim = sum(similarities) / len(similarities) if similarities else 0.0
+        
+        candidate_scores.append({
+            'movie_id': movie_id,
+            'rrf_score': rrf_score,
+            'avg_sim': avg_sim,
+            'axes': axes_results,
+            'metadata': metadata_map.get(movie_id, {})
+        })
     
     
     # Step 6: Sort by (rrf_score desc, avg_sim desc, movie_id asc)
@@ -473,8 +485,7 @@ def fused_vector_search(
     # Return top-N results along with raw lists for visualization
     return {
         'fused_results': candidate_scores[:return_top_n],
-        'raw_anchor': list(ranks_map_anchor.values()),
-        'raw_content': list(ranks_map_content.values()),
-        'raw_vibe': list(ranks_map_vibe.values())
+        'raw_rank_maps_by_collection': rank_maps_by_collection,
+        'raw_similarities_by_movie_id': cosine_sims,
     }
 

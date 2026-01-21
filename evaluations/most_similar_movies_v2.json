@@ -1,0 +1,1153 @@
+{
+    "2493": {
+      "overall_matches": [
+        { "id": 808, "score": 3 },
+        { "id": 11, "score": 3 },
+        { "id": 85, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 22538, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 808, "score": 3 },
+        { "id": 11, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 85, "score": 2 },
+        { "id": 120, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 808, "score": 3 },
+        { "id": 1584, "score": 3 },
+        { "id": 9377, "score": 3 },
+        { "id": 37136, "score": 2 },
+        { "id": 269149, "score": 2 }
+      ]
+    },
+    "1584": {
+      "overall_matches": [
+        { "id": 9377, "score": 3 },
+        { "id": 22538, "score": 2 },
+        { "id": 1824, "score": 2 },
+        { "id": 37136, "score": 1 },
+        { "id": 269149, "score": 1 }
+      ],
+      "content_matches": [
+        { "id": 9377, "score": 2 },
+        { "id": 22538, "score": 2 },
+        { "id": 508965, "score": 1 },
+        { "id": 14160, "score": 1 },
+        { "id": 269149, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 9377, "score": 3 },
+        { "id": 22538, "score": 2 },
+        { "id": 1824, "score": 2 },
+        { "id": 2493, "score": 2 },
+        { "id": 808, "score": 2 }
+      ]
+    },
+    "9377": {
+      "overall_matches": [
+        { "id": 1584, "score": 3 },
+        { "id": 22538, "score": 3 },
+        { "id": 37136, "score": 2 },
+        { "id": 269149, "score": 2 },
+        { "id": 1824, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 1584, "score": 3 },
+        { "id": 269149, "score": 2 },
+        { "id": 37136, "score": 2 },
+        { "id": 22538, "score": 1 },
+        { "id": 14160, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 1584, "score": 3 },
+        { "id": 2493, "score": 3 },
+        { "id": 808, "score": 3 },
+        { "id": 1824, "score": 2 },
+        { "id": 37136, "score": 2 }
+      ]
+    },
+    "269149": {
+      "overall_matches": [
+        { "id": 808, "score": 3 },
+        { "id": 109445, "score": 3 },
+        { "id": 569094, "score": 3 },
+        { "id": 14160, "score": 2 },
+        { "id": 354912, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 37136, "score": 3 },
+        { "id": 392044, "score": 2 },
+        { "id": 155, "score": 2 },
+        { "id": 807, "score": 2 },
+        { "id": 419430, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 808, "score": 3 },
+        { "id": 569094, "score": 3 },
+        { "id": 109445, "score": 3 },
+        { "id": 1584, "score": 2 },
+        { "id": 14160, "score": 2 }
+      ]
+    },
+    "109445": {
+      "overall_matches": [
+        { "id": 808, "score": 3 },
+        { "id": 508965, "score": 3 },
+        { "id": 13397, "score": 3 },
+        { "id": 10674, "score": 2 },
+        { "id": 354912, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 808, "score": 3 },
+        { "id": 10674, "score": 3 },
+        { "id": 2493, "score": 2 },
+        { "id": 671, "score": 2 },
+        { "id": 13397, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 13397, "score": 3 },
+        { "id": 508965, "score": 3 },
+        { "id": 354912, "score": 3 },
+        { "id": 14160, "score": 2 },
+        { "id": 10674, "score": 2 }
+      ]
+    },
+    "508965": {
+      "overall_matches": [
+        { "id": 13397, "score": 3 },
+        { "id": 14160, "score": 2 },
+        { "id": 354912, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 10674, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 13397, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 671, "score": 2 },
+        { "id": 14160, "score": 2 },
+        { "id": 354912, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 13397, "score": 3 },
+        { "id": 109445, "score": 3 },
+        { "id": 808, "score": 2 },
+        { "id": 14160, "score": 2 },
+        { "id": 354912, "score": 2 }
+      ]
+    },
+    "10674": {
+      "overall_matches": [
+        { "id": 109445, "score": 3 },
+        { "id": 269149, "score": 3 },
+        { "id": 354912, "score": 2 },
+        { "id": 508965, "score": 2 },
+        { "id": 808, "score": 1 }
+      ],
+      "content_matches": [
+        { "id": 1771, "score": 3 },
+        { "id": 603, "score": 2 },
+        { "id": 11, "score": 2 },
+        { "id": 98, "score": 1 },
+        { "id": 120, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 109445, "score": 3 },
+        { "id": 2493, "score": 3 },
+        { "id": 269149, "score": 2 },
+        { "id": 808, "score": 2 },
+        { "id": 354912, "score": 1 }
+      ]
+    },
+    "354912": {
+      "overall_matches": [
+        { "id": 14160, "score": 3 },
+        { "id": 508965, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 10674, "score": 2 },
+        { "id": 269149, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 1584, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 671, "score": 2 },
+        { "id": 545611, "score": 1 },
+        { "id": 14160, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 14160, "score": 3 },
+        { "id": 508965, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 1584, "score": 2 },
+        { "id": 13, "score": 2 }
+      ]
+    },
+    "808": {
+      "overall_matches": [
+        { "id": 269149, "score": 3 },
+        { "id": 109445, "score": 3 },
+        { "id": 2493, "score": 2 },
+        { "id": 508965, "score": 2 },
+        { "id": 1584, "score": 1 }
+      ],
+      "content_matches": [
+        { "id": 109445, "score": 3 },
+        { "id": 2493, "score": 3 },
+        { "id": 269149, "score": 2 },
+        { "id": 10674, "score": 2 },
+        { "id": 14160, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 2493, "score": 3 },
+        { "id": 269149, "score": 3 },
+        { "id": 1584, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 508965, "score": 2 }
+      ]
+    },
+    "76341": {
+      "overall_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 335984, "score": 2 },
+        { "id": 245891, "score": 2 },
+        { "id": 85, "score": 2 },
+        { "id": 11, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 11, "score": 2 },
+        { "id": 98, "score": 2 },
+        { "id": 1771, "score": 2 },
+        { "id": 85, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 245891, "score": 3 },
+        { "id": 603, "score": 3 },
+        { "id": 155, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 98, "score": 2 }
+      ]
+    },
+    "155": {
+      "overall_matches": [
+        { "id": 27205, "score": 3 },
+        { "id": 807, "score": 3 },
+        { "id": 245891, "score": 2 },
+        { "id": 550, "score": 2 },
+        { "id": 335984, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 807, "score": 3 },
+        { "id": 176, "score": 2 },
+        { "id": 245891, "score": 2 },
+        { "id": 392044, "score": 1 },
+        { "id": 27205, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 807, "score": 3 },
+        { "id": 27205, "score": 3 },
+        { "id": 245891, "score": 2 },
+        { "id": 550, "score": 2 },
+        { "id": 335984, "score": 2 }
+      ]
+    },
+    "245891": {
+      "overall_matches": [
+        { "id": 155, "score": 3 },
+        { "id": 603, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 335984, "score": 2 },
+        { "id": 76341, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 98, "score": 2 },
+        { "id": 392044, "score": 2 },
+        { "id": 2493, "score": 2 },
+        { "id": 155, "score": 2 },
+        { "id": 807, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 76341, "score": 2 },
+        { "id": 155, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 335984, "score": 2 }
+      ]
+    },
+    "1771": {
+      "overall_matches": [
+        { "id": 299534, "score": 3 },
+        { "id": 155, "score": 2 },
+        { "id": 569094, "score": 2 },
+        { "id": 85, "score": 2 },
+        { "id": 11, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 85, "score": 3 },
+        { "id": 299534, "score": 2 },
+        { "id": 10674, "score": 2 },
+        { "id": 11, "score": 1 },
+        { "id": 155, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 85, "score": 3 },
+        { "id": 11, "score": 2 },
+        { "id": 10674, "score": 2 },
+        { "id": 299534, "score": 2 },
+        { "id": 329, "score": 2 }
+      ]
+    },
+    "14160": {
+      "overall_matches": [
+        { "id": 354912, "score": 3 },
+        { "id": 508965, "score": 3 },
+        { "id": 2493, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 269149, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 508965, "score": 3 },
+        { "id": 354912, "score": 3 },
+        { "id": 2493, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 13397, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 354912, "score": 3 },
+        { "id": 508965, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 2493, "score": 2 },
+        { "id": 13, "score": 2 }
+      ]
+    },
+    "13397": {
+      "overall_matches": [
+        { "id": 508965, "score": 3 },
+        { "id": 354912, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 2493, "score": 2 },
+        { "id": 14160, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 508965, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 354912, "score": 2 },
+        { "id": 2493, "score": 1 },
+        { "id": 14160, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 508965, "score": 3 },
+        { "id": 354912, "score": 3 },
+        { "id": 14160, "score": 2 },
+        { "id": 109445, "score": 2 },
+        { "id": 2493, "score": 2 }
+      ]
+    },
+    "85": {
+      "overall_matches": [
+        { "id": 11, "score": 3 },
+        { "id": 1771, "score": 3 },
+        { "id": 120, "score": 2 },
+        { "id": 329, "score": 2 },
+        { "id": 2493, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 11, "score": 3 },
+        { "id": 1771, "score": 2 },
+        { "id": 120, "score": 2 },
+        { "id": 671, "score": 2 },
+        { "id": 299534, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 11, "score": 3 },
+        { "id": 2493, "score": 3 },
+        { "id": 329, "score": 2 },
+        { "id": 1771, "score": 2 },
+        { "id": 120, "score": 2 }
+      ]
+    },
+    "569094": {
+      "overall_matches": [
+        { "id": 299534, "score": 3 },
+        { "id": 545611, "score": 3 },
+        { "id": 603, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 1771, "score": 1 }
+      ],
+      "content_matches": [
+        { "id": 545611, "score": 3 },
+        { "id": 299534, "score": 3 },
+        { "id": 603, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 671, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 299534, "score": 3 },
+        { "id": 269149, "score": 3 },
+        { "id": 808, "score": 2 },
+        { "id": 354912, "score": 2 },
+        { "id": 22538, "score": 2 }
+      ]
+    },
+    "11": {
+      "overall_matches": [
+        { "id": 85, "score": 3 },
+        { "id": 120, "score": 3 },
+        { "id": 1771, "score": 2 },
+        { "id": 299534, "score": 2 },
+        { "id": 603, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 120, "score": 2 },
+        { "id": 1771, "score": 2 },
+        { "id": 85, "score": 2 },
+        { "id": 671, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 85, "score": 3 },
+        { "id": 2493, "score": 2 },
+        { "id": 671, "score": 2 },
+        { "id": 1771, "score": 2 },
+        { "id": 569094, "score": 2 }
+      ]
+    },
+    "299534": {
+      "overall_matches": [
+        { "id": 1771, "score": 3 },
+        { "id": 569094, "score": 2 },
+        { "id": 11, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 157336, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 27205, "score": 2 },
+        { "id": 569094, "score": 2 },
+        { "id": 545611, "score": 2 },
+        { "id": 157336, "score": 2 },
+        { "id": 603, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 569094, "score": 3 },
+        { "id": 120, "score": 2 },
+        { "id": 11, "score": 2 },
+        { "id": 1771, "score": 2 },
+        { "id": 157336, "score": 2 }
+      ]
+    },
+    "120": {
+      "overall_matches": [
+        { "id": 11, "score": 3 },
+        { "id": 671, "score": 3 },
+        { "id": 85, "score": 2 },
+        { "id": 98, "score": 2 },
+        { "id": 329, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 11, "score": 3 },
+        { "id": 671, "score": 2 },
+        { "id": 299534, "score": 2 },
+        { "id": 85, "score": 2 },
+        { "id": 603, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 671, "score": 3 },
+        { "id": 11, "score": 3 },
+        { "id": 98, "score": 2 },
+        { "id": 329, "score": 2 },
+        { "id": 85, "score": 2 }
+      ]
+    },
+    "671": {
+      "overall_matches": [
+        { "id": 120, "score": 3 },
+        { "id": 11, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 2493, "score": 2 },
+        { "id": 508965, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 120, "score": 3 },
+        { "id": 11, "score": 2 },
+        { "id": 85, "score": 2 },
+        { "id": 109445, "score": 1 },
+        { "id": 2493, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 508965, "score": 3 },
+        { "id": 13397, "score": 3 },
+        { "id": 109445, "score": 2 },
+        { "id": 2493, "score": 2 },
+        { "id": 808, "score": 2 }
+      ]
+    },
+    "98": {
+      "overall_matches": [
+        { "id": 120, "score": 3 },
+        { "id": 11, "score": 3 },
+        { "id": 155, "score": 3 },
+        { "id": 1771, "score": 2 },
+        { "id": 299534, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 155, "score": 3 },
+        { "id": 11, "score": 2 },
+        { "id": 1771, "score": 2 },
+        { "id": 76341, "score": 2 },
+        { "id": 120, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 120, "score": 3 },
+        { "id": 157336, "score": 3 },
+        { "id": 11, "score": 3 },
+        { "id": 155, "score": 2 },
+        { "id": 299534, "score": 2 }
+      ]
+    },
+    "27205": {
+      "overall_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 157336, "score": 3 },
+        { "id": 329865, "score": 3 },
+        { "id": 545611, "score": 2 },
+        { "id": 335984, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 157336, "score": 3 },
+        { "id": 329865, "score": 2 },
+        { "id": 545611, "score": 2 },
+        { "id": 335984, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 157336, "score": 3 },
+        { "id": 603, "score": 3 },
+        { "id": 155, "score": 3 },
+        { "id": 335984, "score": 2 },
+        { "id": 329865, "score": 2 }
+      ]
+    },
+    "157336": {
+      "overall_matches": [
+        { "id": 27205, "score": 3 },
+        { "id": 329865, "score": 2 },
+        { "id": 335984, "score": 2 },
+        { "id": 603, "score": 2 },
+        { "id": 11, "score": 1 }
+      ],
+      "content_matches": [
+        { "id": 329865, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 299534, "score": 1 },
+        { "id": 11, "score": 1 },
+        { "id": 603, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 329865, "score": 3 },
+        { "id": 335984, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 120, "score": 2 },
+        { "id": 597, "score": 1 }
+      ]
+    },
+    "603": {
+      "overall_matches": [
+        { "id": 27205, "score": 3 },
+        { "id": 335984, "score": 3 },
+        { "id": 545611, "score": 3 },
+        { "id": 157336, "score": 2 },
+        { "id": 329865, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 27205, "score": 3 },
+        { "id": 545611, "score": 3 },
+        { "id": 335984, "score": 2 },
+        { "id": 76341, "score": 2 },
+        { "id": 11, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 335984, "score": 3 },
+        { "id": 27205, "score": 3 },
+        { "id": 245891, "score": 3 },
+        { "id": 155, "score": 2 },
+        { "id": 76341, "score": 2 }
+      ]
+    },
+    "335984": {
+      "overall_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 329865, "score": 3 },
+        { "id": 27205, "score": 2 },
+        { "id": 157336, "score": 2 },
+        { "id": 807, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 603, "score": 3 },
+        { "id": 329865, "score": 3 },
+        { "id": 27205, "score": 2 },
+        { "id": 807, "score": 2 },
+        { "id": 157336, "score": 2 }
+      ],
+      "vibes_matches": [
+        { "id": 329865, "score": 3 },
+        { "id": 157336, "score": 3 },
+        { "id": 27205, "score": 3 },
+        { "id": 603, "score": 2 },
+        { "id": 155, "score": 2 }
+      ]
+    },
+    "329865": {
+      "overall_matches": [
+        { "id": 157336, "score": 3 },
+        { "id": 335984, "score": 3 },
+        { "id": 27205, "score": 2 },
+        { "id": 545611, "score": 2 },
+        { "id": 603, "score": 2 }
+      ],
+      "content_matches": [
+        { "id": 157336, "score": 3 },
+        { "id": 299534, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 545611, "score": 2 },
+        { "id": 335984, "score": 1 }
+      ],
+      "vibes_matches": [
+        { "id": 157336, "score": 3 },
+        { "id": 335984, "score": 3 },
+        { "id": 666277, "score": 2 },
+        { "id": 27205, "score": 2 },
+        { "id": 545611, "score": 2 }
+      ]
+    },
+    "493922": {
+      "overall_matches": [
+        { "id": 419430, "score": 9 },
+        { "id": 694, "score": 8 },
+        { "id": 49018, "score": 8 },
+        { "id": 807, "score": 7 },
+        { "id": 176, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 49018, "score": 9 },
+        { "id": 694, "score": 8 },
+        { "id": 419430, "score": 7 },
+        { "id": 176, "score": 6 },
+        { "id": 807, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 694, "score": 9 },
+        { "id": 807, "score": 8 },
+        { "id": 419430, "score": 7 },
+        { "id": 49018, "score": 7 },
+        { "id": 176, "score": 6 }
+      ]
+    },
+    "329": {
+      "overall_matches": [
+        { "id": 27205, "score": 9 },
+        { "id": 76341, "score": 8 },
+        { "id": 85, "score": 8 },
+        { "id": 603, "score": 7 },
+        { "id": 335984, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 694, "score": 7 },
+        { "id": 419430, "score": 7 },
+        { "id": 176, "score": 6 },
+        { "id": 603, "score": 6 },
+        { "id": 157336, "score": 5 }
+      ],
+      "vibes_matches": [
+        { "id": 85, "score": 9 },
+        { "id": 11, "score": 8 },
+        { "id": 27205, "score": 8 },
+        { "id": 603, "score": 7 },
+        { "id": 76341, "score": 7 }
+      ]
+    },
+    "694": {
+      "overall_matches": [
+        { "id": 493922, "score": 9 },
+        { "id": 419430, "score": 8 },
+        { "id": 49018, "score": 7 },
+        { "id": 807, "score": 7 },
+        { "id": 1359, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 49018, "score": 9 },
+        { "id": 493922, "score": 8 },
+        { "id": 419430, "score": 8 },
+        { "id": 550, "score": 7 },
+        { "id": 1359, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 493922, "score": 9 },
+        { "id": 807, "score": 9 },
+        { "id": 419430, "score": 8 },
+        { "id": 1359, "score": 8 },
+        { "id": 49018, "score": 7 }
+      ]
+    },
+    "49018": {
+      "overall_matches": [
+        { "id": 493922, "score": 9 },
+        { "id": 694, "score": 8 },
+        { "id": 419430, "score": 7 },
+        { "id": 176, "score": 6 },
+        { "id": 1034541, "score": 5 }
+      ],
+      "content_matches": [
+        { "id": 493922, "score": 9 },
+        { "id": 694, "score": 8 },
+        { "id": 1034541, "score": 6 },
+        { "id": 176, "score": 4 },
+        { "id": 419430, "score": 4 }
+      ],
+      "vibes_matches": [
+        { "id": 694, "score": 8 },
+        { "id": 493922, "score": 7 },
+        { "id": 419430, "score": 7 },
+        { "id": 176, "score": 6 },
+        { "id": 1034541, "score": 5 }
+      ]
+    },
+    "1034541": {
+      "overall_matches": [
+        { "id": 176, "score": 9 },
+        { "id": 1359, "score": 8 },
+        { "id": 493922, "score": 7 },
+        { "id": 49018, "score": 7 },
+        { "id": 694, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 176, "score": 9 },
+        { "id": 807, "score": 8 },
+        { "id": 49018, "score": 7 },
+        { "id": 493922, "score": 7 },
+        { "id": 694, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 176, "score": 9 },
+        { "id": 1359, "score": 8 },
+        { "id": 807, "score": 7 },
+        { "id": 49018, "score": 7 },
+        { "id": 493922, "score": 7 }
+      ]
+    },
+    "176": {
+      "overall_matches": [
+        { "id": 419430, "score": 8 },
+        { "id": 49018, "score": 8 },
+        { "id": 493922, "score": 7 },
+        { "id": 694, "score": 6 },
+        { "id": 807, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 807, "score": 8 },
+        { "id": 155, "score": 7 },
+        { "id": 419430, "score": 6 },
+        { "id": 392044, "score": 6 },
+        { "id": 550, "score": 5 }
+      ],
+      "vibes_matches": [
+        { "id": 807, "score": 9 },
+        { "id": 1034541, "score": 8 },
+        { "id": 49018, "score": 7 },
+        { "id": 419430, "score": 6 },
+        { "id": 493922, "score": 6 }
+      ]
+    },
+    "496243": {
+      "overall_matches": [
+        { "id": 419430, "score": 9 },
+        { "id": 550, "score": 8 },
+        { "id": 1359, "score": 7 },
+        { "id": 807, "score": 6.5 },
+        { "id": 155, "score": 5.5 }
+      ],
+      "content_matches": [
+        { "id": 419430, "score": 9 },
+        { "id": 550, "score": 6.5 },
+        { "id": 597, "score": 5.5 },
+        { "id": 392044, "score": 4.5 },
+        { "id": 1359, "score": 4 }
+      ],
+      "vibes_matches": [
+        { "id": 419430, "score": 9 },
+        { "id": 1359, "score": 8 },
+        { "id": 550, "score": 8 },
+        { "id": 807, "score": 7.5 },
+        { "id": 694, "score": 7 }
+      ]
+    },
+    "807": {
+      "overall_matches": [
+        { "id": 550, "score": 9 },
+        { "id": 155, "score": 8 },
+        { "id": 496243, "score": 7 },
+        { "id": 1359, "score": 7 },
+        { "id": 176, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 176, "score": 9 },
+        { "id": 155, "score": 8 },
+        { "id": 392044, "score": 7 },
+        { "id": 419430, "score": 6 },
+        { "id": 1359, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 155, "score": 9 },
+        { "id": 335984, "score": 8 },
+        { "id": 550, "score": 7 },
+        { "id": 493922, "score": 7 },
+        { "id": 694, "score": 6 }
+      ]
+    },
+    "419430": {
+      "overall_matches": [
+        { "id": 496243, "score": 9 },
+        { "id": 1359, "score": 8 },
+        { "id": 550, "score": 7 },
+        { "id": 807, "score": 7 },
+        { "id": 493922, "score": 7 }
+      ],
+      "content_matches": [
+        { "id": 496243, "score": 9 },
+        { "id": 603, "score": 7 },
+        { "id": 550, "score": 7 },
+        { "id": 1359, "score": 6 },
+        { "id": 807, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 496243, "score": 9 },
+        { "id": 1359, "score": 8 },
+        { "id": 807, "score": 8 },
+        { "id": 493922, "score": 7 },
+        { "id": 694, "score": 7 }
+      ]
+    },
+    "1359": {
+      "overall_matches": [
+        { "id": 550, "score": 9 },
+        { "id": 496243, "score": 8 },
+        { "id": 419430, "score": 8 },
+        { "id": 807, "score": 7 },
+        { "id": 694, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 550, "score": 9 },
+        { "id": 807, "score": 8 },
+        { "id": 419430, "score": 7 },
+        { "id": 496243, "score": 7 },
+        { "id": 694, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 550, "score": 9 },
+        { "id": 496243, "score": 8 },
+        { "id": 419430, "score": 8 },
+        { "id": 807, "score": 7 },
+        { "id": 694, "score": 6 }
+      ]
+    },
+    "597": {
+      "overall_matches": [
+        { "id": 13, "score": 9 },
+        { "id": 11036, "score": 8 },
+        { "id": 98, "score": 7 },
+        { "id": 666277, "score": 6 },
+        { "id": 329, "score": 5 }
+      ],
+      "content_matches": [
+        { "id": 11036, "score": 9 },
+        { "id": 13, "score": 7 },
+        { "id": 666277, "score": 6 },
+        { "id": 392044, "score": 4 },
+        { "id": 329, "score": 4 }
+      ],
+      "vibes_matches": [
+        { "id": 11036, "score": 9 },
+        { "id": 666277, "score": 7 },
+        { "id": 13, "score": 7 },
+        { "id": 14160, "score": 6 },
+        { "id": 354912, "score": 6 }
+      ]
+    },
+    "13": {
+      "overall_matches": [
+        { "id": 597, "score": 9 },
+        { "id": 11036, "score": 8 },
+        { "id": 666277, "score": 7 },
+        { "id": 14160, "score": 7 },
+        { "id": 423, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 597, "score": 8 },
+        { "id": 1771, "score": 6 },
+        { "id": 10674, "score": 5 },
+        { "id": 98, "score": 4 },
+        { "id": 423, "score": 4 }
+      ],
+      "vibes_matches": [
+        { "id": 14160, "score": 9 },
+        { "id": 354912, "score": 8 },
+        { "id": 597, "score": 8 },
+        { "id": 11036, "score": 8 },
+        { "id": 1584, "score": 6 }
+      ]
+    },
+    "550": {
+      "overall_matches": [
+        { "id": 1359, "score": 9 },
+        { "id": 807, "score": 8 },
+        { "id": 496243, "score": 8 },
+        { "id": 155, "score": 7 },
+        { "id": 419430, "score": 7 }
+      ],
+      "content_matches": [
+        { "id": 1359, "score": 9 },
+        { "id": 496243, "score": 8 },
+        { "id": 155, "score": 7 },
+        { "id": 419430, "score": 7 },
+        { "id": 807, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 1359, "score": 9 },
+        { "id": 807, "score": 8 },
+        { "id": 496243, "score": 8 },
+        { "id": 155, "score": 7 },
+        { "id": 419430, "score": 7 }
+      ]
+    },
+    "11036": {
+      "overall_matches": [
+        { "id": 597, "score": 9 },
+        { "id": 666277, "score": 8 },
+        { "id": 13, "score": 7 },
+        { "id": 1824, "score": 7 },
+        { "id": 25195, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 1824, "score": 9 },
+        { "id": 597, "score": 8 },
+        { "id": 666277, "score": 7 },
+        { "id": 13, "score": 6 },
+        { "id": 25195, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 597, "score": 10 },
+        { "id": 666277, "score": 9 },
+        { "id": 13, "score": 8 },
+        { "id": 14160, "score": 8 },
+        { "id": 354912, "score": 7 }
+      ]
+    },
+    "25195": {
+      "overall_matches": [
+        { "id": 1824, "score": 9 },
+        { "id": 808, "score": 8 },
+        { "id": 2493, "score": 7 },
+        { "id": 11036, "score": 6 },
+        { "id": 9377, "score": 5 }
+      ],
+      "content_matches": [
+        { "id": 808, "score": 8 },
+        { "id": 2493, "score": 7 },
+        { "id": 1824, "score": 6 },
+        { "id": 597, "score": 5 },
+        { "id": 392044, "score": 4 }
+      ],
+      "vibes_matches": [
+        { "id": 1824, "score": 9 },
+        { "id": 2493, "score": 8 },
+        { "id": 808, "score": 8 },
+        { "id": 1584, "score": 7 },
+        { "id": 9377, "score": 7 }
+      ]
+    },
+    "666277": {
+      "overall_matches": [
+        { "id": 11036, "score": 9 },
+        { "id": 597, "score": 8 },
+        { "id": 13, "score": 7 },
+        { "id": 1824, "score": 6 },
+        { "id": 25195, "score": 5 }
+      ],
+      "content_matches": [
+        { "id": 11036, "score": 9 },
+        { "id": 1824, "score": 7 },
+        { "id": 25195, "score": 6 },
+        { "id": 13, "score": 6 },
+        { "id": 597, "score": 5 }
+      ],
+      "vibes_matches": [
+        { "id": 11036, "score": 8 },
+        { "id": 329865, "score": 7 },
+        { "id": 13, "score": 7 },
+        { "id": 597, "score": 6 },
+        { "id": 157336, "score": 6 }
+      ]
+    },
+    "423": {
+      "overall_matches": [
+        { "id": 597, "score": 9 },
+        { "id": 13, "score": 8 },
+        { "id": 98, "score": 7 },
+        { "id": 329865, "score": 7 },
+        { "id": 155, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 85, "score": 9 },
+        { "id": 1771, "score": 8 },
+        { "id": 13, "score": 7 },
+        { "id": 10674, "score": 7 },
+        { "id": 597, "score": 6 }
+      ],
+      "vibes_matches": [
+        { "id": 597, "score": 9 },
+        { "id": 329865, "score": 8 },
+        { "id": 98, "score": 7 },
+        { "id": 13, "score": 7 },
+        { "id": 666277, "score": 7 }
+      ]
+    },
+    "392044": {
+      "overall_matches": [
+        { "id": 269149, "score": 8 },
+        { "id": 807, "score": 7 },
+        { "id": 37136, "score": 6 },
+        { "id": 419430, "score": 5 },
+        { "id": 496243, "score": 4 }
+      ],
+      "content_matches": [
+        { "id": 269149, "score": 8 },
+        { "id": 807, "score": 7 },
+        { "id": 419430, "score": 6 },
+        { "id": 597, "score": 4 },
+        { "id": 496243, "score": 4 }
+      ],
+      "vibes_matches": [
+        { "id": 269149, "score": 7 },
+        { "id": 37136, "score": 6 },
+        { "id": 419430, "score": 5 },
+        { "id": 496243, "score": 4 },
+        { "id": 807, "score": 4 }
+      ]
+    },
+    "1824": {
+      "overall_matches": [
+        { "id": 25195, "score": 8 },
+        { "id": 2493, "score": 7 },
+        { "id": 11036, "score": 7 },
+        { "id": 666277, "score": 6 },
+        { "id": 22538, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 11036, "score": 8 },
+        { "id": 25195, "score": 6 },
+        { "id": 2493, "score": 5 },
+        { "id": 597, "score": 5 },
+        { "id": 666277, "score": 4 }
+      ],
+      "vibes_matches": [
+        { "id": 25195, "score": 8 },
+        { "id": 1584, "score": 7 },
+        { "id": 9377, "score": 7 },
+        { "id": 808, "score": 6 },
+        { "id": 37136, "score": 6 }
+      ]
+    },
+    "37136": {
+      "overall_matches": [
+        { "id": 269149, "score": 9 },
+        { "id": 808, "score": 8 },
+        { "id": 9377, "score": 7 },
+        { "id": 22538, "score": 7 },
+        { "id": 2493, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 269149, "score": 9 },
+        { "id": 392044, "score": 8 },
+        { "id": 807, "score": 7 },
+        { "id": 155, "score": 6 },
+        { "id": 419430, "score": 5 }
+      ],
+      "vibes_matches": [
+        { "id": 808, "score": 9 },
+        { "id": 9377, "score": 8 },
+        { "id": 1584, "score": 8 },
+        { "id": 2493, "score": 7 },
+        { "id": 22538, "score": 7 }
+      ]
+    },
+    "216015": {
+      "overall_matches": [
+        { "id": 11036, "score": 10 },
+        { "id": 666277, "score": 9 },
+        { "id": 13, "score": 9 },
+        { "id": 597, "score": 9 },
+        { "id": 1824, "score": 8 }
+      ],
+      "content_matches": [
+        { "id": 11036, "score": 10 },
+        { "id": 13, "score": 10 },
+        { "id": 666277, "score": 10 },
+        { "id": 597, "score": 10 },
+        { "id": 1824, "score": 9 }
+      ],
+      "vibes_matches": [
+        { "id": 11036, "score": 10 },
+        { "id": 666277, "score": 9 },
+        { "id": 13, "score": 9 },
+        { "id": 597, "score": 9 },
+        { "id": 1824, "score": 8 }
+      ]
+    },
+    "545611": {
+      "overall_matches": [
+        { "id": 569094, "score": 9 },
+        { "id": 22538,  "score": 8 },
+        { "id": 27205,  "score": 7 },
+        { "id": 603,    "score": 7 },
+        { "id": 299534, "score": 6 }
+      ],
+      "content_matches": [
+        { "id": 569094, "score": 10 },
+        { "id": 299534, "score": 8 },
+        { "id": 27205,  "score": 7 },
+        { "id": 603,    "score": 7 },
+        { "id": 550,    "score": 5 }
+      ],
+      "vibes_matches": [
+        { "id": 569094, "score": 9 },
+        { "id": 354912, "score": 8 },
+        { "id": 14160,  "score": 7 },
+        { "id": 808,    "score": 7 },
+        { "id": 269149, "score": 6 }
+      ]
+    },
+    "22538": {
+      "overall_matches": [
+        { "id": 808, "score": 9 },
+        { "id": 2493, "score": 9 },
+        { "id": 545611, "score": 8 },
+        { "id": 1584, "score": 8 },
+        { "id": 569094, "score": 7 }
+      ],
+      "content_matches": [
+        { "id": 808, "score": 9 },
+        { "id": 2493, "score": 8 },
+        { "id": 1584, "score": 8 },
+        { "id": 569094, "score": 7 },
+        { "id": 545611, "score": 7 }
+      ],
+      "vibes_matches": [
+        { "id": 569094, "score": 9 },
+        { "id": 808, "score": 9 },
+        { "id": 545611, "score": 8 },
+        { "id": 1584, "score": 8 },
+        { "id": 9377, "score": 8 }
+      ]
+    }
+  }
+  

@@ -6,12 +6,13 @@ DenseVibe fields for vector search, as specified in the movie search guide (sect
 """
 
 import os
+import json
 from openai import OpenAI
-from prompts import PLOT_SUMMARY_SYSTEM_PROMPT, DENSE_VIBE_SYSTEM_PROMPT
-from schemas import PlotMetadata, VibeMetadata
+from .prompts import DENSE_VIBE_SYSTEM_PROMPT, PLOT_EVENTS_SYSTEM_PROMPT, PLOT_ANALYSIS_SYSTEM_PROMPT
+from .schemas import VibeMetadata, ParentalGuideItem, PlotEventsMetadata, PlotAnalysisMetadata
 from dotenv import load_dotenv
 from typing import Optional, Union
-from classes import ParentalGuideItem
+import time
 
 # Load environment variables (for API key)
 load_dotenv()
@@ -27,50 +28,30 @@ if not api_key:
 # Initialize OpenAI client - created once when module is loaded
 client = OpenAI(api_key=api_key)
 
+# ================================
+#      METADATA GENERATION
+# ================================
 
-def generate_plot_summary(
+def generate_plot_events_metadata(
+    title: str,
     overview: str,
     plot_keywords: list[str],
     plot_summaries: list[str],
-    synopsis: list[str]
-) -> PlotMetadata:
-    """
-    Generates plot synopsis and plot keyphrases using gpt-5-nano with the lowest thinking setting.
-    
-    This function generates LLM-derived plot metadata for vector search (section 4.8 of the
-    movie search guide). It creates a brief but complete plot synopsis (spoilers allowed) and
-    a list of key terms and phrases related to the plot.
-    
-    The inputs are derived from the movie's plot-related fields:
-    - plot_keywords: High-level keywords about the plot
-    - plot_summaries: Detailed plot summaries
-    - synopsis: Extended synopsis text
-    - overview: High-level movie overview
-    
-    Args:
-        overview: High-level movie overview text
-        plot_keywords: List of plot-related keywords
-        plot_summaries: List of detailed plot summaries
-        synopsis: List of synopsis text segments
-        
-    Returns:
-        PlotMetadata instance containing:
-        - plot_synopsis: Brief but complete summary (spoilers allowed)
-        - plot_keyphrases: List of key terms and phrases related to the plot
-        
-    Raises:
-        ValueError: If the model refuses to generate output
-        Exception: If the API call fails
-    """
-    
+    plot_synopses: list[str]
+) -> PlotEventsMetadata:
     # Build user prompt with all plot-related information
     # Combine all inputs into a structured prompt for the LLM
-    plot_info_parts = [
-        f"Overview: {overview}",
-        f"Plot keywords: {', '.join(plot_keywords)}",
-        f"Plot summaries: \n-{'\n-'.join(plot_summaries)}",
-        f"Synopsis: \n-{'\n-'.join(synopsis)}",
-    ]
+    plot_info_parts = []
+    if title:
+        plot_info_parts.append(f"title: {title}")
+    if overview:
+        plot_info_parts.append(f"overview: {overview}")
+    if plot_summaries:
+        plot_info_parts.append(f"plot_summaries: \n-{'\n-'.join(plot_summaries)}")
+    if plot_synopses:
+        plot_info_parts.append(f"plot_synopses: \n-{'\n-'.join(plot_synopses)}")
+    if plot_keywords:
+        plot_info_parts.append(f"plot_keywords: {', '.join(plot_keywords)}")
     
     user_prompt = "\n".join(plot_info_parts)
     
@@ -78,13 +59,14 @@ def generate_plot_summary(
     # Using .parse() for structured output - automatically validates and parses response
     # Note: reasoning_effort="minimal" uses the minimum reasoning capacity for faster responses
     response = client.chat.completions.parse(
-        model="gpt-5-nano",
+        model="gpt-5-mini",
         messages=[
-            {"role": "system", "content": PLOT_SUMMARY_SYSTEM_PROMPT},
+            {"role": "system", "content": PLOT_EVENTS_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt}
         ],
-        response_format=PlotMetadata,
-        reasoning_effort="minimal"
+        response_format=PlotEventsMetadata,
+        reasoning_effort="minimal",
+        verbosity="low"
     )
     
     # Extract the parsed response - OpenAI automatically validates structure matches PlotMetadata
@@ -93,7 +75,53 @@ def generate_plot_summary(
         return message.parsed
     else:
         # Handle case where model refuses to generate output
-        raise ValueError(f"Model refused to generate output: {message.refusal}")
+        raise ValueError(f"Model failed to generate plot events metadata: {message.refusal}")
+
+
+def generate_plot_analysis_metadata(
+    title: str,
+    overview: str,
+    plot_synopsis: str,
+    plot_keywords: list[str],
+    reception_summary: Optional[str] = None
+) -> PlotAnalysisMetadata:
+    # Build user prompt with all plot-related information
+    # Combine all inputs into a structured prompt for the LLM
+    plot_info_parts = []
+    if title:
+        plot_info_parts.append(f"title: {title}")
+    if overview:
+        plot_info_parts.append(f"overview: {overview}")
+    if plot_synopsis:
+        plot_info_parts.append(f"plot_synopsis: {plot_synopsis}")
+    if plot_keywords:
+        plot_info_parts.append(f"plot_keywords: {', '.join(plot_keywords)}")
+    if reception_summary:
+        plot_info_parts.append(f"reception_summary: {reception_summary}")
+    
+    user_prompt = "\n".join(plot_info_parts)
+    
+    # Generate response using gpt-5-nano with lowest thinking setting
+    # Using .parse() for structured output - automatically validates and parses response
+    # Note: reasoning_effort="minimal" uses the minimum reasoning capacity for faster responses
+    response = client.chat.completions.parse(
+        model="gpt-5-mini",
+        messages=[
+            {"role": "system", "content": PLOT_ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt}
+        ],
+        response_format=PlotAnalysisMetadata,
+        reasoning_effort="medium",
+        verbosity="low"
+    )
+    
+    # Extract the parsed response - OpenAI automatically validates structure matches PlotMetadata
+    message = response.choices[0].message
+    if message.parsed:
+        return message.parsed
+    else:
+        # Handle case where model refuses to generate output
+        raise ValueError(f"Model failed to generate plot analysis metadata: {message.refusal}")
 
 
 def generate_vibe_summary(
@@ -232,56 +260,8 @@ def generate_vibe_summary(
 
 
 # ================================
-#         PARALLEL EXECUTION HELPERS
+#    PARALLEL EXECUTION HELPERS
 # ================================
-
-def generate_plot_metadata(
-    overview: str,
-    plot_keywords: list[str],
-    plot_summaries: list[str],
-    synopsis: list[str]
-) -> tuple[str, dict]:
-    """
-    Generate plot metadata using LLM with error handling.
-    
-    This is a wrapper around generate_plot_summary that handles errors gracefully
-    and returns a tuple format suitable for parallel execution.
-    
-    Args:
-        overview: High-level movie overview text
-        plot_keywords: List of plot-related keywords
-        plot_summaries: List of detailed plot summaries
-        synopsis: List of synopsis text segments
-        
-    Returns:
-        Tuple of (result_type, result_data) where result_type is "plot" and
-        result_data contains "plot_synopsis" and "plot_keyphrases" keys.
-    """
-    try:
-        plot_metadata = generate_plot_summary(
-            overview=overview,
-            plot_keywords=plot_keywords,
-            plot_summaries=plot_summaries,
-            synopsis=synopsis
-        )
-        
-        # Check if result is empty or invalid
-        if plot_metadata and plot_metadata.plot_synopsis:
-            return ("plot", {
-                "plot_synopsis": plot_metadata.plot_synopsis,
-                "plot_keyphrases": plot_metadata.plot_keyphrases if plot_metadata.plot_keyphrases else []
-            })
-        else:
-            raise ValueError("Plot metadata generation failed")
-    except Exception as e:
-        print(f"Error generating plot metadata: {e}")
-        # Exception occurred - use defaults
-        if plot_summaries:
-            return ("plot", {
-                "plot_synopsis": plot_summaries[0],
-                "plot_keyphrases": []
-            })
-        return ("plot", {"plot_synopsis": None, "plot_keyphrases": []})
 
 
 def generate_vibe_metadata(
@@ -336,3 +316,48 @@ def generate_vibe_metadata(
         print(f"Error generating DenseVibe metadata: {e}")
         return ("vibe", None)
 
+
+def generate_plot_metadata(
+    title: str,
+    overview: str,
+    plot_summaries: list[str],
+    plot_synopses: list[str],
+    plot_keywords: list[str],
+    reception_summary: Optional[str] = None
+) -> tuple[str, Optional[tuple[PlotEventsMetadata, PlotAnalysisMetadata]]]:
+    try:
+        print(f"Generating plot metadata for {title}")
+
+        # Time the plot events metadata generation
+        start_time_events = time.perf_counter()
+        plot_events_metadata = generate_plot_events_metadata(
+            title=title,
+            overview=overview,
+            plot_keywords=plot_keywords,
+            plot_summaries=plot_summaries,
+            plot_synopses=plot_synopses
+        )
+        end_time_events = time.perf_counter()
+        events_duration = end_time_events - start_time_events
+
+        print(f"Plot events metadata for {title} (completed in {events_duration:.2f} seconds):")
+        print(plot_events_metadata)
+
+        # Time the plot analysis metadata generation
+        start_time_analysis = time.perf_counter()
+        plot_analysis_metadata = generate_plot_analysis_metadata(
+            title=title,
+            overview=overview,
+            plot_synopsis=plot_events_metadata.plot_summary,
+            plot_keywords=plot_keywords,
+            reception_summary=reception_summary
+        )
+        end_time_analysis = time.perf_counter()
+        analysis_duration = end_time_analysis - start_time_analysis
+
+        print(f"\nPlot analysis metadata for {title} (completed in {analysis_duration:.2f} seconds):")
+
+        return ("plot", (plot_events_metadata, plot_analysis_metadata))
+    except Exception as e:
+        print(f"Error generating plot metadata: {e}")
+        return ("plot", None)

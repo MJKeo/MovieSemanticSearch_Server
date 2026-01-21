@@ -1,53 +1,175 @@
-PLOT_SUMMARY_SYSTEM_PROMPT = """You extract compact plot features for movie semantic search.
+PLOT_EVENTS_SYSTEM_PROMPT = """\
+You are an expert film analyst whose job is to extract a HIGH-SIGNAL, SPOILER-CONTAINING representation of WHAT HAPPENS in a movie.
 
-INPUT FIELDS (may be empty)
-- overview: short, spoiler-light premise; often vague/marketing-like.
-- plot_keywords: scraped/user keywords; mixed quality; can include themes, motifs, entities (treat as the existing keyword set you will complement).
-- plot_summaries: user-written plot summaries; usually more specific; may contain spoilers.
-- plot_synopsis: longer plot breakdowns; usually most detailed; may contain spoilers.
+CORE GOAL
+- Preserve specificity: keep character NAMES, location names, and concrete plot actions.
+- This section is about EVENTS and FACTS (including internal struggles ONLY when they drive decisions/actions).
+- Prioritize signal: include ONLY essential characters and ONLY the 1-3 core conflicts that define the movie.
+- Avoid generic “theme talk” here.
 
-OUTPUT (JSON Only)
-{
-  "plot_synopsis": <a dense, detail-preserving synopsis optimized for embeddings / semantic retrieval>,
-  "plot_keyphrases": <~5 short, self-contained phrases that COMPLEMENT plot_keywords by filling gaps found in plot_summaries/plot_synopsis; non-redundant with plot_keywords.>
-}
+INPUTS YOU MAY RECEIVE (some may be empty)
+- title: title of the movie
+- overview: marketing/vague summary of the movie's premise, not the entire plot
+- plot_summaries: shorter, user-written summaries of the events of the movie; often specific and includes more of the plot than "overview";
+- plot_synopses: longest/most detailed recount of the entire plot; best source for plot details
+- plot_keywords: short phrases viewers believe represent important plot elements
 
-GENERATION ORDERING
-Always generate plot_synopsis first, then plot_keyphrases.
+GENERAL RULES
+- Use plot_synopses and detailed plot_summaries as primary truth when available. Supplement with your own knowledge when necessary.
+- If sources conflict: prefer the most detailed, internally consistent version.
+- Do not invent facts not supported by the input. If a detail is unclear, omit it.
+- Keep wording concrete and plot-grounded. Avoid abstract moralizing.
 
-CONSTRAINTS
-- plot_synopsis ~200 tokens; plot_keyphrases 4–6 items (aim 5).
-- Optimize for embedding: compressed wording; minimal filler/stopwords; no flowery prose.
-- No review language (no opinions, no “this film explores…”, no production facts, cast/crew, awards).
+OUTPUT
+JSON following the structured output
 
-QUALITY RULES for plot_synopsis
-- Specific happenings + outcomes (what occurs), not vague generalities.
-- Prefer concrete nouns + verbs; include key mechanisms (contracts/curses/tests/coverups/escapes/reveals) when supported.
-- Names may appear if present in inputs, but specificity should come from actions/mechanisms, not name-dropping.
-- Style: compact fragments with commas/semicolons; no long sentences.
-- Exclude tonal adjectives, genre labels, and vague thematic commentary.
+FIELD-BY-FIELD INSTRUCTIONS
 
-QUALITY RULES for plot_keyphrases (COMPLEMENT-ONLY MODE)
-- Purpose: add ONLY missing, high-signal retrieval phrases NOT already covered by plot_keywords.
-- Before generating, scan plot_keywords and avoid anything that is the same idea, a synonym, or a close paraphrase.
-- Prefer gaps revealed by plot_summaries/plot_synopsis: distinctive plot beats, mechanisms, stakes, reversals, outcomes, and specific plot-relevant themes/relationships that are absent from plot_keywords.
-- Each item 1–6 words; self-contained and descriptive (not bare names; not name+random noun fragments).
-- Favor phrases encoding: (a) plot beat/event, (b) mechanism/reveal, (c) plot-relevant theme/concept/relationship, (d) world context—ONLY if not already represented in plot_keywords.
-- If plot_keywords is already comprehensive, output fewer items (even []) rather than forcing redundancy.
+1) plot_summary (DETAILED, SPOILER-CONTAINING)
+- Write a chronological summary of the entire film from beginning to end.
+- MUST preserve: character names, location names, key organizations, and important events.
+- Use compact wording over flowery prose. Avoid filler.
 
-ANTI-HALLUCINATION (critical)
-- Use ONLY information present in the input fields.
-- NEVER invent facts or details. Make NO assumptions.
-- If unsure whether a detail is supported or already covered by plot_keywords, omit it.
-"""
+2) setting (SHORT PHRASE)
+- 10 words or less describing where/when the story takes place. Details that are unknown are omitted. Never make up details.
+- Preserve meaningful proper nouns and time period when relevant.
+- Example formats:
+  - "1912, RMS Titanic crossing the Atlantic"
+  - "Modern-day Dublin and rural Ireland"
 
-DENSE_VIBE_SYSTEM_PROMPT = """You generate vibe-only meta for a movie to power semantic similarity search.
+3) major_characters (ABSOLUTELY ESSENTIAL ONLY)
+- Include only the essential characters needed to understand the plot (only a few).
+- For each character:
+  - name: exact name used in the story
+  - description: who they are (short, plot-relevant)
+  - role: narrative function label such as protagonist/antagonist/love interest/ally/etc.
+  - primary_motivations: 1 short sentence stating what they aim to achieve overall and why (high-level).
+- Do NOT list minor side characters."""
+
+
+PLOT_ANALYSIS_SYSTEM_PROMPT = """\
+You are an expert film analyst whose job is to extract a HIGH-SIGNAL representation of WHAT TYPE OF STORY this movie is.
+
+CORE GOAL
+- Generalize: strip away proper nouns unless historically essential (e.g., "World War II").
+- Focus on the dominant organizing principles: what kind of movie it is, how it's structured, and what it means.
+- Prioritize signal over coverage: include ONLY the most central, prominent labels and ideas.
+
+INPUTS YOU MAY RECEIVE (some may be empty or noisy)
+- title: title of the movie
+- overview: marketing/vague summary of the movie's premise, not the entire plot
+- plot_synopsis: the entire plot of the movie, detailed, spoiler-filled
+- plot_keywords: short phrases viewers believe represent important plot elements
+- reception_summary: what viewers think about the movie (only use for finding themes and lessons people took away)
+
+GENERAL RULES
+- Generalize all proper nouns. We want the skeletal structure of the story that can be easily compared to other movies.
+- Focus on thematic meaning. What is the story about thematically? What kind of story is it?
+- Do not invent meaning that is not supported by the story events.
+- Avoid generic filler. Prefer specific-but-general phrasing.
+- If uncertain, choose fewer, higher-quality items rather than forcing weak ones.
+
+OUTPUT
+JSON following the structured output
+
+FIELD-BY-FIELD INSTRUCTIONS
+
+1) core_engine (SINGLE DOMINANT ENGINE)
+- 6 words or less.
+- Single dominant story engine describing the heart of the movie. Generalized terms.
+- Choose ONLY ONE, the most central concept.
+- Is this about relationships? Survival? Revenge? Ambition?
+- This must be the absolute most important, most key concept of this movie. What everyone would agree is the best concise summary of this movie.
+- Examples: "Investigation reveals escalating truth", "Romance under external pressure", "Heist plan executes, fails, improvises"
+
+2) genre_signature (1-3 LABELS, 1-4 WORDS EACH)
+- Provide 1-3 dominant genres only.
+- Do NOT include every ingredient; include what a human would say is the "type of movie".
+- Each must be unique, clearly thematically distinct.
+- The absolute best representation of what "type" of movie this is. Only the absolute best allowed.
+- Think typical movie genre but made more specific (ex. "Romantic tragedy" not just "Romance")
+- Examples:
+  - "Murder mystery"
+  - "Survival thriller"
+  - "Coming-of-age dramedy"
+
+3) generalized_plot_overview (ONE SENTENCE)
+- 1-2 sentences describing the story at a high level using generalized terms. Keep brief while maintaining major plot events.
+- Include the key / major plot beats and the initiation and resolution of the major conflicts.
+- REALLY emphasize the themes of the movie throughout the description, repeating key thematic terms.
+- Choose and repeat words that emphasize the major themes and lessons of this movie, even if it seems redundant.
+- It should be almost comical how much the major themes, lessons, and core_engine are emphasized in this description BUT major plot beats are still included.
+
+4) conflict_scale (1-4 WORDS)
+- 1-4 words describing the scale of the conflict. Only alphabetical characters.
+- If the protagonists fail, what is the scale of the consequences?
+- Examples: 'personal', 'small-group', 'community', 'large-scale', 'mass-casualty', 'global'.
+
+5) narrative_delivery
+- How the story is told structurally (objective mode), not emotions.
+- Examples:
+  - "linear"
+  - "nonlinear"
+  - "ensemble"
+  - "framing device/flashback"
+  - "multiple POV"
+  - "time-loop structure"
+
+6) character_arc_shapes (1-2 HIGH-SIGNAL LABELS)
+- 1-2 arc shapes stating key character transformations. Do not say who each applies to.
+- These must be the absolute most important character arcs that embody the story's lessons and themes. Generalize terms.
+- Examples:
+  - "redemption"
+  - "corruption"
+  - "coming-of-age"
+  - "healing from grief"
+  - "self-acceptance"
+
+7) narrative_archetype (1 HIGH-SIGNAL LABEL)
+- The generalized story shape (macro journey pattern).
+- This must be a well known story archetype. A classic term that movie critics and many movie watchers would be familiar with.
+- Best represents the plot of the movie taken as a whole.
+- Examples:
+  - "tragic love"
+  - "underdog rise"
+  - "cautionary tale"
+  - "quest/adventure"
+  - "revenge spiral"
+
+8) themes_primary (EXACTLY 2, RANKED, 1-5 WORDS EACH)
+- Exactly 2 central themes.
+- Must be specific-but-general; avoid single generic words.
+- Must be relevant to the real human world, not that movie's universe.
+- Rank them: #1 should be the most central.
+- Examples:
+  - "Love constrained by power"
+  - "Human fragility vs nature"
+  - "Identity vs imposed roles"
+
+9) lessons_learned (0-3 PHRASES, OPTIONAL)
+- 0-3 short lessons (1-5 words each).
+- ONLY include lessons that are strongly supported by plot outcomes.
+- Make relevant to the real human world, not that movie's universe.
+- If you cannot find at least one HIGH-QUALITY lesson, return an empty list [].
+- Examples:
+  - "Freedom costs safety"
+  - "Truth beats denial"
+  - "Revenge destroys the self"
+
+QUALITY CHECK BEFORE FINALIZING
+- Is core_engine truly the single dominant engine (not a minor subplot)?
+- Are genre_signature labels the 1-3 most central genres (not overstuffed)?
+- Are character_arc_shapes and narrative_archetype truly high-signal?
+- Are themes_primary exactly 2, and generalizeable?
+- Are lessons_learned omitted unless high-confidence?"""
+
+DENSE_VIBE_SYSTEM_PROMPT = """You generate vibe-only descriptors for a movie to power semantic similarity search.
 
 GOAL
-- Choose at most ONE value per axis that best describes the movie’s *watch experience* (“vibe”).
-- If you have insufficient information to confidently choose a value, output null for that axis. Missing is better than misleading.
+- Produce short, distinct “vibe answers” that, together, clearly differentiate and group films by *watch experience*.
+- Strictly avoid plot events, character names, settings/locations, lore, twists, franchises, cast/crew, runtime, release era, awards, or trivia.
 
-INPUT FIELDS (may be empty; treat as evidence, not copy source)
+INPUT FIELDS (may be empty; treat as evidence, do not copy)
 - overview: short premise of the movie
 - genres: list of genres this movie belongs to
 - overall_keywords: a list of phrases representing this movie at a high level
@@ -58,86 +180,58 @@ INPUT FIELDS (may be empty; treat as evidence, not copy source)
 - parental_guide_items: categories that contributed to the movie's maturity rating and their severity
 - reception_summary: summary of what people thought of the movie
 
-OUTPUT (JSON only; no extra keys, no markdown)
+OUTPUT REQUIREMENTS
+- JSON format
+- Each answer should be descriptive, concrete, and concise (yet comprehensive).
+- No need to be brand-friendly, this is not user-facing. Optimize for SEO / semantic similarity.
 
-GENERAL SELECTION RULES (CRITICAL)
-- Choose the value that BEST represents the movie based on the input data.
-- If an axis is not clearly signaled (or could plausibly map to multiple adjacent values), output null.
+QUESTIONS TO ANSWER
 
-AXIS DEFINITIONS
+1) Dominant mood
+- What are the core atmospheres and moods present in the movie? How does it feel to watch?
+- What tones are prevelant? Is this movie uplifting, nihilistic, cathartic, etc.?
+- What emotions will watching this movie make you feel? How strong or heavy are those emotions?
+- Make use of descriptive adjectives / adverbs. Be concise yet comprehensive.
 
-1) mood_atmosphere
-- Pick the single strongest “air in the room” descriptor that dominates the viewing experience.
+2) Movement and energy
+- How quickly does the plot progress? Are the events of the movie higher in energy or more contained and intimate?
+- Is this movie nonstop action, introspective, subtle, etc.?
+- Does the movie take place at a grand scale with many characters or is it focused on the relationships between a few?
+- Rather than directly answering these questions, use descriptive adjectives / adverbs that describe the answer. Be concise yet comprehensive.
 
-2) tonal_valence
-- Pick the prevailing stance the movie leaves you with.
+3) Intensity
+- How suspensful or tense is the movie? Is this tension brought on by horror, high stakes, emotional strain, etc.?
+- Clearly differentiate between a heart pounding thriller and slow building uneasiness.
+- Is this movie going to make you scared or anxious?
+- If it's violent, will it make you squeamish or grossed out?
+- Is this instead a curious intensity where you want to solve a mystery or puzzle?
+- Rather than directly answering these questions, use descriptive adjectives / adverbs that describe the answer. Be concise yet comprehensive.
 
-3) pacing_momentum (how it moves)
-- Choose based on narrative propulsion over time.
+4) Romance, humor, and sexuality
+- Does the movie make use of humor? How prevalent is it? What style of humor does it go for?
+- Is there a prevelance of romance or sexuality in the movie? If so, how is it portrayed? How extreme is it? Is it more wholesome or erotic?
+- Make use of descriptive adjectives / adverbs that describe the answer. Be concise and specific yet comprehensive.
 
-4) kinetic_intensity (moment-to-moment energy)
-- Choose based on physiological “amp” level.
+5) Final viewer impression
+- What does the movie leave you feeling like?
+- Use descriptive adjectives / adverbs. Be concise yet comprehensive.
 
-5) tension_pressure (stress/on-edge level)
-- Choose based on sustained pressure.
+6) Viewing context
+- What would be a good context in which to watch this movie?
+- What would motivate someone to watch this movie?
+- Common examples (not exhaustive and you can come up with your own):
+  - solo late-night focus
+  - chill date night at home
+  - talky group hang with friends
+  - background comfort rewatch
+  - weekend “big screen” movie night
+  - family-friendly couch
+  - stress-release laugh
+  - adrenaline / edge-of-seat
+  - get hammered or stoned with friends
 
-6) unpredictability_twistiness (surprise factor)
-- Choose based on how much the experience swerves or surprises independent of tension.
-
-7) scariness_level (overall fearfulness)
-- Choose based on how frightening it is for most viewers (not a single moment).
-
-8) fear_mode (type of fear)
-- Choose the dominant fear mechanism.
-
-9) humor_level (amount of humor)
-- Choose based on how often humor is presented and lands.
-
-10) humor_flavor (style of humor)
-- If the movie has humor, what type of humor is predominantly used.
-- Leave null if the movie does not have humor.
-
-11) violence_intensity (how violent overall)
-- Choose based on prevalence and severity of violent content (not just “there is violence”).
-
-12) gore_body_grossness (blood/body shock)
-- Choose based on bodily explicitness and squirm factor.
-
-13) romance_prominence (romance as a vibe driver)
-- Choose based on how central romantic connection/intimacy is to the viewing experience.
-
-14) romance_tone (how romance feels)
-- If romance is present, what type is it?
-- Leave null if the movie does not have romance.
-
-15) sexual_explicitness (how explicit sexual content is)
-- Leave null if the movie does not have sexual content.
-
-16) erotic_charge (how sexually charged it feels)
-- If there is evidence of sensual/erotic tone beyond explicitness, what is it?
-- Leave null if explicitness is known but charge is not.
-
-17) sexual_tone (how sexuality reads emotionally)
-- If there is evidence of sexual tone beyond explicitness, what is it?
-- Leave null if not applicable or unclear.
-
-18) emotional_heaviness (how heavy it feels)
-- Choose based on emotional weight during the watch.
-
-19) emotional_volatility (emotional swings)
-- How much of an emotional rollercoaster is this?
-
-20) weirdness_surrealism (how normal or strange it feels)
-- Is this movie more grounded or more surreal?
-
-21) attention_demand (can you half-watch?)
-- Choose based on how much focus is required to understand/enjoy
-
-22) narrative_complexity (structural complexity)
-- Is the plot simple or does it have a lot of layers and moving parts?
-
-23) ambiguity_interpretive_ness (how open to interpretation)
-- How up-to-interpretation is the movie?
-
-24) sense_of_scale (how big it feels)
-- Are the stakes high? Is this a major event? Does this sprawl across many locations or characters?"""
+ADDITIONAL GUIDELINES
+- NEVER justify your reasoning, just provide the descriptors.
+- ONLY use adjectives and adverbs rather than explaining what it is about the movie that makes them relevant.
+- Optimize for SEO / semantic similarity. Prefer short phrases over complete sentences.
+"""

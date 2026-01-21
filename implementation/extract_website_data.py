@@ -2,7 +2,8 @@ from bs4 import BeautifulSoup
 import json
 import re
 import html as html_lib
-from classes import WatchProvider, WatchProviderType
+from .schemas import WatchProvider
+from .enums import WatchProviderType
 
 
 # ================================
@@ -70,15 +71,11 @@ def extract_imdb_attributes(main_page_html: str) -> dict:
     overview = overview.lower()
 
     
-    # Required field: imdb_rating must exist
+    # Optional field: imdb_rating may exist else defaults to None
     imdb_rating = _safe_get(atf, ["ratingsSummary", "aggregateRating"])
-    if imdb_rating is None:
-        raise ValueError("imdb_rating is required but was not found")
     
-    # Required field: metacritic_rating must exist
+    # Optional field: metacritic_rating may exist else defaults to None
     metacritic_rating = _safe_get(atf, ["metacritic", "metascore", "score"])
-    if metacritic_rating is None:
-        raise ValueError("metacritic_rating is required but was not found")
 
     # Interests -> your "Keywords" list (Japanese, Anime, Coming-of-Age, ...)
     # Filter out falsy values from the list
@@ -165,9 +162,9 @@ def extract_imdb_attributes(main_page_html: str) -> dict:
     
 def extract_summary_attributes(summary_html_text: str) -> dict:
     """
-    Extracts plot summaries and synopsis from the summary page HTML.
+    Extracts plot summaries and synopses from the summary page HTML.
     
-    Returns a dictionary with plot_summaries and synopsis lists, filtering out empty strings.
+    Returns a dictionary with plot_summaries and synopses lists, filtering out empty strings.
     """
     soup = BeautifulSoup(summary_html_text, "html.parser")
     nd = _parse_next_data(soup)
@@ -190,21 +187,21 @@ def extract_summary_attributes(summary_html_text: str) -> dict:
     # Remove the first item since it's the same as the overview
     plot_summaries.pop(0) if plot_summaries else None
 
-    # Synopsis - filter out empty strings and falsy values
-    synopsis = _safe_get(data, ["plotSynopsis", "edges"]) or []
-    synopsis_cleaned = []
-    for s in synopsis:
+    # synopses - filter out empty strings and falsy values
+    synopses = _safe_get(data, ["plotSynopsis", "edges"]) or []
+    synopses_cleaned = []
+    for s in synopses:
         plot_html = _safe_get(s, ["node", "plotText", "plaidHtml"])
         if plot_html and isinstance(plot_html, str) and plot_html.strip():
             unescaped = html_lib.unescape(plot_html)
             plot_text = BeautifulSoup(unescaped, "html.parser").get_text(" ", strip=True)
             if plot_text.strip():
-                synopsis_cleaned.append(plot_text.lower())
-    synopsis = synopsis_cleaned
+                synopses_cleaned.append(plot_text.lower())
+    synopses = synopses_cleaned
     
     return {
         "plot_summaries": plot_summaries,
-        "synopsis": synopsis
+        "synopses": synopses
     }
 
 def extract_plot_keywords(pk_html_text: str) -> list[str]:

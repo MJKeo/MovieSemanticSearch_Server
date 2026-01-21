@@ -11,7 +11,9 @@ import chromadb
 from chromadb.config import Settings
 from dotenv import load_dotenv
 from openai import OpenAI
-from classes import IMDBMovie, ChromaVectorCollection
+from .movie import IMDBMovie
+from .schemas import ChromaVectorCollection
+from .enums import VectorCollectionName
 import numpy as np
 
 # Load environment variables from .env file
@@ -95,7 +97,7 @@ def create_dense_anchor_vector_text(movie: IMDBMovie) -> str:
     parts.append("")
     
     # Genres as comma-separated values
-    genres_csv = ", ".join(movie.genres_string()) if movie.genres_string() else ""
+    genres_csv = ", ".join(movie.genres_subset()) if movie.genres_subset() else ""
     if genres_csv:
         parts.append(f"Genres: {genres_csv}")
     
@@ -156,7 +158,8 @@ def create_dense_anchor_vector_text(movie: IMDBMovie) -> str:
     
     # Reception information
     reception_tier = movie.reception_tier()
-    parts.append(f"Reception: {reception_tier}")
+    if reception_tier:
+        parts.append(f"Reception: {reception_tier}")
     
     # Optional review summary
     reception_summary = movie.reception_summary_text()
@@ -174,155 +177,104 @@ def create_dense_anchor_vector_text(movie: IMDBMovie) -> str:
     return "\n".join(parts)
 
 
-def create_dense_content_vector_text(movie: IMDBMovie) -> str:
-    """
-    Creates the text representation for DenseContent vector embedding.
-    
-    DenseContent focuses on "what happens" and major themes without being
-    dominated by cast/production information. It emphasizes plot, synopsis,
-    keyphrases, genres, and keywords to match content-based queries.
-    
-    Args:
-        movie: IMDBMovie instance containing all movie metadata
-        
-    Returns:
-        Formatted text string ready for embedding as DenseContent vector
-    """
-    # Build the text components according to the DenseContent template (section 5.2)
+def create_plot_events_vector_text(movie: IMDBMovie) -> str:
+    return str(movie.plot_events_metadata)
+
+
+def create_plot_analysis_vector_text(movie: IMDBMovie) -> str:
     parts = []
-    
-    # Title string
-    parts.append(movie.title_string())
-    parts.append("")  # Empty line separator
-    
-    # Plot synopsis (LLM-derived, may be empty if not yet generated)
-    plot_string = movie.plot_string()
-    if plot_string:
-        parts.append(plot_string)
-        parts.append("")
-    
-    # Genres as comma-separated values
-    genres_csv = ", ".join(movie.genres_string()) if movie.genres_string() else ""
-    if genres_csv:
-        parts.append(f"Genres: {genres_csv}")
-    
-    # Overall keywords as comma-separated values
-    overall_keywords_csv = ", ".join(movie.overall_keywords) if movie.overall_keywords else ""
-    if overall_keywords_csv:
-        parts.append(f"{overall_keywords_csv}")
-    
-    # Join all parts with newlines
+
+    parts.append(str(movie.plot_analysis_metadata))
+    parts.append(", ".join(movie.overall_keywords))
+
     return "\n".join(parts)
 
 
-def create_dense_vibe_vector_text(movie: IMDBMovie) -> str:
+def create_viewer_experience_vector_text(movie: IMDBMovie) -> str:
     """
-    Creates the text representation for DenseVibe vector embedding.
+    Creates the text representation for viewer experience vector embedding.
     
-    DenseVibe focuses on the viewing experience and suitability for different contexts.
-    It matches queries like "cozy date night movies", "edge-of-your-seat thrillers",
-    "gross-out horror", "comfort watch", and "background-friendly" by capturing
-    how it feels to watch the movie rather than what happens in it.
+    This function extracts viewer experience descriptors from vibe_metadata,
+    focusing on how the movie feels to watch rather than what happens in it.
     
     Args:
-        movie: IMDBMovie instance containing all movie metadata (including vibe fields)
+        movie: IMDBMovie instance containing vibe_metadata
         
     Returns:
-        Formatted text string ready for embedding as DenseVibe vector
-        
-    Note:
-        If vibe_metadata is not available (None), that section will be omitted from the output.
+        Formatted text string ready for embedding as viewer experience vector
     """
-    # Build the text components according to the DenseVibe template (section 5.3.4)
-    parts = []
+    # parts = []
     
-    # Extract all non-None enum values from vibe_metadata and combine into comma-separated list
-    if movie.vibe_metadata is not None:
-        # Collect all enum fields with their attribute names and values
-        enum_fields = [
-            ("mood_atmosphere", movie.vibe_metadata.mood_atmosphere),
-            ("tonal_valence", movie.vibe_metadata.tonal_valence),
-            ("pacing_momentum", movie.vibe_metadata.pacing_momentum),
-            ("kinetic_intensity", movie.vibe_metadata.kinetic_intensity),
-            ("tension_pressure", movie.vibe_metadata.tension_pressure),
-            ("unpredictability_twistiness", movie.vibe_metadata.unpredictability_twistiness),
-            ("scariness_level", movie.vibe_metadata.scariness_level),
-            ("fear_mode", movie.vibe_metadata.fear_mode),
-            ("humor_level", movie.vibe_metadata.humor_level),
-            ("humor_flavor", movie.vibe_metadata.humor_flavor),
-            ("violence_intensity", movie.vibe_metadata.violence_intensity),
-            ("gore_body_grossness", movie.vibe_metadata.gore_body_grossness),
-            ("romance_prominence", movie.vibe_metadata.romance_prominence),
-            ("romance_tone", movie.vibe_metadata.romance_tone),
-            ("sexual_explicitness", movie.vibe_metadata.sexual_explicitness),
-            ("erotic_charge", movie.vibe_metadata.erotic_charge),
-            ("sexual_tone", movie.vibe_metadata.sexual_tone),
-            ("emotional_heaviness", movie.vibe_metadata.emotional_heaviness),
-            ("emotional_volatility", movie.vibe_metadata.emotional_volatility),
-            ("weirdness_surrealism", movie.vibe_metadata.weirdness_surrealism),
-            ("attention_demand", movie.vibe_metadata.attention_demand),
-            ("narrative_complexity", movie.vibe_metadata.narrative_complexity),
-            ("ambiguity_interpretive_ness", movie.vibe_metadata.ambiguity_interpretive_ness),
-            ("sense_of_scale", movie.vibe_metadata.sense_of_scale),
-        ]
-        
-        # Filter out None values and format as "{attribute_name}: {value}"
-        vibe_values = [
-            f"{attr_name}: {value}" 
-            for attr_name, value in enum_fields 
-            if value is not None
-        ]
-        
-        # Add vibe keywords as comma-separated values if any exist
-        if vibe_values:
-            vibe_keywords_csv = ", ".join(vibe_values)
-            parts.append(f"Vibe keywords: {vibe_keywords_csv}")
-            parts.append("")
+    # # Extract viewer experience fields from vibe_metadata if available
+    # if movie.vibe_metadata:
+    #     if movie.vibe_metadata.dominant_mood:
+    #         parts.append(f"Dominant mood: {movie.vibe_metadata.dominant_mood}")
+    #     if movie.vibe_metadata.movie_energy:
+    #         parts.append(f"Movie energy: {movie.vibe_metadata.movie_energy}")
+    #     if movie.vibe_metadata.intensity:
+    #         parts.append(f"Intensity: {movie.vibe_metadata.intensity}")
+    #     if movie.vibe_metadata.romance_humor_sexuality:
+    #         parts.append(f"Romance, humor, and sexuality: {movie.vibe_metadata.romance_humor_sexuality}")
+    #     if movie.vibe_metadata.final_viewer_impression:
+    #         parts.append(f"Final viewer impression: {movie.vibe_metadata.final_viewer_impression}")
+    
+    # # Include genres as context for viewer experience
+    # genres = movie.genres_subset(limit=3)
+    # if genres:
+    #     genres_csv = ", ".join(genres)
+    #     parts.append(f"Genres: {genres_csv}")
+    
+    # return "\n".join(parts)
+    return "Implement this!"
 
-        # # Collect all non-None enum values from VibeMetadata
-        # enum_values = [
-        #     movie.vibe_metadata.mood_atmosphere,
-        #     movie.vibe_metadata.tonal_valence,
-        #     movie.vibe_metadata.pacing_momentum,
-        #     movie.vibe_metadata.kinetic_intensity,
-        #     movie.vibe_metadata.tension_pressure,
-        #     movie.vibe_metadata.unpredictability_twistiness,
-        #     movie.vibe_metadata.scariness_level,
-        #     movie.vibe_metadata.fear_mode,
-        #     movie.vibe_metadata.humor_level,
-        #     movie.vibe_metadata.humor_flavor,
-        #     movie.vibe_metadata.violence_intensity,
-        #     movie.vibe_metadata.gore_body_grossness,
-        #     movie.vibe_metadata.romance_prominence,
-        #     movie.vibe_metadata.romance_tone,
-        #     movie.vibe_metadata.sexual_explicitness,
-        #     movie.vibe_metadata.erotic_charge,
-        #     movie.vibe_metadata.sexual_tone,
-        #     movie.vibe_metadata.emotional_heaviness,
-        #     movie.vibe_metadata.emotional_volatility,
-        #     movie.vibe_metadata.weirdness_surrealism,
-        #     movie.vibe_metadata.attention_demand,
-        #     movie.vibe_metadata.narrative_complexity,
-        #     movie.vibe_metadata.ambiguity_interpretive_ness,
-        #     movie.vibe_metadata.sense_of_scale,
-        # ]
-        
-        # # Filter out None values and convert enum values to strings
-        # vibe_values = [value for value in enum_values if value is not None]
-        
-        # # Add vibe keywords as comma-separated values if any exist
-        # if vibe_values:
-        #     vibe_keywords_csv = ", ".join(vibe_values)
-        #     parts.append(f"Vibe keywords: {vibe_keywords_csv}")
-        #     parts.append("")
+
+def create_watch_context_vector_text(movie: IMDBMovie) -> str:
+    """
+    Creates the text representation for watch context vector embedding.
     
-    # Genres as comma-separated values
-    genres_csv = ", ".join(movie.genres_string()) if movie.genres_string() else ""
-    if genres_csv:
-        parts.append(f"Genres: {genres_csv}")
+    This function extracts viewing context information from vibe_metadata
+    and watch providers, focusing on when and where the movie is suitable to watch.
     
-    # Join all parts with newlines
-    return "\n".join(parts)
+    Args:
+        movie: IMDBMovie instance containing vibe_metadata and watch_providers
+        
+    Returns:
+        Formatted text string ready for embedding as watch context vector
+    """
+    # parts = []
+    
+    # # Extract viewing context from vibe_metadata if available
+    # if movie.vibe_metadata and movie.vibe_metadata.viewing_context:
+    #     parts.append(f"Viewing context: {movie.vibe_metadata.viewing_context}")
+    
+    # # Include watch providers information
+    # watch_providers_text = movie.watch_providers_text()
+    # if watch_providers_text:
+    #     parts.append(watch_providers_text)
+    
+    # # Include duration bucket as it affects watch context
+    # duration_bucket = movie.duration_bucket()
+    # if duration_bucket:
+    #     parts.append(f"Duration: {duration_bucket}")
+    
+    # return "\n".join(parts)
+    return "Implement this!"
+
+
+def create_production_vector_text(movie: IMDBMovie) -> str:
+    """
+    Creates the text representation for production vector embedding.
+    
+    This function extracts production-related information including countries,
+    production companies, filming locations, languages, and cast/crew.
+    
+    Args:
+        movie: IMDBMovie instance containing production metadata
+        
+    Returns:
+        Formatted text string ready for embedding as production vector
+    """
+    return "Implement this!"
 
 
 def save_vector_to_chroma(
@@ -330,7 +282,7 @@ def save_vector_to_chroma(
     embedding: list[float],
     document: str,
     metadata: dict[str, str | int | float],
-    collection_name: str,
+    collection_name: VectorCollectionName,
     db_path: str | Path = "./chroma_db",
     collection_metadata: dict[str, str] | None = None
 ) -> None:
@@ -366,7 +318,7 @@ def save_vector_to_chroma(
     # Get or create the collection with optional metadata
     collection_meta = collection_metadata or {}
     collection = chroma_client.get_or_create_collection(
-        name=collection_name,
+        name=collection_name.value,
         metadata=collection_meta
     )
     
@@ -377,11 +329,11 @@ def save_vector_to_chroma(
         documents=[document],
         metadatas=[metadata]
     )
-    print(f"✓ Saved vector '{vector_id}' to collection '{collection_name}'")
+    print(f"✓ Saved vector '{vector_id}' to collection '{collection_name.value}'")
 
 
 def fetch_all_vectors_from_chroma(
-    collection_name: str,
+    collection_name: VectorCollectionName,
     db_path: str | Path = "./chroma_db"
 ) -> ChromaVectorCollection:
     """
@@ -420,10 +372,10 @@ def fetch_all_vectors_from_chroma(
     
     # Get the collection (will raise error if it doesn't exist)
     try:
-        collection = chroma_client.get_collection(name=collection_name)
+        collection = chroma_client.get_collection(name=collection_name.value)
     except Exception as e:
         raise ValueError(
-            f"Collection '{collection_name}' not found in database at {db_path}. "
+            f"Collection '{collection_name.value}' not found in database at {db_path}. "
             f"Original error: {str(e)}"
         )
     
@@ -442,7 +394,7 @@ def fetch_all_vectors_from_chroma(
 
 def search_similar_vectors(
     query_vector: list[float],
-    collection_name: str,
+    collection_name: VectorCollectionName,
     db_path: str | Path = "./chroma_db",
     n_results: int = 2,
     ids_to_filter_out: list[str] | None = None
@@ -491,26 +443,21 @@ def search_similar_vectors(
     
     # Get the collection (will raise error if it doesn't exist)
     try:
-        collection = chroma_client.get_collection(name=collection_name)
+        collection = chroma_client.get_collection(name=collection_name.value)
     except Exception as e:
         raise ValueError(
-            f"Collection '{collection_name}' not found in database at {db_path}. "
+            f"Collection '{collection_name.value}' not found in database at {db_path}. "
             f"Original error: {str(e)}"
         )
-    
-    # If we need to filter out IDs, query for more results than needed
-    # then filter and return the top n_results
-    ids_to_filter = set(ids_to_filter_out) if ids_to_filter_out else set()
-    
-    # Query for more results if we need to filter (to ensure we get enough after filtering)
-    query_n_results = n_results + len(ids_to_filter) if ids_to_filter else n_results
+
+    ids_to_filter_out = set(ids_to_filter_out) if ids_to_filter_out else set()
     
     # Perform vector similarity search
     # ChromaDB uses cosine similarity by default
     # Include distances in the query to return similarity scores
     results = collection.query(
         query_embeddings=[query_vector],
-        n_results=query_n_results,
+        n_results=n_results + len(ids_to_filter_out),
         include=['embeddings', 'documents', 'metadatas', 'distances']
     )
     
@@ -524,44 +471,39 @@ def search_similar_vectors(
     result_distances = None
     if "distances" in results and results["distances"] is not None:
         result_distances = results["distances"][0]
-    
-    # Filter out excluded IDs
+
+    if collection_name.value in set([VectorCollectionName.DENSE_ANCHOR_VECTORS.value, VectorCollectionName.PLOT_EVENTS_VECTORS.value]):
+        print(f"top {n_results} results for {collection_name.value}")
+        for id, distance, document, metadata in zip(result_ids, result_distances, result_documents, result_metadatas):
+            print(f"id: {id}, title: {metadata['title']}, distance: {distance}, document: {document}")
+
     filtered_ids = []
     filtered_embeddings = []
     filtered_documents = []
     filtered_metadatas = []
     filtered_distances = []
-    
-    for i, vector_id in enumerate(result_ids):
-        if vector_id not in ids_to_filter:
-            filtered_ids.append(vector_id)
-            filtered_embeddings.append(result_embeddings[i])
-            filtered_documents.append(result_documents[i])
-            filtered_metadatas.append(result_metadatas[i])
-            # Include distance if available
-            if result_distances is not None:
-                filtered_distances.append(result_distances[i])
-        
-        # Stop once we have enough results
-        if len(filtered_ids) >= n_results:
-            break
-    
-    # # If we don't have enough results after filtering, return what we have
-    # if len(filtered_ids) < n_results:
-    #     print(f"Warning: Only found {len(filtered_ids)} results after filtering (requested {n_results})")
+
+    for id, embedding, document, metadata, distance in zip(result_ids, result_embeddings, result_documents, result_metadatas, result_distances):
+        if id not in ids_to_filter_out:
+            filtered_ids.append(id)
+            filtered_embeddings.append(embedding)
+            filtered_documents.append(document)
+            filtered_metadatas.append(metadata)
+            filtered_distances.append(distance)
+
     
     # Return results as ChromaVectorCollection instance
     # Include distances if they were available
     return ChromaVectorCollection(
-        ids=filtered_ids[:n_results],
-        embeddings=filtered_embeddings[:n_results],
-        documents=filtered_documents[:n_results],
-        metadatas=filtered_metadatas[:n_results],
-        distances=filtered_distances[:n_results] if result_distances is not None else None
+        ids=filtered_ids,
+        embeddings=filtered_embeddings,
+        documents=filtered_documents,
+        metadatas=filtered_metadatas,
+        distances=filtered_distances
     )
 
 def clear_collections_from_chroma(
-    collection_names: list[str],
+    collection_names: list[VectorCollectionName],
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -596,7 +538,7 @@ def clear_collections_from_chroma(
     for collection_name in collection_names:
         try:
             # Get the collection (will raise error if it doesn't exist)
-            collection = chroma_client.get_collection(name=collection_name)
+            collection = chroma_client.get_collection(name=collection_name.value)
             
             # Get all vector IDs from the collection
             # We only need IDs for deletion, so we don't need to fetch embeddings/documents/metadata
@@ -606,19 +548,18 @@ def clear_collections_from_chroma(
             # Delete all vectors if there are any
             if all_ids:
                 collection.delete(ids=all_ids)
-                print(f"✓ Cleared {len(all_ids)} vector(s) from collection '{collection_name}'")
+                print(f"✓ Cleared {len(all_ids)} vector(s) from collection '{collection_name.value}'")
             else:
-                print(f"✓ Collection '{collection_name}' is already empty")
+                print(f"✓ Collection '{collection_name.value}' is already empty")
                 
         except Exception as e:
             # If collection doesn't exist or other error occurs, print warning and continue
-            print(f"⚠ Warning: Could not clear collection '{collection_name}': {str(e)}")
+            print(f"⚠ Warning: Could not clear collection '{collection_name.value}': {str(e)}")
             continue
 
 
 def create_and_save_dense_anchor_vector(
     movie: IMDBMovie,
-    collection_name: str = "dense_anchor_vectors",
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -631,7 +572,6 @@ def create_and_save_dense_anchor_vector(
     
     Args:
         movie: IMDBMovie instance containing all movie metadata
-        collection_name: Name of the ChromaDB collection to store vectors in
         db_path: Path to the local ChromaDB database directory
         
     Raises:
@@ -671,22 +611,83 @@ def create_and_save_dense_anchor_vector(
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
-        collection_name=collection_name,
+        collection_name=VectorCollectionName.DENSE_ANCHOR_VECTORS,
         db_path=db_path,
         collection_metadata={"description": "Dense anchor vectors for movie semantic search"}
     )
 
 
-def create_and_save_dense_content_vector(
+def create_and_save_plot_events_vector(
     movie: IMDBMovie,
-    collection_name: str = "dense_content_vectors",
     db_path: str | Path = "./chroma_db"
+) -> None:
+    """
+    Creates a plot events vector embedding for a movie and saves it to ChromaDB.
+    
+    This function:
+    1. Generates the text representation using create_plot_events_vector_text
+    2. Embeds the text using OpenAI's text-embedding-3-small model
+    3. Saves the embedding to a local ChromaDB collection
+    
+    Plot events vectors focus on chronological plot details, settings, and major
+    characters, making them ideal for queries about specific plot points or events.
+    
+    Args:
+        movie: IMDBMovie instance containing all movie metadata
+        db_path: Path to the local ChromaDB database directory
+        
+    Raises:
+        Exception: If embedding or database operations fail
+        
+    Note:
+        OpenAI API key must be set in environment variables before importing this module.
+        The module will raise ValueError at import time if OPENAI_API_KEY is not found.
+    """
+    print(f"Processing: {movie.title} (ID: {movie.id})")
+    
+    # Generate text representation for embedding
+    vector_text = create_plot_events_vector_text(movie)
+    
+    # Create embedding using OpenAI's small embedder model
+    # text-embedding-3-small produces 1536-dimensional vectors
+    print("  Creating embedding...")
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=vector_text
+    )
+    embedding = response.data[0].embedding
+    print(f"  Embedding created: {embedding}")
+    
+    # Prepare metadata for storage (include movie title and ID for reference)
+    metadata = {
+        "movie_id": movie.id,
+        "tmdb_id": movie.tmdb_id,
+        "title": movie.title,
+        "release_date": movie.release_date,
+        "genres": ", ".join(movie.genres) if movie.genres else "",
+    }
+    
+    # Save the vector to ChromaDB using the generic save function
+    save_vector_to_chroma(
+        vector_id=movie.id,
+        embedding=embedding,
+        document=vector_text,
+        metadata=metadata,
+        collection_name=VectorCollectionName.PLOT_EVENTS_VECTORS,
+        db_path=db_path,
+        collection_metadata={"description": "Plot events vectors for movie semantic search"}
+    )
+
+
+def create_and_save_plot_analysis_vector(
+    movie: IMDBMovie,
+    db_path: str | Path = "./chroma_db",
 ) -> None:
     """
     Creates a dense content vector embedding for a movie and saves it to ChromaDB.
     
     This function:
-    1. Generates the text representation using create_dense_content_vector_text
+    1. Generates the text representation using create_plot_analysis_vector_text
     2. Embeds the text using OpenAI's text-embedding-3-small model
     3. Saves the embedding to a local ChromaDB collection
     
@@ -695,7 +696,6 @@ def create_and_save_dense_content_vector(
     
     Args:
         movie: IMDBMovie instance containing all movie metadata
-        collection_name: Name of the ChromaDB collection to store vectors in
         db_path: Path to the local ChromaDB database directory
         
     Raises:
@@ -708,7 +708,7 @@ def create_and_save_dense_content_vector(
     print(f"Processing: {movie.title} (ID: {movie.id})")
     
     # Generate text representation for embedding
-    vector_text = create_dense_content_vector_text(movie)
+    vector_text = create_plot_analysis_vector_text(movie)
     
     # Create embedding using OpenAI's small embedder model
     # text-embedding-3-small produces 1536-dimensional vectors
@@ -735,32 +735,30 @@ def create_and_save_dense_content_vector(
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
-        collection_name=collection_name,
+        collection_name=VectorCollectionName.PLOT_ANALYSIS_VECTORS,
         db_path=db_path,
-        collection_metadata={"description": "Dense content vectors for movie semantic search"}
+        collection_metadata={"description": "Plot analysis vectors for movie semantic search"}
     )
 
 
-def create_and_save_dense_vibe_vector(
+def create_and_save_viewer_experience_vector(
     movie: IMDBMovie,
-    collection_name: str = "dense_vibe_vectors",
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
-    Creates a dense vibe vector embedding for a movie and saves it to ChromaDB.
+    Creates a viewer experience vector embedding for a movie and saves it to ChromaDB.
     
     This function:
-    1. Generates the text representation using create_dense_vibe_vector_text
+    1. Generates the text representation using create_viewer_experience_vector_text
     2. Embeds the text using OpenAI's text-embedding-3-small model
     3. Saves the embedding to a local ChromaDB collection
     
-    DenseVibe vectors focus on viewer experience and suitability, enabling semantic
-    matching for queries like "cozy date night movies", "edge-of-your-seat thrillers",
-    "gross-out horror", "comfort watch", and "background-friendly".
+    Viewer experience vectors focus on how the movie feels to watch, including mood,
+    energy, intensity, and emotional impact, making them ideal for queries about
+    viewing experience rather than plot content.
     
     Args:
-        movie: IMDBMovie instance containing all movie metadata (including vibe fields)
-        collection_name: Name of the ChromaDB collection to store vectors in
+        movie: IMDBMovie instance containing all movie metadata (including vibe_metadata)
         db_path: Path to the local ChromaDB database directory
         
     Raises:
@@ -769,13 +767,13 @@ def create_and_save_dense_vibe_vector(
     Note:
         OpenAI API key must be set in environment variables before importing this module.
         The module will raise ValueError at import time if OPENAI_API_KEY is not found.
-        If vibe data is not available (vibe_summary, vibe_keywords, watch_context_tags),
-        the vector will still be created but may have limited semantic matching capability.
+        If vibe_metadata is not available, the vector will still be created but may
+        have limited semantic matching capability.
     """
     print(f"Processing: {movie.title} (ID: {movie.id})")
     
     # Generate text representation for embedding
-    vector_text = create_dense_vibe_vector_text(movie)
+    vector_text = create_viewer_experience_vector_text(movie)
     
     # Create embedding using OpenAI's small embedder model
     # text-embedding-3-small produces 1536-dimensional vectors
@@ -802,8 +800,135 @@ def create_and_save_dense_vibe_vector(
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
-        collection_name=collection_name,
+        collection_name=VectorCollectionName.VIEWER_EXPERIENCE_VECTORS,
         db_path=db_path,
-        collection_metadata={"description": "Dense vibe vectors for movie semantic search"}
+        collection_metadata={"description": "Viewer experience vectors for movie semantic search"}
     )
+
+
+def create_and_save_watch_context_vector(
+    movie: IMDBMovie,
+    db_path: str | Path = "./chroma_db"
+) -> None:
+    """
+    Creates a watch context vector embedding for a movie and saves it to ChromaDB.
+    
+    This function:
+    1. Generates the text representation using create_watch_context_vector_text
+    2. Embeds the text using OpenAI's text-embedding-3-small model
+    3. Saves the embedding to a local ChromaDB collection
+    
+    Watch context vectors focus on when and where the movie is suitable to watch,
+    including viewing context recommendations, availability, and duration, making
+    them ideal for queries about watchability and viewing situations.
+    
+    Args:
+        movie: IMDBMovie instance containing all movie metadata (including vibe_metadata)
+        db_path: Path to the local ChromaDB database directory
+        
+    Raises:
+        Exception: If embedding or database operations fail
+        
+    Note:
+        OpenAI API key must be set in environment variables before importing this module.
+        The module will raise ValueError at import time if OPENAI_API_KEY is not found.
+    """
+    print(f"Processing: {movie.title} (ID: {movie.id})")
+    
+    # Generate text representation for embedding
+    vector_text = create_watch_context_vector_text(movie)
+    
+    # Create embedding using OpenAI's small embedder model
+    # text-embedding-3-small produces 1536-dimensional vectors
+    print("  Creating embedding...")
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=vector_text
+    )
+    embedding = response.data[0].embedding
+    print(f"  Embedding created: {embedding}")
+    
+    # Prepare metadata for storage (include movie title and ID for reference)
+    metadata = {
+        "movie_id": movie.id,
+        "tmdb_id": movie.tmdb_id,
+        "title": movie.title,
+        "release_date": movie.release_date,
+        "genres": ", ".join(movie.genres) if movie.genres else "",
+    }
+    
+    # Save the vector to ChromaDB using the generic save function
+    save_vector_to_chroma(
+        vector_id=movie.id,
+        embedding=embedding,
+        document=vector_text,
+        metadata=metadata,
+        collection_name=VectorCollectionName.WATCH_CONTEXT_VECTORS,
+        db_path=db_path,
+        collection_metadata={"description": "Watch context vectors for movie semantic search"}
+    )
+
+
+def create_and_save_production_vector(
+    movie: IMDBMovie,
+    db_path: str | Path = "./chroma_db"
+) -> None:
+    """
+    Creates a production vector embedding for a movie and saves it to ChromaDB.
+    
+    This function:
+    1. Generates the text representation using create_production_vector_text
+    2. Embeds the text using OpenAI's text-embedding-3-small model
+    3. Saves the embedding to a local ChromaDB collection
+    
+    Production vectors focus on production-related information including countries,
+    production companies, filming locations, languages, cast, and crew, making
+    them ideal for queries about who made the movie and where it was produced.
+    
+    Args:
+        movie: IMDBMovie instance containing all movie metadata
+        db_path: Path to the local ChromaDB database directory
+        
+    Raises:
+        Exception: If embedding or database operations fail
+        
+    Note:
+        OpenAI API key must be set in environment variables before importing this module.
+        The module will raise ValueError at import time if OPENAI_API_KEY is not found.
+    """
+    print(f"Processing: {movie.title} (ID: {movie.id})")
+    
+    # Generate text representation for embedding
+    vector_text = create_production_vector_text(movie)
+    
+    # Create embedding using OpenAI's small embedder model
+    # text-embedding-3-small produces 1536-dimensional vectors
+    print("  Creating embedding...")
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=vector_text
+    )
+    embedding = response.data[0].embedding
+    print(f"  Embedding created: {embedding}")
+    
+    # Prepare metadata for storage (include movie title and ID for reference)
+    metadata = {
+        "movie_id": movie.id,
+        "tmdb_id": movie.tmdb_id,
+        "title": movie.title,
+        "release_date": movie.release_date,
+        "genres": ", ".join(movie.genres) if movie.genres else "",
+    }
+    
+    # Save the vector to ChromaDB using the generic save function
+    save_vector_to_chroma(
+        vector_id=movie.id,
+        embedding=embedding,
+        document=vector_text,
+        metadata=metadata,
+        collection_name=VectorCollectionName.PRODUCTION_VECTORS,
+        db_path=db_path,
+        collection_metadata={"description": "Production vectors for movie semantic search"}
+    )
+
 
