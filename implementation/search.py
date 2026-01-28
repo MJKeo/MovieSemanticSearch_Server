@@ -33,7 +33,6 @@ class RankedResult(TypedDict):
     distance: float
     metadata: dict
     document: str
-    document: str
 
 
 class AxisScoreResults(TypedDict):
@@ -298,17 +297,12 @@ def fused_vector_search(
     query_movie_id: Optional[str] = None,
     n_candidates_per_axis: int = 50,
     rrf_k: float = 60.0,
-    w_anchor: float = 1.0,
-    w_plot_events: float = 1.0,
-    w_plot_analysis: float = 1.0,
-    w_viewer_experience: float = 1.0,
-    w_watch_context: float = 1.0,
-    w_production: float = 1.0,
+    weights: Optional[dict[VectorCollectionName, float]] = None,
     return_top_n: int = 20,
     db_path: str | Path = _DEFAULT_DB_PATH
 ) -> dict:
     """
-    Performs fused vector search across six Chroma collections using Weighted RRF.
+    Performs fused vector search across eight Chroma collections using Weighted RRF.
     
     This is the main search function that implements the complete algorithm:
     1. Embeds the query (text) or fetches movie vectors (movie mode)
@@ -323,24 +317,15 @@ def fused_vector_search(
         query_movie_id: Movie ID to use for "more like this" search (required if query_text is None)
         n_candidates_per_axis: Top-K to retrieve from each collection (default 50)
         rrf_k: Rank dampening constant for RRF (default 60.0)
-        w_anchor: Weight for anchor collection (default 1.0)
-        w_plot_events: Weight for plot events collection (default 1.0)
-        w_plot_analysis: Weight for plot analysis collection (default 1.0)
-        w_viewer_experience: Weight for viewer experience collection (default 1.0)
-        w_watch_context: Weight for watch context collection (default 1.0)
-        w_production: Weight for production collection (default 1.0)
+        weights: Dictionary mapping VectorCollectionName enum to weight values (default 1.0 for all collections)
         return_top_n: Number of final results to return (default 20)
         db_path: Path to ChromaDB database directory
         
     Returns:
         Dictionary with keys:
         - 'fused_results': List of CandidateScore dictionaries, sorted by (rrf_score desc, avg_sim desc, movie_id asc)
-        - 'raw_anchor': List of RankedResult dictionaries from anchor collection
-        - 'raw_plot_events': List of RankedResult dictionaries from plot events collection
-        - 'raw_plot_analysis': List of RankedResult dictionaries from plot analysis collection
-        - 'raw_viewer_experience': List of RankedResult dictionaries from viewer experience collection
-        - 'raw_watch_context': List of RankedResult dictionaries from watch context collection
-        - 'raw_production': List of RankedResult dictionaries from production collection
+        - 'raw_rank_maps_by_collection': Dictionary mapping collection names to rank maps (dict of movie_id to RankedResult)
+        - 'raw_similarities_by_movie_id': Dictionary mapping movie_id to dictionary of similarity scores per collection
         
     Raises:
         ValueError: If neither query_text nor query_movie_id is provided, or both are provided
@@ -398,15 +383,16 @@ def fused_vector_search(
                     metadata_map[candidate_id] = rank_map_by_collection[candidate_id]['metadata']
 
     
-    # Define axis names and their corresponding weights
-    weights_by_axis = {
-        VectorCollectionName.DENSE_ANCHOR_VECTORS.value: w_anchor,
-        VectorCollectionName.PLOT_EVENTS_VECTORS.value: w_plot_events,
-        VectorCollectionName.PLOT_ANALYSIS_VECTORS.value: w_plot_analysis,
-        VectorCollectionName.VIEWER_EXPERIENCE_VECTORS.value: w_viewer_experience,
-        VectorCollectionName.WATCH_CONTEXT_VECTORS.value: w_watch_context,
-        VectorCollectionName.PRODUCTION_VECTORS.value: w_production
-    }
+    # Convert weights dictionary from VectorCollectionName enum keys to collection name string values
+    # Default to 1.0 for any collection not specified in weights
+    weights_by_axis: dict[str, float] = {}
+    if weights is None:
+        weights = {}
+    
+    for collection_name in collection_names:
+        # Use provided weight or default to 1.0
+        weight_value = weights.get(collection_name, 1.0)
+        weights_by_axis[collection_name.value] = weight_value
     
     
     # Step 4: Compute RRF scores for all candidates

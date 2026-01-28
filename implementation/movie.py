@@ -1,11 +1,16 @@
 from typing import Optional
 from .schemas import (
-    VibeMetadata, 
     PlotAnalysisMetadata, 
     PlotEventsMetadata,
     WatchProvider,
     ParentalGuideItem,
-    ChromaVectorCollection
+    IMDBFeaturedReview,
+    ViewerExperienceMetadata,
+    WatchContextMetadata,
+    IMDBReviewTheme,
+    NarrativeTechniquesMetadata,
+    ReceptionMetadata,
+    ProductionMetadata
 )
 from pydantic import BaseModel, ConfigDict
 from .enums import MaturityRating, WatchProviderType
@@ -53,10 +58,16 @@ class IMDBMovie(BaseModel):
     imdb_rating: Optional[float] = None
     metacritic_rating: Optional[float] = None
     reception_summary: Optional[str] = None
+    featured_reviews: list[IMDBFeaturedReview] = []
+    review_themes: list[IMDBReviewTheme] = []
     # METADATA
     plot_events_metadata: Optional[PlotEventsMetadata] = None
     plot_analysis_metadata: Optional[PlotAnalysisMetadata] = None
-    vibe_metadata: Optional[VibeMetadata] = None
+    viewer_experience_metadata: Optional[ViewerExperienceMetadata] = None
+    watch_context_metadata: Optional[WatchContextMetadata] = None
+    narrative_techniques_metadata: Optional[NarrativeTechniquesMetadata] = None
+    reception_metadata: Optional[ReceptionMetadata] = None
+    production_metadata: Optional[ProductionMetadata] = None
     # ONLY FOR DEBUGGING
     debug_synopses: list[str] = []
     debug_plot_summaries: list[str] = []
@@ -78,11 +89,11 @@ class IMDBMovie(BaseModel):
 
     # Maturity rating to semantic description mapping (no numbers)
     _MATURITY_DESCRIPTIONS: dict[str, str] = {
-        "G": "General audiences. Family friendly, safe for kids, children, and all ages. Wholesome entertainment.",
-        "PG": "Parental guidance suggested. Good for families and most children, but may contain some mild material.",
-        "PG-13": "Parents strongly cautioned. Best for teens and young adults. May contain material inappropriate for young children.",
-        "R": "Restricted. Mature audiences only. Contains adult themes, violence, or strong language. Not for kids.",
-        "NC-17": "Adults only. Explicit content. Strictly for mature audiences. Not suitable for children or teens.",
+        "G": "General audiences. Family friendly, safe for kids, children, and all ages. Wholesome entertainment",
+        "PG": "Parental guidance suggested. Good for families and most children, but may contain some mild material",
+        "PG-13": "Parents strongly cautioned. Best for teens and young adults. May contain material inappropriate for young children",
+        "R": "Restricted. Mature audiences only. Contains adult themes, violence, or strong language. Not for kids",
+        "NC-17": "Adults only. Explicit content. Strictly for mature audiences. Not suitable for children or teens",
     }
 
     def _normalize_text(self, text: str) -> str:
@@ -253,7 +264,7 @@ class IMDBMovie(BaseModel):
         else:
             # Map rating to semantic description
             base_description = self._MATURITY_DESCRIPTIONS.get(
-                self.maturity_rating,
+                self.maturity_rating.upper(),
                 f"Rated {self.maturity_rating}"
             )
             
@@ -353,7 +364,7 @@ class IMDBMovie(BaseModel):
             parts.append(f"Music composed by {composers_str}")
         
         if self.actors:
-            actors_str = ", ".join(self.actors[:8])
+            actors_str = ", ".join(self.actors[:5])
             parts.append(f"Main actors: {actors_str}")
         
         return ".\n".join(parts) + "." if parts else ""
@@ -367,10 +378,14 @@ class IMDBMovie(BaseModel):
         Returns:
             Formatted characters string or empty string if no characters
         """
+        if self.plot_events_metadata.major_characters:
+            characters_str = ", ".join([character.name.lower() for character in self.plot_events_metadata.major_characters])
+            return f"Main characters: {characters_str}"
+
         if not self.characters:
             return ""
         
-        characters_str = ", ".join(self.characters[:8])
+        characters_str = ", ".join(self.characters[:5])
         return f"Main characters: {characters_str}"
 
     def reception_score(self) -> Optional[float]:

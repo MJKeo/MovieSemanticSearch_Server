@@ -46,6 +46,8 @@ class VectorCollectionName(Enum):
     DENSE_ANCHOR_VECTORS = "dense_anchor_vectors"
     PLOT_EVENTS_VECTORS = "plot_events_vectors"
     PLOT_ANALYSIS_VECTORS = "plot_analysis_vectors"
+    NARRATIVE_TECHNIQUES_VECTORS = "narrative_techniques_vectors"
     VIEWER_EXPERIENCE_VECTORS = "viewer_experience_vectors"
     WATCH_CONTEXT_VECTORS = "watch_context_vectors"
     PRODUCTION_VECTORS = "production_vectors"
+    RECEPTION_VECTORS = "reception_vectors"

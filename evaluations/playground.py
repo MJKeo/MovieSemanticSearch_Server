@@ -27,9 +27,11 @@ COLLECTION_TO_WEIGHT_PARAM = {
     VectorCollectionName.DENSE_ANCHOR_VECTORS: "w_anchor",
     VectorCollectionName.PLOT_EVENTS_VECTORS: "w_plot_events",
     VectorCollectionName.PLOT_ANALYSIS_VECTORS: "w_plot_analysis",
+    VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS: "w_narrative_techniques",
     VectorCollectionName.VIEWER_EXPERIENCE_VECTORS: "w_viewer_experience",
     VectorCollectionName.WATCH_CONTEXT_VECTORS: "w_watch_context",
     VectorCollectionName.PRODUCTION_VECTORS: "w_production",
+    VectorCollectionName.RECEPTION_VECTORS: "w_reception",
 }
 
 # Color palette for collection charts (one unique color per collection)
@@ -37,9 +39,11 @@ COLLECTION_COLORS = {
     VectorCollectionName.DENSE_ANCHOR_VECTORS: "#FF6B6B",  # Red
     VectorCollectionName.PLOT_EVENTS_VECTORS: "#4ECDC4",  # Teal
     VectorCollectionName.PLOT_ANALYSIS_VECTORS: "#45B7D1",  # Blue
+    VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS: "#9B59B6",  # Purple
     VectorCollectionName.VIEWER_EXPERIENCE_VECTORS: "#FFA07A",  # Light Salmon
     VectorCollectionName.WATCH_CONTEXT_VECTORS: "#98D8C8",  # Mint
     VectorCollectionName.PRODUCTION_VECTORS: "#F7DC6F",  # Yellow
+    VectorCollectionName.RECEPTION_VECTORS: "#E67E22",  # Orange
 }
 
 # Color for overall fused results chart
@@ -377,21 +381,21 @@ def create_gradio_interface(db_path: str | Path = "./chroma_db"):
                     return tuple(empty_outputs)
                 query_movie_id = title_to_id[selected_movie]
             
-            # Map weight values to collection weight parameters
-            weight_params = {}
+            # Map weight values to VectorCollectionName enum keys
+            weights = {}
             for i, collection in enumerate(collections):
-                weight_param_name = COLLECTION_TO_WEIGHT_PARAM[collection]
-                weight_params[weight_param_name] = weight_values[i] if i < len(weight_values) else 1.0
+                weight_value = weight_values[i] if i < len(weight_values) else 1.0
+                weights[collection] = weight_value
             
-            # Perform search with new signature
+            # Perform search with weights dictionary
             search_results = fused_vector_search(
                 query_text=query_text,
                 query_movie_id=query_movie_id,
                 n_candidates_per_axis=n_candidates_per_axis,
                 rrf_k=rrf_k,
+                weights=weights,
                 return_top_n=return_top_n,
-                db_path=db_path,
-                **weight_params
+                db_path=db_path
             )
             
             # Extract results

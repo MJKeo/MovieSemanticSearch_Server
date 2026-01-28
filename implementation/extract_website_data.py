@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 import json
 import re
 import html as html_lib
-from .schemas import WatchProvider
+from .schemas import WatchProvider, IMDBFeaturedReview, IMDBReviewTheme
 from .enums import WatchProviderType
 
 
@@ -144,6 +144,15 @@ def extract_imdb_attributes(main_page_html: str) -> dict:
     # Budget - optional field, defaults to None
     budget = _safe_get(mcd, ["productionBudget", "budget", "amount"])
 
+    # Review Themes - optional field, defaults to []
+    review_themes = _safe_get(nd, ['props', 'pageProps', 'mainColumnData', 'reviewSummary', 'themes'], []) or []
+    parsed_review_themes = []
+    for theme in review_themes:
+        name = _safe_get(theme, ['label', 'value'], None)
+        sentiment = _safe_get(theme, ['sentiment'], None)
+        if name and sentiment:
+            parsed_review_themes.append(IMDBReviewTheme(name=name.lower(), sentiment=sentiment.lower()))
+
     return {
         "original_title": original_title,  # e.g. "Sen to Chihiro no kamikakushi"
         "maturity_rating": maturity_rating,  # e.g. "PG"
@@ -158,6 +167,7 @@ def extract_imdb_attributes(main_page_html: str) -> dict:
         "filming_locations": filming_locations,
         "languages": languages,
         "budget": budget,
+        "review_themes": parsed_review_themes,
     }
     
 def extract_summary_attributes(summary_html_text: str) -> dict:
@@ -350,6 +360,32 @@ def extract_cast_crew(cc_html_text: str) -> dict:
         "producers": producers,
         "composers": list(composers)
     }
+
+def extract_featured_reviews(reviews_html_text: str) -> list[IMDBFeaturedReview]:
+    """
+    Extracts featured reviews from the reviews page HTML.
+    
+    Returns a dictionary with review summaries and texts.
+    """
+    soup = BeautifulSoup(reviews_html_text, "html.parser")
+    nd = _parse_next_data(soup)
+
+    reviews_data = _safe_get(nd, ['props', 'pageProps', 'contentData', 'reviews'], []) or []
+
+    featured_reviews = []
+
+    for review_object in reviews_data[:10]:
+        review_data = review_object['review']
+        summary = _safe_get(review_data, ['reviewSummary'], None)
+        text = _safe_get(review_data, ['reviewText'], None)
+
+        if summary and text:
+            featured_reviews.append({
+                'summary': summary,
+                'text': text
+            })
+
+    return featured_reviews
 
 # ================================
 #    EXTRACTING DATA (TMDB)

@@ -31,6 +31,11 @@ if not api_key:
 # Create OpenAI client instance for use throughout the module
 openai_client = OpenAI(api_key=api_key)
 
+
+# ===============================
+#         Normalization
+# ===============================
+
 def normalize_vector(vector: list[float], eps: float = 1e-8) -> list[float]:
     """
     Normalizes a vector to unit length for efficient cosine similarity computation.
@@ -71,211 +76,9 @@ def normalize_embeddings(
     }
 
 
-def create_dense_anchor_vector_text(movie: IMDBMovie) -> str:
-    """
-    Creates the text representation for DenseAnchor vector embedding.
-    
-    DenseAnchor captures the full "movie card" identity to provide good recall
-    for most queries. It includes comprehensive information about the movie's
-    identity, content, production, cast, and reception.
-    
-    Args:
-        movie: IMDBMovie instance containing all movie metadata
-        
-    Returns:
-        Formatted text string ready for embedding as DenseAnchor vector
-    """
-    # Build the text components according to the DenseAnchor template (section 5.1)
-    parts = []
-    
-    # Title string
-    parts.append(movie.title_string())
-    parts.append("")  # Empty line separator
-    
-    # Overview (use raw overview, not normalized version)
-    parts.append(f"Overview: {movie.overview}")
-    parts.append("")
-    
-    # Genres as comma-separated values
-    genres_csv = ", ".join(movie.genres_subset()) if movie.genres_subset() else ""
-    if genres_csv:
-        parts.append(f"Genres: {genres_csv}")
-    
-    # Keywords as comma-separated values
-    keywords_csv = ", ".join(movie.overall_keywords) if movie.overall_keywords else ""
-    if keywords_csv:
-        parts.append(f"Keywords: {keywords_csv}")
-    
-    parts.append("")
-    
-    # Release decade bucket
-    decade_bucket = movie.release_decade_bucket()
-    if decade_bucket:
-        parts.append(decade_bucket)
-    
-    # Duration bucket
-    duration_bucket = movie.duration_bucket()
-    if duration_bucket:
-        parts.append(f"Duration: {duration_bucket}")
-    
-    # Budget scale for era
-    budget_bucket = movie.budget_bucket_for_era()
-    if budget_bucket:
-        parts.append(budget_bucket)
-    
-    parts.append("")
-    
-    # Maturity guidance
-    maturity_guidance = movie.maturity_guidance_text()
-    if maturity_guidance:
-        parts.append(maturity_guidance)
-    
-    parts.append("")
-    
-    # Production information
-    production_text = movie.production_text()
-    if production_text:
-        parts.append(production_text)
-    
-    # Languages information
-    languages_text = movie.languages_text()
-    if languages_text:
-        parts.append(languages_text)
-    
-    parts.append("")
-    
-    # Cast and crew information
-    cast_text = movie.cast_text()
-    if cast_text:
-        parts.append(cast_text)
-    
-    # Characters information
-    characters_text = movie.characters_text()
-    if characters_text:
-        parts.append(characters_text)
-    
-    parts.append("")
-    
-    # Reception information
-    reception_tier = movie.reception_tier()
-    if reception_tier:
-        parts.append(f"Reception: {reception_tier}")
-    
-    # Optional review summary
-    reception_summary = movie.reception_summary_text()
-    if reception_summary:
-        parts.append(reception_summary)
-
-    parts.append("")
-
-    # Watch providers information
-    watch_providers_text = movie.watch_providers_text()
-    if watch_providers_text:
-        parts.append(watch_providers_text)
-    
-    # Join all parts with newlines
-    return "\n".join(parts)
-
-
-def create_plot_events_vector_text(movie: IMDBMovie) -> str:
-    return str(movie.plot_events_metadata)
-
-
-def create_plot_analysis_vector_text(movie: IMDBMovie) -> str:
-    parts = []
-
-    parts.append(str(movie.plot_analysis_metadata))
-    parts.append(", ".join(movie.overall_keywords))
-
-    return "\n".join(parts)
-
-
-def create_viewer_experience_vector_text(movie: IMDBMovie) -> str:
-    """
-    Creates the text representation for viewer experience vector embedding.
-    
-    This function extracts viewer experience descriptors from vibe_metadata,
-    focusing on how the movie feels to watch rather than what happens in it.
-    
-    Args:
-        movie: IMDBMovie instance containing vibe_metadata
-        
-    Returns:
-        Formatted text string ready for embedding as viewer experience vector
-    """
-    # parts = []
-    
-    # # Extract viewer experience fields from vibe_metadata if available
-    # if movie.vibe_metadata:
-    #     if movie.vibe_metadata.dominant_mood:
-    #         parts.append(f"Dominant mood: {movie.vibe_metadata.dominant_mood}")
-    #     if movie.vibe_metadata.movie_energy:
-    #         parts.append(f"Movie energy: {movie.vibe_metadata.movie_energy}")
-    #     if movie.vibe_metadata.intensity:
-    #         parts.append(f"Intensity: {movie.vibe_metadata.intensity}")
-    #     if movie.vibe_metadata.romance_humor_sexuality:
-    #         parts.append(f"Romance, humor, and sexuality: {movie.vibe_metadata.romance_humor_sexuality}")
-    #     if movie.vibe_metadata.final_viewer_impression:
-    #         parts.append(f"Final viewer impression: {movie.vibe_metadata.final_viewer_impression}")
-    
-    # # Include genres as context for viewer experience
-    # genres = movie.genres_subset(limit=3)
-    # if genres:
-    #     genres_csv = ", ".join(genres)
-    #     parts.append(f"Genres: {genres_csv}")
-    
-    # return "\n".join(parts)
-    return "Implement this!"
-
-
-def create_watch_context_vector_text(movie: IMDBMovie) -> str:
-    """
-    Creates the text representation for watch context vector embedding.
-    
-    This function extracts viewing context information from vibe_metadata
-    and watch providers, focusing on when and where the movie is suitable to watch.
-    
-    Args:
-        movie: IMDBMovie instance containing vibe_metadata and watch_providers
-        
-    Returns:
-        Formatted text string ready for embedding as watch context vector
-    """
-    # parts = []
-    
-    # # Extract viewing context from vibe_metadata if available
-    # if movie.vibe_metadata and movie.vibe_metadata.viewing_context:
-    #     parts.append(f"Viewing context: {movie.vibe_metadata.viewing_context}")
-    
-    # # Include watch providers information
-    # watch_providers_text = movie.watch_providers_text()
-    # if watch_providers_text:
-    #     parts.append(watch_providers_text)
-    
-    # # Include duration bucket as it affects watch context
-    # duration_bucket = movie.duration_bucket()
-    # if duration_bucket:
-    #     parts.append(f"Duration: {duration_bucket}")
-    
-    # return "\n".join(parts)
-    return "Implement this!"
-
-
-def create_production_vector_text(movie: IMDBMovie) -> str:
-    """
-    Creates the text representation for production vector embedding.
-    
-    This function extracts production-related information including countries,
-    production companies, filming locations, languages, and cast/crew.
-    
-    Args:
-        movie: IMDBMovie instance containing production metadata
-        
-    Returns:
-        Formatted text string ready for embedding as production vector
-    """
-    return "Implement this!"
-
+# ===============================
+#     Database Management
+# ===============================
 
 def save_vector_to_chroma(
     vector_id: str,
@@ -558,6 +361,217 @@ def clear_collections_from_chroma(
             continue
 
 
+# ===============================
+#         Vector Text
+# ===============================
+
+def create_dense_anchor_vector_text(movie: IMDBMovie) -> str:
+    """
+    Creates the text representation for DenseAnchor vector embedding.
+    
+    DenseAnchor captures the full "movie card" identity to provide good recall
+    for most queries. It includes comprehensive information about the movie's
+    identity, content, production, cast, and reception.
+    
+    Args:
+        movie: IMDBMovie instance containing all movie metadata
+        
+    Returns:
+        Formatted text string ready for embedding as DenseAnchor vector
+    """
+    # Build the text components according to the DenseAnchor template (section 5.1)
+    parts = []
+    
+    parts.append("# Overview:")
+
+    # Title string
+    parts.append(movie.title_string())
+    
+    if movie.plot_analysis_metadata:
+        parts.append(movie.plot_analysis_metadata.generalized_plot_overview)
+    
+    # Genres as comma-separated values
+    genres_csv = ", ".join(movie.genres_subset()) if movie.genres_subset() else ""
+    if genres_csv:
+        parts.append(f"Genres: {genres_csv}")
+    
+    # Keywords as comma-separated values
+    combined_keywords = movie.overall_keywords + movie.plot_keywords
+    keywords_csv = ", ".join(combined_keywords) if combined_keywords else ""
+    if keywords_csv:
+        parts.append(keywords_csv)
+
+
+    parts.append("\n# Production:")
+
+    # Production information
+    production_text = movie.production_text()
+    if production_text:
+        parts.append(production_text)
+    
+    # Languages information
+    languages_text = movie.languages_text()
+    if languages_text:
+        parts.append(languages_text)
+    
+    # Release decade bucket
+    decade_bucket = movie.release_decade_bucket()
+    if decade_bucket:
+        parts.append(decade_bucket)
+    
+    # Duration bucket
+    duration_bucket = movie.duration_bucket()
+    if duration_bucket:
+        parts.append(f"Duration: {duration_bucket}")
+    
+    # Budget scale for era
+    budget_bucket = movie.budget_bucket_for_era()
+    if budget_bucket:
+        parts.append(budget_bucket)
+
+    if movie.production_metadata:
+        if movie.production_metadata.production_keywords.terms:
+            parts.append(", ".join(movie.production_metadata.production_keywords.terms))
+        if movie.production_metadata.sources_of_inspiration.production_mediums:
+            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.production_mediums))
+        if movie.production_metadata.sources_of_inspiration.sources_of_inspiration:
+            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.sources_of_inspiration))
+    
+    parts.append("\n# Cast and Characters:")
+
+    cast_text = movie.cast_text()
+    if cast_text:
+        parts.append(cast_text)
+    
+    # Characters information
+    characters_text = movie.characters_text()
+    if characters_text:
+        parts.append(characters_text)
+
+    parts.append("\n# Themes and Lessons:")
+
+    if movie.plot_analysis_metadata:
+        parts.append(f"Core concept: {movie.plot_analysis_metadata.core_concept.core_concept_label.lower()}")
+        themes = [theme.theme_label.lower() for theme in movie.plot_analysis_metadata.themes_primary]
+        parts.append(f"Themes: {", ".join(themes)}")
+        lessons = [lesson.lesson_label.lower() for lesson in movie.plot_analysis_metadata.lessons_learned]
+        parts.append(f"Lessons: {", ".join(lessons)}")
+
+    parts.append("\n# Audience Reception:")
+
+    if movie.viewer_experience_metadata:
+        parts.append(f"Emotional palette: {", ".join(movie.viewer_experience_metadata.emotional_palette.terms)}")
+
+    if movie.watch_context_metadata:
+        parts.append(f"Key draws: {", ".join(movie.watch_context_metadata.key_movie_feature_draws.terms)}")
+    
+    # Maturity guidance
+    maturity_guidance = movie.maturity_guidance_text()
+    if maturity_guidance:
+        parts.append(maturity_guidance)
+    
+    # Reception information
+    reception_tier = movie.reception_tier()
+    if reception_tier:
+        parts.append(f"Reception: {reception_tier}")
+
+    if movie.reception_metadata:
+        parts.append(f"Praises: {", ".join(movie.reception_metadata.praise_attributes)}")
+        parts.append(f"Complaints: {", ".join(movie.reception_metadata.complaint_attributes)}")
+
+    # Join all parts with newlines
+    return "\n".join(parts)
+
+
+def create_plot_events_vector_text(movie: IMDBMovie) -> str:
+    return str(movie.plot_events_metadata)
+
+
+def create_plot_analysis_vector_text(movie: IMDBMovie) -> str:
+    parts = []
+
+    parts.append(str(movie.plot_analysis_metadata))
+    parts.append(", ".join(movie.overall_keywords)) # UPDATE TO BE ONLY APPLICABLE KEYWORDS
+
+    return "\n".join(parts)
+
+
+def create_narrative_techniques_vector_text(movie: IMDBMovie) -> str:
+    return str(movie.narrative_techniques_metadata)
+
+
+def create_viewer_experience_vector_text(movie: IMDBMovie) -> str:
+    return str(movie.viewer_experience_metadata)
+
+
+def create_watch_context_vector_text(movie: IMDBMovie) -> str:
+    return str(movie.watch_context_metadata)
+
+
+def create_production_vector_text(movie: IMDBMovie) -> str:
+    parts = []
+
+    parts.append("\n# Production:")
+    
+    # Production information
+    production_text = movie.production_text()
+    if production_text:
+        parts.append(production_text.lower())
+    
+    # Languages information
+    languages_text = movie.languages_text()
+    if languages_text:
+        parts.append(languages_text.lower())
+    
+    # Release decade bucket
+    decade_bucket = movie.release_decade_bucket()
+    if decade_bucket:
+        parts.append(decade_bucket.lower())
+    
+    # Budget scale for era
+    budget_bucket = movie.budget_bucket_for_era()
+    if budget_bucket:
+        parts.append(budget_bucket.lower())
+
+    if movie.production_metadata:
+        if movie.production_metadata.production_keywords.terms:
+            parts.append(", ".join(movie.production_metadata.production_keywords.terms))
+        if movie.production_metadata.sources_of_inspiration.production_mediums:
+            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.production_mediums))
+        if movie.production_metadata.sources_of_inspiration.sources_of_inspiration:
+            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.sources_of_inspiration))
+
+    parts.append("\n# Cast and Characters:")
+
+    cast_text = movie.cast_text()
+    if cast_text:
+        parts.append(cast_text)
+    
+    # Characters information
+    characters_text = movie.characters_text()
+    if characters_text:
+        parts.append(characters_text)
+
+    return "\n".join(parts)
+
+
+def create_reception_vector_text(movie: IMDBMovie) -> str:
+    parts = []
+
+    if movie.reception_tier():
+        parts.append(movie.reception_tier().lower())
+
+    if movie.reception_metadata:
+        parts.append(f"Praises: {", ".join(movie.reception_metadata.praise_attributes)}")
+        parts.append(f"Complaints: {", ".join(movie.reception_metadata.complaint_attributes)}")
+
+    return "\n".join(parts)
+
+
+# ===============================
+#    Vector Creation and Saving
+# ===============================
+
 def create_and_save_dense_anchor_vector(
     movie: IMDBMovie,
     db_path: str | Path = "./chroma_db"
@@ -738,6 +752,49 @@ def create_and_save_plot_analysis_vector(
         collection_name=VectorCollectionName.PLOT_ANALYSIS_VECTORS,
         db_path=db_path,
         collection_metadata={"description": "Plot analysis vectors for movie semantic search"}
+    )
+
+
+def create_and_save_narrative_techniques_vector(
+    movie: IMDBMovie,
+    db_path: str | Path = "./chroma_db"
+) -> None:
+    """
+    Creates a narrative techniques vector embedding for a movie and saves it to ChromaDB.
+    """
+    print(f"Processing: {movie.title} (ID: {movie.id})")
+    
+    # Generate text representation for embedding
+    vector_text = create_narrative_techniques_vector_text(movie)
+    
+    # Create embedding using OpenAI's small embedder model
+    # text-embedding-3-small produces 1536-dimensional vectors
+    print("  Creating embedding...")
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=vector_text
+    )
+    embedding = response.data[0].embedding
+    print(f"  Embedding created: {embedding}")
+    
+    # Prepare metadata for storage (include movie title and ID for reference)
+    metadata = {
+        "movie_id": movie.id,
+        "tmdb_id": movie.tmdb_id,
+        "title": movie.title,
+        "release_date": movie.release_date,
+        "genres": ", ".join(movie.genres) if movie.genres else "",
+    }
+    
+    # Save the vector to ChromaDB using the generic save function
+    save_vector_to_chroma(
+        vector_id=movie.id,
+        embedding=embedding,
+        document=vector_text,
+        metadata=metadata,
+        collection_name=VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS,
+        db_path=db_path,
+        collection_metadata={"description": "Narrative techniques vectors for movie semantic search"}
     )
 
 
@@ -932,3 +989,44 @@ def create_and_save_production_vector(
     )
 
 
+def create_and_save_reception_vector(
+    movie: IMDBMovie,
+    db_path: str | Path = "./chroma_db"
+) -> None:
+    """
+    Creates a narrative techniques vector embedding for a movie and saves it to ChromaDB.
+    """
+    print(f"Processing: {movie.title} (ID: {movie.id})")
+    
+    # Generate text representation for embedding
+    vector_text = create_reception_vector_text(movie)
+    
+    # Create embedding using OpenAI's small embedder model
+    # text-embedding-3-small produces 1536-dimensional vectors
+    print("  Creating embedding...")
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=vector_text
+    )
+    embedding = response.data[0].embedding
+    print(f"  Embedding created: {embedding}")
+    
+    # Prepare metadata for storage (include movie title and ID for reference)
+    metadata = {
+        "movie_id": movie.id,
+        "tmdb_id": movie.tmdb_id,
+        "title": movie.title,
+        "release_date": movie.release_date,
+        "genres": ", ".join(movie.genres) if movie.genres else "",
+    }
+    
+    # Save the vector to ChromaDB using the generic save function
+    save_vector_to_chroma(
+        vector_id=movie.id,
+        embedding=embedding,
+        document=vector_text,
+        metadata=metadata,
+        collection_name=VectorCollectionName.RECEPTION_VECTORS,
+        db_path=db_path,
+        collection_metadata={"description": "Reception vectors for movie semantic search"}
+    )

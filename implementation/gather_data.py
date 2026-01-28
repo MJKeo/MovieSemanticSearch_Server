@@ -9,9 +9,17 @@ import html as html_lib
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
-from .extract_website_data import extract_imdb_attributes, extract_summary_attributes, extract_plot_keywords, extract_parental_guide, extract_cast_crew, get_watch_providers
+from .extract_website_data import (
+    extract_imdb_attributes, 
+    extract_summary_attributes, 
+    extract_plot_keywords, 
+    extract_parental_guide, 
+    extract_cast_crew, 
+    get_watch_providers, 
+    extract_featured_reviews
+)
 from .movie import IMDBMovie
-from .llm_generations import generate_plot_metadata, generate_vibe_metadata
+from .llm_generations import generate_llm_metadata
 
 # Load environment variables (for API key)
 load_dotenv()
@@ -105,6 +113,9 @@ def fetch_parent_guide(movie_id: str) -> Dict[str, Any]:
 def fetch_cast_crew(movie_id: str) -> Dict[str, Any]:
     return perform_imdb_fetch(f"https://www.imdb.com/title/{movie_id}/fullcredits/")
 
+def fetch_featured_reviews(movie_id: str) -> Dict[str, Any]:
+    return perform_imdb_fetch(f"https://www.imdb.com/title/{movie_id}/reviews/")
+
 def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
     """
     Fetches all IMDb data for a movie in parallel and combines into an IMDBMovie object.
@@ -154,6 +165,11 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
             """Fetches cast/crew page and parses cast and crew data."""
             response = fetch_cast_crew(imdb_movie_id)
             return ("cast_crew_data", extract_cast_crew(response.text))
+
+        def fetch_and_parse_featured_reviews():
+            """Fetches featured reviews page and parses featured reviews data."""
+            response = fetch_featured_reviews(imdb_movie_id)
+            return ("featured_reviews_data", extract_featured_reviews(response.text))
         
         # Execute all API calls in parallel and parse as each completes
         # If any fetch fails, the entire movie is invalidated
@@ -164,7 +180,8 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
                 executor.submit(fetch_and_parse_summary): "summary",
                 executor.submit(fetch_and_parse_plot_keywords): "plot_keywords",
                 executor.submit(fetch_and_parse_parental_guide): "parental_guide",
-                executor.submit(fetch_and_parse_cast_crew): "cast_crew"
+                executor.submit(fetch_and_parse_cast_crew): "cast_crew",
+                executor.submit(fetch_and_parse_featured_reviews): "featured_reviews"
             }
             
             # Process results as they complete - if any fails, raise exception
@@ -178,50 +195,23 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
         plot_keywords_data = parsed_results["plot_keywords_data"]
         parental_data = parsed_results["parental_data"]
         cast_crew_data = parsed_results["cast_crew_data"]
-        
-        # Generate plot summary and DenseVibe metadata using LLM in parallel - handle exceptions and empty results
-        # Default values if generation fails or returns empty
-        generated_plot_events_metadata = None
-        generated_plot_analysis_metadata = None
-        generated_vibe_metadata = None
-        
-        # Execute both LLM calls in parallel
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit both tasks
-            plot_future = executor.submit(
-                generate_plot_metadata,
-                title=tmdb_movie_data["title"],
-                overview=imdb_data["overview"],
-                plot_summaries=summary_data["plot_summaries"],
-                plot_synopses=summary_data["synopses"],
-                plot_keywords=plot_keywords_data,
-                reception_summary=imdb_data.get("user_review_summary")
-            )
-            vibe_future = executor.submit(
-                generate_vibe_metadata,
-                overview=imdb_data["overview"],
-                genres=imdb_data["genres"],
-                overall_keywords=imdb_data["keywords"],
-                plot_keywords=plot_keywords_data,
-                synopsis=summary_data["synopses"],
-                plot_summaries=summary_data["plot_summaries"],
-                maturity_rating=imdb_data["maturity_rating"],
-                maturity_reasoning=parental_data["ratingReasons"],
-                parental_guide_items=parental_data["parentsGuide"],
-                reception_summary=imdb_data.get("user_review_summary")
-            )
-            
-            # Process results as they complete
-            for future in as_completed([plot_future, vibe_future]):
-                result_type, result_data = future.result()
-                if result_type == "plot":
-                    if not result_data:
-                        raise ValueError("Plot metadata generation failed")
-                    generated_plot_events_metadata, generated_plot_analysis_metadata = result_data
-                elif result_type == "vibe":
-                    if not result_data:
-                        raise ValueError("Vibe metadata generation failed")
-                    generated_vibe_metadata = result_data
+        featured_reviews_data = parsed_results["featured_reviews_data"]
+
+        llm_metadata = generate_llm_metadata(
+            title=movie.title,
+            overview=movie.overview,
+            plot_summaries=movie.debug_plot_summaries,
+            plot_synopses=movie.debug_synopses,
+            plot_keywords=movie.plot_keywords,
+            featured_reviews=movie.featured_reviews,
+            genres=movie.genres,
+            overall_keywords=movie.overall_keywords,
+            reception_summary=movie.reception_summary,
+            audience_reception_attributes=movie.review_themes,
+            maturity_rating=movie.maturity_rating,
+            maturity_reasoning=movie.maturity_reasoning,
+            parental_guide_items=movie.parental_guide_items
+        )
         
         # Combine all parsed data into IMDBMovie object
         movie = IMDBMovie(
@@ -258,10 +248,16 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
             imdb_rating=imdb_data["imdb_rating"],
             metacritic_rating=imdb_data["metacritic_rating"],
             reception_summary=imdb_data.get("user_review_summary"),  # Optional field, defaults to None
+            featured_reviews=featured_reviews_data,
+            review_themes=imdb_data.get("review_themes", []),
             # METADATA
-            plot_events_metadata=generated_plot_events_metadata,
-            plot_analysis_metadata=generated_plot_analysis_metadata,
-            vibe_metadata=generated_vibe_metadata,
+            plot_events_metadata=llm_metadata["plot_events_metadata"],
+            plot_analysis_metadata=llm_metadata["plot_analysis_metadata"],
+            viewer_experience_metadata=llm_metadata["viewer_experience_metadata"],
+            watch_context_metadata=llm_metadata["watch_context_metadata"],
+            narrative_techniques_metadata=llm_metadata["narrative_techniques_metadata"],
+            production_metadata=llm_metadata["production_metadata"],
+            reception_metadata=llm_metadata["reception_metadata"],
             # DEBUG
             debug_synopses=summary_data["synopses"],
             debug_plot_summaries=summary_data["plot_summaries"]
@@ -335,11 +331,10 @@ def fetch_batch_imdb_movies(tmdb_movie_ids: list[int]) -> None:
 
 if __name__ == "__main__":
     # Override this value to test with a different movie
-    # tmdb_movie_ids = [2493, 1584, 9377, 269149, 109445, 808, 354912, 508965, 10674, 14160, 
-    # 13397, 76341, 245891, 155, 85, 1771, 569094, 299534, 11, 120, 671, 98, 27205, 603, 157336, 
-    # 335984, 329865, 329, 493922, 694, 49018, 176, 1034541, 807, 496243, 419430, 1359, 550, 597, 
-    # 13, 666277, 423, 25195, 11036, 1824, 216015, 392044, 545611, 22538, 37136]
-    tmdb_movie_ids = [2493]
+    tmdb_movie_ids = [2493, 1584, 9377, 269149, 109445, 808, 354912, 508965, 10674, 14160, 
+    13397, 76341, 245891, 155, 85, 1771, 569094, 299534, 11, 120, 671, 98, 27205, 603, 157336, 
+    335984, 329865, 329, 493922, 694, 49018, 176, 1034541, 807, 496243, 419430, 1359, 550, 597, 
+    13, 666277, 423, 25195, 11036, 1824, 216015, 392044, 545611, 22538, 37136]
 
     fetch_batch_imdb_movies(tmdb_movie_ids)
     
