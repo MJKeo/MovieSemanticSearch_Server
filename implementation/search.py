@@ -28,7 +28,7 @@ _DEFAULT_DB_PATH = Path(__file__).parent / "chroma_db"
 
 class RankedResult(TypedDict):
     """Represents a single result from a ranked list."""
-    movie_id: str
+    movie_id: str  # TMDB ID as string
     rank: int
     distance: float
     metadata: dict
@@ -44,7 +44,7 @@ class AxisScoreResults(TypedDict):
 
 class CandidateScore(TypedDict):
     """Represents scoring information for a candidate movie."""
-    movie_id: str
+    movie_id: str  # TMDB ID as string
     rrf_score: float
     avg_sim: float
     axes: dict[str, AxisScoreResults]
@@ -103,10 +103,13 @@ def search_collection_and_build_ranks(
         collection_name: Name of the ChromaDB collection to search
         n_results: Number of top results to retrieve (top-K)
         db_path: Path to the ChromaDB database directory
-        ids_to_filter_out: Optional list of movie IDs to exclude from results
+        ids_to_filter_out: Optional list of TMDB movie IDs (as strings) to exclude from results
         
     Returns:
-        Dictionary mapping movie_id to RankedResult
+        Dictionary mapping tmdb_id (as string) to RankedResult
+        
+    Note:
+        All movie IDs are TMDB IDs stored as strings.
     """
     # Search the collection using the existing search function
     results = search_similar_vectors(
@@ -165,17 +168,21 @@ def get_movie_embeddings(
     movie_ids: list[str],
     collection_name: VectorCollectionName,
     db_path: str | Path = _DEFAULT_DB_PATH
-) -> Optional[list[float]]:
+) -> Optional[list[list[float]]]:
     """
-    Retrieves the stored embedding vector for a movie from a collection.
+    Retrieves the stored embedding vectors for movies from a collection.
     
     Args:
-        movie_id: The movie ID to look up
+        movie_ids: List of TMDB movie IDs (as strings) to look up
         collection_name: Name of the ChromaDB collection
         db_path: Path to the ChromaDB database directory
         
     Returns:
-        The embedding vector as a list of floats, or None if not found
+        List of embedding vectors (each as a list of floats), one per movie_id, or None if not found.
+        The order matches the order of movie_ids provided.
+        
+    Note:
+        Movie IDs are TMDB IDs stored as strings in ChromaDB.
     """
     import chromadb
     from chromadb.config import Settings
@@ -193,7 +200,7 @@ def get_movie_embeddings(
         )
         collection = chroma_client.get_collection(name=collection_name.value)
         
-        # Fetch the specific vector by ID
+        # Fetch the specific vectors by IDs
         results = collection.get(ids=list(movie_ids), include=['embeddings'])
         
         if results["ids"] and len(results["embeddings"]) > 0:
@@ -222,11 +229,14 @@ def compute_cosine_similarities_for_candidates(
     
     Args:
         query_vectors_by_axis: Dictionary mapping collection names to their query embedding vectors
-        candidate_ids: List of movie IDs to compute similarities for
+        candidate_ids: List of TMDB movie IDs (as strings) to compute similarities for
         db_path: Path to the ChromaDB database directory
         
     Returns:
-        Dictionary mapping movie_id to a dictionary of similarity scores for each axis (floats, defaults to 0.0)
+        Dictionary mapping tmdb_id (as string) to a dictionary of similarity scores for each axis (floats, defaults to 0.0)
+        
+    Note:
+        All movie IDs are TMDB IDs stored as strings.
     """
     
     similarities: dict[str, dict[str, float]] = {}
@@ -314,7 +324,7 @@ def fused_vector_search(
     
     Args:
         query_text: User's search query (required if query_movie_id is None)
-        query_movie_id: Movie ID to use for "more like this" search (required if query_text is None)
+        query_movie_id: TMDB movie ID (as string) to use for "more like this" search (required if query_text is None)
         n_candidates_per_axis: Top-K to retrieve from each collection (default 50)
         rrf_k: Rank dampening constant for RRF (default 60.0)
         weights: Dictionary mapping VectorCollectionName enum to weight values (default 1.0 for all collections)
@@ -323,12 +333,15 @@ def fused_vector_search(
         
     Returns:
         Dictionary with keys:
-        - 'fused_results': List of CandidateScore dictionaries, sorted by (rrf_score desc, avg_sim desc, movie_id asc)
-        - 'raw_rank_maps_by_collection': Dictionary mapping collection names to rank maps (dict of movie_id to RankedResult)
-        - 'raw_similarities_by_movie_id': Dictionary mapping movie_id to dictionary of similarity scores per collection
+        - 'fused_results': List of CandidateScore dictionaries, sorted by (rrf_score desc, avg_sim desc, movie_id asc). movie_id is TMDB ID as string.
+        - 'raw_rank_maps_by_collection': Dictionary mapping collection names to rank maps (dict of tmdb_id to RankedResult)
+        - 'raw_similarities_by_movie_id': Dictionary mapping tmdb_id (as string) to dictionary of similarity scores per collection
         
     Raises:
         ValueError: If neither query_text nor query_movie_id is provided, or both are provided
+        
+    Note:
+        All movie IDs in this function refer to TMDB IDs (as strings), not IMDB IDs.
     """
     # Validate input: exactly one of query_text or query_movie_id must be provided
     if query_text is None and query_movie_id is None:

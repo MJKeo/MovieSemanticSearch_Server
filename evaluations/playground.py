@@ -90,13 +90,13 @@ def load_movie_titles(movies_file: str | Path = "../saved_imdb_movies.json") -> 
     with open(movies_path, 'r', encoding='utf-8') as f:
         movies = json.load(f)
     
-    # Create title -> id mapping
+    # Create title -> id mapping (using tmdb_id as string)
     title_to_id = {}
     for movie in movies:
         title = movie.get('title', '')
-        movie_id = movie.get('id', '')
-        if title and movie_id:
-            title_to_id[title] = movie_id
+        tmdb_id = movie.get('tmdb_id')
+        if title and tmdb_id is not None:
+            title_to_id[title] = str(tmdb_id)
     
     return title_to_id
 

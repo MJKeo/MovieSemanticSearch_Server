@@ -621,7 +621,7 @@ def create_and_save_dense_anchor_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
@@ -683,7 +683,7 @@ def create_and_save_plot_events_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
@@ -745,7 +745,7 @@ def create_and_save_plot_analysis_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
@@ -788,7 +788,7 @@ def create_and_save_narrative_techniques_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
@@ -853,7 +853,7 @@ def create_and_save_viewer_experience_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
@@ -916,7 +916,7 @@ def create_and_save_watch_context_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
@@ -979,7 +979,7 @@ def create_and_save_production_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
@@ -1022,7 +1022,7 @@ def create_and_save_reception_vector(
     
     # Save the vector to ChromaDB using the generic save function
     save_vector_to_chroma(
-        vector_id=movie.id,
+        vector_id=str(movie.tmdb_id),
         embedding=embedding,
         document=vector_text,
         metadata=metadata,
