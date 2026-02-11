@@ -1,6 +1,8 @@
 # Vector Weight System Prompts v2
 # Each prompt independently assesses relevance for its specific vector space
 
+from implementation.classes.enums import VectorCollectionName
+
 PLOT_EVENTS_WEIGHT_PROMPT = """
 You assess search query relevance for a movie vector database containing PLOT EVENTS.
 
@@ -430,12 +432,12 @@ Return valid JSON only:
 
 
 # Dictionary for easy access
-VECTOR_WEIGHT_PROMPTS = {
-    "plot_events": PLOT_EVENTS_WEIGHT_PROMPT,
-    "plot_analysis": PLOT_ANALYSIS_WEIGHT_PROMPT,
-    "viewer_experience": VIEWER_EXPERIENCE_WEIGHT_PROMPT,
-    "watch_context": WATCH_CONTEXT_WEIGHT_PROMPT,
-    "narrative_techniques": NARRATIVE_TECHNIQUES_WEIGHT_PROMPT,
-    "production": PRODUCTION_WEIGHT_PROMPT,
-    "reception": RECEPTION_WEIGHT_PROMPT,
+VECTOR_WEIGHT_SYSTEM_PROMPTS = {
+    VectorCollectionName.PLOT_EVENTS_VECTORS: PLOT_EVENTS_WEIGHT_PROMPT,
+    VectorCollectionName.PLOT_ANALYSIS_VECTORS: PLOT_ANALYSIS_WEIGHT_PROMPT,
+    VectorCollectionName.VIEWER_EXPERIENCE_VECTORS: VIEWER_EXPERIENCE_WEIGHT_PROMPT,
+    VectorCollectionName.WATCH_CONTEXT_VECTORS: WATCH_CONTEXT_WEIGHT_PROMPT,
+    VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS: NARRATIVE_TECHNIQUES_WEIGHT_PROMPT,
+    VectorCollectionName.PRODUCTION_VECTORS: PRODUCTION_WEIGHT_PROMPT,
+    VectorCollectionName.RECEPTION_VECTORS: RECEPTION_WEIGHT_PROMPT,
 }

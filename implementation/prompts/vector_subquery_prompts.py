@@ -3,6 +3,8 @@
 # Each prompt is completely independent — no templates, no shared components.
 # Each LLM only sees its own prompt and has no knowledge of other vectors.
 
+from implementation.classes.enums import VectorCollectionName
+
 # =============================================================================
 # PLOT EVENTS
 # =============================================================================
@@ -61,8 +63,7 @@ Return null when the query contains NO plot content:
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
-  "justification": "One sentence explaining your decision"
+  "relevant_subquery_text": "comma, separated, phrases" or null
 }
 
 Normalization rules:
@@ -176,8 +177,7 @@ Return null when the query has no thematic or genre content:
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
-  "justification": "One sentence explaining your decision"
+  "relevant_subquery_text": "comma, separated, phrases" or null
 }
 
 EXAMPLES
@@ -305,8 +305,7 @@ This should be RARE. If there's ANY vibe, emotion, or feeling implied, extract i
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
-  "justification": "One sentence explaining your decision"
+  "relevant_subquery_text": "comma, separated, phrases" or null
 }
 
 Include synonyms and near-duplicates — redundancy helps retrieval.
@@ -406,7 +405,7 @@ Include negations that describe content preferences or scenario constraints:
 - "not for kids" ✓
 
 CRITICAL RULE
-Include ALL relevant pieces. If your justification acknowledges something as relevant, it MUST appear in your output. Missing relevant content is a failure.
+Include ALL relevant pieces. Missing relevant content is a failure.
 
 WHEN TO RETURN NULL
 Return null when the query is purely about:
@@ -418,8 +417,7 @@ Return null when the query is purely about:
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
-  "justification": "One sentence explaining your decision"
+  "relevant_subquery_text": "comma, separated, phrases" or null
 }
 
 EXAMPLES
@@ -536,8 +534,7 @@ Return null when the query contains no technique content:
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
-  "justification": "One sentence explaining your decision"
+  "relevant_subquery_text": "comma, separated, phrases" or null
 }
 
 EXAMPLES
@@ -659,8 +656,7 @@ Return null when the query has no production metadata:
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
-  "justification": "One sentence explaining your decision"
+  "relevant_subquery_text": "comma, separated, phrases" or null
 }
 
 EXAMPLES
@@ -768,8 +764,7 @@ Return null when the query is purely neutral with no evaluation:
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
-  "justification": "One sentence explaining your decision"
+  "relevant_subquery_text": "comma, separated, phrases" or null
 }
 
 Include synonyms — redundancy helps retrieval.
@@ -822,22 +817,12 @@ Why: Pure viewing context describing how the user wants to USE a movie, with no 
 # DICTIONARY OF ALL PROMPTS
 # =============================================================================
 
-VECTOR_QUERY_PROMPTS = {
-    "plot_events": PLOT_EVENTS_SYSTEM_PROMPT,
-    "plot_analysis": PLOT_ANALYSIS_SYSTEM_PROMPT,
-    "viewer_experience": VIEWER_EXPERIENCE_SYSTEM_PROMPT,
-    "watch_context": WATCH_CONTEXT_SYSTEM_PROMPT,
-    "narrative_techniques": NARRATIVE_TECHNIQUES_SYSTEM_PROMPT,
-    "production": PRODUCTION_SYSTEM_PROMPT,
-    "reception": RECEPTION_SYSTEM_PROMPT,
+VECTOR_SUBQUERY_SYSTEM_PROMPTS = {
+    VectorCollectionName.PLOT_EVENTS_VECTORS: PLOT_EVENTS_SYSTEM_PROMPT,
+    VectorCollectionName.PLOT_ANALYSIS_VECTORS: PLOT_ANALYSIS_SYSTEM_PROMPT,
+    VectorCollectionName.VIEWER_EXPERIENCE_VECTORS: VIEWER_EXPERIENCE_SYSTEM_PROMPT,
+    VectorCollectionName.WATCH_CONTEXT_VECTORS: WATCH_CONTEXT_SYSTEM_PROMPT,
+    VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS: NARRATIVE_TECHNIQUES_SYSTEM_PROMPT,
+    VectorCollectionName.PRODUCTION_VECTORS: PRODUCTION_SYSTEM_PROMPT,
+    VectorCollectionName.RECEPTION_VECTORS: RECEPTION_SYSTEM_PROMPT,
 }
-
-
-if __name__ == "__main__":
-    print("Vector Query System Prompts v3")
-    print("=" * 60)
-    for name, prompt in VECTOR_QUERY_PROMPTS.items():
-        lines = prompt.strip().split('\n')
-        print(f"\n{name}:")
-        print(f"  Length: {len(prompt)} characters")
-        print(f"  Lines: {len(lines)}")

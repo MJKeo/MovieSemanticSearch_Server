@@ -10,7 +10,7 @@ from sklearn.manifold import TSNE
 import plotly.graph_objects as go
 from plotly.graph_objects import Figure
 import plotly.express as px
-from .schemas import ChromaVectorCollection
+from .classes.schemas import ChromaVectorCollection
 
 
 def visualize_vectors_tsne(

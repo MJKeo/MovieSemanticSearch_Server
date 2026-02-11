@@ -11,9 +11,9 @@ import chromadb
 from chromadb.config import Settings
 from dotenv import load_dotenv
 from openai import OpenAI
-from .movie import IMDBMovie
-from .schemas import ChromaVectorCollection
-from .enums import VectorCollectionName
+from .classes.movie import IMDBMovie
+from .classes.schemas import ChromaVectorCollection
+from .classes.enums import VectorCollectionName
 import numpy as np
 
 # Load environment variables from .env file
