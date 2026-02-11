@@ -490,8 +490,13 @@ def create_plot_events_vector_text(movie: IMDBMovie) -> str:
 def create_plot_analysis_vector_text(movie: IMDBMovie) -> str:
     parts = []
 
-    parts.append(str(movie.plot_analysis_metadata))
-    parts.append(", ".join(movie.overall_keywords)) # UPDATE TO BE ONLY APPLICABLE KEYWORDS
+    if movie.plot_analysis_metadata:
+        parts.append(str(movie.plot_analysis_metadata))
+    if movie.genres_subset():
+        parts.append(", ".join(movie.genres_subset()))
+    if movie.plot_keywords:
+        parts.append(", ".join(movie.plot_keywords))
+
 
     return "\n".join(parts)
 
@@ -552,6 +557,9 @@ def create_production_vector_text(movie: IMDBMovie) -> str:
     if characters_text:
         parts.append(characters_text)
 
+    # Maturity rating
+    parts.append(f"{movie.maturity_rating.lower()} maturity rating")
+
     return "\n".join(parts)
 
 
@@ -562,6 +570,7 @@ def create_reception_vector_text(movie: IMDBMovie) -> str:
         parts.append(movie.reception_tier().lower())
 
     if movie.reception_metadata:
+        parts.append(f"{movie.reception_metadata.new_reception_summary.lower()}")
         parts.append(f"Praises: {", ".join(movie.reception_metadata.praise_attributes)}")
         parts.append(f"Complaints: {", ".join(movie.reception_metadata.complaint_attributes)}")
 

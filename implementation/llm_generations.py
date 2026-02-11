@@ -8,7 +8,7 @@ DenseVibe fields for vector search, as specified in the movie search guide (sect
 import os
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor
-from .prompts import (
+from .prompts.metadata_generation_prompts import (
     PLOT_EVENTS_SYSTEM_PROMPT, 
     PLOT_ANALYSIS_SYSTEM_PROMPT,
     VIEWER_EXPERIENCE_SYSTEM_PROMPT,

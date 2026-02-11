@@ -649,17 +649,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews praise the film's sharp, humorous writing, charismatic lead and vivid coming-of-age characterization and comedy sequences, while several critics note dated elements, insulting minority stereotypes, and at least one comment about age-miscasting.",
+      "new_reception_summary": "Widely praised as a witty, charming and fast-paced coming‑of‑age comedy that captures the bittersweet feeling of late adolescence and delivers memorable comic set pieces. Viewers applaud the humor, inventive direction and strong lead performance while noting its enduring nostalgic appeal. Common complaints focus on dated cultural elements, limited/divisive representation of minorities, and a morally flawed (selfish) protagonist.",
       "praise_attributes": [
         "witty writing",
-        "charismatic lead performance",
-        "rich coming-of-age characterization",
-        "memorable comedy sequences"
+        "inventive comedy",
+        "strong performances",
+        "nostalgic tone"
       ],
       "complaint_attributes": [
         "dated elements",
-        "outdated racial stereotypes",
-        "age miscasting"
+        "stereotyped representation",
+        "selfish protagonist"
       ]
     },
     "production_metadata": {
@@ -1379,16 +1379,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the summary praise the film's social themes, humor, world-building, character growth, and visuals, while a reviewer and the summary note political messaging and a plot crutch/forced circumstances as weaknesses.",
+      "new_reception_summary": "Viewers found the film thought-provoking and entertaining, praising its handling of prejudice, diversity, and social themes alongside strong humor. Many highlighted the animation quality and character work as major strengths. Some critics felt the messaging could be heavy-handed and noted occasional plot contrivances used to advance the story.",
       "praise_attributes": [
         "strong social commentary",
-        "clever comedy",
-        "rich world-building",
-        "emotional character development"
+        "sharp comedy",
+        "excellent animation",
+        "well-developed characters"
       ],
       "complaint_attributes": [
-        "overly political messaging",
-        "plot contrivance"
+        "heavy-handed messaging",
+        "contrived plotting"
       ]
     },
     "production_metadata": {
@@ -2093,15 +2093,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple featured reviews praise the lead's energetic performance, broad comedy, feel‑good tone, and the music/kids' musical talent (e.g., 'over‑the‑top enthusiasm is contagious', 'hilarious', 'feelgood factor', 'they all play their own instruments'), while several reviews call the film 'cheesy' or 'unbelievable', noting an implausible premise.",
+      "new_reception_summary": "Audiences found the film uproariously funny and hugely carried by an energetic lead performance, with a talented young cast and a feel‑good, family-friendly rock soundtrack. Common criticisms noted a cheesy, implausible premise and occasionally one‑note/simplistic characterizations.",
       "praise_attributes": [
-        "strong lead performance",
-        "broad comedy",
-        "feel‑good tone",
-        "energetic soundtrack"
+        "energetic lead performance",
+        "talented young cast",
+        "catchy soundtrack",
+        "family-friendly comedy"
       ],
       "complaint_attributes": [
-        "cheesy/implausible premise"
+        "cheesy tone",
+        "implausible premise",
+        "simplistic characterization"
       ]
     },
     "production_metadata": {
@@ -2770,12 +2772,12 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews repeatedly praise the film's songs, lovable characters, visuals/animation, and subversion of tropes, while criticizing unclear character motivations, thin worldbuilding, and uneven pacing (e.g., mentions of catchy songs, lovable/well-written characters, beautiful animation, trope subversion, 'Anna's motivations are quite poor', 'environment lacked a real presence', and story pacing issues).",
+      "new_reception_summary": "Audiences praise the film for its catchy songs, lovable characters, and beautiful animation, calling it a fun, family-friendly fairy tale with a memorable twist. Viewers also note inventive subversions of classic tropes that helped make it a phenomenon. Common complaints focus on weak character motivations, thin worldbuilding, and uneven pacing that undercut some emotional beats.",
       "praise_attributes": [
-        "catchy music",
-        "strong characterization",
+        "catchy songs",
+        "lovable characters",
         "beautiful animation",
-        "subversive story"
+        "subversive storytelling"
       ],
       "complaint_attributes": [
         "weak motivations",
@@ -3426,12 +3428,12 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the summary praise the film's quotable lines, humor, memorable characters/performances, and nostalgic appeal, while noting criticisms about special effects and pacing (reception_summary and featured_reviews).",
+      "new_reception_summary": "Audience members celebrate the film's witty dialogue, memorable characters, and seamless mix of romance, adventure and comedy, giving it strong cross-generational and nostalgic appeal. Critics occasionally note dated special effects and uneven pacing, but overall the movie is widely regarded as a timeless, quotable classic.",
       "praise_attributes": [
-        "quotable dialogue",
-        "memorable performances",
-        "sharp comedy",
-        "nostalgic tone"
+        "witty dialogue",
+        "memorable characters",
+        "charming ensemble",
+        "generational appeal"
       ],
       "complaint_attributes": [
         "dated special effects",
@@ -4076,12 +4078,12 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple sources (reception summary and featured reviews) repeatedly praise the film's animation/visuals, music, and emotional/family-focused storytelling, while the summary explicitly notes criticisms of a simplistic script and a predictable twist.",
+      "new_reception_summary": "Widely praised for stunning, colorful animation, detailed visuals, and a memorable, emotional musical score; viewers highlight its heartfelt exploration of family, memory, tradition, and respectful depiction of cultural rituals. Some criticism centers on a simplistic script and a predictable twist, though emotional impact and visual spectacle remain the dominant impressions.",
       "praise_attributes": [
-        "stunning animation",
-        "vibrant visuals",
-        "soulful music",
-        "emotional storytelling"
+        "beautiful animation",
+        "emotional storytelling",
+        "authentic cultural portrayal",
+        "memorable music"
       ],
       "complaint_attributes": [
         "simplistic plot",
@@ -4738,17 +4740,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the summary repeatedly praise the film's distinctive/hand-drawn animation, emotional heart/heartfelt tone, strong voice acting, and inspirational message, while also noting criticisms of being overly sentimental/predictable, having limited character complexity, and uneven pacing/humor.",
+      "new_reception_summary": "Viewers praised the film's distinctive, hand-drawn–inspired animation and emotionally warm storytelling, calling it a charming holiday favorite. Voice performances and character growth were frequently highlighted, while some found the plot predictable and the sentimentality or pacing uneven for their tastes.",
       "praise_attributes": [
-        "distinctive animation",
-        "heartfelt emotion",
+        "innovative animation",
+        "emotional storytelling",
         "strong voice acting",
-        "inspirational theme"
+        "charming characterization"
       ],
       "complaint_attributes": [
         "overly sentimental",
         "predictable plot",
-        "thin character depth",
         "uneven pacing"
       ]
     },
@@ -5402,16 +5403,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple sources in the summary and featured reviews praise the film's poignant storytelling and opening montage, lauded animation/technical quality, and well-developed, relatable characters, while also noting concerns about inappropriate themes for children and plot inconsistencies.",
+      "new_reception_summary": "Widely praised as a poignant, emotionally powerful animated film with a standout opening montage and strong character development. Viewers praise the animation, visuals and blend of humor and heartbreak that appeals to both children and adults. Some viewers note plot inconsistencies and occasional overly villainous beats, and question suitability for very young children.",
       "praise_attributes": [
-        "emotionally powerful storytelling",
-        "high-quality animation",
+        "poignant storytelling",
+        "beautiful animation",
         "strong character development",
-        "moving opening sequence"
+        "blend of humor and pathos"
       ],
       "complaint_attributes": [
-        "inappropriate for children",
-        "plot inconsistencies"
+        "inappropriate for young children",
+        "plot inconsistencies",
+        "overly exaggerated villain"
       ]
     },
     "production_metadata": {
@@ -6088,14 +6090,15 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple featured reviews praise the film’s strong female lead, hand-drawn/beautiful animation, memorable humor/comic relief, and evocative China-inspired visuals, while a reviewer specifically criticized some weak song lyrics.",
+      "new_reception_summary": "Viewers praised the film's hand-drawn animation, its strong, independent female lead, and its blend of humor and heartfelt music. Many appreciated the respectful, visually authentic depiction of the cultural setting. Some viewers noted complaints about changes from the original legend and weak lyrics in a few songs.",
       "praise_attributes": [
-        "strong female lead",
         "beautiful animation",
-        "witty comic relief",
-        "evocative visuals"
+        "strong female lead",
+        "humorous supporting characters",
+        "emotional music"
       ],
       "complaint_attributes": [
+        "deviations from source",
         "weak song lyrics"
       ]
     },
@@ -6723,10 +6726,10 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews explicitly praise the film’s computer animation as groundbreaking, its layered/ adult-oriented humor, standout voice acting, and charming storytelling (e.g., “groundbreaking…great animation,” “innuenos…read at least two levels,” “great voice acting,” “the story line itself is charming”).",
+      "new_reception_summary": "Widely praised for its groundbreaking computer animation and polished visual detail. Viewers highlight sharp, multilayered humor that appeals to both children and adults, strong voice performances, and a warm, irreverent take on fairy-tale storytelling.",
       "praise_attributes": [
-        "innovative animation",
-        "sharp adult humor",
+        "excellent animation",
+        "clever adult humor",
         "strong voice acting",
         "charming storytelling"
       ],
@@ -7290,16 +7293,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews praise the stop-motion animation, memorable songs (especially the Miser Brothers), voice acting/characters and festive charm, while a few note a confusing plot and that two songs ‘should have been cut or re-worked.’",
+      "new_reception_summary": "Longtime viewers praise the stop-motion animation, catchy songs (especially the Miser Brothers numbers), strong voice performances, and nostalgic, heartwarming tone. A minority note uneven plotting and a couple of weaker songs that feel like filler.",
       "praise_attributes": [
-        "excellent stop-motion animation",
-        "memorable musical numbers",
-        "strong voice acting",
-        "charming holiday tone"
+        "strong stop-motion animation",
+        "memorable music",
+        "warm nostalgic tone",
+        "effective voice acting"
       ],
       "complaint_attributes": [
-        "confusing plot",
-        "uneven songs"
+        "uneven plotting",
+        "weak filler songs"
       ]
     },
     "production_metadata": {
@@ -8063,16 +8066,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the summary repeatedly praise the film's action, cinematography, practical stunts/effects and production design, while several sources criticize its simple plot and limited character/backstory.",
+      "new_reception_summary": "Widely praised as an intense, visually stunning action spectacle driven by practical effects, spectacular stunts, and striking cinematography. Viewers repeatedly highlighted the film's thrilling pacing, production design, and prominent strong female characters. Common criticisms focused on a thin plot and limited backstory or character exposition.",
       "praise_attributes": [
-        "spectacular action",
-        "stunning cinematography",
+        "excellent action sequences",
+        "striking cinematography",
         "impressive practical effects",
-        "inventive production design"
+        "spectacular stunt work"
       ],
       "complaint_attributes": [
         "thin plot",
-        "limited character development"
+        "sparse backstory"
       ]
     },
     "production_metadata": {
@@ -8809,12 +8812,12 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple sources note the film's thrilling, well-staged action, sharp humor, charismatic lead and iconic score while audience attributes and reviews explicitly cite a thin story and weak character development.",
+      "new_reception_summary": "Widely praised as a high‑energy, classic adventure — audiences celebrate its thrilling set pieces, charismatic lead performance, iconic score, and immersive production design. Common criticisms focus on a thin story and limited character development despite strong thrills and technical craft.",
       "praise_attributes": [
-        "exciting action",
-        "witty humor",
+        "thrilling action",
         "charismatic lead",
-        "memorable score"
+        "memorable score",
+        "inventive production design"
       ],
       "complaint_attributes": [
         "thin story",
@@ -9634,15 +9637,15 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviewers and the reception summary praise the film's direction, action sequences, cinematography, standout performance (Heath Ledger) and score, while both the summary and audience attributes note negative reception for pacing and character development.",
+      "new_reception_summary": "Widely praised for intense performances, especially a standout villain turn, and for its direction, score, cinematography, and action. Viewers admired the film's moral complexity and genre impact, though several noted uneven pacing and weak character development.",
       "praise_attributes": [
-        "strong direction",
+        "excellent direction",
         "stunning cinematography",
-        "exciting action",
-        "standout acting"
+        "thrilling action sequences",
+        "powerful performances"
       ],
       "complaint_attributes": [
-        "sluggish pacing",
+        "uneven pacing",
         "weak character development"
       ]
     },
@@ -10348,16 +10351,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews repeatedly praise the film’s action, fight choreography, stylish cinematography/direction, lead performance and worldbuilding, while summaries and reviews also note a thin plot and shallow characters.",
+      "new_reception_summary": "Viewers praise the film for relentless, well-choreographed action and stylish cinematography, anchored by a strong lead performance. Many also appreciated its vivid, immersive criminal worldbuilding and crisp direction. Common complaints focus on a thin plot and underdeveloped supporting characters.",
       "praise_attributes": [
-        "excellent action",
+        "excellent fight choreography",
         "stylish cinematography",
         "strong lead performance",
-        "immersive worldbuilding"
+        "rich worldbuilding"
       ],
       "complaint_attributes": [
         "thin plot",
-        "shallow characters"
+        "shallow characterisation"
       ]
     },
     "production_metadata": {
@@ -11148,15 +11151,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviewers praise the lead performance, origin-story structure, and 1940s visual style, while several comments call the villain underdeveloped and criticize uneven/mid-film pacing.",
+      "new_reception_summary": "Viewers praise the film as an engaging origin story anchored by a strong lead performance and evocative WWII-era production. Visuals and effects are frequently commended, though reactions to action beats vary. Common complaints focus on an underdeveloped villain and uneven pacing, while some desire more innovation.",
       "praise_attributes": [
-        "strong lead performance",
         "engaging origin story",
-        "nostalgic production design"
+        "strong lead performance",
+        "nostalgic production design",
+        "solid visual effects"
       ],
       "complaint_attributes": [
         "underdeveloped villain",
-        "uneven pacing"
+        "uneven pacing",
+        "poor historical accuracy"
       ]
     },
     "production_metadata": {
@@ -11999,16 +12004,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the summary consistently praise the film's animation, visuals, action and emotional stakes while noting pacing problems and that the dense/overwhelming visuals can detract from enjoyment.",
+      "new_reception_summary": "Widely praised for its stunning, highly inventive animation, dynamic action, and strong emotional depth. Viewers highlight the film's technical ambition, soundtrack, and visual creativity. Common criticisms focus on uneven pacing, occasionally overwhelming visuals, and a story that feels like an incomplete, split installment.",
       "praise_attributes": [
         "stunning animation",
-        "dynamic action",
-        "emotional depth",
+        "exciting action",
+        "emotional stakes",
         "innovative visuals"
       ],
       "complaint_attributes": [
         "uneven pacing",
-        "overwhelming visuals"
+        "overwhelming visuals",
+        "incomplete structure"
       ]
     },
     "production_metadata": {
@@ -12896,18 +12902,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the reception summary praise the film’s epic action, emotional depth, character arcs and visuals while noting its long runtime, convoluted time-travel plot, uneven pacing and underused characters (reception_summary; featured_reviews).",
+      "new_reception_summary": "Viewers praise the film as an emotionally powerful, visually impressive and epic conclusion that rewards long-term fans. Action set pieces, character payoffs and nostalgic moments are frequently highlighted. Common complaints focus on uneven pacing, thin plotting/time-travel logic, and underused characters or excessive fan service.",
       "praise_attributes": [
         "epic action",
-        "emotional payoff",
-        "strong character arcs",
-        "impressive visuals"
+        "emotionally powerful",
+        "visually impressive",
+        "satisfying finale"
       ],
       "complaint_attributes": [
-        "overlong runtime",
-        "convoluted plot",
         "uneven pacing",
-        "underused characters"
+        "thin plotting",
+        "underused characters",
+        "overreliance on fan service"
       ]
     },
     "production_metadata": {
@@ -13605,18 +13611,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews repeatedly praise the film's special effects, score, production design, worldbuilding and generational appeal while noting problems with character development, derivative/clichéd elements, dialogue, and some dated effects.",
+      "new_reception_summary": "Broadly celebrated as a generational, culture-shaping space fantasy praised for its inventive worldbuilding, iconic production design, memorable score, and groundbreaking special effects. Viewers commend its mythic storytelling and emotional themes of redemption and heroism, while some criticize bland dialogue, weak character development, and occasional clichés or dated moments. Overall impact on cinema and popular culture is repeatedly emphasized.",
       "praise_attributes": [
+        "inventive worldbuilding",
         "innovative special effects",
-        "memorable score",
-        "rich worldbuilding",
-        "iconic production design"
+        "iconic production design",
+        "strong generational appeal"
       ],
       "complaint_attributes": [
         "weak character development",
-        "derivative elements",
-        "stilted dialogue",
-        "dated effects"
+        "derivative storytelling",
+        "poor dialogue"
       ]
     },
     "production_metadata": {
@@ -14363,17 +14368,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews and the reception summary repeatedly praise the film’s effects, production design, worldbuilding and cinematography (e.g., “impressive effects,” “party of colors and sights,” “perfectly recreated” locations), while noting criticisms about pacing, omitted book material, and effects aging compared to later entries (mentions of “dragging,” “much is left out,” and effects being less impressive later).",
+      "new_reception_summary": "Widely praised as a faithful, visually rich introduction that brings the book's world to life through strong production design and worldbuilding. Viewers note impressive effects and cinematography but criticize pacing, omissions from the source material, and uneven performances from the young cast.",
       "praise_attributes": [
-        "impressive visual effects",
-        "detailed production design",
-        "inventive worldbuilding",
-        "memorable cinematography"
+        "excellent worldbuilding",
+        "strong production design",
+        "impressive cinematography",
+        "magical fantastical elements"
       ],
       "complaint_attributes": [
-        "uneven pacing",
-        "abridged adaptation",
-        "dated effects"
+        "pacing issues",
+        "incomplete adaptation",
+        "uneven performances",
+        "effects dated"
       ]
     },
     "production_metadata": {
@@ -15159,16 +15165,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviewers praise visuals, effects, score, performances, and worldbuilding (e.g., “stunning visuals,” “great score,” “acting was flawless,” “brought us Middle Earth”), while the summary notes criticisms of pacing, character depth, and deviations from the book.",
+      "new_reception_summary": "Widely praised for its stunning visuals, immersive score, and meticulous worldbuilding; performances and ensemble chemistry are frequently singled out as authentic and compelling. Viewers celebrate the production design and epic scale, though some note uneven pacing and limited character depth, plus occasional deviations from the source material.",
       "praise_attributes": [
-        "stunning cinematography",
+        "excellent cinematography",
         "immersive score",
-        "excellent acting",
-        "epic worldbuilding"
+        "strong performances",
+        "detailed worldbuilding"
       ],
       "complaint_attributes": [
         "uneven pacing",
-        "limited character depth",
+        "thin characterization",
         "adaptation deviations"
       ]
     },
@@ -15935,16 +15941,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews and the summary repeatedly praise the film’s performances, cinematography/visual spectacle, epic scale, and iconic score while criticizing historical inaccuracies, a simplistic script, pacing issues, and noticeable CGI (e.g., reception_summary and multiple featured reviews).",
+      "new_reception_summary": "Widely praised for its epic scale, powerful performances, striking cinematography and iconic score; many viewers call it a revitalizing, emotionally affecting spectacle. Common criticisms focus on a simplistic script, historical inaccuracies, uneven pacing and noticeable CGI, with some finding parts emotionally predictable or cold.",
       "praise_attributes": [
         "powerful performances",
-        "spectacular cinematography",
-        "epic scale",
-        "iconic score"
+        "striking cinematography",
+        "iconic score",
+        "grand spectacle"
       ],
       "complaint_attributes": [
-        "historically inaccurate",
         "simplistic script",
+        "historical inaccuracies",
         "uneven pacing",
         "overused CGI"
       ]
@@ -16696,16 +16702,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews praise the director's ambitious handling and dream-focused concept plus the score and cinematography, while multiple comments and the summary note a convoluted/confusing plot, pacing problems, limited emotional/character depth, and uninspired action sequences.",
+      "new_reception_summary": "Viewers praise the film's ambitious dream-focused concept, strong lead performance, evocative score and striking cinematography for creating a thought-provoking, visually impressive experience. Criticisms focus on a confusing, sometimes convoluted plot, uneven pacing and weak character development, with some finding action sequences uninspired. The ambiguous ending divides audiences.",
       "praise_attributes": [
-        "strong direction",
-        "thought-provoking concept",
-        "haunting score",
-        "stunning cinematography"
+        "thought-provoking story",
+        "stunning cinematography",
+        "powerful score",
+        "strong lead performance"
       ],
       "complaint_attributes": [
         "confusing plot",
-        "weak pacing",
+        "uneven pacing",
         "weak character development",
         "uninspired action"
       ]
@@ -17421,15 +17427,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviewers praise the film's special effects/bullet-time, action sequences, philosophical, thought-provoking themes, and cinematography; summary also notes 'criticisms of ... some narrative elements', supporting a minor complaint.",
+      "new_reception_summary": "Widely regarded as a groundbreaking sci‑fi that reinvented action filmmaking through innovative visual effects and iconic action sequences. Viewers praise its philosophical, thought‑provoking themes and stylish cinematography and design. Some critics note narrative weaknesses and disappointment with later sequels.",
       "praise_attributes": [
-        "innovative visual effects",
-        "spectacular action sequences",
-        "thought-provoking philosophical themes",
-        "stunning cinematography"
+        "groundbreaking visual effects",
+        "stylish cinematography",
+        "taut action sequences",
+        "thought‑provoking themes"
       ],
       "complaint_attributes": [
-        "minor narrative flaws"
+        "narrative weaknesses",
+        "weak sequels"
       ]
     },
     "production_metadata": {
@@ -18183,18 +18190,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews and summary repeatedly praise the film's ambition, visuals, score, and emotional impact (mentions of 'ambitious themes', 'breathtaking visuals/IMAX', Hans Zimmer's music, and lasting emotional effect), while summaries and some critics note a convoluted plot, questioned scientific accuracy, slow pacing, and long runtime.",
+      "new_reception_summary": "Viewers praise the film for its ambitious themes, stunning visuals, and strong emotional core, repeatedly highlighting the score as a standout element. Many found it thought-provoking and moving, especially around family dynamics and cosmic scale. Criticisms focus on a convoluted plot, questioned scientific accuracy, and uneven pacing/length.",
       "praise_attributes": [
         "ambitious themes",
         "stunning cinematography",
-        "powerful soundtrack",
-        "emotional depth"
+        "emotional storytelling",
+        "powerful soundtrack"
       ],
       "complaint_attributes": [
         "convoluted plot",
-        "questionable scientific accuracy",
+        "scientific inaccuracies",
         "slow pacing",
-        "excessive length"
+        "overlong runtime"
       ]
     },
     "production_metadata": {
@@ -18893,18 +18900,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews and the reception summary repeatedly praise visuals/cinematography, worldbuilding, atmosphere, performances and themes while criticizing slow pacing, long runtime, lack of originality, and plot issues (see reception_summary and multiple featured reviews).",
+      "new_reception_summary": "Audiences praise the film's visuals, atmospheric worldbuilding, thematic ambition, and strong direction and performances. Common criticisms focus on slow pacing, long runtime, and occasional plot weaknesses or perceived lack of originality. Overall reception balances admiration for its artistry with complaints about tempo and narrative issues.",
       "praise_attributes": [
         "stunning cinematography",
-        "ambitious worldbuilding",
-        "moody atmosphere",
-        "strong performances"
+        "rich worldbuilding",
+        "strong direction",
+        "powerful performances"
       ],
       "complaint_attributes": [
         "slow pacing",
         "overlong runtime",
-        "derivative elements",
-        "uneven plotting"
+        "uneven plotting",
+        "derivative elements"
       ]
     },
     "production_metadata": {
@@ -19553,15 +19560,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the reception summary repeatedly praise the film’s special effects, direction/suspense, iconic score, and realistic creature portrayal, while several reviewers criticize some uneven/overdone acting.",
+      "new_reception_summary": "Viewers praise the film's groundbreaking special effects, realistic creature design, and Spielberg's suspenseful direction that delivers a thrilling visual spectacle. John Williams' iconic score is widely cited as enhancing the emotional impact. Some viewers note uneven acting and a few dated elements, but overall the film is celebrated for its lasting generational appeal.",
       "praise_attributes": [
         "revolutionary special effects",
-        "skilled direction",
-        "iconic score",
-        "realistic creature design"
+        "realistic creature design",
+        "suspenseful direction",
+        "iconic score"
       ],
       "complaint_attributes": [
-        "uneven acting"
+        "uneven acting",
+        "dated elements"
       ]
     },
     "production_metadata": {
@@ -20304,14 +20312,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple featured reviews praised the lead performance as 'fabulous' and single‑handedly carrying the film, called the script/writing 'very well written' and 'intelligent', repeatedly highlighted the 'haunting' score, and described the visuals as 'stunning' and original.",
+      "new_reception_summary": "Widely praised as a thoughtful, character-driven sci-fi that foregrounds language and non-linear time, delivering an emotionally powerful and intellectually challenging experience. Viewers highlight strong lead acting, haunting music, and striking visuals. Some note it deliberately avoids big action set pieces, which may disappoint action-oriented audiences.",
       "praise_attributes": [
-        "excellent lead performance",
-        "thoughtful screenplay",
+        "powerful acting",
+        "thoughtful writing",
         "haunting score",
-        "stunning visuals"
+        "striking visuals"
       ],
-      "complaint_attributes": []
+      "complaint_attributes": [
+        "not action-packed",
+        "slow pacing"
+      ]
     },
     "production_metadata": {
       "production_keywords": {
@@ -20957,17 +20968,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews praise the lead performance, cinematography, atmosphere and psychological slow-burn tension, while summaries and reviews repeatedly note the slow pacing and an ambiguous/alienating ending that some viewers found unpleasant or divisive.",
+      "new_reception_summary": "Viewers found the film haunting and unsettling, praising a powerhouse lead performance, striking cinematography, and a tense slow-burn that emphasizes psychological depth. Many appreciated its atmosphere, sound design, and craftsmanship in horror, while others found the pacing plodding and the finale ambiguous or over-the-top. Strongly affecting for some, divisive for viewers seeking conventional scares.",
       "praise_attributes": [
-        "powerful performance",
-        "striking cinematography",
-        "haunting atmosphere",
-        "psychological tension"
+        "powerful acting",
+        "stunning cinematography",
+        "tense slow-burn",
+        "psychological depth"
       ],
       "complaint_attributes": [
         "slow pacing",
         "ambiguous ending",
-        "unpleasant tone"
+        "overlong runtime"
       ]
     },
     "production_metadata": {
@@ -21624,17 +21635,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews repeatedly praise the film's atmosphere, camera work, lead performance and production design while criticizing underdeveloped characters, slow pacing and perceived lack of coherence (reception_summary and featured_reviews).",
+      "new_reception_summary": "Viewers praise the film's atmosphere, striking cinematography, and an iconic central performance, highlighting strong psychological depth and production design. Common complaints focus on weak character development and slow pacing, with some viewers criticizing deviations from the source material. Overall reception is mixed but the film is widely regarded as influential in horror.",
       "praise_attributes": [
-        "haunting atmosphere",
-        "innovative cinematography",
-        "standout lead performance",
-        "impressive production design"
+        "atmospheric",
+        "striking cinematography",
+        "iconic performance",
+        "psychological depth"
       ],
       "complaint_attributes": [
         "weak character development",
         "slow pacing",
-        "ambiguous plotting"
+        "unfaithful adaptation"
       ]
     },
     "production_metadata": {
@@ -22247,15 +22258,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews repeatedly praise the film's intense scares, creepy atmosphere, and striking cinematography while one review calls the storyline only 'decent' / 'not an amazing concept', supporting these attributes.",
+      "new_reception_summary": "Audience reactions emphasize the film as genuinely scary with intense, memorable scares and a strong creepy atmosphere. Viewers repeatedly praised the cinematography and disturbing imagery that sustain tension. Some noted a thin or familiar plot and occasional reliance on jump-scare tactics.",
       "praise_attributes": [
-        "intense scares",
-        "striking cinematography",
-        "creepy atmosphere",
-        "original approach"
+        "genuinely scary",
+        "effective cinematography",
+        "strong atmosphere",
+        "disturbing imagery"
       ],
       "complaint_attributes": [
-        "thin plot"
+        "thin plot",
+        "reliance on jump scares",
+        "familiar tropes"
       ]
     },
     "production_metadata": {
@@ -22967,18 +22980,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviewers praised the practical gore/creative kills and higher production values/acting (mentions of 'special effects gore is off the chart', 'creative horror scenes', 'acting was great', and 'blood was fun'), while several highlighted a confusing/choppy finale, weak or disjointed storytelling, rushed third act/pacing, and the lead's self-aware tone as major negatives.",
+      "new_reception_summary": "Viewers praised the film’s practical gore, creative kills, and upgraded production values and performances. Many found the final act confusing and rushed, with a disjointed, weak plot and uneven, sometimes cringey dialogue. Some also noted a self-aware tone that undercut earlier momentum.",
       "praise_attributes": [
-        "effective practical gore",
+        "exceptional gore",
         "creative kills",
-        "impressive production value",
-        "strong acting"
+        "higher production value",
+        "engaging lead performance"
       ],
       "complaint_attributes": [
         "confusing ending",
-        "weak storytelling",
+        "weak plotting",
         "rushed pacing",
-        "self-aware tone"
+        "cringey dialogue"
       ]
     },
     "production_metadata": {
@@ -23589,16 +23602,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews praise the film's clever writing, tense suspense, shocking twist ending, and memorable score while reviewers note overly dark visuals and at least one reviewer called a late reveal uncharacteristic or unfair.",
+      "new_reception_summary": "Viewers praised the film as a smart, twist-driven thriller with strong tension, effective editing, and a memorable score. Many highlighted the clever mystery and solid performances that elevate its horror elements. Minor complaints focused on overly dark visuals and an occasionally unfair/contrived plot reveal.",
       "praise_attributes": [
         "clever writing",
-        "tense suspense",
-        "effective twist",
+        "twisty plotting",
+        "tense pacing",
         "memorable score"
       ],
       "complaint_attributes": [
         "overly dark cinematography",
-        "occasionally unfair plotting"
+        "contrived plot point"
       ]
     },
     "production_metadata": {
@@ -24317,12 +24330,12 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews call the film grim, disturbing and bleak while praising Fincher's direction, the cinematography, the acting, and its relentless suspense (mentions of dim lighting, unsettling visuals, excellent performances, and ‘harrowing’/‘shocking’ ending).",
+      "new_reception_summary": "Widely regarded as a gripping, unsettling thriller with strikingly dark direction and memorable performances. Viewers praise its stylish cinematography, taut suspense, and shocking, morally ambiguous ending. Many note the film’s relentless bleakness and graphic violence as disturbing drawbacks.",
       "praise_attributes": [
-        "strong direction",
         "excellent performances",
         "stylish cinematography",
-        "gripping suspense"
+        "taut suspense",
+        "dark direction"
       ],
       "complaint_attributes": [
         "bleak tone",
@@ -25141,16 +25154,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Audience praise in the summary and reviews highlights direction, cinematography, acting and sharp writing as strengths; criticisms explicitly include being overhyped/questioned for originality and dislike of the film's second half.",
+      "new_reception_summary": "Viewers praised the film for its sharp social-class critique, confident direction, strong performances, and genre-blending that mixes comedy, thriller, and horror. Many highlighted its striking visuals, dark humor, and tense suspense, calling it thought-provoking. A minority found it overhyped, questioned its originality, and were bothered by the film's ambiguous second half.",
       "praise_attributes": [
-        "excellent direction",
-        "stunning cinematography",
-        "excellent acting",
-        "sharp writing"
+        "strong direction",
+        "excellent cinematography",
+        "sharp dark humor",
+        "intense suspense"
       ],
       "complaint_attributes": [
-        "uneven second-half",
-        "questionable originality"
+        "overhyped",
+        "questionable originality",
+        "ambiguous narrative",
+        "uneven second-half"
       ]
     },
     "production_metadata": {
@@ -25784,15 +25799,15 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple featured reviews praise the film’s smart script, confident debut direction, sustained suspenseful atmosphere, and standout lead performance, while several reviewers specifically cite a tonally jarring/underwhelming ending as the film’s main flaw.",
+      "new_reception_summary": "Viewers praised the film's tense, slowly building suspense, smart social commentary on liberal racism, and stylish direction from a first-time filmmaker. Performances—especially the lead—and the unsettling atmosphere and cinematography were frequently highlighted. A common criticism is a tonally jarring, underwhelming ending.",
       "praise_attributes": [
-        "smart writing",
-        "skilled directing",
-        "tense atmosphere",
-        "strong lead performance"
+        "taut suspense writing",
+        "stylish cinematography",
+        "strong debut direction",
+        "memorable lead acting"
       ],
       "complaint_attributes": [
-        "weak/tonally jarring ending"
+        "tonally jarring ending"
       ]
     },
     "production_metadata": {
@@ -26506,16 +26521,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews and the summary repeatedly praise the lead performance, stylish visuals/production design and haunting score, while noting underused supporting roles, narrative ambiguity, and controversial graphic violence (evidence: reception_summary and multiple featured reviews).",
+      "new_reception_summary": "Viewers find the film a provocative, satirical exploration of consumerism and fractured identity, anchored by a chilling lead performance. Praise focuses on the dark humor, sharp social commentary, stylish visuals and haunting score; criticisms center on an ambiguous plot and underused supporting cast.",
       "praise_attributes": [
-        "stunning lead performance",
-        "stylish production design",
+        "excellent lead performance",
+        "sharp social satire",
+        "stylish visuals",
         "haunting score"
       ],
       "complaint_attributes": [
-        "underused supporting cast",
         "ambiguous narrative",
-        "controversial violence"
+        "underused supporting cast"
       ]
     },
     "production_metadata": {
@@ -27218,16 +27233,15 @@
       }
     },
     "reception_metadata": {
-      "justification": "Audience praise repeatedly highlights strong performances, stylish direction, striking cinematography, and provocative social commentary (reception_summary and featured_reviews); critiques note mixed initial reception and concerns the film glorifies violence (reception_summary).",
+      "new_reception_summary": "Viewed as a bold, visually striking film that provokes thought about identity, consumerism, and rebellion. Widely praised for its performances, direction, cinematography, and psychological depth, though some viewers criticize its depiction of violence and found it initially divisive.",
       "praise_attributes": [
         "strong performances",
         "stylish direction",
         "striking cinematography",
-        "thought-provoking social commentary"
+        "deep psychological themes"
       ],
       "complaint_attributes": [
-        "glorified violence",
-        "polarizing reception"
+        "problematic violence"
       ]
     },
     "production_metadata": {
@@ -28126,16 +28140,15 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviewers and the reception summary praise the film's emotional impact, performers' chemistry, and visual/special-effects production (e.g., \"so many emotions,\" \"acting and chemistry,\" \"special effects are second to none,\" \"preciseness of the ship\"), while the summary and reviews note criticisms of melodrama, perceived historical inaccuracies, thin storytelling, and runtime.",
+      "new_reception_summary": "Viewers praise the film's epic romantic core, strong lead chemistry, and spectacular visuals/production design recreating the sinking. Many highlight its emotional resonance and sustained dramatic tension. Common complaints: melodramatic moments, a thin/formulaic story, and an overlong runtime; some note historical inaccuracies.",
       "praise_attributes": [
-        "strong performances",
-        "powerful chemistry",
-        "stunning visual effects",
-        "epic production design"
+        "excellent chemistry",
+        "stunning visuals",
+        "strong emotional resonance",
+        "impressive production design"
       ],
       "complaint_attributes": [
-        "excessive melodrama",
-        "historical inaccuracies",
+        "melodramatic tone",
         "thin story",
         "overlong runtime"
       ]
@@ -29060,16 +29073,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews and the summary repeatedly praise the film's emotional core, Tom Hanks' performance, soundtrack and special-effects integration, while citing criticism that it oversimplifies complex issues and elicits mixed opinions on character/event portrayals.",
+      "new_reception_summary": "Audience praise centers on the film's heartfelt performances, emotional storytelling, memorable soundtrack, and effective visual effects that weave the protagonist into historical events. Many viewers find it inspirational and nostalgic, a timeless crowd-pleaser. Common criticism notes that the film oversimplifies complex issues and contains controversial portrayals of characters and events.",
       "praise_attributes": [
-        "heartfelt storytelling",
-        "exceptional acting",
+        "heartfelt performances",
         "memorable soundtrack",
-        "seamless visual effects"
+        "effective visual effects",
+        "inspirational tone"
       ],
       "complaint_attributes": [
         "oversimplified themes",
-        "mixed character portrayals"
+        "controversial portrayals"
       ]
     },
     "production_metadata": {
@@ -29698,14 +29711,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews praise the leads' performances, the director's sensitive, true-to-life approach, the film's emotional impact and quiet visual moments (e.g., ‘3 leads are wonderful’, ‘exceptional’, ‘true...made of silences’, ‘heartbreaking’, and praise for cinematography showing time passing).",
+      "new_reception_summary": "Viewers found the film a quietly devastating, very realistic love story anchored by nuanced performances and sensitive direction. Praise centers on authentic emotional truth, evocative silences, and striking cinematography. A common caveat is dissatisfaction with the film's ambiguous/unsatisfying ending.",
       "praise_attributes": [
-        "strong acting",
+        "nuanced acting",
+        "realistic writing",
         "sensitive direction",
-        "emotional resonance",
-        "poignant cinematography"
+        "beautiful cinematography"
       ],
-      "complaint_attributes": []
+      "complaint_attributes": [
+        "ambiguous ending"
+      ]
     },
     "production_metadata": {
       "production_keywords": {
@@ -30494,16 +30509,16 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the summary praise the film's direction, cinematography, emotional weight, and lead performance while noting criticisms of perceived sentimentality and limited character development (summary and featured reviews).",
+      "new_reception_summary": "Viewers consider it a harrowing, unforgettable Holocaust drama with realistic historical detail, atmospheric cinematography, and devastating emotional intensity. Adrien Brody's performance and the direction are widely praised, though some find the protagonist passive or occasionally sentimental.",
       "praise_attributes": [
-        "powerful direction",
-        "stunning cinematography",
-        "emotional performance",
-        "intense emotional weight"
+        "powerful acting",
+        "realistic historical accuracy",
+        "atmospheric cinematography",
+        "intense emotionality"
       ],
       "complaint_attributes": [
-        "perceived sentimentality",
-        "underdeveloped characterization"
+        "passive characterization",
+        "occasional sentimentality"
       ]
     },
     "production_metadata": {
@@ -31120,18 +31135,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the reception summary repeatedly praise the film's heartfelt, romantic chemistry, character development, emotional stakes and nostalgic tone while noting criticisms of excessive sentimentality, formulaic/predictable plotting and an unrealistic portrayal of the central relationship.",
+      "new_reception_summary": "Viewers praise the film for its emotional impact, strong on-screen chemistry, and heartfelt depiction of enduring love. Common complaints focus on its sentimental tone, formulaic structure, and predictable or idealized relationship portrayals.",
       "praise_attributes": [
         "strong chemistry",
-        "emotional performances",
-        "well-developed characters",
-        "nostalgic atmosphere"
+        "heartfelt tone",
+        "powerful emotional stakes",
+        "strong performances"
       ],
       "complaint_attributes": [
-        "overly sentimental tone",
-        "formulaic plotting",
+        "overly sentimental",
+        "formulaic writing",
         "predictable plot",
-        "unrealistic romance"
+        "unrealistic relationships"
       ]
     },
     "production_metadata": {
@@ -31838,18 +31853,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews praise the film as funny, feel-good and romantic with strong lead chemistry and broad entertainment value, while several cite pacing issues, some overdone/weak secondary characters, a somewhat contrived plot, and occasional jokes that don’t land.",
+      "new_reception_summary": "Viewers found the film an entertaining, feel‑good romantic comedy with strong lead chemistry and sincere emotional moments. Most praised its funny beats and heartfelt portrayal of an unusual love story, while some noted uneven humor, pacing issues, and overdone supporting characters.",
       "praise_attributes": [
-        "genuinely funny",
-        "heartfelt romance",
         "strong lead chemistry",
-        "feel-good tone"
+        "feel-good tone",
+        "effective comedy",
+        "heartfelt romance"
       ],
       "complaint_attributes": [
+        "uneven humor",
         "uneven pacing",
-        "weak supporting characters",
-        "contrived plot",
-        "misfired jokes"
+        "weak supporting characterization"
       ]
     },
     "production_metadata": {
@@ -32466,17 +32480,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple featured reviews call the film “predictable” and “formulaic,” praise the lead’s charm and the chemistry between leads, note the “spectacular” Irish scenery, and also mention “awkward” moments and overt “Irish tourism”/stereotypical elements.",
+      "new_reception_summary": "Viewers found Leap Year a light, charming romantic comedy whose lead performance and on-screen chemistry carry the film. Praise for the picturesque Irish scenery and intermittent laughs; criticism for its predictable, formulaic plot, occasional clumsy moments, and stereotypical Irish tourism vibes.",
       "praise_attributes": [
-        "charming lead performance",
-        "strong lead chemistry",
-        "lighthearted tone",
-        "scenic cinematography"
+        "charming tone",
+        "strong lead acting",
+        "convincing chemistry",
+        "picturesque cinematography"
       ],
       "complaint_attributes": [
         "predictable plot",
-        "formulaic writing",
-        "awkward pacing",
+        "formulaic structure",
+        "clumsy editing",
         "stereotypical portrayal"
       ]
     },
@@ -33108,17 +33122,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple sources (summary, audience attributes, and featured reviews) consistently praise cinematography, soundtrack, and performances, while criticizing weak character development, dialogue, thin story, and lack of chemistry.",
+      "new_reception_summary": "Divisive audience reaction: many viewers criticized the film's writing, dialogue, character development and on-screen chemistry, while others praised its cinematography, soundtrack and some lead performances. The adaptation's thin story and handling of BDSM/consent provoked significant discussion and polarized responses.",
       "praise_attributes": [
-        "strong cinematography",
-        "strong soundtrack",
-        "good performances"
+        "polished cinematography",
+        "effective soundtrack",
+        "solid lead performances"
       ],
       "complaint_attributes": [
-        "weak character development",
-        "weak dialogue",
         "thin story",
-        "poor chemistry"
+        "poor dialogue",
+        "weak character development",
+        "lackluster chemistry"
       ]
     },
     "production_metadata": {
@@ -33803,17 +33817,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews praise the film's visuals, costumes, sets and cinematography and its large ensemble, while several critics call it an inaccurate adaptation with a distracting lead portrayal (accent/moustache), uneven pacing and a predictable/anticlimactic resolution.",
+      "new_reception_summary": "Opulent visuals and stylish cinematography praised, with a strong supporting cast and lush score. Common complaints: unfaithful adaptation, a distracting lead portrayal (moustache/accent), uneven pacing and an anticlimactic resolution.",
       "praise_attributes": [
-        "stunning cinematography",
-        "lavish production design",
-        "strong ensemble cast"
+        "stunning visuals",
+        "stylish cinematography",
+        "strong supporting cast"
       ],
       "complaint_attributes": [
         "inaccurate adaptation",
         "distracting lead performance",
         "uneven pacing",
-        "predictable ending"
+        "anticlimactic ending"
       ]
     },
     "production_metadata": {
@@ -34528,18 +34542,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews and the summary repeatedly praise the film's imaginative storytelling, strong performances, emotional impact, and visual spectacle, while also criticizing its complexity, confusing narrative, pacing, and length.",
+      "new_reception_summary": "Widely praised for imaginative storytelling, bold creativity, and emotional depth, with many viewers moved by its exploration of family and identity. Performances and visual inventiveness are frequently lauded, while a notable minority find the film overly complex, confusing, and unevenly paced. Humor divided audiences—many loved its absurd comedy, others saw it as excessive.",
       "praise_attributes": [
-        "excellent acting",
-        "inventive storytelling",
+        "imaginative storytelling",
+        "strong acting",
         "emotional resonance",
-        "striking visuals"
+        "visual spectacle"
       ],
       "complaint_attributes": [
-        "overly complex narrative",
-        "confusing structure",
+        "complex narrative",
         "uneven pacing",
-        "excessive runtime"
+        "confusing structure",
+        "excessive absurdity"
       ]
     },
     "production_metadata": {
@@ -35219,17 +35233,17 @@
       }
     },
     "reception_metadata": {
-      "justification": "Multiple reviews and the reception summary repeatedly praise the film's inventive visuals, fast/kinetic editing, energetic soundtrack and quirky humor, while also noting thin/repetitive plotting, some unlikable characters, and a polarizing/niche appeal.",
+      "new_reception_summary": "Viewers praise the film's highly original, visually inventive style, rapid editing, quirky humor and energetic soundtrack. Criticisms focus on repetitive plotting, occasionally unlikable characters, and a niche appeal that may alienate non-geek audiences.",
       "praise_attributes": [
-        "visually inventive",
+        "inventive visuals",
         "kinetic editing",
-        "energetic soundtrack",
-        "inventive comedy"
+        "quirky humor",
+        "energetic soundtrack"
       ],
       "complaint_attributes": [
-        "thin plotting",
+        "repetitive plotting",
         "unlikable characters",
-        "polarizing appeal"
+        "niche appeal"
       ]
     },
     "production_metadata": {
@@ -35994,17 +36008,18 @@
       }
     },
     "reception_metadata": {
-      "justification": "Reviews repeatedly praise the film’s deadpan lead delivery, ensemble, one-liners and sight-gag slapstick while noting a hit-or-miss, rapid-fire gag tempo and occasional crude or flat jokes (featured reviews and reception summary).",
+      "new_reception_summary": "Broadly praised as an enduringly funny spoof with effective deadpan acting, rapid-fire sight gags, and memorable one-liners that reward rewatching. Some viewers note the joke density can feel overwhelming, a handful of gags land unevenly, and a few cultural references or vulgar jokes may feel dated or tasteless.",
       "praise_attributes": [
-        "excellent deadpan performance",
-        "strong ensemble acting",
-        "memorable one-liners",
-        "effective physical slapstick"
+        "deadpan acting",
+        "sharp one-liners",
+        "inventive visual gags",
+        "strong ensemble"
       ],
       "complaint_attributes": [
-        "inconsistent joke quality",
-        "relentless gag density",
-        "occasionally crude humor"
+        "overstuffed pacing",
+        "inconsistent jokes",
+        "crude humor",
+        "dated references"
       ]
     },
     "production_metadata": {

@@ -401,10 +401,7 @@ class ReceptionMetadata(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    justification: str = Field(
-        ...,
-        description="One sentence justification for your decisions citing concrete evidence from the input."
-    )
+    new_reception_summary: str
     praise_attributes: List[str]
     complaint_attributes: List[str]
 
