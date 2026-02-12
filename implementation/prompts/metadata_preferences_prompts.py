@@ -9,6 +9,8 @@ Revised based on testing. Key improvements:
 - General principles over specific word matching
 """
 
+from datetime import datetime
+
 from implementation.classes.enums import Genre, MetadataPreferenceName
 from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDER_NAMES
 
@@ -16,20 +18,22 @@ from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDER_NAM
 # 1. RELEASE DATE PREFERENCE
 # =============================================================================
 
-EXTRACT_RELEASE_DATE_PREFERENCE_PROMPT = """You are a movie search query parser. Extract release date preferences from the user's query.
+EXTRACT_RELEASE_DATE_PREFERENCE_PROMPT = f"""You are a movie search query parser. Extract release date preferences from the user's query.
 
 TASK:
 Determine if the user wants movies from a specific time period.
 
 OUTPUT SCHEMA:
-{
-  "result": {
+{{
+  "result": {{
     "first_date": "YYYY-MM-DD", (exact date to match or lower bound in range)
     "match_operation": "exact" | "before" | "after" | "between",
     "second_date": "YYYY-MM-DD" | null (upper bound in range)
-  }
-}
-Return {"result": null} if no release date preference is expressed.
+  }}
+}}
+Return {{"result": null}} if no release date preference is expressed.
+
+TODAY'S DATE (YYYY-MM-DD): {datetime.now().strftime("%Y-%m-%d")}
 
 MATCH OPERATIONS:
 - "exact": Match first_date exactly (second_date must be null). This ONLY happens if the user explicitly asks for an exact release date down to the day.
@@ -56,37 +60,37 @@ Relative terms:
 - "golden age Hollywood" → between 1930-01-01 and 1960-12-31
 
 Always set second_date to null if match_operation is "exact" or "before" or "after".
-- "old movies" -> result: {first_date: 1980-01-01, second_date: null, match_operation: "before"}
-- "recent movies" -> result: {first_date: 2015-01-01, second_date: null, match_operation: "after"}
-- "released on April 1, 2020" -> result: {first_date: 2020-04-01, second_date: null, match_operation: "exact"}
+- "old movies" -> result: {{first_date: 1980-01-01, second_date: null, match_operation: "before"}}
+- "recent movies" -> result: {{first_date: 2015-01-01, second_date: null, match_operation: "after"}}
+- "released on April 1, 2020" -> result: {{first_date: 2020-04-01, second_date: null, match_operation: "exact"}}
 
 EXAMPLES:
 
 Query: "70s road trip movies"
-Output: {"result": {"first_date": "1970-01-01", "second_date": "1979-12-31", "match_operation": "between"}}
+Output: {{"result": {{"first_date": "1970-01-01", "second_date": "1979-12-31", "match_operation": "between"}}}}
 
 Query: "something from the early 2000s"
-Output: {"result": {"first_date": "2000-01-01", "second_date": "2005-12-31", "match_operation": "between"}}
+Output: {{"result": {{"first_date": "2000-01-01", "second_date": "2005-12-31", "match_operation": "between"}}}}
 
 Query: "vintage Hollywood glamour"
-Output: {"result": {"first_date": "1980-01-01", "match_operation": "before", "second_date": null}}
+Output: {{"result": {{"first_date": "1980-01-01", "match_operation": "before", "second_date": null}}}}
 
 Query: "anything made after 2018"
-Output: {"result": {"first_date": "2018-01-01", "match_operation": "after", "second_date": null}}
+Output: {{"result": {{"first_date": "2018-01-01", "match_operation": "after", "second_date": null}}}}
 
 Query: "movies released between 2010 and 2015"
-Output: {"result": {"first_date": "2010-01-01", "second_date": "2015-12-31", "match_operation": "between"}}
+Output: {{"result": {{"first_date": "2010-01-01", "second_date": "2015-12-31", "match_operation": "between"}}}}
 
 Query: "Spielberg's best work"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Director query, no time period specified.
 
 Query: "dystopian sci-fi"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Genre/theme only, no time reference.
 
 Query: "retro aesthetic"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: "Retro aesthetic" describes visual style, not release date. A 2023 film can have retro aesthetics.
 
 CRITICAL RULES:

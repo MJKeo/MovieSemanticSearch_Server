@@ -80,6 +80,8 @@ def generate_kimi_response(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
+            temperature=1.0 if enable_thinking else 0.6,
+            top_p=0.95,
             response_format={
                 "type": "json_schema",
                 "json_schema": {

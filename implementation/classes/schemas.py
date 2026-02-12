@@ -548,6 +548,7 @@ class ExtractedEntitiesResponse(BaseModel):
 # -----------------------------
 
 class VectorCollectionSubqueryData(BaseModel):
+    justification: str
     relevant_subquery_text: Optional[str]
 
 class VectorSubqueriesResponse(BaseModel):
@@ -567,6 +568,7 @@ class VectorSubqueriesResponse(BaseModel):
 class VectorCollectionWeightData(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
     relevance: RelevanceSize
+    justification: str
 
 class VectorWeightsResponse(BaseModel):
     model_config = ConfigDict(use_enum_values=True)

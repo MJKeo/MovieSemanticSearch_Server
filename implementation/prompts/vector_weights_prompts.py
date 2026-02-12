@@ -56,8 +56,11 @@ OUTPUT FORMAT
 Return valid JSON only:
 {
   "relevance": "not_relevant" | "small" | "medium" | "large",
-  "justification": "One sentence explaining your assessment"
+  "justification": "10 words or less. Why this answer is correct."
 }
+
+IMPORTANT:
+- Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 """
 
 
@@ -109,8 +112,11 @@ OUTPUT FORMAT
 Return valid JSON only:
 {
   "relevance": "not_relevant" | "small" | "medium" | "large",
-  "justification": "One sentence explaining your assessment"
+  "justification": "10 words or less. Why this answer is correct."
 }
+
+IMPORTANT:
+- Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 """
 
 
@@ -178,8 +184,11 @@ OUTPUT FORMAT
 Return valid JSON only:
 {
   "relevance": "not_relevant" | "small" | "medium" | "large",
-  "justification": "One sentence explaining your assessment"
+  "justification": "10 words or less. Why this answer is correct."
 }
+
+IMPORTANT:
+- Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 """
 
 
@@ -228,8 +237,11 @@ OUTPUT FORMAT
 Return valid JSON only:
 {
   "relevance": "not_relevant" | "small" | "medium" | "large",
-  "justification": "One sentence explaining your assessment"
+  "justification": "10 words or less. Why this answer is correct."
 }
+
+IMPORTANT:
+- Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 """
 
 
@@ -292,8 +304,11 @@ OUTPUT FORMAT
 Return valid JSON only:
 {
   "relevance": "not_relevant" | "small" | "medium" | "large",
-  "justification": "One sentence explaining your assessment"
+  "justification": "10 words or less. Why this answer is correct."
 }
+
+IMPORTANT:
+- Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 """
 
 
@@ -362,8 +377,11 @@ OUTPUT FORMAT
 Return valid JSON only:
 {
   "relevance": "not_relevant" | "small" | "medium" | "large",
-  "justification": "One sentence explaining your assessment"
+  "justification": "10 words or less. Why this answer is correct."
 }
+
+IMPORTANT:
+- Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 """
 
 
@@ -426,8 +444,11 @@ OUTPUT FORMAT
 Return valid JSON only:
 {
   "relevance": "not_relevant" | "small" | "medium" | "large",
-  "justification": "One sentence explaining your assessment"
+  "justification": "10 words or less. Why this answer is correct."
 }
+
+IMPORTANT:
+- Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 """
 
 
