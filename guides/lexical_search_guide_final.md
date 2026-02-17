@@ -1,0 +1,738 @@
+# Lexical Search Implementation Guide (Postgres-Only)
+
+## Document Purpose
+
+This document is the **complete implementation specification** for lexical search in the movie search pipeline using **Postgres as the only lexical database**.
+
+**What lexical search does:**
+
+1. **Candidate expansion:** Find movies matching explicit entity mentions in the query
+2. **Lexical scoring:** Compute per-movie lexical match components and an overall score (normalized in server code)
+3. **Hard filtering:** Apply metadata hard filters (date/runtime/maturity/genre/provider/method) during candidate generation
+
+**What lexical search does NOT do:**
+
+* Final reranking (handled downstream)
+* Vector similarity retrieval (separate system)
+* Any “semantic” interpretation beyond the extracted lexical entities
+
+---
+
+## 1. Core Identifiers and Data Types
+
+### 1.1 Movie Identifier
+
+**`movie_id`** is always **`tmdb_id`** (`BIGINT`).
+
+### 1.2 String Identifier
+
+**`string_id`** is a `BIGINT` assigned to every **normalized string** via a Postgres dictionary table.
+
+* Same `string_id` is reused across contexts (e.g., a person name and character name that normalize identically share an ID).
+* IDs are stable and reused across ingest batches.
+
+### 1.3 Lexical Entity Buckets
+
+Lexical extraction outputs entities in exactly four buckets:
+
+| Bucket        | What it represents                                            | How it is stored/searched              |
+| ------------- | ------------------------------------------------------------- | -------------------------------------- |
+| `movie_title` | Title phrases, tokenized into words                           | **Token postings** (title tokens only) |
+| `people`      | Union of actors + directors + writers + composers + producers | **Phrase postings** (entire phrase)    |
+| `characters`  | Character names list                                          | **Phrase postings** (entire phrase)    |
+| `studios`     | Production companies list                                     | **Phrase postings** (entire phrase)    |
+
+**Important rule:** Only the **movie title** is tokenized into individual words. **All other buckets are stored and searched as full normalized phrases** (no token split).
+
+### 1.4 INCLUDE vs EXCLUDE
+
+Each extracted lexical entity has `exclude_from_results: bool`.
+
+* `false` → INCLUDE: generate candidates and contribute to score
+* `true` → EXCLUDE: remove matching movies when possible at lexical stage (see Section 9.7)
+
+---
+
+## 2. String Normalization
+
+All strings (ingest + query-time) pass through the **same deterministic normalizer**.
+
+### 2.1 Normalization Steps (All Strings)
+
+1. Unicode NFC normalization
+2. Lowercase (Unicode-aware case folding)
+3. Diacritic/accent removal (é → e)
+4. Punctuation handling:
+
+   * Hyphens (`-`) are preserved
+   * Apostrophes (`'`) removed (no space)
+   * Periods (`.`) removed (no space)
+   * All other punctuation becomes spaces
+5. Collapse consecutive whitespace to one space
+6. Trim leading/trailing whitespace
+
+### 2.2 Title Tokenization (Only for `movie_title` bucket)
+
+After base normalization:
+
+1. Split on whitespace into tokens
+2. Hyphen expansion: for a token `a-b`, emit: `["a", "b", "a-b"]`
+3. Deduplicate tokens using set semantics
+4. Store deterministically (sort ascending before writing to DB), but **token order is not used in scoring**
+
+**No max token length**.
+
+---
+
+## 3. Metadata Hard Filters (Stored as IDs before querying)
+
+The server converts all metadata filters to integer/timestamp forms **before** hitting the DB.
+
+Supported hard filters:
+
+1. **release date:** `release_ts` (`BIGINT`, Unix seconds at midnight UTC)
+2. **runtime:** `runtime_minutes` (`INT`)
+3. **maturity rank:** `maturity_rank` (`SMALLINT`) with ordinal mapping in code
+4. **genres:** `genre_ids` (`INT[]`) overlap semantics
+5. **watch availability:** provider + watch_method (“stream/rent/buy”) using encoded offer keys (`INT[]`)
+
+### 3.1 Watch provider + watch_method encoding
+
+To support correct combined semantics without joins:
+
+* `provider_id`: mapped int
+* `watch_method_id`: mapped int (`stream=1, rent=2, buy=3`)
+* `watch_offer_key = (provider_id << 2) | watch_method_id`
+
+The UI filter becomes a set of `watch_offer_key`s:
+
+* If user picks providers P and methods M → allowed keys = `{encode(p,m) for p in P for m in M}`
+* If user picks providers only → treat M as `{1,2,3}`
+* If user picks methods only → treat P as “all known providers” from your provider map (still small)
+
+---
+
+## 4. Postgres Schema (Explicit)
+
+All tables live in schema `lex`.
+
+### 4.1 Required extensions
+
+```sql
+CREATE SCHEMA IF NOT EXISTS lex;
+
+-- used for trigram shortlist on fuzzy title token lookup
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- used for levenshtein distance (edit distance <= 1)
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
+```
+
+### 4.2 String dictionary
+
+```sql
+CREATE TABLE lex.lexical_dictionary (
+  string_id   BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  norm_str    TEXT NOT NULL UNIQUE,
+  touched_at  TIMESTAMP NOT NULL DEFAULT now(),
+  created_at  TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- exact lookup
+CREATE INDEX idx_lexical_dictionary_norm_str
+  ON lex.lexical_dictionary (norm_str);
+
+-- fuzzy shortlist for title tokens only
+CREATE INDEX idx_lexical_dictionary_norm_str_trgm
+  ON lex.lexical_dictionary USING GIN (norm_str gin_trgm_ops);
+```
+
+### 4.3 Movies metadata table (filters + title_token_count)
+
+```sql
+CREATE TABLE lex.movies (
+  movie_id          BIGINT PRIMARY KEY,
+
+  -- hard filters
+  release_ts        BIGINT,         -- unix seconds, midnight UTC
+  runtime_minutes   INT,
+  maturity_rank     SMALLINT,
+
+  genre_ids         INT[] NOT NULL DEFAULT '{}',
+  watch_offer_keys  INT[] NOT NULL DEFAULT '{}',
+
+  -- needed for title scoring
+  title_token_count INT NOT NULL DEFAULT 0,
+
+  updated_at        TIMESTAMP NOT NULL DEFAULT now(),
+  created_at        TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- range filters
+CREATE INDEX idx_movies_release_ts      ON lex.movies (release_ts);
+CREATE INDEX idx_movies_runtime_minutes ON lex.movies (runtime_minutes);
+CREATE INDEX idx_movies_maturity_rank   ON lex.movies (maturity_rank);
+
+-- overlap filters
+CREATE INDEX idx_movies_genre_ids        ON lex.movies USING GIN (genre_ids);
+CREATE INDEX idx_movies_watch_offer_keys ON lex.movies USING GIN (watch_offer_keys);
+```
+
+### 4.4 Inverted index postings (row-per-posting)
+
+One row per `(term_id, movie_id)`.
+
+```sql
+-- Title token postings
+CREATE TABLE lex.inv_title_token_postings (
+  term_id  BIGINT NOT NULL,
+  movie_id BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+-- People phrase postings
+CREATE TABLE lex.inv_person_postings (
+  term_id  BIGINT NOT NULL,
+  movie_id BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+-- Character phrase postings
+CREATE TABLE lex.inv_character_postings (
+  term_id  BIGINT NOT NULL,
+  movie_id BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+-- Studio phrase postings
+CREATE TABLE lex.inv_studio_postings (
+  term_id  BIGINT NOT NULL,
+  movie_id BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+-- Reverse indexes (not required for MVP, but required for future updates/deletes)
+CREATE INDEX idx_title_postings_movie     ON lex.inv_title_token_postings (movie_id);
+CREATE INDEX idx_person_postings_movie    ON lex.inv_person_postings (movie_id);
+CREATE INDEX idx_character_postings_movie ON lex.inv_character_postings (movie_id);
+CREATE INDEX idx_studio_postings_movie    ON lex.inv_studio_postings (movie_id);
+```
+
+### 4.5 Title token document frequency materialized view (max_df)
+
+Applies to **title tokens only**. `max_df = 10,000` absolute.
+
+```sql
+CREATE MATERIALIZED VIEW lex.title_token_doc_frequency AS
+SELECT
+  term_id,
+  COUNT(*)::BIGINT AS doc_frequency,
+  now() AS updated_at
+FROM lex.inv_title_token_postings
+GROUP BY term_id;
+
+CREATE UNIQUE INDEX idx_title_token_df_term_id
+  ON lex.title_token_doc_frequency (term_id);
+```
+
+Refresh (when you implement jobs):
+
+```sql
+REFRESH MATERIALIZED VIEW CONCURRENTLY lex.title_token_doc_frequency;
+```
+
+### 4.6 Optional “reference” tables for debugging/inspection
+
+Not required for query execution (since the server passes IDs), but recommended:
+
+```sql
+CREATE TABLE lex.genre_dictionary (
+  genre_id INT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE lex.provider_dictionary (
+  provider_id INT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE lex.watch_method_dictionary (
+  method_id INT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE -- stream/rent/buy
+);
+
+CREATE TABLE lex.maturity_dictionary (
+  maturity_rank SMALLINT PRIMARY KEY,
+  label TEXT NOT NULL UNIQUE
+);
+```
+
+---
+
+## 5. Ingestion Flow (Step-by-Step)
+
+### 5.1 Inputs per movie (minimum required fields)
+
+* `movie_id`
+* `title`
+* `actors`, `directors`, `writers`, `composers`, `producers`
+* `characters`
+* `production_companies`
+* metadata filters:
+
+  * `release_ts`
+  * `runtime_minutes`
+  * `maturity_rank`
+  * `genre_ids[]`
+  * `watch_offer_keys[]`
+
+### 5.2 Normalize + extract strings
+
+For each movie:
+
+**Title tokens**
+
+1. `norm_title = normalize(title)`
+2. `tokens = tokenize(norm_title)` with hyphen expansion
+3. dedupe using a set
+4. `title_token_count = len(tokens)`
+
+**People phrases**
+Union across roles into a single set:
+
+* actors + directors + writers + composers + producers
+* normalize each name
+* dedupe via set
+
+**Characters phrases**
+
+* normalize each character
+* dedupe via set
+
+**Studios phrases**
+
+* normalize each production company
+* dedupe via set
+
+### 5.3 Batch dictionary resolution (bulk upsert)
+
+Across the ingest batch:
+
+1. collect **all unique normalized strings**
+2. bulk upsert in one query
+
+```sql
+INSERT INTO lex.lexical_dictionary (norm_str)
+SELECT unnest($1::text[])
+ON CONFLICT (norm_str) DO UPDATE SET touched_at = now()
+RETURNING norm_str, string_id;
+```
+
+Your ingest worker builds a `norm_str -> string_id` map from the returned rows (plus cache).
+
+### 5.4 Upsert movie metadata
+
+```sql
+INSERT INTO lex.movies (
+  movie_id, release_ts, runtime_minutes, maturity_rank,
+  genre_ids, watch_offer_keys, title_token_count, updated_at
+) VALUES (...)
+ON CONFLICT (movie_id) DO UPDATE SET
+  release_ts        = EXCLUDED.release_ts,
+  runtime_minutes   = EXCLUDED.runtime_minutes,
+  maturity_rank     = EXCLUDED.maturity_rank,
+  genre_ids         = EXCLUDED.genre_ids,
+  watch_offer_keys  = EXCLUDED.watch_offer_keys,
+  title_token_count = EXCLUDED.title_token_count,
+  updated_at        = now();
+```
+
+### 5.5 Insert postings (row-per-posting)
+
+Convert normalized strings to `term_id`s via the dictionary map, then insert:
+
+```sql
+-- title tokens
+INSERT INTO lex.inv_title_token_postings (term_id, movie_id)
+SELECT unnest($1::bigint[]), $2
+ON CONFLICT DO NOTHING;
+
+-- people
+INSERT INTO lex.inv_person_postings (term_id, movie_id)
+SELECT unnest($1::bigint[]), $2
+ON CONFLICT DO NOTHING;
+
+-- characters
+INSERT INTO lex.inv_character_postings (term_id, movie_id)
+SELECT unnest($1::bigint[]), $2
+ON CONFLICT DO NOTHING;
+
+-- studios
+INSERT INTO lex.inv_studio_postings (term_id, movie_id)
+SELECT unnest($1::bigint[]), $2
+ON CONFLICT DO NOTHING;
+```
+
+**MVP assumption:** lexical fields are immutable. Only providers/method mutability is expected later (metadata-only).
+
+### 5.6 Future update support (post-MVP, no overhaul required)
+
+If you ever need to rebuild postings for a movie:
+
+1. delete by `movie_id` using the reverse indexes
+2. reinsert from the new extracted IDs
+
+```sql
+DELETE FROM lex.inv_person_postings WHERE movie_id = $movie_id;
+-- etc.
+```
+
+---
+
+## 6. Query-Time Retrieval: High-Level Flow
+
+**Inputs**
+
+* INCLUDE entities grouped into:
+
+  * `people[]` (phrases)
+  * `characters[]` (phrases)
+  * `studios[]` (phrases)
+  * `movie_title[]` as **title searches**: list of token arrays
+    Example OR-of-phrases:
+
+    * `[["kung","fu"], ["big","shot"]]`
+* EXCLUDE entities (same categories), optional
+* metadata filters (all pre-mapped to ints/timestamps by server)
+
+**Output**
+
+* candidates with:
+
+  * `matched_people_count`
+  * `matched_character_count`
+  * `matched_studio_count`
+  * `title_score_sum`
+  * `raw_lexical_score`
+* server computes:
+
+  * `max_possible_score = (#people + #characters + #studios + #title_searches)`
+  * `normalized_lexical_score = raw / max_possible_score`
+
+---
+
+## 7. Term ID Resolution (Dictionary Lookups)
+
+### 7.1 Phrase buckets (people/characters/studios): exact only
+
+Batch exact lookup:
+
+```sql
+SELECT norm_str, string_id
+FROM lex.lexical_dictionary
+WHERE norm_str = ANY($1::text[]);
+```
+
+Missing phrase → contributes no candidates.
+
+### 7.2 Title tokens: fuzzy lookup (edit distance ≤ 1)
+
+**Rule:** Fuzzy matching is used **only** for title-token searches and only for INCLUDE title searches.
+
+Because the dictionary contains both phrases and tokens, we restrict fuzzy matching to **true title tokens** by joining against `lex.title_token_doc_frequency`.
+
+Per query token `t` (normalized), return a small candidate list of token IDs:
+
+```sql
+SELECT d.string_id
+FROM lex.lexical_dictionary d
+JOIN lex.title_token_doc_frequency df
+  ON df.term_id = d.string_id
+WHERE
+  (d.norm_str = $1 OR d.norm_str % $1)                   -- trigram shortlist
+  AND abs(length(d.norm_str) - length($1)) <= 1          -- cheap guard
+  AND levenshtein(d.norm_str, $1) <= 1                   -- exact constraint
+  AND df.doc_frequency <= 10000                          -- max_df
+ORDER BY
+  (d.norm_str = $1) DESC,
+  similarity(d.norm_str, $1) DESC
+LIMIT 20;
+```
+
+**max_df:** any token with `doc_frequency > 10,000` is ignored.
+
+If a title search ends up with `k = 0` usable tokens after filtering, that title search is skipped.
+
+---
+
+## 8. Metadata Hard Filtering (“eligible set”)
+
+If **any metadata filters are active**, build `eligible` first:
+
+```sql
+WITH eligible AS MATERIALIZED (
+  SELECT movie_id, title_token_count
+  FROM lex.movies
+  WHERE 1=1
+    AND ($min_release IS NULL OR release_ts >= $min_release)
+    AND ($max_release IS NULL OR release_ts <= $max_release)
+    AND ($min_runtime IS NULL OR runtime_minutes >= $min_runtime)
+    AND ($max_runtime IS NULL OR runtime_minutes <= $max_runtime)
+    AND ($maturity_cmp IS NULL OR
+         CASE WHEN $maturity_cmp = 'LE' THEN maturity_rank <= $maturity_rank
+              WHEN $maturity_cmp = 'GE' THEN maturity_rank >= $maturity_rank
+         END)
+    AND (cardinality($genre_ids::int[]) = 0 OR genre_ids && $genre_ids::int[])
+    AND (cardinality($watch_offer_keys::int[]) = 0 OR watch_offer_keys && $watch_offer_keys::int[])
+)
+...
+```
+
+If no filters are active, you can skip `eligible` and use `lex.movies` only where you need `title_token_count`.
+
+---
+
+## 9. Retrieval + Scoring (OR semantics)
+
+### 9.1 OR semantics (global)
+
+A movie becomes a candidate if it matches **at least one** of:
+
+* any INCLUDE people entity
+* any INCLUDE character entity
+* any INCLUDE studio entity
+* any title search with `title_score >= TITLE_SCORE_THRESHOLD`
+
+### 9.2 Phrase buckets score = count of matched entities
+
+For each phrase bucket, compute distinct matched term_ids per movie.
+
+Example for people:
+
+```sql
+people_scores AS (
+  SELECT p.movie_id, COUNT(DISTINCT p.term_id)::int AS matched_people
+  FROM lex.inv_person_postings p
+  JOIN eligible e ON e.movie_id = p.movie_id
+  WHERE p.term_id = ANY($people_term_ids::bigint[])
+  GROUP BY p.movie_id
+)
+```
+
+Repeat for characters/studios.
+
+### 9.3 Title score (per title search)
+
+**Variables (per title search):**
+
+* `k`: number of query tokens after fuzzy expansion + max_df filtering (token positions)
+* `L`: `title_token_count` of the movie
+* `m`: how many of the `k` token positions matched at least one token ID for that position
+
+**Derived:**
+
+* `coverage = m / k`
+* `specificity = m / L`
+* `β = 2.0`
+
+**Formula (coverage-weighted F-score):**
+[
+title_score = \frac{(1+\beta^2)\cdot (coverage \cdot specificity)}{\beta^2 \cdot specificity + coverage}
+]
+With β=2.0:
+[
+title_score = \frac{5 \cdot (coverage \cdot specificity)}{4 \cdot specificity + coverage}
+]
+
+**Threshold:**
+
+* `TITLE_SCORE_THRESHOLD = 0.15`
+* Movies below threshold do not become candidates from that title search.
+
+#### SQL pattern to compute m
+
+Your server supplies a small table of `(token_idx, term_id)` where each token_idx represents one query token position, and term_id can be multiple IDs (fuzzy candidates) for that position.
+
+```sql
+-- q_tokens(token_idx, term_id) is provided via VALUES or unnest
+title_matches AS (
+  SELECT
+    p.movie_id,
+    COUNT(DISTINCT qt.token_idx)::int AS m
+  FROM q_tokens qt
+  JOIN lex.inv_title_token_postings p
+    ON p.term_id = qt.term_id
+  JOIN eligible e
+    ON e.movie_id = p.movie_id
+  GROUP BY p.movie_id
+),
+title_scored AS (
+  SELECT
+    tm.movie_id,
+    (5.0 * ((tm.m::float / $k) * (tm.m::float / e.title_token_count)))
+    / (4.0 * (tm.m::float / e.title_token_count) + (tm.m::float / $k)) AS title_score
+  FROM title_matches tm
+  JOIN eligible e ON e.movie_id = tm.movie_id
+  WHERE e.title_token_count > 0 AND $k > 0
+),
+title_filtered AS (
+  SELECT movie_id, title_score
+  FROM title_scored
+  WHERE title_score >= 0.15
+)
+```
+
+### 9.4 OR across multiple title searches, and title score summation
+
+If you have multiple title searches (e.g., `["kung fu"] OR ["big shot"]`):
+
+* run the title-score computation per title_search
+* `UNION ALL` the results
+* sum `title_score` per movie
+
+```sql
+title_sum AS (
+  SELECT movie_id, SUM(title_score)::float AS title_score_sum
+  FROM (
+    -- UNION ALL of each title_filtered result
+  ) t
+  GROUP BY movie_id
+)
+```
+
+### 9.5 Title candidate safety cap
+
+After `title_sum`, enforce:
+
+* `TITLE_MAX_CANDIDATES = 10,000` (safety only)
+
+Apply cap by sorting title candidates by `title_score_sum` desc and taking top 10k **before** unioning with phrase-bucket candidates.
+
+### 9.6 Raw lexical score (computed in DB), normalized score (computed in server)
+
+**Raw lexical score:**
+[
+raw = matched_people + matched_characters + matched_studios + title_score_sum
+]
+
+**Max possible score (server-side, deterministic):**
+[
+max = #people_entities + #character_entities + #studio_entities + #title_searches
+]
+
+**Normalized lexical score (server-side):**
+[
+lexical_score = \frac{raw}{max}
+]
+
+> Title contributes up to 1.0 per title_search (since it’s an F-score in [0,1] and thresholded), phrase buckets contribute 1.0 per matched entity.
+
+### 9.7 EXCLUDE handling (hard exclude when possible)
+
+If EXCLUDE terms exist:
+
+**Phrase buckets (people/characters/studios): hard exclude via anti-join**
+You can remove excluded matches without extra tables:
+
+```sql
+AND NOT EXISTS (
+  SELECT 1
+  FROM lex.inv_person_postings xp
+  WHERE xp.movie_id = c.movie_id
+    AND xp.term_id = ANY($exclude_people_term_ids::bigint[])
+)
+```
+
+Repeat for characters/studios.
+
+**Title EXCLUDE (MVP policy):**
+
+* Do **not** fuzzy-expand title excludes.
+* If you implement title excludes at lexical stage: exclude if the movie contains **any** excluded title token ID (exact lookup + max_df filtering). This is optional; otherwise pass through to reranker.
+
+---
+
+## 10. Canonical “One Query” Shape (Conceptual)
+
+In practice you’ll usually build this as one SQL call with CTEs:
+
+1. `eligible` (if metadata filters)
+2. `people_scores`, `character_scores`, `studio_scores`
+3. `title_sum` (unioned from each title search, then capped to 10k)
+4. `candidates` = union of movie_ids from any bucket
+5. join components + compute raw score
+6. apply EXCLUDE anti-joins (if enabled)
+7. order by raw score desc (or return unordered and let reranker handle)
+
+---
+
+## 11. Operational Parameters (MVP)
+
+| Parameter               |      Value | Notes                                            |
+| ----------------------- | ---------: | ------------------------------------------------ |
+| `MAX_DF`                |     10,000 | title tokens only                                |
+| `β`                     |        2.0 | title score                                      |
+| `TITLE_SCORE_THRESHOLD` |       0.15 | title candidates                                 |
+| `TITLE_MAX_CANDIDATES`  |     10,000 | safety cap on title space only                   |
+| Cache TTL               | 30 minutes | dictionary lookups, fuzzy expansions, df lookups |
+
+---
+
+## 12. Caching Strategy (30 min TTL)
+
+Cache aggressively in the server:
+
+1. Exact dictionary lookup (`norm_str -> string_id`) for phrases
+2. Fuzzy expansions for title tokens (`token -> [candidate_term_ids]`)
+3. Token df lookups (or rely on the MV join; still cache token→bool “passes max_df”)
+
+Because values update at most daily, a 30-minute cache is safe and reduces DB load substantially.
+
+---
+
+## 13. Testing Strategy
+
+### Unit tests
+
+* Normalizer (punctuation/diacritics/spacing)
+* Tokenizer (hyphen expansion + dedupe)
+* Title score formula (golden cases)
+
+### Integration tests
+
+* Ingest a small corpus; verify postings counts
+* Title fuzzy: one-edit misspellings resolve correctly
+* max_df: very common tokens filtered out
+* Metadata filtering: eligible set reduces candidates correctly
+* EXCLUDE anti-joins remove movies deterministically
+
+---
+
+## Appendix: Example Walkthrough
+
+**Query:**
+`"mario movies starring chris pratt with music composed by hans zimmer or john williams"`
+
+Extracted INCLUDE entities:
+
+* title_searches: `[["mario"]]`  → 1 title search
+* people: `["chris pratt", "hans zimmer", "john williams"]` → 3 people
+
+No characters/studios in this example.
+
+**Max possible score (server):** `1(title search) + 3(people) = 4`
+
+DB returns per movie:
+
+* `matched_people` ∈ {0..3}
+* `title_score_sum` ∈ [0..1] (only if ≥ 0.15)
+* `raw = matched_people + title_score_sum`
+  Server returns:
+* `lexical_score = raw / 4`
+
+A perfect match would be:
+
+* `matched_people = 3`
+* `title_score_sum = 1.0`
+* `raw = 4.0`
+* `lexical_score = 1.0`
