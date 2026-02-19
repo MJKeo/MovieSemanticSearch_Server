@@ -73,7 +73,7 @@ class WatchProvider(BaseModel):
     name: str
     logo_path: str
     display_priority: int
-    types: list[WatchProviderType]         # subscription / rent / purchase
+    types: list[WatchMethodType]         # subscription / rent / purchase
 ```
 
 ```python
@@ -90,7 +90,7 @@ class CastMember(BaseModel):
 class MaturityRating(Enum):
     G="G"; PG="PG"; PG_13="PG-13"; R="R"; NC_17="NC-17"; NR="NR"
 
-class WatchProviderType(Enum):
+class WatchMethodType(Enum):
     SUBSCRIPTION="subscription"; PURCHASE="purchase"; RENT="rent"
 
 class CastMemberRole(Enum):

@@ -1,27 +1,46 @@
 import os
 import redis
-import psycopg2
+from contextlib import asynccontextmanager
 from qdrant_client import QdrantClient
 from fastapi import FastAPI
+from db.postgres import pool, check_postgres
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan handler for connection pool lifecycle management.
+    
+    Opens the Postgres connection pool on startup and closes it gracefully on shutdown.
+    This ensures connections are established after Docker Compose starts Postgres,
+    and are properly cleaned up when the server shuts down.
+    """
+    # Open the pool and establish initial connections
+    await pool.open()
+    # Validate that connections actually work (fast-fail if Postgres is unreachable)
+    await pool.check()
+    yield
+    # Gracefully close all connections on shutdown
+    await pool.close()
+
+
+app = FastAPI(lifespan=lifespan)
+
 
 @app.get("/health")
-def health_check():
+async def health_check():
+    """
+    Health check endpoint that validates connectivity to all external services.
+    
+    Returns a dictionary with status for each service:
+    - postgres: 'ok' or error message (checked via connection pool)
+    - redis: 'ok' or error message
+    - qdrant: 'ok' or error message
+    """
     results = {}
 
-    # Test Postgres
-    try:
-        conn = psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST"),
-            dbname=os.getenv("POSTGRES_DB"),
-            user=os.getenv("POSTGRES_USER"),
-            password=os.getenv("POSTGRES_PASSWORD")
-        )
-        conn.close()
-        results["postgres"] = "ok"
-    except Exception as e:
-        results["postgres"] = str(e)
+    # Test Postgres via the connection pool
+    results["postgres"] = await check_postgres()
 
     # Test Redis
     try:

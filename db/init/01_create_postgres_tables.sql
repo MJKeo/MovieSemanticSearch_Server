@@ -13,7 +13,6 @@ CREATE SCHEMA IF NOT EXISTS lex;
 CREATE TABLE IF NOT EXISTS public.movie_card (
   movie_id            BIGINT PRIMARY KEY,
   title               TEXT NOT NULL,
-  year                INT,
   poster_url          TEXT,
   release_ts          BIGINT,
   runtime_minutes     INT,

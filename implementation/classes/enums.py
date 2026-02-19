@@ -44,16 +44,16 @@ class MaturityRating(IntEnum):
         return _labels[self]
 
 
-class WatchProviderType(IntEnum):
+class WatchMethodType(IntEnum):
     """Enum representing types of watch provider services."""
     SUBSCRIPTION = 1
     PURCHASE = 2
     RENT = 3
 
     @classmethod
-    def from_string(cls, provider_type: str) -> "WatchProviderType | None":
+    def from_string(cls, provider_type: str) -> "WatchMethodType | None":
         """
-        Convert a string to a WatchProviderType enum value.
+        Convert a string to a WatchMethodType enum value.
         Returns None if the string doesn't match any valid provider type.
         """
         normalized_type = normalize_string(provider_type)
@@ -67,9 +67,9 @@ class WatchProviderType(IntEnum):
     def __str__(self) -> str:
         """Return the human-readable string representation of the provider type."""
         _labels = {
-            WatchProviderType.SUBSCRIPTION: "subscription",
-            WatchProviderType.PURCHASE: "purchase",
-            WatchProviderType.RENT: "rent",
+            WatchMethodType.SUBSCRIPTION: "subscription",
+            WatchMethodType.PURCHASE: "purchase",
+            WatchMethodType.RENT: "rent",
         }
         return _labels[self]
 

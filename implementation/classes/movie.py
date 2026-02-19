@@ -13,7 +13,7 @@ from .schemas import (
     ProductionMetadata
 )
 from pydantic import BaseModel, ConfigDict
-from .enums import MaturityRating, WatchProviderType
+from .enums import MaturityRating, WatchMethodType
 from implementation.misc.helpers import normalize_string
 import re
 

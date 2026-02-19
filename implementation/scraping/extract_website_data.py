@@ -3,7 +3,7 @@ import json
 import re
 import html as html_lib
 from ..classes.schemas import WatchProvider, IMDBFeaturedReview, IMDBReviewTheme
-from ..classes.enums import WatchProviderType
+from ..classes.enums import WatchMethodType
 
 
 # ================================
@@ -422,10 +422,10 @@ def get_watch_providers(watch_providers: dict) -> list[WatchProvider]:
                         name=provider_name.lower(),
                         logo_path=provider.get("logo_path", ""),
                         display_priority=display_priority,
-                        types=[WatchProviderType.SUBSCRIPTION]
+                        types=[WatchMethodType.SUBSCRIPTION]
                     )
                 else:
-                    provider_dict[provider_id].types.append(WatchProviderType.SUBSCRIPTION)
+                    provider_dict[provider_id].types.append(WatchMethodType.SUBSCRIPTION)
             except Exception as e:
                 print(e)
                 continue
@@ -447,10 +447,10 @@ def get_watch_providers(watch_providers: dict) -> list[WatchProvider]:
                         name=provider_name.lower(),
                         logo_path=provider.get("logo_path", ""),
                         display_priority=display_priority,
-                        types=[WatchProviderType.PURCHASE]
+                        types=[WatchMethodType.PURCHASE]
                     )
                 else:
-                    provider_dict[provider_id].types.append(WatchProviderType.PURCHASE)
+                    provider_dict[provider_id].types.append(WatchMethodType.PURCHASE)
             except Exception as e:
                 print(e)
                 continue
@@ -472,10 +472,10 @@ def get_watch_providers(watch_providers: dict) -> list[WatchProvider]:
                         name=provider_name.lower(),
                         logo_path=provider.get("logo_path", ""),
                         display_priority=display_priority,
-                        types=[WatchProviderType.RENT]
+                        types=[WatchMethodType.RENT]
                     )
                 else:
-                    provider_dict[provider_id].types.append(WatchProviderType.RENT)
+                    provider_dict[provider_id].types.append(WatchMethodType.RENT)
             except Exception as e:
                 print(e)
                 continue

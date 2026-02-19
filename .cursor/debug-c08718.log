@@ -1,0 +1,2 @@
+{"sessionId": "c08718", "hypothesisId": "H3", "location": "ingest_movie.py:ingest_movie_card", "message": "env vars check", "data": {"POSTGRES_HOST": "localhost", "POSTGRES_DB": "moviedb", "POSTGRES_USER": "movieuser", "POSTGRES_PASSWORD": "SET"}, "timestamp": 1771529553403}
+{"sessionId": "c08718", "hypothesisId": "H3", "location": "ingest_movie.py:ingest_movie_card", "message": "env vars check", "data": {"POSTGRES_HOST": "localhost", "POSTGRES_DB": "moviedb", "POSTGRES_USER": "movieuser", "POSTGRES_PASSWORD": "SET"}, "timestamp": 1771529582109}

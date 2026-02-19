@@ -101,10 +101,10 @@ def normalize_string(text: str) -> str:
     
     return normalized
 
-def create_watch_provider_offering_int(provider_id: int, method_id: int) -> int:
+def create_watch_provider_offering_key(provider_id: int, watch_method_id: int) -> int:
     """
-    Create a watch provider offering integer from a provider ID and method ID.
+    Create a watch provider offering integer from a provider name ID and watch method ID.
 
-    Upper 27 bits hold the provider, lower 4 bits hold the method
+    Upper 27 bits hold the provider name, lower 4 bits hold the watch method
     """
-    return (provider_id << 4) | method_id
+    return (provider_id << 4) | watch_method_id

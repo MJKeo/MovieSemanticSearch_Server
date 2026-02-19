@@ -43,6 +43,8 @@ services:
         - qdrant
       volumes:
         - ./api:/app
+        - ./db:/app/db
+        - ./implementation:/app/implementation
 
 volumes:
     postgres_data:
