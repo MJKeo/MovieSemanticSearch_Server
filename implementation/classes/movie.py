@@ -14,10 +14,11 @@ from .schemas import (
 )
 from pydantic import BaseModel, ConfigDict
 from .enums import MaturityRating, WatchProviderType
+from implementation.misc.helpers import normalize_string
 import re
 
 
-class IMDBMovie(BaseModel):
+class BaseMovie(BaseModel):
     """
     Represents a complete IMDb movie with all metadata.
     
@@ -39,6 +40,7 @@ class IMDBMovie(BaseModel):
     filming_locations: list[str] = []
     budget: Optional[int] = None
     watch_providers: list[WatchProvider]
+    poster_url: Optional[str] = None
     # Maturity
     maturity_rating: str
     maturity_reasoning: list[str] = []
@@ -127,6 +129,49 @@ class IMDBMovie(BaseModel):
         if self.original_title:
             return f"Movie: {self.title} ({self.original_title})"
         return f"Movie: {self.title}"
+
+    def normalized_title_tokens(self) -> list[str]:
+        """Build normalized title tokens including hyphen expansions."""
+        tokens: list[str] = []
+        seen: set[str] = set()
+
+        # Keep hyphens during first pass so we can add split components.
+        normalized_title = normalize_string(self.title)
+        for title_token in re.split(r"\s+", normalized_title):
+            if not title_token:
+                continue
+
+            if title_token not in seen:
+                seen.add(title_token)
+                tokens.append(title_token)
+
+            # For hyphenated terms, also include each component token.
+            if "-" in title_token:
+                for hyphen_part in title_token.split("-"):
+                    if hyphen_part and hyphen_part not in seen:
+                        seen.add(hyphen_part)
+                        tokens.append(hyphen_part)
+
+        return tokens
+
+    def maturity_rating_and_rank(self) -> tuple[str, int]:
+        """
+        Returns the normalized maturity rating label and its ordinal rank.
+
+        Resolves the movie's raw maturity_rating string to a MaturityRating enum
+        member (case-insensitive, whitespace-tolerant), then returns:
+          - The normalized label (e.g. "pg-13", "nc-17", "unrated")
+          - The ordinal rank integer (G=1, PG=2, PG-13=3, R=4, NC-17=5, Unrated=999)
+
+        Unrecognized ratings fall back to UNRATED (rank 999).
+
+        Returns:
+            Tuple of (normalized_label, rank).
+        """
+        rating = MaturityRating.from_string(self.maturity_rating)
+        rank = rating.value
+        # str(rating) calls MaturityRating.__str__ which returns the human label
+        return normalize_string(str(rating)), rank
 
     def genres_subset(self, limit: int = None) -> list[str]:
         """

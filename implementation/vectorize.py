@@ -11,7 +11,7 @@ import chromadb
 from chromadb.config import Settings
 from dotenv import load_dotenv
 from openai import OpenAI
-from .classes.movie import IMDBMovie
+from .classes.movie import BaseMovie
 from .classes.schemas import ChromaVectorCollection
 from .classes.enums import VectorCollectionName
 import numpy as np
@@ -365,7 +365,7 @@ def clear_collections_from_chroma(
 #         Vector Text
 # ===============================
 
-def create_dense_anchor_vector_text(movie: IMDBMovie) -> str:
+def create_dense_anchor_vector_text(movie: BaseMovie) -> str:
     """
     Creates the text representation for DenseAnchor vector embedding.
     
@@ -483,11 +483,11 @@ def create_dense_anchor_vector_text(movie: IMDBMovie) -> str:
     return "\n".join(parts)
 
 
-def create_plot_events_vector_text(movie: IMDBMovie) -> str:
+def create_plot_events_vector_text(movie: BaseMovie) -> str:
     return str(movie.plot_events_metadata)
 
 
-def create_plot_analysis_vector_text(movie: IMDBMovie) -> str:
+def create_plot_analysis_vector_text(movie: BaseMovie) -> str:
     parts = []
 
     if movie.plot_analysis_metadata:
@@ -501,19 +501,19 @@ def create_plot_analysis_vector_text(movie: IMDBMovie) -> str:
     return "\n".join(parts)
 
 
-def create_narrative_techniques_vector_text(movie: IMDBMovie) -> str:
+def create_narrative_techniques_vector_text(movie: BaseMovie) -> str:
     return str(movie.narrative_techniques_metadata)
 
 
-def create_viewer_experience_vector_text(movie: IMDBMovie) -> str:
+def create_viewer_experience_vector_text(movie: BaseMovie) -> str:
     return str(movie.viewer_experience_metadata)
 
 
-def create_watch_context_vector_text(movie: IMDBMovie) -> str:
+def create_watch_context_vector_text(movie: BaseMovie) -> str:
     return str(movie.watch_context_metadata)
 
 
-def create_production_vector_text(movie: IMDBMovie) -> str:
+def create_production_vector_text(movie: BaseMovie) -> str:
     parts = []
 
     parts.append("\n# Production:")
@@ -563,7 +563,7 @@ def create_production_vector_text(movie: IMDBMovie) -> str:
     return "\n".join(parts)
 
 
-def create_reception_vector_text(movie: IMDBMovie) -> str:
+def create_reception_vector_text(movie: BaseMovie) -> str:
     parts = []
 
     if movie.reception_tier():
@@ -582,7 +582,7 @@ def create_reception_vector_text(movie: IMDBMovie) -> str:
 # ===============================
 
 def create_and_save_dense_anchor_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -641,7 +641,7 @@ def create_and_save_dense_anchor_vector(
 
 
 def create_and_save_plot_events_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -703,7 +703,7 @@ def create_and_save_plot_events_vector(
 
 
 def create_and_save_plot_analysis_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db",
 ) -> None:
     """
@@ -765,7 +765,7 @@ def create_and_save_plot_analysis_vector(
 
 
 def create_and_save_narrative_techniques_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -808,7 +808,7 @@ def create_and_save_narrative_techniques_vector(
 
 
 def create_and_save_viewer_experience_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -873,7 +873,7 @@ def create_and_save_viewer_experience_vector(
 
 
 def create_and_save_watch_context_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -936,7 +936,7 @@ def create_and_save_watch_context_vector(
 
 
 def create_and_save_production_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """
@@ -999,7 +999,7 @@ def create_and_save_production_vector(
 
 
 def create_and_save_reception_vector(
-    movie: IMDBMovie,
+    movie: BaseMovie,
     db_path: str | Path = "./chroma_db"
 ) -> None:
     """

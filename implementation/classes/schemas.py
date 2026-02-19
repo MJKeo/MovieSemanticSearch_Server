@@ -6,7 +6,7 @@ and other data model classes used throughout the project.
 """
 
 from typing import List, Literal, Optional
-from pydantic import BaseModel, Field, conlist, constr, ConfigDict
+from pydantic import BaseModel, Field, conlist, constr, ConfigDict, field_validator
 from enum import Enum
 from .enums import (
     WatchProviderType, 
@@ -620,6 +620,34 @@ class WatchProvider(BaseModel):
     logo_path: str
     display_priority: int
     types: list[WatchProviderType]
+
+    @field_validator("types", mode="before")
+    @classmethod
+    def parse_types(cls, v: list) -> list[WatchProviderType]:
+        """
+        Convert string values to WatchProviderType enum values.
+        Filters out any invalid types that don't match known enum values.
+        """
+        if not isinstance(v, list):
+            return []
+        
+        result = []
+        for item in v:
+            # If already a WatchProviderType, keep it as-is.
+            if isinstance(item, WatchProviderType):
+                result.append(item)
+            # If it's a string, attempt to convert via from_string.
+            elif isinstance(item, str):
+                parsed = WatchProviderType.from_string(item)
+                if parsed is not None:
+                    result.append(parsed)
+            # If it's an int, attempt to convert directly to WatchProviderType.
+            elif isinstance(item, int):
+                try:
+                    result.append(WatchProviderType(item))
+                except ValueError:
+                    pass
+        return result
 
 
 class ParentalGuideItem(BaseModel):

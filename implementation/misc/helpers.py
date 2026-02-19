@@ -5,8 +5,11 @@ This module contains utility functions used across the lexical search system,
 including string normalization for dictionary lookups.
 """
 
+from typing import Optional
+
 import unicodedata
 import re
+import hashlib
 
 
 def normalize_string(text: str) -> str:
@@ -97,3 +100,11 @@ def normalize_string(text: str) -> str:
     normalized = normalized.strip()
     
     return normalized
+
+def create_watch_provider_offering_int(provider_id: int, method_id: int) -> int:
+    """
+    Create a watch provider offering integer from a provider ID and method ID.
+
+    Upper 27 bits hold the provider, lower 4 bits hold the method
+    """
+    return (provider_id << 4) | method_id

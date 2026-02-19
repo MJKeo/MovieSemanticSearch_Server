@@ -322,7 +322,7 @@ Score each extracted metadata preference against Postgres-enriched metadata. App
 
 Each preference produces a score in [0, 1]. Average equally across all active preferences.
 
-**Trending bonus:** if `prefers_trending_now` is `True`, check the candidate's `movie_id` against the in-memory trending set from Redis. Present in set → bonus score contribution (scored as 1.0); absent → 0. This is averaged in as one metadata preference component alongside the others.
+**Trending bonus:** if `prefers_trending_movies` is `True`, check the candidate's `movie_id` against the in-memory trending set from Redis. Present in set → bonus score contribution (scored as 1.0); absent → 0. This is averaged in as one metadata preference component alongside the others.
 
 **4. Penalties**
 * Exclude-entity overlap → heavy penalty

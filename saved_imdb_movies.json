@@ -33,7 +33,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -42,7 +42,7 @@
         "logo_path": "/ywIoxSjoYJGUIbR6BfxUiCHdPi3.jpg",
         "display_priority": 26,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -51,7 +51,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -60,7 +60,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -69,8 +69,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -79,8 +79,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -89,8 +89,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -99,8 +99,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -109,8 +109,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -119,7 +119,7 @@
         "logo_path": "/yFGu4sSzwUMfhwmSsZgez8QhaVl.jpg",
         "display_priority": 95,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -128,10 +128,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/9LTQNCvoLsKXP0LtaKAaYVtRaQL.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [],
     "parental_guide_items": [
@@ -728,7 +729,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -737,7 +738,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -746,8 +747,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -756,8 +757,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -766,8 +767,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -776,8 +777,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -786,11 +787,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/hlK0e0wAQ3VLuJcsfIYPvb4JVud.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for some thematic elements, rude humor and action"
@@ -1450,7 +1452,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -1459,7 +1461,7 @@
         "logo_path": "/ywIoxSjoYJGUIbR6BfxUiCHdPi3.jpg",
         "display_priority": 26,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -1468,7 +1470,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -1477,7 +1479,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -1486,8 +1488,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -1496,7 +1498,7 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -1505,8 +1507,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -1515,8 +1517,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -1525,8 +1527,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -1535,7 +1537,7 @@
         "logo_path": "/yFGu4sSzwUMfhwmSsZgez8QhaVl.jpg",
         "display_priority": 95,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -1544,10 +1546,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/zXLXaepIBvFVLU25DH3wv4IPSbe.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for some rude humor and drug references"
@@ -2171,7 +2174,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -2180,8 +2183,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -2190,8 +2193,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -2200,8 +2203,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -2210,8 +2213,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -2220,11 +2223,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/kgwjIb2JDHRhNk13lmSxiClFjVk.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for some action and mild rude humor"
@@ -2852,7 +2856,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -2861,7 +2865,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -2870,7 +2874,7 @@
         "logo_path": "/4cHGd32hhEHmFjDGJcjVEAwFQg0.jpg",
         "display_priority": 51,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -2879,7 +2883,7 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -2888,7 +2892,7 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -2897,7 +2901,7 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -2906,7 +2910,7 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -2915,10 +2919,11 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase"
+          2
         ]
       }
     ],
+    "poster_url": "/2FC9L9MrjBoGHYjYZjdWQdopVYb.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [],
     "parental_guide_items": [
@@ -3511,7 +3516,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -3520,8 +3525,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -3530,8 +3535,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -3540,8 +3545,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -3550,8 +3555,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -3560,11 +3565,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/6Ryitt95xrO8KXuqRGm1fUuNwqF.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for thematic elements"
@@ -4163,7 +4169,7 @@
         "logo_path": "/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg",
         "display_priority": 1,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -4172,10 +4178,11 @@
         "logo_path": "/dpR8r13zWDeUR0QkzWidrdMxa56.jpg",
         "display_priority": 155,
         "types": [
-          "subscription"
+          1
         ]
       }
     ],
+    "poster_url": "/q125RHUDgR4gjwh1QkfYuJLYkL.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for rude humor and mild action"
@@ -4819,7 +4826,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -4828,8 +4835,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -4838,8 +4845,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -4848,8 +4855,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -4858,8 +4865,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -4868,11 +4875,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/mFvoEwSfLqbcWwFsDjQebn9bzFe.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for some peril and action"
@@ -5488,7 +5496,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -5497,8 +5505,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -5507,8 +5515,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -5517,8 +5525,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -5527,8 +5535,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -5537,11 +5545,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/jAbexAtB0aSfP5Ay4TpWHARyVnG.jpg",
     "maturity_rating": "g",
     "maturity_reasoning": [],
     "parental_guide_items": [
@@ -6172,7 +6181,7 @@
         "logo_path": "/2aGrp1xw3qhwCYvNGAJZPdjfeeX.jpg",
         "display_priority": 15,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -6181,7 +6190,7 @@
         "logo_path": "/drPlq5beqXtBaP7MNs8W616YRhm.jpg",
         "display_priority": 217,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -6190,8 +6199,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6200,8 +6209,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6210,8 +6219,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6220,8 +6229,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6230,11 +6239,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/iB64vpL3dIObOtMZgX3RqdVdQDc.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for mild language and some crude humor"
@@ -6803,8 +6813,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6813,8 +6823,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6823,8 +6833,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6833,8 +6843,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -6843,11 +6853,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/gc5vz1sZXk1DilIzkQLZ2ujuiWQ.jpg",
     "maturity_rating": "approved",
     "maturity_reasoning": [],
     "parental_guide_items": [],
@@ -7372,8 +7383,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -7382,8 +7393,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -7392,8 +7403,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -7402,8 +7413,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -7412,8 +7423,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -7422,7 +7433,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -7431,10 +7442,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/hA2ple9q4qnwxp3hKVNhroipsir.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for intense sequences of violence throughout, and for disturbing images"
@@ -8149,7 +8161,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8158,7 +8170,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8167,7 +8179,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8176,7 +8188,7 @@
         "logo_path": "/ywIoxSjoYJGUIbR6BfxUiCHdPi3.jpg",
         "display_priority": 26,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8185,7 +8197,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8194,7 +8206,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8203,8 +8215,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8213,8 +8225,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8223,8 +8235,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8233,8 +8245,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8243,8 +8255,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8253,10 +8265,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/ceG9VzoRAVGwivFU403Wc3AHRys.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [],
     "parental_guide_items": [
@@ -8890,7 +8903,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8899,7 +8912,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8908,7 +8921,7 @@
         "logo_path": "/5AkEgpCNaBP3Fbwd2m1GdQIk0vv.jpg",
         "display_priority": 12,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -8917,8 +8930,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8927,8 +8940,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8937,8 +8950,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8947,8 +8960,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -8957,11 +8970,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/qJ2tW6WMUDux911r6m7haRef0WH.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for intense sequences of violence and some menace"
@@ -9711,7 +9725,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -9720,7 +9734,7 @@
         "logo_path": "/5AkEgpCNaBP3Fbwd2m1GdQIk0vv.jpg",
         "display_priority": 12,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -9729,7 +9743,7 @@
         "logo_path": "/x9zOHTUkQzt3PgPVKbMH9CKBwLK.jpg",
         "display_priority": 36,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -9738,8 +9752,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -9748,8 +9762,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -9758,8 +9772,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -9768,7 +9782,7 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -9777,8 +9791,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -9787,7 +9801,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -9796,10 +9810,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/wXqWR7dHncNRbxoEGybEy7QTe9h.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for strong and bloody violence throughout, language and brief drug use"
@@ -10428,7 +10443,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -10437,8 +10452,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -10447,8 +10462,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -10457,8 +10472,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -10467,8 +10482,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -10477,10 +10492,11 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/vSNxAJTlD0r02V9sPYpOjqDZXUK.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for intense sequences of sci-fi violence and action"
@@ -11230,7 +11246,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -11239,7 +11255,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -11248,8 +11264,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -11258,8 +11274,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -11268,8 +11284,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -11278,8 +11294,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -11288,8 +11304,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -11298,10 +11314,11 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/8Vt6mWEReuy4Of61Lnj5Xj704m8.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for sequences of animated action violence, some language and thematic elements"
@@ -12088,7 +12105,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -12097,7 +12114,7 @@
         "logo_path": "/76CvnJAKAPbJuiXYwQGN7PFqOci.jpg",
         "display_priority": 101,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -12106,7 +12123,7 @@
         "logo_path": "/cZvP3XsDKlHFhNIyHYCVPStXT5l.jpg",
         "display_priority": 117,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -12115,7 +12132,7 @@
         "logo_path": "/mMJ6AQUpHDsD5s2Q2dnbpX1NFwp.jpg",
         "display_priority": 123,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -12124,8 +12141,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -12134,8 +12151,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -12144,8 +12161,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -12154,8 +12171,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -12164,10 +12181,11 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase"
+          2
         ]
       }
     ],
+    "poster_url": "/ulzhLuWrPK07P1YkdWQLZnQh1JL.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for sequences of sci-fi violence and action, and some language"
@@ -12983,7 +13001,7 @@
         "logo_path": "/97yvRBw1GzX7fXprcF80er19ot.jpg",
         "display_priority": 3,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -12992,7 +13010,7 @@
         "logo_path": "/oTQdXIqM9iewlN4MC2nhKB0gHw.jpg",
         "display_priority": 20,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13001,7 +13019,7 @@
         "logo_path": "/2ino0WmHA4GROB7NYKzT6PGqLcb.jpg",
         "display_priority": 24,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13010,7 +13028,7 @@
         "logo_path": "/gAGrSQCTAisxy2CsWbijVvJEnRo.jpg",
         "display_priority": 28,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13019,7 +13037,7 @@
         "logo_path": "/ovmu6uot1XVvsemM2dDySXLiX57.jpg",
         "display_priority": 29,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13028,7 +13046,7 @@
         "logo_path": "/92Kx25Od0habmgRBTqT6XWgwgKt.jpg",
         "display_priority": 45,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13037,7 +13055,7 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -13046,7 +13064,7 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -13055,8 +13073,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -13065,8 +13083,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -13075,10 +13093,11 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase"
+          2
         ]
       }
     ],
+    "poster_url": "/6FfCtAuVAW8XJjZ7eWeLibRLWTw.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for sci-fi violence and brief mild language"
@@ -13686,7 +13705,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13695,7 +13714,7 @@
         "logo_path": "/2aGrp1xw3qhwCYvNGAJZPdjfeeX.jpg",
         "display_priority": 15,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13704,7 +13723,7 @@
         "logo_path": "/A95qgiMz6ulV2SxeKcJ5Gc9pqGS.jpg",
         "display_priority": 93,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13713,7 +13732,7 @@
         "logo_path": "/drPlq5beqXtBaP7MNs8W616YRhm.jpg",
         "display_priority": 217,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -13722,8 +13741,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -13732,8 +13751,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -13742,8 +13761,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -13752,8 +13771,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -13762,8 +13781,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -13772,7 +13791,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -13781,10 +13800,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/wuMc08IPKEatf9rnMNXvIDxqP4W.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for some scary moments and mild language"
@@ -14450,7 +14470,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -14459,7 +14479,7 @@
         "logo_path": "/5AkEgpCNaBP3Fbwd2m1GdQIk0vv.jpg",
         "display_priority": 12,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -14468,8 +14488,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -14478,8 +14498,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -14488,8 +14508,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -14498,8 +14518,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -14508,8 +14528,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -14518,7 +14538,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -14527,10 +14547,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for epic battle sequences and some scary images"
@@ -15246,7 +15267,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -15255,7 +15276,7 @@
         "logo_path": "/rcBwnERpNfPfWB5DaSTyEMCZbCA.jpg",
         "display_priority": 33,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -15264,7 +15285,7 @@
         "logo_path": "/x9zOHTUkQzt3PgPVKbMH9CKBwLK.jpg",
         "display_priority": 36,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -15273,7 +15294,7 @@
         "logo_path": "/ptmbGSttkyzawLbxx9MElmxKuVo.jpg",
         "display_priority": 52,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -15282,7 +15303,7 @@
         "logo_path": "/esiLBRzDUwodjfN8gA4qj7l3ZF7.jpg",
         "display_priority": 154,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -15291,7 +15312,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -15300,7 +15321,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -15309,8 +15330,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -15319,8 +15340,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -15329,8 +15350,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -15339,8 +15360,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -15349,8 +15370,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -15359,7 +15380,7 @@
         "logo_path": "/g2IaWyo6jCY0rIFjb4qgZ0bSmm3.jpg",
         "display_priority": 42,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -15368,7 +15389,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -15377,10 +15398,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/ty8TGRuvJLPUmAR1H1nRIsgwvim.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for intense, graphic combat"
@@ -16025,7 +16047,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16034,7 +16056,7 @@
         "logo_path": "/5AkEgpCNaBP3Fbwd2m1GdQIk0vv.jpg",
         "display_priority": 12,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16043,7 +16065,7 @@
         "logo_path": "/ohcwolMl8E743CkS8MnhmJKOlRj.jpg",
         "display_priority": 69,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16052,7 +16074,7 @@
         "logo_path": "/zXCdY4pczONheFCU9GkrMbGI1o5.jpg",
         "display_priority": 196,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16061,8 +16083,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16071,8 +16093,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16081,8 +16103,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16091,8 +16113,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16101,8 +16123,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16111,7 +16133,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -16120,10 +16142,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for sequences of violence and action throughout"
@@ -16779,7 +16802,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16788,7 +16811,7 @@
         "logo_path": "/lD7HKUmXDvUya58DceiTA809Zbf.jpg",
         "display_priority": 30,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16797,7 +16820,7 @@
         "logo_path": "/ctiRpS16dlaTXQBSsiFncMrgWmh.jpg",
         "display_priority": 50,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16806,7 +16829,7 @@
         "logo_path": "/ptmbGSttkyzawLbxx9MElmxKuVo.jpg",
         "display_priority": 52,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -16815,8 +16838,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16825,8 +16848,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16835,8 +16858,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16845,8 +16868,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -16855,7 +16878,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -16864,10 +16887,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/p96dm7sCMn4VYAStA6siNz30G1r.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for sci-fi violence and brief language"
@@ -17508,7 +17532,7 @@
         "logo_path": "/efu1Cqc63XrPBoreYnf2mn0Nizj.jpg",
         "display_priority": 13,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -17517,7 +17541,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -17526,7 +17550,7 @@
         "logo_path": "/ywIoxSjoYJGUIbR6BfxUiCHdPi3.jpg",
         "display_priority": 26,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -17535,7 +17559,7 @@
         "logo_path": "/ctiRpS16dlaTXQBSsiFncMrgWmh.jpg",
         "display_priority": 50,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -17544,7 +17568,7 @@
         "logo_path": "/ptmbGSttkyzawLbxx9MElmxKuVo.jpg",
         "display_priority": 52,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -17553,7 +17577,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -17562,7 +17586,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -17571,8 +17595,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -17581,8 +17605,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -17591,8 +17615,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -17601,8 +17625,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -17611,7 +17635,7 @@
         "logo_path": "/g2IaWyo6jCY0rIFjb4qgZ0bSmm3.jpg",
         "display_priority": 42,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -17620,7 +17644,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -17629,10 +17653,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for some intense perilous action and brief strong language."
@@ -18273,8 +18298,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -18283,8 +18308,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -18293,8 +18318,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -18303,8 +18328,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -18313,7 +18338,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -18322,10 +18347,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/gajva2L0rPYkEWjzgFlBXCAVBE5.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for violence, some sexuality, nudity and language"
@@ -18979,8 +19005,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -18989,8 +19015,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -18999,8 +19025,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -19009,8 +19035,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -19019,11 +19045,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/maFjKnJ62hDQ9E66dKqDZgbUy0H.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for intense science fiction terror"
@@ -19640,7 +19667,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -19649,7 +19676,7 @@
         "logo_path": "/ywIoxSjoYJGUIbR6BfxUiCHdPi3.jpg",
         "display_priority": 26,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -19658,7 +19685,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -19667,7 +19694,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -19676,8 +19703,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -19686,8 +19713,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -19696,8 +19723,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -19706,8 +19733,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -19716,8 +19743,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -19726,7 +19753,7 @@
         "logo_path": "/g2IaWyo6jCY0rIFjb4qgZ0bSmm3.jpg",
         "display_priority": 42,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -19735,10 +19762,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/x2FJsf1ElAgr63Y3PNPtJrcmpoe.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for brief strong language"
@@ -20391,8 +20419,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -20401,8 +20429,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -20411,8 +20439,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -20421,8 +20449,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -20431,11 +20459,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/hjlZSXM86wJrfCv5VKfR5DI2VeU.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for horror violence, disturbing images, language, drug use and brief graphic nudity"
@@ -21039,7 +21068,7 @@
         "logo_path": "/2aGrp1xw3qhwCYvNGAJZPdjfeeX.jpg",
         "display_priority": 15,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -21048,7 +21077,7 @@
         "logo_path": "/drPlq5beqXtBaP7MNs8W616YRhm.jpg",
         "display_priority": 217,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -21057,8 +21086,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21067,8 +21096,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21077,8 +21106,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21087,8 +21116,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21097,8 +21126,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21107,10 +21136,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/uAR0AWqhQL1hQa69UDEbb2rE5Wx.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for disturbing violent content and behavior, bloody images, graphic nudity, and strong language"
@@ -21710,7 +21740,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -21719,7 +21749,7 @@
         "logo_path": "/5AkEgpCNaBP3Fbwd2m1GdQIk0vv.jpg",
         "display_priority": 12,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -21728,8 +21758,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21738,8 +21768,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21748,8 +21778,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21758,8 +21788,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -21768,11 +21798,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/1egpmVXuXed58TH2UOnX1nATTrf.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for thematic material, violence, terror and frightening images, and brief strong language"
@@ -22327,7 +22358,7 @@
         "logo_path": "/pvske1MyAoymrs5bguRfVqYiM9a.jpg",
         "display_priority": 5,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -22336,7 +22367,7 @@
         "logo_path": "/vmXC3D9Kqtt9TEohDEmcaxnLYA5.jpg",
         "display_priority": 90,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -22345,7 +22376,7 @@
         "logo_path": "/8aBqoNeGGr0oSA85iopgNZUOTOc.jpg",
         "display_priority": 206,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -22354,8 +22385,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -22364,8 +22395,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -22374,8 +22405,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -22384,8 +22415,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -22394,8 +22425,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -22404,7 +22435,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -22413,10 +22444,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/ju10W5gl3PPK3b7TjEmVOZap51I.jpg",
     "maturity_rating": "unrated",
     "maturity_reasoning": [],
     "parental_guide_items": [
@@ -23056,7 +23088,7 @@
         "logo_path": "/2aGrp1xw3qhwCYvNGAJZPdjfeeX.jpg",
         "display_priority": 15,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -23065,7 +23097,7 @@
         "logo_path": "/drPlq5beqXtBaP7MNs8W616YRhm.jpg",
         "display_priority": 217,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -23074,8 +23106,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23084,8 +23116,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23094,8 +23126,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23104,8 +23136,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23114,8 +23146,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23124,10 +23156,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/rLNSOudrayDBo1uqXjrhxcjODIC.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for strong grisly violence and language"
@@ -23680,8 +23713,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23690,8 +23723,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23700,8 +23733,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23710,8 +23743,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -23720,11 +23753,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/191nKfP0ehp3uIvWqgPbFmI4lv9.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for grisly afterviews of horrific and bizarre killings, and for strong language"
@@ -24406,7 +24440,7 @@
         "logo_path": "/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg",
         "display_priority": 1,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -24415,7 +24449,7 @@
         "logo_path": "/dpR8r13zWDeUR0QkzWidrdMxa56.jpg",
         "display_priority": 155,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -24424,8 +24458,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -24434,8 +24468,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -24444,8 +24478,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -24454,8 +24488,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -24464,8 +24498,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -24474,10 +24508,11 @@
         "logo_path": "/yFGu4sSzwUMfhwmSsZgez8QhaVl.jpg",
         "display_priority": 95,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/7IiTTgloJzvGI1TAYymCfbfl3vT.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for language, some violence and sexual content"
@@ -25234,7 +25269,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -25243,7 +25278,7 @@
         "logo_path": "/5AkEgpCNaBP3Fbwd2m1GdQIk0vv.jpg",
         "display_priority": 12,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -25252,8 +25287,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25262,8 +25297,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25272,8 +25307,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25282,8 +25317,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25292,11 +25327,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/tFXcEccSQMf3lfhfXKSU9iRBpa3.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for violence, bloody images, and language including sexual references"
@@ -25876,7 +25912,7 @@
         "logo_path": "/pvske1MyAoymrs5bguRfVqYiM9a.jpg",
         "display_priority": 5,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -25885,7 +25921,7 @@
         "logo_path": "/yhrtzYd43pFIhRq0ruO8umJPuyn.jpg",
         "display_priority": 39,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -25894,7 +25930,7 @@
         "logo_path": "/8aBqoNeGGr0oSA85iopgNZUOTOc.jpg",
         "display_priority": 206,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -25903,8 +25939,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25913,8 +25949,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25923,8 +25959,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25933,8 +25969,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -25943,11 +25979,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/9uGHEgsiUXjCNq8wdq4r49YL8A1.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for strong violence, sexuality, drug use and language"
@@ -26595,7 +26632,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -26604,7 +26641,7 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -26613,8 +26650,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -26623,8 +26660,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -26633,8 +26670,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -26643,11 +26680,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for disturbing and graphic depiction of violent anti-social behavior, sexuality and language"
@@ -27311,7 +27349,7 @@
         "logo_path": "/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg",
         "display_priority": 1,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27320,7 +27358,7 @@
         "logo_path": "/1C5EVCWyQD798CE1DFfcm6oAbxP.jpg",
         "display_priority": 19,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27329,7 +27367,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27338,7 +27376,7 @@
         "logo_path": "/ywIoxSjoYJGUIbR6BfxUiCHdPi3.jpg",
         "display_priority": 26,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27347,7 +27385,7 @@
         "logo_path": "/ctiRpS16dlaTXQBSsiFncMrgWmh.jpg",
         "display_priority": 50,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27356,7 +27394,7 @@
         "logo_path": "/dpR8r13zWDeUR0QkzWidrdMxa56.jpg",
         "display_priority": 155,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27365,7 +27403,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27374,7 +27412,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -27383,8 +27421,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -27393,8 +27431,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -27403,8 +27441,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -27413,8 +27451,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -27423,8 +27461,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -27433,7 +27471,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -27442,10 +27480,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/9xjZS2rlVxm8SFx8kPC3aIGCOYQ.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for disaster related peril and violence, nudity, sensuality and brief language"
@@ -28220,7 +28259,7 @@
         "logo_path": "/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg",
         "display_priority": 1,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28229,7 +28268,7 @@
         "logo_path": "/pvske1MyAoymrs5bguRfVqYiM9a.jpg",
         "display_priority": 5,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28238,7 +28277,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28247,7 +28286,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28256,7 +28295,7 @@
         "logo_path": "/ptmbGSttkyzawLbxx9MElmxKuVo.jpg",
         "display_priority": 52,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28265,7 +28304,7 @@
         "logo_path": "/dpR8r13zWDeUR0QkzWidrdMxa56.jpg",
         "display_priority": 155,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28274,7 +28313,7 @@
         "logo_path": "/8aBqoNeGGr0oSA85iopgNZUOTOc.jpg",
         "display_priority": 206,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28283,7 +28322,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28292,7 +28331,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -28301,8 +28340,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -28311,8 +28350,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -28321,8 +28360,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -28331,8 +28370,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -28341,8 +28380,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -28351,7 +28390,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -28360,10 +28399,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/saHP97rTPS5eLmrLQEcANmKrsFl.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for drug content, some sensuality and war violence"
@@ -29150,7 +29190,7 @@
         "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
         "display_priority": 11,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29159,7 +29199,7 @@
         "logo_path": "/5AkEgpCNaBP3Fbwd2m1GdQIk0vv.jpg",
         "display_priority": 12,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29168,7 +29208,7 @@
         "logo_path": "/ohcwolMl8E743CkS8MnhmJKOlRj.jpg",
         "display_priority": 69,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29177,7 +29217,7 @@
         "logo_path": "/zXCdY4pczONheFCU9GkrMbGI1o5.jpg",
         "display_priority": 196,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29186,8 +29226,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29196,8 +29236,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29206,8 +29246,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29216,8 +29256,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29226,8 +29266,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29236,7 +29276,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -29245,10 +29285,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/k3waqVXSnvCZWfJYNtdamTgTtTA.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for some strong language"
@@ -29793,7 +29834,7 @@
         "logo_path": "/pvske1MyAoymrs5bguRfVqYiM9a.jpg",
         "display_priority": 5,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29802,7 +29843,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29811,7 +29852,7 @@
         "logo_path": "/2aGrp1xw3qhwCYvNGAJZPdjfeeX.jpg",
         "display_priority": 15,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29820,7 +29861,7 @@
         "logo_path": "/oR1aNm1Qu9jQBkW4VrGPWhqbC3P.jpg",
         "display_priority": 48,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29829,7 +29870,7 @@
         "logo_path": "/z9x1xFFKjHTYlLYWtiPhAjN4jOp.jpg",
         "display_priority": 195,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29838,7 +29879,7 @@
         "logo_path": "/8aBqoNeGGr0oSA85iopgNZUOTOc.jpg",
         "display_priority": 206,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29847,7 +29888,7 @@
         "logo_path": "/drPlq5beqXtBaP7MNs8W616YRhm.jpg",
         "display_priority": 217,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -29856,8 +29897,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29866,8 +29907,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29876,8 +29917,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29886,8 +29927,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -29896,11 +29937,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/2hFvxCCWrTmCYwfy7yum0GKRi3Y.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for violence and brief strong language"
@@ -30586,8 +30628,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -30596,8 +30638,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -30606,8 +30648,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -30616,8 +30658,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -30626,8 +30668,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -30636,10 +30678,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/rNzQyW4f8B8cQeg7Dgj3n6eT5k9.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for some sexuality"
@@ -31212,7 +31255,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -31221,7 +31264,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -31230,7 +31273,7 @@
         "logo_path": "/A95qgiMz6ulV2SxeKcJ5Gc9pqGS.jpg",
         "display_priority": 93,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -31239,7 +31282,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -31248,7 +31291,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -31257,8 +31300,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31267,8 +31310,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31277,8 +31320,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31287,8 +31330,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31297,8 +31340,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31307,10 +31350,11 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/lzUI2Cg7OMfcUNv3f7MywYNBjs6.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 on appeal for crude sexual humor and drug references"
@@ -31924,7 +31968,7 @@
         "logo_path": "/1C5EVCWyQD798CE1DFfcm6oAbxP.jpg",
         "display_priority": 19,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -31933,8 +31977,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31943,8 +31987,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31953,8 +31997,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31963,8 +32007,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -31973,11 +32017,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/i86hMi5iEF3WnYLCaGHdT5FPdYg.jpg",
     "maturity_rating": "pg",
     "maturity_reasoning": [
       "rated pg for sensuality and language"
@@ -32557,8 +32602,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -32567,8 +32612,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -32577,8 +32622,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -32587,8 +32632,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -32597,11 +32642,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/63kGofUkt1Mx0SIL4XI4Z5AoSgt.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for strong sexual content including dialogue, some unusual behavior and graphic nudity, and for language"
@@ -33203,8 +33249,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33213,8 +33259,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33223,8 +33269,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33233,8 +33279,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33243,11 +33289,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/7GtdJU6iAg6fjQu3E3zta3bIAQh.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for violence and thematic elements"
@@ -33900,8 +33947,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33910,8 +33957,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33920,8 +33967,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33930,8 +33977,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33940,8 +33987,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -33950,7 +33997,7 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       },
       {
@@ -33959,10 +34006,11 @@
         "logo_path": "/vLZKlXUNDcZR7ilvfY9Wr9k80FZ.jpg",
         "display_priority": 127,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/u68AjlvlutfEIcpmbYpKcdi09ut.jpg",
     "maturity_rating": "r",
     "maturity_reasoning": [
       "rated r for some violence, sexual material and language"
@@ -34623,8 +34671,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -34633,8 +34681,8 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -34643,8 +34691,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -34653,8 +34701,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -34663,11 +34711,12 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       }
     ],
+    "poster_url": "/g5IoYeudx9XBEfwNL0fHvSckLBz.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [
       "rated pg-13 for stylized violence, sexual content, language and drug references"
@@ -35308,7 +35357,7 @@
         "logo_path": "/9BgaNQRMDvVlji1JBZi6tcfxpKx.jpg",
         "display_priority": 10,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -35317,7 +35366,7 @@
         "logo_path": "/hExO4PtimLIYn3kBOrzsejNv7cT.jpg",
         "display_priority": 22,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -35326,7 +35375,7 @@
         "logo_path": "/ywIoxSjoYJGUIbR6BfxUiCHdPi3.jpg",
         "display_priority": 26,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -35335,7 +35384,7 @@
         "logo_path": "/ctiRpS16dlaTXQBSsiFncMrgWmh.jpg",
         "display_priority": 50,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -35344,7 +35393,7 @@
         "logo_path": "/5wym1C0jAvJeGirPdgVpcW0CCuy.jpg",
         "display_priority": 366,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -35353,7 +35402,7 @@
         "logo_path": "/fts6X10Jn4QT0X6ac3udKEn2tJA.jpg",
         "display_priority": 367,
         "types": [
-          "subscription"
+          1
         ]
       },
       {
@@ -35362,8 +35411,8 @@
         "logo_path": "/qR6FKvnPBx2O37FDg8PNM7efwF3.jpg",
         "display_priority": 6,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -35372,7 +35421,7 @@
         "logo_path": "/SPnB1qiCkYfirS2it3hZORwGVn.jpg",
         "display_priority": 7,
         "types": [
-          "purchase"
+          2
         ]
       },
       {
@@ -35381,8 +35430,8 @@
         "logo_path": "/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg",
         "display_priority": 16,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -35391,8 +35440,8 @@
         "logo_path": "/pTnn5JwWr4p3pG8H6VrpiQo7Vs0.jpg",
         "display_priority": 17,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -35401,8 +35450,8 @@
         "logo_path": "/19fkcOz0xeUgCVW8tO85uOYnYK9.jpg",
         "display_priority": 35,
         "types": [
-          "purchase",
-          "rent"
+          2,
+          3
         ]
       },
       {
@@ -35411,10 +35460,11 @@
         "logo_path": "/aAb9CUHjFe9Y3O57qnrJH0KOF1B.jpg",
         "display_priority": 121,
         "types": [
-          "rent"
+          3
         ]
       }
     ],
+    "poster_url": "/zT0mhZqZQJE1gSY5Eg9qcGP4NYo.jpg",
     "maturity_rating": "pg-13",
     "maturity_reasoning": [],
     "parental_guide_items": [

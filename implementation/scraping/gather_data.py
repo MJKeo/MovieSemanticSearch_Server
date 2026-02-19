@@ -18,7 +18,7 @@ from .extract_website_data import (
     get_watch_providers, 
     extract_featured_reviews
 )
-from ..classes.movie import IMDBMovie
+from ..classes.movie import BaseMovie
 from ..llms.vector_metadata_generation_methods import generate_llm_metadata
 
 # Load environment variables (for API key)
@@ -57,6 +57,7 @@ def fetch_tmdb_movie_data(tmdb_movie_id: int) -> dict:
         "title": data["title"].lower(),
         "release_date": data["release_date"],
         "duration": data["runtime"],
+        "poster_url": data["poster_path"],
         "watch_providers": get_watch_providers(data["watch/providers"]),
     }   
 
@@ -214,7 +215,7 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
         )
         
         # Combine all parsed data into IMDBMovie object
-        movie = IMDBMovie(
+        movie = BaseMovie(
             id=imdb_movie_id,
             tmdb_id=tmdb_movie_id,
             # Base stats

@@ -5,40 +5,73 @@ This module contains all Enum classes used for movie data representation
 across the project.
 """
 
-from enum import Enum
+from enum import Enum, IntEnum
+from implementation.misc.helpers import normalize_string
 
 
-class MaturityRating(Enum):
-    """Enum representing movie maturity/content ratings."""
-    G = "G"
-    PG = "PG"
-    PG_13 = "PG-13"
-    R = "R"
-    NC_17 = "NC-17"
-    UNRATED = "Unrated"
+class MaturityRating(IntEnum):
+    G = 1
+    PG = 2
+    PG_13 = 3
+    R = 4
+    NC_17 = 5
+    UNRATED = 999
 
     @classmethod
-    def from_string(cls, string: str):
-        """
-        Match by enum value (e.g., "PG") rather than key (e.g., "PG").
-        
-        Args:
-            string: Maturity rating string to match
-            
-        Returns:
-            Matching MaturityRating enum or UNRATED as default
-        """
-        for rating in cls:
-            if rating.value == string:
-                return rating
-        return cls.UNRATED
+    def from_string(cls, rating: str) -> "MaturityRating":
+        normalized_rating = normalize_string(rating)
+        _map = {
+            normalize_string("G"): cls.G,
+            normalize_string("PG"): cls.PG,
+            normalize_string("PG-13"): cls.PG_13,
+            normalize_string("R"): cls.R,
+            normalize_string("NC-17"): cls.NC_17,
+            normalize_string("Unrated"): cls.UNRATED,
+        }
+        if normalized_rating not in _map:
+            return cls.UNRATED
+        return _map[normalized_rating]
+
+    def __str__(self) -> str:
+        _labels = {
+            MaturityRating.G: "G",
+            MaturityRating.PG: "PG",
+            MaturityRating.PG_13: "PG-13",
+            MaturityRating.R: "R",
+            MaturityRating.NC_17: "NC-17",
+            MaturityRating.UNRATED: "Unrated",
+        }
+        return _labels[self]
 
 
-class WatchProviderType(Enum):
+class WatchProviderType(IntEnum):
     """Enum representing types of watch provider services."""
-    SUBSCRIPTION = "subscription"
-    PURCHASE = "purchase"
-    RENT = "rent"
+    SUBSCRIPTION = 1
+    PURCHASE = 2
+    RENT = 3
+
+    @classmethod
+    def from_string(cls, provider_type: str) -> "WatchProviderType | None":
+        """
+        Convert a string to a WatchProviderType enum value.
+        Returns None if the string doesn't match any valid provider type.
+        """
+        normalized_type = normalize_string(provider_type)
+        _map = {
+            normalize_string("subscription"): cls.SUBSCRIPTION,
+            normalize_string("purchase"): cls.PURCHASE,
+            normalize_string("rent"): cls.RENT,
+        }
+        return _map.get(normalized_type, None)
+
+    def __str__(self) -> str:
+        """Return the human-readable string representation of the provider type."""
+        _labels = {
+            WatchProviderType.SUBSCRIPTION: "subscription",
+            WatchProviderType.PURCHASE: "purchase",
+            WatchProviderType.RENT: "rent",
+        }
+        return _labels[self]
 
 
 class VectorCollectionName(Enum):
