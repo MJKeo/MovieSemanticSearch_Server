@@ -165,6 +165,23 @@ async def upsert_title_token_string(string_id: int, norm_str: str) -> None:
     await _execute_write(query, (string_id, norm_str))
 
 
+async def upsert_character_string(string_id: int, norm_str: str) -> None:
+    """
+    Upsert a character string row in lex.character_strings.
+    
+    Args:
+        string_id: The string ID.
+        norm_str: The normalized string.
+    """
+    query = """
+    INSERT INTO lex.character_strings (string_id, norm_str)
+    VALUES (%s, %s)
+    ON CONFLICT (string_id) DO UPDATE SET
+        norm_str = EXCLUDED.norm_str;
+    """
+    await _execute_write(query, (string_id, norm_str))
+
+
 async def insert_title_token_posting(term_id: int, movie_id: int) -> None:
     """
     Insert one title-token posting row into lex.inv_title_token_postings.
@@ -312,6 +329,20 @@ async def upsert_language_dictionary(language_id: int, name: str) -> None:
         name = EXCLUDED.name;
     """
     await _execute_write(query, (language_id, name))
+
+
+async def refresh_title_token_doc_frequency() -> None:
+    """
+    Refresh the lex.title_token_doc_frequency materialized view concurrently.
+
+    This should be called after each bulk ingest so that max-df stop-word
+    filtering reflects the latest posting counts.  The CONCURRENTLY option
+    avoids blocking reads during the rebuild (requires the unique index
+    idx_title_token_df_term_id on the view).
+    """
+    await _execute_write(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.title_token_doc_frequency;"
+    )
 
 
 # ===============================

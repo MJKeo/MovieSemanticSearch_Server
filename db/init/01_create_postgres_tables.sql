@@ -87,7 +87,16 @@ CREATE TABLE IF NOT EXISTS lex.inv_person_postings (
 CREATE INDEX IF NOT EXISTS idx_person_postings_movie
   ON lex.inv_person_postings (movie_id);
 
--- Inverted index postings for character names.
+-- Character names strings saving
+CREATE TABLE IF NOT EXISTS lex.character_strings (
+  string_id  BIGINT PRIMARY KEY REFERENCES lex.lexical_dictionary(string_id) ON DELETE CASCADE,
+  norm_str   TEXT NOT NULL UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_character_strings_trgm
+  ON lex.character_strings USING GIN (norm_str gin_trgm_ops);
+
+-- Inverted index postings for character names so we can LIKE match
 CREATE TABLE IF NOT EXISTS lex.inv_character_postings (
   term_id   BIGINT NOT NULL,
   movie_id  BIGINT NOT NULL,

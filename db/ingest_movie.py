@@ -27,6 +27,7 @@ from db.postgres import (
     upsert_provider_dictionary,
     upsert_watch_method_dictionary,
     upsert_title_token_string,
+    upsert_character_string,
 )
 
 
@@ -140,6 +141,7 @@ async def ingest_movie_card(movie: BaseMovie) -> None:
         maturity_rating, maturity_rank = movie.maturity_rating_and_rank()
         if not maturity_rating or not maturity_rank:
             raise ValueError(f"Movie ingestion failed: One or more are None. Maturity rating: {maturity_rating} and rank: {maturity_rank}.")
+        print(f"Maturity rating: {maturity_rating} and rank: {maturity_rank}.")
         # [DEBUG] Keep lookup table aligned with encoded maturity ranks.
         await upsert_maturity_dictionary(maturity_rank, maturity_rating)
 
@@ -177,18 +179,24 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
     # Title token ingestion: dictionary + title_token_strings + postings.
     title_tokens = movie.normalized_title_tokens()
     for token in title_tokens:
+        normalized_token = normalize_string(token)
+        if not normalized_token:
+            continue
         # lex.lexical_dictionary
-        token_term_id = await upsert_lexical_dictionary(token)
+        token_term_id = await upsert_lexical_dictionary(normalized_token)
         if token_term_id is not None:
             # [INVERTED] lex.title_token_postings
             await insert_title_token_posting(token_term_id, movie_id)
             # [DEBUG] lex.title_token_strings
-            await upsert_title_token_string(token_term_id, token)
+            await upsert_title_token_string(token_term_id, normalized_token)
 
     # Person name ingestion across actors/directors/writers/composers/producers.
     for person in create_people_list(movie):
+        normalized_person = normalize_string(person)
+        if not normalized_person:
+            continue
         # lex.lexical_dictionary
-        person_term_id = await upsert_lexical_dictionary(person)
+        person_term_id = await upsert_lexical_dictionary(normalized_person)
         if person_term_id is not None:
             # [INVERTED] lex.person_postings
             await insert_person_posting(person_term_id, movie_id)
@@ -199,11 +207,16 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
         # Default value used here because BaseMovie may not provide characters.
         raw_characters = []
     for character in raw_characters:
+        normalized_character = normalize_string(character)
+        if not normalized_character:
+            continue
         # lex.lexical_dictionary
-        character_term_id = await upsert_phrase_term(str(character))
+        character_term_id = await upsert_phrase_term(normalized_character)
         if character_term_id is not None:
             # [INVERTED] lex.character_postings
             await insert_character_posting(character_term_id, movie_id)
+            # [DEBUG] lex.character_strings
+            await upsert_character_string(character_term_id, normalized_character)
 
     # Studio phrase ingestion.
     raw_studios = getattr(movie, "production_companies", [])
@@ -211,8 +224,11 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
         # Default value used here because BaseMovie may not provide production_companies.
         raw_studios = []
     for studio in raw_studios:
+        normalized_studio = normalize_string(studio)
+        if not normalized_studio:
+            continue
         # lex.lexical_dictionary
-        studio_term_id = await upsert_phrase_term(str(studio))
+        studio_term_id = await upsert_phrase_term(normalized_studio)
         if studio_term_id is not None:
             # [INVERTED] lex.studio_postings
             await insert_studio_posting(studio_term_id, movie_id)
