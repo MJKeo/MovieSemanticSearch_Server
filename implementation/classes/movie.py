@@ -14,7 +14,7 @@ from .schemas import (
 )
 from pydantic import BaseModel, ConfigDict
 from .enums import MaturityRating, WatchMethodType
-from implementation.misc.helpers import normalize_string
+from implementation.misc.helpers import normalize_string, tokenize_title_phrase
 import re
 
 
@@ -132,27 +132,7 @@ class BaseMovie(BaseModel):
 
     def normalized_title_tokens(self) -> list[str]:
         """Build normalized title tokens including hyphen expansions."""
-        tokens: list[str] = []
-        seen: set[str] = set()
-
-        # Keep hyphens during first pass so we can add split components.
-        normalized_title = normalize_string(self.title)
-        for title_token in re.split(r"\s+", normalized_title):
-            if not title_token:
-                continue
-
-            if title_token not in seen:
-                seen.add(title_token)
-                tokens.append(title_token)
-
-            # For hyphenated terms, also include each component token.
-            if "-" in title_token:
-                for hyphen_part in title_token.split("-"):
-                    if hyphen_part and hyphen_part not in seen:
-                        seen.add(hyphen_part)
-                        tokens.append(hyphen_part)
-
-        return tokens
+        return tokenize_title_phrase(self.title)
 
     def maturity_rating_and_rank(self) -> tuple[str, int]:
         """

@@ -1,0 +1,67 @@
+---
+alwaysApply: true
+---
+
+## Project Guide Index
+
+The following markdown files are the **authoritative source of truth** for this project's architecture, data contracts, and implementation decisions. They are not suggestions — they represent finalized design. Always read the relevant guide(s) before implementing anything non-trivial. When a guide and your intuition conflict, the guide wins unless there is a clear bug or omission.
+
+All guides live in `/implementation/guides/`.
+
+---
+
+### When to read which guide
+
+**`server_architecture_guide.md`**
+Read this first whenever you are working on anything that touches the request lifecycle, service topology, caching strategy, or deployment. It is the top-level map of how all components fit together. If you are unsure which system owns a piece of logic, this guide resolves it.
+
+Key things it defines: the end-to-end request flow (Steps 0–7), the Query Understanding DAG structure and caching rules, the concurrent retrieval fan-out pattern, candidate merge logic, the reranking formula and its four components, background job cadence, and Docker Compose deployment layout.
+
+**`query_understanding_schema.md`**
+Read this whenever you are working on: the LLM query understanding pipeline, any code that constructs or consumes a `QueryUnderstandingResponse`, routing logic that uses channel weights, or anything that extracts or uses lexical entities, metadata preferences, vector subqueries, or vector weights. This schema is the contract between the query understanding stage and everything downstream. Do not invent field names — use exactly what is defined here.
+
+Critical callout from this guide: the trending bonus is gated on `popular_trending_preference.prefers_trending_movies` (nested). Using a top-level field name is a silent bug.
+
+**`lexical_search_guide_final.md`**
+Read this for any work involving the lexical search system: the inverted index tables, string normalization, title token fuzzy matching, phrase postings, the eligible-set construction, scoring formulas, INCLUDE/EXCLUDE entity handling, or the Postgres queries that drive lexical retrieval. This is the complete implementation spec for lexical search — do not infer behavior from table schemas alone.
+
+Key things it defines: the four lexical entity buckets and how each is searched (token vs. phrase), the exact string normalization pipeline (same at ingest and query time), title scoring formula inputs (m/k/L), fuzzy token resolution via trigram shortlist + Levenshtein confirm, and max_df stop-word filtering.
+
+**`postgres_database_structure.md`**
+Read this whenever touching Postgres schemas, writing queries, adding indexes, or implementing any ingest/update job. It covers both the `public` schema (movie_card) and the `lex` schema (inverted index system). Cross-reference with `lexical_search_guide_final.md` for query-time behavior.
+
+Key things it defines: `movie_card` schema and index strategy (composite range index, GIN array indexes with explicit `gin__int_ops`), `watch_offer_keys` encoding (bit-shift pair encoding), required extensions (`pg_trgm`, `fuzzystrmatch`, `intarray`), all `lex` schema tables and their roles, and the single-bulk-query enrichment pattern (never query per-candidate).
+
+**`qdrant_database_structure.md`**
+Read this whenever working with vector storage, collection setup, point ingestion, payload filtering, or Qdrant query construction. Also read it when configuring memory constraints — the quantization + memmap setup is mandatory given the t3.large RAM budget.
+
+Key things it defines: the single `movies` collection with alias-based versioning (alias from day 1), 8 named vectors per point (`anchor`, `plot_events`, `plot_analysis`, `viewer_experience`, `watch_context`, `narrative_techniques`, `production`, `reception`) each 1536-dim Cosine, payload schema (5 fields: `release_ts`, `runtime_minutes`, `maturity_rank`, `genre_ids`, `watch_offer_keys`), and the mandatory scalar quantization (int8) + memmap configuration for RAM management.
+
+**`redis_database_structure.md`**
+Read this whenever working with caching — embedding cache, query understanding cache, trending set, or TMDB detail cache. Each cache has a specific key format, serialization method, and TTL that must be followed exactly.
+
+Key things it defines: embedding vectors stored as packed binary float32 (not JSON), embedding cache key format (`emb:{model}:{sha256[:16]}`), QU cache key format (`qu:v{N}:{hash}`), atomic single-key caching for the full DAG output, trending set stored as a Redis Set with `RENAME`-based atomic overwrite, and the TMDB cache shape (store the shaped response your API returns, not the raw TMDB payload).
+
+**`movie_vector_definitions.md`**
+Read this when you need to understand what each of the 8 vector spaces represents conceptually, and which query intent maps to which collection. Use it when writing vector subquery generation logic, routing logic, or anything that decides which collections to query and why.
+
+**`movie_vector_schemas.md`**
+Read this when implementing the ingest pipeline that builds vector text representations from raw movie data — specifically, which movie attributes go into each vector's text and how. Each vector has a dedicated method (`create_dense_anchor_vector_text`, etc.) with a defined attribute list. Do not add or remove attributes from a vector's schema without understanding the downstream retrieval implications.
+
+**`movie_vector_analysis.md`**
+Read this when debugging search quality, writing or tuning vector subquery generation prompts, or making decisions about which vector collection to route a given query type to. It provides a semantic deep-dive into what each collection actually contains and how the content is worded, which is essential for writing subqueries that will actually match well in each embedding space.
+
+**`saved_imdb_movies.json`**
+Reference this when you need a concrete example of what a raw movie object looks like coming into the ingest pipeline. Use it to validate that your ingest code handles real-world data shapes correctly, including optional/nullable fields.
+
+---
+
+### Cross-guide rules to always respect
+
+- **`movie_id` is always `tmdb_id` (BIGINT/uint64).** It is the primary key in Postgres, the point ID in Qdrant, and the identifier in all Redis keys. Never introduce a secondary ID system.
+- **String normalization runs at ingest and query time identically.** The normalizer in `lexical_search_guide_final.md` is the canonical implementation. A mismatch between ingest and query normalization is a silent retrieval bug.
+- **Qdrant scores are final.** Vector similarity is not recomputed at reranking time. The reranker uses the scores Qdrant returned directly, converted to clamped z-scores per channel.
+- **Never query Postgres per-candidate.** All metadata enrichment is a single `WHERE movie_id = ANY($1)` bulk fetch after merge. Implement it this way even if it seems simpler to query inline.
+- **Never cache partial DAG outputs.** The entire `QueryUnderstandingResponse` is one atomic Redis key. Partial writes create consistency bugs that are difficult to detect.
+- **Embedding cache does not lowercase.** Embedding models are case-sensitive. The QU cache normalizer lowercases; the embedding cache normalizer does not. These are different normalization rules applied to different cache keys — do not conflate them.
+- **Qdrant payload is for hard filters only.** Do not add fields to the Qdrant payload for convenience. Full metadata lives in Postgres. The payload schema is intentionally minimal to keep Qdrant lean.

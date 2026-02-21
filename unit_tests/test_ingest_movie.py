@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from db import ingest_movie
+from db import ingest_movie, postgres
 from implementation.classes.schemas import WatchProvider
 
 
@@ -13,8 +13,8 @@ from implementation.classes.schemas import WatchProvider
 async def test_upsert_movie_card_calls_execute_write_with_expected_params() -> None:
     """upsert_movie_card should forward normalized params in the expected order."""
     execute_write = AsyncMock()
-    original_execute_write = ingest_movie._execute_write
-    ingest_movie._execute_write = execute_write
+    original_execute_write = postgres._execute_write
+    postgres._execute_write = execute_write
     try:
         await ingest_movie.upsert_movie_card(
             movie_id=10,
@@ -30,7 +30,7 @@ async def test_upsert_movie_card_calls_execute_write_with_expected_params() -> N
             title_token_count=4,
         )
     finally:
-        ingest_movie._execute_write = original_execute_write
+        postgres._execute_write = original_execute_write
 
     query, params = execute_write.await_args.args
     assert "public.movie_card" in query
@@ -118,7 +118,7 @@ async def test_ingest_lexical_data_requires_movie_id() -> None:
 
 @pytest.mark.asyncio
 async def test_ingest_lexical_data_processes_all_entity_types(mocker) -> None:
-    """ingest_lexical_data should write title, people, character, and studio postings."""
+    """ingest_lexical_data should batch-write title, people, character, and studio postings."""
     movie = SimpleNamespace(
         tmdb_id=9,
         characters=["Hero", "Villain"],
@@ -134,22 +134,23 @@ async def test_ingest_lexical_data_processes_all_entity_types(mocker) -> None:
         "db.ingest_movie.upsert_lexical_dictionary",
         new=AsyncMock(side_effect=[101, None, 201, 202]),
     )
-    insert_title = mocker.patch("db.ingest_movie.insert_title_token_posting", new=AsyncMock())
+    insert_title = mocker.patch("db.ingest_movie.batch_insert_title_token_postings", new=AsyncMock())
     upsert_title_string = mocker.patch("db.ingest_movie.upsert_title_token_string", new=AsyncMock())
-    insert_person = mocker.patch("db.ingest_movie.insert_person_posting", new=AsyncMock())
+    insert_person = mocker.patch("db.ingest_movie.batch_insert_person_postings", new=AsyncMock())
     upsert_phrase = mocker.patch("db.ingest_movie.upsert_phrase_term", new=AsyncMock(side_effect=[301, None, 401]))
-    insert_character = mocker.patch("db.ingest_movie.insert_character_posting", new=AsyncMock())
-    insert_studio = mocker.patch("db.ingest_movie.insert_studio_posting", new=AsyncMock())
+    insert_character = mocker.patch("db.ingest_movie.batch_insert_character_postings", new=AsyncMock())
+    upsert_character_string = mocker.patch("db.ingest_movie.upsert_character_string", new=AsyncMock())
+    insert_studio = mocker.patch("db.ingest_movie.batch_insert_studio_postings", new=AsyncMock())
 
     await ingest_movie.ingest_lexical_data(movie)
 
     assert upsert_lexical.await_count == 4
-    insert_title.assert_awaited_once_with(101, 9)
+    insert_title.assert_awaited_once_with([101], 9)
     upsert_title_string.assert_awaited_once_with(101, "spider-man")
-    insert_person.assert_any_await(201, 9)
-    insert_person.assert_any_await(202, 9)
-    insert_character.assert_awaited_once_with(301, 9)
-    insert_studio.assert_awaited_once_with(401, 9)
+    insert_person.assert_awaited_once_with([201, 202], 9)
+    insert_character.assert_awaited_once_with([301], 9)
+    upsert_character_string.assert_awaited_once_with(301, "hero")
+    insert_studio.assert_awaited_once_with([401], 9)
     assert upsert_phrase.await_count == 3
 
 
@@ -170,8 +171,10 @@ async def test_create_genre_ids_handles_normal_and_invalid_values(mocker) -> Non
 
     assert result == [11, 22]
     assert upsert_lexical.await_count == 2
-    upsert_genre.assert_any_await(11, "Action")
-    upsert_genre.assert_any_await(22, "Sci-Fi")
+    # genre_dictionary stores the normalized name so it is consistent with the
+    # cache-loader key format used by _ensure_genre_cache_loaded.
+    upsert_genre.assert_any_await(11, "action")
+    upsert_genre.assert_any_await(22, "sci-fi")
 
 
 @pytest.mark.asyncio

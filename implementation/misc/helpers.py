@@ -101,6 +101,45 @@ def normalize_string(text: str) -> str:
     
     return normalized
 
+
+def tokenize_title_phrase(text: str) -> list[str]:
+    """
+    Normalize and tokenize a title phrase with hyphen expansion.
+
+    This function is the canonical title-tokenization entrypoint shared by
+    ingest and query-time lexical search. It first normalizes the input using
+    normalize_string, then tokenizes on whitespace, and finally expands
+    hyphenated tokens by including each component token.
+
+    Args:
+        text: Raw title phrase. This can be unnormalized user/LLM input.
+
+    Returns:
+        A deduplicated list of normalized tokens, preserving first-seen order.
+        Returns an empty list if the input normalizes to an empty string.
+    """
+    normalized = normalize_string(text)
+    if not normalized:
+        return []
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+
+    for token in normalized.split():
+        if not token or token in seen:
+            continue
+
+        seen.add(token)
+        tokens.append(token)
+
+        if "-" in token:
+            for hyphen_part in token.split("-"):
+                if hyphen_part and hyphen_part not in seen:
+                    seen.add(hyphen_part)
+                    tokens.append(hyphen_part)
+
+    return tokens
+
 def create_watch_provider_offering_key(provider_id: int, watch_method_id: int) -> int:
     """
     Create a watch provider offering integer from a provider name ID and watch method ID.

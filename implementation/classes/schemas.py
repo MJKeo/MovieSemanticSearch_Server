@@ -6,6 +6,7 @@ and other data model classes used throughout the project.
 """
 
 from typing import List, Literal, Optional
+from dataclasses import dataclass, fields
 from pydantic import BaseModel, Field, conlist, constr, ConfigDict, field_validator
 from enum import Enum
 from .enums import (
@@ -601,6 +602,47 @@ class QueryUnderstandingResponse(BaseModel):
     metadata_preferences: MetadataPreferencesResponse
     vector_subqueries: VectorSubqueriesResponse
     vector_weights: VectorWeightsResponse
+
+
+# -----------------------------
+#        LEXICAL SEARCH
+# -----------------------------
+
+@dataclass
+class LexicalCandidate:
+    """Per-movie scoring components returned by the full lexical search."""
+    movie_id: int
+    matched_people_count: int = 0
+    matched_character_count: int = 0
+    matched_studio_count: int = 0
+    title_score_sum: float = 0.0
+    franchise_score_sum: float = 0.0
+    normalized_lexical_score: float = 0.0
+
+@dataclass(frozen=True, slots=True)
+class MetadataFilters:
+    """
+    Metadata hard-filter parameters passed through from the query
+    understanding layer.  Any field left as None is inactive.
+
+    This dataclass is shared across all posting-search functions so
+    each can build its own MATERIALIZED eligible CTE without receiving
+    a pre-resolved ID array.
+    """
+
+    min_release_ts: Optional[int] = None
+    max_release_ts: Optional[int] = None
+    min_runtime: Optional[int] = None
+    max_runtime: Optional[int] = None
+    min_maturity_rank: Optional[int] = None
+    max_maturity_rank: Optional[int] = None
+    genres: Optional[list[Genre]] = None
+    watch_offer_keys: Optional[list[int]] = None
+
+    @property
+    def is_active(self) -> bool:
+        """True when at least one filter is set."""
+        return any(getattr(self, f.name) is not None for f in fields(self))
 
 
 # -----------------------------

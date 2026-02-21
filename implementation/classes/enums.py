@@ -107,33 +107,43 @@ class MetadataPreferenceName(Enum):
     RECEPTION = "reception"
 
 class Genre(Enum):
-    ACTION = "Action"
-    ADVENTURE = "Adventure"
-    ANIMATION = "Animation"
-    BIOGRAPHY = "Biography"
-    COMEDY = "Comedy"
-    CRIME = "Crime"
-    DOCUMENTARY = "Documentary"
-    DRAMA = "Drama"
-    FAMILY = "Family"
-    FANTASY = "Fantasy"
-    FILM_NOIR = "Film-Noir"
-    GAME_SHOW = "Game-Show"
-    HISTORY = "History"
-    HORROR = "Horror"
-    MUSIC = "Music"
-    MUSICAL = "Musical"
-    MYSTERY = "Mystery"
-    NEWS = "News"
-    REALITY_TV = "Reality-TV"
-    ROMANCE = "Romance"
-    SCI_FI = "Sci-Fi"
-    SHORT = "Short"
-    SPORT = "Sport"
-    TALK_SHOW = "Talk-Show"
-    THRILLER = "Thriller"
-    WAR = "War"
-    WESTERN = "Western"
+    value: str
+    normalized_name: str
+
+    def __new__(cls, value: str, normalized_name: str) -> "Genre":
+        """Create a Genre enum member with display and normalized names."""
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.normalized_name = normalized_name
+        return obj
+
+    ACTION = ("Action", "action")
+    ADVENTURE = ("Adventure", "adventure")
+    ANIMATION = ("Animation", "animation")
+    BIOGRAPHY = ("Biography", "biography")
+    COMEDY = ("Comedy", "comedy")
+    CRIME = ("Crime", "crime")
+    DOCUMENTARY = ("Documentary", "documentary")
+    DRAMA = ("Drama", "drama")
+    FAMILY = ("Family", "family")
+    FANTASY = ("Fantasy", "fantasy")
+    FILM_NOIR = ("Film-Noir", "film-noir")
+    GAME_SHOW = ("Game-Show", "game-show")
+    HISTORY = ("History", "history")
+    HORROR = ("Horror", "horror")
+    MUSIC = ("Music", "music")
+    MUSICAL = ("Musical", "musical")
+    MYSTERY = ("Mystery", "mystery")
+    NEWS = ("News", "news")
+    REALITY_TV = ("Reality-TV", "reality-tv")
+    ROMANCE = ("Romance", "romance")
+    SCI_FI = ("Sci-Fi", "sci-fi")
+    SHORT = ("Short", "short")
+    SPORT = ("Sport", "sport")
+    TALK_SHOW = ("Talk-Show", "talk-show")
+    THRILLER = ("Thriller", "thriller")
+    WAR = ("War", "war")
+    WESTERN = ("Western", "western")
 
 class DateMatchOperation(Enum):
     EXACT = "exact"

@@ -8,17 +8,17 @@ import asyncio
 from typing import Optional, Sequence, List
 from datetime import datetime, timezone
 from implementation.classes.movie import BaseMovie
-from implementation.classes.enums import WatchMethodType
+from implementation.classes.enums import WatchMethodType, MaturityRating
 from implementation.misc.helpers import (
     normalize_string,
     create_watch_provider_offering_key,
 )
 from db.postgres import (
-    _execute_write,
-    insert_title_token_posting,
-    insert_person_posting,
-    insert_character_posting,
-    insert_studio_posting,
+    batch_insert_title_token_postings,
+    batch_insert_person_postings,
+    batch_insert_character_postings,
+    batch_insert_studio_postings,
+    upsert_movie_card,
     upsert_phrase_term,
     upsert_lexical_dictionary,
     upsert_genre_dictionary,
@@ -31,71 +31,6 @@ from db.postgres import (
 )
 
 
-async def upsert_movie_card(
-    movie_id: int,
-    title: str,
-    poster_url: Optional[str],
-    release_ts: Optional[int],
-    runtime_minutes: Optional[int],
-    maturity_rank: Optional[int],
-    genre_ids: Sequence[int],
-    watch_offer_keys: Sequence[int],
-    audio_language_ids: Sequence[int],
-    reception_score: Optional[float],
-    title_token_count: int,
-) -> None:
-    """
-    Upsert a row in public.movie_card for canonical metadata storage.
-    
-    Args:
-        movie_id: Unique movie identifier.
-        title: Movie title.
-        poster_url: URL to the movie poster image.
-        release_ts: Release timestamp (Unix seconds).
-        runtime_minutes: Movie runtime in minutes.
-        maturity_rank: Maturity rating rank.
-        genre_ids: List of genre IDs.
-        watch_offer_keys: List of watch offer keys (encoded provider+method).
-        audio_language_ids: List of audio language IDs.
-        reception_score: Precomputed reception score from IMDB/Metacritic.
-        title_token_count: Number of tokens in the title.
-    """
-    query = """
-    INSERT INTO public.movie_card (
-        movie_id, title, poster_url, release_ts, runtime_minutes,
-        maturity_rank, genre_ids, watch_offer_keys, audio_language_ids,
-        reception_score, title_token_count, created_at, updated_at
-    )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
-    ON CONFLICT (movie_id) DO UPDATE SET
-        title = EXCLUDED.title,
-        poster_url = EXCLUDED.poster_url,
-        release_ts = EXCLUDED.release_ts,
-        runtime_minutes = EXCLUDED.runtime_minutes,
-        maturity_rank = EXCLUDED.maturity_rank,
-        genre_ids = EXCLUDED.genre_ids,
-        watch_offer_keys = EXCLUDED.watch_offer_keys,
-        audio_language_ids = EXCLUDED.audio_language_ids,
-        reception_score = EXCLUDED.reception_score,
-        title_token_count = EXCLUDED.title_token_count,
-        updated_at = now();
-    """
-    params = (
-        movie_id,
-        title,
-        poster_url,
-        release_ts,
-        runtime_minutes,
-        maturity_rank,
-        list(genre_ids),
-        list(watch_offer_keys),
-        list(audio_language_ids),
-        reception_score,
-        title_token_count,
-    )
-    await _execute_write(query, params)
-
-
 async def ingest_movie(movie: BaseMovie) -> None:
     """Ingest one BaseMovie into movie_card plus all lexical posting tables in parallel."""
     await asyncio.gather(
@@ -106,9 +41,6 @@ async def ingest_movie(movie: BaseMovie) -> None:
 
 async def ingest_movie_card(movie: BaseMovie) -> None:
     """Extract fields from a BaseMovie and upsert the canonical movie_card row."""
-    # #region agent log
-    import json as _json, time as _time, os as _os; open("/Users/michaelkeohane/Documents/movie-finder-rag/.cursor/debug-c08718.log","a").write(_json.dumps({"sessionId":"c08718","hypothesisId":"H3","location":"ingest_movie.py:ingest_movie_card","message":"env vars check","data":{"POSTGRES_HOST":_os.getenv("POSTGRES_HOST"),"POSTGRES_DB":_os.getenv("POSTGRES_DB"),"POSTGRES_USER":_os.getenv("POSTGRES_USER"),"POSTGRES_PASSWORD":"SET" if _os.getenv("POSTGRES_PASSWORD") else "UNSET"},"timestamp":int(_time.time()*1000)})+"\n")
-    # #endregion
     try:
         movie_id = getattr(movie, "tmdb_id") or None
         if movie_id is None:
@@ -141,9 +73,11 @@ async def ingest_movie_card(movie: BaseMovie) -> None:
         maturity_rating, maturity_rank = movie.maturity_rating_and_rank()
         if not maturity_rating or not maturity_rank:
             raise ValueError(f"Movie ingestion failed: One or more are None. Maturity rating: {maturity_rating} and rank: {maturity_rank}.")
-        print(f"Maturity rating: {maturity_rating} and rank: {maturity_rank}.")
-        # [DEBUG] Keep lookup table aligned with encoded maturity ranks.
-        await upsert_maturity_dictionary(maturity_rank, maturity_rating)
+        if maturity_rank == MaturityRating.UNRATED.value:
+            maturity_rank = None
+        else:
+            # [DEBUG] Keep lookup table aligned with encoded maturity ranks.
+            await upsert_maturity_dictionary(maturity_rank, maturity_rating)
 
         genre_ids = await create_genre_ids(movie)
         watch_offer_keys = await create_watch_offer_keys(movie)
@@ -178,6 +112,7 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
 
     # Title token ingestion: dictionary + title_token_strings + postings.
     title_tokens = movie.normalized_title_tokens()
+    title_token_term_ids: list[int] = []
     for token in title_tokens:
         normalized_token = normalize_string(token)
         if not normalized_token:
@@ -185,12 +120,13 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
         # lex.lexical_dictionary
         token_term_id = await upsert_lexical_dictionary(normalized_token)
         if token_term_id is not None:
-            # [INVERTED] lex.title_token_postings
-            await insert_title_token_posting(token_term_id, movie_id)
+            title_token_term_ids.append(token_term_id)
             # [DEBUG] lex.title_token_strings
             await upsert_title_token_string(token_term_id, normalized_token)
+    await batch_insert_title_token_postings(list(dict.fromkeys(title_token_term_ids)), movie_id)
 
     # Person name ingestion across actors/directors/writers/composers/producers.
+    person_term_ids: list[int] = []
     for person in create_people_list(movie):
         normalized_person = normalize_string(person)
         if not normalized_person:
@@ -198,14 +134,15 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
         # lex.lexical_dictionary
         person_term_id = await upsert_lexical_dictionary(normalized_person)
         if person_term_id is not None:
-            # [INVERTED] lex.person_postings
-            await insert_person_posting(person_term_id, movie_id)
+            person_term_ids.append(person_term_id)
+    await batch_insert_person_postings(list(dict.fromkeys(person_term_ids)), movie_id)
 
     # Character phrase ingestion.
     raw_characters = getattr(movie, "characters", [])
     if not isinstance(raw_characters, list):
         # Default value used here because BaseMovie may not provide characters.
         raw_characters = []
+    character_term_ids: list[int] = []
     for character in raw_characters:
         normalized_character = normalize_string(character)
         if not normalized_character:
@@ -213,16 +150,17 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
         # lex.lexical_dictionary
         character_term_id = await upsert_phrase_term(normalized_character)
         if character_term_id is not None:
-            # [INVERTED] lex.character_postings
-            await insert_character_posting(character_term_id, movie_id)
+            character_term_ids.append(character_term_id)
             # [DEBUG] lex.character_strings
             await upsert_character_string(character_term_id, normalized_character)
+    await batch_insert_character_postings(list(dict.fromkeys(character_term_ids)), movie_id)
 
     # Studio phrase ingestion.
     raw_studios = getattr(movie, "production_companies", [])
     if not isinstance(raw_studios, list):
         # Default value used here because BaseMovie may not provide production_companies.
         raw_studios = []
+    studio_term_ids: list[int] = []
     for studio in raw_studios:
         normalized_studio = normalize_string(studio)
         if not normalized_studio:
@@ -230,8 +168,8 @@ async def ingest_lexical_data(movie: BaseMovie) -> None:
         # lex.lexical_dictionary
         studio_term_id = await upsert_phrase_term(normalized_studio)
         if studio_term_id is not None:
-            # [INVERTED] lex.studio_postings
-            await insert_studio_posting(studio_term_id, movie_id)
+            studio_term_ids.append(studio_term_id)
+    await batch_insert_studio_postings(list(dict.fromkeys(studio_term_ids)), movie_id)
 
 
 # ================================
@@ -257,8 +195,9 @@ async def create_genre_ids(movie: BaseMovie) -> List[int]:
         genre_id = await upsert_lexical_dictionary(normalized_genre)
         if genre_id is not None:
             genre_ids.append(genre_id)
-            # [DEBUG] Keep lookup table populated for admin views.
-            await upsert_genre_dictionary(genre_id, str(genre_name))
+            # Keep lookup table populated for admin views, using the normalized
+            # name so it is consistent with the cache-loader key format.
+            await upsert_genre_dictionary(genre_id, normalized_genre)
 
     return genre_ids
 
