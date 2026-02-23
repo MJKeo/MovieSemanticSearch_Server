@@ -10,11 +10,11 @@ from implementation.classes.schemas import WatchProvider
 
 
 @pytest.mark.asyncio
-async def test_upsert_movie_card_calls_execute_write_with_expected_params() -> None:
+async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() -> None:
     """upsert_movie_card should forward normalized params in the expected order."""
-    execute_write = AsyncMock()
-    original_execute_write = postgres._execute_write
-    postgres._execute_write = execute_write
+    execute_on_conn = AsyncMock()
+    original = postgres._execute_on_conn
+    postgres._execute_on_conn = execute_on_conn
     try:
         await ingest_movie.upsert_movie_card(
             movie_id=10,
@@ -30,22 +30,32 @@ async def test_upsert_movie_card_calls_execute_write_with_expected_params() -> N
             title_token_count=4,
         )
     finally:
-        postgres._execute_write = original_execute_write
+        postgres._execute_on_conn = original
 
-    query, params = execute_write.await_args.args
+    conn_arg, query, params = execute_on_conn.await_args.args
+    assert conn_arg is None
     assert "public.movie_card" in query
     assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 72.5, 4)
 
 
 @pytest.mark.asyncio
 async def test_ingest_movie_runs_card_and_lexical_ingestion(mocker, base_movie_factory) -> None:
-    """ingest_movie should run movie-card and lexical ingestion together."""
+    """ingest_movie should run movie-card and lexical ingestion on a single connection."""
     movie = base_movie_factory()
     ingest_card = mocker.patch("db.ingest_movie.ingest_movie_card", new=AsyncMock())
     ingest_lexical = mocker.patch("db.ingest_movie.ingest_lexical_data", new=AsyncMock())
+
+    mock_conn = AsyncMock()
+    mock_pool_cm = AsyncMock()
+    mock_pool_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool_cm.__aexit__ = AsyncMock(return_value=False)
+    mocker.patch("db.ingest_movie.pool.connection", return_value=mock_pool_cm)
+
     await ingest_movie.ingest_movie(movie)
-    ingest_card.assert_awaited_once_with(movie)
-    ingest_lexical.assert_awaited_once_with(movie)
+
+    ingest_card.assert_awaited_once_with(movie, conn=mock_conn)
+    ingest_lexical.assert_awaited_once_with(movie, conn=mock_conn)
+    mock_conn.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -98,15 +108,15 @@ async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker
     mocker.patch("builtins.open", mocker.mock_open())
     await ingest_movie.ingest_movie_card(movie)
 
-    upsert_maturity.assert_awaited_once_with(3, "pg-13")
-    create_genres.assert_awaited_once_with(movie)
-    create_watch_keys.assert_awaited_once_with(movie)
-    create_langs.assert_awaited_once_with(movie)
-    # Validate a few critical fields passed to upsert_movie_card.
+    upsert_maturity.assert_awaited_once_with(3, "pg-13", conn=None)
+    create_genres.assert_awaited_once_with(movie, conn=None)
+    create_watch_keys.assert_awaited_once_with(movie, conn=None)
+    create_langs.assert_awaited_once_with(movie, conn=None)
     kwargs = upsert_card.await_args.kwargs
     assert kwargs["movie_id"] == 1
     assert kwargs["title"] == "Spider-Man"
     assert kwargs["title_token_count"] == 3
+    assert kwargs["conn"] is None
 
 
 @pytest.mark.asyncio
@@ -129,29 +139,45 @@ async def test_ingest_lexical_data_processes_all_entity_types(mocker) -> None:
     # Keep person iteration deterministic for assertions.
     mocker.patch("db.ingest_movie.create_people_list", return_value=["peter parker", "norman osborn"])
 
-    # Control returned IDs to exercise both write and skip paths.
+    # Batch dictionary resolution returns IDs for all relevant strings except villain.
     upsert_lexical = mocker.patch(
-        "db.ingest_movie.upsert_lexical_dictionary",
-        new=AsyncMock(side_effect=[101, None, 201, 202]),
+        "db.ingest_movie.batch_upsert_lexical_dictionary",
+        new=AsyncMock(
+            return_value={
+                "spider-man": 101,
+                "hero": 102,
+                "peter parker": 201,
+                "norman osborn": 202,
+                "studio a": 401,
+            }
+        ),
     )
+    upsert_title_string = mocker.patch("db.ingest_movie.batch_upsert_title_token_strings", new=AsyncMock())
+    upsert_character_string = mocker.patch("db.ingest_movie.batch_upsert_character_strings", new=AsyncMock())
     insert_title = mocker.patch("db.ingest_movie.batch_insert_title_token_postings", new=AsyncMock())
-    upsert_title_string = mocker.patch("db.ingest_movie.upsert_title_token_string", new=AsyncMock())
     insert_person = mocker.patch("db.ingest_movie.batch_insert_person_postings", new=AsyncMock())
-    upsert_phrase = mocker.patch("db.ingest_movie.upsert_phrase_term", new=AsyncMock(side_effect=[301, None, 401]))
     insert_character = mocker.patch("db.ingest_movie.batch_insert_character_postings", new=AsyncMock())
-    upsert_character_string = mocker.patch("db.ingest_movie.upsert_character_string", new=AsyncMock())
     insert_studio = mocker.patch("db.ingest_movie.batch_insert_studio_postings", new=AsyncMock())
 
     await ingest_movie.ingest_lexical_data(movie)
 
-    assert upsert_lexical.await_count == 4
-    insert_title.assert_awaited_once_with([101], 9)
-    upsert_title_string.assert_awaited_once_with(101, "spider-man")
-    insert_person.assert_awaited_once_with([201, 202], 9)
-    insert_character.assert_awaited_once_with([301], 9)
-    upsert_character_string.assert_awaited_once_with(301, "hero")
-    insert_studio.assert_awaited_once_with([401], 9)
-    assert upsert_phrase.await_count == 3
+    upsert_lexical.assert_awaited_once_with(
+        [
+            "spider-man",
+            "hero",
+            "peter parker",
+            "norman osborn",
+            "villain",
+            "studio a",
+        ],
+        conn=None,
+    )
+    upsert_title_string.assert_awaited_once_with([101, 102], ["spider-man", "hero"], conn=None)
+    insert_title.assert_awaited_once_with([101, 102], 9, conn=None)
+    insert_person.assert_awaited_once_with([201, 202], 9, conn=None)
+    upsert_character_string.assert_awaited_once_with([102], ["hero"], conn=None)
+    insert_character.assert_awaited_once_with([102], 9, conn=None)
+    insert_studio.assert_awaited_once_with([401], 9, conn=None)
 
 
 @pytest.mark.asyncio
@@ -159,22 +185,18 @@ async def test_create_genre_ids_handles_normal_and_invalid_values(mocker) -> Non
     """create_genre_ids should normalize, skip invalids, and upsert dictionary rows."""
     movie = SimpleNamespace(genres=["Action", " ", "Sci-Fi"])
 
-    async def lexical_side_effect(normalized_value: str):
-        """Return deterministic lexical IDs for known normalized values."""
-        mapping = {"action": 11, "sci-fi": 22}
-        return mapping.get(normalized_value)
-
-    upsert_lexical = mocker.patch("db.ingest_movie.upsert_lexical_dictionary", new=AsyncMock(side_effect=lexical_side_effect))
+    upsert_lexical = mocker.patch(
+        "db.ingest_movie.batch_upsert_lexical_dictionary",
+        new=AsyncMock(side_effect=[{"action": 11}, {"sci-fi": 22}]),
+    )
     upsert_genre = mocker.patch("db.ingest_movie.upsert_genre_dictionary", new=AsyncMock())
 
     result = await ingest_movie.create_genre_ids(movie)
 
     assert result == [11, 22]
     assert upsert_lexical.await_count == 2
-    # genre_dictionary stores the normalized name so it is consistent with the
-    # cache-loader key format used by _ensure_genre_cache_loaded.
-    upsert_genre.assert_any_await(11, "action")
-    upsert_genre.assert_any_await(22, "sci-fi")
+    upsert_genre.assert_any_await(11, "action", conn=None)
+    upsert_genre.assert_any_await(22, "sci-fi", conn=None)
 
 
 @pytest.mark.asyncio
@@ -195,11 +217,15 @@ async def test_create_watch_offer_keys_deduplicates_and_sorts(mocker) -> None:
     ]
     movie = SimpleNamespace(watch_providers=providers)
 
-    # Map normalized provider name to deterministic lexical IDs.
-    async def lexical_side_effect(name: str):
-        return {"netflix": 42, "apple tv": 55}.get(name)
+    # Map normalized provider names to deterministic lexical IDs.
+    async def lexical_side_effect(norm_strings: list[str], conn=None):
+        if norm_strings == ["netflix"]:
+            return {"netflix": 42}
+        if norm_strings == ["apple tv"]:
+            return {"apple tv": 55}
+        return {}
 
-    mocker.patch("db.ingest_movie.upsert_lexical_dictionary", new=AsyncMock(side_effect=lexical_side_effect))
+    mocker.patch("db.ingest_movie.batch_upsert_lexical_dictionary", new=AsyncMock(side_effect=lexical_side_effect))
     upsert_provider = mocker.patch("db.ingest_movie.upsert_provider_dictionary", new=AsyncMock())
     upsert_watch_method = mocker.patch("db.ingest_movie.upsert_watch_method_dictionary", new=AsyncMock())
 
@@ -208,8 +234,8 @@ async def test_create_watch_offer_keys_deduplicates_and_sorts(mocker) -> None:
     # Keys: (42,1), (42,3), and duplicate (42,1) from second Netflix provider should collapse.
     assert result == sorted({(42 << 4) | 1, (42 << 4) | 3})
     assert upsert_provider.await_count >= 2
-    upsert_watch_method.assert_any_await(1, "subscription")
-    upsert_watch_method.assert_any_await(3, "rent")
+    upsert_watch_method.assert_any_await(1, "subscription", conn=None)
+    upsert_watch_method.assert_any_await(3, "rent", conn=None)
 
 
 @pytest.mark.asyncio
@@ -224,8 +250,8 @@ async def test_create_audio_language_ids_paths(mocker) -> None:
     """create_audio_language_ids should normalize languages and upsert dictionary rows."""
     movie = SimpleNamespace(languages=["English", " ", "Spanish"])
     upsert_lexical = mocker.patch(
-        "db.ingest_movie.upsert_lexical_dictionary",
-        new=AsyncMock(side_effect=[10, 20]),
+        "db.ingest_movie.batch_upsert_lexical_dictionary",
+        new=AsyncMock(side_effect=[{"english": 10}, {"spanish": 20}]),
     )
     upsert_language = mocker.patch("db.ingest_movie.upsert_language_dictionary", new=AsyncMock())
 
@@ -233,8 +259,8 @@ async def test_create_audio_language_ids_paths(mocker) -> None:
 
     assert result == [10, 20]
     assert upsert_lexical.await_count == 2
-    upsert_language.assert_any_await(10, "English")
-    upsert_language.assert_any_await(20, "Spanish")
+    upsert_language.assert_any_await(10, "English", conn=None)
+    upsert_language.assert_any_await(20, "Spanish", conn=None)
 
 
 @pytest.mark.asyncio

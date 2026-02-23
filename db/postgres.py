@@ -25,6 +25,46 @@ class PostingTable(Enum):
     STUDIO = "lex.inv_studio_postings"
     TITLE_TOKEN = "lex.inv_title_token_postings"
 
+
+@dataclass(frozen=True, slots=True)
+class TitleSearchInput:
+    """
+    Input payload for one title-space lexical search inside the compound query.
+
+    Args:
+        token_idxs: Positional query token indices aligned with term_ids.
+        term_ids: Resolved title-token term IDs aligned with token_idxs.
+        f_coeff: Precomputed title F-score coefficient (1 + beta^2).
+        k: Count of non-empty query token positions.
+        beta_sq: Squared beta value used by the F-score denominator.
+        score_threshold: Minimum title score required for inclusion.
+        max_candidates: Per-title-search cap after sorting by score desc.
+    """
+    token_idxs: list[int]
+    term_ids: list[int]
+    f_coeff: float
+    k: int
+    beta_sq: float
+    score_threshold: float
+    max_candidates: int
+
+
+@dataclass(frozen=True, slots=True)
+class CompoundLexicalResult:
+    """
+    Parsed result container from execute_compound_lexical_search.
+
+    Args:
+        people_scores: Matched people counts keyed by movie_id.
+        studio_scores: Matched studio counts keyed by movie_id.
+        character_by_query: Character matched counts keyed by query_idx then movie_id.
+        title_scores_by_search: Title scores keyed by title search index then movie_id.
+    """
+    people_scores: dict[int, int]
+    studio_scores: dict[int, int]
+    character_by_query: dict[int, dict[int, int]]
+    title_scores_by_search: dict[int, dict[int, float]]
+
 @dataclass(frozen=True, slots=True)
 class _TitleTokenMatchConfig:
     """Configuration for one title-token matching mode."""
@@ -164,6 +204,38 @@ async def _execute_write(
         return result
 
 
+async def _execute_on_conn(
+    conn,
+    query: str,
+    params: Sequence[object] | None = None,
+    fetch: bool = False,
+) -> list[tuple] | None:
+    """
+    Execute SQL on an optional existing connection.
+
+    Args:
+        conn: Existing async psycopg connection when the caller manages transaction
+            boundaries. If None, this helper acquires and commits its own connection.
+        query: SQL query string with parameter placeholders (%s).
+        params: Optional sequence of parameters to bind to the query.
+        fetch: When True, return all rows from the cursor.
+
+    Returns:
+        Query rows when ``fetch`` is True, otherwise None.
+    """
+    if conn is not None:
+        async with conn.cursor() as cur:
+            await cur.execute(query, params)
+            return await cur.fetchall() if fetch else None
+
+    async with pool.connection() as fallback_conn:
+        async with fallback_conn.cursor() as cur:
+            await cur.execute(query, params)
+            result = await cur.fetchall() if fetch else None
+        await fallback_conn.commit()
+        return result
+
+
 # ===============================
 #     PRIVATE HELPER METHODS
 # ===============================
@@ -272,8 +344,9 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
     if filters.genres is not None:
         genre_id_map = await fetch_genre_ids_by_name(filters.genres)
         genre_ids = [genre_id_map[genre] for genre in filters.genres if genre in genre_id_map]
-        conditions.append("genre_ids && %s::int[]")
-        params.append(genre_ids)
+        if genre_ids:
+            conditions.append("genre_ids && %s::int[]")
+            params.append(genre_ids)
 
     if filters.watch_offer_keys is not None:
         conditions.append("watch_offer_keys && %s::int[]")
@@ -364,68 +437,118 @@ async def check_postgres() -> str:
 #       INGESTION METHODS
 # ===============================
 
-async def upsert_lexical_dictionary(norm_str: str) -> Optional[int]:
+async def batch_upsert_lexical_dictionary(
+    norm_strings: list[str],
+    conn=None,
+) -> dict[str, int]:
     """
-    Upsert a normalized string in lex.lexical_dictionary and return string_id.
-    
+    Batch upsert normalized strings into lex.lexical_dictionary.
+
     Args:
-        norm_str: Normalized string to upsert.
-    
+        norm_strings: Normalized strings to insert or resolve.
+        conn: Optional existing async connection for caller-managed transaction scope.
+
     Returns:
-        The string_id of the upserted or existing row.
+        Mapping of ``norm_str`` to ``string_id`` for every unique input string.
     """
+    if not norm_strings:
+        return {}
+
+    # Preserve first-seen order so callers can reconstruct deterministic ID lists.
+    unique_strings = list(dict.fromkeys(norm_strings))
+
     query = """
-    INSERT INTO lex.lexical_dictionary (norm_str, touched_at, created_at)
-    VALUES (%s, now(), now())
-    ON CONFLICT (norm_str) DO UPDATE SET
-        touched_at = now()
-    RETURNING string_id;
+    WITH input_strings AS (
+        SELECT unnest(%s::text[]) AS norm_str
+    ),
+    inserted AS (
+        INSERT INTO lex.lexical_dictionary (norm_str, created_at)
+        SELECT norm_str, now()
+        FROM input_strings
+        ON CONFLICT (norm_str) DO NOTHING
+        RETURNING norm_str, string_id
+    )
+    SELECT norm_str, string_id FROM inserted
+    UNION ALL
+    SELECT d.norm_str, d.string_id
+    FROM lex.lexical_dictionary d
+    JOIN input_strings i ON i.norm_str = d.norm_str
+    WHERE NOT EXISTS (
+        SELECT 1 FROM inserted ins WHERE ins.norm_str = d.norm_str
+    );
     """
-    row = await _execute_write(query, (norm_str,), fetch_one=True)
-    return row[0] if row else None
+    rows = await _execute_on_conn(conn, query, (unique_strings,), fetch=True) or []
+    return {str(norm_str): int(string_id) for norm_str, string_id in rows}
 
 
-async def upsert_title_token_string(string_id: int, norm_str: str) -> None:
+async def batch_upsert_title_token_strings(
+    string_ids: list[int],
+    norm_strings: list[str],
+    conn=None,
+) -> None:
     """
-    Upsert a title-token lookup row in lex.title_token_strings.
-    
+    Batch upsert title token lookup rows in lex.title_token_strings.
+
     Args:
-        string_id: The string ID to associate with the normalized string.
-        norm_str: Normalized string value.
+        string_ids: String IDs aligned one-to-one with ``norm_strings``.
+        norm_strings: Normalized token strings aligned one-to-one with ``string_ids``.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
+    if not string_ids:
+        return
+    if len(string_ids) != len(norm_strings):
+        raise ValueError("Title token string upsert failed: string_ids and norm_strings lengths differ.")
+    unique_pairs = list(dict.fromkeys(zip(string_ids, norm_strings)))
+    deduped_string_ids = [pair[0] for pair in unique_pairs]
+    deduped_norm_strings = [pair[1] for pair in unique_pairs]
+
     query = """
     INSERT INTO lex.title_token_strings (string_id, norm_str)
-    VALUES (%s, %s)
+    SELECT unnest(%s::bigint[]), unnest(%s::text[])
     ON CONFLICT (string_id) DO UPDATE SET
         norm_str = EXCLUDED.norm_str;
     """
-    await _execute_write(query, (string_id, norm_str))
+    await _execute_on_conn(conn, query, (deduped_string_ids, deduped_norm_strings))
 
 
-async def upsert_character_string(string_id: int, norm_str: str) -> None:
+async def batch_upsert_character_strings(
+    string_ids: list[int],
+    norm_strings: list[str],
+    conn=None,
+) -> None:
     """
-    Upsert a character string row in lex.character_strings.
-    
+    Batch upsert character string rows in lex.character_strings.
+
     Args:
-        string_id: The string ID.
-        norm_str: The normalized string.
+        string_ids: String IDs aligned one-to-one with ``norm_strings``.
+        norm_strings: Normalized character strings aligned one-to-one with ``string_ids``.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
+    if not string_ids:
+        return
+    if len(string_ids) != len(norm_strings):
+        raise ValueError("Character string upsert failed: string_ids and norm_strings lengths differ.")
+    unique_pairs = list(dict.fromkeys(zip(string_ids, norm_strings)))
+    deduped_string_ids = [pair[0] for pair in unique_pairs]
+    deduped_norm_strings = [pair[1] for pair in unique_pairs]
+
     query = """
     INSERT INTO lex.character_strings (string_id, norm_str)
-    VALUES (%s, %s)
+    SELECT unnest(%s::bigint[]), unnest(%s::text[])
     ON CONFLICT (string_id) DO UPDATE SET
         norm_str = EXCLUDED.norm_str;
     """
-    await _execute_write(query, (string_id, norm_str))
+    await _execute_on_conn(conn, query, (deduped_string_ids, deduped_norm_strings))
 
 
-async def batch_insert_title_token_postings(term_ids: list[int], movie_id: int) -> None:
+async def batch_insert_title_token_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
     """
     Insert title-token postings for one movie in a single round-trip.
 
     Args:
         term_ids: Title-token term IDs to insert.
         movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not term_ids:
         return
@@ -434,16 +557,17 @@ async def batch_insert_title_token_postings(term_ids: list[int], movie_id: int) 
     SELECT unnest(%s::bigint[]), %s
     ON CONFLICT (term_id, movie_id) DO NOTHING;
     """
-    await _execute_write(query, (term_ids, movie_id))
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
 
 
-async def batch_insert_person_postings(term_ids: list[int], movie_id: int) -> None:
+async def batch_insert_person_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
     """
     Insert person postings for one movie in a single round-trip.
 
     Args:
         term_ids: Person term IDs to insert.
         movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not term_ids:
         return
@@ -452,16 +576,17 @@ async def batch_insert_person_postings(term_ids: list[int], movie_id: int) -> No
     SELECT unnest(%s::bigint[]), %s
     ON CONFLICT (term_id, movie_id) DO NOTHING;
     """
-    await _execute_write(query, (term_ids, movie_id))
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
 
 
-async def batch_insert_character_postings(term_ids: list[int], movie_id: int) -> None:
+async def batch_insert_character_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
     """
     Insert character postings for one movie in a single round-trip.
 
     Args:
         term_ids: Character term IDs to insert.
         movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not term_ids:
         return
@@ -470,16 +595,17 @@ async def batch_insert_character_postings(term_ids: list[int], movie_id: int) ->
     SELECT unnest(%s::bigint[]), %s
     ON CONFLICT (term_id, movie_id) DO NOTHING;
     """
-    await _execute_write(query, (term_ids, movie_id))
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
 
 
-async def batch_insert_studio_postings(term_ids: list[int], movie_id: int) -> None:
+async def batch_insert_studio_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
     """
     Insert studio postings for one movie in a single round-trip.
 
     Args:
         term_ids: Studio term IDs to insert.
         movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not term_ids:
         return
@@ -488,92 +614,92 @@ async def batch_insert_studio_postings(term_ids: list[int], movie_id: int) -> No
     SELECT unnest(%s::bigint[]), %s
     ON CONFLICT (term_id, movie_id) DO NOTHING;
     """
-    await _execute_write(query, (term_ids, movie_id))
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
 
 
-async def upsert_genre_dictionary(genre_id: int, name: str) -> None:
+async def upsert_genre_dictionary(genre_id: int, name: str, conn=None) -> None:
     """
     Upsert a genre lookup row in lex.genre_dictionary.
     
     Args:
         genre_id: The genre ID.
         name: The genre name.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
     INSERT INTO lex.genre_dictionary (genre_id, name)
     VALUES (%s, %s)
-    ON CONFLICT (genre_id) DO UPDATE SET
-        name = EXCLUDED.name;
+    ON CONFLICT (genre_id) DO NOTHING;
     """
-    await _execute_write(query, (genre_id, name))
+    await _execute_on_conn(conn, query, (genre_id, name))
 
 
-async def upsert_provider_dictionary(provider_id: int, name: str) -> None:
+async def upsert_provider_dictionary(provider_id: int, name: str, conn=None) -> None:
     """
     Upsert a provider lookup row in lex.provider_dictionary.
     
     Args:
         provider_id: The provider ID.
         name: The provider name.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
     INSERT INTO lex.provider_dictionary (provider_id, name)
     VALUES (%s, %s)
-    ON CONFLICT (provider_id) DO UPDATE SET
-        name = EXCLUDED.name;
+    ON CONFLICT (provider_id) DO NOTHING;
     """
-    await _execute_write(query, (provider_id, name))
+    await _execute_on_conn(conn, query, (provider_id, name))
 
 
-async def upsert_watch_method_dictionary(method_id: int, name: str) -> None:
+async def upsert_watch_method_dictionary(method_id: int, name: str, conn=None) -> None:
     """
     Upsert a watch-method lookup row in lex.watch_method_dictionary.
     
     Args:
         method_id: The watch method ID.
         name: The watch method name.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
     INSERT INTO lex.watch_method_dictionary (method_id, name)
     VALUES (%s, %s)
-    ON CONFLICT (method_id) DO UPDATE SET
-        name = EXCLUDED.name;
+    ON CONFLICT (method_id) DO NOTHING;
     """
-    await _execute_write(query, (method_id, name))
+    await _execute_on_conn(conn, query, (method_id, name))
 
 
-async def upsert_maturity_dictionary(maturity_rank: int, label: str) -> None:
+async def upsert_maturity_dictionary(maturity_rank: int, label: str, conn=None) -> None:
     """
     Upsert a maturity-rating lookup row in lex.maturity_dictionary.
     
     Args:
         maturity_rank: The maturity rank.
         label: The maturity label (e.g., "PG-13", "R").
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
     INSERT INTO lex.maturity_dictionary (maturity_rank, label)
     VALUES (%s, %s)
-    ON CONFLICT (maturity_rank) DO UPDATE SET
-        label = EXCLUDED.label;
+    ON CONFLICT (maturity_rank) DO NOTHING;
     """
-    await _execute_write(query, (maturity_rank, label))
+    await _execute_on_conn(conn, query, (maturity_rank, label))
 
 
-async def upsert_language_dictionary(language_id: int, name: str) -> None:
+async def upsert_language_dictionary(language_id: int, name: str, conn=None) -> None:
     """
     Upsert a language lookup row in lex.language_dictionary.
     
     Args:
         language_id: The language ID.
         name: The language name.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
     INSERT INTO lex.language_dictionary (language_id, name)
     VALUES (%s, %s)
-    ON CONFLICT (language_id) DO UPDATE SET
-        name = EXCLUDED.name;
+    ON CONFLICT (language_id) DO NOTHING;
     """
-    await _execute_write(query, (language_id, name))
+    await _execute_on_conn(conn, query, (language_id, name))
 
 
 async def refresh_title_token_doc_frequency() -> None:
@@ -601,6 +727,7 @@ async def upsert_movie_card(
     audio_language_ids: Sequence[int],
     reception_score: Optional[float],
     title_token_count: int,
+    conn=None,
 ) -> None:
     """
     Upsert a row in public.movie_card for canonical metadata storage.
@@ -617,6 +744,7 @@ async def upsert_movie_card(
         audio_language_ids: List of audio language IDs.
         reception_score: Precomputed reception score from IMDB/Metacritic.
         title_token_count: Number of tokens in the title.
+        conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
     INSERT INTO public.movie_card (
@@ -651,7 +779,7 @@ async def upsert_movie_card(
         reception_score,
         title_token_count,
     )
-    await _execute_write(query, params)
+    await _execute_on_conn(conn, query, params)
 
 # ===============================
 #        SEARCH METHODS
@@ -683,66 +811,354 @@ async def fetch_phrase_term_ids(phrases: list[str]) -> dict[str, int]:
     return {row[0]: row[1] for row in search_results}
 
 
-async def fetch_phrase_postings_match_counts(
-    table: PostingTable,
+def _build_compound_phrase_bucket_cte(
+    *,
+    cte_name: str,
+    table_name: str,
     term_ids: list[int],
-    filters: Optional[MetadataFilters] = None,
+    use_eligible: bool,
     exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, int]:
+) -> tuple[str, list]:
     """
-    Count distinct matched term_ids per movie from a phrase posting table.
-
-    Builds a MATERIALIZED eligible CTE when metadata filters are active,
-    otherwise queries the posting table directly.
+    Build one phrase-bucket CTE for the compound lexical query.
 
     Args:
-        table:    Posting table enum for this phrase bucket.
-        term_ids: Resolved string_ids for INCLUDE phrases in this bucket.
-        filters:  Optional metadata hard-filters.
-        exclude_movie_ids: Optional movie IDs to exclude from results.
+        cte_name: Name for the generated CTE block.
+        table_name: Fully-qualified posting table name.
+        term_ids: Resolved term IDs for this bucket.
+        use_eligible: Whether the eligible CTE exists in the query.
+        exclude_movie_ids: Optional IDs excluded from results.
 
     Returns:
-        Dict of {movie_id: matched_count}.
+        Tuple of (cte_sql, params) for this bucket.
     """
-    if not term_ids:
-        return {}
-
-    table_name = table.value
-
-    use_eligible = filters is not None and filters.is_active
-
-    cte_parts: list[str] = []
-    params: list = []
-
-    if use_eligible:
-        eligible_cte, eligible_params = await _build_eligible_cte(filters)
-        cte_parts.append(eligible_cte)
-        params.extend(eligible_params)
-
-    params.append(term_ids)
-    exclusion_clause = ""
-    if exclude_movie_ids:
-        exclusion_clause = (
-            "\n          AND NOT (p.movie_id = ANY(%s::bigint[]))"
-        )
-        params.append(list(exclude_movie_ids))
-
+    params: list = [term_ids]
     eligibility_join = (
         "\n            JOIN eligible e ON e.movie_id = p.movie_id"
         if use_eligible
         else ""
     )
+    exclusion_clause = ""
+    if exclude_movie_ids:
+        exclusion_clause = "\n              AND NOT (p.movie_id = ANY(%s::bigint[]))"
+        params.append(list(exclude_movie_ids))
 
-    with_clause = f"WITH {', '.join(cte_parts)}\n        " if cte_parts else ""
+    cte_sql = f"""{cte_name} AS (
+            SELECT p.movie_id, COUNT(DISTINCT p.term_id)::int AS matched
+            FROM {table_name} p{eligibility_join}
+            WHERE p.term_id = ANY(%s::bigint[]){exclusion_clause}
+            GROUP BY p.movie_id
+        )"""
+    return cte_sql, params
 
-    query = f"""
-        {with_clause}SELECT p.movie_id, COUNT(DISTINCT p.term_id)::int AS matched
-        FROM {table_name} p{eligibility_join}
-        WHERE p.term_id = ANY(%s::bigint[]){exclusion_clause}
-        GROUP BY p.movie_id
+
+def _build_compound_character_cte(
+    *,
+    query_idxs: list[int],
+    term_ids: list[int],
+    use_eligible: bool,
+    exclude_movie_ids: Optional[set[int]] = None,
+) -> tuple[list[str], list]:
     """
-    search_results = await _execute_read(query, params)
-    return {row[0]: row[1] for row in search_results}
+    Build character CTE blocks for the compound lexical query.
+
+    The output always keeps per-query granularity by grouping on
+    ``(query_idx, movie_id)``.
+
+    Args:
+        query_idxs: Query indices aligned with term_ids.
+        term_ids: Resolved character term IDs aligned with query_idxs.
+        use_eligible: Whether the eligible CTE exists in the query.
+        exclude_movie_ids: Optional IDs excluded from results.
+
+    Returns:
+        Tuple of (cte_sql_parts, params).
+    """
+    params: list = [query_idxs, term_ids]
+    eligibility_join = (
+        "\n            JOIN eligible e ON e.movie_id = p.movie_id"
+        if use_eligible
+        else ""
+    )
+    exclusion_clause = ""
+    if exclude_movie_ids:
+        exclusion_clause = "\n            WHERE NOT (p.movie_id = ANY(%s::bigint[]))"
+        params.append(list(exclude_movie_ids))
+
+    cte_parts = [
+        """q_chars AS (
+            SELECT unnest(%s::int[]) AS query_idx,
+                   unnest(%s::bigint[]) AS term_id
+        )""",
+        f"""character_matches AS (
+            SELECT
+                qc.query_idx,
+                p.movie_id,
+                COUNT(DISTINCT qc.query_idx)::int AS matched
+            FROM q_chars qc
+            JOIN lex.inv_character_postings p
+              ON p.term_id = qc.term_id{eligibility_join}{exclusion_clause}
+            GROUP BY qc.query_idx, p.movie_id
+        )""",
+    ]
+    return cte_parts, params
+
+
+def _build_compound_title_ctes(
+    *,
+    search_idx: int,
+    title_search: TitleSearchInput,
+    use_eligible: bool,
+    exclude_movie_ids: Optional[set[int]] = None,
+) -> tuple[list[str], str, list, list]:
+    """
+    Build CTE blocks and UNION branch for one title search.
+
+    Args:
+        search_idx: Zero-based title search index.
+        title_search: One title-search payload.
+        use_eligible: Whether the eligible CTE exists in the query.
+        exclude_movie_ids: Optional IDs excluded from results.
+
+    Returns:
+        Tuple of (cte_sql_parts, union_sql, cte_params, union_params).
+    """
+    token_cte_name = f"q_tokens_{search_idx}"
+    token_matches_cte_name = f"token_matches_{search_idx}"
+    title_matches_cte_name = f"title_matches_{search_idx}"
+    title_scored_cte_name = f"title_scored_{search_idx}"
+    title_ranked_cte_name = f"title_ranked_{search_idx}"
+
+    cte_params: list = [title_search.token_idxs, title_search.term_ids]
+    eligibility_join = (
+        "\n                JOIN eligible e ON e.movie_id = p.movie_id"
+        if use_eligible
+        else ""
+    )
+    exclusion_clause = ""
+    if exclude_movie_ids:
+        exclusion_clause = "\n            WHERE NOT (p.movie_id = ANY(%s::bigint[]))"
+        cte_params.append(list(exclude_movie_ids))
+
+    title_count_source = "eligible" if use_eligible else "public.movie_card"
+    title_count_alias = "e" if use_eligible else "mc"
+
+    cte_params.extend(
+        [
+            title_search.f_coeff,
+            title_search.k,
+            title_search.beta_sq,
+            title_search.k,
+            title_search.k,
+            title_search.score_threshold,
+        ]
+    )
+
+    cte_parts = [
+        f"""{token_cte_name} AS (
+            SELECT unnest(%s::int[]) AS token_idx,
+                   unnest(%s::bigint[]) AS term_id
+        )""",
+        f"""{token_matches_cte_name} AS (
+            SELECT DISTINCT p.movie_id, qt.token_idx
+            FROM {token_cte_name} qt
+            JOIN lex.inv_title_token_postings p
+              ON p.term_id = qt.term_id{eligibility_join}{exclusion_clause}
+        )""",
+        f"""{title_matches_cte_name} AS (
+            SELECT movie_id, COUNT(*)::int AS m
+            FROM {token_matches_cte_name}
+            GROUP BY movie_id
+        )""",
+        f"""{title_scored_cte_name} AS (
+            SELECT
+                tm.movie_id,
+                (%s::double precision
+                    * ((tm.m::double precision / %s)
+                       * (tm.m::double precision / {title_count_alias}.title_token_count)))
+                / (%s::double precision
+                    * (tm.m::double precision / {title_count_alias}.title_token_count)
+                    + (tm.m::double precision / %s))
+                AS title_score
+            FROM {title_matches_cte_name} tm
+            JOIN {title_count_source} {title_count_alias}
+              ON {title_count_alias}.movie_id = tm.movie_id
+            WHERE {title_count_alias}.title_token_count > 0
+              AND %s > 0
+        )""",
+        f"""{title_ranked_cte_name} AS (
+            SELECT
+                movie_id,
+                title_score,
+                ROW_NUMBER() OVER (ORDER BY title_score DESC) AS rn
+            FROM {title_scored_cte_name}
+            WHERE title_score >= %s
+        )""",
+    ]
+    union_sql = (
+        f"SELECT 'title_{search_idx}' AS bucket, -1 AS query_idx, movie_id, title_score AS score "
+        f"FROM {title_ranked_cte_name} WHERE rn <= %s"
+    )
+    union_params = [title_search.max_candidates]
+    return cte_parts, union_sql, cte_params, union_params
+
+
+async def execute_compound_lexical_search(
+    *,
+    people_term_ids: list[int],
+    studio_term_ids: list[int],
+    character_query_idxs: list[int],
+    character_term_ids: list[int],
+    title_searches: list[TitleSearchInput],
+    filters: Optional[MetadataFilters] = None,
+    exclude_movie_ids: Optional[set[int]] = None,
+) -> CompoundLexicalResult:
+    """
+    Execute one compound lexical query across all included lexical buckets.
+
+    This query deduplicates the eligible-set materialization by building one
+    SQL statement with optional bucket CTEs and a tagged UNION ALL result set.
+
+    Args:
+        people_term_ids: Resolved INCLUDE people term IDs.
+        studio_term_ids: Resolved INCLUDE studio term IDs.
+        character_query_idxs: Character query indices aligned with character_term_ids.
+        character_term_ids: Resolved character term IDs aligned with query indices.
+        title_searches: Title-space searches to score in this request.
+        filters: Optional metadata hard-filters.
+        exclude_movie_ids: Optional movie IDs to exclude from all buckets.
+
+    Returns:
+        CompoundLexicalResult with per-bucket parsed maps.
+    """
+    has_any_title = any(search.term_ids for search in title_searches)
+    has_any_bucket = bool(
+        people_term_ids
+        or studio_term_ids
+        or character_term_ids
+        or has_any_title
+    )
+    if not has_any_bucket:
+        return CompoundLexicalResult(
+            people_scores={},
+            studio_scores={},
+            character_by_query={},
+            title_scores_by_search={},
+        )
+
+    if len(character_query_idxs) != len(character_term_ids):
+        raise ValueError("character_query_idxs and character_term_ids must be same length")
+
+    use_eligible = filters is not None and filters.is_active
+    cte_parts: list[str] = []
+    union_parts: list[str] = []
+    cte_params: list = []
+    union_params: list = []
+
+    if use_eligible:
+        eligible_cte, eligible_params = await _build_eligible_cte(filters)
+        cte_parts.append(eligible_cte)
+        cte_params.extend(eligible_params)
+
+    if people_term_ids:
+        people_cte, people_params = _build_compound_phrase_bucket_cte(
+            cte_name="people_matches",
+            table_name=PostingTable.PERSON.value,
+            term_ids=people_term_ids,
+            use_eligible=use_eligible,
+            exclude_movie_ids=exclude_movie_ids,
+        )
+        cte_parts.append(people_cte)
+        cte_params.extend(people_params)
+        union_parts.append(
+            "SELECT 'people' AS bucket, -1 AS query_idx, movie_id, matched::double precision AS score "
+            "FROM people_matches"
+        )
+
+    if studio_term_ids:
+        studio_cte, studio_params = _build_compound_phrase_bucket_cte(
+            cte_name="studio_matches",
+            table_name=PostingTable.STUDIO.value,
+            term_ids=studio_term_ids,
+            use_eligible=use_eligible,
+            exclude_movie_ids=exclude_movie_ids,
+        )
+        cte_parts.append(studio_cte)
+        cte_params.extend(studio_params)
+        union_parts.append(
+            "SELECT 'studio' AS bucket, -1 AS query_idx, movie_id, matched::double precision AS score "
+            "FROM studio_matches"
+        )
+
+    if character_term_ids:
+        character_ctes, character_params = _build_compound_character_cte(
+            query_idxs=character_query_idxs,
+            term_ids=character_term_ids,
+            use_eligible=use_eligible,
+            exclude_movie_ids=exclude_movie_ids,
+        )
+        cte_parts.extend(character_ctes)
+        cte_params.extend(character_params)
+        union_parts.append(
+            "SELECT 'character' AS bucket, query_idx, movie_id, matched::double precision AS score "
+            "FROM character_matches"
+        )
+
+    for idx, title_search in enumerate(title_searches):
+        if not title_search.term_ids:
+            continue
+        title_ctes, title_union, title_cte_params, title_union_params = _build_compound_title_ctes(
+            search_idx=idx,
+            title_search=title_search,
+            use_eligible=use_eligible,
+            exclude_movie_ids=exclude_movie_ids,
+        )
+        cte_parts.extend(title_ctes)
+        union_parts.append(title_union)
+        cte_params.extend(title_cte_params)
+        union_params.extend(title_union_params)
+
+    if not union_parts:
+        return CompoundLexicalResult(
+            people_scores={},
+            studio_scores={},
+            character_by_query={},
+            title_scores_by_search={},
+        )
+
+    with_clause = "WITH " + ",\n        ".join(cte_parts)
+    query = f"""
+        {with_clause}
+        {" UNION ALL ".join(union_parts)}
+    """
+    params = cte_params + union_params
+    rows = await _execute_read(query, params)
+
+    people_scores: dict[int, int] = {}
+    studio_scores: dict[int, int] = {}
+    character_by_query: dict[int, dict[int, int]] = {}
+    title_scores_by_search: dict[int, dict[int, float]] = {}
+
+    for bucket, query_idx, movie_id, score in rows:
+        if bucket == "people":
+            people_scores[movie_id] = int(score)
+            continue
+        if bucket == "studio":
+            studio_scores[movie_id] = int(score)
+            continue
+        if bucket == "character":
+            character_by_query.setdefault(int(query_idx), {})[movie_id] = int(score)
+            continue
+        if bucket.startswith("title_"):
+            search_idx = int(bucket.split("_")[1])
+            title_scores_by_search.setdefault(search_idx, {})[movie_id] = float(score)
+
+    return CompoundLexicalResult(
+        people_scores=people_scores,
+        studio_scores=studio_scores,
+        character_by_query=character_by_query,
+        title_scores_by_search=title_scores_by_search,
+    )
 
 
 async def fetch_title_token_ids(
@@ -885,152 +1301,6 @@ async def fetch_character_term_ids(
     return result
 
 
-async def fetch_character_match_counts(
-    query_idxs: list[int], 
-    term_ids: list[int], 
-    use_eligible: bool, 
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, int]:
-    """
-    Fetch character match counts from lex.inv_character_postings.
-
-    Args:
-        query_idxs: List of query indices.
-        term_ids: List of term IDs.
-        use_eligible: Whether to use the eligible CTE.
-        filters: Optional metadata hard-filters.
-        exclude_movie_ids: Optional movie IDs to exclude from results.
-
-    Returns:
-        Dict of {movie_id: matched_character_count}.
-    """
-    cte_parts: list[str] = []
-    params: list = []
-
-    if use_eligible:
-        eligible_cte, eligible_params = await _build_eligible_cte(filters)
-        cte_parts.append(eligible_cte)
-        params.extend(eligible_params)
-
-    params.extend([query_idxs, term_ids])
-    cte_parts.append(
-        """q_chars AS (
-            SELECT unnest(%s::int[]) AS query_idx,
-                   unnest(%s::bigint[]) AS term_id
-        )"""
-    )
-
-    eligibility_join = (
-        "\n            JOIN eligible e ON e.movie_id = p.movie_id"
-        if use_eligible
-        else ""
-    )
-    exclusion_clause = ""
-    if exclude_movie_ids:
-        exclusion_clause = (
-            "\n            WHERE NOT (p.movie_id = ANY(%s::bigint[]))"
-        )
-        params.append(list(exclude_movie_ids))
-
-    cte_parts.append(
-        f"""character_matches AS (
-            SELECT
-                p.movie_id,
-                COUNT(DISTINCT qc.query_idx)::int AS matched
-            FROM q_chars qc
-            JOIN lex.inv_character_postings p
-              ON p.term_id = qc.term_id{eligibility_join}{exclusion_clause}
-            GROUP BY p.movie_id
-        )"""
-    )
-
-    with_clause = "WITH " + ",\n        ".join(cte_parts)
-    query = f"""
-        {with_clause}
-        SELECT movie_id, matched
-        FROM character_matches
-    """
-
-    search_results = await _execute_read(query, params)
-    return {row[0]: row[1] for row in search_results}
-
-
-async def fetch_character_match_counts_by_query(
-    query_idxs: list[int],
-    term_ids: list[int],
-    use_eligible: bool,
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, dict[int, int]]:
-    """
-    Fetch per-query-index character match counts from inv_character_postings.
-
-    Args:
-        query_idxs: Query indices aligned with term_ids.
-        term_ids: Resolved character term IDs.
-        use_eligible: Whether to include the eligible CTE.
-        filters: Optional metadata hard-filters.
-        exclude_movie_ids: Optional movie IDs to exclude from results.
-
-    Returns:
-        Dict keyed by query_idx, each containing {movie_id: matched_count}.
-    """
-    cte_parts: list[str] = []
-    params: list = []
-
-    if use_eligible:
-        eligible_cte, eligible_params = await _build_eligible_cte(filters)
-        cte_parts.append(eligible_cte)
-        params.extend(eligible_params)
-
-    params.extend([query_idxs, term_ids])
-    cte_parts.append(
-        """q_chars AS (
-            SELECT unnest(%s::int[]) AS query_idx,
-                   unnest(%s::bigint[]) AS term_id
-        )"""
-    )
-
-    eligibility_join = (
-        "\n            JOIN eligible e ON e.movie_id = p.movie_id"
-        if use_eligible
-        else ""
-    )
-    exclusion_clause = ""
-    if exclude_movie_ids:
-        exclusion_clause = (
-            "\n            WHERE NOT (p.movie_id = ANY(%s::bigint[]))"
-        )
-        params.append(list(exclude_movie_ids))
-
-    cte_parts.append(
-        f"""character_matches AS (
-            SELECT
-                qc.query_idx,
-                p.movie_id,
-                COUNT(DISTINCT qc.query_idx)::int AS matched
-            FROM q_chars qc
-            JOIN lex.inv_character_postings p
-              ON p.term_id = qc.term_id{eligibility_join}{exclusion_clause}
-            GROUP BY qc.query_idx, p.movie_id
-        )"""
-    )
-
-    with_clause = "WITH " + ",\n        ".join(cte_parts)
-    query = f"""
-        {with_clause}
-        SELECT query_idx, movie_id, matched
-        FROM character_matches
-    """
-
-    search_results = await _execute_read(query, params)
-    by_query: dict[int, dict[int, int]] = {}
-    for query_idx, movie_id, matched in search_results:
-        by_query.setdefault(query_idx, {})[movie_id] = matched
-    return by_query
-
-
 async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     """
     Bulk fetch canonical movie metadata from public.movie_card.
@@ -1067,132 +1337,6 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     return [dict(zip(columns, row)) for row in search_results]
 
 
-async def fetch_title_token_match_scores(
-    token_idxs: list[int],
-    term_ids: list[int],
-    use_eligible: bool,
-    f_coeff: float,
-    k: int,
-    beta: float,
-    title_score_threshold: float,
-    title_max_candidates: int,
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, float]:
-    """
-    Compute title F-scores for one title search by joining token postings.
-
-    Builds a MATERIALIZED eligible CTE when metadata filters are active
-    (avoiding large array transfer), counts matched token positions (m)
-    per movie, then applies the coverage-weighted F-score:
-
-        title_score = (1+β²)·(coverage·specificity) / (β²·specificity + coverage)
-
-    where coverage = m/k, specificity = m/L, β = TITLE_SCORE_BETA.
-
-    Results are capped at TITLE_MAX_CANDIDATES (sorted by score desc) in
-    the SQL query itself for wire-transfer efficiency.
-
-    Args:
-        exclude_movie_ids: Optional movie IDs to exclude from title scoring.
-
-    Returns:
-        Dict of {movie_id: title_score} for qualifying movies, capped
-        at TITLE_MAX_CANDIDATES entries.
-    """
-    cte_prefix_parts: list[str] = []
-    params: list = []
-
-    # 1) Eligible CTE (only when filters are active)
-    if use_eligible:
-        eligible_cte, eligible_params = await _build_eligible_cte(filters)
-        cte_prefix_parts.append(eligible_cte)
-        params.extend(eligible_params)
-
-    # 2) q_tokens CTE (always present)
-    params.extend([token_idxs, term_ids])
-    cte_prefix_parts.append(
-        """q_tokens AS (
-            SELECT unnest(%s::int[]) AS token_idx,
-                   unnest(%s::bigint[]) AS term_id
-        )"""
-    )
-
-    # 3) token_matches + title_matches CTEs — one match per query token (no expansion bias)
-    # First get distinct (movie_id, token_idx) so each of the n query tokens contributes
-    # at most 1 regardless of how many term_ids it expanded to.
-    eligibility_join = (
-        "\n                JOIN eligible e ON e.movie_id = p.movie_id"
-        if use_eligible
-        else ""
-    )
-    exclusion_clause = ""
-    if exclude_movie_ids:
-        exclusion_clause = (
-            "\n            WHERE NOT (p.movie_id = ANY(%s::bigint[]))"
-        )
-        params.append(list(exclude_movie_ids))
-
-    cte_prefix_parts.append(
-        f"""token_matches AS (
-            SELECT DISTINCT p.movie_id, qt.token_idx
-            FROM q_tokens qt
-            JOIN lex.inv_title_token_postings p
-              ON p.term_id = qt.term_id{eligibility_join}{exclusion_clause}
-        ),
-        title_matches AS (
-            SELECT movie_id, COUNT(*)::int AS m
-            FROM token_matches
-            GROUP BY movie_id
-        )"""
-    )
-
-    # 4) title_scored CTE — applies F-score formula
-    params.extend([f_coeff, k, beta**2, k])
-    title_count_source = "eligible" if use_eligible else "public.movie_card"
-    title_count_alias = "e" if use_eligible else "mc"
-    cte_prefix_parts.append(
-        f"""title_scored AS (
-            SELECT
-                tm.movie_id,
-                (%s::double precision
-                    * ((tm.m::double precision / %s)
-                       * (tm.m::double precision / {title_count_alias}.title_token_count)))
-                / (%s::double precision
-                    * (tm.m::double precision / {title_count_alias}.title_token_count)
-                    + (tm.m::double precision / %s))
-                AS title_score
-            FROM title_matches tm
-            JOIN {title_count_source} {title_count_alias}
-              ON {title_count_alias}.movie_id = tm.movie_id
-            WHERE {title_count_alias}.title_token_count > 0
-              AND %s > 0
-        )"""
-    )
-    params.append(k)  # k > 0 guard bound into the WHERE clause
-
-    # 5) Final SELECT with threshold filter + safety cap
-    params.extend([title_score_threshold, title_max_candidates])
-
-    with_clause = "WITH " + ",\n        ".join(cte_prefix_parts)
-    query = f"""
-        {with_clause}
-        SELECT movie_id, title_score
-        FROM title_scored
-        WHERE title_score >= %s
-        ORDER BY title_score DESC
-        LIMIT %s
-    """
-
-    # ── Execute ───────────────────────────────────────────────────────────
-    try:
-        search_results = await _execute_read(query, params)
-        return {row[0]: float(row[1]) for row in search_results}
-    except Exception:
-        # TODO - Log here
-        raise
-
-
 async def fetch_movie_ids_by_term_ids(
     table: PostingTable,
     term_ids: list[int],
@@ -1221,14 +1365,3 @@ async def fetch_movie_ids_by_term_ids(
     """
     search_results = await _execute_read(query, (term_ids,))
     return {row[0] for row in search_results}
-
-# ===============================
-#      PUBLIC HELPER METHODS
-# ===============================
-
-async def upsert_phrase_term(value: str) -> int | None:
-    """Normalize a phrase and upsert it into lexical_dictionary."""
-    normalized = normalize_string(value)
-    if not normalized:
-        return None
-    return await upsert_lexical_dictionary(normalized)

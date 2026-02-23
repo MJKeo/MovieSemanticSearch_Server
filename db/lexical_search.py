@@ -12,13 +12,11 @@ from db.postgres import (
     fetch_phrase_term_ids,
     fetch_title_token_ids,
     fetch_title_token_ids_exact,
-    fetch_character_match_counts,
-    fetch_character_match_counts_by_query,
     fetch_character_term_ids,
-    fetch_title_token_match_scores,
-    fetch_phrase_postings_match_counts,
+    execute_compound_lexical_search,
     fetch_movie_ids_by_term_ids,
     PostingTable,
+    TitleSearchInput,
 )
 
 # ─── Operational constants (from lexical search guide Section 11) ─────────────
@@ -147,215 +145,59 @@ async def _resolve_exact_exclude_title_term_ids(title_tokens: list[str]) -> list
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                     Inverted Index Posting Searches
+#                        Compound Query Input Helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def search_people_postings(
-    people_term_ids: list[int],
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, int]:
+
+def _flatten_character_term_map(
+    term_map: dict[int, list[int]],
+    query_idx_offset: int = 0,
+) -> tuple[list[int], list[int]]:
     """
-    Count distinct matched people per movie.
+    Flatten a character term-map into query_idx/term_id arrays.
 
     Args:
-        people_term_ids: Resolved string_ids for INCLUDE people phrases.
-        filters:         Optional metadata hard-filters.
-        exclude_movie_ids: Optional movie IDs that should be excluded.
+        term_map: Mapping of character query index to resolved term IDs.
+        query_idx_offset: Offset applied to every query index in term_map.
 
     Returns:
-        Dict of {movie_id: matched_people_count}.
+        Tuple of parallel arrays: (query_idxs, term_ids).
     """
-    return await fetch_phrase_postings_match_counts(
-        PostingTable.PERSON, people_term_ids, filters, exclude_movie_ids,
-    )
-
-async def search_studio_postings(
-    studio_term_ids: list[int],
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, int]:
-    """
-    Count distinct matched studios per movie.
-
-    Args:
-        studio_term_ids: Resolved string_ids for INCLUDE studio phrases.
-        filters:         Optional metadata hard-filters.
-        exclude_movie_ids: Optional movie IDs that should be excluded.
-
-    Returns:
-        Dict of {movie_id: matched_studio_count}.
-    """
-    return await fetch_phrase_postings_match_counts(
-        PostingTable.STUDIO, studio_term_ids, filters, exclude_movie_ids,
-    )
-
-
-async def search_character_postings(
-    character_phrases: list[str],
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, int]:
-    """
-    Count distinct matched character query phrases per movie.
-
-    Calls _resolve_character_term_ids to get substring-expanded term_ids,
-    then runs the standard posting join pattern: unnest (query_idx, term_id)
-    pairs, join inv_character_postings, COUNT(DISTINCT query_idx) per movie.
-
-    Args:
-        character_phrases: Normalized character phrase strings.
-        filters:           Optional metadata hard-filters.
-        exclude_movie_ids: Optional movie IDs that should be excluded.
-
-    Returns:
-        Dict of {movie_id: matched_character_count}.
-    """
-    if not character_phrases:
-        return {}
-
-    # Phase 1: resolve phrases → term_ids
-    phrase_term_map = await _resolve_character_term_ids(character_phrases)
-
-    if not phrase_term_map:
-        return {}
-
-    # Flatten into parallel arrays for unnest
     query_idxs: list[int] = []
     term_ids: list[int] = []
-    for q_idx, tids in phrase_term_map.items():
-        for tid in tids:
-            query_idxs.append(q_idx)
-            term_ids.append(tid)
-
-    if not term_ids:
-        return {}
-
-    # Phase 2: posting join
-    use_eligible = filters is not None and filters.is_active
-
-    return await fetch_character_match_counts(
-        query_idxs,
-        term_ids,
-        use_eligible,
-        filters,
-        exclude_movie_ids,
-    )
-
-
-async def search_character_postings_by_query(
-    character_phrases: list[str],
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> list[dict[int, int]]:
-    """
-    Return per-query character match maps from one batched DB query.
-
-    This keeps per-franchise scoring exact while avoiding one round-trip per
-    phrase. The list index aligns with character_phrases order.
-
-    Args:
-        character_phrases: Normalized character phrase strings.
-        filters: Optional metadata hard-filters.
-        exclude_movie_ids: Optional movie IDs that should be excluded.
-
-    Returns:
-        List of dicts where each dict is {movie_id: matched_count} for the
-        phrase at that index.
-    """
-    if not character_phrases:
-        return []
-
-    phrase_term_map = await _resolve_character_term_ids(character_phrases)
-    if not phrase_term_map:
-        return [{} for _ in character_phrases]
-
-    query_idxs: list[int] = []
-    term_ids: list[int] = []
-    for q_idx, tids in phrase_term_map.items():
-        for term_id in tids:
-            query_idxs.append(q_idx)
+    for query_idx, ids in term_map.items():
+        for term_id in ids:
+            query_idxs.append(query_idx + query_idx_offset)
             term_ids.append(term_id)
-
-    if not term_ids:
-        return [{} for _ in character_phrases]
-
-    use_eligible = filters is not None and filters.is_active
-    by_query = await fetch_character_match_counts_by_query(
-        query_idxs,
-        term_ids,
-        use_eligible,
-        filters,
-        exclude_movie_ids,
-    )
-    return [by_query.get(idx, {}) for idx in range(len(character_phrases))]
+    return query_idxs, term_ids
 
 
-async def search_title_postings(
-    token_term_id_map: dict[int, list[int]],
-    filters: Optional[MetadataFilters] = None,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> dict[int, float]:
+def _build_title_search_input(token_term_id_map: dict[int, list[int]]) -> TitleSearchInput:
     """
-    Compute title F-scores for one title search by joining token postings.
-
-    Builds a MATERIALIZED eligible CTE when metadata filters are active
-    (avoiding large array transfer), counts matched token positions (m)
-    per movie, then applies the coverage-weighted F-score:
-
-        title_score = (1+β²)·(coverage·specificity) / (β²·specificity + coverage)
-
-    where coverage = m/k, specificity = m/L, β = TITLE_SCORE_BETA.
-
-    Results are capped at TITLE_MAX_CANDIDATES (sorted by score desc) in
-    the SQL query itself for wire-transfer efficiency.
+    Convert one token-term map into a TitleSearchInput payload.
 
     Args:
-        token_term_id_map: Mapping of token_idx → list[term_id].
-            Each key is a positional index for a query token; values are
-            all candidate string_ids that matched that position.
-        filters: Optional metadata hard-filters.  When active, an
-            eligible-set CTE is built inline rather than passing IDs.
-        exclude_movie_ids: Optional movie IDs that should be excluded.
+        token_term_id_map: Mapping of token_idx to resolved title term IDs.
 
     Returns:
-        Dict of {movie_id: title_score} for qualifying movies, capped
-        at TITLE_MAX_CANDIDATES entries.
+        TitleSearchInput compatible with execute_compound_lexical_search.
     """
-    if not token_term_id_map:
-        return {}
-
-    # ── Flatten the map into parallel arrays for unnest-based CTE ─────────
     token_idxs: list[int] = []
     term_ids: list[int] = []
-    for token_idx, tids in token_term_id_map.items():
-        for tid in tids:
+    for token_idx, ids in token_term_id_map.items():
+        for term_id in ids:
             token_idxs.append(token_idx)
-            term_ids.append(tid)
+            term_ids.append(term_id)
 
-    if not term_ids:
-        return {}
-
-    # Precompute F-score coefficients
-    f_coeff = 1.0 + (TITLE_SCORE_BETA ** 2)
-    non_empty_token_count = sum(1 for tids in token_term_id_map.values() if tids)
-    if non_empty_token_count == 0:
-        return {}
-
-    # ── Dynamically build query pieces ────────────────────────────────────
-    use_eligible = filters is not None and filters.is_active
-
-    return await fetch_title_token_match_scores(
+    non_empty_token_count = sum(1 for ids in token_term_id_map.values() if ids)
+    return TitleSearchInput(
         token_idxs=token_idxs,
         term_ids=term_ids,
-        use_eligible=use_eligible, 
-        f_coeff=f_coeff, 
+        f_coeff=1.0 + (TITLE_SCORE_BETA ** 2),
         k=non_empty_token_count,
-        beta=TITLE_SCORE_BETA, 
-        title_score_threshold=TITLE_SCORE_THRESHOLD, 
-        title_max_candidates=TITLE_MAX_CANDIDATES, 
-        filters=filters,
-        exclude_movie_ids=exclude_movie_ids,
+        beta_sq=TITLE_SCORE_BETA ** 2,
+        score_threshold=TITLE_SCORE_THRESHOLD,
+        max_candidates=TITLE_MAX_CANDIDATES,
     )
 # ═══════════════════════════════════════════════════════════════════════════════
 #            Full Lexical Search Orchestration (Lexical Guide §10)
@@ -463,9 +305,14 @@ async def lexical_search(
         return []
 
     # STEP 4 - Resolve all include/exclude IDs (phrases + title tokens + character terms)
-    exclude_character_phrases = _dedupe_preserve_order(
-        exclude_characters + exclude_franchise_phrases
+    all_character_phrases = (
+        include_characters
+        + include_franchise_phrases
+        + exclude_characters
+        + exclude_franchise_phrases
     )
+    include_char_end = len(include_characters)
+    franchise_char_end = include_char_end + len(include_franchise_phrases)
     all_exact_phrases = _dedupe_preserve_order(
         include_people
         + include_studios
@@ -476,12 +323,22 @@ async def lexical_search(
         exclude_title_tokens + exclude_franchise_title_tokens
     )
     all_title_searches = include_title_searches + include_franchise_title_searches
-    phrase_id_map, all_title_token_maps, exclude_character_term_map, exclude_title_term_ids = await asyncio.gather(
+    phrase_id_map, all_title_token_maps, all_character_term_map, exclude_title_term_ids = await asyncio.gather(
         fetch_phrase_term_ids(all_exact_phrases),
         _resolve_all_title_tokens(all_title_searches),
-        _resolve_character_term_ids(exclude_character_phrases),
+        _resolve_character_term_ids(all_character_phrases),
         _resolve_exact_exclude_title_term_ids(all_exclude_title_tokens),
     )
+    include_character_term_map = {
+        idx: all_character_term_map[idx]
+        for idx in range(0, include_char_end)
+        if idx in all_character_term_map
+    }
+    franchise_character_term_map = {
+        idx - include_char_end: all_character_term_map[idx]
+        for idx in range(include_char_end, franchise_char_end)
+        if idx in all_character_term_map
+    }
 
     # We want to separate regular title searches from franchise title searches (scoring for franchises is unique)
     regular_title_count = len(include_title_searches)
@@ -494,8 +351,9 @@ async def lexical_search(
     exclude_studio_ids = [phrase_id_map[s] for s in exclude_studios if s in phrase_id_map]
     exclude_character_term_ids = list({
         term_id
-        for term_ids in exclude_character_term_map.values()
-        for term_id in term_ids
+        for idx in range(franchise_char_end, len(all_character_phrases))
+        if idx in all_character_term_map
+        for term_id in all_character_term_map[idx]
     })
 
     # STEP 5 - Resolve a global excluded movie-id set across all exclude buckets.
@@ -523,41 +381,57 @@ async def lexical_search(
         for excluded_ids in exclusion_results:
             excluded_movie_ids.update(excluded_ids)
 
-    # STEP 6 - Match scoring
-    title_futures = [
-        search_title_postings(token_map, filters, excluded_movie_ids)
-        for token_map in title_token_maps
+    # STEP 6 - Match scoring via one compound lexical query
+    include_query_idxs, include_term_ids = _flatten_character_term_map(include_character_term_map)
+    franchise_query_offset = len(include_characters)
+    franchise_query_idxs, franchise_term_ids = _flatten_character_term_map(
+        franchise_character_term_map,
+        query_idx_offset=franchise_query_offset,
+    )
+    character_query_idxs = include_query_idxs + franchise_query_idxs
+    character_term_ids = include_term_ids + franchise_term_ids
+
+    combined_title_token_maps = title_token_maps + franchise_title_token_maps
+    combined_title_searches = [
+        _build_title_search_input(token_map)
+        for token_map in combined_title_token_maps
     ]
-    franchise_title_futures = [
-        search_title_postings(token_map, filters, excluded_movie_ids)
-        for token_map in franchise_title_token_maps
-    ]
-    all_results = await asyncio.gather(
-        search_people_postings(people_term_ids, filters, excluded_movie_ids),
-        search_character_postings(include_characters, filters, excluded_movie_ids),
-        search_studio_postings(studio_term_ids, filters, excluded_movie_ids),
-        search_character_postings_by_query(
-            include_franchise_phrases,
-            filters,
-            excluded_movie_ids,
-        ),
-        *title_futures,
-        *franchise_title_futures,
+    compound_result = await execute_compound_lexical_search(
+        people_term_ids=people_term_ids,
+        studio_term_ids=studio_term_ids,
+        character_query_idxs=character_query_idxs,
+        character_term_ids=character_term_ids,
+        title_searches=combined_title_searches,
+        filters=filters,
+        exclude_movie_ids=excluded_movie_ids,
     )
 
-    people_scores: dict[int, int] = all_results[0]
-    character_scores: dict[int, int] = all_results[1]
-    studio_scores: dict[int, int] = all_results[2]
+    people_scores: dict[int, int] = compound_result.people_scores
+    studio_scores: dict[int, int] = compound_result.studio_scores
+    character_scores: dict[int, int] = {}
+    for query_idx in range(len(include_characters)):
+        query_map = compound_result.character_by_query.get(query_idx, {})
+        for movie_id, matched in query_map.items():
+            character_scores[movie_id] = character_scores.get(movie_id, 0) + matched
 
-    franchise_character_results: list[dict[int, int]] = all_results[3]
-    result_idx = 4
-    title_score_results: list[dict[int, float]] = list(
-        all_results[result_idx: result_idx + len(title_futures)]
-    )
-    result_idx += len(title_futures)
-    franchise_title_results: list[dict[int, float]] = list(
-        all_results[result_idx: result_idx + len(franchise_title_futures)]
-    )
+    franchise_character_results: list[dict[int, int]] = []
+    for local_idx in range(len(include_franchise_phrases)):
+        global_idx = franchise_query_offset + local_idx
+        franchise_character_results.append(
+            compound_result.character_by_query.get(global_idx, {})
+        )
+
+    title_score_results: list[dict[int, float]] = []
+    for idx in range(len(title_token_maps)):
+        title_score_results.append(compound_result.title_scores_by_search.get(idx, {}))
+
+    franchise_title_results: list[dict[int, float]] = []
+    franchise_title_offset = len(title_token_maps)
+    for local_idx in range(len(franchise_title_token_maps)):
+        global_idx = franchise_title_offset + local_idx
+        franchise_title_results.append(
+            compound_result.title_scores_by_search.get(global_idx, {})
+        )
     title_score_sums: dict[int, float] = {}
     for title_result in title_score_results:
         for movie_id, score in title_result.items():

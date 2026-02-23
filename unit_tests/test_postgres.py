@@ -123,29 +123,98 @@ async def test_check_postgres_returns_error_string_on_failure(mocker) -> None:
 
 
 @pytest.mark.asyncio
-async def test_upsert_lexical_dictionary_returns_row_id(mocker) -> None:
-    """upsert_lexical_dictionary should unwrap string_id from returned tuple."""
-    execute_write = mocker.patch("db.postgres._execute_write", new=AsyncMock(return_value=(555,)))
-    result = await postgres.upsert_lexical_dictionary("spider-man")
-    execute_write.assert_awaited_once()
-    assert result == 555
+async def test_execute_on_conn_with_existing_connection_fetches_rows() -> None:
+    """_execute_on_conn should reuse caller connection and return fetched rows."""
+    cursor = AsyncMock()
+    cursor.fetchall.return_value = [(1,), (2,)]
+    cursor_cm = MagicMock()
+    cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
+    cursor_cm.__aexit__ = AsyncMock(return_value=None)
+    connection = MagicMock()
+    connection.cursor.return_value = cursor_cm
+
+    result = await postgres._execute_on_conn(connection, "SELECT 1", (123,), fetch=True)
+
+    cursor.execute.assert_awaited_once_with("SELECT 1", (123,))
+    cursor.fetchall.assert_awaited_once()
+    assert result == [(1,), (2,)]
 
 
 @pytest.mark.asyncio
-async def test_upsert_lexical_dictionary_returns_none_for_empty_row(mocker) -> None:
-    """upsert_lexical_dictionary should return None when no row is returned."""
-    mocker.patch("db.postgres._execute_write", new=AsyncMock(return_value=None))
-    assert await postgres.upsert_lexical_dictionary("spider-man") is None
+async def test_execute_on_conn_without_connection_commits_pool_connection(mocker) -> None:
+    """_execute_on_conn should acquire and commit when conn is not supplied."""
+    connection, cursor = _mock_pool_connection(mocker)
+    result = await postgres._execute_on_conn(None, "INSERT INTO t VALUES (%s)", (9,), fetch=False)
+    cursor.execute.assert_awaited_once_with("INSERT INTO t VALUES (%s)", (9,))
+    connection.commit.assert_awaited_once()
+    assert result is None
 
 
 @pytest.mark.asyncio
-async def test_upsert_title_token_string_calls_execute_write(mocker) -> None:
-    """upsert_title_token_string should write to title token lookup table."""
-    execute_write = mocker.patch("db.postgres._execute_write", new=AsyncMock())
-    await postgres.upsert_title_token_string(11, "spider-man")
-    query, params = execute_write.await_args.args
+async def test_batch_upsert_lexical_dictionary_empty_input_short_circuits(mocker) -> None:
+    """batch_upsert_lexical_dictionary should skip DB work for empty input."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    assert await postgres.batch_upsert_lexical_dictionary([]) == {}
+    execute_on_conn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_lexical_dictionary_dedupes_and_returns_mapping(mocker) -> None:
+    """batch_upsert_lexical_dictionary should dedupe inputs and return ID map."""
+    execute_on_conn = mocker.patch(
+        "db.postgres._execute_on_conn",
+        new=AsyncMock(return_value=[("spider-man", 11), ("hero", 22)]),
+    )
+    result = await postgres.batch_upsert_lexical_dictionary(["spider-man", "spider-man", "hero"])
+    query, params = execute_on_conn.await_args.args[1:3]
+    assert "lex.lexical_dictionary" in query
+    assert params == (["spider-man", "hero"],)
+    assert execute_on_conn.await_args.kwargs["fetch"] is True
+    assert result == {"spider-man": 11, "hero": 22}
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_title_token_strings_calls_execute_on_conn(mocker) -> None:
+    """batch_upsert_title_token_strings should bulk write title token lookup rows."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    await postgres.batch_upsert_title_token_strings([11, 22], ["spider-man", "hero"])
+    query, params = execute_on_conn.await_args.args[1:3]
     assert "lex.title_token_strings" in query
-    assert params == (11, "spider-man")
+    assert params == ([11, 22], ["spider-man", "hero"])
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_title_token_strings_dedupes_duplicate_pairs(mocker) -> None:
+    """batch_upsert_title_token_strings should dedupe duplicate (id, value) pairs."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    await postgres.batch_upsert_title_token_strings(
+        [11, 22, 22],
+        ["spider-man", "hero", "hero"],
+    )
+    params = execute_on_conn.await_args.args[2]
+    assert params == ([11, 22], ["spider-man", "hero"])
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_character_strings_calls_execute_on_conn(mocker) -> None:
+    """batch_upsert_character_strings should bulk write character lookup rows."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    await postgres.batch_upsert_character_strings([22], ["peter parker"])
+    query, params = execute_on_conn.await_args.args[1:3]
+    assert "lex.character_strings" in query
+    assert params == ([22], ["peter parker"])
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_character_strings_dedupes_duplicate_pairs(mocker) -> None:
+    """batch_upsert_character_strings should dedupe duplicate (id, value) pairs."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    await postgres.batch_upsert_character_strings(
+        [54, 55, 55],
+        ["ferris bueller", "cameron frye", "cameron frye"],
+    )
+    params = execute_on_conn.await_args.args[2]
+    assert params == ([54, 55], ["ferris bueller", "cameron frye"])
 
 
 @pytest.mark.asyncio
@@ -160,10 +229,11 @@ async def test_upsert_title_token_string_calls_execute_write(mocker) -> None:
 )
 async def test_batch_insert_posting_functions_use_expected_tables(mocker, function_name: str, table_name: str) -> None:
     """Each batch posting function should target its table with expected params."""
-    execute_write = mocker.patch("db.postgres._execute_write", new=AsyncMock())
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     function = getattr(postgres, function_name)
     await function([7, 8], 77)
-    query, params = execute_write.await_args.args
+    conn_arg, query, params = execute_on_conn.await_args.args
+    assert conn_arg is None
     assert table_name in query
     assert params == ([7, 8], 77)
 
@@ -183,10 +253,10 @@ async def test_batch_insert_posting_functions_empty_term_ids_short_circuit(
     function_name: str,
 ) -> None:
     """Batch posting insert helpers should no-op when term_ids is empty."""
-    execute_write = mocker.patch("db.postgres._execute_write", new=AsyncMock())
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     function = getattr(postgres, function_name)
     await function([], 77)
-    execute_write.assert_not_awaited()
+    execute_on_conn.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -207,30 +277,13 @@ async def test_dictionary_upserts_use_expected_tables_and_params(
     params: tuple,
 ) -> None:
     """Dictionary upsert functions should execute against expected tables and params."""
-    execute_write = mocker.patch("db.postgres._execute_write", new=AsyncMock())
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     function = getattr(postgres, function_name)
     await function(*params)
-    query, sent_params = execute_write.await_args.args
+    conn_arg, query, sent_params = execute_on_conn.await_args.args
+    assert conn_arg is None
     assert table_name in query
     assert sent_params == params
-
-
-@pytest.mark.asyncio
-async def test_upsert_phrase_term_returns_none_when_normalized_is_empty(mocker) -> None:
-    """upsert_phrase_term should stop early when normalized phrase is empty."""
-    mocker.patch("db.postgres.normalize_string", return_value="")
-    upsert_lexical = mocker.patch("db.postgres.upsert_lexical_dictionary", new=AsyncMock())
-    assert await postgres.upsert_phrase_term("###") is None
-    upsert_lexical.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_upsert_phrase_term_normal_flow(mocker) -> None:
-    """upsert_phrase_term should normalize and then upsert lexical term."""
-    mocker.patch("db.postgres.normalize_string", return_value="spider man")
-    upsert_lexical = mocker.patch("db.postgres.upsert_lexical_dictionary", new=AsyncMock(return_value=321))
-    assert await postgres.upsert_phrase_term("Spider Man") == 321
-    upsert_lexical.assert_awaited_once_with("spider man")
 
 
 @pytest.mark.parametrize(
@@ -326,13 +379,17 @@ async def test_build_eligible_cte_with_all_filters_preserves_param_order(mocker)
 
 
 @pytest.mark.asyncio
-async def test_upsert_character_string_calls_execute_write(mocker) -> None:
-    """upsert_character_string should write to character string lookup table."""
-    execute_write = mocker.patch("db.postgres._execute_write", new=AsyncMock())
-    await postgres.upsert_character_string(22, "peter parker")
-    query, params = execute_write.await_args.args
-    assert "lex.character_strings" in query
-    assert params == (22, "peter parker")
+async def test_batch_upsert_title_token_strings_rejects_length_mismatch() -> None:
+    """batch_upsert_title_token_strings should guard against misaligned arrays."""
+    with pytest.raises(ValueError):
+        await postgres.batch_upsert_title_token_strings([11], ["spider-man", "hero"])
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_character_strings_rejects_length_mismatch() -> None:
+    """batch_upsert_character_strings should guard against misaligned arrays."""
+    with pytest.raises(ValueError):
+        await postgres.batch_upsert_character_strings([22], ["hero", "villain"])
 
 
 @pytest.mark.asyncio
@@ -345,9 +402,9 @@ async def test_refresh_title_token_doc_frequency_calls_refresh_statement(mocker)
 
 
 @pytest.mark.asyncio
-async def test_upsert_movie_card_calls_execute_write_with_expected_params(mocker) -> None:
+async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params(mocker) -> None:
     """upsert_movie_card should serialize sequences to lists and pass expected argument order."""
-    execute_write = mocker.patch("db.postgres._execute_write", new=AsyncMock())
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     await postgres.upsert_movie_card(
         movie_id=10,
         title="Movie",
@@ -361,7 +418,8 @@ async def test_upsert_movie_card_calls_execute_write_with_expected_params(mocker
         reception_score=72.5,
         title_token_count=4,
     )
-    query, params = execute_write.await_args.args
+    conn_arg, query, params = execute_on_conn.await_args.args
+    assert conn_arg is None
     assert "public.movie_card" in query
     assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 72.5, 4)
 
@@ -381,54 +439,6 @@ async def test_fetch_phrase_term_ids_returns_dictionary(mocker) -> None:
     mocker.patch("db.postgres._execute_read", new=AsyncMock(return_value=[("tom hanks", 11), ("marvel", 22)]))
     result = await postgres.fetch_phrase_term_ids(["tom hanks", "marvel"])
     assert result == {"tom hanks": 11, "marvel": 22}
-
-
-@pytest.mark.asyncio
-async def test_fetch_phrase_postings_match_counts_empty_term_ids_short_circuits(mocker) -> None:
-    """fetch_phrase_postings_match_counts should skip DB calls when term_ids are empty."""
-    execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock())
-    result = await postgres.fetch_phrase_postings_match_counts(postgres.PostingTable.PERSON, [])
-    assert result == {}
-    execute_read.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_fetch_phrase_postings_match_counts_without_filters(mocker) -> None:
-    """fetch_phrase_postings_match_counts should return movie->matched_count map."""
-    execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock(return_value=[(1, 2), (3, 1)]))
-    result = await postgres.fetch_phrase_postings_match_counts(postgres.PostingTable.PERSON, [10, 20])
-    query, params = execute_read.await_args.args
-    assert "WITH eligible" not in query
-    assert "FROM lex.inv_person_postings p" in query
-    assert params == [[10, 20]]
-    assert result == {1: 2, 3: 1}
-
-
-@pytest.mark.asyncio
-async def test_fetch_phrase_postings_match_counts_with_filters_and_exclusions(mocker) -> None:
-    """fetch_phrase_postings_match_counts should include eligible CTE and exclusion anti-join."""
-    execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock(return_value=[(9, 3)]))
-    filters = postgres.MetadataFilters(min_runtime=90)
-    result = await postgres.fetch_phrase_postings_match_counts(
-        postgres.PostingTable.STUDIO,
-        [5, 6],
-        filters=filters,
-        exclude_movie_ids={99},
-    )
-    query, params = execute_read.await_args.args
-    assert "WITH eligible AS MATERIALIZED" in query
-    assert "JOIN eligible e ON e.movie_id = p.movie_id" in query
-    assert "NOT (p.movie_id = ANY(%s::bigint[]))" in query
-    assert params == [90, [5, 6], [99]]
-    assert result == {9: 3}
-
-
-@pytest.mark.asyncio
-async def test_fetch_phrase_postings_match_counts_reraises_database_errors(mocker) -> None:
-    """fetch_phrase_postings_match_counts should re-raise DB read exceptions."""
-    mocker.patch("db.postgres._execute_read", new=AsyncMock(side_effect=RuntimeError("db fail")))
-    with pytest.raises(RuntimeError, match="db fail"):
-        await postgres.fetch_phrase_postings_match_counts(postgres.PostingTable.PERSON, [1])
 
 
 @pytest.mark.asyncio
@@ -511,83 +521,6 @@ async def test_fetch_character_term_ids_groups_by_query_idx(mocker) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_character_match_counts_without_eligible(mocker) -> None:
-    """fetch_character_match_counts should skip eligible CTE when use_eligible is False."""
-    execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock(return_value=[(3, 2)]))
-    result = await postgres.fetch_character_match_counts(
-        query_idxs=[0, 1],
-        term_ids=[10, 20],
-        use_eligible=False,
-    )
-    query, params = execute_read.await_args.args
-    assert "JOIN eligible e ON e.movie_id = p.movie_id" not in query
-    assert "q_chars AS" in query
-    assert params == [[0, 1], [10, 20]]
-    assert result == {3: 2}
-
-
-@pytest.mark.asyncio
-async def test_fetch_character_match_counts_with_eligible_and_exclusions(mocker) -> None:
-    """fetch_character_match_counts should include eligibility join and exclusion anti-join."""
-    execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock(return_value=[(1, 1)]))
-    filters = postgres.MetadataFilters(min_release_ts=1000)
-    result = await postgres.fetch_character_match_counts(
-        query_idxs=[0],
-        term_ids=[99],
-        use_eligible=True,
-        filters=filters,
-        exclude_movie_ids={123},
-    )
-    query, params = execute_read.await_args.args
-    assert "WITH eligible AS MATERIALIZED" in query
-    assert "JOIN eligible e ON e.movie_id = p.movie_id" in query
-    assert "NOT (p.movie_id = ANY(%s::bigint[]))" in query
-    assert params == [1000, [0], [99], [123]]
-    assert result == {1: 1}
-
-
-@pytest.mark.asyncio
-async def test_fetch_character_match_counts_by_query_returns_nested_map(mocker) -> None:
-    """fetch_character_match_counts_by_query should keep query-index granularity."""
-    execute_read = mocker.patch(
-        "db.postgres._execute_read",
-        new=AsyncMock(return_value=[(0, 1, 1), (0, 2, 1), (1, 2, 1)]),
-    )
-    result = await postgres.fetch_character_match_counts_by_query(
-        query_idxs=[0, 1],
-        term_ids=[10, 20],
-        use_eligible=False,
-    )
-    query, params = execute_read.await_args.args
-    assert "SELECT query_idx, movie_id, matched" in query
-    assert params == [[0, 1], [10, 20]]
-    assert result == {0: {1: 1, 2: 1}, 1: {2: 1}}
-
-
-@pytest.mark.asyncio
-async def test_fetch_character_match_counts_by_query_with_eligible_and_exclusions(mocker) -> None:
-    """fetch_character_match_counts_by_query should include eligible and exclusion clauses when requested."""
-    execute_read = mocker.patch(
-        "db.postgres._execute_read",
-        new=AsyncMock(return_value=[(1, 50, 1)]),
-    )
-    filters = postgres.MetadataFilters(min_runtime=90)
-    result = await postgres.fetch_character_match_counts_by_query(
-        query_idxs=[1],
-        term_ids=[99],
-        use_eligible=True,
-        filters=filters,
-        exclude_movie_ids={123},
-    )
-    query, params = execute_read.await_args.args
-    assert "WITH eligible AS MATERIALIZED" in query
-    assert "JOIN eligible e ON e.movie_id = p.movie_id" in query
-    assert "NOT (p.movie_id = ANY(%s::bigint[]))" in query
-    assert params == [90, [1], [99], [123]]
-    assert result == {1: {50: 1}}
-
-
-@pytest.mark.asyncio
 async def test_fetch_movie_cards_empty_input_short_circuits(mocker) -> None:
     """fetch_movie_cards should return empty list and skip DB call for empty input."""
     execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock())
@@ -616,73 +549,88 @@ async def test_fetch_movie_cards_maps_rows_to_dicts(mocker) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_title_token_match_scores_builds_scored_map(mocker) -> None:
-    """fetch_title_token_match_scores should return float-valued scores keyed by movie_id."""
-    execute_read = mocker.patch(
-        "db.postgres._execute_read",
-        new=AsyncMock(return_value=[(10, 0.75), (20, 0.5)]),
+async def test_execute_compound_lexical_search_empty_short_circuits(mocker) -> None:
+    """execute_compound_lexical_search should skip DB when all buckets are empty."""
+    execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock())
+    result = await postgres.execute_compound_lexical_search(
+        people_term_ids=[],
+        studio_term_ids=[],
+        character_query_idxs=[],
+        character_term_ids=[],
+        title_searches=[],
     )
-    result = await postgres.fetch_title_token_match_scores(
-        token_idxs=[0, 1],
-        term_ids=[11, 12],
-        use_eligible=False,
-        f_coeff=5.0,
-        k=2,
-        beta=2.0,
-        title_score_threshold=0.15,
-        title_max_candidates=100,
-    )
-    query, params = execute_read.await_args.args
-    assert "title_scored AS" in query
-    assert "title_score >= %s" in query
-    assert "LIMIT %s" in query
-    assert params[-2:] == [0.15, 100]
-    assert result == {10: 0.75, 20: 0.5}
+    execute_read.assert_not_awaited()
+    assert result.people_scores == {}
+    assert result.studio_scores == {}
+    assert result.character_by_query == {}
+    assert result.title_scores_by_search == {}
 
 
 @pytest.mark.asyncio
-async def test_fetch_title_token_match_scores_with_eligible_and_exclusions(mocker) -> None:
-    """fetch_title_token_match_scores should include eligible and exclusion clauses when provided."""
-    execute_read = mocker.patch("db.postgres._execute_read", new=AsyncMock(return_value=[(99, 0.4)]))
-    filters = postgres.MetadataFilters(max_runtime=120)
-    result = await postgres.fetch_title_token_match_scores(
-        token_idxs=[0],
-        term_ids=[77],
-        use_eligible=True,
-        f_coeff=5.0,
-        k=1,
-        beta=2.0,
-        title_score_threshold=0.1,
-        title_max_candidates=50,
+async def test_execute_compound_lexical_search_without_filters_builds_tagged_union(mocker) -> None:
+    """Compound query should omit eligible CTE and parse bucket-tagged rows."""
+    execute_read = mocker.patch(
+        "db.postgres._execute_read",
+        new=AsyncMock(
+            return_value=[
+                ("people", -1, 10, 2.0),
+                ("studio", -1, 10, 1.0),
+                ("character", 0, 10, 1.0),
+                ("title_0", -1, 10, 0.7),
+            ]
+        ),
+    )
+    result = await postgres.execute_compound_lexical_search(
+        people_term_ids=[11],
+        studio_term_ids=[22],
+        character_query_idxs=[0],
+        character_term_ids=[33],
+        title_searches=[
+            postgres.TitleSearchInput(
+                token_idxs=[0, 1],
+                term_ids=[101, 102],
+                f_coeff=5.0,
+                k=2,
+                beta_sq=4.0,
+                score_threshold=0.15,
+                max_candidates=100,
+            )
+        ],
+    )
+    query, _ = execute_read.await_args.args
+    assert "WITH eligible AS MATERIALIZED" not in query
+    assert "SELECT 'people' AS bucket" in query
+    assert "SELECT 'studio' AS bucket" in query
+    assert "SELECT 'character' AS bucket" in query
+    assert "SELECT 'title_0' AS bucket" in query
+    assert result.people_scores == {10: 2}
+    assert result.studio_scores == {10: 1}
+    assert result.character_by_query == {0: {10: 1}}
+    assert result.title_scores_by_search == {0: {10: 0.7}}
+
+
+@pytest.mark.asyncio
+async def test_execute_compound_lexical_search_with_filters_and_exclusions(mocker) -> None:
+    """Compound query should include a single eligible CTE and exclusion clauses."""
+    execute_read = mocker.patch(
+        "db.postgres._execute_read",
+        new=AsyncMock(return_value=[]),
+    )
+    filters = postgres.MetadataFilters(min_runtime=90)
+    await postgres.execute_compound_lexical_search(
+        people_term_ids=[1, 2],
+        studio_term_ids=[],
+        character_query_idxs=[0],
+        character_term_ids=[3],
+        title_searches=[],
         filters=filters,
-        exclude_movie_ids={1234},
+        exclude_movie_ids={99},
     )
     query, params = execute_read.await_args.args
     assert "WITH eligible AS MATERIALIZED" in query
-    assert "JOIN eligible e ON e.movie_id = p.movie_id" in query
-    assert "JOIN eligible e" in query
-    assert "JOIN public.movie_card mc" not in query
+    assert query.count("eligible AS MATERIALIZED") == 1
     assert "NOT (p.movie_id = ANY(%s::bigint[]))" in query
-    assert params[0] == 120
-    assert params[-2:] == [0.1, 50]
-    assert result == {99: 0.4}
-
-
-@pytest.mark.asyncio
-async def test_fetch_title_token_match_scores_reraises_database_errors(mocker) -> None:
-    """fetch_title_token_match_scores should re-raise read exceptions."""
-    mocker.patch("db.postgres._execute_read", new=AsyncMock(side_effect=RuntimeError("boom")))
-    with pytest.raises(RuntimeError, match="boom"):
-        await postgres.fetch_title_token_match_scores(
-            token_idxs=[0],
-            term_ids=[1],
-            use_eligible=False,
-            f_coeff=5.0,
-            k=1,
-            beta=2.0,
-            title_score_threshold=0.1,
-            title_max_candidates=5,
-        )
+    assert params[0] == 90
 
 
 # ===============================
