@@ -85,6 +85,16 @@ class VectorCollectionName(Enum):
     PRODUCTION_VECTORS = "production_vectors"
     RECEPTION_VECTORS = "reception_vectors"
 
+class VectorName(Enum):
+    ANCHOR = "anchor"
+    PLOT_EVENTS = "plot_events"
+    PLOT_ANALYSIS = "plot_analysis"
+    VIEWER_EXPERIENCE = "viewer_experience"
+    WATCH_CONTEXT = "watch_context"
+    NARRATIVE_TECHNIQUES = "narrative_techniques"
+    PRODUCTION = "production"
+    RECEPTION = "reception"
+
 
 class RelevanceSize(Enum):
     NOT_RELEVANT = "not_relevant"
@@ -107,43 +117,72 @@ class MetadataPreferenceName(Enum):
     RECEPTION = "reception"
 
 class Genre(Enum):
+    genre_id: int
     value: str
     normalized_name: str
 
-    def __new__(cls, value: str, normalized_name: str) -> "Genre":
-        """Create a Genre enum member with display and normalized names."""
+    def __new__(cls, genre_id: int, value: str, normalized_name: str) -> "Genre":
+        """Create a Genre enum member with a stable numeric ID, display name, and normalized name.
+
+        Args:
+            genre_id: Stable 1-based integer identifier assigned in alphabetical order.
+            value: Human-readable display name (e.g. "Sci-Fi").
+            normalized_name: Lowercased/normalized form used for indexing and matching.
+        """
         obj = object.__new__(cls)
         obj._value_ = value
+        obj.genre_id = genre_id
         obj.normalized_name = normalized_name
         return obj
 
-    ACTION = ("Action", "action")
-    ADVENTURE = ("Adventure", "adventure")
-    ANIMATION = ("Animation", "animation")
-    BIOGRAPHY = ("Biography", "biography")
-    COMEDY = ("Comedy", "comedy")
-    CRIME = ("Crime", "crime")
-    DOCUMENTARY = ("Documentary", "documentary")
-    DRAMA = ("Drama", "drama")
-    FAMILY = ("Family", "family")
-    FANTASY = ("Fantasy", "fantasy")
-    FILM_NOIR = ("Film-Noir", "film-noir")
-    GAME_SHOW = ("Game-Show", "game-show")
-    HISTORY = ("History", "history")
-    HORROR = ("Horror", "horror")
-    MUSIC = ("Music", "music")
-    MUSICAL = ("Musical", "musical")
-    MYSTERY = ("Mystery", "mystery")
-    NEWS = ("News", "news")
-    REALITY_TV = ("Reality-TV", "reality-tv")
-    ROMANCE = ("Romance", "romance")
-    SCI_FI = ("Sci-Fi", "sci-fi")
-    SHORT = ("Short", "short")
-    SPORT = ("Sport", "sport")
-    TALK_SHOW = ("Talk-Show", "talk-show")
-    THRILLER = ("Thriller", "thriller")
-    WAR = ("War", "war")
-    WESTERN = ("Western", "western")
+    ACTION      = (1,  "Action",     "action")
+    ADVENTURE   = (2,  "Adventure",  "adventure")
+    ANIMATION   = (3,  "Animation",  "animation")
+    BIOGRAPHY   = (4,  "Biography",  "biography")
+    COMEDY      = (5,  "Comedy",     "comedy")
+    CRIME       = (6,  "Crime",      "crime")
+    DOCUMENTARY = (7,  "Documentary","documentary")
+    DRAMA       = (8,  "Drama",      "drama")
+    FAMILY      = (9,  "Family",     "family")
+    FANTASY     = (10, "Fantasy",    "fantasy")
+    FILM_NOIR   = (11, "Film-Noir",  "film-noir")
+    GAME_SHOW   = (12, "Game-Show",  "game-show")
+    HISTORY     = (13, "History",    "history")
+    HORROR      = (14, "Horror",     "horror")
+    MUSIC       = (15, "Music",      "music")
+    MUSICAL     = (16, "Musical",    "musical")
+    MYSTERY     = (17, "Mystery",    "mystery")
+    NEWS        = (18, "News",       "news")
+    REALITY_TV  = (19, "Reality-TV", "reality-tv")
+    ROMANCE     = (20, "Romance",    "romance")
+    SCI_FI      = (21, "Sci-Fi",     "sci-fi")
+    SHORT       = (22, "Short",      "short")
+    SPORT       = (23, "Sport",      "sport")
+    TALK_SHOW   = (24, "Talk-Show",  "talk-show")
+    THRILLER    = (25, "Thriller",   "thriller")
+    WAR         = (26, "War",        "war")
+    WESTERN     = (27, "Western",    "western")
+
+    @classmethod
+    def from_string(cls, name: str) -> "Genre | None":
+        """Resolve a genre name string to its Genre enum member.
+
+        Uses normalize_string for case/whitespace tolerance, then matches
+        against each member's normalized_name.
+
+        Args:
+            name: Raw genre name (e.g. "Sci-Fi", "sci-fi", " Action ").
+
+        Returns:
+            The matching Genre member, or None if unrecognized.
+        """
+        normalized = normalize_string(name)
+        if not normalized:
+            return None
+        for member in cls:
+            if member.normalized_name == normalized:
+                return member
+        return None
 
 class DateMatchOperation(Enum):
     EXACT = "exact"

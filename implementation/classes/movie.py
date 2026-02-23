@@ -12,9 +12,11 @@ from .schemas import (
     ReceptionMetadata,
     ProductionMetadata
 )
+from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict
-from .enums import MaturityRating, WatchMethodType
-from implementation.misc.helpers import normalize_string, tokenize_title_phrase
+from .enums import MaturityRating, WatchMethodType, Genre
+from .watch_providers import FILTERABLE_WATCH_PROVIDER_IDS
+from implementation.misc.helpers import normalize_string, tokenize_title_phrase, create_watch_provider_offering_key
 import re
 
 
@@ -130,6 +132,15 @@ class BaseMovie(BaseModel):
             return f"Movie: {self.title} ({self.original_title})"
         return f"Movie: {self.title}"
 
+    def release_ts(self) -> Optional[int]:
+        """
+        Returns the release timestamp of the movie.
+        """
+        if not self.release_date:
+            return None
+        parsed_release = datetime.strptime(self.release_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return int(parsed_release.timestamp())
+
     def normalized_title_tokens(self) -> list[str]:
         """Build normalized title tokens including hyphen expansions."""
         return tokenize_title_phrase(self.title)
@@ -164,6 +175,50 @@ class BaseMovie(BaseModel):
         if limit:
             return self.genres[:limit]
         return self.genres
+
+    def genre_ids(self) -> list[int]:
+        """
+        Returns the list of genre IDs for the movie.
+        """
+        raw_genres = self.genres
+        if not raw_genres:
+            return []
+        
+        genre_ids: list[int] = []
+        for genre_name in raw_genres:
+            genre_enum = Genre.from_string(str(genre_name))
+            if genre_enum is None:
+                continue
+            genre_ids.append(genre_enum.genre_id)
+        return genre_ids
+
+    def watch_offer_keys(self) -> list[int]:
+        """
+        Returns the list of watch offer keys for the movie.
+        """
+        raw_providers = self.watch_providers
+        if not isinstance(raw_providers, list):
+            raw_providers = []
+
+        watch_offer_key_set: set[int] = set()
+        for provider in raw_providers:
+            provider_id = getattr(provider, "id", None)
+            if provider_id is None or provider_id not in FILTERABLE_WATCH_PROVIDER_IDS:
+                continue
+
+            provider_name = str(getattr(provider, "name", "") or "")
+
+            watch_method_types = getattr(provider, "types", [])
+            if not isinstance(watch_method_types, list):
+                watch_method_types = []
+
+            for watch_method_type in watch_method_types:
+                watch_method_id = int(watch_method_type)
+
+                watch_offer_key = create_watch_provider_offering_key(provider_id, watch_method_id)
+                watch_offer_key_set.add(watch_offer_key)
+
+        return sorted(watch_offer_key_set)
 
     def release_decade_bucket(self) -> str:
         """

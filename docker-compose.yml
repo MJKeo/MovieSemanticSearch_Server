@@ -11,6 +11,7 @@ services:
       volumes:
         - postgres_data:/var/lib/postgresql/data
         - ./db/init:/docker-entrypoint-initdb.d       # init scripts
+      restart: unless-stopped
   
     redis:
       image: redis:7
@@ -25,6 +26,20 @@ services:
         - "6333:6333"
       volumes:
         - qdrant_data:/qdrant/storage
+      restart: unless-stopped
+
+    qdrant-init:
+      image: curlimages/curl:8.6.0
+      depends_on:
+        - qdrant
+      environment:
+        QDRANT_URL: http://qdrant:6333
+        QDRANT_COLLECTION_ALIAS: movies
+        QDRANT_PHYSICAL_COLLECTION: movies_v1
+      volumes:
+        - ./db/init/02_qdrant_init.sh:/qdrant_bootstrap.sh:ro
+      entrypoint: ["/bin/sh", "/qdrant_bootstrap.sh"]
+      restart: "no"
   
     api:
       build: ./api

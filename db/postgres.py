@@ -6,7 +6,6 @@ along with async helper functions for executing queries and public methods for
 upserting/inserting movie and lexical data.
 """
 
-import asyncio
 import os
 from dataclasses import dataclass
 from enum import Enum
@@ -88,14 +87,6 @@ _STRING_MATCH_EXACT_ONLY_MAX_LEN = 3
 # Phrases matching more character names than this are too vague to be
 # useful and would bloat the posting join.
 _CHARACTER_RESOLVE_LIMIT_PER_PHRASE: int = 500
-
-# In-memory genre mapping cache: Genre enum -> DB genre_id.
-# Loaded lazily on first request that requires genre filtering.
-_GENRE_ID_CACHE: dict[Genre, int] = {}
-_GENRE_BY_NORMALIZED_NAME: dict[str, Genre] = {
-    genre.normalized_name: genre for genre in Genre
-}
-_GENRE_CACHE_LOCK = asyncio.Lock()
 
 # Base query used for title token matching
 _BASE_TITLE_TOKEN_QUERY = """\
@@ -342,8 +333,7 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
         params.append(filters.max_maturity_rank)
 
     if filters.genres is not None:
-        genre_id_map = await fetch_genre_ids_by_name(filters.genres)
-        genre_ids = [genre_id_map[genre] for genre in filters.genres if genre in genre_id_map]
+        genre_ids = [genre.genre_id for genre in filters.genres]
         if genre_ids:
             conditions.append("genre_ids && %s::int[]")
             params.append(genre_ids)
@@ -363,52 +353,6 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
     )
     return cte_sql, params
 
-
-async def _ensure_genre_cache_loaded() -> None:
-    """
-    Populate the in-memory genre cache if it is currently empty.
-
-    This performs a single bulk query to load all genre mappings from
-    ``lex.genre_dictionary``. The cache is process-local and shared across
-    all requests handled by that process.
-    """
-    if _GENRE_ID_CACHE:
-        return
-
-    async with _GENRE_CACHE_LOCK:
-        if _GENRE_ID_CACHE:
-            return
-
-        rows = await _execute_read("SELECT name, genre_id FROM lex.genre_dictionary")
-        for name, genre_id in rows:
-            genre_enum = _GENRE_BY_NORMALIZED_NAME.get(name)
-            if genre_enum is None:
-                # Ignore dictionary rows that are not represented by the Genre enum.
-                continue
-            _GENRE_ID_CACHE[genre_enum] = int(genre_id)
-
-
-async def fetch_genre_ids_by_name(genres: list[Genre]) -> dict[Genre, int]:
-    """
-    Resolve Genre enum values to their integer IDs in ``lex.genre_dictionary``.
-
-    Args:
-        genres: Genre enum values requested by the caller.
-
-    Returns:
-        Mapping of Genre -> genre_id for enum values present in the cache/table.
-    """
-    if not genres:
-        return {}
-
-    await _ensure_genre_cache_loaded()
-
-    unique_genres = list(dict.fromkeys(genres))
-    return {
-        genre: _GENRE_ID_CACHE[genre]
-        for genre in unique_genres
-        if genre in _GENRE_ID_CACHE
-    }
 
 
 # ===============================
@@ -454,8 +398,10 @@ async def batch_upsert_lexical_dictionary(
     if not norm_strings:
         return {}
 
-    # Preserve first-seen order so callers can reconstruct deterministic ID lists.
-    unique_strings = list(dict.fromkeys(norm_strings))
+    # Deduplicate, then sort lexicographically so that all concurrent
+    # transactions acquire index locks in the same order — preventing the
+    # circular-wait condition required for deadlock.
+    unique_strings = sorted(dict.fromkeys(norm_strings))
 
     query = """
     WITH input_strings AS (

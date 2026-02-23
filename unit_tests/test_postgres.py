@@ -8,19 +8,6 @@ from db import postgres
 from implementation.classes.enums import Genre
 
 
-@pytest.fixture()
-def fresh_genre_cache():
-    """Clear the in-memory genre ID cache before and after each test that uses it.
-
-    Without this fixture, a cache populated by one test leaks into subsequent
-    tests that rely on the cache being empty at start (e.g. tests that verify
-    the DB is only queried once, or tests that verify unknown names are skipped).
-    """
-    postgres._GENRE_ID_CACHE.clear()
-    yield
-    postgres._GENRE_ID_CACHE.clear()
-
-
 def _mock_pool_connection(
     mocker,
     *,
@@ -168,7 +155,7 @@ async def test_batch_upsert_lexical_dictionary_dedupes_and_returns_mapping(mocke
     result = await postgres.batch_upsert_lexical_dictionary(["spider-man", "spider-man", "hero"])
     query, params = execute_on_conn.await_args.args[1:3]
     assert "lex.lexical_dictionary" in query
-    assert params == (["spider-man", "hero"],)
+    assert params == (["hero", "spider-man"],)
     assert execute_on_conn.await_args.kwargs["fetch"] is True
     assert result == {"spider-man": 11, "hero": 22}
 
@@ -352,12 +339,8 @@ async def test_build_eligible_cte_with_no_filters() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_eligible_cte_with_all_filters_preserves_param_order(mocker) -> None:
+async def test_build_eligible_cte_with_all_filters_preserves_param_order() -> None:
     """_build_eligible_cte should preserve deterministic SQL parameter ordering."""
-    resolve_genres = mocker.patch(
-        "db.postgres.fetch_genre_ids_by_name",
-        new=AsyncMock(return_value={Genre.ACTION: 1, Genre.ADVENTURE: 2}),
-    )
     filters = postgres.MetadataFilters(
         min_release_ts=10,
         max_release_ts=20,
@@ -374,8 +357,7 @@ async def test_build_eligible_cte_with_all_filters_preserves_param_order(mocker)
     assert "maturity_rank BETWEEN %s AND %s" in cte_sql
     assert "genre_ids && %s::int[]" in cte_sql
     assert "watch_offer_keys && %s::int[]" in cte_sql
-    resolve_genres.assert_awaited_once_with([Genre.ACTION, Genre.ADVENTURE])
-    assert params == [10, 20, 80, 140, 2, 4, [1, 2], [99]]
+    assert params == [10, 20, 80, 140, 2, 4, [Genre.ACTION.genre_id, Genre.ADVENTURE.genre_id], [99]]
 
 
 @pytest.mark.asyncio
@@ -634,103 +616,21 @@ async def test_execute_compound_lexical_search_with_filters_and_exclusions(mocke
 
 
 # ===============================
-#   Genre Cache Loader Tests
+#   Genre Enum Invariant Tests
 # ===============================
 
-@pytest.mark.asyncio
-async def test_ensure_genre_cache_loaded_populates_from_normalized_db_rows(
-    mocker, fresh_genre_cache
-) -> None:
-    """_ensure_genre_cache_loaded should map normalized DB names to the correct Genre members."""
-    mocker.patch(
-        "db.postgres._execute_read",
-        new=AsyncMock(return_value=[("action", 1), ("sci-fi", 2), ("drama", 3)]),
+def test_genre_ids_are_unique_and_sequential() -> None:
+    """Every Genre member must have a unique genre_id forming a 1-based contiguous sequence."""
+    ids = [genre.genre_id for genre in Genre]
+    assert ids == list(range(1, len(ids) + 1)), (
+        f"Genre IDs are not a contiguous 1..N sequence: {ids}"
     )
-    await postgres._ensure_genre_cache_loaded()
-    assert postgres._GENRE_ID_CACHE[Genre.ACTION] == 1
-    assert postgres._GENRE_ID_CACHE[Genre.SCI_FI] == 2
-    assert postgres._GENRE_ID_CACHE[Genre.DRAMA] == 3
 
-
-@pytest.mark.asyncio
-async def test_ensure_genre_cache_loaded_skips_unrecognized_names(
-    mocker, fresh_genre_cache
-) -> None:
-    """_ensure_genre_cache_loaded should silently ignore DB rows with no matching Genre member."""
-    mocker.patch(
-        "db.postgres._execute_read",
-        new=AsyncMock(return_value=[("action", 1), ("not_a_real_genre", 99)]),
-    )
-    await postgres._ensure_genre_cache_loaded()
-    assert Genre.ACTION in postgres._GENRE_ID_CACHE
-    assert len(postgres._GENRE_ID_CACHE) == 1
-
-
-@pytest.mark.asyncio
-async def test_ensure_genre_cache_loaded_is_idempotent(mocker, fresh_genre_cache) -> None:
-    """_ensure_genre_cache_loaded should query the DB only once; subsequent calls are no-ops."""
-    execute_read = mocker.patch(
-        "db.postgres._execute_read",
-        new=AsyncMock(return_value=[("action", 1)]),
-    )
-    await postgres._ensure_genre_cache_loaded()
-    await postgres._ensure_genre_cache_loaded()
-    execute_read.assert_awaited_once()
-
-
-# ===============================
-#   fetch_genre_ids_by_name Tests
-# ===============================
-
-@pytest.mark.asyncio
-async def test_fetch_genre_ids_by_name_returns_correct_ids(mocker, fresh_genre_cache) -> None:
-    """fetch_genre_ids_by_name should resolve Genre members to their DB IDs from the cache."""
-    postgres._GENRE_ID_CACHE.update({Genre.ACTION: 7, Genre.DRAMA: 14})
-    mocker.patch("db.postgres._ensure_genre_cache_loaded", new=AsyncMock())
-    result = await postgres.fetch_genre_ids_by_name([Genre.ACTION, Genre.DRAMA])
-    assert result == {Genre.ACTION: 7, Genre.DRAMA: 14}
-
-
-@pytest.mark.asyncio
-async def test_fetch_genre_ids_by_name_empty_input_returns_empty_without_loading_cache(
-    mocker,
-) -> None:
-    """fetch_genre_ids_by_name should short-circuit and not touch the cache for empty input."""
-    ensure_loaded = mocker.patch("db.postgres._ensure_genre_cache_loaded", new=AsyncMock())
-    result = await postgres.fetch_genre_ids_by_name([])
-    assert result == {}
-    ensure_loaded.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_fetch_genre_ids_by_name_deduplicates_input(mocker, fresh_genre_cache) -> None:
-    """fetch_genre_ids_by_name should return each genre at most once even if repeated in input."""
-    postgres._GENRE_ID_CACHE[Genre.ACTION] = 5
-    mocker.patch("db.postgres._ensure_genre_cache_loaded", new=AsyncMock())
-    result = await postgres.fetch_genre_ids_by_name([Genre.ACTION, Genre.ACTION, Genre.ACTION])
-    assert result == {Genre.ACTION: 5}
-
-
-@pytest.mark.asyncio
-async def test_fetch_genre_ids_by_name_omits_genres_absent_from_cache(
-    mocker, fresh_genre_cache
-) -> None:
-    """fetch_genre_ids_by_name should silently omit genres not present in the loaded cache."""
-    postgres._GENRE_ID_CACHE[Genre.ACTION] = 3
-    mocker.patch("db.postgres._ensure_genre_cache_loaded", new=AsyncMock())
-    result = await postgres.fetch_genre_ids_by_name([Genre.ACTION, Genre.DRAMA])
-    assert Genre.ACTION in result
-    assert Genre.DRAMA not in result
-
-
-# ===============================
-#   Cross-Boundary Invariant Tests
-# ===============================
 
 def test_genre_normalized_name_equals_value_lowercased() -> None:
     """Every Genre.normalized_name must be exactly Genre.value.lower().
 
-    This guards against typos when adding new Genre members — the cache loader
+    This guards against typos when adding new Genre members — Genre.from_string
     relies on normalized_name matching what normalize_string() produces at
     ingest time.
     """
@@ -741,35 +641,10 @@ def test_genre_normalized_name_equals_value_lowercased() -> None:
         )
 
 
-def test_genre_by_normalized_name_map_covers_all_genre_members() -> None:
-    """_GENRE_BY_NORMALIZED_NAME must have an entry for every Genre member.
-
-    A gap in this map means a genre stored in the DB will never be resolved
-    into the cache, causing silent cache misses at query time.
-    """
+def test_genre_from_string_resolves_all_members() -> None:
+    """Genre.from_string must round-trip every member via its display value."""
     for genre in Genre:
-        assert genre.normalized_name in postgres._GENRE_BY_NORMALIZED_NAME, (
-            f"Genre.{genre.name} ({genre.normalized_name!r}) is missing from "
-            "_GENRE_BY_NORMALIZED_NAME"
-        )
-        assert postgres._GENRE_BY_NORMALIZED_NAME[genre.normalized_name] is genre
-
-
-def test_ingest_and_cache_loader_use_consistent_genre_name_format() -> None:
-    """Names written by ingest (normalized) must be resolvable by the cache loader's lookup map.
-
-    This is the end-to-end contract between the write path (create_genre_ids)
-    and the read path (_ensure_genre_cache_loaded). If ingest stores a name
-    that the cache loader cannot look up, genre filtering silently returns no
-    results.
-    """
-    from implementation.misc.helpers import normalize_string
-
-    for genre in Genre:
-        # Simulate what create_genre_ids writes: normalize_string(genre.value)
-        simulated_ingest_name = normalize_string(genre.value)
-        resolved = postgres._GENRE_BY_NORMALIZED_NAME.get(simulated_ingest_name)
+        resolved = Genre.from_string(genre.value)
         assert resolved is genre, (
-            f"Genre.{genre.name}: ingest writes {simulated_ingest_name!r} but "
-            f"cache loader resolves it to {resolved!r} instead of Genre.{genre.name}"
+            f"Genre.from_string({genre.value!r}) returned {resolved!r}, expected Genre.{genre.name}"
         )

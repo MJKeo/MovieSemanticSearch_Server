@@ -6,7 +6,7 @@ import sys
 import csv
  
 import gradio as gr
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, field_validator, Field, RootModel
 from enum import Enum
@@ -29,6 +29,7 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 kimi_api_key = os.environ.get("MOONSHOT_API_KEY")
 
 openai_client = OpenAI(api_key=openai_api_key)
+async_openai_client = AsyncOpenAI(api_key=openai_api_key)
 kimi_client = OpenAI(
     api_key=kimi_api_key,
     base_url="https://api.moonshot.ai/v1",
@@ -102,3 +103,17 @@ def generate_kimi_response(
         return metadata
     except Exception as e:
         raise ValueError(f"Kimi failed to generate response: {e}")
+
+
+async def generate_vector_embedding(
+    text: list[str],
+    model: str = "text-embedding-3-small",
+) -> list[list[float]]:
+    try:
+        response = await async_openai_client.embeddings.create(
+            model=model,
+            input=text,
+        )
+        return [item.embedding for item in response.data]
+    except Exception as e:
+        raise ValueError(f"OpenAI failed to generate vector embedding: {e}")

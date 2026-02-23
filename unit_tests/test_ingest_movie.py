@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from db import ingest_movie, postgres
+from implementation.classes.enums import Genre
 from implementation.classes.schemas import WatchProvider
 
 
@@ -182,21 +183,17 @@ async def test_ingest_lexical_data_processes_all_entity_types(mocker) -> None:
 
 @pytest.mark.asyncio
 async def test_create_genre_ids_handles_normal_and_invalid_values(mocker) -> None:
-    """create_genre_ids should normalize, skip invalids, and upsert dictionary rows."""
+    """create_genre_ids should resolve via Genre enum, skip invalids, and upsert dictionary rows."""
     movie = SimpleNamespace(genres=["Action", " ", "Sci-Fi"])
 
-    upsert_lexical = mocker.patch(
-        "db.ingest_movie.batch_upsert_lexical_dictionary",
-        new=AsyncMock(side_effect=[{"action": 11}, {"sci-fi": 22}]),
-    )
     upsert_genre = mocker.patch("db.ingest_movie.upsert_genre_dictionary", new=AsyncMock())
 
     result = await ingest_movie.create_genre_ids(movie)
 
-    assert result == [11, 22]
-    assert upsert_lexical.await_count == 2
-    upsert_genre.assert_any_await(11, "action", conn=None)
-    upsert_genre.assert_any_await(22, "sci-fi", conn=None)
+    assert result == [Genre.ACTION.genre_id, Genre.SCI_FI.genre_id]
+    assert upsert_genre.await_count == 2
+    upsert_genre.assert_any_await(Genre.ACTION.genre_id, "action", conn=None)
+    upsert_genre.assert_any_await(Genre.SCI_FI.genre_id, "sci-fi", conn=None)
 
 
 @pytest.mark.asyncio
@@ -208,32 +205,28 @@ async def test_create_genre_ids_non_sequence_defaults_to_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_create_watch_offer_keys_deduplicates_and_sorts(mocker) -> None:
-    """create_watch_offer_keys should skip invalid providers and deduplicate generated keys."""
+    """create_watch_offer_keys should skip non-filterable providers, deduplicate, and sort keys."""
+    # TMDB IDs 8 (Netflix) and 350 (Apple TV) are in FILTERABLE_WATCH_PROVIDER_IDS.
+    # ID 99999 is not, so it must be skipped entirely.
     providers = [
-        WatchProvider(id=1, name="Netflix", logo_path="/n.png", display_priority=1, types=[1, 3, 99]),
-        WatchProvider(id=2, name=" ", logo_path="/x.png", display_priority=2, types=[1]),
-        WatchProvider(id=3, name="Apple TV", logo_path="/a.png", display_priority=2, types="not-a-list"),
-        WatchProvider(id=4, name="Netflix", logo_path="/n2.png", display_priority=3, types=[1]),
+        WatchProvider(id=8, name="Netflix", logo_path="/n.png", display_priority=1, types=[1, 3, 99]),
+        WatchProvider(id=99999, name="Unknown", logo_path="/x.png", display_priority=2, types=[1]),
+        WatchProvider(id=350, name="Apple TV", logo_path="/a.png", display_priority=2, types="not-a-list"),
+        WatchProvider(id=8, name="Netflix", logo_path="/n2.png", display_priority=3, types=[1]),
     ]
     movie = SimpleNamespace(watch_providers=providers)
 
-    # Map normalized provider names to deterministic lexical IDs.
-    async def lexical_side_effect(norm_strings: list[str], conn=None):
-        if norm_strings == ["netflix"]:
-            return {"netflix": 42}
-        if norm_strings == ["apple tv"]:
-            return {"apple tv": 55}
-        return {}
-
-    mocker.patch("db.ingest_movie.batch_upsert_lexical_dictionary", new=AsyncMock(side_effect=lexical_side_effect))
     upsert_provider = mocker.patch("db.ingest_movie.upsert_provider_dictionary", new=AsyncMock())
     upsert_watch_method = mocker.patch("db.ingest_movie.upsert_watch_method_dictionary", new=AsyncMock())
 
     result = await ingest_movie.create_watch_offer_keys(movie)
 
-    # Keys: (42,1), (42,3), and duplicate (42,1) from second Netflix provider should collapse.
-    assert result == sorted({(42 << 4) | 1, (42 << 4) | 3})
-    assert upsert_provider.await_count >= 2
+    # Netflix (8): types [1,3] valid, 99 invalid → keys (8<<4)|1 and (8<<4)|3.
+    # Unknown (99999): not in filterable set → skipped.
+    # Apple TV (350): types is not a list → no keys produced (but provider_dictionary upserted).
+    # Duplicate Netflix (8): type [1] → (8<<4)|1 already present, deduped.
+    assert result == sorted({(8 << 4) | 1, (8 << 4) | 3})
+    upsert_provider.assert_any_await(8, "Netflix", conn=None)
     upsert_watch_method.assert_any_await(1, "subscription", conn=None)
     upsert_watch_method.assert_any_await(3, "rent", conn=None)
 

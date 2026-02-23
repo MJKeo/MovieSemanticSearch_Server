@@ -365,7 +365,7 @@ def clear_collections_from_chroma(
 #         Vector Text
 # ===============================
 
-def create_dense_anchor_vector_text(movie: BaseMovie) -> str:
+def create_anchor_vector_text(movie: BaseMovie) -> str:
     """
     Creates the text representation for DenseAnchor vector embedding.
     
