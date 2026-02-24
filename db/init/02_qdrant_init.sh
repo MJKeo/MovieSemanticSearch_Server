@@ -45,6 +45,7 @@ esac
 # --- Helper to create payload indexes (409 means it already exists) ---
 create_index () {
   field="$1"
+  schema_json="$2"
   echo "[qdrant-init] Creating payload index: $field"
 
   code="$(
@@ -52,7 +53,10 @@ create_index () {
       -X PUT "$QDRANT_URL/collections/$PHYSICAL/index" \
       -H "Content-Type: application/json" \
       --data-binary @- <<JSON
-{ "field_name": "$field", "field_schema": "integer" }
+{
+  "field_name": "$field",
+  "field_schema": $schema_json
+}
 JSON
   )"
 
@@ -62,11 +66,37 @@ JSON
   esac
 }
 
-create_index "release_ts"
-create_index "runtime_minutes"
-create_index "maturity_rank"
-create_index "genre_ids"
-create_index "watch_offer_keys"
+# --- Range fields (no lookup) ---
+create_index "release_ts" '{
+  "type": "integer",
+  "lookup": false,
+  "range": true
+}'
+
+create_index "runtime_minutes" '{
+  "type": "integer",
+  "lookup": false,
+  "range": true
+}'
+
+create_index "maturity_rank" '{
+  "type": "integer",
+  "lookup": false,
+  "range": true
+}'
+
+# --- Lookup fields (no range) ---
+create_index "genre_ids" '{
+  "type": "integer",
+  "lookup": true,
+  "range": false
+}'
+
+create_index "watch_offer_keys" '{
+  "type": "integer",
+  "lookup": true,
+  "range": false
+}'
 
 # --- Create alias (409 means it already exists) ---
 echo "[qdrant-init] Ensuring alias $ALIAS -> $PHYSICAL"

@@ -573,11 +573,17 @@ async def upsert_genre_dictionary(genre_id: int, name: str, conn=None) -> None:
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
+    with name_existence_check as (
+        SELECT 1
+        FROM lex.genre_dictionary
+        WHERE name = %s
+    )
     INSERT INTO lex.genre_dictionary (genre_id, name)
-    VALUES (%s, %s)
-    ON CONFLICT (genre_id) DO NOTHING;
+    SELECT %s, %s
+    WHERE NOT EXISTS (SELECT 1 FROM name_existence_check)
+    ON CONFLICT DO NOTHING;
     """
-    await _execute_on_conn(conn, query, (genre_id, name))
+    await _execute_on_conn(conn, query, (name, genre_id, name))
 
 
 async def upsert_provider_dictionary(provider_id: int, name: str, conn=None) -> None:
@@ -607,11 +613,17 @@ async def upsert_watch_method_dictionary(method_id: int, name: str, conn=None) -
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
+    WITH name_existence_check AS (
+        SELECT 1
+        FROM lex.watch_method_dictionary
+        WHERE name = %s
+    )
     INSERT INTO lex.watch_method_dictionary (method_id, name)
-    VALUES (%s, %s)
-    ON CONFLICT (method_id) DO NOTHING;
+    SELECT %s, %s
+    WHERE NOT EXISTS (SELECT 1 FROM name_existence_check)
+    ON CONFLICT DO NOTHING;
     """
-    await _execute_on_conn(conn, query, (method_id, name))
+    await _execute_on_conn(conn, query, (name, method_id, name))
 
 
 async def upsert_maturity_dictionary(maturity_rank: int, label: str, conn=None) -> None:
@@ -624,11 +636,17 @@ async def upsert_maturity_dictionary(maturity_rank: int, label: str, conn=None) 
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
+    WITH label_existence_check AS (
+        SELECT 1
+        FROM lex.maturity_dictionary
+        WHERE label = %s
+    )
     INSERT INTO lex.maturity_dictionary (maturity_rank, label)
-    VALUES (%s, %s)
-    ON CONFLICT (maturity_rank) DO NOTHING;
+    SELECT %s, %s
+    WHERE NOT EXISTS (SELECT 1 FROM label_existence_check)
+    ON CONFLICT DO NOTHING;
     """
-    await _execute_on_conn(conn, query, (maturity_rank, label))
+    await _execute_on_conn(conn, query, (label, maturity_rank, label))
 
 
 async def upsert_language_dictionary(language_id: int, name: str, conn=None) -> None:
@@ -641,11 +659,17 @@ async def upsert_language_dictionary(language_id: int, name: str, conn=None) -> 
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
+    WITH name_existence_check AS (
+        SELECT 1
+        FROM lex.language_dictionary
+        WHERE name = %s
+    )
     INSERT INTO lex.language_dictionary (language_id, name)
-    VALUES (%s, %s)
-    ON CONFLICT (language_id) DO NOTHING;
+    SELECT %s, %s
+    WHERE NOT EXISTS (SELECT 1 FROM name_existence_check)
+    ON CONFLICT DO NOTHING;
     """
-    await _execute_on_conn(conn, query, (language_id, name))
+    await _execute_on_conn(conn, query, (name, language_id, name))
 
 
 async def refresh_title_token_doc_frequency() -> None:

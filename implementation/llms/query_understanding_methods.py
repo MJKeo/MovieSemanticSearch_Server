@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional, Tuple
 
-from implementation.llms.generic_methods import generate_kimi_response
+from implementation.llms.generic_methods import generate_kimi_response, generate_kimi_response_async
 from implementation.prompts.lexical_prompts import EXTRACT_LEXICAL_ENTITIES_SYSTEM_PROMPT
 from implementation.prompts.channel_weights_prompts import CHANNEL_WEIGHTS_SYSTEM_PROMPT
 from implementation.prompts.metadata_preferences_prompts import ALL_METADATA_EXTRACTION_PROMPTS
@@ -145,10 +145,12 @@ def extract_all_metadata_preferences(query: str) -> Optional[MetadataPreferences
 #      Vector Subqueries
 # ===============================
 
-def create_single_vector_subquery(query: str, collection_name: VectorCollectionName) -> Optional[VectorCollectionSubqueryData]:
+async def create_single_vector_subquery(
+    query: str, collection_name: VectorCollectionName
+) -> Optional[VectorCollectionSubqueryData]:
     """Create a single vector subquery (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception) from query."""
-    return generate_kimi_response(
-        user_prompt=f"User query: \"{query}\"",
+    return await generate_kimi_response_async(
+        user_prompt=f'User query: "{query}"',
         system_prompt=VECTOR_SUBQUERY_SYSTEM_PROMPTS[collection_name],
         response_format=VectorCollectionSubqueryData,
     )
@@ -190,45 +192,45 @@ def create_all_vector_subqueries(query: str) -> Optional[VectorSubqueriesRespons
 #        Vector Weights
 # ===============================
 
-def create_single_vector_weight(query: str, collection_name: VectorCollectionName) -> Optional[VectorCollectionWeightData]:
+async def create_single_vector_weight(query: str, collection_name: VectorCollectionName) -> Optional[VectorCollectionWeightData]:
     """Create a single vector weight (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception) from query."""
-    return generate_kimi_response(
-        user_prompt=f"User query: \"{query}\"",
+    return await generate_kimi_response_async(
+        user_prompt=f'User query: "{query}"',
         system_prompt=VECTOR_WEIGHT_SYSTEM_PROMPTS[collection_name],
         response_format=VectorCollectionWeightData,
     )
 
-def create_all_vector_weights(query: str) -> Optional[VectorWeightsResponse]:
-    """
-    Run create_single_vector_weight in parallel for each vector collection, then assemble
-    a VectorWeightsResponse. Returns None if any single weight creation fails.
-    """
-    results: dict[VectorCollectionName, Optional[VectorCollectionWeightData]] = {}
+# def create_all_vector_weights(query: str) -> Optional[VectorWeightsResponse]:
+#     """
+#     Run create_single_vector_weight in parallel for each vector collection, then assemble
+#     a VectorWeightsResponse. Returns None if any single weight creation fails.
+#     """
+#     results: dict[VectorCollectionName, Optional[VectorCollectionWeightData]] = {}
 
-    with ThreadPoolExecutor(max_workers=len(_COLLECTION_TO_RESPONSE_FIELD)) as executor:
-        future_to_collection = {
-            executor.submit(create_single_vector_weight, query, collection): collection
-            for collection in _COLLECTION_TO_RESPONSE_FIELD
-        }
-        for future in as_completed(future_to_collection):
-            collection = future_to_collection[future]
-            try:
-                result = future.result()
-            except Exception:
-                return None
-            if result is None:
-                return None
-            results[collection] = result
+#     with ThreadPoolExecutor(max_workers=len(_COLLECTION_TO_RESPONSE_FIELD)) as executor:
+#         future_to_collection = {
+#             executor.submit(create_single_vector_weight, query, collection): collection
+#             for collection in _COLLECTION_TO_RESPONSE_FIELD
+#         }
+#         for future in as_completed(future_to_collection):
+#             collection = future_to_collection[future]
+#             try:
+#                 result = future.result()
+#             except Exception:
+#                 return None
+#             if result is None:
+#                 return None
+#             results[collection] = result
 
-    return VectorWeightsResponse(
-        plot_events_data=results[VectorCollectionName.PLOT_EVENTS_VECTORS],
-        plot_analysis_data=results[VectorCollectionName.PLOT_ANALYSIS_VECTORS],
-        viewer_experience_data=results[VectorCollectionName.VIEWER_EXPERIENCE_VECTORS],
-        watch_context_data=results[VectorCollectionName.WATCH_CONTEXT_VECTORS],
-        narrative_techniques_data=results[VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS],
-        production_data=results[VectorCollectionName.PRODUCTION_VECTORS],
-        reception_data=results[VectorCollectionName.RECEPTION_VECTORS],
-    )
+#     return VectorWeightsResponse(
+#         plot_events_data=results[VectorCollectionName.PLOT_EVENTS_VECTORS],
+#         plot_analysis_data=results[VectorCollectionName.PLOT_ANALYSIS_VECTORS],
+#         viewer_experience_data=results[VectorCollectionName.VIEWER_EXPERIENCE_VECTORS],
+#         watch_context_data=results[VectorCollectionName.WATCH_CONTEXT_VECTORS],
+#         narrative_techniques_data=results[VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS],
+#         production_data=results[VectorCollectionName.PRODUCTION_VECTORS],
+#         reception_data=results[VectorCollectionName.RECEPTION_VECTORS],
+#     )
 
 
 # ===============================
