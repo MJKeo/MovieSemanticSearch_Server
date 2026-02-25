@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Awaitable, Callable, Generic, Optional, TypeVar
 
 from qdrant_client import AsyncQdrantClient
@@ -48,6 +48,7 @@ from implementation.classes.schemas import (
     MetadataFilters,
     VectorCollectionSubqueryData,
     VectorCollectionWeightData,
+    VectorWeights,
 )
 from implementation.llms.generic_methods import (
     generate_vector_embedding,
@@ -143,6 +144,21 @@ class CandidateVectorScores:
     reception_score_original: float = 0.0
     reception_score_subquery: float = 0.0
 
+    def __str__(self) -> str:
+        score_lines = [
+            f"    {item.name}: {getattr(self, item.name)}"
+            for item in fields(self)
+        ]
+        return "CandidateVectorScores(\n" + "\n".join(score_lines) + "\n)"
+
+    def to_nonzero_string(self) -> str:
+        score_lines = [
+            f"    {item.name}: {value}"
+            for item in fields(self)
+            if (value := getattr(self, item.name)) != 0.0
+        ]
+        return "CandidateVectorScores(\n" + "\n".join(score_lines) + "\n)"
+
 
 @dataclass(frozen=True, slots=True)
 class SearchJob:
@@ -172,6 +188,7 @@ class SearchJob:
     limit: int
     embedding_time_ms: float
     llm_generation_time_ms: Optional[float]
+    query_string: Optional[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +206,7 @@ class SearchJobStats:
     embedding_time_ms: float
     llm_generation_time_ms: Optional[float]
     latency_ms: float
+    query_string: Optional[str]
 
 
 @dataclass(slots=True)
@@ -219,6 +237,7 @@ class VectorSearchResult:
     debug:      timing, counts, and per-job diagnostics.
     """
     candidates: dict[int, CandidateVectorScores]
+    vector_weights: VectorWeights
     debug: VectorSearchDebug
 
 
@@ -403,6 +422,7 @@ async def _execute_and_merge(
         embedding_time_ms=job.embedding_time_ms,
         llm_generation_time_ms=job.llm_generation_time_ms,
         latency_ms=round(elapsed_ms, 2),
+        query_string=job.query_string,
     )
 
 
@@ -421,6 +441,7 @@ async def _execute_and_merge(
 # ===========================================================================
 
 async def _coordinate_anchor_search(
+    original_query: str,
     original_embedding_task: asyncio.Task[TimedResult[list[list[float]]]],
     qdrant_filter: Optional[Filter],
     qdrant_client: AsyncQdrantClient,
@@ -458,6 +479,7 @@ async def _coordinate_anchor_search(
             limit=limit,
             embedding_time_ms=embedding_result.duration_ms,
             llm_generation_time_ms=None,
+            query_string=original_query,
         )
 
         return await _execute_and_merge(
@@ -477,6 +499,7 @@ async def _coordinate_anchor_search(
 
 async def _coordinate_original_search(
     collection_name: VectorName,
+    original_query: str,
     weight_task: asyncio.Task[TimedResult[Optional[VectorCollectionWeightData]]],
     original_embedding_task: asyncio.Task[TimedResult[list[list[float]]]],
     qdrant_filter: Optional[Filter],
@@ -540,6 +563,7 @@ async def _coordinate_original_search(
             limit=limit,
             embedding_time_ms=embedding_result.duration_ms,
             llm_generation_time_ms=weight_timed.duration_ms,
+            query_string=original_query,
         )
 
         return await _execute_and_merge(
@@ -625,6 +649,7 @@ async def _coordinate_subquery_search(
             limit=limit,
             embedding_time_ms=embedding_result.duration_ms,
             llm_generation_time_ms=subquery_timed.duration_ms,
+            query_string=subquery_result.relevant_subquery_text,
         )
 
         return await _execute_and_merge(
@@ -645,7 +670,7 @@ async def _coordinate_subquery_search(
 
 async def run_vector_search(
     query: str,
-    metadata_filters: "MetadataFilters",
+    metadata_filters: MetadataFilters,
     qdrant_client: AsyncQdrantClient,
     original_limit: int = 2000,
     subquery_limit: int = 2000,
@@ -726,6 +751,9 @@ async def run_vector_search(
     subquery_tasks: dict[VectorName, asyncio.Task[TimedResult[Optional[VectorCollectionSubqueryData]]]] = {}
 
     for collection_name in VectorName:
+        if collection_name == VectorName.ANCHOR:
+            continue
+        
         # Weight LLM call: determines if this collection is relevant to the query.
         # Returns VectorCollectionWeightData with a .relevance field.
         weight_tasks[collection_name] = asyncio.create_task(
@@ -763,6 +791,7 @@ async def run_vector_search(
     coordinator_tasks.append(
         asyncio.create_task(
             _coordinate_anchor_search(
+                original_query=query,
                 original_embedding_task=original_embedding_task,
                 qdrant_filter=qdrant_filter,
                 qdrant_client=qdrant_client,
@@ -787,6 +816,7 @@ async def run_vector_search(
             asyncio.create_task(
                 _coordinate_original_search(
                     collection_name=collection_name,
+                    original_query=query,
                     weight_task=weight_tasks[collection_name],
                     original_embedding_task=original_embedding_task,
                     qdrant_filter=qdrant_filter,
@@ -887,7 +917,18 @@ async def run_vector_search(
         f"{debug.wall_clock_ms}ms wall clock"
     )
 
+    # Build VectorWeights from the resolved weight tasks
+    weight_map = {}
+    for name, task in weight_tasks.items():
+        timed = task.result()  # already resolved — no await needed
+        if timed.value is not None:
+            weight_map[f"{name.value}_weight"] = RelevanceSize(timed.value.relevance)
+        else:
+            weight_map[f"{name.value}_weight"] = RelevanceSize.NOT_RELEVANT
+    vector_weights = VectorWeights(**weight_map)
+
     return VectorSearchResult(
         candidates=candidates,
+        vector_weights=vector_weights,
         debug=debug,
     )

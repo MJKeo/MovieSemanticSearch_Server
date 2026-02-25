@@ -581,6 +581,16 @@ class VectorWeightsResponse(BaseModel):
     production_data: VectorCollectionWeightData
     reception_data: VectorCollectionWeightData
 
+@dataclass(frozen=True)
+class VectorWeights:
+    plot_events_weight: RelevanceSize
+    plot_analysis_weight: RelevanceSize
+    viewer_experience_weight: RelevanceSize
+    watch_context_weight: RelevanceSize
+    narrative_techniques_weight: RelevanceSize
+    production_weight: RelevanceSize
+    reception_weight: RelevanceSize
+
 # -----------------------------
 #       CHANNEL WEIGHTS
 # -----------------------------
