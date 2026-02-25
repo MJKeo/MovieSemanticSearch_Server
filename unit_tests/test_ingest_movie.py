@@ -7,6 +7,7 @@ import pytest
 
 from db import ingest_movie, postgres
 from implementation.classes.enums import Genre
+from implementation.classes.languages import Language
 from implementation.classes.schemas import WatchProvider
 
 
@@ -240,20 +241,16 @@ async def test_create_watch_offer_keys_non_list_defaults_to_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_create_audio_language_ids_paths(mocker) -> None:
-    """create_audio_language_ids should normalize languages and upsert dictionary rows."""
-    movie = SimpleNamespace(languages=["English", " ", "Spanish"])
-    upsert_lexical = mocker.patch(
-        "db.ingest_movie.batch_upsert_lexical_dictionary",
-        new=AsyncMock(side_effect=[{"english": 10}, {"spanish": 20}]),
-    )
+    """create_audio_language_ids should resolve via Language enum and upsert dictionary rows."""
+    movie = SimpleNamespace(languages=["English", " ", "Spanish", "Unknown Language"])
     upsert_language = mocker.patch("db.ingest_movie.upsert_language_dictionary", new=AsyncMock())
 
     result = await ingest_movie.create_audio_language_ids(movie)
 
-    assert result == [10, 20]
-    assert upsert_lexical.await_count == 2
-    upsert_language.assert_any_await(10, "English", conn=None)
-    upsert_language.assert_any_await(20, "Spanish", conn=None)
+    assert result == [Language.ENGLISH.language_id, Language.SPANISH.language_id]
+    assert upsert_language.await_count == 2
+    upsert_language.assert_any_await(Language.ENGLISH.language_id, Language.ENGLISH.value, conn=None)
+    upsert_language.assert_any_await(Language.SPANISH.language_id, Language.SPANISH.value, conn=None)
 
 
 @pytest.mark.asyncio

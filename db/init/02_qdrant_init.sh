@@ -98,6 +98,12 @@ create_index "watch_offer_keys" '{
   "range": false
 }'
 
+create_index "audio_language_ids" '{
+  "type": "integer",
+  "lookup": true,
+  "range": false
+}'
+
 # --- Create alias (409 means it already exists) ---
 echo "[qdrant-init] Ensuring alias $ALIAS -> $PHYSICAL"
 

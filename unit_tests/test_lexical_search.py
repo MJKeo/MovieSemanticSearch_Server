@@ -7,9 +7,11 @@ import pytest
 from db import lexical_search
 from db.postgres import CompoundLexicalResult
 from implementation.classes.enums import EntityCategory
+from implementation.classes.languages import Language
 from implementation.classes.schemas import (
     ExtractedEntitiesResponse,
     ExtractedEntityData,
+    MetadataFilters,
 )
 
 
@@ -84,6 +86,32 @@ class TestHelpers:
 
 class TestLexicalSearch:
     """Tests for the lexical_search orchestrator with compound query execution."""
+
+    @staticmethod
+    def _setup_minimal_step6_case(mocker):
+        """Patch dependencies so lexical_search reaches compound-query execution."""
+        mocker.patch("db.lexical_search.normalize_string", side_effect=lambda value: value.lower())
+        mocker.patch(
+            "db.lexical_search.tokenize_title_phrase",
+            side_effect=lambda value: value.lower().split() if value else [],
+        )
+        mocker.patch(
+            "db.lexical_search.fetch_phrase_term_ids",
+            new=AsyncMock(return_value={"tom hanks": 1}),
+        )
+        mock_compound = mocker.patch(
+            "db.lexical_search.execute_compound_lexical_search",
+            new=AsyncMock(
+                return_value=CompoundLexicalResult(
+                    people_scores={7: 1},
+                    studio_scores={},
+                    character_by_query={},
+                    title_scores_by_search={},
+                )
+            ),
+        )
+        entities = _entities(_entity("Tom Hanks", EntityCategory.PERSON))
+        return mock_compound, entities
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_include_entities(self, mocker) -> None:
@@ -163,3 +191,84 @@ class TestLexicalSearch:
         assert candidate.franchise_score_sum == 1.0
         assert candidate.normalized_lexical_score == pytest.approx((1.0 + 1.0 + 1.0 + 0.6 + 1.0) / 5.0)
 
+    @pytest.mark.asyncio
+    async def test_audio_language_filter_forwarded_when_populated(self, mocker) -> None:
+        """Should forward populated audio-language filters unchanged to compound search."""
+        mock_compound, entities = self._setup_minimal_step6_case(mocker)
+        filters = MetadataFilters(audio_languages=[Language.ENGLISH, Language.SPANISH])
+
+        result = await lexical_search.lexical_search(entities, filters=filters)
+
+        assert mock_compound.await_count == 1
+        kwargs = mock_compound.await_args.kwargs
+        assert kwargs["filters"] is filters
+        assert len(result) == 1
+        assert result[0].movie_id == 7
+
+    @pytest.mark.asyncio
+    async def test_audio_language_filter_forwarded_when_empty_list(self, mocker) -> None:
+        """Should forward empty audio-language lists unchanged to compound search."""
+        mock_compound, entities = self._setup_minimal_step6_case(mocker)
+        filters = MetadataFilters(audio_languages=[])
+
+        await lexical_search.lexical_search(entities, filters=filters)
+
+        assert mock_compound.await_count == 1
+        kwargs = mock_compound.await_args.kwargs
+        assert kwargs["filters"] is filters
+
+    @pytest.mark.asyncio
+    async def test_audio_language_filter_forwarded_when_none(self, mocker) -> None:
+        """Should forward explicit None audio-language field via the filter object."""
+        mock_compound, entities = self._setup_minimal_step6_case(mocker)
+        filters = MetadataFilters(audio_languages=None)
+
+        await lexical_search.lexical_search(entities, filters=filters)
+
+        assert mock_compound.await_count == 1
+        kwargs = mock_compound.await_args.kwargs
+        assert kwargs["filters"] is filters
+
+    @pytest.mark.asyncio
+    async def test_no_filters_defaults_to_none_in_compound_call(self, mocker) -> None:
+        """Should pass filters=None to compound search when lexical_search gets no filters arg."""
+        mock_compound, entities = self._setup_minimal_step6_case(mocker)
+
+        await lexical_search.lexical_search(entities)
+
+        assert mock_compound.await_count == 1
+        kwargs = mock_compound.await_args.kwargs
+        assert kwargs["filters"] is None
+
+    @pytest.mark.asyncio
+    async def test_audio_language_filters_do_not_mutate_input(self, mocker) -> None:
+        """Should preserve caller-owned audio language list and dataclass field order/content."""
+        mock_compound, entities = self._setup_minimal_step6_case(mocker)
+        audio = [Language.ENGLISH, Language.SPANISH]
+        original_audio = list(audio)
+        filters = MetadataFilters(audio_languages=audio)
+
+        await lexical_search.lexical_search(entities, filters=filters)
+
+        assert mock_compound.await_count == 1
+        assert audio == original_audio
+        assert filters.audio_languages == original_audio
+
+    @pytest.mark.asyncio
+    async def test_short_circuit_with_audio_language_filter_does_not_query_db(self, mocker) -> None:
+        """Should skip compound query when include entities are empty even if audio filter is active."""
+        mock_compound = mocker.patch(
+            "db.lexical_search.execute_compound_lexical_search",
+            new=AsyncMock(),
+        )
+        mocker.patch("db.lexical_search.normalize_string", return_value="")
+        mocker.patch("db.lexical_search.tokenize_title_phrase", return_value=[])
+        filters = MetadataFilters(audio_languages=[Language.ENGLISH])
+
+        result = await lexical_search.lexical_search(
+            _entities(_entity("...", EntityCategory.PERSON)),
+            filters=filters,
+        )
+
+        assert result == []
+        mock_compound.assert_not_awaited()

@@ -13,8 +13,10 @@ from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
-from implementation.classes.enums import Genre
+from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDERS_MAP
+from implementation.classes.enums import Genre, MaturityRating, WatchMethodType
 from implementation.classes.schemas import MetadataFilters
+from implementation.classes.languages import Language
 
 
 class PostingTable(Enum):
@@ -338,6 +340,12 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
             conditions.append("genre_ids && %s::int[]")
             params.append(genre_ids)
 
+    if filters.audio_languages is not None:
+        audio_language_ids = [language.language_id for language in filters.audio_languages]
+        if audio_language_ids:
+            conditions.append("audio_language_ids && %s::int[]")
+            params.append(audio_language_ids)
+
     if filters.watch_offer_keys is not None:
         conditions.append("watch_offer_keys && %s::int[]")
         params.append(filters.watch_offer_keys)
@@ -487,6 +495,130 @@ async def batch_upsert_character_strings(
     await _execute_on_conn(conn, query, (deduped_string_ids, deduped_norm_strings))
 
 
+async def batch_upsert_genre_dictionary(conn=None) -> None:
+    """
+    Batch upsert genre lookup rows in lex.genre_dictionary.
+
+    Args:
+        genre_ids: Genre IDs aligned one-to-one with ``names``.
+        names: Genre names aligned one-to-one with ``genre_ids``.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    genre_ids = [genre.genre_id for genre in Genre]
+    names = [genre.normalized_name for genre in Genre]
+    if not genre_ids:
+        return
+    if len(genre_ids) != len(names):
+        raise ValueError("Genre dictionary upsert failed: genre_ids and names lengths differ.")
+
+    query = """
+    INSERT INTO lex.genre_dictionary (genre_id, name)
+    SELECT input.genre_id, input.name
+    FROM unnest(%s::int[], %s::text[]) AS input(genre_id, name)
+    ON CONFLICT (genre_id) DO UPDATE SET
+        name = EXCLUDED.name;
+    """
+    await _execute_on_conn(conn, query, (genre_ids, names))
+
+
+async def batch_upsert_language_dictionary(conn=None) -> None:
+    """
+    Batch upsert language lookup rows in lex.language_dictionary.
+
+    Args:
+        language_ids: Language IDs aligned one-to-one with ``names``.
+        names: Language names aligned one-to-one with ``language_ids``.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    language_ids = [lang.language_id for lang in Language]
+    names = [normalize_string(lang.value) for lang in Language]
+    if not language_ids:
+        return
+    if len(language_ids) != len(names):
+        raise ValueError("Language dictionary upsert failed: language_ids and names lengths differ.")
+
+    query = """
+    INSERT INTO lex.language_dictionary (language_id, name)
+    SELECT input.language_id, input.name
+    FROM unnest(%s::int[], %s::text[]) AS input(language_id, name)
+    ON CONFLICT (language_id) DO UPDATE SET
+        name = EXCLUDED.name;
+    """
+    await _execute_on_conn(conn, query, (language_ids, names))
+
+
+async def batch_upsert_maturity_dictionary(conn=None) -> None:
+    """
+    Upsert a maturity-rating lookup row in lex.maturity_dictionary.
+    
+    Args:
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    maturity_ranks = [maturity.value for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
+    labels = [normalize_string(str(maturity)) for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
+    if not maturity_ranks:
+        return
+    if len(maturity_ranks) != len(labels):
+        raise ValueError("Maturity dictionary upsert failed: maturity_ranks and labels lengths differ.")
+
+    query = """
+    INSERT INTO lex.maturity_dictionary (maturity_rank, label)
+    SELECT input.maturity_rank, input.label
+    FROM unnest(%s::int[], %s::text[]) AS input(maturity_rank, label)
+    ON CONFLICT (maturity_rank) DO UPDATE SET
+        label = EXCLUDED.label;
+    """
+    await _execute_on_conn(conn, query, (maturity_ranks, labels))
+
+
+async def batch_upsert_provider_dictionary(conn=None) -> None:
+    """
+    Batch upsert provider lookup rows in lex.provider_dictionary.
+    
+    Args:
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    provider_ids, provider_names = zip(*FILTERABLE_WATCH_PROVIDERS_MAP.items())
+    provider_names = [normalize_string(name) for name in provider_names]
+    if not provider_ids:
+        return
+    if len(provider_ids) != len(provider_names):
+        raise ValueError("Provider dictionary upsert failed: provider_ids and provider_names lengths differ.")
+
+    query = """
+    INSERT INTO lex.provider_dictionary (provider_id, name)
+    SELECT input.provider_id, input.name
+    FROM unnest(%s::int[], %s::text[]) AS input(provider_id, name)
+    ON CONFLICT (provider_id) DO UPDATE SET
+        name = EXCLUDED.name;
+    """
+    await _execute_on_conn(conn, query, (list(provider_ids), list(provider_names)))
+
+
+async def batch_upsert_watch_method_dictionary(conn=None) -> None:
+    """
+    Batch upsert watch-method lookup rows in lex.watch_method_dictionary.
+
+    Args:
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    watch_method_types = [watch_method_type.value for watch_method_type in WatchMethodType]
+    watch_method_names = [normalize_string(str(watch_method_type)) for watch_method_type in WatchMethodType]
+    if not watch_method_types:
+        return
+    if len(watch_method_types) != len(watch_method_names):
+        raise ValueError("Watch method dictionary upsert failed: watch_method_types and watch_method_names lengths differ.")
+
+    query = """
+    INSERT INTO lex.watch_method_dictionary (method_id, name)
+    SELECT input.method_id, input.name
+    FROM unnest(%s::int[], %s::text[]) AS input(method_id, name)
+    ON CONFLICT (method_id) DO UPDATE SET
+        name = EXCLUDED.name;
+    """
+    await _execute_on_conn(conn, query, (watch_method_types, watch_method_names))
+
+
 async def batch_insert_title_token_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
     """
     Insert title-token postings for one movie in a single round-trip.
@@ -561,115 +693,6 @@ async def batch_insert_studio_postings(term_ids: list[int], movie_id: int, conn=
     ON CONFLICT (term_id, movie_id) DO NOTHING;
     """
     await _execute_on_conn(conn, query, (term_ids, movie_id))
-
-
-async def upsert_genre_dictionary(genre_id: int, name: str, conn=None) -> None:
-    """
-    Upsert a genre lookup row in lex.genre_dictionary.
-    
-    Args:
-        genre_id: The genre ID.
-        name: The genre name.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    query = """
-    with name_existence_check as (
-        SELECT 1
-        FROM lex.genre_dictionary
-        WHERE name = %s
-    )
-    INSERT INTO lex.genre_dictionary (genre_id, name)
-    SELECT %s, %s
-    WHERE NOT EXISTS (SELECT 1 FROM name_existence_check)
-    ON CONFLICT DO NOTHING;
-    """
-    await _execute_on_conn(conn, query, (name, genre_id, name))
-
-
-async def upsert_provider_dictionary(provider_id: int, name: str, conn=None) -> None:
-    """
-    Upsert a provider lookup row in lex.provider_dictionary.
-    
-    Args:
-        provider_id: The provider ID.
-        name: The provider name.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    query = """
-    INSERT INTO lex.provider_dictionary (provider_id, name)
-    VALUES (%s, %s)
-    ON CONFLICT (provider_id) DO NOTHING;
-    """
-    await _execute_on_conn(conn, query, (provider_id, name))
-
-
-async def upsert_watch_method_dictionary(method_id: int, name: str, conn=None) -> None:
-    """
-    Upsert a watch-method lookup row in lex.watch_method_dictionary.
-    
-    Args:
-        method_id: The watch method ID.
-        name: The watch method name.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    query = """
-    WITH name_existence_check AS (
-        SELECT 1
-        FROM lex.watch_method_dictionary
-        WHERE name = %s
-    )
-    INSERT INTO lex.watch_method_dictionary (method_id, name)
-    SELECT %s, %s
-    WHERE NOT EXISTS (SELECT 1 FROM name_existence_check)
-    ON CONFLICT DO NOTHING;
-    """
-    await _execute_on_conn(conn, query, (name, method_id, name))
-
-
-async def upsert_maturity_dictionary(maturity_rank: int, label: str, conn=None) -> None:
-    """
-    Upsert a maturity-rating lookup row in lex.maturity_dictionary.
-    
-    Args:
-        maturity_rank: The maturity rank.
-        label: The maturity label (e.g., "PG-13", "R").
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    query = """
-    WITH label_existence_check AS (
-        SELECT 1
-        FROM lex.maturity_dictionary
-        WHERE label = %s
-    )
-    INSERT INTO lex.maturity_dictionary (maturity_rank, label)
-    SELECT %s, %s
-    WHERE NOT EXISTS (SELECT 1 FROM label_existence_check)
-    ON CONFLICT DO NOTHING;
-    """
-    await _execute_on_conn(conn, query, (label, maturity_rank, label))
-
-
-async def upsert_language_dictionary(language_id: int, name: str, conn=None) -> None:
-    """
-    Upsert a language lookup row in lex.language_dictionary.
-    
-    Args:
-        language_id: The language ID.
-        name: The language name.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    query = """
-    WITH name_existence_check AS (
-        SELECT 1
-        FROM lex.language_dictionary
-        WHERE name = %s
-    )
-    INSERT INTO lex.language_dictionary (language_id, name)
-    SELECT %s, %s
-    WHERE NOT EXISTS (SELECT 1 FROM name_existence_check)
-    ON CONFLICT DO NOTHING;
-    """
-    await _execute_on_conn(conn, query, (name, language_id, name))
 
 
 async def refresh_title_token_doc_frequency() -> None:

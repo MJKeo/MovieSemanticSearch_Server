@@ -121,6 +121,11 @@ CREATE TABLE IF NOT EXISTS lex.genre_dictionary (
   name      TEXT NOT NULL UNIQUE
 );
 
+CREATE TABLE IF NOT EXISTS lex.language_dictionary (
+  language_id  INT PRIMARY KEY,
+  name         TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS lex.provider_dictionary (
   provider_id  INT PRIMARY KEY,
   name         TEXT NOT NULL UNIQUE
@@ -134,11 +139,6 @@ CREATE TABLE IF NOT EXISTS lex.watch_method_dictionary (
 CREATE TABLE IF NOT EXISTS lex.maturity_dictionary (
   maturity_rank  SMALLINT PRIMARY KEY,
   label          TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS lex.language_dictionary (
-  language_id  INT PRIMARY KEY,
-  name         TEXT NOT NULL UNIQUE
 );
 
 -- Materialized view used for max_df stop-word filtering in title matching.

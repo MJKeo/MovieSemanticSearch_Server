@@ -63,3 +63,20 @@ def test_watch_method_type_from_string(raw_method: str, expected: WatchMethodTyp
 def test_watch_method_type_string_labels(method: WatchMethodType, expected: str) -> None:
     """WatchMethodType.__str__ should return the expected lowercase label."""
     assert str(method) == expected
+
+
+def test_maturity_rating_enum_values_are_stable() -> None:
+    """MaturityRating values should remain stable for persisted comparisons."""
+    assert MaturityRating.G == 1
+    assert MaturityRating.PG == 2
+    assert MaturityRating.PG_13 == 3
+    assert MaturityRating.R == 4
+    assert MaturityRating.NC_17 == 5
+    assert MaturityRating.UNRATED == 999
+
+
+def test_watch_method_type_enum_values_are_stable() -> None:
+    """WatchMethodType values should remain stable for watch-offering keys."""
+    assert WatchMethodType.SUBSCRIPTION == 1
+    assert WatchMethodType.PURCHASE == 2
+    assert WatchMethodType.RENT == 3

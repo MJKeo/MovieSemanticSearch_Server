@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict
 from .enums import MaturityRating, WatchMethodType, Genre
 from .watch_providers import FILTERABLE_WATCH_PROVIDER_IDS
+from .languages import LANGUAGE_BY_NORMALIZED_NAME
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase, create_watch_provider_offering_key
 import re
 
@@ -414,6 +415,29 @@ class BaseMovie(BaseModel):
             return f"Primary language: {primary}. Audio also available for {additional_str}"
         else:
             return f"Primary language: {primary}"
+
+    def audio_language_ids(self) -> list[int]:
+        """
+        Returns the list of audio language IDs for the movie.
+        """
+        raw_languages = self.languages
+
+        if not isinstance(raw_languages, list):
+            raw_languages = []
+
+        audio_language_ids: list[int] = []
+        for language in raw_languages:
+            normalized_language = normalize_string(str(language))
+            if not normalized_language:
+                continue
+
+            language_enum = LANGUAGE_BY_NORMALIZED_NAME.get(normalized_language)
+            if language_enum is None:
+                continue
+
+            audio_language_ids.append(language_enum.language_id)
+
+        return audio_language_ids
 
     def cast_text(self) -> str:
         """

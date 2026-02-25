@@ -11,9 +11,10 @@ import json
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
-from typing import Optional, Sequence, List, TYPE_CHECKING
+from typing import Sequence, List, TYPE_CHECKING
 from datetime import datetime, timezone
 from implementation.classes.movie import BaseMovie
+from implementation.classes.languages import Language, LANGUAGE_BY_NORMALIZED_NAME
 from implementation.llms.generic_methods import generate_vector_embedding
 from implementation.classes.enums import Genre, WatchMethodType, MaturityRating, VectorName
 from implementation.vectorize import (
@@ -41,11 +42,6 @@ from db.postgres import (
     batch_upsert_title_token_strings,
     batch_upsert_character_strings,
     upsert_movie_card,
-    upsert_genre_dictionary,
-    upsert_maturity_dictionary,
-    upsert_language_dictionary,
-    upsert_provider_dictionary,
-    upsert_watch_method_dictionary,
 )
 
 # ---------------------------------------------------------------------------
@@ -125,8 +121,6 @@ async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
             raise ValueError(f"Movie ingestion failed: One or more are None. Maturity rating: {maturity_rating} and rank: {maturity_rank}.")
         if maturity_rank == MaturityRating.UNRATED.value:
             maturity_rank = None
-        else:
-            await upsert_maturity_dictionary(maturity_rank, maturity_rating, conn=conn)
 
         genre_ids = await create_genre_ids(movie, conn=conn)
         watch_offer_keys = await create_watch_offer_keys(movie, conn=conn)
@@ -276,6 +270,7 @@ def _build_qdrant_payload(movie: BaseMovie) -> dict:
 
     payload["genre_ids"] = movie.genre_ids()
     payload["watch_offer_keys"] = movie.watch_offer_keys()
+    payload["audio_language_ids"] = movie.audio_language_ids()
 
     return payload
 
@@ -487,24 +482,6 @@ async def ingest_movies_to_qdrant_batched(
 #       HELPER METHODS
 # ================================
 
-async def _resolve_single_lexical_string_id(normalized_value: str, conn=None) -> Optional[int]:
-    """
-    Resolve one normalized string ID through the batch dictionary upsert API.
-
-    Args:
-        normalized_value: Already-normalized string to resolve.
-        conn: Optional existing async connection for caller-managed transaction scope.
-
-    Returns:
-        Resolved lexical string_id, or None when the input does not resolve.
-    """
-    if not normalized_value:
-        return None
-
-    string_id_map = await batch_upsert_lexical_dictionary([normalized_value], conn=conn)
-    return string_id_map.get(normalized_value)
-
-
 async def create_genre_ids(movie: BaseMovie, conn=None) -> List[int]:
     """
     Build the list of genre IDs for a movie using the Genre enum's stable IDs.
@@ -518,20 +495,7 @@ async def create_genre_ids(movie: BaseMovie, conn=None) -> List[int]:
         movie: Movie object containing genre data.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
-    raw_genres = getattr(movie, "genres", [])
-
-    if not isinstance(raw_genres, Sequence):
-        raw_genres = []
-
-    genre_ids: List[int] = []
-    for genre_name in raw_genres:
-        genre_enum = Genre.from_string(str(genre_name))
-        if genre_enum is None:
-            continue
-
-        genre_ids.append(genre_enum.genre_id)
-        await upsert_genre_dictionary(genre_enum.genre_id, genre_enum.normalized_name, conn=conn)
-
+    genre_ids = movie.genre_ids()
     return genre_ids
 
 
@@ -550,64 +514,19 @@ async def create_watch_offer_keys(movie: BaseMovie, conn=None) -> List[int]:
         movie: Movie object containing watch provider data.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
-    raw_providers = getattr(movie, "watch_providers", [])
-    if not isinstance(raw_providers, list):
-        raw_providers = []
-
-    watch_offer_key_set: set[int] = set()
-    for provider in raw_providers:
-        provider_id = getattr(provider, "id", None)
-        if provider_id is None or provider_id not in FILTERABLE_WATCH_PROVIDER_IDS:
-            continue
-
-        provider_name = str(getattr(provider, "name", "") or "")
-        await upsert_provider_dictionary(provider_id, provider_name, conn=conn)
-
-        watch_method_types = getattr(provider, "types", [])
-        if not isinstance(watch_method_types, list):
-            watch_method_types = []
-
-        for watch_method_type in watch_method_types:
-            watch_method_id = int(watch_method_type)
-
-            try:
-                watch_method_enum = WatchMethodType(watch_method_id)
-            except ValueError:
-                continue
-
-            await upsert_watch_method_dictionary(watch_method_id, str(watch_method_enum), conn=conn)
-
-            watch_offer_key = create_watch_provider_offering_key(provider_id, watch_method_id)
-            watch_offer_key_set.add(watch_offer_key)
-
-    return sorted(watch_offer_key_set)
+    return movie.watch_offer_keys()
 
 
 async def create_audio_language_ids(movie: BaseMovie, conn=None) -> List[int]:
     """
-    Build the list of audio language IDs for a movie, upserting into lexical + language dictionaries.
+    Build the list of audio language IDs for a movie using Language enum IDs.
 
     Args:
         movie: Movie object containing language data.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
-    raw_languages = getattr(movie, "languages", [])
-
-    if not isinstance(raw_languages, list):
-        raw_languages = []
-
-    audio_language_ids: list[int] = []
-    for language in raw_languages:
-        normalized_language = normalize_string(str(language))
-        if not normalized_language:
-            continue
-
-        language_id = await _resolve_single_lexical_string_id(normalized_language, conn=conn)
-        if language_id is not None:
-            audio_language_ids.append(language_id)
-            await upsert_language_dictionary(language_id, str(language), conn=conn)
-
-    return audio_language_ids
+    language_ids = movie.audio_language_ids()
+    return language_ids
 
 
 def create_people_list(movie: BaseMovie) -> List[str]:

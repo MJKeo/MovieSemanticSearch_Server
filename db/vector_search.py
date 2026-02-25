@@ -316,6 +316,16 @@ def build_qdrant_filter(metadata_filters: MetadataFilters) -> Optional[Filter]:
             )
         )
 
+    # --- Audio language IDs ---
+    if metadata_filters.audio_languages is not None and len(metadata_filters.audio_languages) > 0:
+        deduped_audio_language_ids = list(dict.fromkeys(language.language_id for language in metadata_filters.audio_languages))
+        conditions.append(
+            FieldCondition(
+                key="audio_language_ids",
+                match=MatchAny(any=deduped_audio_language_ids),
+            )
+        )
+
     # --- Watch offer keys (encoded provider_id * 100 + method_code) ---
     if metadata_filters.watch_offer_keys is not None and len(metadata_filters.watch_offer_keys) > 0:
         deduped_watch_offer_keys = list(dict.fromkeys(metadata_filters.watch_offer_keys))
