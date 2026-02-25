@@ -248,29 +248,30 @@ async def test_batch_insert_posting_functions_empty_term_ids_short_circuit(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("function_name", "table_name", "params"),
+    ("function_name", "table_name", "call_args", "expected_params"),
     [
-        ("upsert_genre_dictionary", "lex.genre_dictionary", (1, "Action")),
-        ("upsert_provider_dictionary", "lex.provider_dictionary", (2, "Netflix")),
-        ("upsert_watch_method_dictionary", "lex.watch_method_dictionary", (3, "rent")),
-        ("upsert_maturity_dictionary", "lex.maturity_dictionary", (4, "R")),
-        ("upsert_language_dictionary", "lex.language_dictionary", (5, "English")),
+        ("upsert_genre_dictionary", "lex.genre_dictionary", (1, "Action"), ("Action", 1, "Action")),
+        ("upsert_provider_dictionary", "lex.provider_dictionary", (2, "Netflix"), (2, "Netflix")),
+        ("upsert_watch_method_dictionary", "lex.watch_method_dictionary", (3, "rent"), ("rent", 3, "rent")),
+        ("upsert_maturity_dictionary", "lex.maturity_dictionary", (4, "R"), ("R", 4, "R")),
+        ("upsert_language_dictionary", "lex.language_dictionary", (5, "English"), ("English", 5, "English")),
     ],
 )
 async def test_dictionary_upserts_use_expected_tables_and_params(
     mocker,
     function_name: str,
     table_name: str,
-    params: tuple,
+    call_args: tuple,
+    expected_params: tuple,
 ) -> None:
     """Dictionary upsert functions should execute against expected tables and params."""
     execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     function = getattr(postgres, function_name)
-    await function(*params)
+    await function(*call_args)
     conn_arg, query, sent_params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert table_name in query
-    assert sent_params == params
+    assert sent_params == expected_params
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ from implementation.prompts.vector_subquery_prompts import VECTOR_SUBQUERY_SYSTE
 from implementation.prompts.vector_weights_prompts import VECTOR_WEIGHT_SYSTEM_PROMPTS
 from implementation.classes.enums import (
     VectorCollectionName,
+    VectorName,
     MetadataPreferenceName,
 )
 from implementation.classes.schemas import (
@@ -145,8 +146,8 @@ def extract_all_metadata_preferences(query: str) -> Optional[MetadataPreferences
 #      Vector Subqueries
 # ===============================
 
-async def create_single_vector_subquery(
-    query: str, collection_name: VectorCollectionName
+async def create_single_vector_subquery_async(
+    query: str, collection_name: VectorName
 ) -> Optional[VectorCollectionSubqueryData]:
     """Create a single vector subquery (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception) from query."""
     return await generate_kimi_response_async(
@@ -155,44 +156,44 @@ async def create_single_vector_subquery(
         response_format=VectorCollectionSubqueryData,
     )
 
-def create_all_vector_subqueries(query: str) -> Optional[VectorSubqueriesResponse]:
-    """
-    Run create_single_vector_subquery in parallel for each vector collection, then assemble
-    a VectorSubqueriesResponse. Returns None if any single subquery fails.
-    """
-    results: dict[VectorCollectionName, Optional[VectorCollectionSubqueryData]] = {}
+# def create_all_vector_subqueries(query: str) -> Optional[VectorSubqueriesResponse]:
+#     """
+#     Run create_single_vector_subquery in parallel for each vector collection, then assemble
+#     a VectorSubqueriesResponse. Returns None if any single subquery fails.
+#     """
+#     results: dict[VectorCollectionName, Optional[VectorCollectionSubqueryData]] = {}
 
-    with ThreadPoolExecutor(max_workers=len(_COLLECTION_TO_RESPONSE_FIELD)) as executor:
-        future_to_collection = {
-            executor.submit(create_single_vector_subquery, query, collection): collection
-            for collection in _COLLECTION_TO_RESPONSE_FIELD
-        }
-        for future in as_completed(future_to_collection):
-            collection = future_to_collection[future]
-            try:
-                result = future.result()
-            except Exception:
-                return None
-            if result is None:
-                return None
-            results[collection] = result
+#     with ThreadPoolExecutor(max_workers=len(_COLLECTION_TO_RESPONSE_FIELD)) as executor:
+#         future_to_collection = {
+#             executor.submit(create_single_vector_subquery, query, collection): collection
+#             for collection in _COLLECTION_TO_RESPONSE_FIELD
+#         }
+#         for future in as_completed(future_to_collection):
+#             collection = future_to_collection[future]
+#             try:
+#                 result = future.result()
+#             except Exception:
+#                 return None
+#             if result is None:
+#                 return None
+#             results[collection] = result
 
-    return VectorSubqueriesResponse(
-        plot_events_data=results[VectorCollectionName.PLOT_EVENTS_VECTORS],
-        plot_analysis_data=results[VectorCollectionName.PLOT_ANALYSIS_VECTORS],
-        viewer_experience_data=results[VectorCollectionName.VIEWER_EXPERIENCE_VECTORS],
-        watch_context_data=results[VectorCollectionName.WATCH_CONTEXT_VECTORS],
-        narrative_techniques_data=results[VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS],
-        production_data=results[VectorCollectionName.PRODUCTION_VECTORS],
-        reception_data=results[VectorCollectionName.RECEPTION_VECTORS],
-    )
+#     return VectorSubqueriesResponse(
+#         plot_events_data=results[VectorCollectionName.PLOT_EVENTS_VECTORS],
+#         plot_analysis_data=results[VectorCollectionName.PLOT_ANALYSIS_VECTORS],
+#         viewer_experience_data=results[VectorCollectionName.VIEWER_EXPERIENCE_VECTORS],
+#         watch_context_data=results[VectorCollectionName.WATCH_CONTEXT_VECTORS],
+#         narrative_techniques_data=results[VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS],
+#         production_data=results[VectorCollectionName.PRODUCTION_VECTORS],
+#         reception_data=results[VectorCollectionName.RECEPTION_VECTORS],
+#     )
 
 
 # ===============================
 #        Vector Weights
 # ===============================
 
-async def create_single_vector_weight(query: str, collection_name: VectorCollectionName) -> Optional[VectorCollectionWeightData]:
+async def create_single_vector_weight_async(query: str, collection_name: VectorName) -> Optional[VectorCollectionWeightData]:
     """Create a single vector weight (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception) from query."""
     return await generate_kimi_response_async(
         user_prompt=f'User query: "{query}"',
@@ -265,13 +266,13 @@ def create_overall_query_understanding(query: str) -> Optional[QueryUnderstandin
             )
 
         for coll in _COLLECTION_TO_RESPONSE_FIELD:
-            future_to_key[executor.submit(create_single_vector_subquery, query, coll)] = (
+            future_to_key[executor.submit(create_single_vector_subquery_async, query, coll)] = (
                 "subquery",
                 coll,
             )
 
         for coll in _COLLECTION_TO_RESPONSE_FIELD:
-            future_to_key[executor.submit(create_single_vector_weight, query, coll)] = (
+            future_to_key[executor.submit(create_single_vector_weight_async, query, coll)] = (
                 "weight",
                 coll,
             )

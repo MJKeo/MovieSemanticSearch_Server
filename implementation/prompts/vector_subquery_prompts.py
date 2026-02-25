@@ -3,7 +3,7 @@
 # Each prompt is completely independent — no templates, no shared components.
 # Each LLM only sees its own prompt and has no knowledge of other vectors.
 
-from implementation.classes.enums import VectorCollectionName
+from implementation.classes.enums import VectorName
 
 # =============================================================================
 # PLOT EVENTS
@@ -846,11 +846,11 @@ Why: Pure viewing context describing how the user wants to USE a movie, with no 
 # =============================================================================
 
 VECTOR_SUBQUERY_SYSTEM_PROMPTS = {
-    VectorCollectionName.PLOT_EVENTS_VECTORS: PLOT_EVENTS_SYSTEM_PROMPT,
-    VectorCollectionName.PLOT_ANALYSIS_VECTORS: PLOT_ANALYSIS_SYSTEM_PROMPT,
-    VectorCollectionName.VIEWER_EXPERIENCE_VECTORS: VIEWER_EXPERIENCE_SYSTEM_PROMPT,
-    VectorCollectionName.WATCH_CONTEXT_VECTORS: WATCH_CONTEXT_SYSTEM_PROMPT,
-    VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS: NARRATIVE_TECHNIQUES_SYSTEM_PROMPT,
-    VectorCollectionName.PRODUCTION_VECTORS: PRODUCTION_SYSTEM_PROMPT,
-    VectorCollectionName.RECEPTION_VECTORS: RECEPTION_SYSTEM_PROMPT,
+    VectorName.PLOT_EVENTS: PLOT_EVENTS_SYSTEM_PROMPT,
+    VectorName.PLOT_ANALYSIS: PLOT_ANALYSIS_SYSTEM_PROMPT,
+    VectorName.VIEWER_EXPERIENCE: VIEWER_EXPERIENCE_SYSTEM_PROMPT,
+    VectorName.WATCH_CONTEXT: WATCH_CONTEXT_SYSTEM_PROMPT,
+    VectorName.NARRATIVE_TECHNIQUES: NARRATIVE_TECHNIQUES_SYSTEM_PROMPT,
+    VectorName.PRODUCTION: PRODUCTION_SYSTEM_PROMPT,
+    VectorName.RECEPTION: RECEPTION_SYSTEM_PROMPT,
 }
