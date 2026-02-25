@@ -561,6 +561,16 @@ class VectorSubqueriesResponse(BaseModel):
     production_data: VectorCollectionSubqueryData
     reception_data: VectorCollectionSubqueryData
 
+@dataclass(frozen=True)
+class VectorSubqueries:
+    plot_events_subquery: Optional[str]
+    plot_analysis_subquery: Optional[str]
+    viewer_experience_subquery: Optional[str]
+    watch_context_subquery: Optional[str]
+    narrative_techniques_subquery: Optional[str]
+    production_subquery: Optional[str]
+    reception_subquery: Optional[str]
+
 
 # -----------------------------
 #   VECTOR COLLECTION WEIGHTS

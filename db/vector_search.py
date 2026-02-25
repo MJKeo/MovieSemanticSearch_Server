@@ -49,6 +49,7 @@ from implementation.classes.schemas import (
     VectorCollectionSubqueryData,
     VectorCollectionWeightData,
     VectorWeights,
+    VectorSubqueries,
 )
 from implementation.llms.generic_methods import (
     generate_vector_embedding,
@@ -188,7 +189,6 @@ class SearchJob:
     limit: int
     embedding_time_ms: float
     llm_generation_time_ms: Optional[float]
-    query_string: Optional[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +206,6 @@ class SearchJobStats:
     embedding_time_ms: float
     llm_generation_time_ms: Optional[float]
     latency_ms: float
-    query_string: Optional[str]
 
 
 @dataclass(slots=True)
@@ -238,7 +237,8 @@ class VectorSearchResult:
     """
     candidates: dict[int, CandidateVectorScores]
     vector_weights: VectorWeights
-    debug: VectorSearchDebug
+    vector_subqueries: VectorSubqueries
+    debug: Optional[VectorSearchDebug]
 
 
 # ===========================================================================
@@ -422,7 +422,6 @@ async def _execute_and_merge(
         embedding_time_ms=job.embedding_time_ms,
         llm_generation_time_ms=job.llm_generation_time_ms,
         latency_ms=round(elapsed_ms, 2),
-        query_string=job.query_string,
     )
 
 
@@ -479,7 +478,6 @@ async def _coordinate_anchor_search(
             limit=limit,
             embedding_time_ms=embedding_result.duration_ms,
             llm_generation_time_ms=None,
-            query_string=original_query,
         )
 
         return await _execute_and_merge(
@@ -563,7 +561,6 @@ async def _coordinate_original_search(
             limit=limit,
             embedding_time_ms=embedding_result.duration_ms,
             llm_generation_time_ms=weight_timed.duration_ms,
-            query_string=original_query,
         )
 
         return await _execute_and_merge(
@@ -649,7 +646,6 @@ async def _coordinate_subquery_search(
             limit=limit,
             embedding_time_ms=embedding_result.duration_ms,
             llm_generation_time_ms=subquery_timed.duration_ms,
-            query_string=subquery_result.relevant_subquery_text,
         )
 
         return await _execute_and_merge(
@@ -927,8 +923,19 @@ async def run_vector_search(
             weight_map[f"{name.value}_weight"] = RelevanceSize.NOT_RELEVANT
     vector_weights = VectorWeights(**weight_map)
 
+    # Build VectorSubqueries from the resolved subquery tasks
+    subquery_map = {}
+    for name, task in subquery_tasks.items():
+        timed = task.result()  # already resolved — no await needed
+        if timed.value is not None:
+            subquery_map[f"{name.value}_subquery"] = timed.value.relevant_subquery_text
+        else:
+            subquery_map[f"{name.value}_subquery"] = None
+    vector_subqueries = VectorSubqueries(**subquery_map)
+
     return VectorSearchResult(
         candidates=candidates,
         vector_weights=vector_weights,
+        vector_subqueries=vector_subqueries,
         debug=debug,
     )
