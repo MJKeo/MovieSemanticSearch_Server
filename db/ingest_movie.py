@@ -484,16 +484,12 @@ async def ingest_movies_to_qdrant_batched(
 
 async def create_genre_ids(movie: BaseMovie, conn=None) -> List[int]:
     """
-    Build the list of genre IDs for a movie using the Genre enum's stable IDs.
-
-    Each raw genre string is resolved to a Genre enum member via
-    ``Genre.from_string``. Unrecognized genres are silently skipped.
-    Matching the maturity-rank pattern, each resolved genre is also
-    upserted into ``lex.genre_dictionary`` for human-readable lookups.
+    Return genre IDs by delegating to ``BaseMovie.genre_ids()``.
 
     Args:
-        movie: Movie object containing genre data.
+        movie: Movie object implementing ``genre_ids()``.
         conn: Optional existing async connection for caller-managed transaction scope.
+            Unused in this delegating helper.
     """
     genre_ids = movie.genre_ids()
     return genre_ids
@@ -501,29 +497,24 @@ async def create_genre_ids(movie: BaseMovie, conn=None) -> List[int]:
 
 async def create_watch_offer_keys(movie: BaseMovie, conn=None) -> List[int]:
     """
-    Build the sorted list of watch-offer keys for a movie, upserting provider/method dictionaries.
-
-    Only providers whose TMDB ID appears in FILTERABLE_WATCH_PROVIDER_IDS are
-    included. The provider's TMDB ID is used directly as the provider component
-    of each watch-offer key (no lexical dictionary round-trip).
-
-    The provider_dictionary upsert is retained as a debug/sanity-check table
-    but is never read at query time.
+    Return watch-offer keys by delegating to ``BaseMovie.watch_offer_keys()``.
 
     Args:
-        movie: Movie object containing watch provider data.
+        movie: Movie object implementing ``watch_offer_keys()``.
         conn: Optional existing async connection for caller-managed transaction scope.
+            Unused in this delegating helper.
     """
     return movie.watch_offer_keys()
 
 
 async def create_audio_language_ids(movie: BaseMovie, conn=None) -> List[int]:
     """
-    Build the list of audio language IDs for a movie using Language enum IDs.
+    Return audio language IDs by delegating to ``BaseMovie.audio_language_ids()``.
 
     Args:
-        movie: Movie object containing language data.
+        movie: Movie object implementing ``audio_language_ids()``.
         conn: Optional existing async connection for caller-managed transaction scope.
+            Unused in this delegating helper.
     """
     language_ids = movie.audio_language_ids()
     return language_ids

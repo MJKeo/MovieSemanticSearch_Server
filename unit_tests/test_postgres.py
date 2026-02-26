@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from db import postgres
-from implementation.classes.enums import Genre
+from implementation.classes.enums import Genre, MaturityRating, WatchMethodType
+from implementation.classes.languages import Language
+from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDERS_MAP
 
 
 def _mock_pool_connection(
@@ -248,30 +250,41 @@ async def test_batch_insert_posting_functions_empty_term_ids_short_circuit(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("function_name", "table_name", "call_args", "expected_params"),
+    ("function_name", "table_name"),
     [
-        ("upsert_genre_dictionary", "lex.genre_dictionary", (1, "Action"), ("Action", 1, "Action")),
-        ("upsert_provider_dictionary", "lex.provider_dictionary", (2, "Netflix"), (2, "Netflix")),
-        ("upsert_watch_method_dictionary", "lex.watch_method_dictionary", (3, "rent"), ("rent", 3, "rent")),
-        ("upsert_maturity_dictionary", "lex.maturity_dictionary", (4, "R"), ("R", 4, "R")),
-        ("upsert_language_dictionary", "lex.language_dictionary", (5, "English"), ("English", 5, "English")),
+        ("batch_upsert_genre_dictionary", "lex.genre_dictionary"),
+        ("batch_upsert_provider_dictionary", "lex.provider_dictionary"),
+        ("batch_upsert_watch_method_dictionary", "lex.watch_method_dictionary"),
+        ("batch_upsert_maturity_dictionary", "lex.maturity_dictionary"),
+        ("batch_upsert_language_dictionary", "lex.language_dictionary"),
     ],
 )
 async def test_dictionary_upserts_use_expected_tables_and_params(
     mocker,
     function_name: str,
     table_name: str,
-    call_args: tuple,
-    expected_params: tuple,
 ) -> None:
     """Dictionary upsert functions should execute against expected tables and params."""
     execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     function = getattr(postgres, function_name)
-    await function(*call_args)
+    await function()
     conn_arg, query, sent_params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert table_name in query
-    assert sent_params == expected_params
+    assert isinstance(sent_params, tuple)
+    assert len(sent_params) == 2
+    assert all(isinstance(values, list) for values in sent_params)
+    assert len(sent_params[0]) == len(sent_params[1])
+
+    # Spot-check expected cardinalities for each dictionary source of truth.
+    expected_sizes = {
+        "batch_upsert_genre_dictionary": len(list(Genre)),
+        "batch_upsert_provider_dictionary": len(FILTERABLE_WATCH_PROVIDERS_MAP),
+        "batch_upsert_watch_method_dictionary": len(list(WatchMethodType)),
+        "batch_upsert_maturity_dictionary": len([m for m in MaturityRating if m != MaturityRating.UNRATED]),
+        "batch_upsert_language_dictionary": len(list(Language)),
+    }
+    assert len(sent_params[0]) == expected_sizes[function_name]
 
 
 @pytest.mark.parametrize(

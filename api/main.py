@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from qdrant_client import QdrantClient
 from fastapi import FastAPI
 from db.postgres import pool, check_postgres
+from db.qdrant import qdrant_client, check_qdrant
 
 
 @asynccontextmanager
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
     await pool.check()
     yield
     # Gracefully close all connections on shutdown
+    await qdrant_client.close()
     await pool.close()
 
 
@@ -41,6 +43,7 @@ async def health_check():
 
     # Test Postgres via the connection pool
     results["postgres"] = await check_postgres()
+    results["qdrant"] = await check_qdrant()
 
     # Test Redis
     try:
@@ -49,13 +52,5 @@ async def health_check():
         results["redis"] = "ok"
     except Exception as e:
         results["redis"] = str(e)
-
-    # Test Qdrant
-    try:
-        client = QdrantClient(host=os.getenv("QDRANT_HOST", "qdrant"), port=6333)
-        client.get_collections()
-        results["qdrant"] = "ok"
-    except Exception as e:
-        results["qdrant"] = str(e)
 
     return results

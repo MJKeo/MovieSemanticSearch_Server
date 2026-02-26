@@ -6,9 +6,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from db import ingest_movie, postgres
-from implementation.classes.enums import Genre
-from implementation.classes.languages import Language
-from implementation.classes.schemas import WatchProvider
 
 
 @pytest.mark.asyncio
@@ -98,9 +95,8 @@ async def test_ingest_movie_card_raises_for_invalid_maturity_rank(mocker) -> Non
 
 @pytest.mark.asyncio
 async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker, base_movie_factory) -> None:
-    """ingest_movie_card should compute values and call dictionary + movie-card upsert functions."""
+    """ingest_movie_card should compute values and call helper + movie-card upsert functions."""
     movie = base_movie_factory()
-    upsert_maturity = mocker.patch("db.ingest_movie.upsert_maturity_dictionary", new=AsyncMock())
     create_genres = mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[10, 11]))
     create_watch_keys = mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[100, 200]))
     create_langs = mocker.patch("db.ingest_movie.create_audio_language_ids", new=AsyncMock(return_value=[5]))
@@ -110,7 +106,6 @@ async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker
     mocker.patch("builtins.open", mocker.mock_open())
     await ingest_movie.ingest_movie_card(movie)
 
-    upsert_maturity.assert_awaited_once_with(3, "pg-13", conn=None)
     create_genres.assert_awaited_once_with(movie, conn=None)
     create_watch_keys.assert_awaited_once_with(movie, conn=None)
     create_langs.assert_awaited_once_with(movie, conn=None)
@@ -184,80 +179,60 @@ async def test_ingest_lexical_data_processes_all_entity_types(mocker) -> None:
 
 @pytest.mark.asyncio
 async def test_create_genre_ids_handles_normal_and_invalid_values(mocker) -> None:
-    """create_genre_ids should resolve via Genre enum, skip invalids, and upsert dictionary rows."""
-    movie = SimpleNamespace(genres=["Action", " ", "Sci-Fi"])
-
-    upsert_genre = mocker.patch("db.ingest_movie.upsert_genre_dictionary", new=AsyncMock())
+    """create_genre_ids should delegate to movie.genre_ids()."""
+    movie = SimpleNamespace(genre_ids=mocker.Mock(return_value=[1, 21]))
 
     result = await ingest_movie.create_genre_ids(movie)
 
-    assert result == [Genre.ACTION.genre_id, Genre.SCI_FI.genre_id]
-    assert upsert_genre.await_count == 2
-    upsert_genre.assert_any_await(Genre.ACTION.genre_id, "action", conn=None)
-    upsert_genre.assert_any_await(Genre.SCI_FI.genre_id, "sci-fi", conn=None)
+    assert result == [1, 21]
+    movie.genre_ids.assert_called_once_with()
 
 
 @pytest.mark.asyncio
 async def test_create_genre_ids_non_sequence_defaults_to_empty() -> None:
-    """create_genre_ids should return empty list when genres is not a sequence."""
+    """create_genre_ids should propagate attribute errors for invalid movie objects."""
     movie = SimpleNamespace(genres=123)
-    assert await ingest_movie.create_genre_ids(movie) == []
+    with pytest.raises(AttributeError):
+        await ingest_movie.create_genre_ids(movie)
 
 
 @pytest.mark.asyncio
 async def test_create_watch_offer_keys_deduplicates_and_sorts(mocker) -> None:
-    """create_watch_offer_keys should skip non-filterable providers, deduplicate, and sort keys."""
-    # TMDB IDs 8 (Netflix) and 350 (Apple TV) are in FILTERABLE_WATCH_PROVIDER_IDS.
-    # ID 99999 is not, so it must be skipped entirely.
-    providers = [
-        WatchProvider(id=8, name="Netflix", logo_path="/n.png", display_priority=1, types=[1, 3, 99]),
-        WatchProvider(id=99999, name="Unknown", logo_path="/x.png", display_priority=2, types=[1]),
-        WatchProvider(id=350, name="Apple TV", logo_path="/a.png", display_priority=2, types="not-a-list"),
-        WatchProvider(id=8, name="Netflix", logo_path="/n2.png", display_priority=3, types=[1]),
-    ]
-    movie = SimpleNamespace(watch_providers=providers)
-
-    upsert_provider = mocker.patch("db.ingest_movie.upsert_provider_dictionary", new=AsyncMock())
-    upsert_watch_method = mocker.patch("db.ingest_movie.upsert_watch_method_dictionary", new=AsyncMock())
+    """create_watch_offer_keys should delegate to movie.watch_offer_keys()."""
+    expected = sorted({(8 << 4) | 1, (8 << 4) | 3})
+    movie = SimpleNamespace(watch_offer_keys=mocker.Mock(return_value=expected))
 
     result = await ingest_movie.create_watch_offer_keys(movie)
 
-    # Netflix (8): types [1,3] valid, 99 invalid → keys (8<<4)|1 and (8<<4)|3.
-    # Unknown (99999): not in filterable set → skipped.
-    # Apple TV (350): types is not a list → no keys produced (but provider_dictionary upserted).
-    # Duplicate Netflix (8): type [1] → (8<<4)|1 already present, deduped.
-    assert result == sorted({(8 << 4) | 1, (8 << 4) | 3})
-    upsert_provider.assert_any_await(8, "Netflix", conn=None)
-    upsert_watch_method.assert_any_await(1, "subscription", conn=None)
-    upsert_watch_method.assert_any_await(3, "rent", conn=None)
+    assert result == expected
+    movie.watch_offer_keys.assert_called_once_with()
 
 
 @pytest.mark.asyncio
 async def test_create_watch_offer_keys_non_list_defaults_to_empty() -> None:
-    """create_watch_offer_keys should return empty list when watch_providers is not a list."""
+    """create_watch_offer_keys should propagate attribute errors for invalid movie objects."""
     movie = SimpleNamespace(watch_providers="invalid")
-    assert await ingest_movie.create_watch_offer_keys(movie) == []
+    with pytest.raises(AttributeError):
+        await ingest_movie.create_watch_offer_keys(movie)
 
 
 @pytest.mark.asyncio
 async def test_create_audio_language_ids_paths(mocker) -> None:
-    """create_audio_language_ids should resolve via Language enum and upsert dictionary rows."""
-    movie = SimpleNamespace(languages=["English", " ", "Spanish", "Unknown Language"])
-    upsert_language = mocker.patch("db.ingest_movie.upsert_language_dictionary", new=AsyncMock())
+    """create_audio_language_ids should delegate to movie.audio_language_ids()."""
+    movie = SimpleNamespace(audio_language_ids=mocker.Mock(return_value=[80, 286]))
 
     result = await ingest_movie.create_audio_language_ids(movie)
 
-    assert result == [Language.ENGLISH.language_id, Language.SPANISH.language_id]
-    assert upsert_language.await_count == 2
-    upsert_language.assert_any_await(Language.ENGLISH.language_id, Language.ENGLISH.value, conn=None)
-    upsert_language.assert_any_await(Language.SPANISH.language_id, Language.SPANISH.value, conn=None)
+    assert result == [80, 286]
+    movie.audio_language_ids.assert_called_once_with()
 
 
 @pytest.mark.asyncio
 async def test_create_audio_language_ids_non_list_defaults_to_empty() -> None:
-    """create_audio_language_ids should return empty list when languages is not a list."""
+    """create_audio_language_ids should propagate attribute errors for invalid movie objects."""
     movie = SimpleNamespace(languages={"English"})
-    assert await ingest_movie.create_audio_language_ids(movie) == []
+    with pytest.raises(AttributeError):
+        await ingest_movie.create_audio_language_ids(movie)
 
 
 def test_create_people_list_deduplicates_and_normalizes_names() -> None:

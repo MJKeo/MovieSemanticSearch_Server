@@ -76,6 +76,18 @@ def extract_lexical_entities(query: str) -> Optional[ExtractedEntitiesResponse]:
     )
 
 
+async def extract_lexical_entities_async(query: str) -> Optional[ExtractedEntitiesResponse]:
+    """
+        Async version of extract_lexical_entities.
+        Extract lexical entities (characters, franchises, people, studios, titles) from query.
+    """
+    return await generate_kimi_response_async(
+        user_prompt=f'User query: "{query}"',
+        system_prompt=EXTRACT_LEXICAL_ENTITIES_SYSTEM_PROMPT,
+        response_format=ExtractedEntitiesResponse,
+    )
+
+
 # ===============================
 #        Channel Weights
 # ===============================

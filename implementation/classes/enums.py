@@ -58,18 +58,18 @@ class WatchMethodType(IntEnum):
         """
         normalized_type = normalize_string(provider_type)
         _map = {
-            normalize_string("subscription"): cls.SUBSCRIPTION,
-            normalize_string("purchase"): cls.PURCHASE,
-            normalize_string("rent"): cls.RENT,
+            StreamingAccessType.SUBSCRIPTION.value: cls.SUBSCRIPTION,
+            StreamingAccessType.PURCHASE.value: cls.PURCHASE,
+            StreamingAccessType.RENT.value: cls.RENT,
         }
         return _map.get(normalized_type, None)
 
     def __str__(self) -> str:
         """Return the human-readable string representation of the provider type."""
         _labels = {
-            WatchMethodType.SUBSCRIPTION: "subscription",
-            WatchMethodType.PURCHASE: "purchase",
-            WatchMethodType.RENT: "rent",
+            WatchMethodType.SUBSCRIPTION: StreamingAccessType.SUBSCRIPTION.value,
+            WatchMethodType.PURCHASE: StreamingAccessType.PURCHASE.value,
+            WatchMethodType.RENT: StreamingAccessType.RENT.value,
         }
         return _labels[self]
 

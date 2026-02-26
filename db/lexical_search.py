@@ -1,4 +1,6 @@
 import asyncio
+import time
+from dataclasses import dataclass
 from typing import Optional
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase
 from implementation.misc.sql_like import escape_like
@@ -8,6 +10,7 @@ from implementation.classes.schemas import (
     LexicalCandidate,
     MetadataFilters,
 )
+from implementation.llms.query_understanding_methods import extract_lexical_entities_async
 from db.postgres import (
     fetch_phrase_term_ids,
     fetch_title_token_ids,
@@ -24,10 +27,29 @@ MAX_DF = 10_000
 TITLE_SCORE_BETA = 2.0
 TITLE_SCORE_THRESHOLD = 0.15
 TITLE_MAX_CANDIDATES = 10_000
+
+@dataclass(slots=True)
+class LexicalSearchDebug:
+    latency_ms: float
+    llm_generation_time_ms: float
+    extracted_entities: ExtractedEntitiesResponse
+    candidates_returned: int
+
+@dataclass(slots=True)
+class LexicalSearchResult:
+    """
+    The final return type of lexical_search().
+
+    candidates: List of LexicalCandidate objects representing all movies that matched at
+                least one entity and that movie's overall score.
+    """
+    candidates: list[LexicalCandidate]
+    debug: LexicalSearchDebug
+
+
 # ===============================
 #     PRIVATE HELPER METHODS
 # ===============================
-
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
     """Deduplicate strings while preserving first-seen order."""
@@ -205,11 +227,14 @@ def _build_title_search_input(token_term_id_map: dict[int, list[int]]) -> TitleS
 
 
 async def lexical_search(
-    entities: ExtractedEntitiesResponse,
+    query: str,
     filters: Optional[MetadataFilters] = None,
-) -> list[LexicalCandidate]:
+) -> LexicalSearchResult:
     """
     Full lexical search combining all buckets with OR semantics.
+
+    Accepts a raw query string, extracts entities via LLM, then searches.
+    Returns empty list if entity extraction fails or returns None.
 
     Entity inputs are treated as non-normalized strings. Phrase buckets are
     normalized via normalize_string while title-space searches use
@@ -221,6 +246,30 @@ async def lexical_search(
     Returns:
         List of LexicalCandidate objects sorted by normalized_lexical_score desc.
     """
+    start = time.perf_counter()
+
+    # STEP 1 - Extract lexical entities (LLM)
+    try:
+        entities = await extract_lexical_entities_async(query)
+    except Exception as e:
+        raise e # TODO: Find the best way to handle either of the search flows erroring
+
+    after_llm = time.perf_counter()
+
+    if entities is None:
+        raise ValueError("Lexical entity extraction failed")
+    elif len(entities.entity_candidates) == 0:
+        end = time.perf_counter()
+        return LexicalSearchResult(
+            candidates=[],
+            debug=LexicalSearchDebug(
+                latency_ms=(end - start) * 1000,
+                llm_generation_time_ms=(after_llm - start) * 1000,
+                extracted_entities=entities,
+                candidates_returned=0,
+            ),
+        )
+    
     include_people: list[str] = []
     include_characters: list[str] = []
     include_studios: list[str] = []
@@ -302,7 +351,16 @@ async def lexical_search(
         + len(include_franchise_phrases)
     )
     if max_possible == 0:
-        return []
+        end = time.perf_counter()
+        return LexicalSearchResult(
+            candidates=[],
+            debug=LexicalSearchDebug(
+                latency_ms=(end - start) * 1000,
+                llm_generation_time_ms=(after_llm - start) * 1000,
+                extracted_entities=entities,
+                candidates_returned=0,
+            ),
+        )
 
     # STEP 4 - Resolve all include/exclude IDs (phrases + title tokens + character terms)
     all_character_phrases = (
@@ -488,4 +546,14 @@ async def lexical_search(
         )
 
     candidates.sort(key=lambda c: c.normalized_lexical_score, reverse=True)
-    return candidates
+
+    end = time.perf_counter()
+    return LexicalSearchResult(
+        candidates=candidates,
+        debug=LexicalSearchDebug(
+            latency_ms=(end - start) * 1000,
+            llm_generation_time_ms=(after_llm - start) * 1000,
+            extracted_entities=entities,
+            candidates_returned=len(candidates),
+        ),
+    )

@@ -678,9 +678,9 @@ async def run_vector_search(
     query: str,
     metadata_filters: MetadataFilters,
     qdrant_client: AsyncQdrantClient,
-    original_limit: int = 2000,
-    subquery_limit: int = 2000,
-    anchor_limit: int = 2000,
+    candidate_limit_original: int = 2000,
+    candidate_limit_subquery: int = 2000,
+    candidate_limit_anchor: int = 2000,
 ) -> VectorSearchResult:
     """
     Main entry point for the vector search step.
@@ -697,9 +697,9 @@ async def run_vector_search(
                         Passed in from the caller — this module does NOT own filter
                         construction from the QU output.
       qdrant_client:    An AsyncQdrantClient instance connected to the Qdrant server.
-      original_limit:   Max candidates to retrieve per original-query search (default 2000).
-      subquery_limit:   Max candidates to retrieve per subquery search (default 2000).
-      anchor_limit:     Max candidates to retrieve from the anchor search (default 2000).
+      candidate_limit_original:   Max candidates to retrieve per original-query search (default 2000).
+      candidate_limit_subquery:   Max candidates to retrieve per subquery search (default 2000).
+      candidate_limit_anchor:     Max candidates to retrieve from the anchor search (default 2000).
 
     Returns:
       VectorSearchResult containing:
@@ -803,7 +803,7 @@ async def run_vector_search(
                 qdrant_client=qdrant_client,
                 candidates=candidates,
                 search_params=_QDRANT_SEARCH_PARAMS,
-                limit=anchor_limit,
+                limit=candidate_limit_anchor,
             ),
             name="coord_anchor_original",
         )
@@ -829,7 +829,7 @@ async def run_vector_search(
                     qdrant_client=qdrant_client,
                     candidates=candidates,
                     search_params=_QDRANT_SEARCH_PARAMS,
-                    limit=original_limit,
+                    limit=candidate_limit_original,
                 ),
                 name=f"coord_{collection_name.value}_original",
             )
@@ -855,7 +855,7 @@ async def run_vector_search(
                     qdrant_client=qdrant_client,
                     candidates=candidates,
                     search_params=_QDRANT_SEARCH_PARAMS,
-                    limit=subquery_limit,
+                    limit=candidate_limit_subquery,
                 ),
                 name=f"coord_{collection_name.value}_subquery",
             )
