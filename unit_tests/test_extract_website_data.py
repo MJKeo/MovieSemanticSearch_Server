@@ -16,7 +16,7 @@ from implementation.scraping.extract_website_data import (
     extract_featured_reviews,
     get_watch_providers,
 )
-from implementation.classes.enums import WatchMethodType
+from implementation.classes.enums import StreamingAccessType
 
 
 # ================================
@@ -31,6 +31,16 @@ def _wrap_next_data(payload: dict) -> str:
         f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(payload)}</script>'
         "</body></html>"
     )
+
+
+def _type_values(types: list[StreamingAccessType | str]) -> list[str]:
+    values: list[str] = []
+    for access_type in types:
+        if isinstance(access_type, StreamingAccessType):
+            values.append(access_type.value)
+        else:
+            values.append(str(access_type))
+    return values
 
 
 def _imdb_page(atf_extra: dict | None = None, mcd_extra: dict | None = None) -> str:
@@ -546,11 +556,7 @@ class TestGetWatchProviders:
         data = {"results": {"US": {"flatrate": [provider], "buy": [provider], "rent": [provider]}}}
         result = get_watch_providers(data)
         assert len(result) == 1
-        assert set(result[0].types) == {
-            WatchMethodType.SUBSCRIPTION,
-            WatchMethodType.PURCHASE,
-            WatchMethodType.RENT,
-        }
+        assert set(_type_values(result[0].types)) == {"subscription", "buy", "rent"}
 
     def test_separates_different_provider_ids(self) -> None:
         """Should create distinct providers for different provider IDs."""
@@ -597,7 +603,7 @@ class TestGetWatchProviders:
         }
         result = get_watch_providers(data)
         assert len(result) == 1
-        assert result[0].types == [WatchMethodType.SUBSCRIPTION]
+        assert _type_values(result[0].types) == ["subscription"]
 
     def test_lowercases_provider_names(self) -> None:
         """Should lowercase provider names."""

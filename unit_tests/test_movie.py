@@ -228,7 +228,7 @@ def test_watch_providers_text_variants(base_movie_factory) -> None:
     """watch_providers_text should produce provider sentence when providers exist."""
     providers = [
         WatchProvider(id=1, name="Netflix", logo_path="/n.png", display_priority=1, types=["subscription"]),
-        WatchProvider(id=2, name="Apple TV", logo_path="/a.png", display_priority=2, types=["purchase"]),
+        WatchProvider(id=2, name="Apple TV", logo_path="/a.png", display_priority=2, types=["buy"]),
     ]
     movie = base_movie_factory(watch_providers=providers)
     assert movie.watch_providers_text() == "Watch on Netflix, Apple TV"

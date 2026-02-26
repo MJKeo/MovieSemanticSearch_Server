@@ -12,6 +12,7 @@ Revised based on testing. Key improvements:
 from datetime import datetime
 
 from implementation.classes.enums import Genre, MetadataPreferenceName
+from implementation.classes.languages import Language
 from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDER_NAMES
 
 # =============================================================================
@@ -286,22 +287,22 @@ CRITICAL RULES:
 # 4. AUDIO LANGUAGES PREFERENCE
 # =============================================================================
 
-EXTRACT_AUDIO_LANGUAGES_PREFERENCE_PROMPT = """You are a movie search query parser. Extract audio language preferences from the user's query.
+EXTRACT_AUDIO_LANGUAGES_PREFERENCE_PROMPT = f"""You are a movie search query parser. Extract audio language preferences from the user's query.
 
 TASK:
 Identify which spoken languages the user wants in the film's audio track.
 
 OUTPUT SCHEMA:
-{
-  "result": {
+{{
+  "result": {{
     "should_include": [<list of language names the user wants the movie to have audio in>],
     "should_exclude": [<list of language names the user doesn't want the movie to have audio in>]
-  }
-}
-Return {"result": null} if no audio language preference is expressed.
+  }}
+}}
+Return {{"result": null}} if no audio language preference is expressed.
 
-LANGUAGE FORMAT:
-Use standard English names: English, Spanish, French, Japanese, Korean, Mandarin, Cantonese, Hindi, German, Italian, Portuguese, Russian, Arabic, Swedish, Danish, Thai, Vietnamese, etc.
+VALID LANGUAGES (ONLY RESPOND WITH THESE VALUES):
+{", ".join([language.value for language in Language])}
 
 EXTRACTION RULES:
 
@@ -326,38 +327,38 @@ Only extract the audio language, ignore subtitle mentions.
 EXAMPLES:
 
 Query: "Spanish-language thrillers"
-Output: {"result": {"should_include": ["Spanish"], "should_exclude": []}}
+Output: {{"result": {{"should_include": ["Spanish"], "should_exclude": []}}}}
 
 Query: "Cantonese kung fu films"
-Output: {"result": {"should_include": ["Cantonese"], "should_exclude": []}}
+Output: {{"result": {{"should_include": ["Cantonese"], "should_exclude": []}}}}
 
 Query: "German expressionist horror"
-Output: {"result": {"should_include": ["German"], "should_exclude": []}}
+Output: {{"result": {{"should_include": ["German"], "should_exclude": []}}}}
 
 Query: "movies from Brazil"
-Output: {"result": {"should_include": ["Portuguese"], "should_exclude": []}}
+Output: {{"result": {{"should_include": ["Portuguese"], "should_exclude": []}}}}
 
 Query: "American indie comedies"
-Output: {"result": {"should_include": ["English"], "should_exclude": []}}
+Output: {{"result": {{"should_include": ["English"], "should_exclude": []}}}}
 
 Query: "Scandinavian noir"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: "Scandinavian" spans multiple languages (Swedish, Danish, Norwegian). Too ambiguous.
 
 Query: "foreign art house"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: "Foreign" doesn't specify which language.
 
 Query: "subtitled movies"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Subtitle preference, not audio language preference.
 
 Query: "films with great dialogue"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Quality preference, no language specified.
 
 Query: "European cinema from the 60s"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: "European" spans many languages. Not specific enough.
 
 CRITICAL RULES:
@@ -446,22 +447,22 @@ CRITICAL RULES:
 # 6. MATURITY RATING PREFERENCE
 # =============================================================================
 
-EXTRACT_MATURITY_RATING_PREFERENCE_PROMPT = """You are a movie search query parser. Extract age-appropriateness preferences from the user's query.
+EXTRACT_MATURITY_RATING_PREFERENCE_PROMPT = f"""You are a movie search query parser. Extract age-appropriateness preferences from the user's query.
 
 TASK:
 Determine if the user wants movies filtered by maturity rating.
 
 OUTPUT SCHEMA:
-{
-  "result": {
-    "rating": "G" | "PG" | "PG-13" | "R" | "NC-17", (exact rating to match or lower / upper threshold)
+{{
+  "result": {{
+    "rating": "g" | "pg" | "pg-13" | "r" | "nc-17", (exact rating to match or lower / upper threshold)
     "match_operation": "exact" | "greater_than" | "less_than" | "greater_than_or_equal" | "less_than_or_equal"
-  }
-}
-Return {"result": null} if no maturity preference is expressed.
+  }}
+}}
+Return {{"result": null}} if no maturity preference is expressed.
 
 RATING SCALE (least to most mature):
-G → PG → PG-13 → R → NC-17
+g → pg → pg-13 → r → nc-17
 
 OPERATION SELECTION:
 
@@ -478,49 +479,49 @@ Use "exact" ONLY when:
 - User explicitly demands a specific rating: "must be rated R", "only PG-13"
 
 AUDIENCE TO RATING MAPPING:
-- Young children (under 7): G or less_than_or_equal G
-- Children (7-12): PG or less_than_or_equal PG
-- Teenagers (13-17): PG-13 or less_than_or_equal PG-13
-- Adults only: R or greater_than_or_equal R
+- Young children (under 7): g or less_than_or_equal g
+- Children (7-12): pg or less_than_or_equal pg
+- Teenagers (13-17): pg-13 or less_than_or_equal pg-13
+- Adults only: r or greater_than_or_equal r
 
 EXAMPLES:
 
 Query: "something safe for my toddler"
-Output: {"result": {"rating": "G", "match_operation": "less_than_or_equal"}}
+Output: {{"result": {{"rating": "g", "match_operation": "less_than_or_equal"}}}}
 
 Query: "movie night with my 10-year-old"
-Output: {"result": {"rating": "PG", "match_operation": "less_than_or_equal"}}
+Output: {{"result": {{"rating": "pg", "match_operation": "less_than_or_equal"}}}}
 
 Query: "teen-appropriate fantasy"
-Output: {"result": {"rating": "PG-13", "match_operation": "less_than_or_equal"}}
+Output: {{"result": {{"rating": "pg-13", "match_operation": "less_than_or_equal"}}}}
 
 Query: "adults-only thriller"
-Output: {"result": {"rating": "R", "match_operation": "greater_than_or_equal"}}
+Output: {{"result": {{"rating": "r", "match_operation": "greater_than_or_equal"}}}}
 
 Query: "I specifically want rated R horror"
-Output: {"result": {"rating": "R", "match_operation": "exact"}}
+Output: {{"result": {{"rating": "r", "match_operation": "exact"}}}}
 
 Query: "nothing above PG-13"
-Output: {"result": {"rating": "PG-13", "match_operation": "less_than_or_equal"}}
+Output: {{"result": {{"rating": "pg-13", "match_operation": "less_than_or_equal"}}}}
 
 Query: "animated movie"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Animation is a medium, not a maturity level. Animated films range from G to R.
 
 Query: "Disney classics"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Studio preference. While Disney skews family-friendly, user didn't request a rating filter.
 
 Query: "intense and disturbing"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Content descriptors describe the viewing experience, not official ratings. A PG-13 film can be intense.
 
 Query: "nothing too gory"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Gore is a content element, not a rating. Some R films have no gore; some PG-13 films push limits.
 
 Query: "Tarantino-style violence"
-Output: {"result": null}
+Output: {{"result": null}}
 Reason: Stylistic preference, not a maturity rating request.
 
 CRITICAL RULES:

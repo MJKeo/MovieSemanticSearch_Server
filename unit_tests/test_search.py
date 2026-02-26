@@ -98,7 +98,14 @@ async def test_search_calls_both_with_correct_args():
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
         mock_lex.assert_awaited_once_with(DUMMY_QUERY, DUMMY_FILTERS)
-        mock_vec.assert_awaited_once_with(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
+        mock_vec.assert_awaited_once_with(
+            query=DUMMY_QUERY,
+            metadata_filters=DUMMY_FILTERS,
+            qdrant_client=mock_client,
+            candidate_limit_original=2000,
+            candidate_limit_subquery=2000,
+            candidate_limit_anchor=2000,
+        )
 
     assert isinstance(result, SearchResult)
     assert result.candidates == []

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from implementation.classes.movie import BaseMovie
 from implementation.classes.languages import Language, LANGUAGE_BY_NORMALIZED_NAME
 from implementation.llms.generic_methods import generate_vector_embedding
-from implementation.classes.enums import Genre, WatchMethodType, MaturityRating, VectorName
+from implementation.classes.enums import MaturityRating, VectorName
 from implementation.vectorize import (
     create_anchor_vector_text,
     create_plot_events_vector_text,
@@ -119,7 +119,7 @@ async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
         maturity_rating, maturity_rank = movie.maturity_rating_and_rank()
         if not maturity_rating or not maturity_rank:
             raise ValueError(f"Movie ingestion failed: One or more are None. Maturity rating: {maturity_rating} and rank: {maturity_rank}.")
-        if maturity_rank == MaturityRating.UNRATED.value:
+        if maturity_rank == MaturityRating.UNRATED.maturity_rank:
             maturity_rank = None
 
         genre_ids = await create_genre_ids(movie, conn=conn)
@@ -263,7 +263,7 @@ def _build_qdrant_payload(movie: BaseMovie) -> dict:
     _, maturity_rank = movie.maturity_rating_and_rank()
     if not maturity_rank:
         raise ValueError(f"Qdrant ingestion failed: Maturity rank is None")
-    if maturity_rank == MaturityRating.UNRATED.value:
+    if maturity_rank == MaturityRating.UNRATED.maturity_rank:
         payload["maturity_rank"] = None
     else:
         payload["maturity_rank"] = maturity_rank

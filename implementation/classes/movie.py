@@ -14,7 +14,7 @@ from .schemas import (
 )
 from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict
-from .enums import MaturityRating, WatchMethodType, Genre
+from .enums import MaturityRating, StreamingAccessType, Genre
 from .watch_providers import FILTERABLE_WATCH_PROVIDER_IDS
 from .languages import LANGUAGE_BY_NORMALIZED_NAME
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase, create_watch_provider_offering_key
@@ -160,10 +160,8 @@ class BaseMovie(BaseModel):
         Returns:
             Tuple of (normalized_label, rank).
         """
-        rating = MaturityRating.from_string(self.maturity_rating)
-        rank = rating.value
-        # str(rating) calls MaturityRating.__str__ which returns the human label
-        return normalize_string(str(rating)), rank
+        rating = MaturityRating.from_string_with_default(self.maturity_rating)
+        return rating.value, rating.maturity_rank
 
     def genres_subset(self, limit: int = None) -> list[str]:
         """
@@ -214,9 +212,21 @@ class BaseMovie(BaseModel):
                 watch_method_types = []
 
             for watch_method_type in watch_method_types:
-                watch_method_id = int(watch_method_type)
+                parsed_watch_method: StreamingAccessType | None = None
+                if isinstance(watch_method_type, StreamingAccessType):
+                    parsed_watch_method = watch_method_type
+                elif isinstance(watch_method_type, str):
+                    parsed_watch_method = StreamingAccessType.from_string(watch_method_type)
+                elif isinstance(watch_method_type, int):
+                    parsed_watch_method = StreamingAccessType.from_type_id(watch_method_type)
 
-                watch_offer_key = create_watch_provider_offering_key(provider_id, watch_method_id)
+                if parsed_watch_method is None:
+                    continue
+
+                watch_offer_key = create_watch_provider_offering_key(
+                    provider_id,
+                    parsed_watch_method.type_id,
+                )
                 watch_offer_key_set.add(watch_offer_key)
 
         return sorted(watch_offer_key_set)
@@ -568,4 +578,3 @@ class BaseMovie(BaseModel):
         
         providers_str = ", ".join([provider.name for provider in self.watch_providers])
         return f"Watch on {providers_str}"
-

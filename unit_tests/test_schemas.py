@@ -2,7 +2,7 @@
 
 import pytest
 
-from implementation.classes.enums import WatchMethodType
+from implementation.classes.enums import StreamingAccessType
 from implementation.classes.schemas import (
     WatchProvider,
     MajorCharacter,
@@ -24,6 +24,15 @@ from implementation.classes.schemas import (
     DatePreferenceResult,
 )
 
+def _type_values(types: list[StreamingAccessType | str]) -> list[str]:
+    values: list[str] = []
+    for access_type in types:
+        if isinstance(access_type, StreamingAccessType):
+            values.append(access_type.value)
+        else:
+            values.append(str(access_type))
+    return values
+
 
 def _base_provider_payload() -> dict:
     """Return a valid baseline payload for constructing WatchProvider."""
@@ -39,17 +48,17 @@ def _base_provider_payload() -> dict:
 def test_watch_provider_parse_types_from_strings() -> None:
     """WatchProvider should parse valid string watch method types."""
     payload = _base_provider_payload()
-    payload["types"] = ["subscription", "purchase", "rent"]
+    payload["types"] = ["subscription", "buy", "rent"]
     provider = WatchProvider(**payload)
-    assert provider.types == [1, 2, 3]
+    assert _type_values(provider.types) == ["subscription", "buy", "rent"]
 
 
 def test_watch_provider_parse_types_from_enum_members() -> None:
     """WatchProvider should keep enum members when already provided."""
     payload = _base_provider_payload()
-    payload["types"] = [WatchMethodType.SUBSCRIPTION, WatchMethodType.RENT]
+    payload["types"] = [StreamingAccessType.SUBSCRIPTION, StreamingAccessType.RENT]
     provider = WatchProvider(**payload)
-    assert provider.types == [1, 3]
+    assert _type_values(provider.types) == ["subscription", "rent"]
 
 
 def test_watch_provider_parse_types_from_ints() -> None:
@@ -57,15 +66,15 @@ def test_watch_provider_parse_types_from_ints() -> None:
     payload = _base_provider_payload()
     payload["types"] = [1, 2, 3]
     provider = WatchProvider(**payload)
-    assert provider.types == [1, 2, 3]
+    assert _type_values(provider.types) == ["subscription", "buy", "rent"]
 
 
 def test_watch_provider_parse_types_mixed_and_invalid_entries_filtered() -> None:
     """WatchProvider should ignore invalid entries while preserving valid entries in order."""
     payload = _base_provider_payload()
-    payload["types"] = ["subscription", "invalid", 2, WatchMethodType.RENT, 999]
+    payload["types"] = ["subscription", "invalid", 2, StreamingAccessType.RENT, 999]
     provider = WatchProvider(**payload)
-    assert provider.types == [1, 2, 3]
+    assert _type_values(provider.types) == ["subscription", "buy", "rent"]
 
 
 @pytest.mark.parametrize("non_list_value", [None, "subscription", 1, {"a": 1}])

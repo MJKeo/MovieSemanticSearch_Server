@@ -21,9 +21,7 @@ async def test_health_check_all_services_ok(mocker) -> None:
     mock_redis.ping.return_value = True
     mocker.patch("api.main.redis.Redis", return_value=mock_redis)
 
-    mock_qdrant = MagicMock()
-    mock_qdrant.get_collections.return_value = []
-    mocker.patch("api.main.QdrantClient", return_value=mock_qdrant)
+    mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="ok"))
 
     result = await health_check()
     assert result == {"postgres": "ok", "redis": "ok", "qdrant": "ok"}
@@ -38,9 +36,7 @@ async def test_health_check_postgres_failure_isolated(mocker) -> None:
     mock_redis.ping.return_value = True
     mocker.patch("api.main.redis.Redis", return_value=mock_redis)
 
-    mock_qdrant = MagicMock()
-    mock_qdrant.get_collections.return_value = []
-    mocker.patch("api.main.QdrantClient", return_value=mock_qdrant)
+    mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="ok"))
 
     result = await health_check()
     assert result["postgres"] == "connection refused"
@@ -57,9 +53,7 @@ async def test_health_check_redis_failure_isolated(mocker) -> None:
     mock_redis.ping.side_effect = ConnectionError("redis down")
     mocker.patch("api.main.redis.Redis", return_value=mock_redis)
 
-    mock_qdrant = MagicMock()
-    mock_qdrant.get_collections.return_value = []
-    mocker.patch("api.main.QdrantClient", return_value=mock_qdrant)
+    mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="ok"))
 
     result = await health_check()
     assert result["postgres"] == "ok"
@@ -76,7 +70,7 @@ async def test_health_check_qdrant_failure_isolated(mocker) -> None:
     mock_redis.ping.return_value = True
     mocker.patch("api.main.redis.Redis", return_value=mock_redis)
 
-    mocker.patch("api.main.QdrantClient", side_effect=RuntimeError("qdrant unreachable"))
+    mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="qdrant unreachable"))
 
     result = await health_check()
     assert result["postgres"] == "ok"
@@ -93,7 +87,7 @@ async def test_health_check_all_services_down(mocker) -> None:
     mock_redis.ping.side_effect = ConnectionError("redis error")
     mocker.patch("api.main.redis.Redis", return_value=mock_redis)
 
-    mocker.patch("api.main.QdrantClient", side_effect=RuntimeError("qdrant error"))
+    mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="qdrant error"))
 
     result = await health_check()
     assert result["postgres"] == "pg error"

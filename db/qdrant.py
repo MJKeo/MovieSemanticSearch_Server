@@ -2,8 +2,8 @@ import os
 from qdrant_client import AsyncQdrantClient                                                                                                                         
                   
 qdrant_client = AsyncQdrantClient(
-    host=os.getenv("QDRANT_HOST", None),
-    port=int(os.getenv("QDRANT_PORT", None)),
+    host=os.getenv("QDRANT_HOST", "localhost"),
+    port=int(os.getenv("QDRANT_PORT", 6333)),
     timeout=10,
 )
 

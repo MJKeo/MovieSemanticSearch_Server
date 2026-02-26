@@ -5,73 +5,70 @@ This module contains all Enum classes used for movie data representation
 across the project.
 """
 
-from enum import Enum, IntEnum
+from enum import Enum
 from implementation.misc.helpers import normalize_string
 
 
-class MaturityRating(IntEnum):
-    G = 1
-    PG = 2
-    PG_13 = 3
-    R = 4
-    NC_17 = 5
-    UNRATED = 999
+class MaturityRating(Enum):
+    maturity_rank: int
+    value: str
+
+    def __new__(cls, maturity_rank: int, value: str) -> "MaturityRating":
+        """Create a MaturityRating enum member with rank and display value."""
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.maturity_rank = maturity_rank
+        return obj
 
     @classmethod
-    def from_string(cls, rating: str) -> "MaturityRating":
-        normalized_rating = normalize_string(rating)
-        _map = {
-            normalize_string("G"): cls.G,
-            normalize_string("PG"): cls.PG,
-            normalize_string("PG-13"): cls.PG_13,
-            normalize_string("R"): cls.R,
-            normalize_string("NC-17"): cls.NC_17,
-            normalize_string("Unrated"): cls.UNRATED,
-        }
-        if normalized_rating not in _map:
+    def from_string_with_default(cls, value: str) -> "MaturityRating":
+        """Create a MaturityRating enum member with rank and display value."""
+        try:
+            normalized_value = normalize_string(value)
+            return cls(normalized_value)
+        except ValueError:
             return cls.UNRATED
-        return _map[normalized_rating]
 
-    def __str__(self) -> str:
-        _labels = {
-            MaturityRating.G: "G",
-            MaturityRating.PG: "PG",
-            MaturityRating.PG_13: "PG-13",
-            MaturityRating.R: "R",
-            MaturityRating.NC_17: "NC-17",
-            MaturityRating.UNRATED: "Unrated",
-        }
-        return _labels[self]
+    G = (1, "g")
+    PG = (2, "pg")
+    PG_13 = (3, "pg-13")
+    R = (4, "r")
+    NC_17 = (5, "nc-17")
+    UNRATED = (999, "unrated")
 
 
-class WatchMethodType(IntEnum):
+class StreamingAccessType(Enum):
     """Enum representing types of watch provider services."""
-    SUBSCRIPTION = 1
-    PURCHASE = 2
-    RENT = 3
+    type_id: int
+    value: str
+
+    def __new__(cls, type_id: int, value: str) -> "StreamingAccessType":
+        """Create a StreamingAccessType enum member with rank and display value."""
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.type_id = type_id
+        return obj
 
     @classmethod
-    def from_string(cls, provider_type: str) -> "WatchMethodType | None":
-        """
-        Convert a string to a WatchMethodType enum value.
-        Returns None if the string doesn't match any valid provider type.
-        """
-        normalized_type = normalize_string(provider_type)
-        _map = {
-            StreamingAccessType.SUBSCRIPTION.value: cls.SUBSCRIPTION,
-            StreamingAccessType.PURCHASE.value: cls.PURCHASE,
-            StreamingAccessType.RENT.value: cls.RENT,
-        }
-        return _map.get(normalized_type, None)
+    def from_string(cls, name: str) -> "StreamingAccessType | None":
+        """Resolve a string label to its StreamingAccessType enum member."""
+        normalized = normalize_string(name)
+        try:
+            return cls(normalized)
+        except ValueError:
+            return None
 
-    def __str__(self) -> str:
-        """Return the human-readable string representation of the provider type."""
-        _labels = {
-            WatchMethodType.SUBSCRIPTION: StreamingAccessType.SUBSCRIPTION.value,
-            WatchMethodType.PURCHASE: StreamingAccessType.PURCHASE.value,
-            WatchMethodType.RENT: StreamingAccessType.RENT.value,
-        }
-        return _labels[self]
+    @classmethod
+    def from_type_id(cls, type_id: int) -> "StreamingAccessType | None":
+        """Resolve a numeric type_id to its StreamingAccessType enum member."""
+        for member in cls:
+            if member.type_id == type_id:
+                return member
+        return None
+
+    SUBSCRIPTION = (1, "subscription")
+    BUY = (2, "buy")
+    RENT = (3, "rent")
 
 
 class VectorCollectionName(Enum):
@@ -207,11 +204,6 @@ class ReceptionType(Enum):
     CRITICALLY_ACCLAIMED = "critically_acclaimed"
     POORLY_RECEIVED = "poorly_received"
     NO_PREFERENCE = "no_preference"
-
-class StreamingAccessType(Enum):
-    SUBSCRIPTION = "subscription"
-    RENT = "rent"
-    BUY = "buy"
 
 # ============================
 #     Lexical Entity Enums

@@ -14,7 +14,7 @@ from psycopg_pool import AsyncConnectionPool
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
 from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDERS_MAP
-from implementation.classes.enums import Genre, MaturityRating, WatchMethodType
+from implementation.classes.enums import Genre, MaturityRating, StreamingAccessType
 from implementation.classes.schemas import MetadataFilters
 from implementation.classes.languages import Language
 
@@ -554,8 +554,8 @@ async def batch_upsert_maturity_dictionary(conn=None) -> None:
     Args:
         conn: Optional existing async connection for caller-managed transaction scope.
     """
-    maturity_ranks = [maturity.value for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
-    labels = [normalize_string(str(maturity)) for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
+    maturity_ranks = [maturity.maturity_rank for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
+    labels = [normalize_string(maturity.value) for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
     if not maturity_ranks:
         return
     if len(maturity_ranks) != len(labels):
@@ -602,8 +602,8 @@ async def batch_upsert_watch_method_dictionary(conn=None) -> None:
     Args:
         conn: Optional existing async connection for caller-managed transaction scope.
     """
-    watch_method_types = [watch_method_type.value for watch_method_type in WatchMethodType]
-    watch_method_names = [normalize_string(str(watch_method_type)) for watch_method_type in WatchMethodType]
+    watch_method_types = [watch_method_type.type_id for watch_method_type in StreamingAccessType]
+    watch_method_names = [normalize_string(watch_method_type.value) for watch_method_type in StreamingAccessType]
     if not watch_method_types:
         return
     if len(watch_method_types) != len(watch_method_names):

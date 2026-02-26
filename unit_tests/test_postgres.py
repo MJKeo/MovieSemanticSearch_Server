@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from db import postgres
-from implementation.classes.enums import Genre, MaturityRating, WatchMethodType
+from implementation.classes.enums import Genre, MaturityRating, StreamingAccessType
 from implementation.classes.languages import Language
 from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDERS_MAP
 
@@ -280,7 +280,7 @@ async def test_dictionary_upserts_use_expected_tables_and_params(
     expected_sizes = {
         "batch_upsert_genre_dictionary": len(list(Genre)),
         "batch_upsert_provider_dictionary": len(FILTERABLE_WATCH_PROVIDERS_MAP),
-        "batch_upsert_watch_method_dictionary": len(list(WatchMethodType)),
+        "batch_upsert_watch_method_dictionary": len(list(StreamingAccessType)),
         "batch_upsert_maturity_dictionary": len([m for m in MaturityRating if m != MaturityRating.UNRATED]),
         "batch_upsert_language_dictionary": len(list(Language)),
     }

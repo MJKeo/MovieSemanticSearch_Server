@@ -73,7 +73,7 @@ class WatchProvider(BaseModel):
     name: str
     logo_path: str
     display_priority: int
-    types: list[WatchMethodType]         # subscription / rent / purchase
+    types: list[StreamingAccessType]     # subscription / rent / buy
 ```
 
 ```python
@@ -90,8 +90,8 @@ class CastMember(BaseModel):
 class MaturityRating(Enum):
     G="G"; PG="PG"; PG_13="PG-13"; R="R"; NC_17="NC-17"; NR="NR"
 
-class WatchMethodType(Enum):
-    SUBSCRIPTION="subscription"; PURCHASE="purchase"; RENT="rent"
+class StreamingAccessType(Enum):
+    SUBSCRIPTION="subscription"; BUY="buy"; RENT="rent"
 
 class CastMemberRole(Enum):
     ACTOR="actor"; DIRECTOR="director"; PRODUCER="producer"
@@ -617,4 +617,3 @@ After deterministic scoring:
 - **Three vectors:** enough separation to reduce “one-vector blur” without exploding into dozens of vectors that might miss top-K.
 - **RRF fusion:** combines heterogeneous retrieval methods reliably using rank-only fusion.
 - **Deterministic rerank + top-50 LLM:** cheap and scalable for MVP, yet still allows an LLM to apply “spirit of the query” judgment where it matters most.
-

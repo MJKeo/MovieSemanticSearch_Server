@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, conlist, constr, ConfigDict, field_valida
 from enum import Enum
 from .languages import Language
 from .enums import (
-    WatchMethodType, 
+    MaturityRating,
     DateMatchOperation, 
     NumericalMatchOperation, 
     RatingMatchOperation, 
@@ -84,7 +84,7 @@ class PlotEventsMetadata(BaseModel):
             parts.append(f"{self.setting.lower()}")
         if self.major_characters:
             stringified_characters = [str(character).lower() for character in self.major_characters]
-            parts.append(f"{"\n".join(stringified_characters)}")
+            parts.append('\n'.join(stringified_characters))
         return "\n".join(parts)
 
 
@@ -179,18 +179,18 @@ class PlotAnalysisMetadata(BaseModel):
         if self.core_concept:
             parts.append(f"{str(self.core_concept).lower()}")
         if self.genre_signatures:
-            parts.append(f"{", ".join(self.genre_signatures).lower()}")
+            parts.append(", ".join(self.genre_signatures).lower())
         if self.conflict_scale:
             parts.append(f"{self.conflict_scale.lower()} conflict")
         if self.character_arcs:
             stringified_character_arcs = [str(character_arc).lower() for character_arc in self.character_arcs]
-            parts.append(f"{"\n".join(stringified_character_arcs)}")
+            parts.append("\n".join(stringified_character_arcs))
         if self.themes_primary:
             stringified_themes = [str(theme).lower() for theme in self.themes_primary]
-            parts.append(f"{"\n".join(stringified_themes)}")
+            parts.append("\n".join(stringified_themes))
         if self.lessons_learned:
             stringified_lessons = [str(lesson).lower() for lesson in self.lessons_learned]
-            parts.append(f"{"\n".join(stringified_lessons)}")
+            parts.append("\n".join(stringified_lessons))
         return "\n".join(parts)
 
 
@@ -458,17 +458,17 @@ class NumericalPreference(BaseModel):
     result: Optional[NumericalPreferenceResult]
 
 
-class ListPreferenceResult(BaseModel):
-    """Inner result object containing list preference fields."""
+class LanguageListPreferenceResult(BaseModel):
+    """Inner result object containing audio language list preference fields."""
     model_config = ConfigDict(extra="forbid")
-    should_include: List[str] = Field(default=[], description="List of items that should be included in the movie's metadata.")
-    should_exclude: List[str] = Field(default=[], description="List of items that should be excluded from the movie's metadata.")
+    should_include: List[Language] = Field(default=[], description="List of audio languages that should be included in the movie's metadata.")
+    should_exclude: List[Language] = Field(default=[], description="List of audio languages that should be excluded from the movie's metadata.")
 
 
-class ListPreference(BaseModel):
+class LanguageListPreference(BaseModel):
     """List preference wrapper with optional result."""
     model_config = ConfigDict(extra="forbid")
-    result: Optional[ListPreferenceResult]
+    result: Optional[LanguageListPreferenceResult]
 
 
 class GenreListPreferenceResult(BaseModel):
@@ -487,7 +487,7 @@ class GenreListPreference(BaseModel):
 class MaturityPreferenceResult(BaseModel):
     """Inner result object containing maturity preference fields."""
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
-    rating: str = Field(..., description="Standard USA ratings: G, PG, PG-13, R, NC-17")
+    rating: MaturityRating = Field(..., description="Standard USA maturity ratings")
     match_operation: RatingMatchOperation = Field(..., description="Whether we prefer movies with this rating, greater (more mature), or less (less mature).")
 
 
@@ -523,7 +523,7 @@ class MetadataPreferencesResponse(BaseModel):
     release_date_preference: DatePreference
     duration_preference: NumericalPreference
     genres_preference: GenreListPreference
-    audio_languages_preference: ListPreference
+    audio_languages_preference: LanguageListPreference
     watch_providers_preference: WatchProvidersPreference
     maturity_rating_preference: MaturityPreference
     popular_trending_preference: PopularTrendingPreference
@@ -683,13 +683,13 @@ class WatchProvider(BaseModel):
     name: str
     logo_path: str
     display_priority: int
-    types: list[WatchMethodType]
+    types: list[StreamingAccessType]
 
     @field_validator("types", mode="before")
     @classmethod
-    def parse_types(cls, v: list) -> list[WatchMethodType]:
+    def parse_types(cls, v: list) -> list[StreamingAccessType]:
         """
-        Convert string values to WatchMethodType enum values.
+        Convert string/integer values to StreamingAccessType enum values.
         Filters out any invalid types that don't match known enum values.
         """
         if not isinstance(v, list):
@@ -697,20 +697,16 @@ class WatchProvider(BaseModel):
         
         result = []
         for item in v:
-            # If already a WatchMethodType, keep it as-is.
-            if isinstance(item, WatchMethodType):
+            if isinstance(item, StreamingAccessType):
                 result.append(item)
-            # If it's a string, attempt to convert via from_string.
             elif isinstance(item, str):
-                parsed = WatchMethodType.from_string(item)
+                parsed = StreamingAccessType.from_string(item)
                 if parsed is not None:
                     result.append(parsed)
-            # If it's an int, attempt to convert directly to WatchMethodType.
             elif isinstance(item, int):
-                try:
-                    result.append(WatchMethodType(item))
-                except ValueError:
-                    pass
+                parsed = StreamingAccessType.from_type_id(item)
+                if parsed is not None:
+                    result.append(parsed)
         return result
 
 
