@@ -199,19 +199,19 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
         featured_reviews_data = parsed_results["featured_reviews_data"]
 
         llm_metadata = generate_llm_metadata(
-            title=movie.title,
-            overview=movie.overview,
-            plot_summaries=movie.debug_plot_summaries,
-            plot_synopses=movie.debug_synopses,
-            plot_keywords=movie.plot_keywords,
-            featured_reviews=movie.featured_reviews,
-            genres=movie.genres,
-            overall_keywords=movie.overall_keywords,
-            reception_summary=movie.reception_summary,
-            audience_reception_attributes=movie.review_themes,
-            maturity_rating=movie.maturity_rating,
-            maturity_reasoning=movie.maturity_reasoning,
-            parental_guide_items=movie.parental_guide_items
+            title=tmdb_movie_data["title"],
+            overview=imdb_data["overview"],
+            plot_summaries=summary_data["plot_summaries"],
+            plot_synopses=summary_data["synopses"],
+            plot_keywords=plot_keywords_data,
+            featured_reviews=featured_reviews_data,
+            genres=imdb_data["genres"],
+            overall_keywords=imdb_data["keywords"],
+            reception_summary=imdb_data.get("user_review_summary"),
+            audience_reception_attributes=imdb_data.get("review_themes", []),
+            maturity_rating=imdb_data["maturity_rating"],
+            maturity_reasoning=parental_data["ratingReasons"],
+            parental_guide_items=parental_data["parentsGuide"],
         )
         
         # Combine all parsed data into IMDBMovie object
@@ -247,6 +247,7 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
             production_companies=imdb_data["production_companies"],
             # Popularity
             imdb_rating=imdb_data["imdb_rating"],
+            imdb_vote_count=imdb_data.get("imdb_vote_count", 0),
             metacritic_rating=imdb_data["metacritic_rating"],
             reception_summary=imdb_data.get("user_review_summary"),  # Optional field, defaults to None
             featured_reviews=featured_reviews_data,
@@ -332,10 +333,11 @@ def fetch_batch_imdb_movies(tmdb_movie_ids: list[int]) -> None:
 
 if __name__ == "__main__":
     # Override this value to test with a different movie
-    tmdb_movie_ids = [2493, 1584, 9377, 269149, 109445, 808, 354912, 508965, 10674, 14160, 
-    13397, 76341, 245891, 155, 85, 1771, 569094, 299534, 11, 120, 671, 98, 27205, 603, 157336, 
-    335984, 329865, 329, 493922, 694, 49018, 176, 1034541, 807, 496243, 419430, 1359, 550, 597, 
-    13, 666277, 423, 25195, 11036, 1824, 216015, 392044, 545611, 22538, 37136]
+    tmdb_movie_ids = [2493]
+    # tmdb_movie_ids = [2493, 1584, 9377, 269149, 109445, 808, 354912, 508965, 10674, 14160, 
+    # 13397, 76341, 245891, 155, 85, 1771, 569094, 299534, 11, 120, 671, 98, 27205, 603, 157336, 
+    # 335984, 329865, 329, 493922, 694, 49018, 176, 1034541, 807, 496243, 419430, 1359, 550, 597, 
+    # 13, 666277, 423, 25195, 11036, 1824, 216015, 392044, 545611, 22538, 37136]
 
     fetch_batch_imdb_movies(tmdb_movie_ids)
     

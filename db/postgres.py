@@ -708,6 +708,61 @@ async def refresh_title_token_doc_frequency() -> None:
         "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.title_token_doc_frequency;"
     )
 
+
+async def refresh_movie_popularity_scores(
+    *,
+    threshold: float = 0.70,
+    steepness_k: float = 15.0,
+    conn=None,
+) -> None:
+    """
+    Recompute and persist ``movie_card.popularity_score`` from IMDb vote count.
+
+    Pipeline (based on guides/popularity_metric_guide.md):
+      1. Build/refresh a materialized view of global vote-count percentiles.
+      2. Apply sigmoid transform and write scores to ``public.movie_card``.
+      3. Zero out rows without vote count.
+
+    Args:
+        threshold: Percentile midpoint for sigmoid transition.
+        steepness_k: Sigmoid steepness coefficient.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    create_view_query = """
+    CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_popularity_percentile AS
+    SELECT
+      movie_id,
+      PERCENT_RANK() OVER (ORDER BY imdb_vote_count ASC) AS percentile
+    FROM public.movie_card
+    WHERE imdb_vote_count IS NOT NULL;
+    """
+    refresh_view_query = "REFRESH MATERIALIZED VIEW public.mv_popularity_percentile;"
+    update_scores_query = """
+    UPDATE public.movie_card mc
+    SET popularity_score = 1.0 / (1.0 + exp(-%s * (mv.percentile - %s)))
+    FROM public.mv_popularity_percentile mv
+    WHERE mc.movie_id = mv.movie_id;
+    """
+    zero_missing_query = """
+    UPDATE public.movie_card
+    SET popularity_score = 0.0
+    WHERE imdb_vote_count IS NULL;
+    """
+
+    if conn is not None:
+        await _execute_on_conn(conn, create_view_query)
+        await _execute_on_conn(conn, refresh_view_query)
+        await _execute_on_conn(conn, update_scores_query, (steepness_k, threshold))
+        await _execute_on_conn(conn, zero_missing_query)
+        return
+
+    async with pool.connection() as local_conn:
+        await _execute_on_conn(local_conn, create_view_query)
+        await _execute_on_conn(local_conn, refresh_view_query)
+        await _execute_on_conn(local_conn, update_scores_query, (steepness_k, threshold))
+        await _execute_on_conn(local_conn, zero_missing_query)
+        await local_conn.commit()
+
 async def upsert_movie_card(
     movie_id: int,
     title: str,
@@ -718,6 +773,7 @@ async def upsert_movie_card(
     genre_ids: Sequence[int],
     watch_offer_keys: Sequence[int],
     audio_language_ids: Sequence[int],
+    imdb_vote_count: int,
     reception_score: Optional[float],
     title_token_count: int,
     conn=None,
@@ -735,6 +791,7 @@ async def upsert_movie_card(
         genre_ids: List of genre IDs.
         watch_offer_keys: List of watch offer keys (encoded provider+method).
         audio_language_ids: List of audio language IDs.
+        imdb_vote_count: Raw IMDb vote count.
         reception_score: Precomputed reception score from IMDB/Metacritic.
         title_token_count: Number of tokens in the title.
         conn: Optional existing async connection for caller-managed transaction scope.
@@ -743,9 +800,9 @@ async def upsert_movie_card(
     INSERT INTO public.movie_card (
         movie_id, title, poster_url, release_ts, runtime_minutes,
         maturity_rank, genre_ids, watch_offer_keys, audio_language_ids,
-        reception_score, title_token_count, created_at, updated_at
+        imdb_vote_count, reception_score, title_token_count, created_at, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
         poster_url = EXCLUDED.poster_url,
@@ -755,6 +812,7 @@ async def upsert_movie_card(
         genre_ids = EXCLUDED.genre_ids,
         watch_offer_keys = EXCLUDED.watch_offer_keys,
         audio_language_ids = EXCLUDED.audio_language_ids,
+        imdb_vote_count = EXCLUDED.imdb_vote_count,
         reception_score = EXCLUDED.reception_score,
         title_token_count = EXCLUDED.title_token_count,
         updated_at = now();
@@ -769,6 +827,7 @@ async def upsert_movie_card(
         list(genre_ids),
         list(watch_offer_keys),
         list(audio_language_ids),
+        imdb_vote_count,
         reception_score,
         title_token_count,
     )
@@ -1308,7 +1367,7 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     Returns:
         List of dicts with keys: movie_id, title, poster_url,
         release_ts, runtime_minutes, maturity_rank, genre_ids,
-        watch_offer_keys, audio_language_ids, reception_score.
+        watch_offer_keys, audio_language_ids, imdb_vote_count, popularity_score, reception_score.
     """
     if not movie_ids:
         return []
@@ -1316,14 +1375,14 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     query = """
         SELECT movie_id, title, poster_url, release_ts, runtime_minutes,
                maturity_rank, genre_ids, watch_offer_keys, audio_language_ids,
-               reception_score
+               imdb_vote_count, popularity_score, reception_score
         FROM public.movie_card
         WHERE movie_id = ANY(%s::bigint[])
     """
     columns = [
         "movie_id", "title", "poster_url", "release_ts",
         "runtime_minutes", "maturity_rank", "genre_ids", "watch_offer_keys",
-        "audio_language_ids", "reception_score",
+        "audio_language_ids", "imdb_vote_count", "popularity_score", "reception_score",
     ]
 
     search_results = await _execute_read(query, (movie_ids,))

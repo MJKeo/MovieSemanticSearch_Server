@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   genre_ids           INT[] NOT NULL DEFAULT '{}',
   watch_offer_keys    INT[] NOT NULL DEFAULT '{}',
   audio_language_ids  INT[] NOT NULL DEFAULT '{}',
+  imdb_vote_count     INT NOT NULL DEFAULT 0,
+  popularity_score    FLOAT NOT NULL DEFAULT 0.0,
   reception_score     FLOAT,
   title_token_count   INT NOT NULL DEFAULT 0,
   updated_at          TIMESTAMP NOT NULL DEFAULT now(),

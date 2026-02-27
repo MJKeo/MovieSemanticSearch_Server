@@ -1,6 +1,6 @@
 """Unit tests for api.main health check endpoint."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,11 +16,7 @@ from api.main import health_check  # noqa: E402
 async def test_health_check_all_services_ok(mocker) -> None:
     """health_check should return 'ok' for every service when all are reachable."""
     mocker.patch("api.main.check_postgres", new=AsyncMock(return_value="ok"))
-
-    mock_redis = MagicMock()
-    mock_redis.ping.return_value = True
-    mocker.patch("api.main.redis.Redis", return_value=mock_redis)
-
+    mocker.patch("api.main.check_redis", new=AsyncMock(return_value="ok"))
     mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="ok"))
 
     result = await health_check()
@@ -31,11 +27,7 @@ async def test_health_check_all_services_ok(mocker) -> None:
 async def test_health_check_postgres_failure_isolated(mocker) -> None:
     """health_check should report postgres error without affecting other services."""
     mocker.patch("api.main.check_postgres", new=AsyncMock(return_value="connection refused"))
-
-    mock_redis = MagicMock()
-    mock_redis.ping.return_value = True
-    mocker.patch("api.main.redis.Redis", return_value=mock_redis)
-
+    mocker.patch("api.main.check_redis", new=AsyncMock(return_value="ok"))
     mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="ok"))
 
     result = await health_check()
@@ -48,11 +40,7 @@ async def test_health_check_postgres_failure_isolated(mocker) -> None:
 async def test_health_check_redis_failure_isolated(mocker) -> None:
     """health_check should report redis error without affecting other services."""
     mocker.patch("api.main.check_postgres", new=AsyncMock(return_value="ok"))
-
-    mock_redis = MagicMock()
-    mock_redis.ping.side_effect = ConnectionError("redis down")
-    mocker.patch("api.main.redis.Redis", return_value=mock_redis)
-
+    mocker.patch("api.main.check_redis", new=AsyncMock(return_value="redis down"))
     mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="ok"))
 
     result = await health_check()
@@ -65,11 +53,7 @@ async def test_health_check_redis_failure_isolated(mocker) -> None:
 async def test_health_check_qdrant_failure_isolated(mocker) -> None:
     """health_check should report qdrant error without affecting other services."""
     mocker.patch("api.main.check_postgres", new=AsyncMock(return_value="ok"))
-
-    mock_redis = MagicMock()
-    mock_redis.ping.return_value = True
-    mocker.patch("api.main.redis.Redis", return_value=mock_redis)
-
+    mocker.patch("api.main.check_redis", new=AsyncMock(return_value="ok"))
     mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="qdrant unreachable"))
 
     result = await health_check()
@@ -82,11 +66,7 @@ async def test_health_check_qdrant_failure_isolated(mocker) -> None:
 async def test_health_check_all_services_down(mocker) -> None:
     """health_check should report errors for all services when all are unreachable."""
     mocker.patch("api.main.check_postgres", new=AsyncMock(return_value="pg error"))
-
-    mock_redis = MagicMock()
-    mock_redis.ping.side_effect = ConnectionError("redis error")
-    mocker.patch("api.main.redis.Redis", return_value=mock_redis)
-
+    mocker.patch("api.main.check_redis", new=AsyncMock(return_value="redis error"))
     mocker.patch("api.main.check_qdrant", new=AsyncMock(return_value="qdrant error"))
 
     result = await health_check()

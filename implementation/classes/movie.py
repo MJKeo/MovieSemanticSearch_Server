@@ -61,6 +61,7 @@ class BaseMovie(BaseModel):
     production_companies: list[str]
     # Popularity
     imdb_rating: Optional[float] = None
+    imdb_vote_count: int = 0
     metacritic_rating: Optional[float] = None
     reception_summary: Optional[str] = None
     featured_reviews: list[IMDBFeaturedReview] = []

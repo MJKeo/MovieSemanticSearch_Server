@@ -1,5 +1,6 @@
 """Unit tests for db.postgres methods."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -398,6 +399,53 @@ async def test_refresh_title_token_doc_frequency_calls_refresh_statement(mocker)
 
 
 @pytest.mark.asyncio
+async def test_refresh_movie_popularity_scores_with_existing_connection_runs_expected_steps(mocker) -> None:
+    """refresh_movie_popularity_scores should execute create/refresh/update/zero queries in order."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    conn = object()
+
+    await postgres.refresh_movie_popularity_scores(conn=conn)
+
+    assert execute_on_conn.await_count == 4
+    calls = execute_on_conn.await_args_list
+    assert calls[0].args[0] is conn
+    assert "CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_popularity_percentile" in calls[0].args[1]
+    assert calls[1].args[0] is conn
+    assert "REFRESH MATERIALIZED VIEW public.mv_popularity_percentile;" in calls[1].args[1]
+    assert calls[2].args[0] is conn
+    assert "SET popularity_score = 1.0 / (1.0 + exp(-%s * (mv.percentile - %s)))" in calls[2].args[1]
+    assert calls[2].args[2] == (15.0, 0.70)
+    assert calls[3].args[0] is conn
+    assert "WHERE imdb_vote_count IS NULL" in calls[3].args[1]
+
+
+@pytest.mark.asyncio
+async def test_refresh_movie_popularity_scores_without_connection_commits_pool_connection(mocker) -> None:
+    """refresh_movie_popularity_scores should use pool connection and commit when conn is omitted."""
+    connection, _ = _mock_pool_connection(mocker)
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+
+    await postgres.refresh_movie_popularity_scores()
+
+    assert execute_on_conn.await_count == 4
+    for call in execute_on_conn.await_args_list:
+        assert call.args[0] is connection
+    connection.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_movie_popularity_scores_uses_custom_sigmoid_parameters(mocker) -> None:
+    """refresh_movie_popularity_scores should pass caller-provided sigmoid params into UPDATE query."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    conn = object()
+
+    await postgres.refresh_movie_popularity_scores(conn=conn, threshold=0.8, steepness_k=12.5)
+
+    update_call = execute_on_conn.await_args_list[2]
+    assert update_call.args[2] == (12.5, 0.8)
+
+
+@pytest.mark.asyncio
 async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params(mocker) -> None:
     """upsert_movie_card should serialize sequences to lists and pass expected argument order."""
     execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
@@ -411,13 +459,14 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params(mock
         genre_ids=(1, 2),
         watch_offer_keys=(100, 200),
         audio_language_ids=(7, 8),
+        imdb_vote_count=945678,
         reception_score=72.5,
         title_token_count=4,
     )
     conn_arg, query, params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert "public.movie_card" in query
-    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 72.5, 4)
+    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, 4)
 
 
 @pytest.mark.asyncio
@@ -532,16 +581,19 @@ async def test_fetch_movie_cards_maps_rows_to_dicts(mocker) -> None:
         "db.postgres._execute_read",
         new=AsyncMock(
             return_value=[
-                (1, "A", "u", 10, 90, 2, [1], [11], [21], 80.5),
-                (2, "B", None, None, None, None, [], [], [], None),
+                (1, "A", "u", 10, 90, 2, [1], [11], [21], 945678, 0.82, 80.5),
+                (2, "B", None, None, None, None, [], [], [], 0, 0.0, None),
             ]
         ),
     )
     result = await postgres.fetch_movie_cards([1, 2])
     assert result[0]["movie_id"] == 1
     assert result[0]["title"] == "A"
+    assert result[0]["imdb_vote_count"] == 945678
+    assert result[0]["popularity_score"] == 0.82
     assert result[1]["movie_id"] == 2
     assert "audio_language_ids" in result[0]
+    assert "popularity_score" in result[0]
 
 
 @pytest.mark.asyncio
@@ -662,3 +714,10 @@ def test_genre_from_string_resolves_all_members() -> None:
         assert resolved is genre, (
             f"Genre.from_string({genre.value!r}) returned {resolved!r}, expected Genre.{genre.name}"
         )
+
+
+def test_movie_card_init_sql_contains_popularity_columns() -> None:
+    """Base SQL bootstrap should declare and backfill-safe add popularity columns."""
+    sql = Path("db/init/01_create_postgres_tables.sql").read_text(encoding="utf-8")
+    assert "popularity_score" in sql
+    assert "imdb_vote_count" in sql

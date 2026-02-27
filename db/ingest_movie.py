@@ -125,6 +125,7 @@ async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
         genre_ids = await create_genre_ids(movie, conn=conn)
         watch_offer_keys = await create_watch_offer_keys(movie, conn=conn)
         audio_language_ids = await create_audio_language_ids(movie, conn=conn)
+        imdb_vote_count = int(getattr(movie, "imdb_vote_count", 0) or 0)
         reception_score = movie.reception_score()
         title_token_count = len(movie.normalized_title_tokens())
 
@@ -138,6 +139,7 @@ async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
             genre_ids=genre_ids,
             watch_offer_keys=watch_offer_keys,
             audio_language_ids=audio_language_ids,
+            imdb_vote_count=imdb_vote_count,
             reception_score=reception_score,
             title_token_count=title_token_count,
             conn=conn,

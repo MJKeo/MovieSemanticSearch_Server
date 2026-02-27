@@ -77,6 +77,13 @@ def extract_imdb_attributes(main_page_html: str) -> dict:
     # Optional field: metacritic_rating may exist else defaults to None
     metacritic_rating = _safe_get(atf, ["metacritic", "metascore", "score"])
 
+    # Optional field: imdb_vote_count may be missing; default to 0
+    imdb_vote_count_raw = _safe_get(atf, ["ratingsSummary", "voteCount"], 0)
+    try:
+        imdb_vote_count = int(imdb_vote_count_raw) if imdb_vote_count_raw is not None else 0
+    except (TypeError, ValueError):
+        imdb_vote_count = 0
+
     # Interests -> your "Keywords" list (Japanese, Anime, Coming-of-Age, ...)
     # Filter out falsy values from the list
     interest_edges = _safe_get(atf, ["interests", "edges"], []) or []
@@ -159,6 +166,7 @@ def extract_imdb_attributes(main_page_html: str) -> dict:
         "overview": overview,
         "keywords": keywords,  # interest-based keywords list
         "imdb_rating": imdb_rating,
+        "imdb_vote_count": imdb_vote_count,
         "metacritic_rating": metacritic_rating,
         "user_review_summary": user_review_summary,
         "genres": genres,

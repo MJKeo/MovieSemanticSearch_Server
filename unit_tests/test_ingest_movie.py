@@ -25,6 +25,7 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
             genre_ids=(1, 2),
             watch_offer_keys=(100, 200),
             audio_language_ids=(7, 8),
+            imdb_vote_count=945678,
             reception_score=72.5,
             title_token_count=4,
         )
@@ -34,7 +35,7 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
     conn_arg, query, params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert "public.movie_card" in query
-    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 72.5, 4)
+    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, 4)
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,7 @@ async def test_ingest_movie_card_raises_for_invalid_maturity_rank(mocker) -> Non
 @pytest.mark.asyncio
 async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker, base_movie_factory) -> None:
     """ingest_movie_card should compute values and call helper + movie-card upsert functions."""
-    movie = base_movie_factory()
+    movie = base_movie_factory(imdb_vote_count=945678)
     create_genres = mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[10, 11]))
     create_watch_keys = mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[100, 200]))
     create_langs = mocker.patch("db.ingest_movie.create_audio_language_ids", new=AsyncMock(return_value=[5]))
@@ -112,8 +113,56 @@ async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker
     kwargs = upsert_card.await_args.kwargs
     assert kwargs["movie_id"] == 1
     assert kwargs["title"] == "Spider-Man"
+    assert kwargs["imdb_vote_count"] == 945678
     assert kwargs["title_token_count"] == 3
     assert kwargs["conn"] is None
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_card_casts_string_imdb_vote_count_to_int(mocker) -> None:
+    """ingest_movie_card should coerce imdb_vote_count to int before upsert."""
+    movie = SimpleNamespace(
+        tmdb_id=1,
+        title="Movie",
+        poster_url="https://img.test/poster.png",
+        duration=120,
+        imdb_vote_count="12345",
+        release_ts=lambda: 1_577_836_800,
+        maturity_rating_and_rank=lambda: ("pg-13", 3),
+        reception_score=lambda: 70.0,
+        normalized_title_tokens=lambda: ["movie"],
+    )
+    mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[]))
+    mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[]))
+    mocker.patch("db.ingest_movie.create_audio_language_ids", new=AsyncMock(return_value=[]))
+    upsert_card = mocker.patch("db.ingest_movie.upsert_movie_card", new=AsyncMock())
+
+    await ingest_movie.ingest_movie_card(movie)
+
+    assert upsert_card.await_args.kwargs["imdb_vote_count"] == 12345
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_card_invalid_imdb_vote_count_raises_value_error(mocker) -> None:
+    """ingest_movie_card should fail fast when imdb_vote_count cannot be cast to int."""
+    movie = SimpleNamespace(
+        tmdb_id=1,
+        title="Movie",
+        poster_url="https://img.test/poster.png",
+        duration=120,
+        imdb_vote_count="not-a-number",
+        release_ts=lambda: 1_577_836_800,
+        maturity_rating_and_rank=lambda: ("pg-13", 3),
+        reception_score=lambda: 70.0,
+        normalized_title_tokens=lambda: ["movie"],
+    )
+    mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[]))
+    mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[]))
+    mocker.patch("db.ingest_movie.create_audio_language_ids", new=AsyncMock(return_value=[]))
+    mocker.patch("db.ingest_movie.upsert_movie_card", new=AsyncMock())
+
+    with pytest.raises(ValueError, match="Movie ingestion failed"):
+        await ingest_movie.ingest_movie_card(movie)
 
 
 @pytest.mark.asyncio
