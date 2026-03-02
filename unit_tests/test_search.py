@@ -9,17 +9,71 @@ from db.lexical_search import LexicalSearchDebug, LexicalSearchResult
 from db.vector_search import VectorSearchResult, VectorSearchDebug, CandidateVectorScores
 from db.vector_scoring import VectorScoringResult
 from implementation.classes.schemas import (
+    ChannelWeightsResponse,
     MetadataFilters,
+    MetadataPreferencesResponse,
     ExtractedEntitiesResponse,
     LexicalCandidate,
     VectorWeights,
     VectorSubqueries,
+    DatePreference,
+    NumericalPreference,
+    GenreListPreference,
+    LanguageListPreference,
+    WatchProvidersPreference,
+    MaturityPreference,
+    PopularTrendingPreference,
+    ReceptionPreference,
 )
-from implementation.classes.enums import RelevanceSize, VectorName
+from implementation.classes.enums import RelevanceSize, ReceptionType, VectorName
 
 
 DUMMY_QUERY = "find me a fun movie"
 DUMMY_FILTERS = MetadataFilters()
+
+
+def _default_metadata_preferences() -> MetadataPreferencesResponse:
+    return MetadataPreferencesResponse(
+        release_date_preference=DatePreference(result=None),
+        duration_preference=NumericalPreference(result=None),
+        genres_preference=GenreListPreference(result=None),
+        audio_languages_preference=LanguageListPreference(result=None),
+        watch_providers_preference=WatchProvidersPreference(result=None),
+        maturity_rating_preference=MaturityPreference(result=None),
+        popular_trending_preference=PopularTrendingPreference(
+            prefers_trending_movies=False, prefers_popular_movies=False,
+        ),
+        reception_preference=ReceptionPreference(reception_type=ReceptionType.NO_PREFERENCE),
+    )
+
+
+def _default_channel_weights() -> ChannelWeightsResponse:
+    return ChannelWeightsResponse(
+        lexical_relevance=RelevanceSize.MEDIUM,
+        metadata_relevance=RelevanceSize.MEDIUM,
+        vector_relevance=RelevanceSize.MEDIUM,
+    )
+
+
+def _mock_new_dependencies():
+    """Return a context manager that patches the three new async dependencies."""
+    metadata_prefs = _default_metadata_preferences()
+    channel_weights = _default_channel_weights()
+
+    return (
+        patch(
+            "db.search.extract_all_metadata_preferences_async",
+            new=AsyncMock(return_value=metadata_prefs),
+        ),
+        patch(
+            "db.search.create_channel_weights_async",
+            new=AsyncMock(return_value=channel_weights),
+        ),
+        patch(
+            "db.metadata_scoring.create_metadata_scores",
+            new=AsyncMock(side_effect=lambda prefs, candidates: candidates),
+        ),
+    )
 
 
 def _lexical_debug() -> LexicalSearchDebug:
@@ -90,10 +144,12 @@ async def test_search_calls_both_with_correct_args():
 
     mock_client = AsyncMock()
 
+    p1, p2, p3 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)) as mock_lex,
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)) as mock_vec,
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
+        p1, p2, p3,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -136,10 +192,12 @@ async def test_search_merges_overlapping_candidates():
 
     mock_client = AsyncMock()
 
+    p1, p2, p3 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
+        p1, p2, p3,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -180,10 +238,12 @@ async def test_search_non_overlapping_candidates():
 
     mock_client = AsyncMock()
 
+    p1, p2, p3 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
+        p1, p2, p3,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -216,10 +276,12 @@ async def test_search_debug_fields_populated():
 
     mock_client = AsyncMock()
 
+    p1, p2, p3 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
+        p1, p2, p3,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -227,6 +289,8 @@ async def test_search_debug_fields_populated():
     assert result.debug.vector_debug is vec_debug
     assert result.debug.total_candidates == 0
     assert result.debug.total_latency_ms > 0
+    assert result.debug.metadata_preferences_debug is not None
+    assert result.debug.channel_weights_debug is not None
 
 
 @pytest.mark.asyncio
@@ -247,10 +311,12 @@ async def test_search_empty_results():
 
     mock_client = AsyncMock()
 
+    p1, p2, p3 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
+        p1, p2, p3,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 

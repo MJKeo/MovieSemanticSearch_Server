@@ -1,5 +1,7 @@
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
+
 
 from implementation.llms.generic_methods import generate_kimi_response, generate_kimi_response_async
 from implementation.prompts.lexical_prompts import EXTRACT_LEXICAL_ENTITIES_SYSTEM_PROMPT
@@ -11,6 +13,7 @@ from implementation.classes.enums import (
     VectorCollectionName,
     VectorName,
     MetadataPreferenceName,
+    ReceptionType,
 )
 from implementation.classes.schemas import (
     ExtractedEntitiesResponse,
@@ -59,22 +62,31 @@ _METADATA_PREFERENCE_TO_RESPONSE_MAPPING: dict[MetadataPreferenceName, tuple[typ
     MetadataPreferenceName.RECEPTION: (ReceptionPreference, "reception_preference"),
 }
 
+_METADATA_PREFERENCE_DEFAULT_FACTORIES: dict[MetadataPreferenceName, Callable[[], Any]] = {
+    MetadataPreferenceName.RELEASE_DATE: lambda: DatePreference(result=None),
+    MetadataPreferenceName.DURATION: lambda: NumericalPreference(result=None),
+    MetadataPreferenceName.GENRES: lambda: GenreListPreference(result=None),
+    MetadataPreferenceName.AUDIO_LANGUAGES: lambda: LanguageListPreference(result=None),
+    MetadataPreferenceName.WATCH_PROVIDERS: lambda: WatchProvidersPreference(result=None),
+    MetadataPreferenceName.MATURITY_RATING: lambda: MaturityPreference(result=None),
+    MetadataPreferenceName.POPULARITY: lambda: PopularTrendingPreference(
+        prefers_trending_movies=False,
+        prefers_popular_movies=False,
+    ),
+    MetadataPreferenceName.RECEPTION: lambda: ReceptionPreference(
+        reception_type=ReceptionType.NO_PREFERENCE,
+    ),
+}
+
+
+def _build_default_metadata_preference(preference_name: MetadataPreferenceName) -> Any:
+    """Create the safe fallback response for a single metadata preference."""
+    return _METADATA_PREFERENCE_DEFAULT_FACTORIES[preference_name]()
+
 
 # ===============================
 #           Lexical
 # ===============================
-
-def extract_lexical_entities(query: str) -> Optional[ExtractedEntitiesResponse]:
-    """
-        Extract lexical entities (characters, franchises, people, studios, titles) from query.
-        Throws an error if anything fails.
-    """
-    return generate_kimi_response(
-        user_prompt=f"User query: \"{query}\"",
-        system_prompt=EXTRACT_LEXICAL_ENTITIES_SYSTEM_PROMPT,
-        response_format=ExtractedEntitiesResponse,
-    )
-
 
 async def extract_lexical_entities_async(query: str) -> Optional[ExtractedEntitiesResponse]:
     """
@@ -92,12 +104,12 @@ async def extract_lexical_entities_async(query: str) -> Optional[ExtractedEntiti
 #        Channel Weights
 # ===============================
 
-def create_channel_weights(query) -> Optional[ChannelWeightsResponse]:
+async def create_channel_weights_async(query) -> Optional[ChannelWeightsResponse]:
     """
         Extract channel weights (lexical, metadata, vector relevance) from query.
         Throws an error if anything fails.
     """
-    return generate_kimi_response(
+    return await generate_kimi_response_async(
         user_prompt=f"User query: \"{query}\"",
         system_prompt=CHANNEL_WEIGHTS_SYSTEM_PROMPT,
         response_format=ChannelWeightsResponse,
@@ -108,48 +120,50 @@ def create_channel_weights(query) -> Optional[ChannelWeightsResponse]:
 #      Metadata Preferences
 # ===============================
 
-def extract_single_metadata_preference(query: str, preference_name: MetadataPreferenceName) -> Optional[Any]:
+async def extract_single_metadata_preference_async(query: str, preference_name: MetadataPreferenceName) -> Optional[Any]:
     """
+    Async version of extract_single_metadata_preference.
     Extract a single metadata preference from the query using the LLM.
     Returns the parsed schema or None if extraction fails.
     """
     response_schema, _ = _METADATA_PREFERENCE_TO_RESPONSE_MAPPING[preference_name]
     system_prompt = ALL_METADATA_EXTRACTION_PROMPTS[preference_name]
-    return generate_kimi_response(
+    return await generate_kimi_response_async(
         user_prompt=f"User query: \"{query}\"",
         system_prompt=system_prompt,
         response_format=response_schema,
     )
 
 
-def extract_all_metadata_preferences(query: str) -> Optional[MetadataPreferencesResponse]:
+async def extract_all_metadata_preferences_async(query: str) -> MetadataPreferencesResponse:
     """
-    Run extract_single_metadata_preference in parallel for each metadata preference,
-    then assemble a MetadataPreferencesResponse. Returns None if any
-    metadata preference extraction fails or returns None.
+    Run extract_single_metadata_preference_async concurrently for each metadata preference,
+    then assemble a MetadataPreferencesResponse.
+
+    If any individual extraction raises an exception or returns None, that preference
+    is replaced with its default "no preference" value while the remaining results
+    are preserved.
     """
-    results: dict[MetadataPreferenceName, Any] = {}
+    preferences = tuple(_METADATA_PREFERENCE_TO_RESPONSE_MAPPING)
+    tasks = [
+        extract_single_metadata_preference_async(query, preference_name)
+        for preference_name in preferences
+    ]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    with ThreadPoolExecutor(max_workers=len(_METADATA_PREFERENCE_TO_RESPONSE_MAPPING)) as executor:
-        future_to_preference = {
-            executor.submit(extract_single_metadata_preference, query, pref): pref
-            for pref in _METADATA_PREFERENCE_TO_RESPONSE_MAPPING
-        }
-        for future in as_completed(future_to_preference):
-            preference = future_to_preference[future]
-            try:
-                result = future.result()
-            except Exception as e:
-                print(f"Error extracting metadata preference {preference} for query {query}: {e}")
-                return None
-            if result is None:
-                return None
-            results[preference] = result
-
-    # Build MetadataPreferencesResponse from results, using mapping for field names.
     kwargs: dict[str, Any] = {}
-    for pref, (_, field_name) in _METADATA_PREFERENCE_TO_RESPONSE_MAPPING.items():
-        kwargs[field_name] = results[pref]
+    for preference_name, raw_result in zip(preferences, raw_results):
+        _, field_name = _METADATA_PREFERENCE_TO_RESPONSE_MAPPING[preference_name]
+
+        if isinstance(raw_result, Exception):
+            kwargs[field_name] = _build_default_metadata_preference(preference_name)
+            continue
+
+        if raw_result is None:
+            kwargs[field_name] = _build_default_metadata_preference(preference_name)
+            continue
+
+        kwargs[field_name] = raw_result
 
     return MetadataPreferencesResponse(**kwargs)
 
@@ -168,38 +182,6 @@ async def create_single_vector_subquery_async(
         response_format=VectorCollectionSubqueryData,
     )
 
-# def create_all_vector_subqueries(query: str) -> Optional[VectorSubqueriesResponse]:
-#     """
-#     Run create_single_vector_subquery in parallel for each vector collection, then assemble
-#     a VectorSubqueriesResponse. Returns None if any single subquery fails.
-#     """
-#     results: dict[VectorCollectionName, Optional[VectorCollectionSubqueryData]] = {}
-
-#     with ThreadPoolExecutor(max_workers=len(_COLLECTION_TO_RESPONSE_FIELD)) as executor:
-#         future_to_collection = {
-#             executor.submit(create_single_vector_subquery, query, collection): collection
-#             for collection in _COLLECTION_TO_RESPONSE_FIELD
-#         }
-#         for future in as_completed(future_to_collection):
-#             collection = future_to_collection[future]
-#             try:
-#                 result = future.result()
-#             except Exception:
-#                 return None
-#             if result is None:
-#                 return None
-#             results[collection] = result
-
-#     return VectorSubqueriesResponse(
-#         plot_events_data=results[VectorCollectionName.PLOT_EVENTS_VECTORS],
-#         plot_analysis_data=results[VectorCollectionName.PLOT_ANALYSIS_VECTORS],
-#         viewer_experience_data=results[VectorCollectionName.VIEWER_EXPERIENCE_VECTORS],
-#         watch_context_data=results[VectorCollectionName.WATCH_CONTEXT_VECTORS],
-#         narrative_techniques_data=results[VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS],
-#         production_data=results[VectorCollectionName.PRODUCTION_VECTORS],
-#         reception_data=results[VectorCollectionName.RECEPTION_VECTORS],
-#     )
-
 
 # ===============================
 #        Vector Weights
@@ -211,132 +193,4 @@ async def create_single_vector_weight_async(query: str, collection_name: VectorN
         user_prompt=f'User query: "{query}"',
         system_prompt=VECTOR_WEIGHT_SYSTEM_PROMPTS[collection_name],
         response_format=VectorCollectionWeightData,
-    )
-
-# def create_all_vector_weights(query: str) -> Optional[VectorWeightsResponse]:
-#     """
-#     Run create_single_vector_weight in parallel for each vector collection, then assemble
-#     a VectorWeightsResponse. Returns None if any single weight creation fails.
-#     """
-#     results: dict[VectorCollectionName, Optional[VectorCollectionWeightData]] = {}
-
-#     with ThreadPoolExecutor(max_workers=len(_COLLECTION_TO_RESPONSE_FIELD)) as executor:
-#         future_to_collection = {
-#             executor.submit(create_single_vector_weight, query, collection): collection
-#             for collection in _COLLECTION_TO_RESPONSE_FIELD
-#         }
-#         for future in as_completed(future_to_collection):
-#             collection = future_to_collection[future]
-#             try:
-#                 result = future.result()
-#             except Exception:
-#                 return None
-#             if result is None:
-#                 return None
-#             results[collection] = result
-
-#     return VectorWeightsResponse(
-#         plot_events_data=results[VectorCollectionName.PLOT_EVENTS_VECTORS],
-#         plot_analysis_data=results[VectorCollectionName.PLOT_ANALYSIS_VECTORS],
-#         viewer_experience_data=results[VectorCollectionName.VIEWER_EXPERIENCE_VECTORS],
-#         watch_context_data=results[VectorCollectionName.WATCH_CONTEXT_VECTORS],
-#         narrative_techniques_data=results[VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS],
-#         production_data=results[VectorCollectionName.PRODUCTION_VECTORS],
-#         reception_data=results[VectorCollectionName.RECEPTION_VECTORS],
-#     )
-
-
-# ===============================
-#   Overall Query Understanding
-# ===============================
-
-def create_overall_query_understanding(query: str) -> Optional[QueryUnderstandingResponse]:
-    """
-    Run all 24 query-understanding tasks in parallel (lexical, channel weights, 8 metadata
-    preferences, 7 vector subqueries, 7 vector weights), then assemble QueryUnderstandingResponse.
-    Returns None if: lexical_entities, channel_weights, any metadata preference, any vector
-    subquery, any vector weight fails or returns None; or if any exception occurs.
-    """
-    # Build all 24 tasks: 1 lexical + 1 channel_weights + 8 metadata + 7 subqueries + 7 weights
-    future_to_key: dict = {}
-    total_tasks = (
-        1  # lexical
-        + 1  # channel_weights
-        + len(_METADATA_PREFERENCE_TO_RESPONSE_MAPPING)
-        + len(_COLLECTION_TO_RESPONSE_FIELD)
-        + len(_COLLECTION_TO_RESPONSE_FIELD)
-    )
-
-    with ThreadPoolExecutor(max_workers=total_tasks) as executor:
-        future_to_key[executor.submit(extract_lexical_entities, query)] = ("lexical", None)
-        future_to_key[executor.submit(create_channel_weights, query)] = ("channel_weights", None)
-
-        for pref in _METADATA_PREFERENCE_TO_RESPONSE_MAPPING:
-            future_to_key[executor.submit(extract_single_metadata_preference, query, pref)] = (
-                "metadata",
-                pref,
-            )
-
-        for coll in _COLLECTION_TO_RESPONSE_FIELD:
-            future_to_key[executor.submit(create_single_vector_subquery_async, query, coll)] = (
-                "subquery",
-                coll,
-            )
-
-        for coll in _COLLECTION_TO_RESPONSE_FIELD:
-            future_to_key[executor.submit(create_single_vector_weight_async, query, coll)] = (
-                "weight",
-                coll,
-            )
-
-        results: dict = {}
-        for future in as_completed(future_to_key):
-            key = future_to_key[future]
-            try:
-                result = future.result()
-                task_type, identifier = key
-
-                # These tasks must succeed; None means failure
-                if task_type == "lexical" or task_type == "channel_weights":
-                    if result is None:
-                        return None
-                elif task_type == "subquery" or task_type == "weight":
-                    if result is None:
-                        return None
-                elif task_type == "metadata":
-                    if result is None:
-                        return None
-
-                results[key] = result
-            except Exception:
-                return None
-
-    # Assemble MetadataPreferencesResponse from metadata results.
-    # All metadata preferences are required and already validated as non-None.
-    metadata_kwargs: dict[str, Any] = {}
-    for pref, (_, field_name) in _METADATA_PREFERENCE_TO_RESPONSE_MAPPING.items():
-        metadata_kwargs[field_name] = results[("metadata", pref)]
-
-    return QueryUnderstandingResponse(
-        channel_weights=results[("channel_weights", None)],
-        lexical_entities=results[("lexical", None)],
-        metadata_preferences=MetadataPreferencesResponse(**metadata_kwargs),
-        vector_subqueries=VectorSubqueriesResponse(
-            plot_events_data=results[("subquery", VectorCollectionName.PLOT_EVENTS_VECTORS)],
-            plot_analysis_data=results[("subquery", VectorCollectionName.PLOT_ANALYSIS_VECTORS)],
-            viewer_experience_data=results[("subquery", VectorCollectionName.VIEWER_EXPERIENCE_VECTORS)],
-            watch_context_data=results[("subquery", VectorCollectionName.WATCH_CONTEXT_VECTORS)],
-            narrative_techniques_data=results[("subquery", VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS)],
-            production_data=results[("subquery", VectorCollectionName.PRODUCTION_VECTORS)],
-            reception_data=results[("subquery", VectorCollectionName.RECEPTION_VECTORS)],
-        ),
-        vector_weights=VectorWeightsResponse(
-            plot_events_data=results[("weight", VectorCollectionName.PLOT_EVENTS_VECTORS)],
-            plot_analysis_data=results[("weight", VectorCollectionName.PLOT_ANALYSIS_VECTORS)],
-            viewer_experience_data=results[("weight", VectorCollectionName.VIEWER_EXPERIENCE_VECTORS)],
-            watch_context_data=results[("weight", VectorCollectionName.WATCH_CONTEXT_VECTORS)],
-            narrative_techniques_data=results[("weight", VectorCollectionName.NARRATIVE_TECHNIQUES_VECTORS)],
-            production_data=results[("weight", VectorCollectionName.PRODUCTION_VECTORS)],
-            reception_data=results[("weight", VectorCollectionName.RECEPTION_VECTORS)],
-        ),
     )
