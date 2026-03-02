@@ -1,14 +1,68 @@
 """Unit tests for db.search (unified search orchestrator)."""
 
+import importlib
+import sys
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+try:
+    importlib.import_module("qdrant_client")
+except ModuleNotFoundError:
+    qdrant_module = ModuleType("qdrant_client")
+    qdrant_models_module = ModuleType("qdrant_client.models")
+
+    class _StubAsyncQdrantClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class _StubQdrantModel:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    qdrant_module.AsyncQdrantClient = _StubAsyncQdrantClient
+    qdrant_models_module.Filter = _StubQdrantModel
+    qdrant_models_module.FieldCondition = _StubQdrantModel
+    qdrant_models_module.MatchAny = _StubQdrantModel
+    qdrant_models_module.Range = _StubQdrantModel
+    qdrant_models_module.SearchParams = _StubQdrantModel
+    qdrant_models_module.QuantizationSearchParams = _StubQdrantModel
+    sys.modules["qdrant_client"] = qdrant_module
+    sys.modules["qdrant_client.models"] = qdrant_models_module
+
+try:
+    importlib.import_module("implementation.llms.generic_methods")
+except ModuleNotFoundError:
+    generic_methods_module = ModuleType("implementation.llms.generic_methods")
+
+    async def _stub_generate_vector_embedding(*args, **kwargs):
+        return []
+
+    generic_methods_module.generate_vector_embedding = _stub_generate_vector_embedding
+    sys.modules["implementation.llms.generic_methods"] = generic_methods_module
+
+try:
+    importlib.import_module("implementation.llms.query_understanding_methods")
+except ImportError:
+    query_methods_module = ModuleType("implementation.llms.query_understanding_methods")
+
+    async def _stub_async_method(*args, **kwargs):
+        return None
+
+    query_methods_module.create_single_vector_weight_async = _stub_async_method
+    query_methods_module.create_single_vector_subquery_async = _stub_async_method
+    query_methods_module.create_channel_weights_async = _stub_async_method
+    query_methods_module.extract_all_metadata_preferences_async = _stub_async_method
+    query_methods_module.extract_lexical_entities_async = _stub_async_method
+    sys.modules["implementation.llms.query_understanding_methods"] = query_methods_module
 
 from db.search import search, SearchCandidate, SearchDebug, SearchResult
 from db.lexical_search import LexicalSearchDebug, LexicalSearchResult
 from db.vector_search import VectorSearchResult, VectorSearchDebug, CandidateVectorScores
 from db.vector_scoring import VectorScoringResult
 from implementation.classes.schemas import (
+    BudgetSizePreference,
     ChannelWeightsResponse,
     MetadataFilters,
     MetadataPreferencesResponse,
@@ -25,7 +79,7 @@ from implementation.classes.schemas import (
     PopularTrendingPreference,
     ReceptionPreference,
 )
-from implementation.classes.enums import RelevanceSize, ReceptionType, VectorName
+from implementation.classes.enums import BudgetSize, RelevanceSize, ReceptionType, VectorName
 
 
 DUMMY_QUERY = "find me a fun movie"
@@ -44,6 +98,9 @@ def _default_metadata_preferences() -> MetadataPreferencesResponse:
             prefers_trending_movies=False, prefers_popular_movies=False,
         ),
         reception_preference=ReceptionPreference(reception_type=ReceptionType.NO_PREFERENCE),
+        budget_size_preference=BudgetSizePreference(
+            budget_size=BudgetSize.NO_PREFERENCE,
+        ),
     )
 
 

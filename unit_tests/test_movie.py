@@ -2,6 +2,7 @@
 
 import pytest
 
+from implementation.classes.enums import BudgetSize
 from implementation.classes.schemas import MajorCharacter, PlotEventsMetadata, WatchProvider
 
 
@@ -68,18 +69,18 @@ def test_duration_bucket_boundaries(base_movie_factory) -> None:
 
 def test_budget_bucket_for_era_core_paths(base_movie_factory) -> None:
     """budget_bucket_for_era should classify low, high, and in-range budgets."""
-    assert base_movie_factory(budget=None).budget_bucket_for_era() == ""
-    assert base_movie_factory(release_date="2012-01-01", budget=10_000_000).budget_bucket_for_era() == "small budget"
-    assert base_movie_factory(release_date="2012-01-01", budget=250_000_001).budget_bucket_for_era() == "big budget, blockbuster"
-    assert base_movie_factory(release_date="2012-01-01", budget=80_000_000).budget_bucket_for_era() == ""
+    assert base_movie_factory(budget=None).budget_bucket_for_era() is None
+    assert base_movie_factory(release_date="2012-01-01", budget=10_000_000).budget_bucket_for_era() == BudgetSize.SMALL
+    assert base_movie_factory(release_date="2012-01-01", budget=250_000_001).budget_bucket_for_era() == BudgetSize.LARGE
+    assert base_movie_factory(release_date="2012-01-01", budget=80_000_000).budget_bucket_for_era() is None
 
 
 def test_budget_bucket_for_era_fallback_decades(base_movie_factory) -> None:
     """budget_bucket_for_era should clamp decades before 1920 and after 2030."""
     pre_1920 = base_movie_factory(release_date="1899-01-01", budget=50_000)
     post_2030 = base_movie_factory(release_date="2035-01-01", budget=300_000_000)
-    assert pre_1920.budget_bucket_for_era() == "small budget"
-    assert post_2030.budget_bucket_for_era() == "big budget, blockbuster"
+    assert pre_1920.budget_bucket_for_era() == BudgetSize.SMALL
+    assert post_2030.budget_bucket_for_era() == BudgetSize.LARGE
 
 
 def test_maturity_guidance_text_unrated_uses_parental_items(base_movie_factory) -> None:
@@ -247,15 +248,15 @@ def test_duration_bucket_zero_and_negative(base_movie_factory) -> None:
 
 
 def test_budget_bucket_zero_is_small(base_movie_factory) -> None:
-    """budget_bucket_for_era should classify a budget of 0 as 'small budget'."""
+    """budget_bucket_for_era should classify a budget of 0 as BudgetSize.SMALL."""
     movie = base_movie_factory(release_date="2020-01-01", budget=0)
-    assert movie.budget_bucket_for_era() == "small budget"
+    assert movie.budget_bucket_for_era() == BudgetSize.SMALL
 
 
 def test_budget_bucket_invalid_release_date(base_movie_factory) -> None:
-    """budget_bucket_for_era should return empty string when release_date is unparseable."""
+    """budget_bucket_for_era should return None when release_date is unparseable."""
     movie = base_movie_factory(release_date="not-a-date", budget=50_000_000)
-    assert movie.budget_bucket_for_era() == ""
+    assert movie.budget_bucket_for_era() is None
 
 
 def test_normalized_title_tokens_multi_word_no_hyphens(base_movie_factory) -> None:

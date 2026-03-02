@@ -22,6 +22,7 @@ from .enums import (
     Genre,
     EntityCategory,
     RelevanceSize,
+    BudgetSize,
 )
 
 
@@ -608,6 +609,10 @@ class ReceptionPreference(BaseModel):
     def contains_valid_data(self) -> bool:
         return self.reception_type not in {ReceptionType.NO_PREFERENCE, ReceptionType.NO_PREFERENCE.value}
 
+class BudgetSizePreference(BaseModel):
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+    budget_size: BudgetSize
+
 class MetadataPreferencesResponse(BaseModel):
     release_date_preference: DatePreference
     duration_preference: NumericalPreference
@@ -617,6 +622,7 @@ class MetadataPreferencesResponse(BaseModel):
     maturity_rating_preference: MaturityPreference
     popular_trending_preference: PopularTrendingPreference
     reception_preference: ReceptionPreference
+    budget_size_preference: BudgetSizePreference
 
     def has_active_preferences(self) -> bool:
         """Return True if at least one metadata preference contains actionable data."""
@@ -632,15 +638,24 @@ class MetadataPreferencesResponse(BaseModel):
             if pref.result is not None and pref.result.contains_valid_data():
                 return True
 
+        # RECEPTION
         if self.reception_preference.contains_valid_data():
             return True
 
+        # POPULAR TRENDING
         pt = self.popular_trending_preference
         if pt.prefers_trending_movies or pt.prefers_popular_movies:
             return True
 
+        # BUDGET SIZE
+        if isinstance(self.budget_size_preference.budget_size, BudgetSize):
+            if self.budget_size_preference.budget_size != BudgetSize.NO_PREFERENCE:
+                return True
+        elif isinstance(self.budget_size_preference.budget_size, str):
+            if self.budget_size_preference.budget_size != BudgetSize.NO_PREFERENCE.value:
+                return True
+        
         return False
-
 
 # -----------------------------
 #   LEXICAL ENTITY EXTRACTION

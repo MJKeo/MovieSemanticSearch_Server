@@ -1,9 +1,60 @@
 """Unit tests for db.ingest_movie methods."""
 
+import importlib
+import sys
 from types import SimpleNamespace
+from types import ModuleType
 from unittest.mock import AsyncMock
 
 import pytest
+
+try:
+    importlib.import_module("qdrant_client")
+except ModuleNotFoundError:
+    qdrant_module = ModuleType("qdrant_client")
+    qdrant_models_module = ModuleType("qdrant_client.models")
+
+    class _StubQdrantClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class _StubPointStruct:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    qdrant_module.QdrantClient = _StubQdrantClient
+    qdrant_models_module.PointStruct = _StubPointStruct
+    sys.modules["qdrant_client"] = qdrant_module
+    sys.modules["qdrant_client.models"] = qdrant_models_module
+
+try:
+    importlib.import_module("implementation.llms.generic_methods")
+except ModuleNotFoundError:
+    generic_methods_module = ModuleType("implementation.llms.generic_methods")
+
+    async def _stub_generate_vector_embedding(*args, **kwargs):
+        return []
+
+    generic_methods_module.generate_vector_embedding = _stub_generate_vector_embedding
+    sys.modules["implementation.llms.generic_methods"] = generic_methods_module
+
+try:
+    importlib.import_module("implementation.vectorize")
+except ModuleNotFoundError:
+    vectorize_module = ModuleType("implementation.vectorize")
+
+    def _stub_vectorize_text(*args, **kwargs) -> str:
+        return ""
+
+    vectorize_module.create_anchor_vector_text = _stub_vectorize_text
+    vectorize_module.create_plot_events_vector_text = _stub_vectorize_text
+    vectorize_module.create_plot_analysis_vector_text = _stub_vectorize_text
+    vectorize_module.create_viewer_experience_vector_text = _stub_vectorize_text
+    vectorize_module.create_watch_context_vector_text = _stub_vectorize_text
+    vectorize_module.create_narrative_techniques_vector_text = _stub_vectorize_text
+    vectorize_module.create_production_vector_text = _stub_vectorize_text
+    vectorize_module.create_reception_vector_text = _stub_vectorize_text
+    sys.modules["implementation.vectorize"] = vectorize_module
 
 from db import ingest_movie, postgres
 
@@ -35,7 +86,7 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
     conn_arg, query, params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert "public.movie_card" in query
-    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, 4)
+    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, None, 4)
 
 
 @pytest.mark.asyncio
@@ -65,8 +116,20 @@ async def test_ingest_movie_runs_card_and_lexical_ingestion(mocker, base_movie_f
         SimpleNamespace(tmdb_id=None),
         SimpleNamespace(tmdb_id=1, title=None),
         SimpleNamespace(tmdb_id=1, title="Movie", poster_url=None),
-        SimpleNamespace(tmdb_id=1, title="Movie", poster_url="url", release_date=None),
-        SimpleNamespace(tmdb_id=1, title="Movie", poster_url="url", release_date="2020-01-01", duration=None),
+        SimpleNamespace(
+            tmdb_id=1,
+            title="Movie",
+            poster_url="url",
+            release_ts=lambda: None,
+            duration=120,
+        ),
+        SimpleNamespace(
+            tmdb_id=1,
+            title="Movie",
+            poster_url="url",
+            release_ts=lambda: 1_577_836_800,
+            duration=None,
+        ),
     ],
 )
 async def test_ingest_movie_card_missing_required_values_raise_value_error(movie_obj, mocker) -> None:
@@ -84,7 +147,7 @@ async def test_ingest_movie_card_raises_for_invalid_maturity_rank(mocker) -> Non
         tmdb_id=1,
         title="Movie",
         poster_url="https://img.test/poster.png",
-        release_date="2020-01-01",
+        release_ts=lambda: 1_577_836_800,
         duration=120,
         maturity_rating_and_rank=lambda: (None, None),
     )
@@ -114,6 +177,7 @@ async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker
     assert kwargs["movie_id"] == 1
     assert kwargs["title"] == "Spider-Man"
     assert kwargs["imdb_vote_count"] == 945678
+    assert kwargs["budget_bucket"] == "large"
     assert kwargs["title_token_count"] == 3
     assert kwargs["conn"] is None
 
@@ -131,6 +195,7 @@ async def test_ingest_movie_card_casts_string_imdb_vote_count_to_int(mocker) -> 
         maturity_rating_and_rank=lambda: ("pg-13", 3),
         reception_score=lambda: 70.0,
         normalized_title_tokens=lambda: ["movie"],
+        budget_bucket_for_era=lambda: None,
     )
     mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[]))
     mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[]))
@@ -140,6 +205,7 @@ async def test_ingest_movie_card_casts_string_imdb_vote_count_to_int(mocker) -> 
     await ingest_movie.ingest_movie_card(movie)
 
     assert upsert_card.await_args.kwargs["imdb_vote_count"] == 12345
+    assert upsert_card.await_args.kwargs["budget_bucket"] is None
 
 
 @pytest.mark.asyncio
@@ -155,6 +221,7 @@ async def test_ingest_movie_card_invalid_imdb_vote_count_raises_value_error(mock
         maturity_rating_and_rank=lambda: ("pg-13", 3),
         reception_score=lambda: 70.0,
         normalized_title_tokens=lambda: ["movie"],
+        budget_bucket_for_era=lambda: None,
     )
     mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[]))
     mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[]))

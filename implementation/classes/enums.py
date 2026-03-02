@@ -112,6 +112,7 @@ class MetadataPreferenceName(Enum):
     MATURITY_RATING = "maturity_rating"
     POPULARITY = "popularity"
     RECEPTION = "reception"
+    BUDGET_SIZE = "budget_size"
 
 class Genre(Enum):
     genre_id: int
@@ -203,6 +204,11 @@ class RatingMatchOperation(Enum):
 class ReceptionType(Enum):
     CRITICALLY_ACCLAIMED = "critically_acclaimed"
     POORLY_RECEIVED = "poorly_received"
+    NO_PREFERENCE = "no_preference"
+
+class BudgetSize(Enum):
+    SMALL = "small"
+    LARGE = "large"
     NO_PREFERENCE = "no_preference"
 
 # ============================

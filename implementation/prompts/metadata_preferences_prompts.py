@@ -453,7 +453,7 @@ Determine if the user wants movies filtered by maturity rating.
 OUTPUT SCHEMA:
 {{
   "result": {{
-    "rating": "g" | "pg" | "pg-13" | "r" | "nc-17", (exact rating to match or lower / upper threshold)
+    "rating": "g" | "pg" | "pg-13" | "r" | "nc-17" | "unrated", (exact rating to match or lower / upper threshold)
     "match_operation": "exact" | "greater_than" | "less_than" | "greater_than_or_equal" | "less_than_or_equal"
   }}
 }}
@@ -475,6 +475,12 @@ Use "greater_than_or_equal" (floor) when:
 
 Use "exact" ONLY when:
 - User explicitly demands a specific rating: "must be rated R", "only PG-13"
+- User explicitly asks for "unrated"
+
+UNRATED RULE:
+- Only output rating="unrated" when the user explicitly says "unrated"
+- Never infer "unrated" from vague wording, missing-rating contexts, indie/underground film preferences, or content descriptors
+- If the user does not explicitly say "unrated", do not use "unrated" for rating under any circumstance
 
 AUDIENCE TO RATING MAPPING:
 - Young children (under 7): g or less_than_or_equal g
@@ -498,6 +504,9 @@ Output: {{"result": {{"rating": "r", "match_operation": "greater_than_or_equal"}
 
 Query: "I specifically want rated R horror"
 Output: {{"result": {{"rating": "r", "match_operation": "exact"}}}}
+
+Query: "unrated horror films"
+Output: {{"result": {{"rating": "unrated", "match_operation": "exact"}}}}
 
 Query: "nothing above PG-13"
 Output: {{"result": {{"rating": "pg-13", "match_operation": "less_than_or_equal"}}}}
@@ -528,6 +537,7 @@ CRITICAL RULES:
 - Studio/brand preferences are NOT maturity preferences
 - When rating is mentioned for suitability, default to "less_than_or_equal" (ceiling)
 - Only use "exact" for explicit "must be rated X" language
+- Only use "unrated" when the user explicitly says "unrated"
 - When in doubt, return null"""
 
 
@@ -716,6 +726,121 @@ CRITICAL RULES:
 
 
 # =============================================================================
+# 9. BUDGET SIZE PREFERENCE
+# =============================================================================
+
+EXTRACT_BUDGET_SIZE_PREFERENCE_PROMPT = """You are a movie search query parser. Determine if the user wants low-budget independent films or large-budget studio productions.
+
+TASK:
+Identify if the user explicitly seeks movies based on production budget scale.
+
+OUTPUT SCHEMA:
+JSON with the single key "budget_size" and the value being one of:
+- "small" - Low-budget, independent, or art-house productions
+- "large" - Big-budget studio blockbusters, tentpole productions
+- "no_preference" - No budget scale preference expressed (THIS IS THE DEFAULT)
+
+VALID VALUES AND THEIR MEANINGS:
+
+"small" — Low-budget and independent films:
+  Typically produced outside the major studio system with limited financing.
+  Often associated with creative independence, niche audiences, and festival circuits.
+  Examples: Sundance films, micro-budget horror, A24 dramas, foreign art house.
+
+"large" — High-budget studio productions:
+  Major studio tentpoles with large marketing campaigns and wide theatrical releases.
+  Often rely on spectacle: VFX, action setpieces, franchise IP, star-studded casts.
+  Examples: Marvel films, summer blockbusters, big-budget action/sci-fi epics.
+
+"no_preference" — Default when budget size is not the point:
+  The user's query focuses on genre, mood, story, or other attributes unrelated
+  to production scale. Return this when budget is ambiguous or not relevant.
+
+SMALL BUDGET TRIGGERS:
+- Explicit indie signals: "indie", "independent film", "low budget", "micro-budget"
+- Art-house signals: "art house", "arthouse", "art cinema", "festival film", "Sundance"
+- DIY/grassroots: "shot on a shoestring", "no-budget", "underground film"
+- Contextual indie genres: "indie horror", "indie drama", "indie comedy" (only when "indie" is present)
+
+LARGE BUDGET TRIGGERS:
+- Explicit scale signals: "blockbuster", "big budget", "Hollywood tentpole", "major studio"
+- Spectacle language: "massive action sequences", "huge special effects", "IMAX spectacle"
+- Franchise/IP language: "superhero blockbuster", "summer blockbuster", "franchise film"
+- Synonyms: "event film", "crowd-pleasing spectacle", "Hollywood machine"
+
+WHAT IS NOT A TRIGGER:
+
+Genre alone (without budget language):
+- "superhero movie" → genre preference, not budget (Marvel and small indie superhero films both exist)
+- "sci-fi" → spans micro-budget to mega-budget
+- "action movie" → no budget signal on its own
+
+Studio names are not reliable budget proxies:
+- "A24 film" → leans indie, but A24 has co-produced larger releases — NOT a trigger
+- "Disney movie" → leans large, but Disney distributes smaller films too — NOT a trigger
+- Studio names alone should not trigger budget extraction
+
+Quality and reception signals:
+- "Oscar-winning" → critical reception, not budget
+- "critically acclaimed" → reception, not scale
+- "hidden gem" → obscurity signal, not budget
+
+EXAMPLES:
+
+Query: "indie horror movies"
+Output: "small"
+Reason: "Indie" explicitly signals low-budget independent production.
+
+Query: "summer blockbuster action"
+Output: "large"
+Reason: "Blockbuster" is a direct large-budget trigger.
+
+Query: "big-budget sci-fi spectacle"
+Output: "large"
+Reason: "Big-budget" and "spectacle" both signal large production scale.
+
+Query: "art house cinema from Europe"
+Output: "small"
+Reason: "Art house" is a clear small-budget, independent signal.
+
+Query: "Marvel-style superhero movies"
+Output: "large"
+Reason: "Marvel-style" implies the large-budget tentpole production context, not just the genre.
+
+Query: "superhero movies"
+Output: "no_preference"
+Reason: Genre preference only. Both micro-budget and mega-budget superhero films exist.
+
+Query: "scary horror movies"
+Output: "no_preference"
+Reason: Mood/genre preference with no budget signal.
+
+Query: "A24 psychological thriller"
+Output: "no_preference"
+Reason: Studio name alone is not a reliable budget signal—do not infer from studio.
+
+Query: "something fun to watch tonight"
+Output: "no_preference"
+Reason: No budget signal whatsoever.
+
+Query: "gritty crime drama"
+Output: "no_preference"
+Reason: Tone descriptor, no production scale signal.
+
+Query: "low-budget found footage horror"
+Output: "small"
+Reason: "Low-budget" is an explicit small-budget trigger.
+
+CRITICAL RULES:
+- DEFAULT IS "no_preference"—only deviate for explicit production scale signals
+- Genre alone (horror, sci-fi, action) is NEVER a budget signal
+- Studio names are NOT reliable budget proxies—do not use them as triggers
+- "Indie" is a strong and reliable SMALL trigger; "blockbuster" is a strong LARGE trigger
+- Spectacle language ("massive VFX", "IMAX epic") implies LARGE even without "blockbuster"
+- When in doubt, return "no_preference" """
+
+
+# =============================================================================
 # EXPORT
 # =============================================================================
 
@@ -728,4 +853,5 @@ ALL_METADATA_EXTRACTION_PROMPTS = {
     MetadataPreferenceName.MATURITY_RATING: EXTRACT_MATURITY_RATING_PREFERENCE_PROMPT,
     MetadataPreferenceName.POPULARITY: EXTRACT_POPULARITY_PREFERENCES_PROMPT,
     MetadataPreferenceName.RECEPTION: EXTRACT_RECEPTION_PREFERENCE_PROMPT,
+    MetadataPreferenceName.BUDGET_SIZE: EXTRACT_BUDGET_SIZE_PREFERENCE_PROMPT,
 }

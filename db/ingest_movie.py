@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from implementation.classes.movie import BaseMovie
 from implementation.classes.languages import Language, LANGUAGE_BY_NORMALIZED_NAME
 from implementation.llms.generic_methods import generate_vector_embedding
-from implementation.classes.enums import MaturityRating, VectorName
+from implementation.classes.enums import BudgetSize, MaturityRating, VectorName
 from implementation.vectorize import (
     create_anchor_vector_text,
     create_plot_events_vector_text,
@@ -128,6 +128,12 @@ async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
         reception_score = movie.reception_score()
         title_token_count = len(movie.normalized_title_tokens())
 
+        # Classify the movie's budget relative to its production era.
+        # Returns BudgetSize.SMALL or BudgetSize.LARGE for outliers;
+        # None for mid-range budgets or when budget data is unavailable.
+        budget_bucket_result = movie.budget_bucket_for_era()
+        budget_bucket = budget_bucket_result.value if budget_bucket_result is not None else None
+
         await upsert_movie_card(
             movie_id=movie_id,
             title=title,
@@ -141,6 +147,7 @@ async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
             imdb_vote_count=imdb_vote_count,
             reception_score=reception_score,
             title_token_count=title_token_count,
+            budget_bucket=budget_bucket,
             conn=conn,
         )
     except Exception as e:

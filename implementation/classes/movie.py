@@ -14,7 +14,7 @@ from .schemas import (
 )
 from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict
-from .enums import MaturityRating, StreamingAccessType, Genre
+from .enums import BudgetSize, Genre, MaturityRating, StreamingAccessType
 from .watch_providers import PROVIDER_ID_TO_SERVICE
 from .languages import LANGUAGE_BY_NORMALIZED_NAME
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase, create_watch_provider_offering_key
@@ -78,19 +78,28 @@ class BaseMovie(BaseModel):
     debug_synopses: list[str] = []
     debug_plot_summaries: list[str] = []
 
-    # Budget bucket thresholds by decade (era-aware budget classification)
+    # Budget bucket thresholds by decade (era-aware budget classification).
+    # Each entry: (small_ceiling, large_floor) in nominal USD.
+    # - Below small_ceiling → BudgetSize.SMALL (indie / micro-budget for the era)
+    # - Above large_floor   → BudgetSize.LARGE (blockbuster for the era)
+    # - Between the two     → mid-range (returns None, no signal)
+    #
+    # Thresholds are calibrated against well-known reference points per era
+    # (e.g. "Pulp Fiction" $8M should be SMALL in the 90s, "LOTR" $94M should
+    # be LARGE in the 2000s) and smoothed via linear interpolation at the year
+    # level so there are no cliff effects at decade boundaries.
     _DECADE_THRESHOLDS: dict[int, tuple[int, int]] = {
-        1920: (100_000, 1_000_000),
-        1930: (150_000, 2_000_000),
-        1940: (250_000, 3_000_000),
-        1950: (750_000, 10_000_000),
-        1960: (1_000_000, 15_000_000),
-        1970: (2_000_000, 20_000_000),
-        1980: (7_000_000, 40_000_000),
-        1990: (20_000_000, 100_000_000),
-        2000: (25_000_000, 150_000_000),
-        2010: (25_000_000, 200_000_000),
-        2020: (25_000_000, 250_000_000),
+        1920: (    100_000,   1_000_000),
+        1930: (    150_000,   2_000_000),
+        1940: (    250_000,   3_000_000),
+        1950: (    750_000,  12_000_000),
+        1960: (  1_000_000,  20_000_000),
+        1970: (  2_000_000,  25_000_000),
+        1980: (  5_000_000,  45_000_000),
+        1990: (  9_000_000,  80_000_000),
+        2000: ( 12_000_000, 110_000_000),
+        2010: ( 15_000_000, 150_000_000),
+        2020: ( 18_000_000, 185_000_000),
     }
 
     # Maturity rating to semantic description mapping (no numbers)
@@ -287,48 +296,87 @@ class BaseMovie(BaseModel):
         else:  # >= 144
             return "very long"
 
-    def budget_bucket_for_era(self) -> str:
+    def budget_bucket_for_era(self) -> BudgetSize | None:
         """
-        Classifies budget as small/blockbuster/noteworthy based on era thresholds (4.7).
-        
-        Uses decade-specific thresholds to determine if budget is exceptionally
-        small or large for the movie's release era.
-        
+        Classifies budget as small/large/noteworthy based on era thresholds (4.7).
+
+        Instead of snapping to the nearest decade, linearly interpolates between
+        adjacent decade anchor points so that a 1995 film uses thresholds
+        halfway between the 1990 and 2000 values. This eliminates cliff effects
+        at decade boundaries where thresholds can jump significantly.
+
         Returns:
-            Budget classification string:
-            - "small budget"
-            - "big budget, blockbuster"
-            - "" (budget unknown or not of note)
+            BudgetSize.SMALL when notably low for the era,
+            BudgetSize.LARGE when notably high for the era,
+            or None when budget is unknown, typical, or unparseable.
         """
         if self.budget is None:
-            return ""
-        
+            return None
+
         try:
-            # Extract year from release_date
             year = int(self.release_date[:4])
-            # Determine decade for threshold lookup
-            decade = (year // 10) * 10
-            
-            # Use 1920s thresholds for movies before 1920
-            if decade < 1920:
-                decade = 1920
-            # Use 2020s thresholds for movies 2030 or later
-            elif decade >= 2030:
-                decade = 2020
-            
-            # Get thresholds for this decade
-            min_threshold, max_threshold = self._DECADE_THRESHOLDS[decade]
-            
-            # Classify budget
-            if self.budget < min_threshold:
-                return "small budget"
-            elif self.budget > max_threshold:
-                return "big budget, blockbuster"
+
+            # Clamp to the supported range so we can always interpolate.
+            clamped_year = max(1920, min(year, 2029))
+
+            small_threshold, large_threshold = self._interpolated_thresholds(clamped_year)
+
+            if self.budget < small_threshold:
+                return BudgetSize.SMALL
+            elif self.budget > large_threshold:
+                return BudgetSize.LARGE
             else:
-                return ""
+                return None
         except (ValueError, IndexError, KeyError):
             print(f"Error occurred getting budget bucket: {self.budget}")
-            return ""
+            return None
+
+    def _interpolated_thresholds(self, year: int) -> tuple[float, float]:
+        """
+        Linearly interpolate small/large thresholds for an exact year.
+
+        Finds the two bounding decade anchors (e.g. 1990 and 2000 for a 1995
+        film) and blends their thresholds proportionally. Years at or beyond
+        the first/last anchor use that anchor's values directly.
+
+        Args:
+            year: Release year clamped to the supported range.
+
+        Returns:
+            (small_threshold, large_threshold) interpolated for the given year.
+        """
+        # Access the dict through the instance to avoid Pydantic's
+        # ModelPrivateAttr wrapper that intercepts classmethod access.
+        thresholds = self._DECADE_THRESHOLDS
+        decades = sorted(thresholds.keys())
+
+        # At or before the earliest anchor → use it directly
+        if year <= decades[0]:
+            return thresholds[decades[0]]
+
+        # At or after the latest anchor → use it directly
+        if year >= decades[-1]:
+            return thresholds[decades[-1]]
+
+        # Find the two bounding decades
+        lo_decade = decades[0]
+        for d in decades:
+            if d <= year:
+                lo_decade = d
+            else:
+                break
+        hi_decade = lo_decade + 10
+
+        lo_small, lo_large = thresholds[lo_decade]
+        hi_small, hi_large = thresholds[hi_decade]
+
+        # Fractional position within the decade (0.0 at lo, 1.0 at hi)
+        t = (year - lo_decade) / 10.0
+
+        small_threshold = lo_small + t * (hi_small - lo_small)
+        large_threshold = lo_large + t * (hi_large - lo_large)
+
+        return small_threshold, large_threshold
 
     def maturity_guidance_text(self) -> str:
         """

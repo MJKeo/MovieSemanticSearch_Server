@@ -56,6 +56,7 @@ for _module_name, _attrs in (
 from db.metadata_scoring import create_metadata_scores, ScoredPreference
 from db.search import SearchCandidate
 from implementation.classes.enums import (
+    BudgetSize,
     DateMatchOperation,
     Genre,
     MaturityRating,
@@ -65,6 +66,7 @@ from implementation.classes.enums import (
     StreamingAccessType,
 )
 from implementation.classes.schemas import (
+    BudgetSizePreference,
     DatePreference,
     DatePreferenceResult,
     GenreListPreference,
@@ -107,6 +109,9 @@ def _build_no_prefs(**overrides) -> MetadataPreferencesResponse:
         ),
         reception_preference=ReceptionPreference(
             reception_type=ReceptionType.NO_PREFERENCE,
+        ),
+        budget_size_preference=BudgetSizePreference(
+            budget_size=BudgetSize.NO_PREFERENCE,
         ),
     )
     defaults.update(overrides)

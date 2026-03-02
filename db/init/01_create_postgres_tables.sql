@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   imdb_vote_count     INT NOT NULL DEFAULT 0,
   popularity_score    FLOAT NOT NULL DEFAULT 0.0,
   reception_score     FLOAT,
+  budget_bucket       TEXT,
   title_token_count   INT NOT NULL DEFAULT 0,
   updated_at          TIMESTAMP NOT NULL DEFAULT now(),
   created_at          TIMESTAMP NOT NULL DEFAULT now()

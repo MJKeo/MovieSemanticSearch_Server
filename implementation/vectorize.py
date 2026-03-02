@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from .classes.movie import BaseMovie
 from .classes.schemas import ChromaVectorCollection
-from .classes.enums import VectorCollectionName
+from .classes.enums import BudgetSize, VectorCollectionName
 import numpy as np
 
 # Load environment variables from .env file
@@ -35,6 +35,14 @@ openai_client = OpenAI(api_key=api_key)
 # ===============================
 #         Normalization
 # ===============================
+
+def budget_size_to_vector_text(budget_size: BudgetSize | None) -> str:
+    """Map budget size enums to the semantic phrases used in vector text."""
+    if budget_size == BudgetSize.SMALL:
+        return "small budget"
+    if budget_size == BudgetSize.LARGE:
+        return "big budget, blockbuster"
+    return ""
 
 def normalize_vector(vector: list[float], eps: float = 1e-8) -> list[float]:
     """
@@ -425,7 +433,7 @@ def create_anchor_vector_text(movie: BaseMovie) -> str:
         parts.append(f"Duration: {duration_bucket}")
     
     # Budget scale for era
-    budget_bucket = movie.budget_bucket_for_era()
+    budget_bucket = budget_size_to_vector_text(movie.budget_bucket_for_era())
     if budget_bucket:
         parts.append(budget_bucket)
 
@@ -534,7 +542,7 @@ def create_production_vector_text(movie: BaseMovie) -> str:
         parts.append(decade_bucket.lower())
     
     # Budget scale for era
-    budget_bucket = movie.budget_bucket_for_era()
+    budget_bucket = budget_size_to_vector_text(movie.budget_bucket_for_era())
     if budget_bucket:
         parts.append(budget_bucket.lower())
 

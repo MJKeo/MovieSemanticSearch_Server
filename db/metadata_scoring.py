@@ -14,6 +14,7 @@ from db.postgres import fetch_movie_cards
 from db.redis import read_trending_scores
 from db.search import SearchCandidate
 from implementation.classes.enums import (
+    BudgetSize,
     DateMatchOperation,
     Genre,
     MaturityRating,
@@ -49,6 +50,7 @@ class ScoredPreference(Enum):
     DURATION        = ("duration",        2)
     TRENDING        = ("trending",        2)
     POPULAR         = ("popular",         2)
+    BUDGET_SIZE     = ("budget_size",     3)
 
 
 _DURATION_GRACE_MINUTES = 30
@@ -236,6 +238,19 @@ def _score_popular(popularity_score: float | None) -> float:
     return float(popularity_score)
 
 
+def _score_budget_size(budget_bucket: str | None, preferred_size: BudgetSize) -> float:
+    """
+    Score [0, 1]. Binary match against the movie's stored budget bucket.
+
+    Returns 1.0 when the stored bucket exactly matches the user's preference,
+    0.0 in all other cases — including when the movie has no budget data on
+    record or falls in the mid-range (both stored as NULL).
+    """
+    if budget_bucket is None:
+        return 0.0
+    return 1.0 if budget_bucket == preferred_size.value else 0.0
+
+
 # ── Precomputation helpers ────────────────────────────────────────────────
 
 def _precompute_release_date(first_date: str, match_operation: DateMatchOperation, second_date: str | None):
@@ -381,6 +396,14 @@ async def create_metadata_scores(
         if r.prefers_popular_movies:
             active.add(ScoredPreference.POPULAR)
 
+    # Budget size: normalize to enum if stored as a raw string, then check for a real preference.
+    budget_size_pref: BudgetSize | None = None
+    if (r := prefs.budget_size_preference) is not None:
+        bs = BudgetSize(r.budget_size) if isinstance(r.budget_size, str) else r.budget_size
+        if bs != BudgetSize.NO_PREFERENCE:
+            active.add(ScoredPreference.BUDGET_SIZE)
+            budget_size_pref = bs
+
     # ── Precompute preference constants ──
     rd_lo = rd_hi = rd_grace = 0.0
     if ScoredPreference.RELEASE_DATE in active:
@@ -501,6 +524,11 @@ async def create_metadata_scores(
         if ScoredPreference.POPULAR in active:
             weighted_sum += ScoredPreference.POPULAR.weight * _score_popular(
                 card.get("popularity_score"),
+            )
+
+        if ScoredPreference.BUDGET_SIZE in active and budget_size_pref is not None:
+            weighted_sum += ScoredPreference.BUDGET_SIZE.weight * _score_budget_size(
+                card.get("budget_bucket"), budget_size_pref,
             )
 
         candidate.metadata_score = weighted_sum / total_weight

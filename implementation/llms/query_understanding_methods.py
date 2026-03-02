@@ -14,6 +14,7 @@ from implementation.classes.enums import (
     VectorName,
     MetadataPreferenceName,
     ReceptionType,
+    BudgetSize,
 )
 from implementation.classes.schemas import (
     ExtractedEntitiesResponse,
@@ -32,6 +33,7 @@ from implementation.classes.schemas import (
     MaturityPreference,
     PopularTrendingPreference,
     ReceptionPreference,
+    BudgetSizePreference,
 )
 
 # ===============================
@@ -60,6 +62,7 @@ _METADATA_PREFERENCE_TO_RESPONSE_MAPPING: dict[MetadataPreferenceName, tuple[typ
     MetadataPreferenceName.MATURITY_RATING: (MaturityPreference, "maturity_rating_preference"),
     MetadataPreferenceName.POPULARITY: (PopularTrendingPreference, "popular_trending_preference"),
     MetadataPreferenceName.RECEPTION: (ReceptionPreference, "reception_preference"),
+    MetadataPreferenceName.BUDGET_SIZE: (BudgetSizePreference, "budget_size_preference"),
 }
 
 _METADATA_PREFERENCE_DEFAULT_FACTORIES: dict[MetadataPreferenceName, Callable[[], Any]] = {
@@ -76,6 +79,7 @@ _METADATA_PREFERENCE_DEFAULT_FACTORIES: dict[MetadataPreferenceName, Callable[[]
     MetadataPreferenceName.RECEPTION: lambda: ReceptionPreference(
         reception_type=ReceptionType.NO_PREFERENCE,
     ),
+    MetadataPreferenceName.BUDGET_SIZE: lambda: BudgetSizePreference(budget_size=BudgetSize.NO_PREFERENCE),
 }
 
 

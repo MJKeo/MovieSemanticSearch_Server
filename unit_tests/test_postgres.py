@@ -463,7 +463,7 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params(mock
     conn_arg, query, params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert "public.movie_card" in query
-    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, 4)
+    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, None, 4)
 
 
 @pytest.mark.asyncio
