@@ -618,6 +618,29 @@ class MetadataPreferencesResponse(BaseModel):
     popular_trending_preference: PopularTrendingPreference
     reception_preference: ReceptionPreference
 
+    def has_active_preferences(self) -> bool:
+        """Return True if at least one metadata preference contains actionable data."""
+        wrapper_fields = (
+            self.release_date_preference,
+            self.duration_preference,
+            self.genres_preference,
+            self.audio_languages_preference,
+            self.watch_providers_preference,
+            self.maturity_rating_preference,
+        )
+        for pref in wrapper_fields:
+            if pref.result is not None and pref.result.contains_valid_data():
+                return True
+
+        if self.reception_preference.contains_valid_data():
+            return True
+
+        pt = self.popular_trending_preference
+        if pt.prefers_trending_movies or pt.prefers_popular_movies:
+            return True
+
+        return False
+
 
 # -----------------------------
 #   LEXICAL ENTITY EXTRACTION

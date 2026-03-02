@@ -353,7 +353,7 @@ async def create_metadata_scores(
 
     Mutates each candidate's metadata_score in place and returns the same list.
     """
-    if not candidates:
+    if not candidates or not preferences.has_active_preferences():
         return candidates
 
     # ── Determine active preferences ──
@@ -380,9 +380,6 @@ async def create_metadata_scores(
             active.add(ScoredPreference.TRENDING)
         if r.prefers_popular_movies:
             active.add(ScoredPreference.POPULAR)
-
-    if not active:
-        return candidates
 
     # ── Precompute preference constants ──
     rd_lo = rd_hi = rd_grace = 0.0

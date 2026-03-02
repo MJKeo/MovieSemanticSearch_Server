@@ -87,6 +87,47 @@ async def _timed_metadata_preferences(query: str):
 
 
 # ---------------------------------------------------------------------------
+# Channel weight correction
+# ---------------------------------------------------------------------------
+
+def _correct_channel_weights(
+    vector_relevance: RelevanceSize,
+    lexical_relevance: RelevanceSize,
+    metadata_relevance: RelevanceSize,
+    has_lexical_entities: bool,
+    has_active_metadata: bool,
+) -> tuple[RelevanceSize, RelevanceSize, RelevanceSize]:
+    """
+    Deterministically fix channel weights that contradict the actual
+    outputs of the other LLM calls.
+
+    Rules:
+        1. Lexical > NOT_RELEVANT but no entities → force NOT_RELEVANT
+        2. Lexical == NOT_RELEVANT but entities exist → promote to SMALL
+        3. Metadata > NOT_RELEVANT but no active preferences → force NOT_RELEVANT
+        4. Metadata == NOT_RELEVANT but active preferences exist → promote to SMALL
+        5. Vector == NOT_RELEVANT → promote to SMALL (anchor always runs)
+    """
+    # Rule 1 & 2: lexical
+    if has_lexical_entities and lexical_relevance == RelevanceSize.NOT_RELEVANT:
+        lexical_relevance = RelevanceSize.SMALL
+    elif not has_lexical_entities and lexical_relevance != RelevanceSize.NOT_RELEVANT:
+        lexical_relevance = RelevanceSize.NOT_RELEVANT
+
+    # Rule 3 & 4: metadata
+    if has_active_metadata and metadata_relevance == RelevanceSize.NOT_RELEVANT:
+        metadata_relevance = RelevanceSize.SMALL
+    elif not has_active_metadata and metadata_relevance != RelevanceSize.NOT_RELEVANT:
+        metadata_relevance = RelevanceSize.NOT_RELEVANT
+
+    # Rule 5: vector
+    if vector_relevance == RelevanceSize.NOT_RELEVANT:
+        vector_relevance = RelevanceSize.SMALL
+
+    return vector_relevance, lexical_relevance, metadata_relevance
+
+
+# ---------------------------------------------------------------------------
 # Main search orchestrator
 # ---------------------------------------------------------------------------
 
@@ -154,13 +195,24 @@ async def search(
     candidates_list = list(merged.values())
     candidates_list = await create_metadata_scores(metadata_preferences, candidates_list)
 
-    # Phase D — Await channel weights and compute final scores
+    # Phase D — Await channel weights, correct, and compute final scores
     channel_weights_result, channel_weights_ms = await channel_weights_task
 
+    has_lexical_entities = len(lexical_result.debug.extracted_entities.entity_candidates) > 0
+    has_active_metadata = metadata_preferences.has_active_preferences()
+
     if channel_weights_result is not None:
-        raw_vector = RELEVANCE_RAW_WEIGHTS[RelevanceSize(channel_weights_result.vector_relevance)]
-        raw_lexical = RELEVANCE_RAW_WEIGHTS[RelevanceSize(channel_weights_result.lexical_relevance)]
-        raw_metadata = RELEVANCE_RAW_WEIGHTS[RelevanceSize(channel_weights_result.metadata_relevance)]
+        vector_rel, lexical_rel, metadata_rel = _correct_channel_weights(
+            vector_relevance=RelevanceSize(channel_weights_result.vector_relevance),
+            lexical_relevance=RelevanceSize(channel_weights_result.lexical_relevance),
+            metadata_relevance=RelevanceSize(channel_weights_result.metadata_relevance),
+            has_lexical_entities=has_lexical_entities,
+            has_active_metadata=has_active_metadata,
+        )
+
+        raw_vector = RELEVANCE_RAW_WEIGHTS[vector_rel]
+        raw_lexical = RELEVANCE_RAW_WEIGHTS[lexical_rel]
+        raw_metadata = RELEVANCE_RAW_WEIGHTS[metadata_rel]
         total = raw_vector + raw_lexical + raw_metadata
 
         if total > 0:
