@@ -201,8 +201,8 @@ def test_reception_score_paths(base_movie_factory) -> None:
     metacritic_only = base_movie_factory(imdb_rating=None, metacritic_rating=70.0)
     neither = base_movie_factory(imdb_rating=None, metacritic_rating=None)
     assert both.reception_score() == 74.0
-    assert imdb_only.reception_score() == 32.0
-    assert metacritic_only.reception_score() == 42.0
+    assert imdb_only.reception_score() == 80.0
+    assert metacritic_only.reception_score() == 70.0
     assert neither.reception_score() is None
 
 

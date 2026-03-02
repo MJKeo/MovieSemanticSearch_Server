@@ -21,8 +21,9 @@ from implementation.classes.schemas import MetadataFilters
 @dataclass(slots=True)
 class SearchCandidate:
     movie_id: int
-    vector_score: float        # final weighted sum from calculate_vector_scores [0,1]
-    lexical_score: float       # normalized_lexical_score from LexicalCandidate
+    vector_score: float          # final weighted sum from calculate_vector_scores [0,1]
+    lexical_score: float         # normalized_lexical_score from LexicalCandidate
+    metadata_score: float = 0.0  # normalized metadata score calculated AFTER search completes
 
 
 @dataclass(slots=True)

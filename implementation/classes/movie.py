@@ -15,7 +15,7 @@ from .schemas import (
 from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict
 from .enums import MaturityRating, StreamingAccessType, Genre
-from .watch_providers import FILTERABLE_WATCH_PROVIDER_IDS
+from .watch_providers import PROVIDER_ID_TO_SERVICE
 from .languages import LANGUAGE_BY_NORMALIZED_NAME
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase, create_watch_provider_offering_key
 import re
@@ -203,10 +203,8 @@ class BaseMovie(BaseModel):
         watch_offer_key_set: set[int] = set()
         for provider in raw_providers:
             provider_id = getattr(provider, "id", None)
-            if provider_id is None or provider_id not in FILTERABLE_WATCH_PROVIDER_IDS:
+            if provider_id is None or provider_id not in PROVIDER_ID_TO_SERVICE:
                 continue
-
-            provider_name = str(getattr(provider, "name", "") or "")
 
             watch_method_types = getattr(provider, "types", [])
             if not isinstance(watch_method_types, list):
@@ -516,9 +514,9 @@ class BaseMovie(BaseModel):
         if self.imdb_rating and self.metacritic_rating:
             return (0.4 * 10 * self.imdb_rating) + (0.6 * self.metacritic_rating)
         elif self.imdb_rating:
-            return 0.4 * 10 * self.imdb_rating
+            return 10 * self.imdb_rating
         elif self.metacritic_rating:
-            return 0.6 * self.metacritic_rating
+            return self.metacritic_rating
         else:
             return None
 

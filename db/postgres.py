@@ -13,7 +13,6 @@ from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
-from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDERS_MAP
 from implementation.classes.enums import Genre, MaturityRating, StreamingAccessType
 from implementation.classes.schemas import MetadataFilters
 from implementation.classes.languages import Language
@@ -569,30 +568,6 @@ async def batch_upsert_maturity_dictionary(conn=None) -> None:
         label = EXCLUDED.label;
     """
     await _execute_on_conn(conn, query, (maturity_ranks, labels))
-
-
-async def batch_upsert_provider_dictionary(conn=None) -> None:
-    """
-    Batch upsert provider lookup rows in lex.provider_dictionary.
-    
-    Args:
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    provider_ids, provider_names = zip(*FILTERABLE_WATCH_PROVIDERS_MAP.items())
-    provider_names = [normalize_string(name) for name in provider_names]
-    if not provider_ids:
-        return
-    if len(provider_ids) != len(provider_names):
-        raise ValueError("Provider dictionary upsert failed: provider_ids and provider_names lengths differ.")
-
-    query = """
-    INSERT INTO lex.provider_dictionary (provider_id, name)
-    SELECT input.provider_id, input.name
-    FROM unnest(%s::int[], %s::text[]) AS input(provider_id, name)
-    ON CONFLICT (provider_id) DO UPDATE SET
-        name = EXCLUDED.name;
-    """
-    await _execute_on_conn(conn, query, (list(provider_ids), list(provider_names)))
 
 
 async def batch_upsert_watch_method_dictionary(conn=None) -> None:

@@ -13,7 +13,7 @@ from datetime import datetime
 
 from implementation.classes.enums import Genre, MetadataPreferenceName
 from implementation.classes.languages import Language
-from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDER_NAMES
+from implementation.classes.watch_providers import StreamingService, STREAMING_SERVICE_ALIASES, STREAMING_SERVICE_DISPLAY_NAMES
 
 # =============================================================================
 # 1. RELEASE DATE PREFERENCE
@@ -372,6 +372,16 @@ CRITICAL RULES:
 # 5. WATCH PROVIDERS PREFERENCE
 # =============================================================================
 
+_VALID_SERVICES_BLOCK = "\n".join(
+    f'  "{service.value}" ({STREAMING_SERVICE_DISPLAY_NAMES[service]})'
+    for service in StreamingService
+)
+
+_ALIAS_BLOCK = "\n".join(
+    f'  {", ".join(repr(a) for a in aliases)} → "{service.value}"'
+    for service, aliases in STREAMING_SERVICE_ALIASES.items()
+)
+
 EXTRACT_WATCH_PROVIDERS_PREFERENCE_PROMPT = f"""You are a movie search query parser. Extract streaming service preferences from the user's query.
 
 TASK:
@@ -380,26 +390,18 @@ Identify streaming platforms and access methods the user prefers.
 OUTPUT SCHEMA:
 {{
   "result": {{
-    "should_include": [<list of provider names the user wants the movie to be available on>],
-    "should_exclude": [<list of provider names the user doesn't want the movie to be available on>],
+    "should_include": [<list of valid streaming service names (see below) the user wants the movie to be available on>],
+    "should_exclude": [<list of valid streaming service names (see below) the user doesn't want the movie to be available on>],
     "preferred_access_type": "subscription" | "rent" | "buy" | null (how the user wants to access the movie)
   }}
 }}
 Return {{"result": null}} if no provider preference is expressed.
 
-PROVIDER NAME NORMALIZATION:
-Use these canonical names:
-{", ".join([name for name in FILTERABLE_WATCH_PROVIDER_NAMES])}
+VALID SERVICE VALUES (use exactly these strings in your output):
+{_VALID_SERVICES_BLOCK}
 
-Common shorthand mappings:
-- "Prime" / "Amazon" → "Amazon Prime Video"
-- "Max" → "HBO Max"  
-- "Apple" (streaming context) → "Apple TV+"
-- "Hulu" → "Hulu"
-- "Netflix" → "Netflix"
-- "Disney" (streaming context) → "Disney+"
-- "Peacock" → "Peacock"
-- "Paramount" (streaming context) → "Paramount+"
+ALIAS MAPPINGS — if the user says any of these, use the listed service value:
+{_ALIAS_BLOCK}
 
 ACCESS TYPE RULES:
 - Subscription indicators: "streaming on", "watch on", "available on", "included with"
@@ -410,16 +412,16 @@ ACCESS TYPE RULES:
 EXAMPLES:
 
 Query: "what's good on Hulu right now"
-Output: {{"result": {{"should_include": ["Hulu"], "should_exclude": [], "preferred_access_type": "subscription"}}}}
+Output: {{"result": {{"should_include": ["hulu"], "should_exclude": [], "preferred_access_type": "subscription"}}}}
 
 Query: "available on Prime or Netflix"
-Output: {{"result": {{"should_include": ["Amazon Prime Video", "Netflix"], "should_exclude": [], "preferred_access_type": "subscription"}}}}
+Output: {{"result": {{"should_include": ["amazon", "netflix"], "should_exclude": [], "preferred_access_type": "subscription"}}}}
 
 Query: "I want to rent something tonight"
 Output: {{"result": {{"should_include": [], "should_exclude": [], "preferred_access_type": "rent"}}}}
 
 Query: "anything but Netflix, I cancelled"
-Output: {{"result": {{"should_include": [], "should_exclude": ["Netflix"], "preferred_access_type": null}}}}
+Output: {{"result": {{"should_include": [], "should_exclude": ["netflix"], "preferred_access_type": null}}}}
 
 Query: "where to buy digitally"
 Output: {{"result": {{"should_include": [], "should_exclude": [], "preferred_access_type": "buy"}}}}
@@ -431,10 +433,6 @@ Reason: Studio preference, not streaming platform. Pixar films are on various pl
 Query: "best thriller of 2023"
 Output: {{"result": null}}
 Reason: No streaming service mentioned.
-
-Query: "Netflix original series"
-Output: {{"result": null}}
-Reason: This is for TV series, not movies. Also, "original" is a production distinction, not availability.
 
 CRITICAL RULES:
 - Studios (Disney, Warner Bros, A24) are NOT streaming platforms

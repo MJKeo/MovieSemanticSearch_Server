@@ -5,11 +5,13 @@ This module contains Pydantic models used for structured outputs from LLM API ca
 and other data model classes used throughout the project.
 """
 
+from datetime import date
 from typing import List, Literal, Optional
 from dataclasses import dataclass, fields
 from pydantic import BaseModel, Field, conlist, constr, ConfigDict, field_validator
 from enum import Enum
 from .languages import Language
+from .watch_providers import StreamingService
 from .enums import (
     MaturityRating,
     DateMatchOperation, 
@@ -437,6 +439,28 @@ class DatePreferenceResult(BaseModel):
         description="Optional second date in the range only if match_operation is BETWEEN. ISO 8601 date: YYYY-MM-DD"
     )
 
+    def contains_valid_data(self) -> bool:
+        try:
+            first = date.fromisoformat(self.first_date)
+        except (TypeError, ValueError):
+            return False
+
+        is_between = self.match_operation in {DateMatchOperation.BETWEEN, DateMatchOperation.BETWEEN.value}
+        if is_between:
+            if self.second_date is None:
+                return False
+            try:
+                second = date.fromisoformat(self.second_date)
+            except (TypeError, ValueError):
+                return False
+            if first > second:
+                self.first_date, self.second_date = self.second_date, self.first_date
+            return True
+
+        if self.second_date is not None:
+            self.second_date = None
+        return True
+
 
 class DatePreference(BaseModel):
     """Date preference wrapper with optional result."""
@@ -451,6 +475,22 @@ class NumericalPreferenceResult(BaseModel):
     match_operation: NumericalMatchOperation = Field(..., description="How we should evaluate the provided first and (maybe) second values.")
     second_value: Optional[float] = Field(default=None, description="Optional second value in the range only if match_operation is BETWEEN.")
 
+    def contains_valid_data(self) -> bool:
+        if self.first_value is None:
+            return False
+
+        is_between = self.match_operation in {NumericalMatchOperation.BETWEEN, NumericalMatchOperation.BETWEEN.value}
+        if is_between:
+            if self.second_value is None:
+                return False
+            if self.first_value > self.second_value:
+                self.first_value, self.second_value = self.second_value, self.first_value
+            return True
+
+        if self.second_value is not None:
+            self.second_value = None
+        return True
+
 
 class NumericalPreference(BaseModel):
     """Numerical preference wrapper with optional result."""
@@ -463,6 +503,13 @@ class LanguageListPreferenceResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     should_include: List[Language] = Field(default=[], description="List of audio languages that should be included in the movie's metadata.")
     should_exclude: List[Language] = Field(default=[], description="List of audio languages that should be excluded from the movie's metadata.")
+
+    def contains_valid_data(self) -> bool:
+        overlapping_values = set(self.should_include).intersection(self.should_exclude)
+        if overlapping_values:
+            self.should_include = set([value for value in self.should_include if value not in overlapping_values])
+            self.should_exclude = set([value for value in self.should_exclude if value not in overlapping_values])
+        return bool(self.should_include or self.should_exclude)
 
 
 class LanguageListPreference(BaseModel):
@@ -477,6 +524,13 @@ class GenreListPreferenceResult(BaseModel):
     should_include: List[Genre] = Field(default=[], description="List of genres that the user's query wants the movie to fall under.")
     should_exclude: List[Genre] = Field(default=[], description="List of genres that the user's query wants to avoid in the movie.")
 
+    def contains_valid_data(self) -> bool:
+        overlapping_values = set(self.should_include).intersection(self.should_exclude)
+        if overlapping_values:
+            self.should_include = set([value for value in self.should_include if value not in overlapping_values])
+            self.should_exclude = set([value for value in self.should_exclude if value not in overlapping_values])
+        return bool(self.should_include or self.should_exclude)
+
 
 class GenreListPreference(BaseModel):
     """Genre list preference wrapper with optional result."""
@@ -490,6 +544,9 @@ class MaturityPreferenceResult(BaseModel):
     rating: MaturityRating = Field(..., description="Standard USA maturity ratings")
     match_operation: RatingMatchOperation = Field(..., description="Whether we prefer movies with this rating, greater (more mature), or less (less mature).")
 
+    def contains_valid_data(self) -> bool:
+        return self.rating is not None and self.match_operation is not None
+
 
 class MaturityPreference(BaseModel):
     """Maturity preference wrapper with optional result."""
@@ -500,9 +557,35 @@ class MaturityPreference(BaseModel):
 class WatchProvidersPreferenceResult(BaseModel):
     """Inner result object containing watch providers preference fields."""
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
-    should_include: List[str]
-    should_exclude: List[str]
+    should_include: List[StreamingService]
+    should_exclude: List[StreamingService]
     preferred_access_type: Optional[StreamingAccessType]
+
+    def contains_valid_data(self) -> bool:
+        normalized_include = {value.strip().lower() for value in self.should_include if isinstance(value, str) and value.strip()}
+        normalized_exclude = {value.strip().lower() for value in self.should_exclude if isinstance(value, str) and value.strip()}
+
+        overlapping_values = normalized_include.intersection(normalized_exclude)
+        if overlapping_values:
+            self.should_include = set([
+                value for value in self.should_include
+                if isinstance(value, str)
+                and value.strip()
+                and value.strip().lower() not in overlapping_values
+            ])
+            self.should_exclude = set([
+                value for value in self.should_exclude
+                if isinstance(value, str)
+                and value.strip()
+                and value.strip().lower() not in overlapping_values
+            ])
+            normalized_include = {value.strip().lower() for value in self.should_include}
+            normalized_exclude = {value.strip().lower() for value in self.should_exclude}
+
+        has_provider_filter = bool(normalized_include or normalized_exclude)
+        has_access_type_filter = self.preferred_access_type is not None
+
+        return has_provider_filter or has_access_type_filter
 
 
 class WatchProvidersPreference(BaseModel):
@@ -515,9 +598,15 @@ class PopularTrendingPreference(BaseModel):
     prefers_trending_movies: bool
     prefers_popular_movies: bool
 
+    def contains_valid_data(self) -> bool:
+        return self.prefers_trending_movies or self.prefers_popular_movies
+
 class ReceptionPreference(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
     reception_type: ReceptionType
+
+    def contains_valid_data(self) -> bool:
+        return self.reception_type not in {ReceptionType.NO_PREFERENCE, ReceptionType.NO_PREFERENCE.value}
 
 class MetadataPreferencesResponse(BaseModel):
     release_date_preference: DatePreference

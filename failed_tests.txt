@@ -1,0 +1,582 @@
+___________________________________________ test_score_reception_critically_acclaimed_ramp_and_clamp[65.0-0.25] ___________________________________________
+
+reception_score = 65.0, expected = 0.25
+
+    @pytest.mark.parametrize(
+        ("reception_score", "expected"),
+        [
+            (55.0, 0.0),
+            (65.0, 0.25),
+            (75.0, 0.5),
+            (95.0, 1.0),
+            (20.0, 0.0),
+            (120.0, 1.0),
+        ],
+    )
+    def test_score_reception_critically_acclaimed_ramp_and_clamp(
+        reception_score: float,
+        expected: float,
+    ) -> None:
+        """Critically acclaimed path should be linear ramp with clamping."""
+>       assert _score_reception(reception_score, "critically_acclaimed") == pytest.approx(expected)
+E       assert 0.0 == 0.25 ± 2.5e-07
+E         
+E         comparison failed
+E         Obtained: 0.0
+E         Expected: 0.25 ± 2.5e-07
+
+unit_tests/test_metadata_scoring.py:372: AssertionError
+___________________________________________ test_score_reception_critically_acclaimed_ramp_and_clamp[75.0-0.5] ____________________________________________
+
+reception_score = 75.0, expected = 0.5
+
+    @pytest.mark.parametrize(
+        ("reception_score", "expected"),
+        [
+            (55.0, 0.0),
+            (65.0, 0.25),
+            (75.0, 0.5),
+            (95.0, 1.0),
+            (20.0, 0.0),
+            (120.0, 1.0),
+        ],
+    )
+    def test_score_reception_critically_acclaimed_ramp_and_clamp(
+        reception_score: float,
+        expected: float,
+    ) -> None:
+        """Critically acclaimed path should be linear ramp with clamping."""
+>       assert _score_reception(reception_score, "critically_acclaimed") == pytest.approx(expected)
+E       assert 0.0 == 0.5 ± 5.0e-07
+E         
+E         comparison failed
+E         Obtained: 0.0
+E         Expected: 0.5 ± 5.0e-07
+
+unit_tests/test_metadata_scoring.py:372: AssertionError
+___________________________________________ test_score_reception_critically_acclaimed_ramp_and_clamp[95.0-1.0] ____________________________________________
+
+reception_score = 95.0, expected = 1.0
+
+    @pytest.mark.parametrize(
+        ("reception_score", "expected"),
+        [
+            (55.0, 0.0),
+            (65.0, 0.25),
+            (75.0, 0.5),
+            (95.0, 1.0),
+            (20.0, 0.0),
+            (120.0, 1.0),
+        ],
+    )
+    def test_score_reception_critically_acclaimed_ramp_and_clamp(
+        reception_score: float,
+        expected: float,
+    ) -> None:
+        """Critically acclaimed path should be linear ramp with clamping."""
+>       assert _score_reception(reception_score, "critically_acclaimed") == pytest.approx(expected)
+E       assert 0.0 == 1.0 ± 1.0e-06
+E         
+E         comparison failed
+E         Obtained: 0.0
+E         Expected: 1.0 ± 1.0e-06
+
+unit_tests/test_metadata_scoring.py:372: AssertionError
+___________________________________________ test_score_reception_critically_acclaimed_ramp_and_clamp[20.0-0.0] ____________________________________________
+
+reception_score = 20.0, expected = 0.0
+
+    @pytest.mark.parametrize(
+        ("reception_score", "expected"),
+        [
+            (55.0, 0.0),
+            (65.0, 0.25),
+            (75.0, 0.5),
+            (95.0, 1.0),
+            (20.0, 0.0),
+            (120.0, 1.0),
+        ],
+    )
+    def test_score_reception_critically_acclaimed_ramp_and_clamp(
+        reception_score: float,
+        expected: float,
+    ) -> None:
+        """Critically acclaimed path should be linear ramp with clamping."""
+>       assert _score_reception(reception_score, "critically_acclaimed") == pytest.approx(expected)
+E       assert 0.75 == 0.0 ± 1.0e-12
+E         
+E         comparison failed
+E         Obtained: 0.75
+E         Expected: 0.0 ± 1.0e-12
+
+unit_tests/test_metadata_scoring.py:372: AssertionError
+___________________________________________ test_score_reception_critically_acclaimed_ramp_and_clamp[120.0-1.0] ___________________________________________
+
+reception_score = 120.0, expected = 1.0
+
+    @pytest.mark.parametrize(
+        ("reception_score", "expected"),
+        [
+            (55.0, 0.0),
+            (65.0, 0.25),
+            (75.0, 0.5),
+            (95.0, 1.0),
+            (20.0, 0.0),
+            (120.0, 1.0),
+        ],
+    )
+    def test_score_reception_critically_acclaimed_ramp_and_clamp(
+        reception_score: float,
+        expected: float,
+    ) -> None:
+        """Critically acclaimed path should be linear ramp with clamping."""
+>       assert _score_reception(reception_score, "critically_acclaimed") == pytest.approx(expected)
+E       assert 0.0 == 1.0 ± 1.0e-06
+E         
+E         comparison failed
+E         Obtained: 0.0
+E         Expected: 1.0 ± 1.0e-06
+
+unit_tests/test_metadata_scoring.py:372: AssertionError
+________________________________________ test_precompute_release_date_between_sorts_bounds_and_uses_variable_grace ________________________________________
+
+    def test_precompute_release_date_between_sorts_bounds_and_uses_variable_grace() -> None:
+        """Between mode should sort dates and use half-range grace within clamp limits."""
+        lo, hi, grace_days = _precompute_release_date("2023-01-01", "between", "2021-01-01")
+>       assert lo == _utc_ts("2021-01-01")
+E       AssertionError: assert 1672531200.0 == 1609459200.0
+E        +  where 1609459200.0 = _utc_ts('2021-01-01')
+
+unit_tests/test_metadata_scoring.py:434: AssertionError
+____________________________________________ test_precompute_release_date_between_applies_minimum_grace_clamp _____________________________________________
+
+    def test_precompute_release_date_between_applies_minimum_grace_clamp() -> None:
+        """Small between ranges should clamp grace to minimum 365 days."""
+        _, _, grace_days = _precompute_release_date("2021-01-01", "between", "2021-06-01")
+>       assert grace_days == 365.0
+E       assert 730.0 == 365.0
+
+unit_tests/test_metadata_scoring.py:442: AssertionError
+____________________________________________ test_precompute_release_date_between_applies_maximum_grace_clamp _____________________________________________
+
+    def test_precompute_release_date_between_applies_maximum_grace_clamp() -> None:
+        """Very wide between ranges should clamp grace to maximum 1825 days."""
+        _, _, grace_days = _precompute_release_date("1900-01-01", "between", "2100-01-01")
+>       assert grace_days == 1825.0
+E       assert 730.0 == 1825.0
+
+unit_tests/test_metadata_scoring.py:448: AssertionError
+____________________________________________ test_precompute_release_date_after_builds_open_ended_upper_range _____________________________________________
+
+    def test_precompute_release_date_after_builds_open_ended_upper_range() -> None:
+        """After mode should set hi to +inf and fixed 3-year grace."""
+        lo, hi, grace_days = _precompute_release_date("2010-05-20", "after", None)
+        assert lo == _utc_ts("2010-05-20")
+>       assert math.isinf(hi) and hi > 0
+E       assert (False)
+E        +  where False = <built-in function isinf>(1274313600.0)
+E        +    where <built-in function isinf> = math.isinf
+
+unit_tests/test_metadata_scoring.py:455: AssertionError
+____________________________________________ test_precompute_release_date_before_builds_open_ended_lower_range ____________________________________________
+
+    def test_precompute_release_date_before_builds_open_ended_lower_range() -> None:
+        """Before mode should set lo to -inf and fixed 3-year grace."""
+        lo, hi, grace_days = _precompute_release_date("2010-05-20", "before", None)
+>       assert math.isinf(lo) and lo < 0
+E       assert (False)
+E        +  where False = <built-in function isinf>(1274313600.0)
+E        +    where <built-in function isinf> = math.isinf
+
+unit_tests/test_metadata_scoring.py:462: AssertionError
+______________________________________________________ test_precompute_duration_between_sorts_bounds ______________________________________________________
+
+    def test_precompute_duration_between_sorts_bounds() -> None:
+        """Between mode should normalize numerical bounds to (lo, hi)."""
+        lo, hi = _precompute_duration(120.0, "between", 90.0)
+>       assert lo == 90.0
+E       assert 120.0 == 90.0
+
+unit_tests/test_metadata_scoring.py:488: AssertionError
+___________________________________________ test_precompute_duration_greater_than_builds_open_ended_upper_range ___________________________________________
+
+    def test_precompute_duration_greater_than_builds_open_ended_upper_range() -> None:
+        """Greater-than mode should set hi to +inf."""
+        lo, hi = _precompute_duration(100.0, "greater_than", None)
+        assert lo == 100.0
+>       assert math.isinf(hi) and hi > 0
+E       assert (False)
+E        +  where False = <built-in function isinf>(100.0)
+E        +    where <built-in function isinf> = math.isinf
+
+unit_tests/test_metadata_scoring.py:496: AssertionError
+____________________________________________ test_precompute_duration_less_than_builds_open_ended_lower_range _____________________________________________
+
+    def test_precompute_duration_less_than_builds_open_ended_lower_range() -> None:
+        """Less-than mode should set lo to -inf."""
+        lo, hi = _precompute_duration(100.0, "less_than", None)
+>       assert math.isinf(lo) and lo < 0
+E       assert (False)
+E        +  where False = <built-in function isinf>(100.0)
+E        +    where <built-in function isinf> = math.isinf
+
+unit_tests/test_metadata_scoring.py:502: AssertionError
+_______________________ test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-13-exact-MaturityRating.PG_13-3-3] _______________________
+
+rating = 'pg-13', match_operation = 'exact', expected_target = <MaturityRating.PG_13: 'pg-13'>, expected_lo = 3, expected_hi = 3
+
+    @pytest.mark.parametrize(
+        ("rating", "match_operation", "expected_target", "expected_lo", "expected_hi"),
+        [
+            ("pg-13", "exact", MaturityRating.PG_13, 3, 3),
+            ("pg", "greater_than", MaturityRating.PG, 3, 5),
+            ("pg-13", "less_than", MaturityRating.PG_13, 1, 2),
+            ("r", "greater_than_or_equal", MaturityRating.R, 4, 5),
+            ("r", "less_than_or_equal", MaturityRating.R, 1, 4),
+            ("g", "less_than", MaturityRating.G, 1, 0),
+            ("nc-17", "greater_than", MaturityRating.NC_17, 6, 5),
+            ("pg", "unexpected", MaturityRating.PG, 2, 2),
+        ],
+    )
+    def test_precompute_maturity_resolves_rating_and_range_for_each_operation(
+        rating: str,
+        match_operation: str,
+        expected_target: MaturityRating,
+        expected_lo: int,
+        expected_hi: int,
+    ) -> None:
+        """Maturity precompute should map operation strings to expected rank ranges."""
+        target, lo, hi = _precompute_maturity(rating, match_operation)
+        assert target is expected_target
+>       assert lo == expected_lo
+E       assert 1 == 3
+
+unit_tests/test_metadata_scoring.py:543: AssertionError
+______________________ test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-greater_than-MaturityRating.PG-3-5] _______________________
+
+rating = 'pg', match_operation = 'greater_than', expected_target = <MaturityRating.PG: 'pg'>, expected_lo = 3, expected_hi = 5
+
+    @pytest.mark.parametrize(
+        ("rating", "match_operation", "expected_target", "expected_lo", "expected_hi"),
+        [
+            ("pg-13", "exact", MaturityRating.PG_13, 3, 3),
+            ("pg", "greater_than", MaturityRating.PG, 3, 5),
+            ("pg-13", "less_than", MaturityRating.PG_13, 1, 2),
+            ("r", "greater_than_or_equal", MaturityRating.R, 4, 5),
+            ("r", "less_than_or_equal", MaturityRating.R, 1, 4),
+            ("g", "less_than", MaturityRating.G, 1, 0),
+            ("nc-17", "greater_than", MaturityRating.NC_17, 6, 5),
+            ("pg", "unexpected", MaturityRating.PG, 2, 2),
+        ],
+    )
+    def test_precompute_maturity_resolves_rating_and_range_for_each_operation(
+        rating: str,
+        match_operation: str,
+        expected_target: MaturityRating,
+        expected_lo: int,
+        expected_hi: int,
+    ) -> None:
+        """Maturity precompute should map operation strings to expected rank ranges."""
+        target, lo, hi = _precompute_maturity(rating, match_operation)
+        assert target is expected_target
+>       assert lo == expected_lo
+E       assert 1 == 3
+
+unit_tests/test_metadata_scoring.py:543: AssertionError
+_____________________ test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-13-less_than-MaturityRating.PG_13-1-2] _____________________
+
+rating = 'pg-13', match_operation = 'less_than', expected_target = <MaturityRating.PG_13: 'pg-13'>, expected_lo = 1, expected_hi = 2
+
+    @pytest.mark.parametrize(
+        ("rating", "match_operation", "expected_target", "expected_lo", "expected_hi"),
+        [
+            ("pg-13", "exact", MaturityRating.PG_13, 3, 3),
+            ("pg", "greater_than", MaturityRating.PG, 3, 5),
+            ("pg-13", "less_than", MaturityRating.PG_13, 1, 2),
+            ("r", "greater_than_or_equal", MaturityRating.R, 4, 5),
+            ("r", "less_than_or_equal", MaturityRating.R, 1, 4),
+            ("g", "less_than", MaturityRating.G, 1, 0),
+            ("nc-17", "greater_than", MaturityRating.NC_17, 6, 5),
+            ("pg", "unexpected", MaturityRating.PG, 2, 2),
+        ],
+    )
+    def test_precompute_maturity_resolves_rating_and_range_for_each_operation(
+        rating: str,
+        match_operation: str,
+        expected_target: MaturityRating,
+        expected_lo: int,
+        expected_hi: int,
+    ) -> None:
+        """Maturity precompute should map operation strings to expected rank ranges."""
+        target, lo, hi = _precompute_maturity(rating, match_operation)
+        assert target is expected_target
+        assert lo == expected_lo
+>       assert hi == expected_hi
+E       assert 3 == 2
+
+unit_tests/test_metadata_scoring.py:544: AssertionError
+___________________ test_precompute_maturity_resolves_rating_and_range_for_each_operation[r-greater_than_or_equal-MaturityRating.R-4-5] ___________________
+
+rating = 'r', match_operation = 'greater_than_or_equal', expected_target = <MaturityRating.R: 'r'>, expected_lo = 4, expected_hi = 5
+
+    @pytest.mark.parametrize(
+        ("rating", "match_operation", "expected_target", "expected_lo", "expected_hi"),
+        [
+            ("pg-13", "exact", MaturityRating.PG_13, 3, 3),
+            ("pg", "greater_than", MaturityRating.PG, 3, 5),
+            ("pg-13", "less_than", MaturityRating.PG_13, 1, 2),
+            ("r", "greater_than_or_equal", MaturityRating.R, 4, 5),
+            ("r", "less_than_or_equal", MaturityRating.R, 1, 4),
+            ("g", "less_than", MaturityRating.G, 1, 0),
+            ("nc-17", "greater_than", MaturityRating.NC_17, 6, 5),
+            ("pg", "unexpected", MaturityRating.PG, 2, 2),
+        ],
+    )
+    def test_precompute_maturity_resolves_rating_and_range_for_each_operation(
+        rating: str,
+        match_operation: str,
+        expected_target: MaturityRating,
+        expected_lo: int,
+        expected_hi: int,
+    ) -> None:
+        """Maturity precompute should map operation strings to expected rank ranges."""
+        target, lo, hi = _precompute_maturity(rating, match_operation)
+        assert target is expected_target
+>       assert lo == expected_lo
+E       assert 1 == 4
+
+unit_tests/test_metadata_scoring.py:543: AssertionError
+_________________________ test_precompute_maturity_resolves_rating_and_range_for_each_operation[g-less_than-MaturityRating.G-1-0] _________________________
+
+rating = 'g', match_operation = 'less_than', expected_target = <MaturityRating.G: 'g'>, expected_lo = 1, expected_hi = 0
+
+    @pytest.mark.parametrize(
+        ("rating", "match_operation", "expected_target", "expected_lo", "expected_hi"),
+        [
+            ("pg-13", "exact", MaturityRating.PG_13, 3, 3),
+            ("pg", "greater_than", MaturityRating.PG, 3, 5),
+            ("pg-13", "less_than", MaturityRating.PG_13, 1, 2),
+            ("r", "greater_than_or_equal", MaturityRating.R, 4, 5),
+            ("r", "less_than_or_equal", MaturityRating.R, 1, 4),
+            ("g", "less_than", MaturityRating.G, 1, 0),
+            ("nc-17", "greater_than", MaturityRating.NC_17, 6, 5),
+            ("pg", "unexpected", MaturityRating.PG, 2, 2),
+        ],
+    )
+    def test_precompute_maturity_resolves_rating_and_range_for_each_operation(
+        rating: str,
+        match_operation: str,
+        expected_target: MaturityRating,
+        expected_lo: int,
+        expected_hi: int,
+    ) -> None:
+        """Maturity precompute should map operation strings to expected rank ranges."""
+        target, lo, hi = _precompute_maturity(rating, match_operation)
+        assert target is expected_target
+        assert lo == expected_lo
+>       assert hi == expected_hi
+E       assert 1 == 0
+
+unit_tests/test_metadata_scoring.py:544: AssertionError
+___________________ test_precompute_maturity_resolves_rating_and_range_for_each_operation[nc-17-greater_than-MaturityRating.NC_17-6-5] ____________________
+
+rating = 'nc-17', match_operation = 'greater_than', expected_target = <MaturityRating.NC_17: 'nc-17'>, expected_lo = 6, expected_hi = 5
+
+    @pytest.mark.parametrize(
+        ("rating", "match_operation", "expected_target", "expected_lo", "expected_hi"),
+        [
+            ("pg-13", "exact", MaturityRating.PG_13, 3, 3),
+            ("pg", "greater_than", MaturityRating.PG, 3, 5),
+            ("pg-13", "less_than", MaturityRating.PG_13, 1, 2),
+            ("r", "greater_than_or_equal", MaturityRating.R, 4, 5),
+            ("r", "less_than_or_equal", MaturityRating.R, 1, 4),
+            ("g", "less_than", MaturityRating.G, 1, 0),
+            ("nc-17", "greater_than", MaturityRating.NC_17, 6, 5),
+            ("pg", "unexpected", MaturityRating.PG, 2, 2),
+        ],
+    )
+    def test_precompute_maturity_resolves_rating_and_range_for_each_operation(
+        rating: str,
+        match_operation: str,
+        expected_target: MaturityRating,
+        expected_lo: int,
+        expected_hi: int,
+    ) -> None:
+        """Maturity precompute should map operation strings to expected rank ranges."""
+        target, lo, hi = _precompute_maturity(rating, match_operation)
+        assert target is expected_target
+>       assert lo == expected_lo
+E       assert 1 == 6
+
+unit_tests/test_metadata_scoring.py:543: AssertionError
+_______________________ test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-unexpected-MaturityRating.PG-2-2] ________________________
+
+rating = 'pg', match_operation = 'unexpected', expected_target = <MaturityRating.PG: 'pg'>, expected_lo = 2, expected_hi = 2
+
+    @pytest.mark.parametrize(
+        ("rating", "match_operation", "expected_target", "expected_lo", "expected_hi"),
+        [
+            ("pg-13", "exact", MaturityRating.PG_13, 3, 3),
+            ("pg", "greater_than", MaturityRating.PG, 3, 5),
+            ("pg-13", "less_than", MaturityRating.PG_13, 1, 2),
+            ("r", "greater_than_or_equal", MaturityRating.R, 4, 5),
+            ("r", "less_than_or_equal", MaturityRating.R, 1, 4),
+            ("g", "less_than", MaturityRating.G, 1, 0),
+            ("nc-17", "greater_than", MaturityRating.NC_17, 6, 5),
+            ("pg", "unexpected", MaturityRating.PG, 2, 2),
+        ],
+    )
+    def test_precompute_maturity_resolves_rating_and_range_for_each_operation(
+        rating: str,
+        match_operation: str,
+        expected_target: MaturityRating,
+        expected_lo: int,
+        expected_hi: int,
+    ) -> None:
+        """Maturity precompute should map operation strings to expected rank ranges."""
+        target, lo, hi = _precompute_maturity(rating, match_operation)
+        assert target is expected_target
+>       assert lo == expected_lo
+E       assert 1 == 2
+
+unit_tests/test_metadata_scoring.py:543: AssertionError
+___________________________________________ test_precompute_watch_providers_resolves_names_and_builds_key_sets ____________________________________________
+
+    def test_precompute_watch_providers_resolves_names_and_builds_key_sets() -> None:
+        """Provider names should normalize correctly and produce expected key sets."""
+>       exclude_key_sets, include_desired_keys, include_any_method_keys = _precompute_watch_providers(
+            should_include=["  NETFLIX ", "hULu"],
+            should_exclude=["AMAZON PRIME VIDEO"],
+            preferred_access_type="subscription",
+        )
+
+unit_tests/test_metadata_scoring.py:555: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+should_include = ['  NETFLIX ', 'hULu'], should_exclude = ['AMAZON PRIME VIDEO'], preferred_access_type = 'subscription'
+
+    def _precompute_watch_providers(
+        should_include: list[str],
+        should_exclude: list[str],
+        preferred_access_type: StreamingAccessType | None,
+    ):
+        """Resolve provider names → key sets once for all candidates."""
+        # Exclusion: one set of all-method keys per excluded provider
+        exclude_key_sets: list[set[int]] = []
+        for name in should_exclude:
+            pid = FILTERABLE_WATCH_PROVIDERS_NAME_TO_ID.get(normalize_string(name))
+            if pid is None:
+                continue
+            exclude_key_sets.append(
+                {create_watch_provider_offering_key(pid, mid) for mid in _ALL_METHOD_IDS}
+            )
+    
+        # Inclusion: desired-method keys and any-method keys across all providers
+        if preferred_access_type is not None:
+>           desired_method_ids = [preferred_access_type.type_id]
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'str' object has no attribute 'type_id'
+
+db/metadata_scoring.py:309: AttributeError
+_______________________________________ test_precompute_watch_providers_duplicate_includes_are_deduplicated_in_sets _______________________________________
+
+    def test_precompute_watch_providers_duplicate_includes_are_deduplicated_in_sets() -> None:
+        """Duplicate include providers should not duplicate keys in include sets."""
+>       _, include_desired_keys, include_any_method_keys = _precompute_watch_providers(
+            should_include=["Netflix", " netflix "],
+            should_exclude=[],
+            preferred_access_type="rent",
+        )
+
+unit_tests/test_metadata_scoring.py:595: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+should_include = ['Netflix', ' netflix '], should_exclude = [], preferred_access_type = 'rent'
+
+    def _precompute_watch_providers(
+        should_include: list[str],
+        should_exclude: list[str],
+        preferred_access_type: StreamingAccessType | None,
+    ):
+        """Resolve provider names → key sets once for all candidates."""
+        # Exclusion: one set of all-method keys per excluded provider
+        exclude_key_sets: list[set[int]] = []
+        for name in should_exclude:
+            pid = FILTERABLE_WATCH_PROVIDERS_NAME_TO_ID.get(normalize_string(name))
+            if pid is None:
+                continue
+            exclude_key_sets.append(
+                {create_watch_provider_offering_key(pid, mid) for mid in _ALL_METHOD_IDS}
+            )
+    
+        # Inclusion: desired-method keys and any-method keys across all providers
+        if preferred_access_type is not None:
+>           desired_method_ids = [preferred_access_type.type_id]
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'str' object has no attribute 'type_id'
+
+db/metadata_scoring.py:309: AttributeError
+_________________________________________ test_precompute_watch_providers_invalid_access_type_raises_value_error __________________________________________
+
+    def test_precompute_watch_providers_invalid_access_type_raises_value_error() -> None:
+        """Invalid access-type labels should raise ValueError from enum resolution."""
+        with pytest.raises(ValueError):
+>           _precompute_watch_providers(
+                should_include=["Netflix"],
+                should_exclude=[],
+                preferred_access_type="free_with_ads",
+            )
+
+unit_tests/test_metadata_scoring.py:619: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+should_include = ['Netflix'], should_exclude = [], preferred_access_type = 'free_with_ads'
+
+    def _precompute_watch_providers(
+        should_include: list[str],
+        should_exclude: list[str],
+        preferred_access_type: StreamingAccessType | None,
+    ):
+        """Resolve provider names → key sets once for all candidates."""
+        # Exclusion: one set of all-method keys per excluded provider
+        exclude_key_sets: list[set[int]] = []
+        for name in should_exclude:
+            pid = FILTERABLE_WATCH_PROVIDERS_NAME_TO_ID.get(normalize_string(name))
+            if pid is None:
+                continue
+            exclude_key_sets.append(
+                {create_watch_provider_offering_key(pid, mid) for mid in _ALL_METHOD_IDS}
+            )
+    
+        # Inclusion: desired-method keys and any-method keys across all providers
+        if preferred_access_type is not None:
+>           desired_method_ids = [preferred_access_type.type_id]
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'str' object has no attribute 'type_id'
+
+db/metadata_scoring.py:309: AttributeError
+================================================================= short test summary info =================================================================
+FAILED unit_tests/test_metadata_scoring.py::test_score_reception_critically_acclaimed_ramp_and_clamp[65.0-0.25] - assert 0.0 == 0.25 ± 2.5e-07
+FAILED unit_tests/test_metadata_scoring.py::test_score_reception_critically_acclaimed_ramp_and_clamp[75.0-0.5] - assert 0.0 == 0.5 ± 5.0e-07
+FAILED unit_tests/test_metadata_scoring.py::test_score_reception_critically_acclaimed_ramp_and_clamp[95.0-1.0] - assert 0.0 == 1.0 ± 1.0e-06
+FAILED unit_tests/test_metadata_scoring.py::test_score_reception_critically_acclaimed_ramp_and_clamp[20.0-0.0] - assert 0.75 == 0.0 ± 1.0e-12
+FAILED unit_tests/test_metadata_scoring.py::test_score_reception_critically_acclaimed_ramp_and_clamp[120.0-1.0] - assert 0.0 == 1.0 ± 1.0e-06
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_release_date_between_sorts_bounds_and_uses_variable_grace - AssertionError: assert 1672531200.0 == 1609459200.0
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_release_date_between_applies_minimum_grace_clamp - assert 730.0 == 365.0
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_release_date_between_applies_maximum_grace_clamp - assert 730.0 == 1825.0
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_release_date_after_builds_open_ended_upper_range - assert (False)
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_release_date_before_builds_open_ended_lower_range - assert (False)
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_duration_between_sorts_bounds - assert 120.0 == 90.0
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_duration_greater_than_builds_open_ended_upper_range - assert (False)
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_duration_less_than_builds_open_ended_lower_range - assert (False)
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-13-exact-MaturityRating.PG_13-3-3] - assert 1 == 3
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-greater_than-MaturityRating.PG-3-5] - assert 1 == 3
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-13-less_than-MaturityRating.PG_13-1-2] - assert 3 == 2
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_maturity_resolves_rating_and_range_for_each_operation[r-greater_than_or_equal-MaturityRating.R-4-5] - assert 1 == 4
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_maturity_resolves_rating_and_range_for_each_operation[g-less_than-MaturityRating.G-1-0] - assert 1 == 0
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_maturity_resolves_rating_and_range_for_each_operation[nc-17-greater_than-MaturityRating.NC_17-6-5] - assert 1 == 6
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_maturity_resolves_rating_and_range_for_each_operation[pg-unexpected-MaturityRating.PG-2-2] - assert 1 == 2
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_watch_providers_resolves_names_and_builds_key_sets - AttributeError: 'str' object has no attribute 'type_id'
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_watch_providers_duplicate_includes_are_deduplicated_in_sets - AttributeError: 'str' object has no attribute 'type_id'
+FAILED unit_tests/test_metadata_scoring.py::test_precompute_watch_providers_invalid_access_type_raises_value_error - AttributeError: 'str' object has no attribute 'type_id'
+============================================================== 23 failed, 64 passed in 3.62s ==============================================================

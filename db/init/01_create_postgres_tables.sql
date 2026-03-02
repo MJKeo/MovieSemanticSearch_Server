@@ -128,11 +128,6 @@ CREATE TABLE IF NOT EXISTS lex.language_dictionary (
   name         TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS lex.provider_dictionary (
-  provider_id  INT PRIMARY KEY,
-  name         TEXT NOT NULL UNIQUE
-);
-
 CREATE TABLE IF NOT EXISTS lex.watch_method_dictionary (
   method_id  INT PRIMARY KEY,
   name       TEXT NOT NULL UNIQUE

@@ -250,11 +250,6 @@ CREATE TABLE lex.genre_dictionary (
   name TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE lex.provider_dictionary (
-  provider_id INT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
-);
-
 CREATE TABLE lex.watch_method_dictionary (
   method_id INT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE -- stream/rent/buy

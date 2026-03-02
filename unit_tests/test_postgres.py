@@ -8,7 +8,6 @@ import pytest
 from db import postgres
 from implementation.classes.enums import Genre, MaturityRating, StreamingAccessType
 from implementation.classes.languages import Language
-from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDERS_MAP
 
 
 def _mock_pool_connection(
@@ -254,7 +253,6 @@ async def test_batch_insert_posting_functions_empty_term_ids_short_circuit(
     ("function_name", "table_name"),
     [
         ("batch_upsert_genre_dictionary", "lex.genre_dictionary"),
-        ("batch_upsert_provider_dictionary", "lex.provider_dictionary"),
         ("batch_upsert_watch_method_dictionary", "lex.watch_method_dictionary"),
         ("batch_upsert_maturity_dictionary", "lex.maturity_dictionary"),
         ("batch_upsert_language_dictionary", "lex.language_dictionary"),
@@ -280,7 +278,6 @@ async def test_dictionary_upserts_use_expected_tables_and_params(
     # Spot-check expected cardinalities for each dictionary source of truth.
     expected_sizes = {
         "batch_upsert_genre_dictionary": len(list(Genre)),
-        "batch_upsert_provider_dictionary": len(FILTERABLE_WATCH_PROVIDERS_MAP),
         "batch_upsert_watch_method_dictionary": len(list(StreamingAccessType)),
         "batch_upsert_maturity_dictionary": len([m for m in MaturityRating if m != MaturityRating.UNRATED]),
         "batch_upsert_language_dictionary": len(list(Language)),

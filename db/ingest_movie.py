@@ -31,7 +31,6 @@ from implementation.misc.helpers import (
     normalize_string,
     create_watch_provider_offering_key,
 )
-from implementation.classes.watch_providers import FILTERABLE_WATCH_PROVIDER_IDS
 from db.postgres import (
     pool,
     batch_insert_title_token_postings,
