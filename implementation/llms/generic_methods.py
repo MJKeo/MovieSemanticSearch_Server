@@ -51,7 +51,10 @@ def generate_openai_response(
     model: str = "gpt-5-mini",
     reasoning_effort: str = "low",
     verbosity: str = "low"
-):
+) -> Tuple[BaseModel, int, int]:
+    """
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
     try:
         response = openai_client.chat.completions.parse(
             model=model,
@@ -63,9 +66,14 @@ def generate_openai_response(
             reasoning_effort=reasoning_effort,
             verbosity=verbosity
         )
-        
+
+        usage = response.usage
+        input_tokens = usage.prompt_tokens
+        output_tokens = usage.completion_tokens
+
         # Extract the parsed response - OpenAI automatically validates structure matches response_format
-        return response.choices[0].message.parsed
+        parsed = response.choices[0].message.parsed
+        return parsed, input_tokens, output_tokens
     except Exception as e:
         raise ValueError(f"OpenAI failed to generate response: {e}")
 

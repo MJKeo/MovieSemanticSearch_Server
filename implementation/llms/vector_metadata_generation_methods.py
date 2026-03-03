@@ -6,6 +6,7 @@ DenseVibe fields for vector search, as specified in the movie search guide (sect
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple
 from implementation.llms.generic_methods import generate_openai_response
 from implementation.prompts.vector_metadata_generation_prompts import (
     PLOT_EVENTS_SYSTEM_PROMPT, 
@@ -32,7 +33,15 @@ from implementation.classes.schemas import (
     IMDBReviewTheme,
 )
 from dotenv import load_dotenv
-from typing import Optional, List
+from typing import Optional, List, Tuple
+
+
+class TokenUsage(NamedTuple):
+    """Token counts for a single LLM call, tagged with the model used."""
+    input_tokens: int
+    output_tokens: int
+    model: str
+
 
 # ================================
 #         Plot Events
@@ -44,7 +53,7 @@ def generate_plot_events_metadata(
     plot_keywords: list[str],
     plot_summaries: list[str],
     plot_synopses: list[str]
-) -> PlotEventsMetadata:
+) -> Tuple[PlotEventsMetadata, TokenUsage]:
     # Build user prompt with all plot-related information
     # Combine all inputs into a structured prompt for the LLM
     plot_info_parts = []
@@ -58,11 +67,11 @@ def generate_plot_events_metadata(
         plot_info_parts.append(f"plot_synopses: \n-{'\n-'.join(plot_synopses)}")
     if plot_keywords:
         plot_info_parts.append(f"plot_keywords: {', '.join(plot_keywords)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with minimal thinking - faster responses for structured extraction
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=PLOT_EVENTS_SYSTEM_PROMPT,
         response_format=PlotEventsMetadata,
@@ -72,7 +81,7 @@ def generate_plot_events_metadata(
     )
     if parsed is None:
         raise ValueError("Model failed to generate plot events metadata")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 
 # ================================
@@ -87,7 +96,7 @@ def generate_plot_analysis_metadata(
     plot_keywords: list[str],
     reception_summary: Optional[str] = None,
     featured_reviews: list[IMDBFeaturedReview] = []
-) -> PlotAnalysisMetadata:
+) -> Tuple[PlotAnalysisMetadata, TokenUsage]:
     # Build user prompt with all plot-related information
     # Combine all inputs into a structured prompt for the LLM
     plot_info_parts = []
@@ -106,11 +115,11 @@ def generate_plot_analysis_metadata(
     if featured_reviews:
         formatted_reviews = [f"{review.summary}: {review.text}" for review in featured_reviews[:5]]
         plot_info_parts.append(f"featured_reviews: \n -{"\n -".join(formatted_reviews)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with low thinking for structured analysis
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=PLOT_ANALYSIS_SYSTEM_PROMPT,
         response_format=PlotAnalysisMetadata,
@@ -120,7 +129,7 @@ def generate_plot_analysis_metadata(
     )
     if parsed is None:
         raise ValueError("Model failed to generate plot analysis metadata")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 
 # ================================
@@ -139,7 +148,7 @@ def generate_viewer_experience_metadata(
     reception_summary: str,
     audience_reception_attributes: List[IMDBReviewTheme],
     featured_reviews: List[IMDBFeaturedReview],
-) -> ViewerExperienceMetadata:
+) -> Tuple[ViewerExperienceMetadata, TokenUsage]:
     """
     Generate viewer experience metadata for a movie.
     """
@@ -168,11 +177,11 @@ def generate_viewer_experience_metadata(
     if featured_reviews:
         formatted_reviews = [f"{review.summary}: {review.text}" for review in featured_reviews[:5]]
         plot_info_parts.append(f"featured_reviews: \n -{"\n -".join(formatted_reviews)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with low thinking for viewer experience metadata
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=VIEWER_EXPERIENCE_SYSTEM_PROMPT,
         response_format=ViewerExperienceMetadata,
@@ -182,7 +191,7 @@ def generate_viewer_experience_metadata(
     )
     if parsed is None:
         raise ValueError("Model failed to generate viewer experience metadata")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 
 # ================================
@@ -198,7 +207,7 @@ def generate_watch_context_metadata(
     audience_reception_attributes: List[IMDBReviewTheme],
     reception_summary: str,
     featured_reviews: List[IMDBFeaturedReview]
-) -> WatchContextMetadata:
+) -> Tuple[WatchContextMetadata, TokenUsage]:
     """
     Generate watch context metadata for a movie.
     """
@@ -221,11 +230,11 @@ def generate_watch_context_metadata(
     if featured_reviews:
         formatted_reviews = [f"{review.summary}: {review.text}" for review in featured_reviews[:5]]
         plot_info_parts.append(f"featured_reviews: \n -{"\n -".join(formatted_reviews)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with medium thinking for watch context analysis
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=WATCH_CONTEXT_SYSTEM_PROMPT,
         response_format=WatchContextMetadata,
@@ -235,7 +244,7 @@ def generate_watch_context_metadata(
     )
     if parsed is None:
         raise ValueError("Model failed to generate watch context metadata")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 
 # ================================
@@ -249,7 +258,7 @@ def generate_narrative_techniques_metadata(
     overall_keywords: List[str],
     featured_reviews: List[IMDBFeaturedReview],
     reception_summary: str,
-) -> NarrativeTechniquesMetadata:
+) -> Tuple[NarrativeTechniquesMetadata, TokenUsage]:
     """
     Generate narrative techniques metadata for a movie.
     """
@@ -267,11 +276,11 @@ def generate_narrative_techniques_metadata(
     if featured_reviews:
         formatted_reviews = [f"{review.summary}: {review.text}" for review in featured_reviews[:5]]
         plot_info_parts.append(f"featured_reviews: \n -{"\n -".join(formatted_reviews)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with medium thinking for narrative techniques analysis
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=NARRATIVE_TECHNIQUES_SYSTEM_PROMPT,
         response_format=NarrativeTechniquesMetadata,
@@ -281,7 +290,7 @@ def generate_narrative_techniques_metadata(
     )
     if parsed is None:
         raise ValueError("Model failed to generate narrative techniques metadata")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 
 # ================================
@@ -294,11 +303,12 @@ def generate_production_metadata(
     plot_keywords: List[str],
     overall_keywords: List[str],
     featured_reviews: List[IMDBFeaturedReview]
-) -> ProductionMetadata:
+) -> Tuple[ProductionMetadata, TokenUsage]:
     """
-    Generate production metadata by calling generate_production_keywords and 
+    Generate production metadata by calling generate_production_keywords and
     generate_source_of_inspiration in parallel, then combining the results.
-    
+
+    Token usage is summed across both sub-calls since they jointly produce this space.
     Raises an error if either function fails to return a value or raises an error.
     """
     # Execute both functions in parallel using ThreadPoolExecutor
@@ -317,61 +327,72 @@ def generate_production_metadata(
             overall_keywords,
             featured_reviews
         )
-        
+
         # Wait for both to complete and collect results
         production_keywords_result = None
         source_of_inspiration_result = None
         production_keywords_error = None
         source_of_inspiration_error = None
-        
+
         # Get results, catching any exceptions
         try:
             production_keywords_result = future_production_keywords.result()
         except Exception as e:
             production_keywords_error = e
-        
+
         try:
             source_of_inspiration_result = future_source_of_inspiration.result()
         except Exception as e:
             source_of_inspiration_error = e
-        
+
         # Check if either failed or returned None
         if production_keywords_error is not None:
             raise RuntimeError(
                 f"generate_production_keywords failed: {production_keywords_error}"
             ) from production_keywords_error
-        
+
         if source_of_inspiration_error is not None:
             raise RuntimeError(
                 f"generate_source_of_inspiration failed: {source_of_inspiration_error}"
             ) from source_of_inspiration_error
-        
+
         if production_keywords_result is None:
             raise RuntimeError("generate_production_keywords returned None")
-        
+
         if source_of_inspiration_result is None:
             raise RuntimeError("generate_source_of_inspiration returned None")
-        
+
+        # Unpack metadata and token usage from both sub-calls
+        prod_keywords_metadata, prod_keywords_tokens = production_keywords_result
+        source_inspiration_metadata, source_inspiration_tokens = source_of_inspiration_result
+
+        # Sum token usage across both sub-calls (both use the same model)
+        combined_tokens = TokenUsage(
+            input_tokens=prod_keywords_tokens.input_tokens + source_inspiration_tokens.input_tokens,
+            output_tokens=prod_keywords_tokens.output_tokens + source_inspiration_tokens.output_tokens,
+            model=prod_keywords_tokens.model,
+        )
+
         # Both succeeded, combine into ProductionMetadata
         return ProductionMetadata(
-            production_keywords=production_keywords_result,
-            sources_of_inspiration=source_of_inspiration_result
-        )
+            production_keywords=prod_keywords_metadata,
+            sources_of_inspiration=source_inspiration_metadata
+        ), combined_tokens
 
 def generate_production_keywords(
     title: str,
     overall_keywords: List[str]
-) -> GenericTermsSection:
+) -> Tuple[GenericTermsSection, TokenUsage]:
     plot_info_parts = []
     if title:
         plot_info_parts.append(f"title: {title}")
     if overall_keywords:
         plot_info_parts.append(f"keywords: {', '.join(overall_keywords)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with low thinking for production keywords
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=PRODUCTION_KEYWORDS_SYSTEM_PROMPT,
         response_format=GenericTermsSection,
@@ -381,7 +402,7 @@ def generate_production_keywords(
     )
     if parsed is None:
         raise ValueError("Model failed to generate production keywords")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 def generate_source_of_inspiration(
     title: str,
@@ -389,7 +410,7 @@ def generate_source_of_inspiration(
     plot_keywords: List[str],
     overall_keywords: List[str],
     featured_reviews: List[IMDBFeaturedReview],
-) -> SourceOfInspirationSection:
+) -> Tuple[SourceOfInspirationSection, TokenUsage]:
     """
     Generate source of inspiration metadata for a movie.
     """
@@ -405,11 +426,11 @@ def generate_source_of_inspiration(
     if featured_reviews:
         formatted_reviews = [f"{review.summary}: {review.text}" for review in featured_reviews[:5]]
         plot_info_parts.append(f"featured_reviews: \n -{"\n -".join(formatted_reviews)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with low thinking for sources of inspiration
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=SOURCE_OF_INSPIRATION_SYSTEM_PROMPT,
         response_format=SourceOfInspirationSection,
@@ -419,7 +440,7 @@ def generate_source_of_inspiration(
     )
     if parsed is None:
         raise ValueError("Model failed to generate sources of inspiration")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 
 # ================================
@@ -431,7 +452,7 @@ def generate_reception_metadata(
     reception_summary: str,
     audience_reception_attributes: List[IMDBFeaturedReview],
     featured_reviews: List[IMDBFeaturedReview],
-) -> ReceptionMetadata:
+) -> Tuple[ReceptionMetadata, TokenUsage]:
     """
     Generate reception metadata for a movie.
     """
@@ -446,11 +467,11 @@ def generate_reception_metadata(
     if featured_reviews:
         formatted_reviews = [f"{review.summary}: {review.text}" for review in featured_reviews[:5]]
         plot_info_parts.append(f"featured_reviews: \n -{"\n -".join(formatted_reviews)}")
-    
+
     user_prompt = "\n".join(plot_info_parts)
-    
+
     # Generate response using gpt-5-mini with low thinking for reception metadata
-    parsed = generate_openai_response(
+    parsed, input_tokens, output_tokens = generate_openai_response(
         user_prompt=user_prompt,
         system_prompt=RECEPTION_SYSTEM_PROMPT,
         response_format=ReceptionMetadata,
@@ -460,7 +481,7 @@ def generate_reception_metadata(
     )
     if parsed is None:
         raise ValueError("Model failed to generate reception metadata")
-    return parsed
+    return parsed, TokenUsage(input_tokens, output_tokens, "gpt-5-mini")
 
 
 # ================================
@@ -482,27 +503,32 @@ def generate_llm_metadata(
     maturity_rating: str = "",
     maturity_reasoning: list[str] = [],
     parental_guide_items: list[ParentalGuideItem] = []
-) -> dict:
+) -> Tuple[dict, dict[str, TokenUsage]]:
     """
     Generate all LLM metadata for a movie using parallel execution.
-    
+
     Execution flow:
-    1. Calls generate_plot_events_metadata, generate_watch_context_metadata, and 
+    1. Calls generate_plot_events_metadata, generate_watch_context_metadata, and
        generate_reception_metadata in parallel
     2. As soon as generate_plot_events_metadata completes successfully, calls
        generate_plot_analysis_metadata, generate_viewer_experience_metadata,
        generate_narrative_techniques_metadata, and generate_production_metadata in parallel
-    3. Returns a dictionary where each key maps to one of the metadata objects generated
-    
+    3. Returns a tuple of (metadata_dict, token_usage_dict)
+
     If generate_plot_events_metadata fails, the whole method raises an error.
-    If any other method fails, that key is set to None in the returned dictionary.
-    
+    If any other method fails, that key is set to None in the metadata dict
+    and omitted from the token usage dict.
+
     Returns:
-        dict: A dictionary with keys: 'plot_events', 'watch_context', 'reception',
-              'plot_analysis', 'viewer_experience', 'narrative_techniques', 'production'
+        Tuple of:
+        - dict: metadata with keys 'plot_events_metadata', 'watch_context_metadata', etc.
+        - dict[str, TokenUsage]: per-space token usage keyed by the same metadata keys
     """
     print(f"Generating llm metadata for {title}")
-    
+
+    # Accumulates token usage per vector space as results come in
+    token_usage: dict[str, TokenUsage] = {}
+
     # Step 1: Execute plot_events, watch_context, and reception in parallel
     # These don't depend on plot_events completing
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -533,12 +559,13 @@ def generate_llm_metadata(
             audience_reception_attributes=audience_reception_attributes,
             featured_reviews=featured_reviews
         )
-        
+
         # Wait for plot_events to complete first (critical - must succeed)
         # If it fails, the whole method should error
         try:
-            plot_events_metadata = plot_events_future.result()
+            plot_events_metadata, plot_events_tokens = plot_events_future.result()
             plot_synopsis = plot_events_metadata.plot_summary
+            token_usage["plot_events_metadata"] = plot_events_tokens
             if plot_events_metadata is not None:
                 print(f"✓ plot_events_metadata for {title}: SUCCESS")
             else:
@@ -547,29 +574,31 @@ def generate_llm_metadata(
         except Exception as e:
             print(f"✗ plot_events_metadata for {title}: FAILED ({e})")
             raise RuntimeError(f"generate_plot_events_metadata failed: {e}") from e
-        
+
         # Collect results from watch_context and reception (these can fail gracefully)
         watch_context_metadata = None
         reception_metadata = None
-        
+
         try:
-            watch_context_metadata = watch_context_future.result()
+            watch_context_metadata, watch_context_tokens = watch_context_future.result()
             if watch_context_metadata is not None:
+                token_usage["watch_context_metadata"] = watch_context_tokens
                 print(f"✓ watch_context_metadata for {title}: SUCCESS")
             else:
                 print(f"✗ watch_context_metadata for {title}: FAILED (result is None)")
         except Exception as e:
             print(f"✗ watch_context_metadata for {title}: FAILED ({e})")
-        
+
         try:
-            reception_metadata = reception_future.result()
+            reception_metadata, reception_tokens = reception_future.result()
             if reception_metadata is not None:
+                token_usage["reception_metadata"] = reception_tokens
                 print(f"✓ reception_metadata for {title}: SUCCESS")
             else:
                 print(f"✗ reception_metadata for {title}: FAILED (result is None)")
         except Exception as e:
             print(f"✗ reception_metadata for {title}: FAILED ({e})")
-    
+
     # Step 2: Now that plot_events is complete, execute the dependent functions in parallel
     # These all depend on plot_synopsis from plot_events_metadata
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -615,51 +644,55 @@ def generate_llm_metadata(
             overall_keywords=overall_keywords,
             featured_reviews=featured_reviews
         )
-        
+
         # Collect results from all four tasks (these can fail gracefully)
         plot_analysis_metadata = None
         viewer_experience_metadata = None
         narrative_techniques_metadata = None
         production_metadata = None
-        
+
         try:
-            plot_analysis_metadata = plot_analysis_future.result()
+            plot_analysis_metadata, plot_analysis_tokens = plot_analysis_future.result()
             if plot_analysis_metadata is not None:
+                token_usage["plot_analysis_metadata"] = plot_analysis_tokens
                 print(f"✓ plot_analysis_metadata for {title}: SUCCESS")
             else:
                 print(f"✗ plot_analysis_metadata for {title}: FAILED (result is None)")
         except Exception as e:
             print(f"✗ plot_analysis_metadata for {title}: FAILED ({e})")
-        
+
         try:
-            viewer_experience_metadata = viewer_experience_future.result()
+            viewer_experience_metadata, viewer_experience_tokens = viewer_experience_future.result()
             if viewer_experience_metadata is not None:
+                token_usage["viewer_experience_metadata"] = viewer_experience_tokens
                 print(f"✓ viewer_experience_metadata for {title}: SUCCESS")
             else:
                 print(f"✗ viewer_experience_metadata for {title}: FAILED (result is None)")
         except Exception as e:
             print(f"✗ viewer_experience_metadata for {title}: FAILED ({e})")
-        
+
         try:
-            narrative_techniques_metadata = narrative_techniques_future.result()
+            narrative_techniques_metadata, narrative_tokens = narrative_techniques_future.result()
             if narrative_techniques_metadata is not None:
+                token_usage["narrative_techniques_metadata"] = narrative_tokens
                 print(f"✓ narrative_techniques_metadata for {title}: SUCCESS")
             else:
                 print(f"✗ narrative_techniques_metadata for {title}: FAILED (result is None)")
         except Exception as e:
             print(f"✗ narrative_techniques_metadata for {title}: FAILED ({e})")
-        
+
         try:
-            production_metadata = production_future.result()
+            production_metadata, production_tokens = production_future.result()
             if production_metadata is not None:
+                token_usage["production_metadata"] = production_tokens
                 print(f"✓ production_metadata for {title}: SUCCESS")
             else:
                 print(f"✗ production_metadata for {title}: FAILED (result is None)")
         except Exception as e:
             print(f"✗ production_metadata for {title}: FAILED ({e})")
-    
-    # Return a dictionary with all results
-    return {
+
+    # Return metadata dict and per-space token usage dict
+    metadata = {
         "plot_events_metadata": plot_events_metadata,
         "watch_context_metadata": watch_context_metadata,
         "reception_metadata": reception_metadata,
@@ -668,3 +701,4 @@ def generate_llm_metadata(
         "narrative_techniques_metadata": narrative_techniques_metadata,
         "production_metadata": production_metadata
     }
+    return metadata, token_usage

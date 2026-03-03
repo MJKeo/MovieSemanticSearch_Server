@@ -201,7 +201,7 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
         cast_crew_data = parsed_results["cast_crew_data"]
         featured_reviews_data = parsed_results["featured_reviews_data"]
 
-        llm_metadata = generate_llm_metadata(
+        llm_metadata, llm_token_usage = generate_llm_metadata(
             title=tmdb_movie_data["title"],
             overview=imdb_data["overview"],
             plot_summaries=summary_data["plot_summaries"],
