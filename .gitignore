@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Ingestion pipeline data (tracker DB, per-movie JSON files, embeddings)
+ingestion_data/
