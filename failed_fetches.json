@@ -1,6 +1,6 @@
 [
   {
     "tmdb_movie_id": 2493,
-    "failure_reason": "'title'"
+    "failure_reason": "maturity_rating is required but was not found"
   }
 ]

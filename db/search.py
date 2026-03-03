@@ -15,13 +15,15 @@ from typing import Optional
 from qdrant_client import AsyncQdrantClient
 
 from db.lexical_search import lexical_search, LexicalSearchDebug
+from db.postgres import fetch_reception_scores
+from db.reranking import rerank_candidates
 from db.vector_search import run_vector_search, VectorSearchDebug
 from db.vector_scoring import calculate_vector_scores, RELEVANCE_RAW_WEIGHTS
 from implementation.llms.query_understanding_methods import (
     create_channel_weights_async,
     extract_all_metadata_preferences_async,
 )
-from implementation.classes.enums import RelevanceSize
+from implementation.classes.enums import RelevanceSize, ReceptionType
 from implementation.classes.schemas import (
     ChannelWeightsResponse,
     MetadataPreferencesResponse,
@@ -36,6 +38,8 @@ class SearchCandidate:
     lexical_score: float         # normalized_lexical_score from LexicalCandidate
     metadata_score: float = 0.0  # normalized metadata score calculated AFTER search completes
     final_score: float = 0.0     # weighted combination of all three channel scores
+    bucketed_final_score: float = 0.0  # final_score rounded to BUCKET_PRECISION for tie-breaking
+    quality_prior: float = 0.0         # normalized reception score for within-bucket ordering
 
 
 @dataclass(slots=True)
@@ -192,8 +196,13 @@ async def search(
             )
 
     # Phase C — Run metadata scoring
+    # reception_scores is populated as a side-channel by create_metadata_scores
+    # from the movie cards it already fetches, avoiding a redundant DB query.
     candidates_list = list(merged.values())
-    candidates_list = await create_metadata_scores(metadata_preferences, candidates_list)
+    reception_scores: dict[int, float | None] = {}
+    candidates_list = await create_metadata_scores(
+        metadata_preferences, candidates_list, reception_scores,
+    )
 
     # Phase D — Await channel weights, correct, and compute final scores
     channel_weights_result, channel_weights_ms = await channel_weights_task
@@ -232,8 +241,30 @@ async def search(
             + w_metadata * c.metadata_score
         )
 
-    # Phase E — Sort descending by final_score
-    candidates_list.sort(key=lambda c: c.final_score, reverse=True)
+    # Phase E — Quality prior reranking
+    # Bucket candidates by rounded final_score, then sort within each bucket
+    # by normalized reception score so higher-quality movies surface first
+    # when relevance is essentially tied.
+
+    # Determine the user's reception preference.
+    # reception_type is stored as a string at runtime due to Pydantic's
+    # use_enum_values=True on ReceptionPreference, so we handle both forms.
+    raw_reception_type = metadata_preferences.reception_preference.reception_type
+    reception_type = (
+        raw_reception_type
+        if isinstance(raw_reception_type, ReceptionType)
+        else ReceptionType(raw_reception_type)
+    )
+
+    # Fetch reception scores only when metadata scoring didn't already
+    # provide them (i.e. when it early-returned due to no active preferences).
+    if not reception_scores and candidates_list:
+        reception_scores = await fetch_reception_scores(
+            [c.movie_id for c in candidates_list],
+        )
+
+    # Rerank: bucket by relevance, sort within buckets by quality prior
+    rerank_candidates(candidates_list, reception_scores, reception_type)
 
     # Phase F — Build debug and return
     end = time.perf_counter()

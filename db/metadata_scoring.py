@@ -362,11 +362,20 @@ def _precompute_watch_providers(
 async def create_metadata_scores(
     preferences: MetadataPreferencesResponse,
     candidates: list[SearchCandidate],
+    reception_scores_out: dict[int, float | None] | None = None,
 ) -> list[SearchCandidate]:
     """
     Score each candidate against the user's inferred metadata preferences.
 
     Mutates each candidate's metadata_score in place and returns the same list.
+
+    Args:
+        preferences: Structured metadata preferences from query understanding.
+        candidates: Merged search candidates to score.
+        reception_scores_out: Optional mutable dict populated with
+            {movie_id: reception_score} from the movie cards already fetched
+            by this function. Allows callers to reuse reception data without
+            a redundant DB round-trip (e.g. for quality-prior reranking).
     """
     if not candidates or not preferences.has_active_preferences():
         return candidates
@@ -466,6 +475,12 @@ async def create_metadata_scores(
         trending_scores = {}
 
     cards: dict[int, dict] = {card["movie_id"]: card for card in cards_list}
+
+    # Expose reception scores to caller so reranking can reuse them
+    # without a redundant database query.
+    if reception_scores_out is not None:
+        for movie_id, card in cards.items():
+            reception_scores_out[movie_id] = card.get("reception_score")
 
     # ── Precompute total weight (constant across candidates) ──
     total_weight = sum(p.weight for p in active)

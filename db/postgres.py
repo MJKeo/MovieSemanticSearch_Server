@@ -1370,6 +1370,32 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     return [dict(zip(columns, row)) for row in search_results]
 
 
+async def fetch_reception_scores(movie_ids: list[int]) -> dict[int, float | None]:
+    """
+    Bulk fetch reception scores for quality-prior reranking.
+
+    Lightweight alternative to fetch_movie_cards when only the reception
+    score column is needed (e.g. for within-bucket tie-breaking).
+
+    Args:
+        movie_ids: List of movie IDs to fetch scores for.
+
+    Returns:
+        Dict mapping movie_id -> reception_score (None when missing).
+    """
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT movie_id, reception_score
+        FROM public.movie_card
+        WHERE movie_id = ANY(%s::bigint[])
+    """
+
+    rows = await _execute_read(query, (movie_ids,))
+    return {row[0]: row[1] for row in rows}
+
+
 async def fetch_movie_ids_by_term_ids(
     table: PostingTable,
     term_ids: list[int],

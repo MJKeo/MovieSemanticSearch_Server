@@ -68,13 +68,14 @@ def fetch_tmdb_movie_data(tmdb_movie_id: int) -> dict:
 
 IMDB_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    # Safer with requests unless you know you can decode br/zstd:
-    "Accept-Encoding": "gzip, deflate",
+    # requests can transparently handle these encodings when supported by the runtime.
+    "Accept-Encoding": "gzip, deflate, br, zstd",
     "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control": "max-age=0",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
     "Priority": "u=0, i",
-    "Referer": "https://www.google.com/",
-    "Sec-CH-UA": '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
+    "Referer": "https://www.imdb.com/",
+    "Sec-CH-UA": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
     "Sec-CH-UA-Mobile": "?0",
     "Sec-CH-UA-Platform": '"macOS"',
     "Sec-Fetch-Dest": "document",
@@ -82,7 +83,7 @@ IMDB_HEADERS = {
     "Sec-Fetch-Site": "same-origin",
     "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": "1",
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
 }
 
 def perform_imdb_fetch(url: str) -> Dict[str, Any]:
@@ -145,6 +146,8 @@ def fetch_and_create_imdb_movie(tmdb_movie_id: int) -> dict:
         def fetch_and_parse_main_page():
             """Fetches main page and parses IMDb attributes."""
             response = fetch_main_page(imdb_movie_id)
+            with open("main_page.html", "w", encoding="utf-8") as html_file:
+                html_file.write(response.text)
             return ("imdb_data", extract_imdb_attributes(response.text))
         
         def fetch_and_parse_summary():

@@ -113,7 +113,7 @@ def _default_channel_weights() -> ChannelWeightsResponse:
 
 
 def _mock_new_dependencies():
-    """Return a context manager that patches the three new async dependencies."""
+    """Return a context manager that patches the four new async dependencies."""
     metadata_prefs = _default_metadata_preferences()
     channel_weights = _default_channel_weights()
 
@@ -128,7 +128,11 @@ def _mock_new_dependencies():
         ),
         patch(
             "db.metadata_scoring.create_metadata_scores",
-            new=AsyncMock(side_effect=lambda prefs, candidates: candidates),
+            new=AsyncMock(side_effect=lambda prefs, candidates, reception_scores_out=None: candidates),
+        ),
+        patch(
+            "db.search.fetch_reception_scores",
+            new=AsyncMock(return_value={}),
         ),
     )
 
@@ -201,12 +205,12 @@ async def test_search_calls_both_with_correct_args():
 
     mock_client = AsyncMock()
 
-    p1, p2, p3 = _mock_new_dependencies()
+    p1, p2, p3, p4 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)) as mock_lex,
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)) as mock_vec,
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
-        p1, p2, p3,
+        p1, p2, p3, p4,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -249,12 +253,12 @@ async def test_search_merges_overlapping_candidates():
 
     mock_client = AsyncMock()
 
-    p1, p2, p3 = _mock_new_dependencies()
+    p1, p2, p3, p4 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
-        p1, p2, p3,
+        p1, p2, p3, p4,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -295,12 +299,12 @@ async def test_search_non_overlapping_candidates():
 
     mock_client = AsyncMock()
 
-    p1, p2, p3 = _mock_new_dependencies()
+    p1, p2, p3, p4 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
-        p1, p2, p3,
+        p1, p2, p3, p4,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -333,12 +337,12 @@ async def test_search_debug_fields_populated():
 
     mock_client = AsyncMock()
 
-    p1, p2, p3 = _mock_new_dependencies()
+    p1, p2, p3, p4 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
-        p1, p2, p3,
+        p1, p2, p3, p4,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
@@ -368,14 +372,113 @@ async def test_search_empty_results():
 
     mock_client = AsyncMock()
 
-    p1, p2, p3 = _mock_new_dependencies()
+    p1, p2, p3, p4 = _mock_new_dependencies()
     with (
         patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
         patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
         patch("db.search.calculate_vector_scores", return_value=scoring_res),
-        p1, p2, p3,
+        p1, p2, p3, p4,
     ):
         result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
 
     assert result.candidates == []
     assert result.debug.total_candidates == 0
+
+
+@pytest.mark.asyncio
+async def test_search_reranking_applies_quality_prior():
+    """Candidates with the same bucketed relevance sort by reception score."""
+    # Two lexical-only candidates with nearly identical scores
+    # (both round to 0.33 at 2 decimal places under equal channel weights)
+    lexical_res = LexicalSearchResult(
+        candidates=[
+            _lexical_candidate(1, 0.999),
+            _lexical_candidate(2, 0.998),
+        ],
+        debug=_lexical_debug(),
+    )
+    vector_res = VectorSearchResult(
+        candidates={},
+        vector_weights=_vector_weights(),
+        vector_subqueries=_vector_subqueries(),
+        debug=_vector_debug(),
+    )
+    scoring_res = VectorScoringResult(
+        final_scores={},
+        space_contexts=[],
+        per_space_normalized={},
+    )
+
+    # Movie 2 has much higher reception than movie 1
+    reception_scores = {1: 35.0, 2: 85.0}
+
+    mock_client = AsyncMock()
+
+    p1, p2, p3, p4 = _mock_new_dependencies()
+    # Override the default empty reception scores with our test data
+    p4_override = patch(
+        "db.search.fetch_reception_scores",
+        new=AsyncMock(return_value=reception_scores),
+    )
+    with (
+        patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
+        patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
+        patch("db.search.calculate_vector_scores", return_value=scoring_res),
+        p1, p2, p3, p4_override,
+    ):
+        result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
+
+    assert len(result.candidates) == 2
+    # Both candidates land in the same relevance bucket (both have equal final_score
+    # since channel weight correction zeroes lexical weight with no entities).
+    # Movie 2 has higher reception, so it should be ranked first via quality prior.
+    assert result.candidates[0].movie_id == 2
+    assert result.candidates[1].movie_id == 1
+    # Verify the new fields are populated on the candidates
+    assert result.candidates[0].quality_prior > result.candidates[1].quality_prior
+
+
+@pytest.mark.asyncio
+async def test_search_reranking_skips_fetch_when_metadata_scoring_provides_scores():
+    """When create_metadata_scores populates reception_scores_out, fetch_reception_scores is not called."""
+    lexical_res = LexicalSearchResult(
+        candidates=[_lexical_candidate(1, 0.9)],
+        debug=_lexical_debug(),
+    )
+    vector_res = VectorSearchResult(
+        candidates={},
+        vector_weights=_vector_weights(),
+        vector_subqueries=_vector_subqueries(),
+        debug=_vector_debug(),
+    )
+    scoring_res = VectorScoringResult(
+        final_scores={},
+        space_contexts=[],
+        per_space_normalized={},
+    )
+
+    # Mock create_metadata_scores to populate the reception_scores_out dict
+    async def _mock_metadata_scoring(prefs, candidates, reception_scores_out=None):
+        if reception_scores_out is not None:
+            reception_scores_out[1] = 75.0
+        return candidates
+
+    mock_client = AsyncMock()
+    mock_fetch_reception = AsyncMock(return_value={})
+
+    p1, p2, _, _ = _mock_new_dependencies()
+    with (
+        patch("db.search.lexical_search", new=AsyncMock(return_value=lexical_res)),
+        patch("db.search.run_vector_search", new=AsyncMock(return_value=vector_res)),
+        patch("db.search.calculate_vector_scores", return_value=scoring_res),
+        p1, p2,
+        patch("db.metadata_scoring.create_metadata_scores", new=AsyncMock(side_effect=_mock_metadata_scoring)),
+        patch("db.search.fetch_reception_scores", new=mock_fetch_reception),
+    ):
+        result = await search(DUMMY_QUERY, DUMMY_FILTERS, mock_client)
+
+    # fetch_reception_scores should NOT have been called since metadata scoring
+    # already populated the reception scores dict
+    mock_fetch_reception.assert_not_called()
+    assert len(result.candidates) == 1
+    assert result.candidates[0].quality_prior > 0

@@ -61,6 +61,7 @@ def extract_imdb_attributes(main_page_html: str) -> dict:
     # Required field: maturity_rating must exist
     maturity_rating = _safe_get(atf, ["certificate", "rating"])
     if not maturity_rating:
+        print(atf)
         raise ValueError("maturity_rating is required but was not found")
     maturity_rating = maturity_rating.lower()
     
