@@ -42,7 +42,6 @@ class PipelineStage(StrEnum):
 
 INGESTION_DATA_DIR = Path("./ingestion_data")
 TRACKER_DB_PATH = INGESTION_DATA_DIR / "tracker.db"
-TMDB_DATA_DIR = INGESTION_DATA_DIR / "tmdb"
 
 # ---------------------------------------------------------------------------
 # Schema — exact tables and indexes from the pipeline architecture guide.
@@ -88,6 +87,31 @@ CREATE TABLE IF NOT EXISTS filter_log (
 CREATE INDEX IF NOT EXISTS idx_progress_status ON movie_progress(status);
 CREATE INDEX IF NOT EXISTS idx_filter_log_stage ON filter_log(stage);
 CREATE INDEX IF NOT EXISTS idx_filter_log_tmdb  ON filter_log(tmdb_id);
+
+-- TMDB detail data: one row per movie fetched in Stage 2.
+-- Stores the subset of fields needed for Stage 3 quality filtering and
+-- downstream pipeline stages. Full response data is NOT persisted — only
+-- the fields actually consumed by later stages.
+CREATE TABLE IF NOT EXISTS tmdb_data (
+    tmdb_id             INTEGER PRIMARY KEY,
+    imdb_id             TEXT,
+    title               TEXT,
+    release_date        TEXT,
+    duration            INTEGER,
+    poster_url          TEXT,
+    watch_provider_keys BLOB,
+    vote_count          INTEGER DEFAULT 0,
+    popularity          REAL DEFAULT 0.0,
+    vote_average        REAL DEFAULT 0.0,
+    overview_length     INTEGER DEFAULT 0,
+    genre_count         INTEGER DEFAULT 0,
+    has_revenue         INTEGER DEFAULT 0,
+    has_budget          INTEGER DEFAULT 0,
+    has_production_companies INTEGER DEFAULT 0,
+    has_production_countries INTEGER DEFAULT 0,
+    has_keywords        INTEGER DEFAULT 0,
+    has_cast_and_crew   INTEGER DEFAULT 0
+);
 """
 
 
@@ -131,10 +155,9 @@ def log_filter(
     """
     Record a filtered-out movie in filter_log and update movie_progress status.
 
-    Automatically attaches title and year from the TMDB detail file if it
-    exists on disk (i.e., the movie made it past Stage 1 and was fetched in
-    Stage 2). For Stage 1 filtering, title and year will be NULL since no
-    TMDB detail file exists yet.
+    Automatically attaches title and year from the ``tmdb_data`` table if the
+    movie was fetched in Stage 2.  For Stage 1 filtering, title and year will
+    be NULL since no ``tmdb_data`` row exists yet.
 
     The UPDATE to movie_progress is intentionally tolerant of missing rows —
     Stage 1 filtered movies are never inserted into movie_progress, so the
@@ -150,13 +173,15 @@ def log_filter(
     title = None
     year = None
 
-    # Pull title/year from TMDB data if available (exists for anything past Stage 1)
-    tmdb_path = TMDB_DATA_DIR / f"{tmdb_id}.json"
-    if tmdb_path.exists():
-        tmdb_data = load_json(tmdb_path)
-        title = tmdb_data.get("title")
-        release_date = tmdb_data.get("release_date", "")
-        if release_date and len(release_date) >= 4:
+    # Pull title/year from tmdb_data table if available (populated in Stage 2).
+    # For Stage 1 filtering, this row won't exist yet, so title/year stay NULL.
+    row = db.execute(
+        "SELECT title, release_date FROM tmdb_data WHERE tmdb_id = ?", (tmdb_id,)
+    ).fetchone()
+    if row:
+        title = row[0]
+        release_date = row[1] or ""
+        if len(release_date) >= 4:
             try:
                 year = int(release_date[:4])
             except ValueError:

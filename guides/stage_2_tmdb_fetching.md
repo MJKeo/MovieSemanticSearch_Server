@@ -70,44 +70,63 @@ These fields exist in the database only to power the quality funnel's scoring an
 | `overview_length` | `len(overview)` | Integer (character count) | Hard filter (overview must exist and be ≥ 20 chars); also a data completeness signal |
 | `genre_count` | `len(genres)` | Integer (count) | Hard filter (must have ≥ 1 genre); data completeness signal |
 | `has_revenue` | `revenue > 0` | Boolean (0 or 1) | Data completeness bonus in quality scoring |
+| `has_budget` | `budget > 0` | Boolean (0 or 1) | Data completeness signal; movies with known budgets tend to be professionally produced |
+| `has_production_companies` | `len(production_companies) > 0` | Boolean (0 or 1) | Data completeness signal; presence of a named studio indicates a legitimate, distributed film |
+| `has_production_countries` | `len(production_countries) > 0` | Boolean (0 or 1) | Data completeness signal; country data indicates a properly cataloged release |
+| `has_keywords` | `len(keywords.keywords) > 0` | Boolean (0 or 1) | Data completeness signal; keyword-tagged movies have been curated by TMDB contributors, suggesting notability |
+| `has_cast_and_crew` | `len(credits.cast) > 0 AND len(credits.crew) > 0` | Boolean (0 or 1) | Data completeness signal; requires both cast and crew to be non-empty. A movie with no credited people is almost certainly a low-quality entry. |
 
 ### What we intentionally do NOT store from TMDB
 
 The following data is available in the TMDB response but is not persisted. The rationale: we get higher-quality versions of all of this from IMDB scraping in Stage 4, and storing it from both sources would create confusing duplication.
 
-| Data | Why we skip it |
-|------|---------------|
+| Data | Why we skip the full data |
+|------|--------------------------|
 | `overview` (full text) | We store only the character count. The LLM stages use IMDB's plot summaries, which are richer and more detailed than TMDB's overview. |
-| `credits` (full cast/crew) | IMDB's full credits page provides complete cast, crew, and character names. TMDB credits are a subset. |
-| `keywords` | IMDB keywords are more comprehensive. TMDB keywords are useful but redundant once IMDB data exists. |
+| `credits` (full cast/crew lists) | We store only a boolean (`has_cast_and_crew`) indicating both lists are non-empty. IMDB's full credits page provides complete cast, crew, and character names. TMDB credits are a subset. |
+| `keywords` (full keyword objects) | We store only a boolean (`has_keywords`) indicating the list is non-empty. IMDB keywords are more comprehensive. TMDB keywords are useful but redundant once IMDB data exists. |
 | `genres` (full objects) | We store only the count for filtering. Genre IDs for the final database come from a normalized mapping at ingestion time (Stage 8), not raw TMDB genre objects. |
 | `release_dates` (certification data) | Maturity rating (`maturity_rank`) is derived from IMDB's parental guide, which is more detailed. |
-| `budget` | Used only in quality scoring via `has_revenue`. The actual dollar amount isn't needed. |
-| `production_companies` | Stored in the lexical search index from IMDB data, which has cleaner company names. |
+| `budget` (dollar amount) | We store only a boolean (`has_budget`) indicating a nonzero value exists. The actual dollar figure isn't needed for filtering or downstream stages. |
+| `production_companies` (full objects) | We store only a boolean (`has_production_companies`) indicating the list is non-empty. Full company names for lexical search indexing come from IMDB, which has cleaner data. |
+| `production_countries` (full objects) | We store only a boolean (`has_production_countries`) indicating the list is non-empty. The actual country data for the production database is sourced from IMDB for consistency. |
 | `spoken_languages`, `origin_country` | Used in the final database but sourced from IMDB for consistency. |
 | `original_title` | Only needed if it differs from `title`; handled at ingestion time. |
 
-### Watch provider key encoding
+### TMDB response extraction paths for boolean filter fields
 
-The `watch/providers` response includes streaming, rent, and buy availability per region. We extract US-region data and encode each (provider_id, method_id) pair as a single integer for compact storage and efficient array-overlap filtering downstream.
+The five new boolean fields derive from different locations in the TMDB response JSON. Some are top-level fields, others are nested inside `append_to_response` sub-resources. Here is the exact path to each, along with the gotchas.
 
-Encoding formula:
-
+**`has_budget`** — Top-level field.
 ```
-watch_offer_key = provider_id * 100 + method_id
+response["budget"]  →  integer (0 if missing or unknown)
 ```
+TMDB defaults `budget` to `0` when the value is unknown, not `null`. This means a simple null check is insufficient — you must check `budget > 0`.
 
-Where `method_id` follows a fixed mapping:
+**`has_production_companies`** — Top-level field.
+```
+response["production_companies"]  →  list of objects, each with "id", "name", etc.
+```
+An empty list `[]` means no companies are associated. Check `len(production_companies) > 0`.
 
-| Method | method_id |
-|--------|-----------|
-| subscription (stream) | 1 |
-| rent | 2 |
-| buy (purchase) | 3 |
+**`has_production_countries`** — Top-level field.
+```
+response["production_countries"]  →  list of objects, each with "iso_3166_1", "name"
+```
+An empty list `[]` means no countries are associated. Check `len(production_countries) > 0`.
 
-Example: Netflix (provider_id=8) streaming → `8 * 100 + 1 = 801`. Amazon Video (provider_id=10) rent → `10 * 100 + 2 = 1002`.
+**`has_keywords`** — Nested inside the `keywords` append sub-resource.
+```
+response["keywords"]["keywords"]  →  list of objects, each with "id", "name"
+```
+Note the double nesting: the `append_to_response=keywords` expansion adds a top-level `"keywords"` key to the response, and the actual keyword list is under `"keywords"` within that object. If the append expansion is missing or the movie has no keywords, this path may yield an empty list or the `"keywords"` key may be absent entirely. Defensive access: `response.get("keywords", {}).get("keywords", [])`.
 
-The TMDB response nests providers under `flatrate` (subscription), `rent`, and `buy` arrays within the US region object. Extract all three, encode each, and store as a list of integers.
+**`has_cast_and_crew`** — Nested inside the `credits` append sub-resource.
+```
+response["credits"]["cast"]  →  list of cast member objects
+response["credits"]["crew"]  →  list of crew member objects
+```
+Both lists must be non-empty for `has_cast_and_crew` to be `True`. A movie might have crew but no credited cast (e.g., a documentary), or cast but no crew entries — either case should evaluate to `False`. Defensive access: `response.get("credits", {}).get("cast", [])` and `response.get("credits", {}).get("crew", [])`.
 
 ---
 
@@ -174,7 +193,12 @@ CREATE TABLE tmdb_data (
     vote_average        REAL DEFAULT 0.0,
     overview_length     INTEGER DEFAULT 0,
     genre_count         INTEGER DEFAULT 0,
-    has_revenue         INTEGER DEFAULT 0   -- 0 or 1
+    has_revenue         INTEGER DEFAULT 0,  -- 0 or 1
+    has_budget          INTEGER DEFAULT 0,  -- 0 or 1
+    has_production_companies INTEGER DEFAULT 0,  -- 0 or 1
+    has_production_countries INTEGER DEFAULT 0,  -- 0 or 1
+    has_keywords        INTEGER DEFAULT 0,  -- 0 or 1
+    has_cast_and_crew   INTEGER DEFAULT 0   -- 0 or 1; True only if BOTH cast and crew are non-empty
 );
 ```
 
@@ -182,7 +206,7 @@ CREATE TABLE tmdb_data (
 
 The original pipeline design stored TMDB responses as one JSON file per movie (~950K files totaling 3–5 GB). The SQLite approach is better for several reasons:
 
-**Storage efficiency.** We're storing ~190 bytes per row instead of ~3–5 KB per JSON file. Total footprint: ~300–350 MB vs. 3–5 GB. This is a 10x reduction.
+**Storage efficiency.** We're storing ~195 bytes per row instead of ~3–5 KB per JSON file. Total footprint: ~310–360 MB vs. 3–5 GB. This is roughly a 10x reduction.
 
 **No filesystem overhead.** 950K small files create real problems: `ls` becomes unusable, `find` is slow, some filesystems degrade with this many inodes in a single directory, and backup/copy operations crawl. A single SQLite file has none of these issues.
 
@@ -238,19 +262,24 @@ Worst-case analysis for 1,000,000 rows (rounding up from ~950K for safety):
 | overview_length | 4 | 4 MB |
 | genre_count | 2 | 2 MB |
 | has_revenue | 1 | 1 MB |
-| **Row total** | **~190** | **~190 MB** |
+| has_budget | 1 | 1 MB |
+| has_production_companies | 1 | 1 MB |
+| has_production_countries | 1 | 1 MB |
+| has_keywords | 1 | 1 MB |
+| has_cast_and_crew | 1 | 1 MB |
+| **Row total** | **~195** | **~195 MB** |
 
 Add SQLite per-row overhead (~25 bytes/row) and index storage (primary key on `tmdb_data`, primary key + status index on `movie_progress`):
 
 | Component | Estimate |
 |-----------|----------|
-| Raw row data | ~190 MB |
+| Raw row data | ~195 MB |
 | SQLite row overhead | ~25 MB |
 | Primary key index (tmdb_data) | ~30 MB |
 | movie_progress table + indexes | ~40 MB |
 | filter_log table + indexes | ~20 MB |
 | Page fragmentation overhead | ~30 MB |
-| **Total database file** | **~300–350 MB** |
+| **Total database file** | **~310–360 MB** |
 
 This fits comfortably in RAM on any modern laptop, which means SQLite read queries for Stage 3 will be served entirely from the OS page cache — effectively instant.
 
@@ -493,6 +522,26 @@ def extract_tmdb_fields(raw: dict) -> dict:
     genres = raw.get("genres", []) or []
     revenue = raw.get("revenue") or 0
     
+    # --- Boolean filter field extraction ---
+    # budget: top-level integer, defaults to 0 (not null) when unknown
+    budget = raw.get("budget") or 0
+    
+    # production_companies: top-level list of objects
+    production_companies = raw.get("production_companies", []) or []
+    
+    # production_countries: top-level list of objects
+    production_countries = raw.get("production_countries", []) or []
+    
+    # keywords: nested under append_to_response expansion
+    # response["keywords"]["keywords"] → list of keyword objects
+    keywords_list = raw.get("keywords", {}).get("keywords", []) or []
+    
+    # credits: nested under append_to_response expansion
+    # response["credits"]["cast"] → list, response["credits"]["crew"] → list
+    credits = raw.get("credits", {})
+    cast_list = credits.get("cast", []) or []
+    crew_list = credits.get("crew", []) or []
+    
     return {
         "tmdb_id":             raw["id"],
         "imdb_id":             raw.get("imdb_id"),
@@ -509,6 +558,11 @@ def extract_tmdb_fields(raw: dict) -> dict:
         "overview_length":     len(overview),
         "genre_count":         len(genres),
         "has_revenue":         1 if revenue > 0 else 0,
+        "has_budget":          1 if budget > 0 else 0,
+        "has_production_companies": 1 if len(production_companies) > 0 else 0,
+        "has_production_countries": 1 if len(production_countries) > 0 else 0,
+        "has_keywords":        1 if len(keywords_list) > 0 else 0,
+        "has_cast_and_crew":   1 if len(cast_list) > 0 and len(crew_list) > 0 else 0,
     }
 ```
 
@@ -526,14 +580,18 @@ def persist_tmdb_movie(db: sqlite3.Connection, fields: dict):
         INSERT OR REPLACE INTO tmdb_data (
             tmdb_id, imdb_id, title, release_date, duration, poster_url,
             watch_provider_keys, vote_count, popularity, vote_average,
-            overview_length, genre_count, has_revenue
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            overview_length, genre_count, has_revenue, has_budget,
+            has_production_companies, has_production_countries,
+            has_keywords, has_cast_and_crew
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         fields["tmdb_id"], fields["imdb_id"], fields["title"],
         fields["release_date"], fields["duration"], fields["poster_url"],
         packed_keys, fields["vote_count"], fields["popularity"],
         fields["vote_average"], fields["overview_length"],
-        fields["genre_count"], fields["has_revenue"]
+        fields["genre_count"], fields["has_revenue"], fields["has_budget"],
+        fields["has_production_companies"], fields["has_production_countries"],
+        fields["has_keywords"], fields["has_cast_and_crew"]
     ))
     
     db.execute("""
@@ -706,7 +764,7 @@ Movies passing hard filters receive a composite score (0–100 scale) built from
 | Engagement | 0–50 | Dominant | `vote_count` | `min(log1p(vote_count) * 5.0, 50.0)` |
 | Popularity | 0–25 | Secondary | `popularity` | `min(log1p(popularity) * 4.0, 25.0)` |
 | Rating quality | 0–15 | Conditional | `vote_average`, `vote_count` | `(vote_average / 10) * 15 * min(vote_count / 10, 1.0)` |
-| Data completeness | 0–10 | Tiebreaker | `poster_url`, `has_revenue`, `overview_length`, `genre_count` | Sum of boolean/scaled bonuses |
+| Data completeness | 0–10 | Tiebreaker | `poster_url`, `has_revenue`, `has_budget`, `overview_length`, `genre_count`, `has_production_companies`, `has_production_countries`, `has_keywords`, `has_cast_and_crew` | Sum of boolean/scaled bonuses |
 
 The hierarchy is deliberate: a movie with 500 votes and a 5.0 average is a better candidate than a movie with 2 votes and a 9.0 average, because real engagement data means IMDB will have actual reviews, ratings, and parental guide data to scrape — producing much better downstream LLM and vector outputs.
 
@@ -739,7 +797,7 @@ Before running Stage 2, verify the following:
 
 4. **`tmdb_data` table is created.** Run the CREATE TABLE statement from the schema section above. This is idempotent if the table already exists.
 
-5. **Disk space is available.** The database will grow to ~300–350 MB. Verify you have at least 1 GB of free space on the volume containing `./ingestion_data/`.
+5. **Disk space is available.** The database will grow to ~310–360 MB. Verify you have at least 1 GB of free space on the volume containing `./ingestion_data/`.
 
 6. **Network is stable.** This stage runs for hours. If running on a laptop, ensure sleep/hibernate is disabled during the run. If running over WiFi, a wired connection is preferred for reliability (though not required — the resumability design handles intermittent drops).
 
@@ -776,7 +834,7 @@ Warning signs:
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Storage format | SQLite (not flat JSON files) | 10x smaller footprint, atomic queries for Stage 3, transactional consistency with checkpoint tracker |
-| Data stored from TMDB | 7 persistent fields + 6 filter-only fields | Persistent fields are needed downstream; filter fields enable quality funnel without re-fetching |
+| Data stored from TMDB | 7 persistent fields + 11 filter-only fields | Persistent fields are needed downstream; filter fields enable quality funnel without re-fetching |
 | Watch provider encoding | Packed int32 BLOB | Compact, avoids JSON parse overhead, directly compatible with the integer-key format used in Qdrant and Postgres |
 | Overview storage | Length only (not full text) | Full text comes from IMDB; TMDB overview is only needed for the ≥20 char hard filter check |
 | Genre storage | Count only (not IDs/names) | Genre IDs for the production database are derived from a normalized mapping at Stage 8; the count is sufficient for the hard filter and completeness scoring |
