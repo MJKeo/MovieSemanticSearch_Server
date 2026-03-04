@@ -46,10 +46,10 @@ _STAGE = PipelineStage.TMDB_FETCH
 
 # Number of movies per async batch.  After each batch completes we commit the
 # SQLite transaction, bounding data loss on crash to at most one batch.
-_COMMIT_BATCH_SIZE = 100
+_COMMIT_BATCH_SIZE = 500
 
 # Print a progress line every N movies processed.
-_PROGRESS_INTERVAL = 500
+_PROGRESS_INTERVAL = 1_000
 
 # httpx connection pool ceiling — protects the local machine; the rate limiter
 # (not this) is what enforces TMDB's per-second throughput cap.
@@ -342,7 +342,7 @@ async def _fetch_all(db, pending_ids: list[int]) -> dict:
     total = len(pending_ids)
 
     rate_limiter = AdaptiveRateLimiter(
-        initial_rate=36.0, max_rate=40.0, burst=5, clean_window=120.0
+        initial_rate=36.0, max_rate=100.0, burst=5, clean_window=120.0, increase_interval=4.0
     )
 
     headers = {"Authorization": f"Bearer {access_token()}"}
@@ -402,32 +402,37 @@ def run() -> None:
     """
     db = init_db()
 
-    rows = db.execute(
-        "SELECT tmdb_id FROM movie_progress WHERE status = 'pending'"
-    ).fetchall()
-    pending_ids = [row[0] for row in rows[:10000]]
+    try:
+        rows = db.execute(
+            "SELECT tmdb_id FROM movie_progress WHERE status = 'pending'"
+        ).fetchall()
+        pending_ids = [row[0] for row in rows]
 
-    if not pending_ids:
-        print("Stage 2: No movies found in saved_imdb_movies.json.")
-        return
+        if not pending_ids:
+            print("Stage 2: No movies found in saved_imdb_movies.json.")
+            return
 
-    print(f"Stage 2: {len(pending_ids):,} movies to fetch from TMDB")
-    start = time.monotonic()
+        print(f"Stage 2: {len(pending_ids):,} movies to fetch from TMDB")
+        start = time.monotonic()
 
-    counters = asyncio.run(_fetch_all(db, pending_ids))
+        counters = asyncio.run(_fetch_all(db, pending_ids))
 
-    elapsed = time.monotonic() - start
-    hours = elapsed / 3600
+        elapsed = time.monotonic() - start
+        hours = elapsed / 3600
 
-    print("\n" + "=" * 60)
-    print("Stage 2 Complete")
-    print("=" * 60)
-    print(f"  Total pending:  {len(pending_ids):,}")
-    print(f"  Fetched:        {counters['fetched']:,}")
-    print(f"  Filtered out:   {counters['filtered']:,}")
-    print(f"  Errors:         {counters['errors']:,}")
-    print(f"  Duration:       {elapsed:,.0f}s ({hours:.1f}h)")
-    print("=" * 60)
+        print("\n" + "=" * 60)
+        print("Stage 2 Complete")
+        print("=" * 60)
+        print(f"  Total pending:  {len(pending_ids):,}")
+        print(f"  Fetched:        {counters['fetched']:,}")
+        print(f"  Filtered out:   {counters['filtered']:,}")
+        print(f"  Errors:         {counters['errors']:,}")
+        print(f"  Duration:       {elapsed:,.0f}s ({hours:.1f}h)")
+        print("=" * 60)
+    finally:
+        # Ensure the connection is always closed, even on Ctrl+C or crash,
+        # so we don't leave a dangling lock on the database file.
+        db.close()
 
 
 if __name__ == "__main__":

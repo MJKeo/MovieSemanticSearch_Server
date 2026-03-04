@@ -130,8 +130,7 @@ class AdaptiveRateLimiter:
             #   2. increase_interval: minimum gap between consecutive bumps so
             #      we ramp gradually rather than jumping to max_rate instantly.
             if (
-                self._last_429_time > 0
-                and now - self._last_429_time > self.clean_window
+                now - self._last_429_time > self.clean_window
                 and now - self._last_increase_time > self.increase_interval
                 and self.current_rate < self.max_rate
             ):
