@@ -342,7 +342,7 @@ async def _fetch_all(db, pending_ids: list[int]) -> dict:
     total = len(pending_ids)
 
     rate_limiter = AdaptiveRateLimiter(
-        initial_rate=36.0, max_rate=100.0, burst=5, clean_window=120.0, increase_interval=4.0
+        initial_rate=45.0, max_rate=100.0, burst=5, clean_window=120.0, increase_interval=8.0
     )
 
     headers = {"Authorization": f"Bearer {access_token()}"}

@@ -5,6 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
+# Install dependencies (uses UV package manager, not pip)
+uv sync
+
 # Run all tests
 pytest unit_tests/
 
@@ -22,6 +25,8 @@ uvicorn api.main:app --reload
 ```
 
 Python version is 3.13. Test runner uses `asyncio_mode = "auto"` (all async tests work without decorators).
+
+**Environment:** A `.env` file is required with keys for `TMDB_API_KEY`, `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, and Postgres/Redis/Qdrant connection strings. See `.env` for the full list.
 
 ## Architecture Overview
 
@@ -60,8 +65,10 @@ Fetch display metadata → return JSON
 | `implementation/llms/` | LLM calls: query understanding, structured output parsing, vector metadata generation |
 | `implementation/prompts/` | System prompts for each LLM task |
 | `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
+| `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
+| `movie_ingestion/` | Multi-stage TMDB ingestion pipeline (`tmdb_fetcher.py`, `tracker.py`, `daily_export.py`) |
 | `unit_tests/` | pytest test suite (27 files); `conftest.py` provides `base_movie_factory` fixture |
-| `guides/` | In-depth architecture documentation (18 markdown files — read these before modifying scoring logic) |
+| `guides/` | Deep-dive architecture docs (23 markdown files) — **read the relevant guide before modifying any scoring logic** |
 
 ### Vector Search Design
 
@@ -77,6 +84,8 @@ Fetch display metadata → return JSON
 
 5-stage vector scoring pipeline (`db/vector_scoring.py`): execute → blend (80/20 original/subquery) → normalize (exponential decay) → weight → sum.
 
+Each vector space has LLM-generated metadata (`implementation/llms/vector_metadata_generation_methods.py`) covering 7 types: plot events, plot analysis, viewer experience, watch context, narrative techniques, reception, and production. These are generated once during ingestion and stored in Qdrant payloads.
+
 ### Data Stores
 
 | Service | Technology | Purpose |
@@ -85,9 +94,20 @@ Fetch display metadata → return JSON
 | Qdrant | `db/qdrant.py`, `db/vector_search.py` | 8 vector spaces × 150K movies |
 | Redis 7 | `db/redis.py` | Embeddings cache, query understanding cache, trending set, TMDB detail cache |
 
+### Movie Ingestion Pipeline
+
+Movies are ingested in stages:
+1. `movie_ingestion/daily_export.py` — fetches bulk TMDB export (list of all movie IDs)
+2. `movie_ingestion/tmdb_fetcher.py` — fetches full TMDB detail per movie, rate-limited with adaptive backoff, stores raw data in SQLite tracker DB (`ingestion_data/`)
+3. `implementation/llms/vector_metadata_generation_methods.py` — generates 7 LLM metadata types per movie
+4. `implementation/vectorize.py` — embeds metadata into 8 vector spaces via OpenAI
+5. `db/ingest_movie.py` — upserts final data into Postgres, Qdrant, and Redis
+
+`movie_ingestion/tracker.py` manages per-movie processing state across all stages using a SQLite database.
+
 ### LLM Provider
 
-The LLM calls use the **Moonshot/Kimi API** (`implementation/llms/generic_methods.py`) with structured output parsing, not OpenAI Chat directly. OpenAI is used only for embeddings.
+The LLM calls use the **Moonshot/Kimi API** (`implementation/llms/generic_methods.py`) with structured output parsing via `client.beta.chat.completions.parse()`, not OpenAI Chat directly. OpenAI is used only for embeddings (`text-embedding-3-small`, 1536 dims).
 
 ### Coding Best Practices
 

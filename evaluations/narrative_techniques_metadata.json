@@ -1,0 +1,3900 @@
+{
+  "tt0091042": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The protagonist repeatedly speaks directly to the camera and addresses the audience throughout the film (synopsis, reviews).",
+        "terms": [
+          "direct-address narrator"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story unfolds in a single continuous day with montage-driven transitions between landmark set-pieces (synopsis, reviews mention montages and day-long timeframe).",
+        "terms": [
+          "single-day timeframe",
+          "montage-driven sequences"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot is structured as a low-stakes episodic caper/joyride focused on a single day's adventures (synopsis, reviews).",
+        "terms": [
+          "caper/joyride"
+        ]
+      },
+      "information_control": {
+        "justification": "Most scenes rely on the audience knowing the protagonist's ruse while other characters remain unaware, creating sustained dramatic irony (synopsis, reviews).",
+        "terms": [
+          "dramatic irony"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through active schemes and contrasted behavior, with gradual background details about secondary characters drip-fed across the day (synopsis, reviews).",
+        "terms": [
+          "show-don't-tell actions",
+          "character foil contrast",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "One friend undergoes emotional maturation while the central protagonist remains essentially unchanged, producing a clear coming-of-age arc alongside a flat lead arc (synopsis, featured reviews).",
+        "terms": [
+          "coming-of-age arc",
+          "flat lead arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis frame the lead as charming but flawed and the close friend as anxious and sympathetic, shaping predictable audience alignments (featured reviews, synopsis).",
+        "terms": [
+          "lovable rogue",
+          "sympathetic wounded sidekick"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The film builds urgency around a homecoming deadline and escalates pursuit and consequences throughout the day (synopsis).",
+        "terms": [
+          "ticking-clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through the protagonist's camera asides and contrasting character choices and set-piece moments rather than explicit exposition (synopsis, reviews).",
+        "terms": [
+          "direct-address thematic commentary",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film repeatedly breaks the fourth wall and uses self-aware narrator asides to comment on events (synopsis, plot_keywords, reviews).",
+        "terms": [
+          "fourth-wall breaks",
+          "self-aware narrator asides"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The film is built as a series of episodic vignettes capped by a comic coda ending that resolves the day's gambit (synopsis, reviews).",
+        "terms": [
+          "episodic vignette structure",
+          "comic coda ending"
+        ]
+      }
+    }
+  },
+  "tt2948356": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows Judy as the primary viewpoint character with audience insight into Nick via revealed backstory and shared scenes.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot unfolds in mostly chronological order with occasional childhood flashbacks that explain character origins.",
+        "terms": [
+          "linear chronology",
+          "flashback-driven moments"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The story centers on a police duo investigating disappearances and uncovering a conspiracy, combining procedural mystery with partner dynamics.",
+        "terms": [
+          "buddy-cop whodunit"
+        ]
+      },
+      "information_control": {
+        "justification": "The script hides the true villain behind misleading evidence and uses a late reveal to reverse audience assumptions about who engineered the crisis.",
+        "terms": [
+          "plot twist / reversal",
+          "red herrings"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through actions, selective backstory reveals, and contrasting pairings that highlight differences in motive and method.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Main figures undergo clear moral and developmental shifts from idealism and cynicism toward reconciliation and corruption for the antagonist.",
+        "terms": [
+          "coming-of-age arc",
+          "redemption arc",
+          "corruption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis signal a sympathetic idealistic lead, a charming con-artist partner, and a villain who earns audience dislike after a hidden reveal.",
+        "terms": [
+          "sympathetic idealist",
+          "lovable rogue",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The investigation is constrained by an explicit 48-hour deadline and escalates from a local case to citywide social crisis.",
+        "terms": [
+          "ticking clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film uses an anthropomorphic city as an allegory and embeds moral questions about prejudice into characters' choices and institutional outcomes.",
+        "terms": [
+          "allegorical worldbuilding",
+          "moral argument embedded in choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "There is no strong evidence of overt self-aware or metafictional devices in the provided material.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The story opens with a childhood prologue and uses montage sequences for training, investigation, and time-passage beats.",
+        "terms": [
+          "prologue / cold open",
+          "montage sequences"
+        ]
+      }
+    }
+  },
+  "tt0332379": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews focus primarily on the protagonist's actions and perspective while following the student ensemble, indicating a single-protagonist external focalization.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story unfolds in chronological order from impersonation to performance without temporal fragmentation or flashback structure.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot centers on an underestimated group striving for and achieving public triumph against expectations via a competition.",
+        "terms": [
+          "underdog rise"
+        ]
+      },
+      "information_control": {
+        "justification": "The plot hinges on a prolonged deception and its exposure, building to a reveal that propels the climax.",
+        "terms": [
+          "slow-burn reveal",
+          "reveal-driven climax"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are shown changing through actions, contrasts with others, and moments where performed identities break down.",
+        "terms": [
+          "show don't tell actions",
+          "character foil contrast",
+          "mask slips moments"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist moves from selfish aim to mentor/guardian while the students grow in confidence and skill.",
+        "terms": [
+          "redemption arc",
+          "coming-of-age arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis describe the lead as an over-the-top but endearing rule-breaker and the kids as a sympathetic, talented group.",
+        "terms": [
+          "lovable rogue",
+          "sympathetic ensemble"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes escalate toward a single public competition date, with increasing consequences as the central deception threatens exposure.",
+        "terms": [
+          "escalation ladder",
+          "competition deadline"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through characters' choices and opposing character values rather than explicit exposition.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Synopsis and reviews show no clear self-aware or fourth-wall narrative devices.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film uses condensed training/rehearsal sequences and a climactic public performance as central structural set-pieces.",
+        "terms": [
+          "training montage",
+          "climactic performance set-piece"
+        ]
+      }
+    }
+  },
+  "tt2294629": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis shifts focal attention between the two sisters and supporting characters, showing scenes from different characters' perspectives.",
+        "terms": [
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story unfolds mostly chronologically with an opening childhood sequence that jumps forward to the characters' adult lives.",
+        "terms": [
+          "linear chronology",
+          "prologue then time jump"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot centers on familial conflict that moves from estrangement to reconciliation and restoration.",
+        "terms": [
+          "family reconciliation"
+        ]
+      },
+      "information_control": {
+        "justification": "The film withholds and then reverses audience expectations (late antagonist reveal) and uses a false-ally setup for misdirection.",
+        "terms": [
+          "plot twist reversal",
+          "false ally misdirection"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined through staged childhood backstory, contrasting foils, and musical numbers that express inner states.",
+        "terms": [
+          "backstory drip feed",
+          "character foil contrast",
+          "songs as inner monologue"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Primary characters undergo personal growth toward acceptance and one character completes a self-sacrificial turning point.",
+        "terms": [
+          "self acceptance arc",
+          "sacrificial heroism arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Audience response and the synopsis present one lead as a sympathetic isolated figure and the later-revealed villain as a duplicitous antagonist.",
+        "terms": [
+          "sympathetic isolated lead",
+          "love to hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes escalate from personal emotional harm to kingdom-wide catastrophe and culminate in a forced sacrificial choice.",
+        "terms": [
+          "escalation ladder",
+          "forced sacrificial choice"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated by pairing opposing character states and by deliberately subverting familiar fairy tale conventions.",
+        "terms": [
+          "contrast pairs",
+          "trope subversion"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The synopsis and reviews show no clear evidence of self-aware or fourth-wall techniques in the film's storytelling.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The movie is structured around prominent musical set pieces and opens with a childhood prologue that sets up later events.",
+        "terms": [
+          "musical set pieces",
+          "cold open prologue"
+        ]
+      }
+    }
+  },
+  "tt0093779": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story is presented as a book read by a grandfather (frame) while the internal tale plays out with an all-seeing narration across characters.",
+        "terms": [
+          "framed narrator",
+          "omniscient pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The core fairy-tale plot unfolds in straightforward chronological order while the present-day reading is intercut as a separate temporal layer.",
+        "terms": [
+          "linear chronology",
+          "frame-story intercutting"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The central plot is structured around a romantic rescue and series of perilous trials that drive an adventure quest.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "Key identity reveals and long-teased grudges are staged as formal twists and payoffs (e.g., masked identity, the six-finger antagonist), with earlier hints used as setup.",
+        "terms": [
+          "plot twist / reversal",
+          "Chekhov's gun"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined largely through witty dialogue, staggered backstory disclosure, and contrasting pairings rather than expository monologue.",
+        "terms": [
+          "indirect characterization through dialogue",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The screenplay foregrounds a vengeance-driven journey with a parallel restoration/reunion through rescue and reconciliation.",
+        "terms": [
+          "revenge arc",
+          "reunion/restoration arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are guided to root for an earnest hero and gentle giant while despising the scheming prince and sympathizing with the avenger.",
+        "terms": [
+          "lovable gentle giant",
+          "love-to-hate antagonist",
+          "sympathetic avenger"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot uses escalating obstacles culminating in a time-pressured ceremony deadline to concentrate urgency and consequences.",
+        "terms": [
+          "ticking-clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated by placing characters in repeated moral choices and juxtaposing opposing value systems rather than explicit lecturing.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film openly satirizes fairy-tale conventions and uses winkingly self-aware humor while framing the tale as a read-aloud story.",
+        "terms": [
+          "self-referential humor",
+          "genre parody/pastiche"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The movie is literally a story-within-a-story and repeatedly uses memorable recurring lines as motif-driven hooks.",
+        "terms": [
+          "framed story",
+          "motif-driven catchphrases"
+        ]
+      }
+    }
+  },
+  "tt2380307": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story is followed mainly through a single child protagonist's experiences and decisions, keeping audience access tightly aligned with that character's perspective.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events unfold in chronological order from the protagonist's departure through the otherworld journey and return, with past events revealed as the plot progresses.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot centers on a young protagonist's emotional and moral growth as they confront family tradition and personal passion.",
+        "terms": [
+          "coming-of-age arc"
+        ]
+      },
+      "information_control": {
+        "justification": "The film withholds key family history and then overturns the protagonist's assumptions with a decisive revelation about the past, using misleading evidence about a revered figure.",
+        "terms": [
+          "plot twist / reversal",
+          "red herrings"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character histories and motives are revealed gradually through discoveries and actions, while contrasting pairs highlight competing values.",
+        "terms": [
+          "backstory drip-feed",
+          "indirect characterization through action",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Primary figures undergo growth and public restoration\u2014youthful maturation and moral/emotional reconciliation and reputational vindication are central.",
+        "terms": [
+          "coming-of-age arc",
+          "redemption arc",
+          "vindication arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are guided to root for the earnest young protagonist, distrust a charismatic public idol, and warm to a roguish yet sympathetic companion.",
+        "terms": [
+          "sympathetic protagonist",
+          "charismatic villain",
+          "lovable trickster"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot imposes a literal sunrise deadline and moral tradeoffs that force the protagonist into urgent, consequential choices.",
+        "terms": [
+          "ticking clock deadline",
+          "forced sacrifice choice"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through symbolic mechanics (memory/photos determining existence) and by pairing characters who embody opposing values.",
+        "terms": [
+          "symbolic consequences",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Provided material shows no clear use of metafictional or self-referential storytelling devices.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The plot uses a literal gateway to an otherworld realm and concludes with a time-skip epilogue that resolves repercussions in the living world.",
+        "terms": [
+          "afterlife portal",
+          "epilogue"
+        ]
+      }
+    }
+  },
+  "tt4729430": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story is told mainly through the protagonist's experiences and growth, with the audience following his perspective throughout the film (synopsis, reviews).",
+        "terms": [
+          "third-person limited pov",
+          "single-protagonist focus"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events proceed in forward chronological order around a year-long mission with a later time-jump epilogue that summarizes subsequent years (synopsis).",
+        "terms": [
+          "linear chronology",
+          "epilogue time jump"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot functions as a mythical origin that explains the founding of a recurring tradition (synopsis, reviews describing it as an origin tale).",
+        "terms": [
+          "origin story"
+        ]
+      },
+      "information_control": {
+        "justification": "Key past details and plot outcomes are revealed gradually and a late reversal (toy-swap reveal) upends antagonist expectations (synopsis).",
+        "terms": [
+          "slow-burn reveal",
+          "plot reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character change is shown through actions and behavior while personal history is revealed incrementally (Klaus's past, Jesper's deeds in synopsis).",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Main characters undergo clear transformational journeys from selfishness/isolation to community engagement and healing (synopsis, reception notes).",
+        "terms": [
+          "redemption arc",
+          "healing arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews emphasize audience sympathy for the flawed but charming lead and the reclusive toymaker, indicating consistent viewer reads (featured_reviews, reception_summary).",
+        "terms": [
+          "lovable rogue",
+          "sympathetic outsider"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot uses a concrete deadline for the protagonist and escalating communal sabotage and feuding to raise stakes (synopsis).",
+        "terms": [
+          "ticking clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film conveys its moral through characters' repeated choices and by staging opposing groups as contrasting value pairs whose outcomes illustrate the theme (synopsis, reviews).",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Provided materials show no clear evidence of self-aware or fourth-wall devices or overt meta-commentary (synopsis, reviews).",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "Physical objects (letters and toys) are introduced early and drive the plot payoff, and the story closes with an extended epilogue of repeating ritual years (synopsis).",
+        "terms": [
+          "Chekhov's gun",
+          "epilogue"
+        ]
+      }
+    }
+  },
+  "tt1049413": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story primarily follows the elderly protagonist with significant scenes centering on a child companion, shifting focal attention between them.",
+        "terms": [
+          "third-person limited pov",
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The film progresses chronologically but uses a famous time-compressing visual sequence to summarize decades of life.",
+        "terms": [
+          "linear chronology",
+          "montage time-compression"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The central plot is structured around a journey to a distant goal with episodic encounters and an ultimate return.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "Character turns and stakes are revealed gradually\u2014an admired hero becomes a villain and emotional truths are disclosed at key moments.",
+        "terms": [
+          "slow-burn reveal",
+          "mentor-to-antagonist reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined through a visual life montage, meaningful props and objects, and actions rather than exposition.",
+        "terms": [
+          "backstory montage",
+          "props-driven memory cues",
+          "show don't tell actions"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonists undergo clear personal change: an older man moves from grief-bound isolation toward renewed connection while the child grows through experience.",
+        "terms": [
+          "redemption arc",
+          "coming-of-age arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers consistently respond to the lead as a gruff but sympathetic figure, the child as earnest and lovable, and the once-idolized explorer as a villainsome foil.",
+        "terms": [
+          "sympathetic curmudgeon",
+          "lovable earnest child",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Tangible deadlines and morally wrenching choices escalate pressure, including a literal loss-of-lift deadline and an emotional choose-between stakes moment.",
+        "terms": [
+          "ticking clock deadline",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme is conveyed through character choices and symbolic outcomes rather than didactic statements, using consequences and objects to reflect meaning.",
+        "terms": [
+          "moral argument embedded in choices",
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "There is no sustained self-aware or fourth-wall playing in the provided material.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens with a prologue-style visual montage and uses a physical keepsake as an epistolary turning point.",
+        "terms": [
+          "opening montage",
+          "epistolary device"
+        ]
+      }
+    }
+  },
+  "tt0120762": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews consistently center the story on Mulan's experiences and inner life rather than multiple viewpoints.",
+        "terms": [
+          "third-person limited pov",
+          "single-protagonist focalization"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events progress in forward order with training and skill gains shown through montage-like sequences.",
+        "terms": [
+          "linear chronology",
+          "montage training sequences"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot follows a youth who grows into maturity and public responsibility over the course of the film.",
+        "terms": [
+          "coming-of-age arc"
+        ]
+      },
+      "information_control": {
+        "justification": "The audience knows the protagonist's secret identity while other characters do not, and the story uses character-facing reveals.",
+        "terms": [
+          "dramatic irony",
+          "secret identity reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is shown through actions, contrasting foils, and an internal-expressive song rather than exposition-heavy backstory.",
+        "terms": [
+          "show don't tell actions",
+          "character foil contrast",
+          "song as internal monologue"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The main character undergoes self-discovery while a supporting figure completes a clear redemption beat.",
+        "terms": [
+          "self-discovery arc",
+          "redemption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis portray the lead as a sympathetic, resourceful hero and the comic companion as an endearing sidekick.",
+        "terms": [
+          "sympathetic protagonist",
+          "lovable comic sidekick"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot hinges on a personal sacrifice decision that escalates into increasingly larger public and military consequences.",
+        "terms": [
+          "forced sacrifice choice",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are expressed through characters' repeated choices and opposing value contrasts rather than explicit lecturing.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No clear self-referential or fourth-wall techniques are evident in the provided materials.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens with an ancestral prologue and centers plot action around a disguise device.",
+        "terms": [
+          "prologue ancestral chorus",
+          "secret identity disguise"
+        ]
+      }
+    }
+  },
+  "tt0126029": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis centers audience alignment on the ogre protagonist's experiences and choices throughout the film, keeping focalization close to a single lead.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events proceed in straightforward sequence from exile to quest to resolution without temporal jumps or parallel timelines in the synopsis.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The core plot is organized around a rescue/return journey that functions as a quest with obstacles and a final homecoming.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "Key plot information (the heroine's curse) is revealed to allies and the audience before the protagonist, creating misunderstanding, and the finale subverts expectations.",
+        "terms": [
+          "dramatic irony",
+          "reveal-driven twist"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined by contrasting behaviors and actions (foil relationships) and by showing emotional change through deeds rather than exposition.",
+        "terms": [
+          "character foil contrast",
+          "show don't tell actions"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The central figures move from isolation/insecurity to mutual acceptance and emotional healing across the story.",
+        "terms": [
+          "self-acceptance arc",
+          "healing arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewer reactions described in the synopsis and reviews frame the lead as a likable antihero, the romantic lead as an outsider, and the ruler as a cartoonish villain.",
+        "terms": [
+          "lovable antihero",
+          "misunderstood outsider",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot hinges on an approaching wedding deadline and choices that force characters to sacrifice personal desire for other goals.",
+        "terms": [
+          "ticking clock deadline",
+          "forced sacrifice choice"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film communicates themes by staging opposing character pairs and layering subtext (adult jokes and irony) beneath family-friendly scenes, per the synopsis and reviews.",
+        "terms": [
+          "contrast pairs",
+          "subtextual scenes"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The story openly parodies and reworks fairy-tale conventions, using pastiche and genre-aware humor noted in reviews and the synopsis.",
+        "terms": [
+          "parody/pastiche",
+          "genre deconstruction"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The climax is built around a public ceremonial confrontation and the narrative repeatedly inverts standard fairy-tale tropes.",
+        "terms": [
+          "public-ceremony climax",
+          "fairy-tale trope inversion"
+        ]
+      }
+    }
+  },
+  "tt0072424": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows multiple characters across locations and scenes, showing events beyond any single character's knowledge.",
+        "terms": [
+          "multiple pov switching",
+          "omniscient pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot proceeds sequentially from Santa's illness through the elves' mission to the final resolution with no flashbacks or time jumps.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The story is driven by an outward mission to recover something lost (belief) via tasks and encounters.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "Evidence of belief is accumulated over scenes and Santa often travels incognito, letting the audience know more than some characters.",
+        "terms": [
+          "slow-burn reveal",
+          "dramatic irony"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are conveyed primarily through their actions, song performances, and dialogue across set-piece encounters.",
+        "terms": [
+          "show don't tell actions",
+          "musical exposition",
+          "indirect characterization through dialogue"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The central figure moves from disillusionment back to commitment while other figures function as steady catalysts or foils.",
+        "terms": [
+          "redemption arc",
+          "disillusionment to belief"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are positioned to empathize with the beleaguered lead while enjoying charismatic, scene-stealing antagonists.",
+        "terms": [
+          "sympathetic protagonist",
+          "charismatic antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Obstacles escalate from civic disbelief to supernatural bargaining, requiring compromises and negotiations to resolve the crisis.",
+        "terms": [
+          "escalation ladder",
+          "negotiated compromise"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The theme (belief/faith) is communicated through characters' choices, songs, and contrasting figures representing opposing values.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided material shows no clear self-referential or fourth-wall techniques.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The special is organized around distinct musical set pieces and episodic encounters that structure the narrative.",
+        "terms": [
+          "musical numbers",
+          "episodic set pieces"
+        ]
+      }
+    }
+  },
+  "tt1392190": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film follows several characters in action-focused sequences (Max, Furiosa, Nux, Joe) while rarely giving interior monologue, so the camera shifts focus without deep internal access.",
+        "terms": [
+          "multiple pov switching",
+          "limited internal access"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot unfolds in chronological order as one sustained outbound-and-return chase across contiguous terrain and set-pieces.",
+        "terms": [
+          "linear chronology",
+          "continuous chase structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The story is primarily an extended pursuit/escape that functions as a road-bound mission to reach and secure a survival goal.",
+        "terms": [
+          "escape pursuit"
+        ]
+      },
+      "information_control": {
+        "justification": "Key plot information is withheld or revealed at turning points (e.g., Green Place discovery) while exposition is sparse and delayed.",
+        "terms": [
+          "midpoint reversal",
+          "delayed exposition"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through deeds and stunts rather than exposition, with backstory revealed in small bits and contrasting figures set against one another.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Several characters undergo moral turnaround and atonement through action, most notably redemption through sacrifice and choice.",
+        "terms": [
+          "redemption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers read the lead as a taciturn, reluctant savior while perceiving the female lead as dominant and agency-driven, per reviews and plot focus.",
+        "terms": [
+          "reluctant hero",
+          "empowered female lead"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The film foregrounds resource scarcity as the core pressure and escalates threats via increasingly large set-piece confrontations.",
+        "terms": [
+          "resource scarcity stakes",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through characters' choices and the consequences of action rather than explicit dialogue, often via contrasting moral positions.",
+        "terms": [
+          "theme through actions",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No clear self-aware or metafictional devices are used in the provided materials or reviews.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The movie is structured as one prolonged chase composed of discrete, large-scale action set-pieces that sustain momentum.",
+        "terms": [
+          "single continuous chase",
+          "large-scale set-pieces"
+        ]
+      }
+    }
+  },
+  "tt0082971": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film's camera and scenes are tightly aligned with the protagonist, following his actions and choices throughout the story.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot advances in chronological order through a succession of discrete, globe-trotting action set pieces.",
+        "terms": [
+          "linear chronology",
+          "episodic set-piece structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The overall dramatic shape is a globe-spanning pursuit of a single coveted object and the obstacles encountered along the way.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "Early props and clues (e.g., the headpiece/staff mechanics) are deliberately planted to pay off later and the climax reveals supernatural consequences.",
+        "terms": [
+          "Chekhov's gun",
+          "climactic supernatural reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed primarily by physical actions, distinctive props/costume, and by contrasting rivals rather than heavy exposition.",
+        "terms": [
+          "show don't tell actions",
+          "character through props and costume",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist functions largely as a stable adventure archetype without a deep internal transformation over the course of the film.",
+        "terms": [
+          "flat arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and the film's tone position the lead as a roguish, charismatic hero while antagonists read as clearly evil, archetypal foes.",
+        "terms": [
+          "charismatic action hero",
+          "manichean villain"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Tension is built by escalating obstacles centered on possession of a sought-after object that drives competing factions.",
+        "terms": [
+          "escalation ladder",
+          "macguffin-driven stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through oppositional pairings of characters and through symbolic outcomes that illustrate moral consequences.",
+        "terms": [
+          "contrast pairs",
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film explicitly trades on and references the conventions of 1930s serials and pulp adventure in tone and structure.",
+        "terms": [
+          "serial-era homage",
+          "genre pastiche"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The movie begins with an independent action prologue and proceeds in distinct chapter-like episodes that resemble serialized installments.",
+        "terms": [
+          "cold open",
+          "chaptered structure"
+        ]
+      }
+    }
+  },
+  "tt0468569": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows multiple principals (Batman, Joker, Dent, Gordon) with scenes centered on different characters rather than a single internal narrator.",
+        "terms": [
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events unfold in chronological order from the bank heist through escalating consequences without time-jumping structure.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The overall plot warns about moral compromise and the cost of order through escalating consequences and tragic outcomes.",
+        "terms": [
+          "cautionary tale"
+        ]
+      },
+      "information_control": {
+        "justification": "The film uses audience-knowledge versus public ignorance and late reversals (e.g., the final cover-up) to create dramatic effect.",
+        "terms": [
+          "plot twist / reversal",
+          "dramatic irony"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed primarily through actions, oppositional pairings, and moments where private identities or morals break down.",
+        "terms": [
+          "show don't tell actions",
+          "character foil contrast",
+          "mask slips moments"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Key figures undergo moral decay or make ultimate personal sacrifices that reshape their public roles.",
+        "terms": [
+          "corruption arc",
+          "sacrificial arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis emphasize a charismatic, unsettling antagonist, a morally gray hero, and a sympathetic fallen idealist.",
+        "terms": [
+          "charismatic antagonist",
+          "morally gray lead",
+          "sympathetic fallen hero"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The Joker creates immediate-deadline threats and ethical no-win scenarios (explosive choices, ferries) to escalate stakes.",
+        "terms": [
+          "ticking clock deadline",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated by forcing characters into moral choices and by pairing opposing value positions across characters.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Synopsis and reviews show no clear self-aware or fourth-wall devices; the film plays events straight rather than metafictionally.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens with an immediate heist prologue and frequently cross-cuts parallel crises to build momentum.",
+        "terms": [
+          "cold open",
+          "intercut parallel action"
+        ]
+      }
+    }
+  },
+  "tt2911666": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film follows the protagonist's immediate experiences and motivations throughout without omniscient narration, keeping audience alignment tightly on him.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events proceed largely in straightforward chronological order from the inciting theft through the final pursuit with minimal temporal jumps.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot is driven by a personal loss that triggers a sustained campaign of retaliation and escalation.",
+        "terms": [
+          "revenge spiral"
+        ]
+      },
+      "information_control": {
+        "justification": "The story uses tight, economical exposition and explicit setup-payoff elements (e.g., stolen car and puppy) to trigger the plot.",
+        "terms": [
+          "economical exposition",
+          "Chekhov's gun"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is conveyed primarily through competent action and limited dialogue, with occasional small reveals of past history.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist moves from grief and vengeful action toward physical recovery and emotional reconnection by the ending.",
+        "terms": [
+          "healing arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are guided to root for a morally ambiguous, skilled killer whose motivations are sympathetic.",
+        "terms": [
+          "sympathetic antihero"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes escalate through violent retaliation and a publicly announced bounty that draws progressively tougher opposition.",
+        "terms": [
+          "escalation ladder",
+          "bounty-driven escalation"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated primarily through consequences and symbolic outcomes (loss prompting revenge; rescue signaling healing).",
+        "terms": [
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No clear self-referential or fourth-wall devices are evident in the provided material.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The narrative is framed by an emotional prologue and an epilogue that bookend the central revenge plot.",
+        "terms": [
+          "prologue/epilogue framing"
+        ]
+      }
+    }
+  },
+  "tt0458339": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis centers the story on Steve Rogers' experience without narrator intrusion, showing events from a single protagonist vantage.",
+        "terms": [
+          "third-person limited pov",
+          "hero-centered perspective"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Story follows chronological origin and wartime missions then jumps decades later to the modern era.",
+        "terms": [
+          "linear chronology with time jump"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot traces an underdog's transformation into a heroic figure through origin events and trials.",
+        "terms": [
+          "underdog rise"
+        ]
+      },
+      "information_control": {
+        "justification": "The film ends with a deliberate franchise-teasing scene and delivers exposition via staged briefings and simulations.",
+        "terms": [
+          "post-credits teaser",
+          "exposition through staged settings"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is established by deeds and training montages, with contrasts between the protagonist's ideals and institutional actors.",
+        "terms": [
+          "show don't tell actions",
+          "montage-driven development",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The lead undergoes a clear origin transformation culminating in a conscious sacrificial act.",
+        "terms": [
+          "origin-to-hero arc",
+          "self-sacrifice arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis frame the protagonist as an earnest, sympathetic underdog and idealistic moral center.",
+        "terms": [
+          "sympathetic idealist",
+          "lovable underdog"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Plot escalates through successive missions toward a deadline threat of civilian-targeted bombers.",
+        "terms": [
+          "escalation ladder",
+          "ticking clock deadline"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed by contrasting value systems and by moral choices shown through character actions.",
+        "terms": [
+          "contrast pairs",
+          "moral argument through choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Provided material shows no clear self-aware or fourth-wall devices or overt meta commentary.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film uses montages and an episodic series of raids, plus a franchise-building epilogue.",
+        "terms": [
+          "montage sequences",
+          "episodic mission structure",
+          "post-credits scene"
+        ]
+      }
+    }
+  },
+  "tt9362722": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews show the film follows multiple protagonists (Miles, Gwen, Miguel and other spider-people) with shifting focal access to their experiences.",
+        "terms": [
+          "third-person limited pov",
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Story proceeds in a forward timeline while repeatedly jumping between universes and intercutting parallel-world sequences.",
+        "terms": [
+          "linear chronology",
+          "interdimensional jumps"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "Central throughline centers on a young hero's growth, identity and responsibility across the film.",
+        "terms": [
+          "coming-of-age arc"
+        ]
+      },
+      "information_control": {
+        "justification": "Plot reveals (canon rules, Miles's anomaly) are gradually unfolded and the Spot's visions and warnings foreshadow future events.",
+        "terms": [
+          "slow-burn reveal",
+          "foreshadowing"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are developed via revealed backstory over time, contrasting spider-characters as foils, and action-driven show-not-tell moments.",
+        "terms": [
+          "backstory drip-feed",
+          "character foil contrast",
+          "show don't tell actions"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Key players undergo shifts in belief and perspective (youthful growth and growing disillusionment are emphasized in synopsis and reviews).",
+        "terms": [
+          "disillusionment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis frame the protagonist as emotionally sympathetic while authority figures inspire conflicted/antagonistic reactions.",
+        "terms": [
+          "sympathetic protagonist",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Conflict is built around existential multiverse collapse and ethically wrenching choices that create urgent deadlines and no-win dilemmas.",
+        "terms": [
+          "ticking clock deadline",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through characters' consequential choices and recurring ethical dilemmas rather than explicit exposition.",
+        "terms": [
+          "moral argument embedded in choices",
+          "repeated dilemma"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Sources do not indicate clear self-aware or metafictional devices beyond heavy fan-referential Easter eggs.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film ends on an unresolved cliffhanger and is explicitly presented as the first installment of a multi-part story.",
+        "terms": [
+          "cliffhanger ending",
+          "part-one serialization"
+        ]
+      }
+    }
+  },
+  "tt4154796": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film shifts spotlight among a large ensemble and shows events beyond any single character's view across many scenes.",
+        "terms": [
+          "multiple POV switching",
+          "ensemble omniscient perspective"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot uses time travel to jump between years and creates branching pasts rather than a strictly linear march.",
+        "terms": [
+          "non-linear timeline",
+          "parallel timelines"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The central throughline is a team mission to retrieve objects and restore a broken world, matching a quest-style arc.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "The story relies on surprise reversals and long-term franchise set-ups that pay off in later moments.",
+        "terms": [
+          "plot twist/reversal",
+          "Chekhov's gun"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through actions, contrasted against one another, and given backstory in measured increments.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Multiple principal characters undergo clear moral or legacy-driven transformations, including sacrifice and redemption.",
+        "terms": [
+          "redemption arc",
+          "tragic sacrifice arc",
+          "legacy arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and reception emphasize strong fan attachment to the returning roster and emotional sympathy for sacrificial figures.",
+        "terms": [
+          "fan-favorite ensemble",
+          "sympathetic tragic hero"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The narrative imposes hard limits and escalating consequences (limited resources, global/galactic stakes) to drive urgency.",
+        "terms": [
+          "ticking clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed through repeated moral choices and contrasting character positions rather than explicit exposition.",
+        "terms": [
+          "moral dilemmas embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film deliberately deploys callbacks and in-jokes that reward long-term franchise viewers.",
+        "terms": [
+          "fan-service callbacks"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The plot is organized as a multipart heist across time with separated teams and culminates in a large ensemble confrontation.",
+        "terms": [
+          "time-travel heist structure",
+          "team-split mission segments",
+          "epic ensemble climax"
+        ]
+      }
+    }
+  },
+  "tt0076759": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews show the film follows several characters in turn (Luke, Leia, Han, Vader) rather than a single subjective narrator.",
+        "terms": [
+          "multiple POV switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot progresses in straightforward chronological order from inciting incident to climactic battle without temporal loops or reverse ordering.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "Critics explicitly link the story to Joseph Campbell and the film maps onto a classic heroic quest structure.",
+        "terms": [
+          "hero's journey"
+        ]
+      },
+      "information_control": {
+        "justification": "The stolen plans function as a driving MacGuffin and key tactical details are withheld then revealed at strategic moments (e.g., exhaust port weakness).",
+        "terms": [
+          "MacGuffin",
+          "the reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Reviews and the synopsis emphasize characters defined by actions, contrasting foils, and gradual backstory disclosure (Obi\u2011Wan/Luke history).",
+        "terms": [
+          "show don't tell actions",
+          "character foil contrast",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The narrative clearly presents Luke's coming-of-age growth and Han's shift from self-interest to committed ally.",
+        "terms": [
+          "coming-of-age arc",
+          "redemption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews repeatedly describe Han as a roguish favorite, Luke as the sympathetic young hero, and Vader as a formidable antagonist.",
+        "terms": [
+          "lovable rogue",
+          "sympathetic young protagonist",
+          "formidable antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The Rebel attack is structured around an urgent deadline to stop the Death Star and the action escalates through increasingly severe confrontations.",
+        "terms": [
+          "ticking clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Reviews note themes (redemption, good vs evil) are shown through repeated moral choices and opposing character pairs rather than explicit exposition.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Neither the synopsis nor reviews indicate self-aware or fourth\u2011wall devices or overt meta-commentary in the film's storytelling.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens with an iconic opening crawl and builds toward a large set-piece battle climax that structures the latter half of the narrative.",
+        "terms": [
+          "opening text crawl",
+          "set-piece-driven climax"
+        ]
+      }
+    }
+  },
+  "tt0241527": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film primarily follows a single young protagonist's discoveries while occasionally showing scenes beyond his knowledge, so focalization centers on one lead.",
+        "terms": [
+          "third-person limited pov",
+          "single-protagonist focalization"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Story unfolds in straightforward chronological order across a single school year with discrete episodes leading to a climax.",
+        "terms": [
+          "linear chronology",
+          "episodic school-year structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot traces a young character's growth and initiation into a larger world over the course of the story.",
+        "terms": [
+          "coming-of-age arc"
+        ]
+      },
+      "information_control": {
+        "justification": "The screenplay guides audience suspicion with misleading cues about a suspect and culminates in a concealed antagonist reveal.",
+        "terms": [
+          "red herrings",
+          "plot twist / reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through staged actions, gradual backstory revelations, and contrasting foils rather than long expository monologues.",
+        "terms": [
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Primary figures mature through challenges and form a durable peer bond over the course of the narrative.",
+        "terms": [
+          "coming-of-age arc",
+          "friendship-bond arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are positioned to root for an underdog lead while being encouraged to mistrust certain authority figures through framing and performance.",
+        "terms": [
+          "sympathetic underdog protagonist",
+          "mistrustful authority figure"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The story raises stakes via progressively harder obstacles and a sequence of protective challenges guarding the central object.",
+        "terms": [
+          "escalation ladder",
+          "trial gauntlet"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme is conveyed through charged objects and contrasting groups that symbolize opposing values rather than explicit exposition.",
+        "terms": [
+          "symbolic MacGuffin",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The synopsis and reviews show no clear evidence of self-aware or meta-narrative devices in the film.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens with a prologue cold open and advances via a series of set-piece episodes tied to the school calendar.",
+        "terms": [
+          "cold open prologue",
+          "set-piece episodic structure"
+        ]
+      }
+    }
+  },
+  "tt0120737": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows Frodo but shifts focal attention among multiple heroes and set-piece sequences, indicating a third-person external viewpoint with shifting focal characters.",
+        "terms": [
+          "third-person limited pov",
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story runs largely in forward time after an opening historical prologue that supplies backstory and context.",
+        "terms": [
+          "linear chronology",
+          "expository prologue"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The central structure is an organized journey to accomplish a single goal, matching a classic quest pattern.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "Backstory and stakes are revealed progressively via the prologue, investigations, and council scenes, with repeated foreshadowing and staged reveals.",
+        "terms": [
+          "foreshadowing",
+          "slow-burn reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined primarily through enacted choices and behavior, gradual backstory disclosure, and oppositional pairings between characters.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The synopsis shows clear developmental trajectories, notably a youthful burdened hero maturation and a companion's moral decline under temptation.",
+        "terms": [
+          "coming-of-age arc",
+          "corruption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and the synopsis present a broadly sympathetic lead and a well-acted, morally compromised ally who provokes both empathy and critique.",
+        "terms": [
+          "sympathetic protagonist",
+          "sympathetic flawed ally"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Obstacles escalate through successive set-pieces and the plot forces high-cost choices and sacrificial moments from characters.",
+        "terms": [
+          "escalation ladder",
+          "forced sacrifice choice"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are delivered by putting characters into ethical dilemmas and by contrasting opposing character values rather than explicit exposition.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Neither the synopsis nor reviews indicate self-aware storytelling or fourth-wall play; the film presents its world straight-faced.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film uses a prominent opening prologue and concludes on an unresolved ending that directly sets up the sequel.",
+        "terms": [
+          "cold open prologue",
+          "cliffhanger ending"
+        ]
+      }
+    }
+  },
+  "tt0172495": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story centers on a single heroic viewpoint while periodically cutting to the antagonist and political sphere, creating a mainly character-aligned but occasionally shifting vantage.",
+        "terms": [
+          "third-person limited pov",
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events unfold in chronological order from battle prologue through capture, rise, and final duel without major nonlinear jumps.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot follows a protagonist driven by personal loss toward public vengeance and final resolution.",
+        "terms": [
+          "revenge quest"
+        ]
+      },
+      "information_control": {
+        "justification": "The film uses private revelations and public recognitions alongside a concealed wound that the audience sees before most characters, producing tension and payoff.",
+        "terms": [
+          "dramatic irony",
+          "recognition reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined primarily through physical action and contrast rather than explicit exposition, with behavior and staged oppositions conveying moral traits.",
+        "terms": [
+          "show don't tell actions",
+          "character foil contrast",
+          "indirect characterization through behavior"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The lead undergoes a morally elevated but fatal trajectory that resolves through sacrifice and restoration rather than transformation into villainy.",
+        "terms": [
+          "tragic hero arc",
+          "redemption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are guided to sympathize with the noble protagonist while strongly disliking the envious, performative antagonist.",
+        "terms": [
+          "sympathetic hero",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes escalate from personal revenge to public and political consequences, often played out through spectacle and progressive escalation of danger.",
+        "terms": [
+          "escalation ladder",
+          "public spectacle stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed by contrasting character pairings and consequences that symbolically mirror moral positions rather than explicit moralizing.",
+        "terms": [
+          "contrast pairs",
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The material contains no clear self-referential or fourth-wall devices in the provided synopsis and reviews.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens with an action prologue and builds to a single, highly staged climactic duel that structures the narrative momentum.",
+        "terms": [
+          "cold open battle prologue",
+          "climactic single combat"
+        ]
+      }
+    }
+  },
+  "tt1375666": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film aligns audience perception tightly with the protagonist's subjective experience and leaves objective reality unsettled, per the synopsis's dream intrusions and ambiguous finale.",
+        "terms": [
+          "third-person limited pov",
+          "unreliable narrator"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story is built around nested dream levels with different subjective time rates and interleaved sequences across those layers, as described in the synopsis.",
+        "terms": [
+          "multi-layer nested structure",
+          "time dilation across layers"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The central mission to plant an idea is structured and staged like a coordinated infiltration rather than a simple linear drama, matching classic heist mechanics.",
+        "terms": [
+          "heist blueprint"
+        ]
+      },
+      "information_control": {
+        "justification": "The screenplay withholds and times key revelations through parallel cross-cutting of synchronized actions and purposefully leaves the ending unresolved, per synopsis and reviews.",
+        "terms": [
+          "cross-cutting parallel action",
+          "ambiguous ending"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed via a novice surrogate learning the rules, gradual backstory disclosure, and visible externalizations of inner psychology (projections) noted in the synopsis.",
+        "terms": [
+          "audience surrogate exposition",
+          "backstory drip-feed",
+          "externalized subconscious projections"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist's journey centers on atonement and letting go while the target moves toward autonomy, both clearly outlined in the plot summary.",
+        "terms": [
+          "redemption arc",
+          "coming-into-autonomy arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and the synopsis present the lead as morally compromised but sympathetic due to personal guilt and relatable motives.",
+        "terms": [
+          "sympathetic flawed lead",
+          "morally gray protagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes are driven by tightly synchronized deadlines across nested levels and escalating consequences as each deeper layer compounds risk, per the mission mechanics in the synopsis.",
+        "terms": [
+          "synchronized multi-layer deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme is communicated through a recurring physical motif and character decisions that produce consequential outcomes rather than explicit statements, noted in synopsis and reviews.",
+        "terms": [
+          "symbolic recurring motif",
+          "theme via consequential choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Critics and the script frame the film as a work that reflexively examines dreaming and the act of constructing narratives, making the story self-aware about storytelling.",
+        "terms": [
+          "story about storytelling"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens in medias res and uses explicit rule-teaching scenes to orient the audience to its premise, both described in the synopsis and reviews.",
+        "terms": [
+          "cold open",
+          "rule-exposition sequences"
+        ]
+      }
+    }
+  },
+  "tt0133093": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows Neo's discoveries and choices closely, presenting events through his experiential viewpoint.",
+        "terms": [
+          "third-person limited pov",
+          "protagonist-focused perspective"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events proceed largely in forward chronological order from discovery through climax with contained training and explanation sequences.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The story follows a mythic selection and mission that transforms the lead into a savior-like figure.",
+        "terms": [
+          "mythic hero's journey"
+        ]
+      },
+      "information_control": {
+        "justification": "The screenplay gradually unveils the simulated world and uses prophecy and key reversals to subvert audience expectations.",
+        "terms": [
+          "slow-burn reveal",
+          "plot twist / reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are established through behavior, mentor exposition, and oppositional contrasts between humans and agents.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist clearly transforms from skeptic to empowered figure by the story's end.",
+        "terms": [
+          "transformation arc",
+          "coming-into-power arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are positioned to sympathize with a hesitant, reluctant lead while opposing a cold, relentless antagonist.",
+        "terms": [
+          "reluctant hero",
+          "implacable antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes rise through betrayals, rescue missions and sacrificial decisions rather than a single static obstacle.",
+        "terms": [
+          "escalation ladder",
+          "forced sacrifice choice"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed through binary contrasts and through pivotal moral choices presented to characters.",
+        "terms": [
+          "contrast pairs",
+          "moral argument embedded in choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided synopsis and reviews show no clear self-referential or fourth-wall storytelling devices.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film uses an opening action sequence, training montages, and heavy explanatory scenes to structure information and momentum.",
+        "terms": [
+          "cold open",
+          "training montage",
+          "exposition-heavy infodump"
+        ]
+      }
+    }
+  },
+  "tt0816692": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows a central protagonist (Cooper) while periodically shifting to other key characters and timeframes.",
+        "terms": [
+          "third-person limited pov",
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story proceeds largely forward but repeatedly jumps decades due to relativistic time dilation and visualizes time spatially in the tesseract.",
+        "terms": [
+          "linear chronology with large time jumps",
+          "time dilation-centered sequencing"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot is organized around a mission to find new worlds and save humanity, fitting a long-form mission/quest structure.",
+        "terms": [
+          "quest/adventure"
+        ]
+      },
+      "information_control": {
+        "justification": "Major late revelations (Brand's lie, the 'ghost' identity, tesseract causality) and withheld Plan B are revealed gradually to reframe earlier scenes.",
+        "terms": [
+          "plot twist / reversal",
+          "slow-burn reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through decisive actions, staggered backstory across decades, and contrasting foils (e.g., cooperative vs deceitful choices).",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Murph matures from child to scientist while the protagonist undertakes a self-sacrificial mission that changes his role and relationships.",
+        "terms": [
+          "coming-of-age arc",
+          "sacrifice-driven arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and the synopsis emphasize emotional rooting for the lead while other figures occupy morally ambiguous or antagonistic roles.",
+        "terms": [
+          "sympathetic protagonist",
+          "morally ambiguous characters"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "An environmental deadline and competing Plan A/Plan B forces create urgent, ethically fraught choices and escalating mission stakes.",
+        "terms": [
+          "ticking clock deadline",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film communicates themes through consequential choices and recurring symbolic motifs (e.g., the watch, time) rather than explicit exposition alone.",
+        "terms": [
+          "moral argument embedded in choices",
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided material shows no clear fourth-wall breaks or overt self-referential/story-about-story framing.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The plot is structured as discrete planetary episodes and features a visualized four-dimensional tesseract that externalizes time.",
+        "terms": [
+          "time-as-space visual device",
+          "episodic planet-segment structure"
+        ]
+      }
+    }
+  },
+  "tt1856101": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "Story is primarily filtered through the blade runner K's experiences while occasionally shifting focus to other key characters.",
+        "terms": [
+          "third-person limited pov",
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot moves largely forward in time but depends on memory flashbacks and revealed past moments to drive the present investigation.",
+        "terms": [
+          "linear chronology",
+          "memory flashbacks"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The central structure is a detective-style investigation that uncovers a hidden truth with noir framing.",
+        "terms": [
+          "whodunit mystery"
+        ]
+      },
+      "information_control": {
+        "justification": "Key facts are withheld and revealed gradually, using delayed confirmations and a late reversal about identity for dramatic effect.",
+        "terms": [
+          "slow-burn reveal",
+          "plot twist / reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are built through actions, visual detail, and drip-fed backstory and memories rather than explicit exposition.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "memory-driven characterization"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Principal figures follow identity-focused journeys that end in sacrifice or personal reconciliation rather than clear victory.",
+        "terms": [
+          "identity quest arc",
+          "sacrificial tragic arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "The film frames its lead as a sympathetic, stoic figure whose moral ambiguity invites empathy and debate.",
+        "terms": [
+          "morally gray lead",
+          "sympathetic outsider"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Narrative pressure combines immediate deadlines with escalating consequences that threaten wider social order.",
+        "terms": [
+          "ticking clock deadline",
+          "existential societal stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through characters' choices and recurring memory motifs instead of direct statement.",
+        "terms": [
+          "theme shown through choices",
+          "memory-as-theme device"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film pays homage to its predecessor but does not rely on overt self-referential or fourth-wall techniques.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "Investigation progresses via forensic databases, archival records, and tangible clue objects that guide discoveries.",
+        "terms": [
+          "archive-driven investigation",
+          "object clue motif"
+        ]
+      }
+    }
+  },
+  "tt0107290": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film follows an ensemble cast with the camera shifting between specialists, staff, and children rather than a single narrator, indicating multiple viewpoint shifts.",
+        "terms": [
+          "multiple pov switching"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot unfolds in straightforward chronological order from inspection to system failure to escape, without major time jumps or parallel timelines.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "Reviews and synopsis frame the story as a warning about scientific hubris and unintended consequences, matching a cautionary structure.",
+        "terms": [
+          "cautionary tale"
+        ]
+      },
+      "information_control": {
+        "justification": "Key facts (frog DNA, engineered females, system sabotage) are seeded early and revealed gradually, building suspense through delayed payoff.",
+        "terms": [
+          "foreshadowing",
+          "slow-burn reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined primarily by contrasting beliefs and observable reactions under threat, rather than lengthy expositional backstory.",
+        "terms": [
+          "character foil contrast",
+          "show don't tell actions"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The story traces clear emotional growth in younger characters and a broader loss of idealism among adults as hubris is exposed.",
+        "terms": [
+          "coming-of-age arc",
+          "disillusionment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Audience response and reviews emphasize an empathic reading of the ensemble while identifying conspicuously dislikeable antagonists among the staff.",
+        "terms": [
+          "sympathetic ensemble",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Tension escalates from isolated incidents to full-park breakdown, creating an emphasis on survival and successive escalation of threats.",
+        "terms": [
+          "survival ordeal",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes about scientific hubris are communicated through characters' choices and the concrete consequences those choices produce rather than explicit preaching.",
+        "terms": [
+          "moral argument embedded in choices",
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided materials show no clear use of self-aware or fourth-wall devices, so no meta techniques are included.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens with an inciting on-site incident and proceeds via large, discrete action set pieces that drive the plot forward.",
+        "terms": [
+          "cold open",
+          "set piece structure"
+        ]
+      }
+    }
+  },
+  "tt2543164": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film stays tightly aligned to one protagonist, presenting her subjective visions and limited external viewpoint.",
+        "terms": [
+          "third-person limited pov",
+          "subjective experiential focalization"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events are presented out of order via apparent memories that are later revealed as future knowledge.",
+        "terms": [
+          "non-linear timeline",
+          "flashforward-driven structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The story is built around an encounter-driven exploration of communication and meaning rather than action spectacle.",
+        "terms": [
+          "first contact exploration"
+        ]
+      },
+      "information_control": {
+        "justification": "A major late reinterpretation reframes earlier scenes while translation unfolds gradually to reshape audience understanding.",
+        "terms": [
+          "plot twist / reversal",
+          "slow-burn reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Personality and motives are revealed through behavior, repeated interactions, and gradually released personal visions rather than direct exposition.",
+        "terms": [
+          "indirect characterization through behavior",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The lead moves toward conscious acceptance of foreknown outcomes and persists in chosen action despite their cost.",
+        "terms": [
+          "acceptance arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Intimate access to the protagonist's interior and moral choices encourages strong viewer empathy.",
+        "terms": [
+          "sympathetic protagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Geopolitical escalation and the threat of military attack create an urgent deadline and rising stakes.",
+        "terms": [
+          "ticking clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme emerges through characters' decisions and the mechanics of language learning rather than explicit didactic statements.",
+        "terms": [
+          "moral argument embedded in choices",
+          "subtextual scenes"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film does not employ overt self-referential or fourth-wall devices.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The opening line functions like a prologue and the story returns to motifs, producing a circular framed effect.",
+        "terms": [
+          "cold open",
+          "circular framing"
+        ]
+      }
+    }
+  },
+  "tt7784604": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film is primarily experienced through the mother's subjective experience\u2014her dissociation and possession dominate viewer access to events (synopsis, reviews praising the central performance).",
+        "terms": [
+          "third-person limited pov",
+          "subjective focalization"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events play out in chronological order with a deliberately patient, tension-building tempo noted by reviewers and visible in the synopsis progression.",
+        "terms": [
+          "linear chronology",
+          "slow-burn pacing"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The story charts a household's collapse and the generational transmission of horror, constituting a family-centered tragedy.",
+        "terms": [
+          "family tragedy"
+        ]
+      },
+      "information_control": {
+        "justification": "Key cult connections and supernatural mechanics are withheld and revealed gradually, culminating in a late, decisive reversal (synopsis reveals final cult twist).",
+        "terms": [
+          "slow-burn reveal",
+          "final-act twist"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined through behavior, ritual objects, and incremental backstory details (dioramas, sketchbook, sleepwalking, s\u00e9ances in the synopsis).",
+        "terms": [
+          "show-don't-tell actions",
+          "backstory drip-feed",
+          "symbolic object motifs"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Principal characters descend into possession and ruin, showing moral/psychological corruption and a tragic downfall (synopsis arc to ritual outcome).",
+        "terms": [
+          "corruption arc",
+          "tragic downfall"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are led to empathize strongly with the lead while simultaneously doubting her reliability, a perception emphasized in reviews of the central performance.",
+        "terms": [
+          "sympathetic but unreliable protagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Pressure builds through escalating supernatural signs and ritual deadlines toward an inescapable outcome, creating mounting inevitability (synopsis ritual climax).",
+        "terms": [
+          "escalation ladder",
+          "inevitable fate"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film communicates themes via recurring domestic symbols and consequences rather than explicit statements, as reviewers note its subtextual approach to grief and generational harm.",
+        "terms": [
+          "symbolic consequences",
+          "subtextual scenes"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No strong evidence of self-aware or fourth-wall devices appears in the synopsis or reviews.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "Recurring miniatures function as a literal and visual device, and the story closes on an ambiguous, tableau-like ending (synopsis finale).",
+        "terms": [
+          "miniature diorama motif",
+          "ambiguous ending"
+        ]
+      }
+    }
+  },
+  "tt0081505": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film consistently follows the family's experiences with close access to Jack's behavior and Danny's psychic visions, blending external observation with subjective mental states.",
+        "terms": [
+          "third-person limited pov",
+          "subjective psychic pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story progresses in a single chronological winter confined arc while repeatedly cutting into hallucinatory visions and dreamlike sequences.",
+        "terms": [
+          "linear chronology",
+          "hallucinatory intercuts"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot maps onto a central character's progressive mental collapse under mounting supernatural influence.",
+        "terms": [
+          "descent into madness"
+        ]
+      },
+      "information_control": {
+        "justification": "Early clues (e.g., Room 237, Grady) are planted and the supernatural threat is revealed incrementally, with staged narrative payoffs.",
+        "terms": [
+          "slow-burn reveal",
+          "Chekhov's gun"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are shown through actions, repeating visual tells, and selective backstory disclosure rather than exposition-heavy explanation.",
+        "terms": [
+          "show don't tell actions",
+          "revealing habits/tells",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The central adult deteriorates into violence while the child develops resourcefulness and agency across the story.",
+        "terms": [
+          "corruption arc",
+          "coming-of-age arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are guided to read the lead as increasingly unstable and dangerous while sympathizing with the surviving family and the clairvoyant child.",
+        "terms": [
+          "unstable protagonist",
+          "sympathetic survivor",
+          "innocent psychic figure"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The isolated, snowbound setting creates a no-escape pressure cooker that escalates into immediate bodily peril and life-or-death choices.",
+        "terms": [
+          "isolated no-exit stakes",
+          "escalating physical threat"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme is conveyed through the environment and recurring visual motifs (maze, blood elevator, repeated text) rather than overt statements.",
+        "terms": [
+          "symbolic setting",
+          "motif-driven subtext"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film does not overtly deploy self-reflexive or fourth-wall techniques; it remains narratively immersive rather than meta-commentary.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The climax uses a physical labyrinth chase as a mechanical hook and the film ends on an elliptical historical photograph that reframes events.",
+        "terms": [
+          "climactic labyrinth chase",
+          "ambiguous photographic epilogue"
+        ]
+      }
+    }
+  },
+  "tt1591095": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows the family from an external vantage but shifts into highly subjective astral sequences centered on Josh and Dalton.",
+        "terms": [
+          "third-person limited pov",
+          "subjective pov sequences"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story proceeds largely linearly in the real world while repeatedly intercutting with scenes in an alternate astral realm.",
+        "terms": [
+          "linear chronology",
+          "dual-reality intercutting"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot is structured around a mission to retrieve a trapped child from a hostile supernatural realm.",
+        "terms": [
+          "rescue quest"
+        ]
+      },
+      "information_control": {
+        "justification": "Key facts are gradually revealed through investigation and a late surprise reversal that recontextualizes earlier events.",
+        "terms": [
+          "slow-burn reveal",
+          "plot twist reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is revealed through investigator exposition, archival photos/artifacts, and sudden behavioral breakdowns rather than long monologues.",
+        "terms": [
+          "backstory drip-feed",
+          "revealing artifacts photos",
+          "mask slips moments"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist moves from protector/rescuer to being corrupted/possessed by the story's end.",
+        "terms": [
+          "corruption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are guided to sympathize with the lead before a final turn that casts them as a menacing threat.",
+        "terms": [
+          "sympathetic-then-menacing lead"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Threats escalate progressively and center on loss of bodily agency through possession.",
+        "terms": [
+          "escalation ladder",
+          "body-possession stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated via recurring visual imagery and consequences that literalize inner trauma and past secrets.",
+        "terms": [
+          "subtextual imagery",
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No clear self-aware or fourth-wall devices are evident in the provided material.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The synopsis relies on supernatural set-pieces and structural hooks such as s\u00e9ances, astral travel, portal rooms, and a post-credits reveal.",
+        "terms": [
+          "seance set-piece",
+          "astral-travel sequences",
+          "otherworld portal",
+          "post-credits coda"
+        ]
+      }
+    }
+  },
+  "tt27911000": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis centers on Sienna's perceptions (hallucinations, dreams) while also cutting to external killer set-pieces, indicating a limited focalization with subjective sequences.",
+        "terms": [
+          "third-person limited pov",
+          "subjective hallucination perspective"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Story proceeds mostly linearly but includes a multi-year jump and recurring dream/vision interruptions.",
+        "terms": [
+          "linear chronology with time skip",
+          "dream/vision interruptions"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot frames a protagonist enduring repeated attacks and trying to stop/escape a returning killer, matching a survival-focused shape.",
+        "terms": [
+          "survival ordeal"
+        ]
+      },
+      "information_control": {
+        "justification": "The film repeatedly blurs what's real via hallucinations and withholds events through off-screen kills and abrupt act transitions called out in reviews.",
+        "terms": [
+          "subjective ambiguity",
+          "off-screen omissions"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is conveyed through traumatic visions, intermittent backstory details (letters) and action-based revelations rather than expository monologue.",
+        "terms": [
+          "backstory drip-feed",
+          "show don't tell actions"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Sienna shifts from trauma survivor to active rescuer/mission-driven figure, shown through vows and confrontations.",
+        "terms": [
+          "rescue/mission arc",
+          "empowerment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis position the protagonist as a sympathetic survivor while the antagonist functions as a reviled, gleeful killer figure.",
+        "terms": [
+          "sympathetic survivor",
+          "despicable villain"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The film escalates from isolated murders to public mass-casualty attacks and ends with a personal rescue stake, increasing pressure over time.",
+        "terms": [
+          "escalation ladder",
+          "personal rescue stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film externalizes inner trauma and mission through recurring visual motifs (dream armor, possession imagery) and repeated violent motifs.",
+        "terms": [
+          "visual symbolism to externalize trauma",
+          "repeated traumatic motifs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Synopsis and reviews note self-awareness in the antagonist's tone but show no clear fourth-wall or overt metafictional devices.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "Narrative uses a multi-year time skip, dream/vision beats, and ends on an unresolved cliffhanger that sets up a sequel.",
+        "terms": [
+          "time skip",
+          "dream/vision sequences",
+          "cliffhanger sequel hook"
+        ]
+      }
+    }
+  },
+  "tt0387564": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film alternates focus between the two trapped men, the investigating detectives, and intermittent views of the killer, creating shifting audience vantage points.",
+        "terms": [
+          "multiple pov switching",
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Repeated flashbacks and intercut scenes rearrange chronology to withhold and later reveal key facts about prior traps and investigations.",
+        "terms": [
+          "non-linear timeline",
+          "flashback-driven structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The story is structured around uncovering the perpetrator and the mechanics of his crimes through clues and investigation.",
+        "terms": [
+          "whodunit mystery"
+        ]
+      },
+      "information_control": {
+        "justification": "The screenplay withholds crucial facts until a final reversal and uses editing to misdirect the viewer about who is dead and who controls events.",
+        "terms": [
+          "plot twist reversal",
+          "misdirection editing"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed primarily through pressured choices, flashback drip-feed, and diegetic audio that discloses motives and history.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "indirect characterization through recordings"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Key players undergo moral collapse under extreme pressure, trading professional identity for survival-driven violence.",
+        "terms": [
+          "corruption arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are invited to sympathize with or at least understand the antagonist's moral logic while disliking protagonists' desperate choices.",
+        "terms": [
+          "sympathetic monster",
+          "frustrating decision-making protagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot imposes a hard deadline and agonizing bodily sacrifices to force irreversible choices and escalation.",
+        "terms": [
+          "ticking clock deadline",
+          "forced sacrifice choice"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme is conveyed by forcing characters into moral dilemmas repeatedly so their decisions demonstrate the film's ethical argument.",
+        "terms": [
+          "moral argument embedded in choices",
+          "repeated dilemma"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No clear self-referential or fourth-wall techniques are used in the provided material.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The story hinges on a confined-room premise, diegetic cassette evidence, and a revelatory montage that recontextualizes earlier scenes.",
+        "terms": [
+          "locked-room scenario",
+          "diegetic recordings",
+          "montage recontextualization"
+        ]
+      }
+    }
+  },
+  "tt0114369": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews follow the investigation through two detectives as primary focal points rather than an omniscient narrator, centering audience access on co-leads.",
+        "terms": [
+          "third-person limited pov",
+          "multiple pov (co-leads)"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story unfolds chronologically as a sequence of linked case investigations, each murder functioning as a discrete beat in the progression.",
+        "terms": [
+          "linear chronology",
+          "episodic investigation structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot is built around a police inquiry into a serial killer and the mystery of his motive and identity.",
+        "terms": [
+          "whodunit mystery"
+        ]
+      },
+      "information_control": {
+        "justification": "Reviews and synopsis note the film keeps the audience as much in the dark as the detectives and culminates in a late, shocking reversal.",
+        "terms": [
+          "audience kept in dark",
+          "slow-burn reveal",
+          "plot twist / reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is conveyed through contrasting partners, revealed actions at crime scenes, and gradual backstory details rather than extended exposition.",
+        "terms": [
+          "character foil contrast",
+          "show-don't-tell actions",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The synopsis describes a protagonist driven into moral collapse and a mentor figure moving from disillusionment to a renewed (if bleak) resolve.",
+        "terms": [
+          "corruption arc",
+          "disillusionment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews characterize one lead as idealistic/naive, the other as world-weary mentor, and the killer as methodical and persuasive.",
+        "terms": [
+          "naive idealist lead",
+          "world-weary mentor",
+          "cold calculating antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The case escalates with each ritualized murder and culminates in a moral trap that forces an irreversible, no-win choice.",
+        "terms": [
+          "escalation ladder",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film conveys its moral themes through repeated sin-based rituals and consequences that embody the theme rather than explicit preaching.",
+        "terms": [
+          "ritualized symbolism",
+          "moral argument embedded in choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Provided materials show no clear self-reflexive or fourth-wall devices; the film plays as a straight thriller/noir.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The movie opens immediately with a murder set-piece and builds to a final shock-reveal payoff accompanied by an epilogue voiceover.",
+        "terms": [
+          "cold open",
+          "final reveal payoff",
+          "epilogue voiceover"
+        ]
+      }
+    }
+  },
+  "tt6751668": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews show the film consistently aligns audience perspective with the struggling family, following their actions and inner reversals rather than a neutral omniscient viewpoint.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot unfolds in a straightforward sequence from infiltration through escalation to aftermath with a final time jump, rather than fragmented chronology.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The overall story is a downward spiral that converts social satire into a tragic collapse for the protagonists.",
+        "terms": [
+          "tragic downfall"
+        ]
+      },
+      "information_control": {
+        "justification": "The film keeps the wealthy family ignorant while the audience knows the Kims' deception, and slowly reveals the hidden bunker and violent reversals.",
+        "terms": [
+          "dramatic irony",
+          "slow-burn reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is revealed primarily through actions, staged disclosures of hidden pasts, and contrasts between the two families' behaviors.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Major figures transition from opportunistic survival to moral collapse and growing disillusionment as pressures escalate.",
+        "terms": [
+          "corruption arc",
+          "disillusionment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis present protagonists as sympathetic yet ethically compromised, inviting mixed rooting and judgment from viewers.",
+        "terms": [
+          "sympathetic antiheroes",
+          "morally gray lead"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The narrative escalates stakes through social pressure and cascading consequences, producing situations with no satisfactory outcome for the underclass.",
+        "terms": [
+          "escalation ladder",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film communicates its themes via the house/basement spatial contrast and by forcing characters to make revealing moral choices.",
+        "terms": [
+          "spatial metaphor",
+          "moral argument embedded in choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Neither the synopsis nor reviews indicate overt self-referential or fourth-wall devices in the storytelling.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The finale leaves the fate of central relationships and plans unresolved, ending on an open, ambiguous note.",
+        "terms": [
+          "ambiguous ending"
+        ]
+      }
+    }
+  },
+  "tt5052448": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "Synopsis and reviews show the film is experienced through a single protagonist with audience-aligned focalization.",
+        "terms": [
+          "third-person limited pov",
+          "protagonist-aligned perspective"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events largely proceed chronologically with hypnotically triggered memory sequences interrupting the present action.",
+        "terms": [
+          "linear chronology",
+          "hypnosis-triggered flashbacks"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The core story is a confined, life-or-death struggle to escape an exploitative situation.",
+        "terms": [
+          "survival ordeal"
+        ]
+      },
+      "information_control": {
+        "justification": "Plot clues are seeded early and gradually assembled into a late, shocking revelation about the hosts' true scheme.",
+        "terms": [
+          "slow-burn reveal",
+          "plot twist"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through behavior, selective backstory via hypnotherapy and photos, and contrasting foils rather than explicit exposition.",
+        "terms": [
+          "indirect characterization through behavior",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist moves from wary visitor to active survivor and experiences disillusionment with trusted figures.",
+        "terms": [
+          "empowerment arc",
+          "disillusionment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews characterize the lead as sympathetic and the hosts as deceptive, betraying audience trust.",
+        "terms": [
+          "sympathetic protagonist",
+          "false-ally antagonist",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes pivot on control over bodily autonomy and escalate from social tension to surgical life-or-death consequences.",
+        "terms": [
+          "bodily integrity stakes",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Social critique is conveyed through genre mechanics, subtext and situational irony rather than didactic exposition.",
+        "terms": [
+          "social commentary embedded in genre",
+          "subtextual theme delivery"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Provided materials show no clear evidence of self-referential or fourth-wall devices.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "Hypnosis functions as a recurring structural device and the film cultivates a slow build that detonates into sudden violence.",
+        "terms": [
+          "recurring hypnosis sequences",
+          "slow-burn to sudden payoff"
+        ]
+      }
+    }
+  },
+  "tt0144084": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story is filtered through the protagonist's interior voice and presents events the audience cannot fully trust, as shown by pervasive voice-over and disputed events in the synopsis and reviews.",
+        "terms": [
+          "first-person pov",
+          "unreliable narrator"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events proceed mostly in chronological order but unfold as discrete episodes of routine and violence, per the synopsis listing repeated set-piece incidents.",
+        "terms": [
+          "linear chronology",
+          "episodic vignettes"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot follows a protagonist's progressive mental collapse and loss of grip on reality, emphasized by reviews and the synopsis' unresolved ending.",
+        "terms": [
+          "descent into madness"
+        ]
+      },
+      "information_control": {
+        "justification": "The film withholds objective verification of violent acts and intentionally blurs what's real versus imagined, creating sustained ambiguity for the audience.",
+        "terms": [
+          "reality-fantasy ambiguity",
+          "delayed verification of events"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is revealed through internal voice-over, obsessive surface details, and repeated revealing habits rather than explicit exposition.",
+        "terms": [
+          "internal voice-over monologue",
+          "revealing habits/tells",
+          "indirect characterization through possessions"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist shows increasing psychological breakdown without clear redemption or closure, as noted in synopsis and reviews.",
+        "terms": [
+          "psychological deterioration arc",
+          "flat unresolved arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are led to see the lead as both repellent and magnetically charismatic, per critical reception praising the performance while condemning the character's amorality.",
+        "terms": [
+          "despicable protagonist",
+          "darkly charismatic lead"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Tension arises from escalating violent acts and the social system's indifference or failure to hold the protagonist accountable, both emphasized in the synopsis and reviews.",
+        "terms": [
+          "escalation ladder",
+          "societal indifference as barrier"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are delivered by juxtaposing mundane consumer detail with graphic violence and using material obsessions as symbolic shorthand, as reviewers note.",
+        "terms": [
+          "satirical juxtaposition of banality and violence",
+          "theme via material detail"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film self-consciously mixes genre tones and satirizes its social milieu, creating a deconstructive stance rather than straightforward genre play.",
+        "terms": [
+          "genre deconstruction",
+          "self-referential dark humor"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The story uses confessional voice recordings and routine montages as recurring devices and closes on an unresolved ending, per synopsis details.",
+        "terms": [
+          "recorded confession device",
+          "open-ended ending"
+        ]
+      }
+    }
+  },
+  "tt0137523": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film is delivered through the protagonist's internal narration and culminates in a split-identity reveal, signaling both first-person subjectivity and unreliability.",
+        "terms": [
+          "first-person voiceover",
+          "unreliable narrator"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story follows a mostly chronological arc while using frequent montages to compress time and show the spread of Fight Club and Project Mayhem.",
+        "terms": [
+          "linear chronology",
+          "montage time-compression"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot charts a protagonist's mental collapse and the escalation of personal discontent into organized extremism.",
+        "terms": [
+          "psychological descent"
+        ]
+      },
+      "information_control": {
+        "justification": "The screenplay conceals and then reveals a major identity twist, using visual foreshadowing and misdirection to withhold the truth until the climax.",
+        "terms": [
+          "plot twist reversal",
+          "foreshadowing visuals"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through sharp contrasts, drip-fed backstory, and continuous internal commentary rather than straightforward exposition.",
+        "terms": [
+          "character foil contrast",
+          "backstory drip-feed",
+          "voiceover internal monologue"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The lead fragments psychologically while shifting from private disillusionment toward collective radicalization under an emergent ideology.",
+        "terms": [
+          "identity fragmentation arc",
+          "radicalization arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are positioned to sympathize with a morally ambiguous protagonist while being attracted to a charismatic, cult-like insurgent figure.",
+        "terms": [
+          "morally ambiguous protagonist",
+          "charismatic cult-leader figure"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Conflict escalates from personal catharsis to large-scale sabotage with progressive escalation and a deadline-driven demolition plan.",
+        "terms": [
+          "escalation ladder",
+          "ticking clock deadline"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed by juxtaposing opposing value systems and embedding moral questions in characters' consequential actions.",
+        "terms": [
+          "contrast pairs",
+          "moral argument embedded in actions"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The narrator's self-aware, sardonic commentary frames the film's critique and draws attention to its own storytelling perspective.",
+        "terms": [
+          "self-referential voiceover"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The film opens in medias res with a cold open and relies on montage cross-cutting to depict nationwide movement building.",
+        "terms": [
+          "cold open in medias res"
+        ]
+      }
+    }
+  },
+  "tt0120338": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story is presented through an elderly Rose recounting events to modern-day salvagers, creating a first-person framed narrator perspective.",
+        "terms": [
+          "first-person framed narrator"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "A present-day framing device launches an extended, mostly linear flashback that tells the bulk of the film's events.",
+        "terms": [
+          "frame narrative with extended flashback"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The central plot follows a doomed romantic relationship set against a larger disaster, fitting a tragic romance shape.",
+        "terms": [
+          "tragic romance"
+        ]
+      },
+      "information_control": {
+        "justification": "Historical audience foreknowledge shapes suspense while early props and gifts (the necklace, the drawing) pay off later as planted evidence.",
+        "terms": [
+          "dramatic irony",
+          "Chekhov's gun"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed primarily through actions and contrasts between social types rather than expository explanation.",
+        "terms": [
+          "show don't tell actions",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist matures out of constrained social expectations while a central partner follows a sacrificial, tragic end.",
+        "terms": [
+          "coming-of-age arc",
+          "tragic sacrifice arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewer responses emphasize strong empathy for the romantic leads and antagonistic dislike for the privileged fianc\u00e9.",
+        "terms": [
+          "sympathetic romantic leads",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The impending sinking creates an urgent deadline and forces characters into life-or-death sacrifice choices.",
+        "terms": [
+          "ticking clock deadline",
+          "forced sacrifice choice"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme is conveyed by juxtaposing opposing social values and recurring symbolic outcomes tied to characters' choices.",
+        "terms": [
+          "contrast pairs",
+          "symbolic consequences"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No overt self-referential or fourth-wall devices are used in the material provided.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film uses a modern-day search framing, simulated reconstructions, and a closing life montage/vision as structural devices.",
+        "terms": [
+          "framed story",
+          "reconstruction cutaways",
+          "epilogue montage"
+        ]
+      }
+    }
+  },
+  "tt0109830": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story is presented as Forrest recounting his life from a bench in voiceover, giving a single first-person, naive-lensed narration.",
+        "terms": [
+          "first-person pov",
+          "naive narrator"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The film frames a life story as extended flashbacks made up of discrete episodes and set pieces across decades.",
+        "terms": [
+          "framed flashback structure",
+          "episodic vignette structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot follows a multi-decade sequence of life events centered on a single protagonist's journey and impact.",
+        "terms": [
+          "life-spanning odyssey"
+        ]
+      },
+      "information_control": {
+        "justification": "The audience knows broader historical and emotional context that the protagonist often does not, creating recurrent dramatic irony.",
+        "terms": [
+          "dramatic irony"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed primarily through action-driven anecdotes, selective backstory drip, and contrasting foil relationships.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The synopsis shows a largely unchanging, morally steady protagonist, alongside clear redemption and tragic decline arcs for supporting figures.",
+        "terms": [
+          "flat arc",
+          "redemption arc",
+          "tragic downfall arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis repeatedly frame the lead as an innocent, sympathetic figure while other key figures read as tragic or complex foils.",
+        "terms": [
+          "sympathetic innocent lead",
+          "tragic love interest",
+          "complex foil"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Tension is driven less by external deadlines and more by accumulating personal losses and escalating emotional consequences.",
+        "terms": [
+          "stakes via personal loss",
+          "escalating emotional stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through the protagonist's repeated choices and through oppositional character pairings rather than explicit statements.",
+        "terms": [
+          "theme shown through choices",
+          "contrasting character pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided material shows no clear self-referential or fourth-wall techniques in the film's storytelling.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The movie opens with a framed storyteller, uses montage sequences for time jumps, and integrates the protagonist into archival historical footage.",
+        "terms": [
+          "framed story",
+          "montage sequences",
+          "historical footage integration"
+        ]
+      }
+    }
+  },
+  "tt13238346": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film follows events mainly through the protagonist's interior life and perspective across decades, with intimate access but no first-person narration (synopsis and reviews emphasizing focus on Nora's experience).",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Story unfolds across years in mostly chronological order while skipping intervening time and using scenes that show time passing (synopsis and reviews note decade-spanning meetings and a scene that visualizes time passing).",
+        "terms": [
+          "linear chronology",
+          "elliptical time jumps"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The core plot revolves around rekindled possibility and the consequences of life choices, matching the 'sliding doors' / alternate-path romance shape noted by reviewers.",
+        "terms": [
+          "sliding doors romance"
+        ]
+      },
+      "information_control": {
+        "justification": "The film withholds explicit explanations and relies on gradual emotional revelation and restraint rather than plot twists (reviews cite slow-burn, unspoken feelings and withheld exposition).",
+        "terms": [
+          "slow-burn emotional reveal",
+          "subtextual withholding"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are defined through actions, sparse dialogue, visual beats, and intermittent backstory delivered across time (synopsis and reviews highlight long silences, glances, video chats, and drip-fed history).",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "revealing silences"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Both leads move from longing toward acceptance and separate resolutions, indicating arcs of acceptance and emotional closure rather than dramatic transformation (synopsis shows Nora choosing stability and Hae-sung rebuilding).",
+        "terms": [
+          "acceptance arc",
+          "closure / moving-on arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers consistently respond to the leads as morally complex and sympathetic figures\u2014Nora as emotionally ambiguous and the men as vulnerable, kind counterparts (featured reviews describe Nora as morally gray and the others as sympathetic).",
+        "terms": [
+          "morally gray lead",
+          "sympathetic love rival",
+          "empathetic supportive partner"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The central pressure is an emotional, binary choice between competing goods with relational consequences rather than external deadlines, creating a no-win dilemma anchored in personal ties (synopsis and reviews emphasize choosing between past possibility and present commitment).",
+        "terms": [
+          "no-win dilemma",
+          "relationship-anchored stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed through juxtaposed choices and character pairings and shown via the consequences of those decisions rather than explicit statement (reviews mention the film exploring choices, alternate paths, and cultural/nostalgic contrast).",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "There is no clear self-aware or metafictional commentary in the provided material, so no meta techniques are asserted.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film uses episodic reunion beats and montaged sequences to compress years and show the passage of time between meetings (synopsis notes multiple meetings over decades and reviews mention a scene showing time passing).",
+        "terms": [
+          "time-passing montage",
+          "episodic reunion structure"
+        ]
+      }
+    }
+  },
+  "tt0253474": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews repeatedly note the story is experienced through the protagonist's viewpoint with point-of-view shooting and limited outside access.",
+        "terms": [
+          "third-person limited pov",
+          "subjective camera"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The film follows chronological wartime years with long gaps between major events, creating a linear progression punctuated by temporal ellipses.",
+        "terms": [
+          "linear chronology",
+          "temporal ellipses"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot centers on a single individual's endurance and survival through escalating wartime danger as described in the synopsis and reviews.",
+        "terms": [
+          "survival ordeal"
+        ]
+      },
+      "information_control": {
+        "justification": "Audience knowledge is tightly aligned with the protagonist's experience and the film uses minimal explanatory exposition to withhold broader context.",
+        "terms": [
+          "restricted point-of-view",
+          "sparse exposition"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Reviews highlight nonverbal acting, physical deterioration, and actions over explicit dialogue as the primary means of conveying character.",
+        "terms": [
+          "show don't tell actions",
+          "nonverbal characterization",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The synopsis and reception describe a trajectory focused on survival, loss of former identity, and a return to life after trauma.",
+        "terms": [
+          "survival arc",
+          "disillusionment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Critical responses describe the protagonist as a sympathetic, passive figure whom audiences relate to as an everyman survivor rather than a conventional hero.",
+        "terms": [
+          "sympathetic passive protagonist",
+          "relatable everyman"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The narrative escalates threats from discrimination to deportation and urban destruction, forcing impossible choices and survival trade-offs.",
+        "terms": [
+          "escalation ladder",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Reviews and synopsis note recurring use of music as an emotional through-line and reliance on subtext and silent moments to convey moral weight.",
+        "terms": [
+          "musical motif anchoring",
+          "subtextual scenes"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided materials do not indicate deliberate self-referential or meta-narrative devices in the film's storytelling.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The film structurally bookends with music performances and concludes with an epilogue, per the synopsis and reviews.",
+        "terms": [
+          "bookended structure",
+          "epilogue"
+        ]
+      }
+    }
+  },
+  "tt0332280": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "An elderly man reads a leather-bound notebook that frames the past sequences, giving the film a narrated, diary-centered viewpoint.",
+        "terms": [
+          "framed diary narration",
+          "first-person narration via reading"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The film intercuts a present-day nursing-home storyline with extended 1940s scenes, organizing action across two concurrent timeframes.",
+        "terms": [
+          "parallel timelines",
+          "flashback-driven structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot traces a lifelong romantic relationship told as a sweeping, emotionally charged chronicle that ends in a tragic reunion.",
+        "terms": [
+          "romantic epic"
+        ]
+      },
+      "information_control": {
+        "justification": "Key facts (the elderly couple's identities, intercepted letters) are withheld and revealed through the notebook and recovered documents.",
+        "terms": [
+          "delayed identity reveal",
+          "epistolary reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is shown gradually through actions, withheld backstory delivered via letters, and contrasts between social roles and parents.",
+        "terms": [
+          "backstory drip-feed",
+          "indirect characterization through actions",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Protagonists largely remain emotionally constant in devotion while the plot centers on reunion and restorative choices across decades.",
+        "terms": [
+          "flat arc",
+          "reunion arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers typically read the leads as sympathetic, idealized romantic figures that invite rooting despite their melodramatic presentation.",
+        "terms": [
+          "sympathetic romantic leads",
+          "idealized protagonists"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Narrative pressure is created by social-class barriers and separations (including war) plus escalating urgency from progressive memory loss.",
+        "terms": [
+          "social class barrier",
+          "memory-loss ticking clock"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed by contrasting character pairs and by letting characters' consequential choices carry the moral weight rather than explicit exposition.",
+        "terms": [
+          "contrast pairs",
+          "moral themes shown through choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The synopsis and reviews show no strong evidence of self-aware or fourth-wall techniques.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The central storytelling device is a preserved journal used as a framing mechanism\u2014a story-within-a-story presented epistolarily.",
+        "terms": [
+          "framed story",
+          "epistolary format"
+        ]
+      }
+    }
+  },
+  "tt0343660": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film primarily aligns the audience with the male lead's choices and perspective while eliciting sympathy for both leads.",
+        "terms": [
+          "third-person limited pov",
+          "sympathetic protagonist alignment"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Story unfolds in chronological order while repeatedly staging near-identical mornings as an episodic device.",
+        "terms": [
+          "linear chronology",
+          "day-by-day episodic repetition"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot follows a romance built around sacrifice and long-term commitment decisions.",
+        "terms": [
+          "romantic sacrifice"
+        ]
+      },
+      "information_control": {
+        "justification": "The audience knows the protagonist's memory condition while the forgetful character remains unaware, and key facts are provided via recorded footage.",
+        "terms": [
+          "dramatic irony",
+          "expository video device"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through actions, contrasting foils, and gradual disclosure of past trauma.",
+        "terms": [
+          "show don't tell actions",
+          "backstory drip-feed",
+          "character foil contrast"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The lead evolves from commitment-averse to sacrificial partner, a clear transformative arc driving the plot.",
+        "terms": [
+          "redemption/commitment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Viewers are guided to root for the charming, flawed protagonist and to feel sympathy for the vulnerable memory-impaired lead.",
+        "terms": [
+          "lovable rogue",
+          "sympathetic vulnerable lead"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Tension is framed around personal trade-offs requiring sacrifice and a choice between career ambitions and relational commitment.",
+        "terms": [
+          "forced sacrifice choice",
+          "personal vs professional stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are conveyed through repeated rituals and consequential choices rather than overt exposition.",
+        "terms": [
+          "moral argument embedded in choices",
+          "repeated ritual motif"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film does not rely on obvious self-aware or fourth-wall devices in its storytelling.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "Narrative relies on the daily reenactment structure and a recurring recorded-tape mechanism to frame each morning.",
+        "terms": [
+          "video diary framing device",
+          "recurrent routine framing"
+        ]
+      }
+    }
+  },
+  "tt1216492": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis follows Anna's subjective journey and orients most scenes and emotional beats around her experience.",
+        "terms": [
+          "third-person limited pov",
+          "protagonist-centered lens"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The story plays out in straightforward chronological order as a series of travel episodes on a single trip.",
+        "terms": [
+          "linear chronology",
+          "episodic journey structure"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The plot is built around a cross-country journey that functions as a romantic quest between mismatched leads.",
+        "terms": [
+          "romantic road-trip"
+        ]
+      },
+      "information_control": {
+        "justification": "Key personal histories and relationship truths are revealed gradually and the story hinges on a mid-story reversal (the unexpected proposal/acceptance complication).",
+        "terms": [
+          "slow-burn reveal",
+          "midpoint reversal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through oppositional pairing, physical actions and behavior, and staggered backstory disclosures during the trip.",
+        "terms": [
+          "character foil contrast",
+          "show-don't-tell actions",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The lead shifts from a goal-oriented fixation to emotional self-realization and disillusionment with her prior relationship.",
+        "terms": [
+          "coming-of-age arc",
+          "disillusionment arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and the synopsis present the male lead as a charming rogue and the protagonist as a relatable, sympathetic lead.",
+        "terms": [
+          "lovable rogue",
+          "sympathetic lead"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The film imposes a literal deadline (Leap Day) while escalating travel obstacles and a financial threat to drive forward pressure.",
+        "terms": [
+          "ticking clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Theme is communicated by contrasting character pairings and by letting characters' choices and consequences demonstrate the moral import.",
+        "terms": [
+          "contrast pairs",
+          "choices-as-theme"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided materials show no clear self-reflexive or meta-narrative techniques.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The plot is structured around a classic meet-cute and a sequence of episodic travel setpieces that generate comic complications.",
+        "terms": [
+          "meet-cute",
+          "episodic setpiece structure"
+        ]
+      }
+    }
+  },
+  "tt2322441": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews center the story tightly on Ana's subjective experience and choices, with focalized scenes and close-ups on her reactions.",
+        "terms": [
+          "third-person limited pov",
+          "single-protagonist focalization"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot follows a straightforward progression from first meeting through escalating intimacy to a breakup without temporal jumps or flashbacks.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The film charts a romantic relationship that unravels as intimacy exposes incompatibility and harm, producing disillusionment rather than uplift.",
+        "terms": [
+          "romantic disillusionment"
+        ]
+      },
+      "information_control": {
+        "justification": "Key personal history and the true nature of the relationship are revealed gradually over scenes rather than via a single twist.",
+        "terms": [
+          "slow-burn reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character is conveyed through incremental backstory disclosure, observable actions and rituals, and repeated close-ups on mannerisms.",
+        "terms": [
+          "backstory drip-feed",
+          "show don't tell actions",
+          "revealing habits/tells"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist moves from naivety to rejection of the relationship while the dominant partner remains emotionally static.",
+        "terms": [
+          "disillusionment arc",
+          "flat arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis frame the lead as passively indecisive and the dominant as controlling, shaping a conflicted audience response.",
+        "terms": [
+          "frustrating decision-making protagonist",
+          "love-to-hate antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Tension builds through incremental escalation of intimacy and control, culminating in an emotional choice between desire and safety.",
+        "terms": [
+          "escalation ladder",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are communicated through characters' consequential choices and by juxtaposing opposing emotional/ethical positions.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The provided material shows no clear evidence of self-aware or meta-narrative devices in the film's presentation.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The formal contract frames the relationship as a structural engine and the plot advances via staged, escalating intimacy beats.",
+        "terms": [
+          "contract as plot device",
+          "escalating intimacy beats"
+        ]
+      }
+    }
+  },
+  "tt3402236": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The film follows the investigation from the detective's viewpoint, centering audience access on Poirot's inquiries and observations in the synopsis and reviews.",
+        "terms": [
+          "third-person limited pov",
+          "investigator-centered focalization"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Events unfold in chronological order aboard the trapped train with information revealed progressively during the investigation.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "A classic closed setting with a finite list of suspects and an investigation-driven reveal matches the whodunit structure described.",
+        "terms": [
+          "closed-circle whodunit"
+        ]
+      },
+      "information_control": {
+        "justification": "The plot uses a major reversal (multiple killers) and planted clues/misdirections to conceal the true solution until the denouement.",
+        "terms": [
+          "plot twist / reversal",
+          "red herrings"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Character and motive are exposed through interviews, discovered evidence, and incremental revelations rather than extended flashbacks.",
+        "terms": [
+          "backstory drip-feed",
+          "indirect characterization through dialogue and clues"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Poirot ends morally compromised after choosing to conceal the truth, while the ensemble moves from grief to collective retributive action.",
+        "terms": [
+          "disillusionment arc",
+          "collective vengeance arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and the plot present the lead as an eccentric, idiosyncratic detective who ultimately occupies a morally gray position.",
+        "terms": [
+          "eccentric detective",
+          "morally gray lead"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The isolated, stalled train creates pressure and forces a moral, no-win choice between legal truth and compassionate concealment.",
+        "terms": [
+          "isolated setting pressure",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "The film communicates its ethics through characters' forced choices and contrasting positions of law versus personal justice rather than explicit exposition.",
+        "terms": [
+          "moral argument embedded in choices",
+          "contrast pairs (law vs vigilante justice)"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "No clear fourth-wall or self-referential storytelling is evidenced in the provided synopsis and reviews.",
+        "terms": []
+      },
+      "additional_plot_devices": {
+        "justification": "The locked cabin murder, the detective's assembled denouement, and the presentation of two rival solutions are central mechanical beats in the synopsis.",
+        "terms": [
+          "locked-room mystery",
+          "assembly denouement",
+          "dual-solution reveal"
+        ]
+      }
+    }
+  },
+  "tt6710474": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and reviews focus the audience experience tightly on Evelyn\u2019s perceptions and discoveries across realities rather than an omniscient viewpoint.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "The plot repeatedly cuts between alternate realities and uses quick montage-like jumps as Evelyn accesses other lives and skills.",
+        "terms": [
+          "parallel timelines",
+          "rapid montage verse-jumps"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The core story structure centers on mending family relationships and personal reconciliation amid larger stakes.",
+        "terms": [
+          "family reconciliation"
+        ]
+      },
+      "information_control": {
+        "justification": "Worldbuilding and stakes are revealed progressively as Evelyn learns via verse-jumping, keeping audience knowledge aligned with the protagonist.",
+        "terms": [
+          "protagonist-limited reveal",
+          "gradual worldbuilding reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Characters are revealed through actions, contrasts with alternate selves, and staggered backstory details rather than expositional dumps.",
+        "terms": [
+          "show don't tell actions",
+          "character foil contrast",
+          "backstory drip-feed"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The synopsis describes a lead who moves from disillusionment/nihilism toward acceptance and repair of relationships.",
+        "terms": [
+          "redemption arc",
+          "disillusionment-to-acceptance arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews and synopsis portray the lead and antagonist as emotionally complex and eliciting sympathy despite flaws and antagonism.",
+        "terms": [
+          "sympathetic flawed lead",
+          "sympathetic antagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "Stakes combine an existential multiverse threat with forced moral choices that escalate into no-win dilemmas.",
+        "terms": [
+          "existential stakes",
+          "no-win dilemma"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Themes are delivered by contrasting alternate lives/values and by embedding moral arguments in recurring character choices.",
+        "terms": [
+          "contrast pairs",
+          "moral argument embedded in choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Critics note the film blends and references multiple genres and stylistic touchstones rather than playing strictly within one genre.",
+        "terms": [
+          "genre pastiche"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The plot is driven by a central object that threatens everything and frequent short action/dreamlike sequences that punctuate the story.",
+        "terms": [
+          "MacGuffin object",
+          "action vignettes"
+        ]
+      }
+    }
+  },
+  "tt0446029": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The story is primarily experienced through Scott's viewpoint, with scenes anchored to his choices and perception in synopsis and reviews.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Reviews describe a mostly forward-moving plot punctuated by dreams, daydreams, montages and comic/video-game cutaways.",
+        "terms": [
+          "linear chronology",
+          "fantasy/dream interludes"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "Synopsis and keywords frame the plot as a youth-centered emotional growth story tied to romantic pursuit.",
+        "terms": [
+          "coming-of-age"
+        ]
+      },
+      "information_control": {
+        "justification": "The plot uses a literal death/limbo/extra-life reset and a late reveal about mind-control to reorder audience knowledge.",
+        "terms": [
+          "second-chance replay",
+          "late-stage reveal"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Reviews and synopsis highlight characterization via actions/fights, incremental backstory about Ramona, and deadpan dialogue.",
+        "terms": [
+          "indirect characterization through action",
+          "backstory drip-feed",
+          "deadpan dialogue characterization"
+        ]
+      },
+      "character_arcs": {
+        "justification": "Scott's trajectory is described as maturing from insecure avoidance to self-respect and honest relationships.",
+        "terms": [
+          "coming-of-age arc",
+          "self-respect arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reception repeatedly frames the lead as an awkward, geeky protagonist who divides viewers between sympathy and frustration.",
+        "terms": [
+          "sympathetic awkward protagonist",
+          "frustrating decision-making protagonist"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot stages a sequence of escalating one-on-one confrontations structured like video-game boss fights tied to personal stakes.",
+        "terms": [
+          "boss-battle escalation",
+          "escalating personal stakes"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Critics note the film externalizes relationship baggage as stylized battles and conveys themes through characters' choices rather than exposition.",
+        "terms": [
+          "theme via metaphorical battles",
+          "theme shown through choices"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "Multiple reviews emphasize self-aware comic-book and video-game aesthetics, on-screen game cues, and parodying genre tropes.",
+        "terms": [
+          "parody/pastiche",
+          "self-referential visual gags"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The film repeatedly uses chapter titles, comic-book inserts and integrated video-game UI elements as formal devices.",
+        "terms": [
+          "chaptered structure",
+          "comic-book-style inserts",
+          "video-game UI integration"
+        ]
+      }
+    }
+  },
+  "tt0095705": {
+    "original_full_tokens": {
+      "pov_perspective": {
+        "justification": "The synopsis and scene descriptions consistently follow the protagonist's actions and choices, framing events around him rather than an omniscient ensemble.",
+        "terms": [
+          "third-person limited pov"
+        ]
+      },
+      "narrative_delivery": {
+        "justification": "Plot progression in the synopsis is chronological and causal from setup through escalating set pieces to a stadium climax without nonlinear jumps.",
+        "terms": [
+          "linear chronology"
+        ]
+      },
+      "narrative_archetype": {
+        "justification": "The film functions as a comedic send-up of a familiar genre rather than a conventional drama or quest.",
+        "terms": [
+          "genre parody"
+        ]
+      },
+      "information_control": {
+        "justification": "Reviews and synopsis emphasize rapid sight gags, surprise punchlines, and joke payoffs that rely on audience misdirection and visual reveals.",
+        "terms": [
+          "sight gags",
+          "rapid-fire joke pacing",
+          "misdirection gag payoffs"
+        ]
+      },
+      "characterization_methods": {
+        "justification": "Critics highlight deadpan delivery and physical slapstick as primary means of revealing character, with behavior and visual bits carrying much of the characterization.",
+        "terms": [
+          "deadpan straight-man performance",
+          "physical slapstick behavior",
+          "show-don't-tell actions"
+        ]
+      },
+      "character_arcs": {
+        "justification": "The protagonist remains essentially the same comedic figure throughout, achieving goals without significant psychological transformation.",
+        "terms": [
+          "flat comedic arc"
+        ]
+      },
+      "audience_character_perception": {
+        "justification": "Reviews repeatedly describe the lead as an inept but endearing lawman whose bumbling is central to audience sympathy and humor.",
+        "terms": [
+          "bumbling protagonist",
+          "lovable bungler"
+        ]
+      },
+      "conflict_stakes_design": {
+        "justification": "The plot uses an explicit time limit and progressively larger public set pieces, escalating stakes from a police investigation to a public assassination spectacle.",
+        "terms": [
+          "ticking clock deadline",
+          "escalation ladder"
+        ]
+      },
+      "thematic_delivery": {
+        "justification": "Critics note the film communicates satire by exaggerating and remixing genre clich\u00e9s and using absurd escalation to lampoon conventions.",
+        "terms": [
+          "parodic pastiche",
+          "absurdist exaggeration"
+        ]
+      },
+      "meta_techniques": {
+        "justification": "The film repeatedly riffs on other genre texts and uses celebrity appearances and self-aware gags to comment on the conventions it spoofs.",
+        "terms": [
+          "genre deconstruction",
+          "celebrity cameo usage"
+        ]
+      },
+      "additional_plot_devices": {
+        "justification": "The movie opens with an attention-grabbing setpiece, runs recurring visual jokes, and culminates in a large staged public climax as described in the synopsis and reviews.",
+        "terms": [
+          "cold open",
+          "running gag",
+          "set-piece climax"
+        ]
+      }
+    }
+  }
+}

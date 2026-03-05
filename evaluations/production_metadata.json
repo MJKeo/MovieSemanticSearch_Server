@@ -1,0 +1,909 @@
+{
+  "tt0091042": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "All provided keywords are genre descriptors (buddy comedy, satire, teen comedy, comedy) and do not describe how the film was produced, so none are production-related.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The provided plot and reviews repeatedly describe original characters, situations and credit John Hughes as the author of the teen-comedy voice, indicating this is an original screenplay rather than an adaptation. The film is depicted with on-location Chicago sequences, actors lip-syncing and direct-address narration, evidencing live-action production with real sets and locations.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt2948356": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "Only 'computer animation' describes how the film was produced (animation technique) while the other keywords refer to genre or plot elements, per the provided list.",
+        "terms": [
+          "computer animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The provided keywords and multiple featured reviews explicitly describe the film as CGI/computer animated and compare it to other computer-animated features, indicating it was produced as digital animation. The plot and character descriptions show an original story with no indication of being a direct adaptation of a book, game, true story, or specific real person.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt0332379": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "The keyword 'high-concept comedy' refers to the film's marketable production approach (a high-concept premise) based on the provided keyword list.",
+        "terms": [
+          "high-concept comedy"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The plot and multiple reviews describe contemporary actors (Jack Black, Joan Cusack) and child performers playing real instruments in a school and live Battle of the Bands setting, indicating a filmed, actor-driven production rather than an adaptation. There is no evidence in the synopsis or reviews that the film adapts a book, true story, game, or other specific real-world source.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt2294629": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "'computer animation' and 'animation' directly describe how the film was produced (its production technique) as given in the keyword list.",
+        "terms": [
+          "computer animation",
+          "animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The inputs repeatedly describe the film as an animated, Disney fairy-tale musical (keywords include \u201ccomputer animation,\u201d \u201canimation,\u201d and reviews praise the animation and songs), and the plot centers on fantastical powers and cartoon characters (Olaf, Marshmallow) indicating fully animated visuals. There is no evidence the film is a direct adaptation of a specific real-world source\u2014while it echoes fairy-tale elements, the supplied materials present it as an original Disney story rather than a direct adaptation.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt0093779": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe production aspects (they are genre or plot-related terms), so no input keywords relate to how the film was produced.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The frame story and multiple reviews explicitly state the film is adapted from William Goldman\u2019s book/screenplay (the grandfather reads the book and reviews note \u201cscreenplay written by William Goldman (based on his book)\u201d), establishing a direct novel adaptation. Visually the movie is shot with photographed actors, staged sword fights, stunt work and creature/makeup effects (fencing training, Andr\u00e9 the Giant, R.O.U.S., Miracle Max prosthetics), indicating live-action production with practical effects.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action",
+          "practical effects"
+        ]
+      }
+    }
+  },
+  "tt2380307": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "'computer animation' and 'animation' from the provided keywords directly describe how the film was produced.",
+        "terms": [
+          "computer animation",
+          "animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The plot, keywords, and multiple reviews explicitly center the Mexican D\u00eda de los Muertos tradition (ofrendas, marigold bridge, remembering ancestors) as the film's core setting and driving theme. Reviews and keywords also repeatedly note the film's fully animated visuals and Pixar-quality imagery, indicating it was produced as computer-generated animation.",
+        "sources_of_inspiration": [
+          "based on a cultural tradition (D\u00eda de los Muertos)"
+        ],
+        "production_mediums": [
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt4729430": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "Selected terms indicate the film's production technique (animation) and specific method (hand-drawn animation) as given in the provided keyword list.",
+        "terms": [
+          "hand-drawn animation",
+          "animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "Reviews and plot details indicate Klaus is an original reimagining of the origin of Santa Claus rather than a direct adaptation of an existing book or true story; reviewers explicitly praise its unique story and call it a new origin tale. Production notes in reviews describe it as hand-drawn animation enhanced by computer lighting and effects, evidencing a hybrid 2D production.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "hand-drawn animation",
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt1049413": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "The keywords 'computer animation' and 'animation' explicitly describe the film's production medium and technique as given in the input.",
+        "terms": [
+          "computer animation",
+          "animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "Plot and featured reviews repeatedly identify this as an original Pixar narrative (not adapted from a book or true-life account) and note its status as a fully computer-generated, 3-D animated feature. Reviewers explicitly reference Pixar, Pete Docter, and the film being the studio's tenth film and first full-length 3-D release, supporting the production medium classification.",
+        "sources_of_inspiration": [
+          "original story"
+        ],
+        "production_mediums": [
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt0120762": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "'hand-drawn animation' and 'pop musical' refer to how the film was produced (animation technique and musical format) rather than plot or themes.",
+        "terms": [
+          "hand-drawn animation",
+          "pop musical"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The plot and multiple featured reviews explicitly state the film adapts the well\u2011known Chinese tale of Mulan (a traditional folk legend/ballad about a woman who disguises herself as a man to join the army). Contemporary commentary and the keywords/reviews repeatedly praise its \"hand\u2011drawn animation\" and 2D visual style, confirming traditional cel/2D production as the primary visual medium.",
+        "sources_of_inspiration": [
+          "based on a Chinese folk legend/ballad"
+        ],
+        "production_mediums": [
+          "hand-drawn animation"
+        ]
+      }
+    }
+  },
+  "tt0126029": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "Only 'computer animation' describes how the film was produced (the animation technique) based on the provided keyword list.",
+        "terms": [
+          "computer animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The story centers on well-known fairy-tale characters and a single titled source protagonist, indicating direct adaptation from a preexisting children\u2019s book plus the use of public-domain fairy tales; reviewers and keywords repeatedly note the film\u2019s fairy-tale parody elements. Multiple featured reviews and the keyword list emphasize the film\u2019s breakthrough CGI look, confirming its primary visual production medium as computer animation.",
+        "sources_of_inspiration": [
+          "based on a children's book",
+          "based on public-domain fairy tales"
+        ],
+        "production_mediums": [
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt0072424": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "The provided keywords explicitly identify the film as animated and produced using stop-motion techniques.",
+        "terms": [
+          "stop motion animation",
+          "animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "Featured reviews explicitly state the special is based on Phyllis McGinley\u2019s 1956 book of the same name and note its 1974 Rankin/Bass television production; multiple reviews also describe the distinctive stop-motion animation and TV special history. The plot and keywords (elves, Miser brothers, Vixen, North Pole) match the cited book adaptation and the well-known Rankin/Bass stop-motion \u2018Animagic\u2019 style.",
+        "sources_of_inspiration": [
+          "based on a book"
+        ],
+        "production_mediums": [
+          "stop motion animation"
+        ]
+      }
+    }
+  },
+  "tt1392190": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "\"car action\" implies production involving vehicular stunts/real car work; \"desert adventure\" implies production/location work in desert settings.",
+        "terms": [
+          "car action",
+          "desert adventure"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The film continues the Mad Max continuity and central character (Max Rockatansky) created in earlier Mad Max films, as shown by the returning franchise elements and reviewers referencing prior Mad Max entries. Reviews and the plot emphasize extensive real-world vehicle stunts, custom car designs, and on-location desert photography, noting practical effects and stunt work with CGI used only to enhance visuals.",
+        "sources_of_inspiration": [
+          "based on earlier films in a franchise"
+        ],
+        "production_mediums": [
+          "live action",
+          "practical effects and stunt work"
+        ]
+      }
+    }
+  },
+  "tt0082971": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they all refer to genre or plot elements rather than production details like format, creators, location, or production process).",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Contemporary reviews and synopses describe Raiders as an original Lucas/Spielberg creation evoking 1930s matinee adventure serials rather than adapting a single prior work, and production accounts and reviews repeatedly note extensive live-action stunts, practical effects, animatronics, real animals and miniature/matte techniques. Evidence: featured reviews cite the original collaboration of Lucas/Kasdan/Spielberg, practical on-set effects (real snakes, giant rolling boulder, animatronics, rubber props) and stunt-heavy live-action photography.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "practical special effects"
+        ]
+      }
+    }
+  },
+  "tt0468569": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they are all genre or thematic labels rather than production format, creators, location, time, inspiration, or process).",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film centers on established DC characters (Batman, the Joker, Harvey Dent/Two-Face) and uses their comic-book origins and roles as primary narrative drivers, indicating it is directly drawn from comic-book source material. Contemporary reviews and the film's realistic city visuals and stunts point to a principally live-action production approach.",
+        "sources_of_inspiration": [
+          "based on comic book characters"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt2911666": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "The keyword 'gun fu' describes a specific choreography/stunt technique used in production, while the other keywords are genre or thematic labels that do not describe how the film was produced.",
+        "terms": [
+          "gun fu"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The synopsis and multiple reviews describe an original revenge story created for film (no mention of a pre-existing book, game, or true-story source), so there is no direct adaptation creditable. Production commentary in the reviews repeatedly highlights the film's stunt-heavy, clearly choreographed action and the directors' stunt background, indicating primary visual production as live-action with practical stunt work.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt0458339": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they are all genre/tonal descriptors), so no production-related terms can be selected from the list.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The keywords and plot explicitly identify Marvel characters (Steve Rogers/Captain America, Red Skull, Hydra) and reviewers repeatedly note it adapts a classic Marvel origin, supporting a direct comic-book adaptation. Reviews and the plot describe period production design alongside effects-heavy sequences (Tesseract, plane crash, frozen revival), indicating a live-action film augmented significantly with computer-generated visual effects.",
+        "sources_of_inspiration": [
+          "based on a comic book"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt9362722": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "The only input keyword that refers to how the film was produced is 'computer animation', which denotes the movie's production method.",
+        "terms": [
+          "computer animation"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The keywords and plot explicitly center on established Spider-Man characters (Miles Morales, Gwen Stacy) and multiverse elements drawn from Marvel comics, and multiple inputs note the film is \u201cbased on comic.\u201d Reviews and keywords repeatedly praise the film\u2019s highly stylized, frame-by-frame visual approach and expansive, varied art styles, indicating a primarily digitally animated production augmented by 2D-styled overlays.",
+        "sources_of_inspiration": [
+          "based on a comic",
+          "based on a comic book character"
+        ],
+        "production_mediums": [
+          "computer animation",
+          "2D hand-drawn/overlay stylization"
+        ]
+      }
+    }
+  },
+  "tt4154796": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords reference how the film was produced (studio, production process, creators, format, location, or source of inspiration); they describe genre/themes and plot elements.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film directly continues and adapts characters and storylines from the Marvel Cinematic Universe and Marvel Comics continuity (plot and reviews repeatedly reference MCU continuity, established characters and events like Thanos, the Infinity Stones and prior films). Visually it is a live-action blockbuster heavily reliant on digital visual effects for space sequences, large-scale battles and character effects (plot describes cosmic/space scenes, time travel setpieces, and reviews praise its visual spectacle).",
+        "sources_of_inspiration": [
+          "based on comic book",
+          "based on existing film franchise"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt0076759": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe production aspects (they are genres/themes), so no terms relate to how the movie was produced.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Reviews note George Lucas developed the story and screenplay himself beginning in 1973 rather than adapting an existing work, and they describe the film\u2019s groundbreaking in-camera and model-based effects (including the Dykstraflex motion-control system) used to create its visuals. Evidence in the featured reviews emphasizes original authorship and extensive practical/special-effects work during production.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "practical effects (model miniatures and motion-control photography)"
+        ]
+      }
+    }
+  },
+  "tt0241527": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords (teen fantasy, adventure, family, fantasy, holiday) indicate production details such as format, creators, location, source material, or production process, so no production-related terms are present.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The plot synopsis and multiple featured reviews explicitly state the film adapts J.K. Rowling's novel and praise its faithfulness to the book, confirming a direct novel adaptation. Reviews and descriptions repeatedly note extensive special effects and cinematic 'magic' brought to life, indicating primary use of live-action production augmented by significant visual/CGI effects.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer-generated visual effects"
+        ]
+      }
+    }
+  },
+  "tt0120737": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced; they are all genre or plot-related terms from the input list.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Multiple featured reviews explicitly state the film is an adaptation of J.R.R. Tolkien's books (e.g., \u201cBased on J.R.R. Tolkien's beloved books,\u201d and readers noting faithfulness to the novel). Reviews also repeatedly praise practical and digital effects\u2014mentions of Gollum, Balrog, seamless shrinking, artificial trees and \u2018special effects\u2019\u2014supporting live-action production augmented by computer-generated visuals.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt0172495": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "The terms 'period drama' and 'sword & sandal' describe the film's production type and historical/peplum production style rather than plot elements.",
+        "terms": [
+          "period drama",
+          "sword & sandal"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The film is an original cinematic story set in ancient Rome rather than a direct adaptation of a specific book or single historical biography; featured reviews and the plot emphasise genre elements and worldbuilding rather than citing an originating source. Production notes in reviews reference notable CGI and Ridley Scott\u2019s recreated Roman environments alongside large-scale staged battles and arena sequences, indicating live-action filmmaking augmented with computer visual effects.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "computer-generated visual effects"
+        ]
+      }
+    }
+  },
+  "tt1375666": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe production aspects (they are genre/descriptor terms like 'action', 'epic', 'sci-fi', and 'psychological thriller'), so no input keywords relate to how the film was produced.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "All provided materials describe an original screenplay and production choices (reviews reference Christopher Nolan writing the script over many years and praise original set-pieces like the city-bending and zero-gravity sequences), with no indication the film directly adapts a book, game, real person, or true event. Multiple reviews call out large-scale visual effects and inventive practical sequences, supporting identification of live-action filmmaking augmented by heavy computer-generated/visual-effects work.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "computer visual effects"
+        ]
+      }
+    }
+  },
+  "tt0133093": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "Selected keywords that describe the film's production style and techniques (visual inspiration and fight/choreography methods) based solely on the provided list.",
+        "terms": [
+          "cyberpunk",
+          "gun fu",
+          "martial arts"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The supplied plot and reviews describe an original screenplay with no mention of an adapted source (no novel, true story, game, or real person is referenced), while multiple reviews and the synopsis emphasize pioneering visual effects, slow\u2011motion \"bullet time,\" and intensive martial\u2011arts/stunt choreography. These elements indicate a live\u2011action production heavily augmented with computer animation/CGI rather than being a direct adaptation.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt0816692": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe production aspects (they are genre/plot descriptors), so no terms relate to how the film was produced.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The detailed plot centers on wormholes, a black hole singularity, quantum gravity data and relativistic time dilation, indicating the filmmakers grounded the story in contemporary theoretical physics; featured reviews repeatedly praise the film\u2019s scientific scope and visual effects, confirming a science-driven production. The movie is an original screenplay rather than a direct adaptation, while its visuals are dominated by live-action filmmaking augmented by intensive computer-generated imagery and effects.",
+        "sources_of_inspiration": [
+          "based on scientific research/theoretical physics"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer-generated visual effects"
+        ]
+      }
+    }
+  },
+  "tt1856101": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the supplied keywords describe how the film was produced; they are thematic or genre descriptors (e.g., 'cyberpunk', 'dystopian sci-fi', 'psychological thriller') rather than information about production, creators, location, process, or inspiration.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film is explicitly a direct continuation of the earlier Blade Runner movie \u2014 it continues characters (Deckard, Rachael), plot elements (replicants) and narrative history from the 1982 film \u2014 and reviews and synopsis repeatedly reference it as a sequel. Production notes in reviews praise Roger Deakins' cinematography, IMAX presentation, and the film\u2019s extensive, modern visual effects, indicating a live-action production augmented heavily with CGI/VFX.",
+        "sources_of_inspiration": [
+          "sequel to a previous film"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer-generated visual effects"
+        ]
+      }
+    }
+  },
+  "tt0107290": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "All provided keywords describe genre or thematic elements of the film (e.g., 'action', 'sci-fi', 'adventure') rather than any aspect of how the movie was produced, so none qualify as production-related terms.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film\u2019s storyline\u2014industrialist creates a theme park of cloned dinosaurs from DNA in amber\u2014matches the plot of Michael Crichton\u2019s novel and is a direct adaptation of that book. Contemporary reviews repeatedly praise the movie\u2019s pioneering visual effects, noting extensive use of CGI alongside realistic creature effects, indicating live-action production augmented by computer animation and practical animatronics.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer animation",
+          "practical animatronics"
+        ]
+      }
+    }
+  },
+  "tt2543164": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they all refer to genre or plot elements such as 'alien invasion', 'drama', or 'sci\u2011fi'), so no production-related terms can be selected from the list.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The inputs explicitly note the film is adapted from a short story and the plot synopsis and reviews repeatedly reference the central written heptapod language and elaborate alien visuals (ink-like logograms) indicating direct adaptation and distinctive visual effects. Reviews and the synopsis describe realistic human performances and on-set action with heavily rendered alien forms, supporting live-action production augmented by computer-generated imagery.",
+        "sources_of_inspiration": [
+          "based on a short story"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer animation"
+        ]
+      }
+    }
+  },
+  "tt7784604": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe production aspects; they are genre or thematic descriptors (e.g., 'psychological horror', 'folk horror'), so no production-related terms were selected.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The synopsis and reviews describe original characters, a contemporary family, and a director-driven narrative with no mention of a prior book, game, or real-life case, indicating the film is not a direct adaptation. The plot and synopsis explicitly reference detailed miniature dioramas and physical models, and all reviews praise performances and cinematography consistent with live-action production employing practical effects.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "practical miniatures/models"
+        ]
+      }
+    }
+  },
+  "tt0081505": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "All provided keywords describe genre or thematic content (e.g., psychological drama/horror, supernatural horror) and do not specify production-related facts such as format, creators, location, time, process, or inspiration.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Keywords and multiple reviews explicitly state the film is an adaptation of Stephen King\u2019s book (e.g., \u201cKubrick takes King\u2019s fantastic book\u201d), confirming it\u2019s based on a novel. Reviews also emphasize the film\u2019s cinematography, sets, long shots and lens work, indicating traditional live-action production rather than animation.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt1591095": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "All provided keywords describe genres/themes (e.g., 'supernatural horror', 'thriller') and do not reference how the film was produced, so none are production-related.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The featured reviews name James Wan and Leigh Whannell and praise the film's original approach and cinematography, indicating this is an original screenplay rather than a direct adaptation of a book or real event. The plot describes conventional live-action performances and practical-set sequences (family home, astral-travel scenes, s\u00e9ance) consistent with live-action filmmaking.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt27911000": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the supplied keywords describe how Terrifier 3 was produced (they are genre or thematic descriptors, not production details), so no terms apply.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film continues established characters and storyline (Art the Clown, Sienna Shaw) and directly follows events from prior entries, indicating it\u2019s a direct sequel/continuation of earlier films; reviews repeatedly compare it to Parts 1 and 2. Multiple reviews and the plot emphasize extreme, tangible gore effects and prosthetic makeup (\"special effects gore is off the chart\", \"kills...had me squirming\"), pointing to live-action production with heavy practical effects.",
+        "sources_of_inspiration": [
+          "sequel/continuation of earlier films (existing franchise character)"
+        ],
+        "production_mediums": [
+          "live action",
+          "practical special effects / prosthetic makeup"
+        ]
+      }
+    }
+  },
+  "tt0387564": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe production aspects; they are genre or narrative descriptors from the input list.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Contemporary coverage and the filmmakers\u2019 accounts note Saw grew from James Wan and Leigh Whannell\u2019s earlier short used to pitch the feature, and reviews remark the film was shot quickly (reported 28 days) and primarily in two real locations with practical gore effects. The plot, marketing and critiques present it as an original screenplay rather than an adaptation of a book or true case.",
+        "sources_of_inspiration": [
+          "based on a short film",
+          "original screenplay"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt0114369": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they are genres/themes or plot elements rather than production methods, creators, locations, or process).",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film\u2019s central structure and murders are explicitly built around the seven deadly sins (plot details list each sin and killings), and multiple reviews reference Dante\u2019s The Divine Comedy and biblical themes as the moral framework. Production notes in reviews mention David Fincher\u2019s deliberate, altered film stock and dim, rain-soaked visuals, indicating a live-action shoot with stylized cinematography.",
+        "sources_of_inspiration": [
+          "based on religious/theological concepts (seven deadly sins)",
+          "based on classical literature (Dante/the Divine Comedy)"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt6751668": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "Only 'korean' refers to the movie's place of production (country/language); the other keywords describe genre or themes, not production.",
+        "terms": [
+          "korean"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The detailed plot, original character names, and reviews repeatedly describe unique screenplay beats and social themes without mentioning any prior book, game, or real-life person\u2014indicating this is an original screenplay rather than an adaptation. The film\u2019s visual emphasis on the Parks\u2019 modernist house, the semi-basement apartment, and grounded performances described in reviews point to conventional live-action production using real sets and cinematography.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt5052448": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they are genres/themes like horror, thriller, or stylistic descriptors) so no terms relate to production.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film is an original screenplay and debut feature by Jordan Peele, with contemporary reviews repeatedly describing it as a fresh, inventive horror/thriller and noting Peele\u2019s original voice rather than an adaptation. Reviews reference stylistic influences but present the movie as an original work, and the plot\u2019s surgical/body-horror imagery and visual praise indicate hands-on filmmaking techniques. ",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "practical makeup and prosthetics"
+        ]
+      }
+    }
+  },
+  "tt0144084": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the movie was produced (format, production location/time, creators, process, or inspirations); they are genres/themes of the final film.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Featured reviews explicitly identify the film as an adaptation of Bret Easton Ellis's controversial 1991 novel and discuss differences from the book, supporting 'based on a novel.' The plot synopsis and reviews describe on-screen performances by actors (Christian Bale, Willem Dafoe, Jared Leto) and real-world settings and practical sequences, indicating a traditional live-action production.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt0137523": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they are genre/theme labels), so no production-related terms are present in the list.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Fight Club is a direct film adaptation of Chuck Palahniuk\u2019s 1996 novel of the same name, with the movie following the novel's plot beats (unnamed narrator, Tyler Durden, Fight Club/Project Mayhem) and themes. Visually the film is a live-action production that makes substantial use of digital visual effects and compositing for its stylistic editing, camera tricks, and perceptual-distortion sequences.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action",
+          "digital visual effects"
+        ]
+      }
+    }
+  },
+  "tt0120338": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "The terms 'epic', 'period drama', and 'romantic epic' describe production-related choices about the film's scale, stylistic ambition, and historical setting.",
+        "terms": [
+          "epic",
+          "period drama",
+          "romantic epic"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The film dramatizes the 1912 sinking of the RMS Titanic and uses named historical figures (Thomas Andrews, Captain Smith, Harold Lowe) and the real event as its central framework, so it is directly adapting a real historical incident. Reviews and the synopsis repeatedly praise the realistic recreation and special effects of the ship and sinking, indicating heavy use of live-action filmmaking augmented by advanced visual effects.",
+        "sources_of_inspiration": [
+          "based on a true story",
+          "based on a real person"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer-generated visual effects"
+        ]
+      }
+    }
+  },
+  "tt0109830": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "\"Period drama\" from the provided keyword list indicates a production choice to present the film as a period piece (a film produced to depict a specific historical period).",
+        "terms": [
+          "period drama"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The inputs list 'based on novel' among keywords and reviewers explicitly mention reading the novel, indicating the film directly adapts a published book. The plot and featured reviews describe live-action performances and numerous scenes that integrate the protagonist into archival footage and historical events, indicating principal live-action production augmented by digital visual-effects compositing.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action",
+          "digital visual effects/compositing"
+        ]
+      }
+    }
+  },
+  "tt13238346": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "'korean' indicates the country/language of production, which relates to how and where the film was produced; 'drama' and 'romance' are genres and not production details.",
+        "terms": [
+          "korean"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "Multiple reviews state the story is drawn from the director Celine Song\u2019s own life and lived experience (reviews: \u201cdrawn from the living experience of the director,\u201d \u201ctrue\u2026 drawn from the living experience\u201d), and the plot follows realistic, autobiographical-seeming events rather than adapting a named work. Visually the film is presented as contemporary, naturalistic filmmaking with real actors in real-world settings and intimate video-chat sequences, indicating live-action production.",
+        "sources_of_inspiration": [
+          "based on the director's personal experiences"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt0253474": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "From the provided keywords, 'docudrama', 'biography', 'period drama', and 'war epic' refer to production-related aspects (based on real events/person, historical setting, and large-scale wartime production) while the others are purely thematic/genre labels.",
+        "terms": [
+          "docudrama",
+          "biography",
+          "period drama",
+          "war epic"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "The synopsis and multiple featured reviews explicitly state the film recounts W\u0142adys\u0142aw Szpilman\u2019s real-life survival during the Nazi occupation and refer to it as an adapted/true-life account; reviewers also note the film is adapted (and won for adapted screenplay). The keywords include \u201cbased on autobiography\u201d and \u201cbased on true story,\u201d confirming the movie directly adapts Szpilman\u2019s memoir.",
+        "sources_of_inspiration": [
+          "based on an autobiography",
+          "based on a true story"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt0332280": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "All provided keywords describe the film's genre or themes (romantic/psychological/drama) and do not reference how the movie was produced, where, when, who made it, or its production process.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Featured reviews explicitly name Nicholas Sparks as the author (e.g., \u201cNicholas Sparks at his best\u201d), indicating the film adapts a Sparks novel; the plot\u2019s detailed, realistic period drama and present-day nursing-home framing are told through photographed performances rather than animation. Cast and critic commentary (references to actors, SAG nomination, and on-screen scenes like the lake/boat sequence) further confirm it is a live-action feature film.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt0343660": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "All provided keywords are genre or thematic labels (e.g., romantic comedy, drama) and do not describe how the film was produced, when/where, who created it, production process, or source inspiration.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The plot and featured reviews describe an original screenplay with contemporary characters (Henry, Lucy, Marlin) and no mention of adaptation from a book, true story, game, or historical figure; reviews explicitly compare it to Groundhog Day as a tonal reference rather than a source. The credits and on-screen performances (named actors, Sea Life Park setting, location-specific Hawaiian details) indicate a conventional live-action production rather than animation or stop-motion.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt1216492": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the supplied keywords (road trip, romantic comedy, comedy, romance) describe how the film was produced\u2014 they refer to plot or genre, not production details.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The plot and keywords explicitly center on an Irish leap-day proposal tradition (Anna travels to Dublin to propose on February 29) and multiple reviews reference that Irish folklore/tradition and the film\u2019s scenic Irish countryside setting. Visual production is described in reviews praising the rolling Irish countryside and realistic performances, indicating a live-action, on-location photographic production.",
+        "sources_of_inspiration": [
+          "based on a cultural/folklore tradition"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt2322441": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced (they are all genre/plot descriptors), so no production-related terms can be selected.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The plot synopsis and multiple reviews explicitly identify the film as a cinematic adaptation of E.L. James\u2019 erotic bestseller, describing direct transfers of characters, scenes, and novel-specific elements (contracts, playroom, Thomas Hardy books). Reviews also call it a sanitized/faithful adaptation of the novel, confirming the primary source and that it was produced as a conventional filmed feature rather than animated.",
+        "sources_of_inspiration": [
+          "based on a novel"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt3402236": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords describe how the film was produced; they are all genre or plot-related terms.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The detailed plot and character list match Agatha Christie\u2019s classic 1934 novel featuring Hercule Poirot, and multiple reviews explicitly call it an adaptation of that Christie story. Reviews and plot notes also emphasize a star-studded, photographed-for-cinema production with elaborate sets, costumes and special-effects-enhanced sequences.",
+        "sources_of_inspiration": [
+          "based on a novel",
+          "based on a fictional character"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  },
+  "tt6710474": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the provided keywords specify production details (technique, location, creators, inspiration, or process); they describe genre or content rather than how the film was made.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "The film\u2019s premise, characters, and multiverse plot are original to the screenplay (reviews repeatedly call it wildly original and unlike any adaptation), and nothing in the synopsis or reviews indicates it adapts a novel, game, or real-life source. Visually it uses filmed performances with extensive martial-arts choreography and surreal, highly composited effects for the multiverse sequences (reviews describe it as a visual feast and comparisons to action/fantasy films), indicating live-action production augmented by digital effects.",
+        "sources_of_inspiration": [],
+        "production_mediums": [
+          "live action",
+          "computer-generated visual effects"
+        ]
+      }
+    }
+  },
+  "tt0446029": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "None of the supplied keywords describe production aspects\u2014they are all genre or thematic labels\u2014so no production-related terms are present.",
+        "terms": []
+      },
+      "sources_of_inspiration": {
+        "justification": "Multiple reviews explicitly identify the film as an adaptation of Bryan Lee O'Malley\u2019s comic book series and describe its comic-book/video-game aesthetic; reviewers also repeatedly note the film\u2019s heavy use of on-screen graphics, animated flashbacks, 8-bit/game cues and visual effects. These comments support treating the source as a comic-book adaptation and the production as live-action augmented with significant computer-generated/visual-effects work.",
+        "sources_of_inspiration": [
+          "based on a comic book"
+        ],
+        "production_mediums": [
+          "live action",
+          "computer-generated visual effects"
+        ]
+      }
+    }
+  },
+  "tt0095705": {
+    "original_full_tokens": {
+      "production_keywords": {
+        "justification": "'parody' and 'satire' indicate the filmmakers produced the film as a comedic send-up, and 'cop drama' suggests the source material/inspiration they were spoofing, all drawn directly from the provided keywords.",
+        "terms": [
+          "parody",
+          "satire",
+          "cop drama"
+        ]
+      },
+      "sources_of_inspiration": {
+        "justification": "Multiple featured reviews explicitly state the film is an adaptation of the short-lived TV series 'Police Squad!' and the plot and reviews reference characters and setups carried over from that series (e.g., Lt. Frank Drebin, Police Squad). The movie is performed by on-screen actors and built around physical stunts, sight gags and practical set pieces (car chases, stadium sequence), indicating conventional live-action production.",
+        "sources_of_inspiration": [
+          "based on a television series"
+        ],
+        "production_mediums": [
+          "live action"
+        ]
+      }
+    }
+  }
+}
