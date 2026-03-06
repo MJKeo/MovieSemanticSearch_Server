@@ -37,6 +37,36 @@ class PipelineStage(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Movie progress statuses — the `status` column in movie_progress.
+# StrEnum so values are plain strings (compatible with SQLite text columns
+# and usable directly in parameterised queries).
+# ---------------------------------------------------------------------------
+
+
+class MovieStatus(StrEnum):
+    """Movie processing status in movie_progress.status.
+
+    Progression:
+      PENDING → TMDB_FETCHED → TMDB_QUALITY_PASSED → IMDB_SCRAPED →
+      PHASE1_COMPLETE → PHASE2_COMPLETE → EMBEDDED → INGESTED
+
+    Terminal:
+      FILTERED_OUT, BELOW_QUALITY_CUTOFF
+    """
+    PENDING = "pending"
+    TMDB_FETCHED = "tmdb_fetched"
+    TMDB_QUALITY_PASSED = "tmdb_quality_passed"
+    IMDB_SCRAPED = "imdb_scraped"
+    PHASE1_COMPLETE = "phase1_complete"
+    PHASE2_COMPLETE = "phase2_complete"
+    EMBEDDED = "embedded"
+    INGESTED = "ingested"
+    # Terminal statuses
+    FILTERED_OUT = "filtered_out"
+    BELOW_QUALITY_CUTOFF = "below_quality_cutoff"
+
+
+# ---------------------------------------------------------------------------
 # Paths — all ingestion data lives under this root, relative to the project.
 # ---------------------------------------------------------------------------
 
@@ -53,8 +83,8 @@ CREATE TABLE IF NOT EXISTS movie_progress (
     tmdb_id          INTEGER PRIMARY KEY,
     imdb_id          TEXT,
     status           TEXT NOT NULL DEFAULT 'pending',
-    -- Statuses (in order):
-    --   pending → tmdb_fetched → quality_passed → imdb_scraped →
+    -- Statuses (in order) — defined in MovieStatus enum:
+    --   pending → tmdb_fetched → tmdb_quality_passed → imdb_scraped →
     --   phase1_complete → phase2_complete → embedded → ingested
     --
     -- Terminal statuses:
@@ -193,8 +223,8 @@ def log_filter(
         (tmdb_id, title, year, stage, reason, details),
     )
     db.execute(
-        "UPDATE movie_progress SET status = 'filtered_out', updated_at = CURRENT_TIMESTAMP WHERE tmdb_id = ?",
-        (tmdb_id,),
+        "UPDATE movie_progress SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE tmdb_id = ?",
+        (MovieStatus.FILTERED_OUT, tmdb_id),
     )
 
 

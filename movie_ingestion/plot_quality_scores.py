@@ -19,7 +19,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import argrelextrema
 
-from movie_ingestion.tracker import TRACKER_DB_PATH, init_db
+from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, init_db
 
 
 def _normalize_to_01(arr: np.ndarray) -> np.ndarray:
@@ -71,10 +71,11 @@ def _fetch_quality_scores() -> list[float]:
                 """
                 SELECT quality_score
                 FROM movie_progress
-                WHERE status = 'tmdb_fetched'
+                WHERE status = ?
                   AND quality_score IS NOT NULL
                 ORDER BY quality_score ASC
-                """
+                """,
+                (MovieStatus.TMDB_FETCHED,),
             )
         ]
     finally:

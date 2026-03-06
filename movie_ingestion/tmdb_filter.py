@@ -4,7 +4,7 @@ Stage 3: TMDB Quality Funnel — Hard Filters + Quality Score Threshold
 Applies five hard filters and a quality-score threshold to every movie that has
 status='tmdb_fetched' in movie_progress.  Movies failing any check are marked
 filtered_out and logged to filter_log; survivors retain status='tmdb_fetched'
-and proceed to Stage 4 (IMDB scraping).
+and advanced to 'tmdb_quality_passed' for Stage 4 (IMDB scraping).
 
 Quality scores are computed inline via compute_quality_score() and persisted to
 movie_progress.quality_score for every movie, eliminating the need for a
@@ -32,7 +32,7 @@ import sqlite3
 from collections.abc import Callable
 
 from movie_ingestion.tmdb_quality_scorer import compute_quality_score
-from movie_ingestion.tracker import PipelineStage, init_db, log_filter
+from movie_ingestion.tracker import MovieStatus, PipelineStage, init_db, log_filter
 
 # ---------------------------------------------------------------------------
 # Tuning constants
@@ -166,7 +166,7 @@ def run() -> None:
       3. Check the quality-score threshold (lowest priority).
       4. Call log_filter() for any movie that fails at least one check.
 
-    Survivors are left untouched — their status remains 'tmdb_fetched'.
+    Survivors are advanced to 'tmdb_quality_passed' via a single bulk UPDATE.
 
     Progress is reported every LOG_EVERY rows.  A summary table is printed
     at the end showing the per-reason breakdown and the surviving count.
@@ -207,8 +207,8 @@ def run() -> None:
             d.has_cast_and_crew
         FROM tmdb_data d
         JOIN movie_progress p ON d.tmdb_id = p.tmdb_id
-        WHERE p.status = 'tmdb_fetched'
-    """).fetchall()
+        WHERE p.status = ?
+    """, (MovieStatus.TMDB_FETCHED,)).fetchall()
 
     total = len(rows)
     print(f"  {total:,} movies to evaluate (today = {today})")
@@ -285,6 +285,17 @@ def run() -> None:
                 )
 
         # Flush any remaining uncommitted writes.
+        db.commit()
+
+        # Advance all surviving movies (still at 'tmdb_fetched') to the next
+        # pipeline status in a single bulk UPDATE.  Any movie whose status was
+        # changed to 'filtered_out' during the loop is excluded by the WHERE.
+        db.execute(
+            """UPDATE movie_progress
+               SET status = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE status = ?""",
+            (MovieStatus.TMDB_QUALITY_PASSED, MovieStatus.TMDB_FETCHED),
+        )
         db.commit()
     finally:
         # Guarantee the connection is released even if compute_quality_score

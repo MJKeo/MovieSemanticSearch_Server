@@ -33,6 +33,7 @@ from implementation.classes.enums import StreamingAccessType
 from implementation.misc.helpers import create_watch_provider_offering_key
 from movie_ingestion.tracker import (
     INGESTION_DATA_DIR,
+    MovieStatus,
     PipelineStage,
     init_db,
     log_filter,
@@ -88,7 +89,7 @@ _INSERT_TMDB_DATA_SQL = """
 
 _UPDATE_PROGRESS_SQL = """
     UPDATE movie_progress
-    SET imdb_id = ?, status = 'tmdb_fetched', updated_at = CURRENT_TIMESTAMP
+    SET imdb_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
     WHERE tmdb_id = ?
 """
 
@@ -255,7 +256,10 @@ def _persist_movie(db, fields: dict) -> None:
         ),
     )
 
-    db.execute(_UPDATE_PROGRESS_SQL, (fields["imdb_id"], fields["tmdb_id"]))
+    db.execute(
+        _UPDATE_PROGRESS_SQL,
+        (fields["imdb_id"], MovieStatus.TMDB_FETCHED, fields["tmdb_id"]),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +408,8 @@ def run() -> None:
 
     try:
         rows = db.execute(
-            "SELECT tmdb_id FROM movie_progress WHERE status = 'pending'"
+            "SELECT tmdb_id FROM movie_progress WHERE status = ?",
+            (MovieStatus.PENDING,)
         ).fetchall()
         pending_ids = [row[0] for row in rows]
 

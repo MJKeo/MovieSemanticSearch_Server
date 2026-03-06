@@ -50,7 +50,7 @@ import math
 import sqlite3
 import struct
 
-from movie_ingestion.tracker import init_db
+from movie_ingestion.tracker import MovieStatus, init_db
 
 # ---------------------------------------------------------------------------
 # Tuning constants
@@ -362,8 +362,8 @@ def run() -> None:
         SELECT COUNT(*)
         FROM tmdb_data d
         JOIN movie_progress p ON d.tmdb_id = p.tmdb_id
-        WHERE p.status = 'tmdb_fetched'
-    """).fetchone()[0]
+        WHERE p.status = ?
+    """, (MovieStatus.TMDB_FETCHED,)).fetchone()[0]
 
     print(f"  {total:,} movies to score (reference date = {today})")
 
@@ -396,8 +396,8 @@ def run() -> None:
             d.has_cast_and_crew
         FROM tmdb_data d
         JOIN movie_progress p ON d.tmdb_id = p.tmdb_id
-        WHERE p.status = 'tmdb_fetched'
-    """)
+        WHERE p.status = ?
+    """, (MovieStatus.TMDB_FETCHED,))
 
     try:
         for i, row in enumerate(cursor):
