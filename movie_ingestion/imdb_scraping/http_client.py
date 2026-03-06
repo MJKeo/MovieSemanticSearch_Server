@@ -227,7 +227,7 @@ async def fetch_movie(
                     json=payload,
                     headers={"User-Agent": ua.random},
                 )
-        except (httpx.TimeoutException, httpx.NetworkError, ssl.SSLError) as exc:
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError, ssl.SSLError) as exc:
             # Network-level failure — retry with exponential backoff
             last_failure_reason = type(exc).__name__
             if attempt < _MAX_RETRIES:
