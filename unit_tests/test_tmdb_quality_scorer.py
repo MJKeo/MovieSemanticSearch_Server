@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from movie_ingestion.tmdb_quality_scorer import (
+from movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer import (
     POP_LOG_CAP,
     THEATER_WINDOW_DAYS,
     VC_CLASSIC_BOOST_CAP,

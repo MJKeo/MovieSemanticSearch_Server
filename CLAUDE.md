@@ -66,7 +66,7 @@ Fetch display metadata → return JSON
 | `implementation/prompts/` | System prompts for each LLM task |
 | `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
 | `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
-| `movie_ingestion/` | Multi-stage TMDB ingestion pipeline (`tmdb_fetcher.py`, `tracker.py`, `daily_export.py`) |
+| `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data) |
 | `unit_tests/` | pytest test suite (27 files); `conftest.py` provides `base_movie_factory` fixture |
 | `guides/` | Deep-dive architecture docs (23 markdown files) — **read the relevant guide before modifying any scoring logic** |
 
@@ -97,8 +97,8 @@ Each vector space has LLM-generated metadata (`implementation/llms/vector_metada
 ### Movie Ingestion Pipeline
 
 Movies are ingested in stages:
-1. `movie_ingestion/daily_export.py` — fetches bulk TMDB export (list of all movie IDs)
-2. `movie_ingestion/tmdb_fetcher.py` — fetches full TMDB detail per movie, rate-limited with adaptive backoff, stores raw data in SQLite tracker DB (`ingestion_data/`)
+1. `movie_ingestion/tmdb_fetching/daily_export.py` — fetches bulk TMDB export (list of all movie IDs)
+2. `movie_ingestion/tmdb_fetching/tmdb_fetcher.py` — fetches full TMDB detail per movie, rate-limited with adaptive backoff, stores raw data in SQLite tracker DB (`ingestion_data/`)
 3. `implementation/llms/vector_metadata_generation_methods.py` — generates 7 LLM metadata types per movie
 4. `implementation/vectorize.py` — embeds metadata into 8 vector spaces via OpenAI
 5. `db/ingest_movie.py` — upserts final data into Postgres, Qdrant, and Redis

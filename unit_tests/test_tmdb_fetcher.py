@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from movie_ingestion.tmdb_fetcher import (
+from movie_ingestion.tmdb_fetching.tmdb_fetcher import (
     _COMMIT_BATCH_SIZE,
     _TMDB_CATEGORY_TO_ACCESS_TYPE,
     _extract_fields,

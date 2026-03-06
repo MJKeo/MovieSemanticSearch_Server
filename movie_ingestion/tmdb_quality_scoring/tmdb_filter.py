@@ -31,7 +31,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 
-from movie_ingestion.tmdb_quality_scorer import compute_quality_score
+from .tmdb_quality_scorer import compute_quality_score
 from movie_ingestion.tracker import MovieStatus, PipelineStage, init_db, log_filter
 
 # ---------------------------------------------------------------------------
