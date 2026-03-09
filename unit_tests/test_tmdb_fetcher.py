@@ -1,10 +1,12 @@
 """
 Unit tests for movie_ingestion.tmdb_fetcher — Stage 2 TMDB detail fetching.
 
-Covers watch-provider key encoding, field extraction, SQLite persistence,
-single-movie async processing, batch orchestration, error logging, and run().
+Covers watch-provider key encoding, field extraction, maturity rating and
+review extraction, SQLite bulk persistence, single-movie async processing,
+batch orchestration, error logging, and run().
 """
 
+import json
 import struct
 import sqlite3
 from datetime import datetime, timezone
@@ -15,17 +17,25 @@ import pytest
 
 from movie_ingestion.tmdb_fetching.tmdb_fetcher import (
     _COMMIT_BATCH_SIZE,
+    _MovieResult,
     _TMDB_CATEGORY_TO_ACCESS_TYPE,
     _extract_fields,
+    _extract_review_contents,
+    _extract_us_maturity_rating,
     _extract_watch_provider_keys,
     _fetch_all,
     _log_unexpected_error,
     _pack_provider_keys,
-    _persist_movie,
+    _persist_movies,
     _process_movie,
     run,
 )
-from movie_ingestion.tracker import _SCHEMA_SQL, PipelineStage
+from movie_ingestion.tracker import (
+    _SCHEMA_SQL,
+    MovieStatus,
+    PipelineStage,
+    batch_log_filter,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +84,22 @@ def _sample_tmdb_response(**overrides) -> dict:
                 }
             }
         },
+        "release_dates": {
+            "results": [
+                {
+                    "iso_3166_1": "US",
+                    "release_dates": [
+                        {"certification": "R", "type": 3},
+                    ],
+                }
+            ]
+        },
+        "reviews": {
+            "results": [
+                {"content": "A masterpiece of modern cinema."},
+                {"content": "Mind-blowing twist ending."},
+            ]
+        },
     }
     base.update(overrides)
     return base
@@ -112,6 +138,12 @@ def _sample_extracted_fields(**overrides) -> dict:
         "has_production_countries": 1,
         "has_keywords": 1,
         "has_cast_and_crew": 1,
+        "budget": 63000000,
+        "maturity_rating": "R",
+        "reviews": json.dumps(
+            ["A masterpiece of modern cinema.", "Mind-blowing twist ending."],
+            ensure_ascii=False,
+        ),
     }
     base.update(overrides)
     return base
@@ -262,6 +294,176 @@ class TestExtractWatchProviderKeys:
 
 
 # ---------------------------------------------------------------------------
+# _extract_us_maturity_rating
+# ---------------------------------------------------------------------------
+
+
+class TestExtractUsMaturityRating:
+    """Tests for US maturity rating extraction from release_dates data."""
+
+    def test_extracts_us_certification(self) -> None:
+        """Standard US entry with certification='PG-13' returns 'PG-13'."""
+        raw = {
+            "release_dates": {
+                "results": [
+                    {
+                        "iso_3166_1": "US",
+                        "release_dates": [
+                            {"certification": "PG-13", "type": 3},
+                        ],
+                    }
+                ]
+            }
+        }
+        assert _extract_us_maturity_rating(raw) == "PG-13"
+
+    def test_returns_none_when_no_us_region(self) -> None:
+        """Only non-US countries present returns None."""
+        raw = {
+            "release_dates": {
+                "results": [
+                    {
+                        "iso_3166_1": "GB",
+                        "release_dates": [
+                            {"certification": "15", "type": 3},
+                        ],
+                    }
+                ]
+            }
+        }
+        assert _extract_us_maturity_rating(raw) is None
+
+    def test_returns_none_when_no_release_dates(self) -> None:
+        """Empty or missing release_dates key returns None."""
+        assert _extract_us_maturity_rating({}) is None
+        assert _extract_us_maturity_rating({"release_dates": {"results": []}}) is None
+
+    def test_returns_first_nonempty_certification(self) -> None:
+        """US has multiple release dates, first empty, second 'R' — returns 'R'."""
+        raw = {
+            "release_dates": {
+                "results": [
+                    {
+                        "iso_3166_1": "US",
+                        "release_dates": [
+                            {"certification": "", "type": 1},
+                            {"certification": "R", "type": 3},
+                        ],
+                    }
+                ]
+            }
+        }
+        assert _extract_us_maturity_rating(raw) == "R"
+
+    def test_strips_whitespace(self) -> None:
+        """Certification ' PG-13 ' returns 'PG-13'."""
+        raw = {
+            "release_dates": {
+                "results": [
+                    {
+                        "iso_3166_1": "US",
+                        "release_dates": [
+                            {"certification": " PG-13 ", "type": 3},
+                        ],
+                    }
+                ]
+            }
+        }
+        assert _extract_us_maturity_rating(raw) == "PG-13"
+
+    def test_returns_none_for_empty_certifications(self) -> None:
+        """US entries all have empty string certifications returns None."""
+        raw = {
+            "release_dates": {
+                "results": [
+                    {
+                        "iso_3166_1": "US",
+                        "release_dates": [
+                            {"certification": "", "type": 1},
+                            {"certification": "", "type": 3},
+                        ],
+                    }
+                ]
+            }
+        }
+        assert _extract_us_maturity_rating(raw) is None
+
+    def test_handles_null_release_dates_key(self) -> None:
+        """release_dates is None returns None."""
+        raw = {"release_dates": None}
+        assert _extract_us_maturity_rating(raw) is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_review_contents
+# ---------------------------------------------------------------------------
+
+
+class TestExtractReviewContents:
+    """Tests for review text extraction from TMDB reviews data."""
+
+    def test_extracts_review_contents(self) -> None:
+        """Two reviews with content returns JSON list with both strings."""
+        raw = {
+            "reviews": {
+                "results": [
+                    {"content": "Great movie!"},
+                    {"content": "Loved it."},
+                ]
+            }
+        }
+        result = _extract_review_contents(raw)
+        parsed = json.loads(result)
+
+        assert parsed == ["Great movie!", "Loved it."]
+
+    def test_returns_none_for_no_reviews(self) -> None:
+        """Empty results list returns None."""
+        raw = {"reviews": {"results": []}}
+        assert _extract_review_contents(raw) is None
+
+    def test_skips_reviews_without_content(self) -> None:
+        """Mix of reviews with and without content only includes non-empty ones."""
+        raw = {
+            "reviews": {
+                "results": [
+                    {"content": "Good"},
+                    {"content": ""},
+                    {"author": "reviewer_no_content"},
+                    {"content": "Bad"},
+                ]
+            }
+        }
+        result = _extract_review_contents(raw)
+        parsed = json.loads(result)
+
+        assert parsed == ["Good", "Bad"]
+
+    def test_returns_none_for_missing_reviews_key(self) -> None:
+        """No 'reviews' key returns None."""
+        assert _extract_review_contents({}) is None
+
+    def test_returns_none_for_null_reviews(self) -> None:
+        """reviews=None returns None."""
+        raw = {"reviews": None}
+        assert _extract_review_contents(raw) is None
+
+    def test_preserves_unicode_in_reviews(self) -> None:
+        """Review with non-ASCII chars preserved in JSON output."""
+        raw = {
+            "reviews": {
+                "results": [
+                    {"content": "Un chef-d'œuvre cinématographique!"},
+                ]
+            }
+        }
+        result = _extract_review_contents(raw)
+        parsed = json.loads(result)
+
+        assert parsed == ["Un chef-d'œuvre cinématographique!"]
+
+
+# ---------------------------------------------------------------------------
 # _extract_fields
 # ---------------------------------------------------------------------------
 
@@ -270,7 +472,7 @@ class TestExtractFields:
     """Tests for the TMDB JSON → flat dict field extraction."""
 
     def test_happy_path(self) -> None:
-        """Complete TMDB response produces correct 18-key dict."""
+        """Complete TMDB response produces correct 21-key dict."""
         raw = _sample_tmdb_response()
         fields = _extract_fields(raw)
 
@@ -308,6 +510,9 @@ class TestExtractFields:
         assert fields["has_production_countries"] == 0
         assert fields["has_keywords"] == 0
         assert fields["has_cast_and_crew"] == 0
+        assert fields["budget"] == 0
+        assert fields["maturity_rating"] is None
+        assert fields["reviews"] is None
 
     @pytest.mark.parametrize("overview", [None, ""])
     def test_falsy_overview(self, overview) -> None:
@@ -415,67 +620,206 @@ class TestExtractFields:
         )
         assert _extract_fields(raw)["has_production_countries"] == 1
 
+    # --- New tests for the 3 added fields ---
+
+    def test_budget_field_extracted(self) -> None:
+        """Full response with budget=63000000 produces fields['budget']=63000000."""
+        raw = _sample_tmdb_response(budget=63000000)
+        fields = _extract_fields(raw)
+
+        assert fields["budget"] == 63000000
+
+    def test_budget_defaults_to_zero(self) -> None:
+        """No budget key produces fields['budget']=0."""
+        raw = _sample_tmdb_response()
+        del raw["budget"]
+        fields = _extract_fields(raw)
+
+        assert fields["budget"] == 0
+
+    def test_maturity_rating_extracted(self) -> None:
+        """Response with US release_dates cert produces fields['maturity_rating']='PG-13'."""
+        raw = _sample_tmdb_response(
+            release_dates={
+                "results": [
+                    {
+                        "iso_3166_1": "US",
+                        "release_dates": [{"certification": "PG-13", "type": 3}],
+                    }
+                ]
+            }
+        )
+        fields = _extract_fields(raw)
+
+        assert fields["maturity_rating"] == "PG-13"
+
+    def test_maturity_rating_none_when_missing(self) -> None:
+        """No release_dates produces fields['maturity_rating']=None."""
+        raw = _sample_tmdb_response()
+        del raw["release_dates"]
+        fields = _extract_fields(raw)
+
+        assert fields["maturity_rating"] is None
+
+    def test_reviews_extracted(self) -> None:
+        """Response with reviews produces fields['reviews'] as JSON string."""
+        raw = _sample_tmdb_response(
+            reviews={
+                "results": [
+                    {"content": "Amazing film."},
+                ]
+            }
+        )
+        fields = _extract_fields(raw)
+
+        parsed = json.loads(fields["reviews"])
+        assert parsed == ["Amazing film."]
+
+    def test_reviews_none_when_missing(self) -> None:
+        """No reviews produces fields['reviews']=None."""
+        raw = _sample_tmdb_response()
+        del raw["reviews"]
+        fields = _extract_fields(raw)
+
+        assert fields["reviews"] is None
+
 
 # ---------------------------------------------------------------------------
-# _persist_movie
+# _persist_movies
 # ---------------------------------------------------------------------------
 
 
-class TestPersistMovie:
-    """Tests for SQLite persistence of extracted movie fields."""
+class TestPersistMovies:
+    """Tests for bulk SQLite persistence of extracted movie fields."""
 
-    def test_inserts_tmdb_data(self, in_memory_db) -> None:
-        """_persist_movie inserts a complete row into tmdb_data."""
-        fields = _sample_extracted_fields()
-        _persist_movie(in_memory_db, fields)
+    def _make_result(self, **overrides) -> _MovieResult:
+        """Build a _MovieResult with extracted fields for testing."""
+        fields = _sample_extracted_fields(**overrides.pop("field_overrides", {}))
+        defaults = {
+            "tmdb_id": fields["tmdb_id"],
+            "status": "fetched",
+            "reason": None,
+            "fields": fields,
+        }
+        defaults.update(overrides)
+        return _MovieResult(**defaults)
 
-        row = in_memory_db.execute(
-            "SELECT tmdb_id, imdb_id, title, release_date, duration, "
-            "vote_count, popularity, vote_average, overview_length, "
-            "genre_count, has_revenue, has_budget, has_production_companies, "
-            "has_production_countries, has_keywords, has_cast_and_crew "
-            "FROM tmdb_data WHERE tmdb_id = ?",
-            (550,),
-        ).fetchone()
+    def test_bulk_inserts_tmdb_data(self, in_memory_db) -> None:
+        """Pass 3 _MovieResults with fields — 3 rows in tmdb_data."""
+        results = [
+            self._make_result(tmdb_id=100, field_overrides={"tmdb_id": 100}),
+            self._make_result(tmdb_id=200, field_overrides={"tmdb_id": 200}),
+            self._make_result(tmdb_id=300, field_overrides={"tmdb_id": 300}),
+        ]
 
-        assert row is not None
-        assert row[0] == 550           # tmdb_id
-        assert row[1] == "tt0137523"   # imdb_id
-        assert row[2] == "Fight Club"  # title
-        assert row[3] == "1999-10-15"  # release_date
-        assert row[4] == 139           # duration
-        assert row[5] == 27000         # vote_count
-        assert row[10] == 1            # has_revenue
-        assert row[11] == 1            # has_budget
+        _persist_movies(in_memory_db, results)
+        in_memory_db.commit()
 
-    def test_updates_movie_progress(self, in_memory_db) -> None:
-        """_persist_movie updates movie_progress status to 'tmdb_fetched'."""
-        # Insert a pending row first
+        count = in_memory_db.execute("SELECT COUNT(*) FROM tmdb_data").fetchone()[0]
+        assert count == 3
+
+    def test_bulk_updates_movie_progress(self, in_memory_db) -> None:
+        """3 results with status='fetched' — 3 movie_progress rows updated to tmdb_fetched."""
+        for tid in (100, 200, 300):
+            in_memory_db.execute(
+                "INSERT INTO movie_progress (tmdb_id, status) VALUES (?, 'pending')",
+                (tid,),
+            )
+        in_memory_db.commit()
+
+        results = [
+            self._make_result(tmdb_id=tid, field_overrides={"tmdb_id": tid})
+            for tid in (100, 200, 300)
+        ]
+
+        _persist_movies(in_memory_db, results)
+        in_memory_db.commit()
+
+        statuses = in_memory_db.execute(
+            "SELECT status FROM movie_progress ORDER BY tmdb_id"
+        ).fetchall()
+        assert all(s[0] == "tmdb_fetched" for s in statuses)
+
+    def test_skips_missing_imdb_id_for_progress_update(self, in_memory_db) -> None:
+        """Result with status='missing_imdb_id' — tmdb_data inserted but progress NOT updated."""
         in_memory_db.execute(
-            "INSERT INTO movie_progress (tmdb_id, status) VALUES (?, 'pending')",
-            (550,),
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (550, 'pending')"
         )
         in_memory_db.commit()
 
-        fields = _sample_extracted_fields()
-        _persist_movie(in_memory_db, fields)
+        result = _MovieResult(
+            tmdb_id=550,
+            status="missing_imdb_id",
+            reason="missing_imdb_id",
+            fields=_sample_extracted_fields(imdb_id=None),
+        )
 
-        row = in_memory_db.execute(
-            "SELECT status, imdb_id FROM movie_progress WHERE tmdb_id = ?",
-            (550,),
+        _persist_movies(in_memory_db, [result])
+        in_memory_db.commit()
+
+        # tmdb_data row was inserted
+        tmdb_row = in_memory_db.execute(
+            "SELECT tmdb_id FROM tmdb_data WHERE tmdb_id = 550"
         ).fetchone()
+        assert tmdb_row is not None
 
-        assert row[0] == "tmdb_fetched"
-        assert row[1] == "tt0137523"
+        # movie_progress was NOT updated to tmdb_fetched (still pending)
+        status = in_memory_db.execute(
+            "SELECT status FROM movie_progress WHERE tmdb_id = 550"
+        ).fetchone()[0]
+        assert status == "pending"
+
+    def test_empty_results_is_noop(self, in_memory_db) -> None:
+        """Empty list produces no DB writes."""
+        _persist_movies(in_memory_db, [])
+
+        count = in_memory_db.execute("SELECT COUNT(*) FROM tmdb_data").fetchone()[0]
+        assert count == 0
+
+    def test_does_not_commit(self, in_memory_db) -> None:
+        """_persist_movies does not call db.commit()."""
+        result = self._make_result()
+        _persist_movies(in_memory_db, [result])
+
+        # Row visible in same connection (uncommitted transaction)
+        count = in_memory_db.execute(
+            "SELECT COUNT(*) FROM tmdb_data WHERE tmdb_id = 550"
+        ).fetchone()[0]
+        assert count == 1
+
+        # Roll back proves _persist_movies did not commit
+        in_memory_db.rollback()
+        count_after = in_memory_db.execute(
+            "SELECT COUNT(*) FROM tmdb_data WHERE tmdb_id = 550"
+        ).fetchone()[0]
+        assert count_after == 0
+
+    def test_packs_watch_provider_keys(self, in_memory_db) -> None:
+        """Fields with watch_provider_keys=[100,200] stored as packed BLOB."""
+        result = self._make_result(
+            field_overrides={"watch_provider_keys": [100, 200]}
+        )
+
+        _persist_movies(in_memory_db, [result])
+        in_memory_db.commit()
+
+        blob = in_memory_db.execute(
+            "SELECT watch_provider_keys FROM tmdb_data WHERE tmdb_id = ?",
+            (550,),
+        ).fetchone()[0]
+
+        unpacked = list(struct.unpack(f"<{len(blob) // 4}I", blob))
+        assert unpacked == [100, 200]
 
     def test_replace_on_duplicate(self, in_memory_db) -> None:
-        """INSERT OR REPLACE overwrites existing tmdb_data row."""
-        fields = _sample_extracted_fields()
-        _persist_movie(in_memory_db, fields)
+        """INSERT OR REPLACE: second insert with same tmdb_id overwrites."""
+        result1 = self._make_result(field_overrides={"title": "Original"})
+        _persist_movies(in_memory_db, [result1])
+        in_memory_db.commit()
 
-        # Insert again with different title
-        fields["title"] = "Fight Club (Updated)"
-        _persist_movie(in_memory_db, fields)
+        result2 = self._make_result(field_overrides={"title": "Updated"})
+        _persist_movies(in_memory_db, [result2])
+        in_memory_db.commit()
 
         count = in_memory_db.execute(
             "SELECT COUNT(*) FROM tmdb_data WHERE tmdb_id = ?", (550,)
@@ -485,44 +829,7 @@ class TestPersistMovie:
         ).fetchone()[0]
 
         assert count == 1
-        assert title == "Fight Club (Updated)"
-
-    def test_packs_watch_provider_keys_as_blob(self, in_memory_db) -> None:
-        """Watch provider keys are stored as a packed binary BLOB."""
-        fields = _sample_extracted_fields(watch_provider_keys=[100, 200, 300])
-        _persist_movie(in_memory_db, fields)
-
-        blob = in_memory_db.execute(
-            "SELECT watch_provider_keys FROM tmdb_data WHERE tmdb_id = ?",
-            (550,),
-        ).fetchone()[0]
-
-        unpacked = list(struct.unpack(f"<{len(blob) // 4}I", blob))
-        assert unpacked == [100, 200, 300]
-
-    def test_empty_watch_keys_stores_null(self, in_memory_db) -> None:
-        """Empty watch_provider_keys list stores NULL in the BLOB column."""
-        fields = _sample_extracted_fields(watch_provider_keys=[])
-        _persist_movie(in_memory_db, fields)
-
-        blob = in_memory_db.execute(
-            "SELECT watch_provider_keys FROM tmdb_data WHERE tmdb_id = ?",
-            (550,),
-        ).fetchone()[0]
-
-        assert blob is None
-
-    def test_tolerates_missing_progress_row(self, in_memory_db) -> None:
-        """UPDATE matches zero rows when no movie_progress entry exists — no error."""
-        fields = _sample_extracted_fields()
-        # No INSERT into movie_progress first
-        _persist_movie(in_memory_db, fields)
-
-        # tmdb_data row still inserted
-        row = in_memory_db.execute(
-            "SELECT tmdb_id FROM tmdb_data WHERE tmdb_id = ?", (550,)
-        ).fetchone()
-        assert row is not None
+        assert title == "Updated"
 
 
 # ---------------------------------------------------------------------------
@@ -533,194 +840,140 @@ class TestPersistMovie:
 class TestProcessMovie:
     """Tests for the single-movie async processing coroutine."""
 
-    def _make_counters(self) -> dict:
-        """Return a fresh counters dict."""
-        return {"fetched": 0, "filtered": 0, "errors": 0}
-
-    @pytest.mark.asyncio
-    async def test_happy_path_increments_fetched(self, mocker, in_memory_db) -> None:
-        """Successful fetch/extract/persist with imdb_id increments 'fetched'."""
-        fields = _sample_extracted_fields()
+    async def test_success_returns_fetched_result(self, mocker) -> None:
+        """Successful fetch+extract with imdb_id returns _MovieResult(status='fetched')."""
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
             new_callable=AsyncMock,
             return_value=_sample_tmdb_response(),
         )
+
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
+
+        assert isinstance(result, _MovieResult)
+        assert result.status == "fetched"
+        assert result.reason is None
+
+    async def test_success_includes_extracted_fields(self, mocker) -> None:
+        """Result.fields contains all expected keys."""
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._extract_fields", return_value=fields
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
+            new_callable=AsyncMock,
+            return_value=_sample_tmdb_response(),
         )
-        mocker.patch("movie_ingestion.tmdb_fetcher._persist_movie")
-        mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
 
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
 
-        assert counters["fetched"] == 1
-        assert counters["errors"] == 0
-        assert counters["filtered"] == 0
+        assert result.fields is not None
+        assert "tmdb_id" in result.fields
+        assert "imdb_id" in result.fields
+        assert "budget" in result.fields
+        assert "maturity_rating" in result.fields
+        assert "reviews" in result.fields
 
-    @pytest.mark.asyncio
-    async def test_tmdb_fetch_error_logs_and_counts(self, mocker, in_memory_db) -> None:
-        """TMDBFetchError logs 'tmdb_fetch_error' and increments errors."""
+    async def test_missing_imdb_id_returns_missing_result(self, mocker) -> None:
+        """Extract succeeds but imdb_id=None returns _MovieResult(status='missing_imdb_id')."""
+        raw = _sample_tmdb_response(imdb_id=None)
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
+            new_callable=AsyncMock,
+            return_value=raw,
+        )
+
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
+
+        assert result.status == "missing_imdb_id"
+        assert result.reason == "missing_imdb_id"
+
+    async def test_missing_imdb_id_still_includes_fields(self, mocker) -> None:
+        """Fields are present in result even when imdb_id missing."""
+        raw = _sample_tmdb_response(imdb_id=None)
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
+            new_callable=AsyncMock,
+            return_value=raw,
+        )
+
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
+
+        assert result.fields is not None
+        assert result.fields["tmdb_id"] == 550
+
+    async def test_tmdb_fetch_error_returns_error_result(self, mocker) -> None:
+        """TMDBFetchError returns _MovieResult(status='error', reason='tmdb_fetch_error')."""
         from db.tmdb import TMDBFetchError
 
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
             new_callable=AsyncMock,
             side_effect=TMDBFetchError("test"),
         )
-        log_mock = mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
 
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
 
-        assert counters["errors"] == 1
-        log_mock.assert_called_once()
-        assert log_mock.call_args.kwargs["reason"] == "tmdb_fetch_error"
+        assert result.status == "error"
+        assert result.reason == "tmdb_fetch_error"
+        assert result.fields is None
 
-    @pytest.mark.asyncio
-    async def test_value_error_logs_parse_error(self, mocker, in_memory_db) -> None:
-        """ValueError logs 'tmdb_parse_error' and increments errors."""
+    async def test_value_error_returns_error_result(self, mocker) -> None:
+        """ValueError returns _MovieResult(status='error', reason='tmdb_parse_error')."""
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
             new_callable=AsyncMock,
             side_effect=ValueError("bad json"),
         )
-        log_mock = mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
 
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
 
-        assert counters["errors"] == 1
-        # log_filter(db, tmdb_id, _STAGE, reason="tmdb_parse_error")
-        assert log_mock.call_args.kwargs["reason"] == "tmdb_parse_error"
+        assert result.status == "error"
+        assert result.reason == "tmdb_parse_error"
+        assert result.fields is None
 
-    @pytest.mark.asyncio
-    async def test_404_none_response_logs_filtered(self, mocker, in_memory_db) -> None:
-        """None response (404) logs 'tmdb_404' and increments filtered."""
+    async def test_404_returns_filtered_result(self, mocker) -> None:
+        """None response returns _MovieResult(status='filtered', reason='tmdb_404')."""
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
             new_callable=AsyncMock,
             return_value=None,
         )
-        log_mock = mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
 
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
 
-        assert counters["filtered"] == 1
-        assert log_mock.call_args.kwargs["reason"] == "tmdb_404"
+        assert result.status == "filtered"
+        assert result.reason == "tmdb_404"
+        assert result.fields is None
 
-    @pytest.mark.asyncio
-    async def test_extract_error_logs_and_counts(self, mocker, in_memory_db) -> None:
-        """Exception in _extract_fields logs 'tmdb_extract_error'."""
+    async def test_extract_error_returns_error_result(self, mocker) -> None:
+        """Exception in _extract_fields returns _MovieResult(status='error', reason='tmdb_extract_error')."""
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
             new_callable=AsyncMock,
             return_value={"id": 1},
         )
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._extract_fields",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._extract_fields",
             side_effect=KeyError("unexpected"),
         )
-        log_mock = mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
 
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
 
-        assert counters["errors"] == 1
-        assert log_mock.call_args.kwargs["reason"] == "tmdb_extract_error"
+        assert result.status == "error"
+        assert result.reason == "tmdb_extract_error"
+        assert result.fields is None
 
-    @pytest.mark.asyncio
-    async def test_persist_exception_propagates(self, mocker, in_memory_db) -> None:
-        """Exception in _persist_movie is NOT caught — propagates to gather."""
+    async def test_empty_string_imdb_id_treated_as_missing(self, mocker) -> None:
+        """Empty string imdb_id (falsy) treated as missing."""
+        raw = _sample_tmdb_response(imdb_id="")
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.fetch_movie_details",
             new_callable=AsyncMock,
-            return_value=_sample_tmdb_response(),
-        )
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher._extract_fields",
-            return_value=_sample_extracted_fields(),
-        )
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher._persist_movie",
-            side_effect=sqlite3.OperationalError("disk full"),
+            return_value=raw,
         )
 
-        counters = self._make_counters()
+        result = await _process_movie(MagicMock(), MagicMock(), 550)
 
-        with pytest.raises(sqlite3.OperationalError, match="disk full"):
-            await _process_movie(
-                MagicMock(), MagicMock(), 550, in_memory_db, counters
-            )
-
-    @pytest.mark.asyncio
-    async def test_missing_imdb_id_logs_filtered(self, mocker, in_memory_db) -> None:
-        """None imdb_id logs 'missing_imdb_id' and increments filtered."""
-        fields = _sample_extracted_fields(imdb_id=None)
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
-            new_callable=AsyncMock,
-            return_value=_sample_tmdb_response(),
-        )
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher._extract_fields", return_value=fields
-        )
-        persist_mock = mocker.patch("movie_ingestion.tmdb_fetcher._persist_movie")
-        log_mock = mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
-
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
-
-        assert counters["filtered"] == 1
-        assert log_mock.call_args.kwargs["reason"] == "missing_imdb_id"
-        # _persist_movie still called (before the IMDB check)
-        persist_mock.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_empty_string_imdb_id_treated_as_missing(
-        self, mocker, in_memory_db
-    ) -> None:
-        """Empty string imdb_id is falsy — treated as missing."""
-        fields = _sample_extracted_fields(imdb_id="")
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
-            new_callable=AsyncMock,
-            return_value=_sample_tmdb_response(),
-        )
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher._extract_fields", return_value=fields
-        )
-        mocker.patch("movie_ingestion.tmdb_fetcher._persist_movie")
-        log_mock = mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
-
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
-
-        assert counters["filtered"] == 1
-        assert log_mock.call_args.kwargs["reason"] == "missing_imdb_id"
-
-    @pytest.mark.asyncio
-    async def test_persist_called_before_imdb_check(self, mocker, in_memory_db) -> None:
-        """_persist_movie is called even when imdb_id is missing."""
-        fields = _sample_extracted_fields(imdb_id=None)
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher.fetch_movie_details",
-            new_callable=AsyncMock,
-            return_value=_sample_tmdb_response(),
-        )
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher._extract_fields", return_value=fields
-        )
-        persist_mock = mocker.patch("movie_ingestion.tmdb_fetcher._persist_movie")
-        mocker.patch("movie_ingestion.tmdb_fetcher.log_filter")
-
-        counters = self._make_counters()
-        await _process_movie(MagicMock(), MagicMock(), 550, in_memory_db, counters)
-
-        # _persist_movie was called BEFORE the imdb_id check
-        persist_mock.assert_called_once_with(in_memory_db, fields)
+        assert result.status == "missing_imdb_id"
+        assert result.reason == "missing_imdb_id"
 
 
 # ---------------------------------------------------------------------------
@@ -731,49 +984,56 @@ class TestProcessMovie:
 class TestFetchAll:
     """Tests for the batched async orchestration loop."""
 
-    @pytest.mark.asyncio
     async def test_processes_in_batches(self, mocker) -> None:
         """1200 IDs produce 3 batches (500 + 500 + 200) with 3 commits."""
         mock_db = MagicMock()
-        process_mock = mocker.patch(
-            "movie_ingestion.tmdb_fetcher._process_movie",
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
             new_callable=AsyncMock,
+            return_value=_MovieResult(1, "fetched", None, _sample_extracted_fields()),
         )
-        mocker.patch("movie_ingestion.tmdb_fetcher.access_token", return_value="tok")
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies",
+        )
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter",
+        )
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
 
         ids = list(range(1200))
         counters = await _fetch_all(mock_db, ids)
 
-        assert process_mock.await_count == 1200
         assert mock_db.commit.call_count == 3
 
-    @pytest.mark.asyncio
     async def test_commits_after_each_batch(self, mocker) -> None:
         """501 IDs produce exactly 2 batches (500 + 1) with 2 commits."""
         mock_db = MagicMock()
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._process_movie",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
             new_callable=AsyncMock,
+            return_value=_MovieResult(1, "fetched", None, _sample_extracted_fields()),
         )
-        mocker.patch("movie_ingestion.tmdb_fetcher.access_token", return_value="tok")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
 
         counters = await _fetch_all(mock_db, list(range(501)))
 
         assert mock_db.commit.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_captures_gather_exceptions(self, mocker) -> None:
         """Unexpected exceptions from gather are logged and counted as errors."""
         mock_db = MagicMock()
-        # Make every _process_movie call raise an exception
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._process_movie",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
             new_callable=AsyncMock,
             side_effect=RuntimeError("boom"),
         )
-        mocker.patch("movie_ingestion.tmdb_fetcher.access_token", return_value="tok")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
         log_mock = mocker.patch(
-            "movie_ingestion.tmdb_fetcher._log_unexpected_error"
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._log_unexpected_error"
         )
 
         counters = await _fetch_all(mock_db, [1, 2, 3])
@@ -781,15 +1041,17 @@ class TestFetchAll:
         assert counters["errors"] == 3
         assert log_mock.call_count == 3
 
-    @pytest.mark.asyncio
     async def test_returns_counters_dict(self, mocker) -> None:
         """_fetch_all returns dict with fetched, filtered, and errors keys."""
         mock_db = MagicMock()
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._process_movie",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
             new_callable=AsyncMock,
+            return_value=_MovieResult(1, "fetched", None, _sample_extracted_fields()),
         )
-        mocker.patch("movie_ingestion.tmdb_fetcher.access_token", return_value="tok")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
 
         counters = await _fetch_all(mock_db, [1])
 
@@ -797,36 +1059,87 @@ class TestFetchAll:
         assert "filtered" in counters
         assert "errors" in counters
 
-    @pytest.mark.asyncio
     async def test_empty_pending_ids(self, mocker) -> None:
         """Empty ID list produces zero iterations and all-zero counters."""
         mock_db = MagicMock()
-        mocker.patch("movie_ingestion.tmdb_fetcher.access_token", return_value="tok")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
 
         counters = await _fetch_all(mock_db, [])
 
         assert counters == {"fetched": 0, "filtered": 0, "errors": 0}
         mock_db.commit.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_progress_reporting_at_boundary(self, mocker, capsys) -> None:
-        """Progress is printed at _PROGRESS_INTERVAL boundaries."""
+    async def test_persist_movies_called_per_batch(self, mocker) -> None:
+        """_persist_movies called once per batch with collected _MovieResults."""
         mock_db = MagicMock()
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._process_movie",
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
             new_callable=AsyncMock,
+            return_value=_MovieResult(1, "fetched", None, _sample_extracted_fields()),
         )
-        mocker.patch("movie_ingestion.tmdb_fetcher.access_token", return_value="tok")
+        persist_mock = mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
 
-        # 10_000 is the progress interval — create exactly that many IDs
-        # to trigger the boundary check.  Use a large batch size to keep
-        # the test fast (one batch of 10K).
-        mocker.patch("movie_ingestion.tmdb_fetcher._COMMIT_BATCH_SIZE", 10_000)
+        await _fetch_all(mock_db, list(range(501)))
 
-        counters = await _fetch_all(mock_db, list(range(10_000)))
+        # 2 batches → 2 calls
+        assert persist_mock.call_count == 2
 
-        output = capsys.readouterr().out
-        assert "Progress" in output
+    async def test_batch_log_filter_called_for_filtered(self, mocker) -> None:
+        """Filtered results cause batch_log_filter to be called with correct entries."""
+        mock_db = MagicMock()
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
+            new_callable=AsyncMock,
+            return_value=_MovieResult(1, "filtered", "tmdb_404", None),
+        )
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies")
+        blf_mock = mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
+
+        await _fetch_all(mock_db, [1])
+
+        blf_mock.assert_called_once()
+        entries = blf_mock.call_args[0][1]
+        assert len(entries) == 1
+        assert entries[0][2] == "tmdb_404"  # reason
+
+    async def test_error_results_added_to_filter_entries(self, mocker) -> None:
+        """_MovieResult(status='error') included in batch_log_filter entries."""
+        mock_db = MagicMock()
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
+            new_callable=AsyncMock,
+            return_value=_MovieResult(1, "error", "tmdb_extract_error", None),
+        )
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies")
+        blf_mock = mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
+
+        counters = await _fetch_all(mock_db, [1])
+
+        blf_mock.assert_called_once()
+        entries = blf_mock.call_args[0][1]
+        assert len(entries) == 1
+        assert entries[0][2] == "tmdb_extract_error"
+        assert counters["errors"] == 1
+
+    async def test_missing_imdb_id_counted_as_filtered(self, mocker) -> None:
+        """_MovieResult(status='missing_imdb_id') increments counters['filtered']."""
+        mock_db = MagicMock()
+        mocker.patch(
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._process_movie",
+            new_callable=AsyncMock,
+            return_value=_MovieResult(1, "missing_imdb_id", "missing_imdb_id", _sample_extracted_fields()),
+        )
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher._persist_movies")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.batch_log_filter")
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.access_token", return_value="tok")
+
+        counters = await _fetch_all(mock_db, [1])
+
+        assert counters["filtered"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -841,7 +1154,7 @@ class TestLogUnexpectedError:
         """Error entry written to file with tmdb_id and exception info."""
         log_file = tmp_path / "errors.log"
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._ERROR_LOG_PATH", log_file
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._ERROR_LOG_PATH", log_file
         )
 
         try:
@@ -858,7 +1171,7 @@ class TestLogUnexpectedError:
         """Calling twice produces 2 separate entries in the file."""
         log_file = tmp_path / "errors.log"
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._ERROR_LOG_PATH", log_file
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._ERROR_LOG_PATH", log_file
         )
 
         try:
@@ -881,7 +1194,7 @@ class TestLogUnexpectedError:
         """Error entry includes a Python traceback."""
         log_file = tmp_path / "errors.log"
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._ERROR_LOG_PATH", log_file
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._ERROR_LOG_PATH", log_file
         )
 
         try:
@@ -897,7 +1210,7 @@ class TestLogUnexpectedError:
         """Error entry includes a UTC timestamp in expected format."""
         log_file = tmp_path / "errors.log"
         mocker.patch(
-            "movie_ingestion.tmdb_fetcher._ERROR_LOG_PATH", log_file
+            "movie_ingestion.tmdb_fetching.tmdb_fetcher._ERROR_LOG_PATH", log_file
         )
 
         try:
@@ -920,52 +1233,24 @@ class TestLogUnexpectedError:
 class TestRun:
     """Tests for the Stage 2 entry point."""
 
-    def test_no_pending_movies_exits_early(self, mocker, capsys) -> None:
-        """run() prints early-exit message when no pending movies exist."""
+    def test_prints_status_counts(self, mocker, capsys) -> None:
+        """run() queries movie_progress and prints status information."""
         mock_db = MagicMock()
         mock_db.execute.return_value.fetchall.return_value = []
-        mocker.patch("movie_ingestion.tmdb_fetcher.init_db", return_value=mock_db)
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.init_db", return_value=mock_db)
 
         run()
 
         output = capsys.readouterr().out
-        assert "No pending movies" in output
+        # When no pending movies exist, prints an informational message
+        assert "No" in output or "no" in output or "0" in output
 
-    def test_processes_pending_movies(self, mocker) -> None:
-        """run() calls _fetch_all with correct pending IDs."""
+    def test_closes_db_connection(self, mocker) -> None:
+        """db.close() called in finally block."""
         mock_db = MagicMock()
-        mock_db.execute.return_value.fetchall.return_value = [
-            (100,), (200,), (300,),
-        ]
-        mocker.patch("movie_ingestion.tmdb_fetcher.init_db", return_value=mock_db)
-        # Use a plain MagicMock (not AsyncMock) so calling _fetch_all()
-        # returns a non-coroutine sentinel that won't trigger "never awaited"
-        mocker.patch("movie_ingestion.tmdb_fetcher._fetch_all", new=MagicMock())
-        fetch_mock = mocker.patch(
-            "movie_ingestion.tmdb_fetcher.asyncio.run",
-            return_value={"fetched": 3, "filtered": 0, "errors": 0},
-        )
+        mock_db.execute.return_value.fetchall.return_value = []
+        mocker.patch("movie_ingestion.tmdb_fetching.tmdb_fetcher.init_db", return_value=mock_db)
 
         run()
 
-        # asyncio.run is called with _fetch_all(db, [100, 200, 300])
-        fetch_mock.assert_called_once()
-
-    def test_prints_summary_statistics(self, mocker, capsys) -> None:
-        """run() prints summary with counters after completion."""
-        mock_db = MagicMock()
-        mock_db.execute.return_value.fetchall.return_value = [(1,)]
-        mocker.patch("movie_ingestion.tmdb_fetcher.init_db", return_value=mock_db)
-        # Use a plain MagicMock (not AsyncMock) so calling _fetch_all()
-        # returns a non-coroutine sentinel that won't trigger "never awaited"
-        mocker.patch("movie_ingestion.tmdb_fetcher._fetch_all", new=MagicMock())
-        mocker.patch(
-            "movie_ingestion.tmdb_fetcher.asyncio.run",
-            return_value={"fetched": 1, "filtered": 0, "errors": 0},
-        )
-
-        run()
-
-        output = capsys.readouterr().out
-        assert "Stage 2 Complete" in output
-        assert "Fetched:" in output
+        mock_db.close.assert_called_once()

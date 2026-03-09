@@ -23,10 +23,12 @@ from dotenv import load_dotenv
 from movie_ingestion.tracker import (
     INGESTION_DATA_DIR,
     MovieStatus,
+    PipelineStage,
+    batch_log_filter,
     init_db,
 )
 from .http_client import create_client, create_ua_generator
-from .scraper import process_movie
+from .scraper import MovieResult, process_movie
 
 # Load .env for proxy credentials (DATA_IMPULSE_LOGIN, etc.)
 load_dotenv()
@@ -47,6 +49,15 @@ _PROGRESS_INTERVAL = 50
 # Start at 60 with DataImpulse IP rotation; tune based on error rate
 # metrics from the DataImpulse dashboard.
 _INITIAL_SEMAPHORE = 60
+
+_STAGE = PipelineStage.IMDB_SCRAPE
+
+# SQL for bulk-updating movie status after successful scraping
+_UPDATE_STATUS_SQL = """
+    UPDATE movie_progress
+    SET status = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE tmdb_id = ?
+"""
 
 # Append-only error log for exceptions that escape process_movie.
 # These would otherwise be silently lost since process_movie's own
@@ -121,9 +132,9 @@ async def _scrape_all(db, candidates: list[tuple[int, str]]) -> dict:
                   f"{batch_start_idx + len(chunk)} of {total})")
             print(f"{'=' * 60}\n")
 
+            # --- Phase 1: Async HTTP fetching (no DB writes) ---
             tasks = [
-                process_movie(client, semaphore, ua, tmdb_id, imdb_id, db,
-                              counters)
+                process_movie(client, semaphore, ua, tmdb_id, imdb_id)
                 for tmdb_id, imdb_id in chunk
             ]
 
@@ -134,9 +145,11 @@ async def _scrape_all(db, candidates: list[tuple[int, str]]) -> dict:
 
             batch_elapsed = time.monotonic() - batch_start
 
-            # Log unexpected exceptions (process_movie handles expected
-            # failures internally, so anything here is a genuine bug)
+            # --- Phase 2: Collect outcomes and do bulk DB writes ---
+            scraped_ids: list[int] = []
+            filtered_entries: list[tuple[int, str, str, str | None]] = []
             unexpected_errors = 0
+
             for (tmdb_id, imdb_id), result in zip(chunk, results):
                 if isinstance(result, Exception):
                     _log_unexpected_error(tmdb_id, result)
@@ -144,6 +157,28 @@ async def _scrape_all(db, candidates: list[tuple[int, str]]) -> dict:
                     unexpected_errors += 1
                     print(f"  [tmdb={tmdb_id}] UNEXPECTED ERROR: "
                           f"{type(result).__name__}: {result}")
+                elif result.status == "scraped":
+                    scraped_ids.append(result.tmdb_id)
+                    counters["scraped"] += 1
+                elif result.status == "filtered":
+                    filtered_entries.append(
+                        (result.tmdb_id, _STAGE, result.reason, None)
+                    )
+                    counters["filtered"] += 1
+                elif result.status == "error":
+                    counters["errors"] += 1
+
+            # Bulk DB writes — all writes happen here, sequentially,
+            # after async HTTP is complete.
+            db.executemany(
+                _UPDATE_STATUS_SQL,
+                [(MovieStatus.IMDB_SCRAPED, tid) for tid in scraped_ids],
+            )
+            batch_log_filter(db, filtered_entries)
+
+            commit_start = time.monotonic()
+            db.commit()
+            commit_elapsed = time.monotonic() - commit_start
 
             # Batch summary
             print(f"\n  Batch {batch_num} complete in {batch_elapsed:.1f}s "
@@ -154,10 +189,6 @@ async def _scrape_all(db, candidates: list[tuple[int, str]]) -> dict:
             if unexpected_errors:
                 print(f"  WARNING: {unexpected_errors} unexpected errors "
                       f"in this batch (see {_ERROR_LOG_PATH})")
-
-            commit_start = time.monotonic()
-            db.commit()
-            commit_elapsed = time.monotonic() - commit_start
             if commit_elapsed > 0.1:
                 print(f"  DB commit took {commit_elapsed:.2f}s")
 

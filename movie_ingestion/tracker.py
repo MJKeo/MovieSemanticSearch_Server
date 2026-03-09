@@ -97,14 +97,10 @@ CREATE TABLE IF NOT EXISTS movie_progress (
 );
 
 -- Every movie that gets dropped, with why.
--- title and year come from TMDB and are populated for any movie that made it
--- past Stage 1 (the initial adult/video filter). For movies filtered at
--- Stage 1, these will be NULL since we only have the tmdb_id at that point.
+-- Join on tmdb_data to get title/year when needed for display.
 CREATE TABLE IF NOT EXISTS filter_log (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     tmdb_id    INTEGER NOT NULL,
-    title      TEXT,
-    year       INTEGER,
     stage      TEXT NOT NULL,
     -- Stages: 'tmdb_export_filter', 'tmdb_fetch', 'tmdb_quality_funnel',
     --         'imdb_scrape', 'essential_data_check', 'llm_phase1',
@@ -140,7 +136,10 @@ CREATE TABLE IF NOT EXISTS tmdb_data (
     has_production_companies INTEGER DEFAULT 0,
     has_production_countries INTEGER DEFAULT 0,
     has_keywords        INTEGER DEFAULT 0,
-    has_cast_and_crew   INTEGER DEFAULT 0
+    has_cast_and_crew   INTEGER DEFAULT 0,
+    budget              INTEGER DEFAULT 0,
+    maturity_rating     TEXT,
+    reviews             TEXT
 );
 """
 
@@ -163,8 +162,29 @@ def init_db() -> sqlite3.Connection:
     # WAL mode gives better concurrent read performance (useful when
     # inspecting the DB in another terminal while a stage is running).
     db.execute("PRAGMA journal_mode=WAL")
+    # FULL sync ensures every commit is fsynced to disk, preventing
+    # corruption if the process is killed or the system crashes.
+    db.execute("PRAGMA synchronous=FULL")
 
     db.executescript(_SCHEMA_SQL)
+
+    # Migrate existing databases: add columns introduced after the initial
+    # schema.  Each ALTER TABLE is wrapped in a try/except because SQLite
+    # raises OperationalError if the column already exists (i.e. the DB was
+    # created with the updated CREATE TABLE statement above).
+    _MIGRATIONS = [
+        "ALTER TABLE tmdb_data ADD COLUMN budget INTEGER DEFAULT 0",
+        "ALTER TABLE tmdb_data ADD COLUMN maturity_rating TEXT",
+        "ALTER TABLE tmdb_data ADD COLUMN reviews TEXT",
+        "ALTER TABLE filter_log DROP COLUMN title",
+        "ALTER TABLE filter_log DROP COLUMN year",
+    ]
+    for stmt in _MIGRATIONS:
+        try:
+            db.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # Column already exists — nothing to do.
+
     db.commit()
 
     return db
@@ -185,13 +205,11 @@ def log_filter(
     """
     Record a filtered-out movie in filter_log and update movie_progress status.
 
-    Automatically attaches title and year from the ``tmdb_data`` table if the
-    movie was fetched in Stage 2.  For Stage 1 filtering, title and year will
-    be NULL since no ``tmdb_data`` row exists yet.
-
     The UPDATE to movie_progress is intentionally tolerant of missing rows —
     Stage 1 filtered movies are never inserted into movie_progress, so the
     UPDATE matches zero rows, which is correct behavior.
+
+    Does NOT commit — the caller is responsible for batching commits.
 
     Args:
         db:      Open SQLite connection.
@@ -200,31 +218,40 @@ def log_filter(
         reason:  Human-readable filter reason (e.g., 'adult', 'missing_imdb_id').
         details: Optional JSON string with additional context.
     """
-    title = None
-    year = None
-
-    # Pull title/year from tmdb_data table if available (populated in Stage 2).
-    # For Stage 1 filtering, this row won't exist yet, so title/year stay NULL.
-    row = db.execute(
-        "SELECT title, release_date FROM tmdb_data WHERE tmdb_id = ?", (tmdb_id,)
-    ).fetchone()
-    if row:
-        title = row[0]
-        release_date = row[1] or ""
-        if len(release_date) >= 4:
-            try:
-                year = int(release_date[:4])
-            except ValueError:
-                pass
-
     db.execute(
-        """INSERT INTO filter_log (tmdb_id, title, year, stage, reason, details)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (tmdb_id, title, year, stage, reason, details),
+        """INSERT INTO filter_log (tmdb_id, stage, reason, details)
+           VALUES (?, ?, ?, ?)""",
+        (tmdb_id, stage, reason, details),
     )
     db.execute(
         "UPDATE movie_progress SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE tmdb_id = ?",
         (MovieStatus.FILTERED_OUT, tmdb_id),
+    )
+
+
+def batch_log_filter(
+    db: sqlite3.Connection,
+    entries: list[tuple[int, str, str, str | None]],
+) -> None:
+    """
+    Batch version of log_filter — bulk-insert into filter_log and bulk-update
+    movie_progress for multiple filtered movies at once.
+
+    Each entry is a tuple of (tmdb_id, stage, reason, details).
+
+    Does NOT commit — the caller is responsible for batching commits.
+    """
+    if not entries:
+        return
+
+    db.executemany(
+        """INSERT INTO filter_log (tmdb_id, stage, reason, details)
+           VALUES (?, ?, ?, ?)""",
+        entries,
+    )
+    db.executemany(
+        "UPDATE movie_progress SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE tmdb_id = ?",
+        [(MovieStatus.FILTERED_OUT, e[0]) for e in entries],
     )
 
 

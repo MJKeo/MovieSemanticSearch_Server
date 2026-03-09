@@ -2,18 +2,17 @@
 Unit tests for movie_ingestion.imdb_scraping.scraper.
 
 Tests the per-movie process_movie orchestration (failure routing for
-404, fetch failure, transform errors, and the success path).
+404, fetch failure, transform errors, and the success path) and the
+MovieResult NamedTuple.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from movie_ingestion.imdb_scraping.http_client import FetchResult
-from movie_ingestion.imdb_scraping.scraper import process_movie
+from movie_ingestion.imdb_scraping.scraper import MovieResult, process_movie
 from movie_ingestion.imdb_scraping.models import IMDBScrapedMovie
-from movie_ingestion.tracker import MovieStatus
 
 
 # ---------------------------------------------------------------------------
@@ -47,11 +46,6 @@ _SAMPLE_TITLE_DATA = {
 }
 
 
-def _make_counters() -> dict:
-    """Return a fresh counters dict matching the run module's structure."""
-    return {"scraped": 0, "filtered": 0, "errors": 0}
-
-
 def _success(data: dict = _SAMPLE_TITLE_DATA) -> tuple[FetchResult, dict]:
     """Return a SUCCESS fetch result tuple."""
     return (FetchResult.SUCCESS, data)
@@ -65,6 +59,38 @@ def _failed() -> tuple[FetchResult, None]:
 def _http_404() -> tuple[FetchResult, None]:
     """Return an HTTP_404 fetch result tuple."""
     return (FetchResult.HTTP_404, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests: MovieResult
+# ---------------------------------------------------------------------------
+
+
+class TestMovieResult:
+    """Tests for the MovieResult NamedTuple."""
+
+    def test_movie_result_fields(self) -> None:
+        """MovieResult has tmdb_id (int), status (str), reason (str|None) fields."""
+        result = MovieResult(tmdb_id=42, status="scraped", reason=None)
+
+        assert result.tmdb_id == 42
+        assert result.status == "scraped"
+        assert result.reason is None
+
+    def test_movie_result_is_namedtuple(self) -> None:
+        """MovieResult supports indexing and unpacking like a NamedTuple."""
+        result = MovieResult(tmdb_id=1, status="filtered", reason="imdb_404")
+
+        # Supports indexing
+        assert result[0] == 1
+        assert result[1] == "filtered"
+        assert result[2] == "imdb_404"
+
+        # Supports unpacking
+        tid, status, reason = result
+        assert tid == 1
+        assert status == "filtered"
+        assert reason == "imdb_404"
 
 
 # ---------------------------------------------------------------------------
@@ -83,75 +109,107 @@ class TestProcessMovie:
             return_value=return_value,
         )
 
-    @pytest.mark.asyncio
-    async def test_happy_path_success(self) -> None:
-        """Successful fetch + transform: JSON saved, status updated, scraped counter incremented."""
-        counters = _make_counters()
-        db = MagicMock()
+    async def test_success_returns_scraped_result(self) -> None:
+        """Successful fetch+transform returns MovieResult with status='scraped', reason=None."""
+        with (
+            self._patch_fetch(_success()),
+            patch("movie_ingestion.imdb_scraping.scraper.save_json"),
+        ):
+            result = await process_movie(
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
+            )
 
+        assert isinstance(result, MovieResult)
+        assert result.status == "scraped"
+        assert result.reason is None
+        assert result.tmdb_id == 100
+
+    async def test_success_saves_json_file(self) -> None:
+        """Successful path: save_json called with correct path and model dump."""
         with (
             self._patch_fetch(_success()),
             patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
         ):
             await process_movie(
-                AsyncMock(), asyncio.Semaphore(30), MagicMock(),
-                tmdb_id=100, imdb_id="tt0000100", db=db, counters=counters,
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=42, imdb_id="tt0000042",
             )
 
-        assert counters["scraped"] == 1
         mock_save.assert_called_once()
-        db.execute.assert_called()
+        path_arg = mock_save.call_args[0][0]
+        assert str(path_arg).endswith("42.json")
+        # Second arg should be a dict (model_dump output)
+        data_arg = mock_save.call_args[0][1]
+        assert isinstance(data_arg, dict)
 
-    @pytest.mark.asyncio
-    async def test_http_404_filters_movie(self) -> None:
-        """HTTP_404 result: log_filter called with reason='imdb_404', filtered counter incremented."""
-        counters = _make_counters()
-        db = MagicMock()
+    async def test_http_404_returns_filtered_result(self) -> None:
+        """HTTP_404 fetch returns MovieResult(status='filtered', reason='imdb_404')."""
+        with self._patch_fetch(_http_404()):
+            result = await process_movie(
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
+            )
 
+        assert result.status == "filtered"
+        assert result.reason == "imdb_404"
+
+    async def test_http_404_does_not_save_json(self) -> None:
+        """HTTP_404 path: save_json is NOT called."""
         with (
             self._patch_fetch(_http_404()),
-            patch("movie_ingestion.imdb_scraping.scraper.log_filter") as mock_log,
             patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
         ):
             await process_movie(
-                AsyncMock(), asyncio.Semaphore(30), MagicMock(),
-                tmdb_id=100, imdb_id="tt0000100", db=db, counters=counters,
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
             )
 
-        assert counters["filtered"] == 1
-        mock_log.assert_called_once()
-        # Verify reason is "imdb_404" (passed as keyword arg)
-        assert mock_log.call_args[1]["reason"] == "imdb_404"
         mock_save.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_fetch_failed_filters_movie(self) -> None:
-        """FAILED result: log_filter called with reason='fetch_failed', filtered counter incremented."""
-        counters = _make_counters()
-        db = MagicMock()
+    async def test_fetch_failed_returns_filtered_result(self) -> None:
+        """FAILED fetch returns MovieResult(status='filtered', reason='fetch_failed')."""
+        with self._patch_fetch(_failed()):
+            result = await process_movie(
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
+            )
 
+        assert result.status == "filtered"
+        assert result.reason == "fetch_failed"
+
+    async def test_fetch_failed_does_not_save_json(self) -> None:
+        """FAILED path: save_json is NOT called."""
         with (
             self._patch_fetch(_failed()),
-            patch("movie_ingestion.imdb_scraping.scraper.log_filter") as mock_log,
             patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
         ):
             await process_movie(
-                AsyncMock(), asyncio.Semaphore(30), MagicMock(),
-                tmdb_id=100, imdb_id="tt0000100", db=db, counters=counters,
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
             )
 
-        assert counters["filtered"] == 1
-        mock_log.assert_called_once()
-        # Verify reason is "fetch_failed" (passed as keyword arg)
-        assert mock_log.call_args[1]["reason"] == "fetch_failed"
         mock_save.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_transform_exception_increments_errors(self) -> None:
-        """Transform raises an exception: errors counter incremented, movie skipped."""
-        counters = _make_counters()
-        db = MagicMock()
+    async def test_transform_exception_returns_error_result(self) -> None:
+        """Transform raises exception: returns MovieResult(status='error', reason=None)."""
+        with (
+            self._patch_fetch(_success()),
+            patch(
+                "movie_ingestion.imdb_scraping.scraper.transform_graphql_response",
+                side_effect=ValueError("bad data"),
+            ),
+        ):
+            result = await process_movie(
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
+            )
 
+        assert result.status == "error"
+        assert result.reason is None
+
+    async def test_transform_exception_does_not_save_json(self) -> None:
+        """Transform error path: save_json is NOT called."""
         with (
             self._patch_fetch(_success()),
             patch(
@@ -161,56 +219,25 @@ class TestProcessMovie:
             patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
         ):
             await process_movie(
-                AsyncMock(), asyncio.Semaphore(30), MagicMock(),
-                tmdb_id=100, imdb_id="tt0000100", db=db, counters=counters,
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
             )
 
-        assert counters["errors"] == 1
-        assert counters["scraped"] == 0
         mock_save.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_db_status_update_on_success(self) -> None:
-        """db.execute called with correct UPDATE SQL and status on success."""
-        counters = _make_counters()
-        db = MagicMock()
-
+    async def test_no_db_interaction(self) -> None:
+        """process_movie never touches a database — it only returns a result."""
         with (
             self._patch_fetch(_success()),
             patch("movie_ingestion.imdb_scraping.scraper.save_json"),
         ):
-            await process_movie(
-                AsyncMock(), asyncio.Semaphore(30), MagicMock(),
-                tmdb_id=777, imdb_id="tt0000777", db=db, counters=counters,
+            # process_movie takes no db parameter — this test verifies the
+            # API contract: it returns a result, not writes to a database.
+            result = await process_movie(
+                AsyncMock(), MagicMock(), MagicMock(),
+                tmdb_id=100, imdb_id="tt0000100",
             )
 
-        # Find the status update call among db.execute calls
-        update_calls = [
-            c for c in db.execute.call_args_list
-            if "UPDATE movie_progress" in str(c)
-        ]
-        assert len(update_calls) == 1
-        args = update_calls[0][0]
-        assert args[1] == (MovieStatus.IMDB_SCRAPED, 777)
-
-    @pytest.mark.asyncio
-    async def test_save_json_called_with_correct_path(self) -> None:
-        """save_json is called with the tmdb_id-based path and model dump."""
-        counters = _make_counters()
-        db = MagicMock()
-
-        with (
-            self._patch_fetch(_success()),
-            patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
-        ):
-            await process_movie(
-                AsyncMock(), asyncio.Semaphore(30), MagicMock(),
-                tmdb_id=42, imdb_id="tt0000042", db=db, counters=counters,
-            )
-
-        mock_save.assert_called_once()
-        path_arg = mock_save.call_args[0][0]
-        assert str(path_arg).endswith("42.json")
-        # Second arg should be a dict (model_dump output)
-        data_arg = mock_save.call_args[0][1]
-        assert isinstance(data_arg, dict)
+        # The function signature has no db parameter — if it did, this
+        # test would fail at the call site. The result is a plain NamedTuple.
+        assert isinstance(result, MovieResult)

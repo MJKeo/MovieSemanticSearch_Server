@@ -18,7 +18,7 @@ from pathlib import Path
 # Data directory
 # ---------------------------------------------------------------------------
 
-_IMDB_DIR = Path(__file__).resolve().parent.parent / "ingestion_data" / "imdb"
+_IMDB_DIR = Path(__file__).resolve().parent.parent.parent / "ingestion_data" / "imdb"
 
 
 # ---------------------------------------------------------------------------

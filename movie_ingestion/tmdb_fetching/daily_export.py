@@ -160,7 +160,7 @@ def _flush_batch(db, pending_inserts: list[tuple], filter_entries: list[tuple]) 
     Args:
         db:              Open SQLite connection.
         pending_inserts: List of (tmdb_id,) tuples for movie_progress.
-        filter_entries:  List of (tmdb_id, title, year, stage, reason, details)
+        filter_entries:  List of (tmdb_id, stage, reason, details)
                          tuples for filter_log.
     """
     if pending_inserts:
@@ -170,8 +170,8 @@ def _flush_batch(db, pending_inserts: list[tuple], filter_entries: list[tuple]) 
         )
     if filter_entries:
         db.executemany(
-            """INSERT INTO filter_log (tmdb_id, title, year, stage, reason, details)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO filter_log (tmdb_id, stage, reason, details)
+               VALUES (?, ?, ?, ?)""",
             filter_entries,
         )
     db.commit()
@@ -241,8 +241,7 @@ def run() -> None:
             inserted_count += 1
         else:
             # Entry filtered out — queue for filter_log
-            # title and year are NULL at Stage 1 (no TMDB detail file exists yet)
-            filter_entries.append((tmdb_id, None, None, _STAGE, reason, None))
+            filter_entries.append((tmdb_id, _STAGE, reason, None))
             filtered_count += 1
             filter_reasons[reason] += 1
 

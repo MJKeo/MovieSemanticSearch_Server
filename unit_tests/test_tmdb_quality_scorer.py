@@ -897,7 +897,7 @@ class TestRun:
         for tmdb_id in [101, 102, 103]:
             _seed_movie(run_db, tmdb_id)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -908,7 +908,7 @@ class TestRun:
         """run() writes float values (not integers or strings) to quality_score."""
         _seed_movie(run_db, 201)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -918,7 +918,7 @@ class TestRun:
         """run() does NOT modify movie status — it remains 'tmdb_fetched'."""
         _seed_movie(run_db, 301)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -932,7 +932,7 @@ class TestRun:
         conn.commit()
         conn.close()
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -940,7 +940,7 @@ class TestRun:
 
     def test_empty_db_exits_gracefully(self, run_db) -> None:
         """run() exits without error or exception when no tmdb_fetched movies exist."""
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()  # must not raise
 
@@ -948,12 +948,12 @@ class TestRun:
         """Calling run() twice produces identical quality_scores (idempotency)."""
         _seed_movie(run_db, 501)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
         score_first = _read_score(run_db, 501)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
         score_second = _read_score(run_db, 501)
@@ -965,7 +965,7 @@ class TestRun:
         for tmdb_id in range(601, 611):
             _seed_movie(run_db, tmdb_id)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -986,7 +986,7 @@ class TestRun:
         _seed_movie(run_db, 701, vote_count=2000)
         _seed_movie(run_db, 702, vote_count=1)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -1000,7 +1000,7 @@ class TestRun:
         _seed_movie(run_db, 802, watch_provider_keys=b"",
                     release_date=past_date)
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -1016,7 +1016,7 @@ class TestRun:
         ).fetchone()[0]
         conn.close()
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 
@@ -1039,7 +1039,7 @@ class TestRun:
         _seed_movie(run_db, 1002, watch_provider_keys=b"", release_date=recent_date,
                     vote_count=50, popularity=0.5)   # within window → 0.0 wp
 
-        with patch("movie_ingestion.tmdb_quality_scorer.init_db",
+        with patch("movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer.init_db",
                    side_effect=lambda: _make_run_conn(run_db)):
             run()
 

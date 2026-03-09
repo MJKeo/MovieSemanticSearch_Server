@@ -1,27 +1,28 @@
 """
 Per-movie IMDB scraping orchestration.
 
-Coordinates the GraphQL fetch, response transformation, and persistence
+Coordinates the GraphQL fetch, response transformation, and JSON persistence
 for a single movie. Called by the run module's batch loop.
 
+Returns a result describing the outcome — the caller (run.py) is responsible
+for all database writes, which happen in bulk after the async batch completes.
+
 Failure routing:
-  - GraphQL returns null title → FILTERED_OUT (movie doesn't exist on IMDB)
-  - Fetch failed after retries → FILTERED_OUT (infrastructure failure)
-  - Transform exception → counted as error, movie skipped
-  - Full success → save merged data, mark imdb_scraped
+  - GraphQL returns null title → filtered (movie doesn't exist on IMDB)
+  - Fetch failed after retries → filtered (infrastructure failure)
+  - Transform exception → error, movie skipped
+  - Full success → save JSON, return scraped result
 """
 
-import sqlite3
 import time
+from typing import NamedTuple
 
 import httpx
 from fake_useragent import UserAgent
 
 from movie_ingestion.tracker import (
     INGESTION_DATA_DIR,
-    MovieStatus,
     PipelineStage,
-    log_filter,
     save_json,
 )
 from .http_client import FetchResult, fetch_movie
@@ -35,12 +36,17 @@ from .parsers import transform_graphql_response
 _STAGE = PipelineStage.IMDB_SCRAPE
 _IMDB_JSON_DIR = INGESTION_DATA_DIR / "imdb"
 
-# SQL for updating movie status after successful scraping
-_UPDATE_STATUS_SQL = """
-    UPDATE movie_progress
-    SET status = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE tmdb_id = ?
-"""
+
+# ---------------------------------------------------------------------------
+# Result type returned by process_movie
+# ---------------------------------------------------------------------------
+
+
+class MovieResult(NamedTuple):
+    """Outcome of processing a single movie. Used by run.py for bulk DB writes."""
+    tmdb_id: int
+    status: str        # "scraped", "filtered", or "error"
+    reason: str | None  # filter reason (e.g., "imdb_404"), None for scraped/error
 
 
 # ---------------------------------------------------------------------------
@@ -54,14 +60,13 @@ async def process_movie(
     ua: UserAgent,
     tmdb_id: int,
     imdb_id: str,
-    db: sqlite3.Connection,
-    counters: dict,
-) -> None:
+) -> MovieResult:
     """
     Fetch, transform, and persist IMDB data for a single movie.
 
-    This is the main per-movie coroutine called from the batch loop in
-    run.py. Updates counters dict in-place (safe in single-threaded asyncio).
+    Performs only HTTP fetching, transformation, and JSON file persistence.
+    Returns a MovieResult describing the outcome — all database writes
+    are handled by the caller in bulk after the async batch completes.
 
     Args:
         client: Shared httpx.AsyncClient with proxy configuration.
@@ -69,8 +74,6 @@ async def process_movie(
         ua: UserAgent generator for random desktop UA strings.
         tmdb_id: TMDB movie ID (used for JSON filename and tracker updates).
         imdb_id: IMDB title ID (e.g., "tt0137523", used for GraphQL variable).
-        db: Open SQLite connection for tracker updates.
-        counters: Mutable dict tracking scraped/filtered/errors counts.
     """
     movie_start = time.monotonic()
     tag = f"[tmdb={tmdb_id}]"
@@ -82,16 +85,12 @@ async def process_movie(
     if result_type == FetchResult.HTTP_404:
         elapsed = time.monotonic() - movie_start
         print(f"  {tag} Not found on IMDB — filtering out ({elapsed:.2f}s)")
-        log_filter(db, tmdb_id, _STAGE, reason="imdb_404")
-        counters["filtered"] += 1
-        return
+        return MovieResult(tmdb_id, "filtered", "imdb_404")
 
     if result_type == FetchResult.FAILED:
         elapsed = time.monotonic() - movie_start
         print(f"  {tag} Fetch failed — filtering out ({elapsed:.2f}s)")
-        log_filter(db, tmdb_id, _STAGE, reason="fetch_failed")
-        counters["filtered"] += 1
-        return
+        return MovieResult(tmdb_id, "filtered", "fetch_failed")
 
     # Step 3: Transform the GraphQL response into the output model.
     # Wrap in try/except so a parser bug on one movie doesn't crash the batch.
@@ -101,13 +100,10 @@ async def process_movie(
         elapsed = time.monotonic() - movie_start
         print(f"  {tag} Transform FAILED: {type(exc).__name__}: "
               f"{str(exc)[:120]} ({elapsed:.2f}s)")
-        counters["errors"] += 1
-        return
+        return MovieResult(tmdb_id, "error", None)
 
-    # Step 4: Save the merged JSON file
+    # Step 4: Save the merged JSON file (atomic write-then-rename, crash-safe)
     json_path = _IMDB_JSON_DIR / f"{tmdb_id}.json"
     save_json(json_path, merged.model_dump(mode="json"))
 
-    # Step 5: Update tracker status to imdb_scraped
-    db.execute(_UPDATE_STATUS_SQL, (MovieStatus.IMDB_SCRAPED, tmdb_id))
-    counters["scraped"] += 1
+    return MovieResult(tmdb_id, "scraped", None)

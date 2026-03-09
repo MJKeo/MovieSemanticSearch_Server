@@ -230,17 +230,18 @@ class TestAdaptiveRateLimiterAcquire:
         assert rl.current_rate == 40.0
 
     @pytest.mark.asyncio
-    async def test_acquire_no_increase_when_no_429_history(self, mocker) -> None:
-        """acquire does not increase rate if no 429 has ever been received."""
-        rl = AdaptiveRateLimiter(initial_rate=36.0)
-        # _last_429_time stays 0.0 (default)
+    async def test_acquire_no_increase_when_within_clean_window(self, mocker) -> None:
+        """acquire does not increase rate when last 429 is within clean_window."""
+        rl = AdaptiveRateLimiter(initial_rate=36.0, clean_window=120.0)
+        # Place a recent 429 so the clean window check fails
+        rl._last_429_time = rl._last_refill + 5.0
 
-        mocker.patch("db.tmdb.time.monotonic", return_value=rl._last_refill + 300.0)
+        mocker.patch("db.tmdb.time.monotonic", return_value=rl._last_refill + 50.0)
         mocker.patch("db.tmdb.asyncio.sleep", new_callable=AsyncMock)
 
         await rl.acquire()
 
-        assert rl.current_rate == 36.0  # Unchanged
+        assert rl.current_rate == 36.0  # Unchanged — still within clean_window
 
     @pytest.mark.asyncio
     async def test_acquire_no_increase_within_same_increase_interval(self, mocker) -> None:

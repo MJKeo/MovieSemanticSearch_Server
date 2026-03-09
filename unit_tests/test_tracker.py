@@ -15,6 +15,7 @@ from movie_ingestion.tracker import (
     TRACKER_DB_PATH,
     PipelineStage,
     _SCHEMA_SQL,
+    batch_log_filter,
     init_db,
     load_json,
     log_filter,
@@ -122,13 +123,13 @@ class TestInitDb:
         db.close()
 
         expected = {
-            "id", "tmdb_id", "title", "year", "stage",
+            "id", "tmdb_id", "stage",
             "reason", "details", "created_at",
         }
         assert col_names == expected
 
     def test_creates_tmdb_data_table(self, mocker, tmp_path) -> None:
-        """init_db creates the tmdb_data table with all 18 columns."""
+        """init_db creates the tmdb_data table with all 21 columns."""
         data_dir = tmp_path / "ingestion_data"
         mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
         mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
@@ -137,7 +138,7 @@ class TestInitDb:
         cols = db.execute("PRAGMA table_info(tmdb_data)").fetchall()
         db.close()
 
-        assert len(cols) == 18
+        assert len(cols) == 21
 
     def test_creates_indexes(self, mocker, tmp_path) -> None:
         """init_db creates all three expected indexes."""
@@ -188,6 +189,91 @@ class TestInitDb:
         assert isinstance(db, sqlite3.Connection)
         db.close()
 
+    def test_enables_synchronous_full(self, mocker, tmp_path) -> None:
+        """init_db sets PRAGMA synchronous to FULL (value 2)."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        sync_mode = db.execute("PRAGMA synchronous").fetchone()[0]
+        db.close()
+
+        assert sync_mode == 2
+
+    def test_creates_tmdb_data_budget_column(self, mocker, tmp_path) -> None:
+        """init_db creates the tmdb_data table with a budget column."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(tmdb_data)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "budget" in col_names
+
+    def test_creates_tmdb_data_maturity_rating_column(self, mocker, tmp_path) -> None:
+        """init_db creates the tmdb_data table with a maturity_rating column."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(tmdb_data)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "maturity_rating" in col_names
+
+    def test_creates_tmdb_data_reviews_column(self, mocker, tmp_path) -> None:
+        """init_db creates the tmdb_data table with a reviews column."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(tmdb_data)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "reviews" in col_names
+
+    def test_migration_drops_filter_log_title_year(self, mocker, tmp_path) -> None:
+        """init_db migrates old filter_log schema by dropping title and year columns."""
+        data_dir = tmp_path / "ingestion_data"
+        db_path = data_dir / "tracker.db"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", db_path)
+
+        # Create old schema with title/year columns
+        data_dir.mkdir(parents=True, exist_ok=True)
+        old_db = sqlite3.connect(str(db_path))
+        old_db.execute("""
+            CREATE TABLE IF NOT EXISTS filter_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tmdb_id INTEGER NOT NULL,
+                title TEXT,
+                year INTEGER,
+                stage TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        old_db.commit()
+        old_db.close()
+
+        # Run init_db which should drop title/year via migrations
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(filter_log)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "title" not in col_names
+        assert "year" not in col_names
+
 
 # ---------------------------------------------------------------------------
 # log_filter
@@ -229,87 +315,30 @@ class TestLogFilter:
         count = in_memory_db.execute("SELECT COUNT(*) FROM filter_log").fetchone()[0]
         assert count == 1
 
-    def test_pulls_title_from_tmdb_data(self, in_memory_db) -> None:
-        """log_filter populates title from tmdb_data table when available."""
+    def test_does_not_commit(self, in_memory_db) -> None:
+        """log_filter does not call db.commit() — caller is responsible."""
+        # Insert a pending movie, commit, then call log_filter WITHOUT committing.
+        # Open a second connection and verify the filter_log row is NOT visible
+        # (proving log_filter did not commit on its own).
         in_memory_db.execute(
-            "INSERT INTO tmdb_data (tmdb_id, title, release_date) VALUES (300, 'Inception', '2010-07-16')"
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (400, 'pending')"
         )
-
-        log_filter(in_memory_db, tmdb_id=300, stage="tmdb_fetch", reason="test")
         in_memory_db.commit()
 
-        title = in_memory_db.execute("SELECT title FROM filter_log WHERE tmdb_id = 300").fetchone()[0]
-        assert title == "Inception"
+        log_filter(in_memory_db, tmdb_id=400, stage="tmdb_fetch", reason="test")
 
-    def test_parses_year_from_release_date(self, in_memory_db) -> None:
-        """log_filter parses year from first 4 characters of release_date."""
-        in_memory_db.execute(
-            "INSERT INTO tmdb_data (tmdb_id, title, release_date) VALUES (301, 'Test', '2010-07-16')"
-        )
+        # The row should be visible within the same connection (uncommitted)
+        count_same = in_memory_db.execute(
+            "SELECT COUNT(*) FROM filter_log WHERE tmdb_id = 400"
+        ).fetchone()[0]
+        assert count_same == 1
 
-        log_filter(in_memory_db, tmdb_id=301, stage="tmdb_fetch", reason="test")
-        in_memory_db.commit()
-
-        year = in_memory_db.execute("SELECT year FROM filter_log WHERE tmdb_id = 301").fetchone()[0]
-        assert year == 2010
-
-    def test_short_release_date_leaves_year_null(self, in_memory_db) -> None:
-        """log_filter leaves year as NULL when release_date is shorter than 4 chars."""
-        in_memory_db.execute(
-            "INSERT INTO tmdb_data (tmdb_id, title, release_date) VALUES (302, 'Test', '20')"
-        )
-
-        log_filter(in_memory_db, tmdb_id=302, stage="tmdb_fetch", reason="test")
-        in_memory_db.commit()
-
-        year = in_memory_db.execute("SELECT year FROM filter_log WHERE tmdb_id = 302").fetchone()[0]
-        assert year is None
-
-    def test_empty_release_date_leaves_year_null(self, in_memory_db) -> None:
-        """log_filter leaves year as NULL when release_date is empty string."""
-        in_memory_db.execute(
-            "INSERT INTO tmdb_data (tmdb_id, title, release_date) VALUES (303, 'Test', '')"
-        )
-
-        log_filter(in_memory_db, tmdb_id=303, stage="tmdb_fetch", reason="test")
-        in_memory_db.commit()
-
-        year = in_memory_db.execute("SELECT year FROM filter_log WHERE tmdb_id = 303").fetchone()[0]
-        assert year is None
-
-    def test_null_release_date_leaves_year_null(self, in_memory_db) -> None:
-        """log_filter leaves year as NULL when release_date is NULL."""
-        in_memory_db.execute(
-            "INSERT INTO tmdb_data (tmdb_id, title, release_date) VALUES (304, 'Test', NULL)"
-        )
-
-        log_filter(in_memory_db, tmdb_id=304, stage="tmdb_fetch", reason="test")
-        in_memory_db.commit()
-
-        year = in_memory_db.execute("SELECT year FROM filter_log WHERE tmdb_id = 304").fetchone()[0]
-        assert year is None
-
-    def test_unparseable_year_leaves_year_null(self, in_memory_db) -> None:
-        """log_filter leaves year as NULL when release_date starts with non-numeric chars."""
-        in_memory_db.execute(
-            "INSERT INTO tmdb_data (tmdb_id, title, release_date) VALUES (305, 'Test', 'abcd-01-01')"
-        )
-
-        log_filter(in_memory_db, tmdb_id=305, stage="tmdb_fetch", reason="test")
-        in_memory_db.commit()
-
-        year = in_memory_db.execute("SELECT year FROM filter_log WHERE tmdb_id = 305").fetchone()[0]
-        assert year is None
-
-    def test_no_tmdb_data_leaves_title_year_null(self, in_memory_db) -> None:
-        """log_filter sets title and year to NULL when tmdb_data row does not exist."""
-        log_filter(in_memory_db, tmdb_id=306, stage="tmdb_export_filter", reason="adult")
-        in_memory_db.commit()
-
-        row = in_memory_db.execute(
-            "SELECT title, year FROM filter_log WHERE tmdb_id = 306"
-        ).fetchone()
-        assert row == (None, None)
+        # Roll back to prove it was never committed
+        in_memory_db.rollback()
+        count_after = in_memory_db.execute(
+            "SELECT COUNT(*) FROM filter_log WHERE tmdb_id = 400"
+        ).fetchone()[0]
+        assert count_after == 0
 
     def test_details_stored_when_provided(self, in_memory_db) -> None:
         """log_filter stores details field when provided."""
@@ -356,6 +385,135 @@ class TestLogFilter:
             for row in in_memory_db.execute("SELECT id FROM filter_log ORDER BY id").fetchall()
         ]
         assert ids == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# batch_log_filter
+# ---------------------------------------------------------------------------
+
+
+class TestBatchLogFilter:
+    """Tests for the bulk version of log_filter."""
+
+    def test_batch_inserts_all_filter_log_rows(self, in_memory_db) -> None:
+        """batch_log_filter inserts one filter_log row per entry."""
+        entries = [
+            (100, "tmdb_fetch", "missing_imdb_id", None),
+            (200, "tmdb_fetch", "tmdb_404", None),
+            (300, "imdb_scrape", "fetch_failed", '{"attempt": 3}'),
+        ]
+
+        batch_log_filter(in_memory_db, entries)
+        in_memory_db.commit()
+
+        rows = in_memory_db.execute(
+            "SELECT tmdb_id, stage, reason, details FROM filter_log ORDER BY tmdb_id"
+        ).fetchall()
+
+        assert len(rows) == 3
+        assert rows[0] == (100, "tmdb_fetch", "missing_imdb_id", None)
+        assert rows[1] == (200, "tmdb_fetch", "tmdb_404", None)
+        assert rows[2] == (300, "imdb_scrape", "fetch_failed", '{"attempt": 3}')
+
+    def test_batch_updates_all_movie_progress_statuses(self, in_memory_db) -> None:
+        """batch_log_filter updates all matching movie_progress rows to filtered_out."""
+        for tid in (100, 200, 300):
+            in_memory_db.execute(
+                "INSERT INTO movie_progress (tmdb_id, status) VALUES (?, 'pending')",
+                (tid,),
+            )
+        in_memory_db.commit()
+
+        entries = [
+            (100, "tmdb_fetch", "reason_a", None),
+            (200, "tmdb_fetch", "reason_b", None),
+            (300, "tmdb_fetch", "reason_c", None),
+        ]
+        batch_log_filter(in_memory_db, entries)
+        in_memory_db.commit()
+
+        statuses = in_memory_db.execute(
+            "SELECT status FROM movie_progress ORDER BY tmdb_id"
+        ).fetchall()
+        assert all(s[0] == "filtered_out" for s in statuses)
+
+    def test_batch_empty_list_is_noop(self, in_memory_db) -> None:
+        """Empty entry list does not insert rows and does not raise."""
+        batch_log_filter(in_memory_db, [])
+        in_memory_db.commit()
+
+        count = in_memory_db.execute("SELECT COUNT(*) FROM filter_log").fetchone()[0]
+        assert count == 0
+
+    def test_batch_tolerates_missing_progress_rows(self, in_memory_db) -> None:
+        """batch_log_filter creates filter_log rows even without movie_progress entries."""
+        entries = [
+            (999, "tmdb_export_filter", "adult", None),
+        ]
+        batch_log_filter(in_memory_db, entries)
+        in_memory_db.commit()
+
+        count = in_memory_db.execute("SELECT COUNT(*) FROM filter_log").fetchone()[0]
+        assert count == 1
+
+    def test_batch_does_not_commit(self, in_memory_db) -> None:
+        """batch_log_filter does not call db.commit() — caller is responsible."""
+        entries = [(100, "tmdb_fetch", "reason", None)]
+        batch_log_filter(in_memory_db, entries)
+
+        # Row visible in same connection (uncommitted transaction)
+        count = in_memory_db.execute(
+            "SELECT COUNT(*) FROM filter_log WHERE tmdb_id = 100"
+        ).fetchone()[0]
+        assert count == 1
+
+        # Roll back proves batch_log_filter did not commit
+        in_memory_db.rollback()
+        count_after = in_memory_db.execute(
+            "SELECT COUNT(*) FROM filter_log WHERE tmdb_id = 100"
+        ).fetchone()[0]
+        assert count_after == 0
+
+    def test_batch_single_entry(self, in_memory_db) -> None:
+        """batch_log_filter handles a single-entry list correctly."""
+        entries = [(42, "imdb_scrape", "imdb_404", None)]
+        batch_log_filter(in_memory_db, entries)
+        in_memory_db.commit()
+
+        row = in_memory_db.execute(
+            "SELECT tmdb_id, stage, reason FROM filter_log"
+        ).fetchone()
+        assert row == (42, "imdb_scrape", "imdb_404")
+
+    def test_batch_preserves_details_field(self, in_memory_db) -> None:
+        """batch_log_filter stores details JSON string correctly."""
+        details_json = '{"http_status": 500, "retries": 3}'
+        entries = [(100, "tmdb_fetch", "fetch_error", details_json)]
+        batch_log_filter(in_memory_db, entries)
+        in_memory_db.commit()
+
+        details = in_memory_db.execute(
+            "SELECT details FROM filter_log WHERE tmdb_id = 100"
+        ).fetchone()[0]
+        assert details == details_json
+
+    def test_batch_mixed_details_null_and_present(self, in_memory_db) -> None:
+        """batch_log_filter handles mix of entries with and without details."""
+        entries = [
+            (100, "tmdb_fetch", "reason_a", '{"key": "val"}'),
+            (200, "tmdb_fetch", "reason_b", None),
+            (300, "tmdb_fetch", "reason_c", '{"other": 1}'),
+        ]
+        batch_log_filter(in_memory_db, entries)
+        in_memory_db.commit()
+
+        rows = in_memory_db.execute(
+            "SELECT tmdb_id, details FROM filter_log ORDER BY tmdb_id"
+        ).fetchall()
+
+        assert rows[0] == (100, '{"key": "val"}')
+        assert rows[1] == (200, None)
+        assert rows[2] == (300, '{"other": 1}')
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ from pathlib import Path
 import struct
 import time
 import traceback
+from typing import NamedTuple
 from datetime import datetime, timezone
 
 import httpx
@@ -35,8 +36,8 @@ from movie_ingestion.tracker import (
     INGESTION_DATA_DIR,
     MovieStatus,
     PipelineStage,
+    batch_log_filter,
     init_db,
-    log_filter,
 )
 
 # ---------------------------------------------------------------------------
@@ -83,8 +84,9 @@ _INSERT_TMDB_DATA_SQL = """
         watch_provider_keys, vote_count, popularity, vote_average,
         overview_length, genre_count, has_revenue, has_budget,
         has_production_companies, has_production_countries,
-        has_keywords, has_cast_and_crew
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        has_keywords, has_cast_and_crew,
+        budget, maturity_rating, reviews
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _UPDATE_PROGRESS_SQL = """
@@ -164,6 +166,61 @@ def _extract_watch_provider_keys(raw_providers: dict) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
+# Maturity rating extraction — US certification from release_dates
+# ---------------------------------------------------------------------------
+
+
+def _extract_us_maturity_rating(raw: dict) -> str | None:
+    """
+    Extract the US maturity rating (e.g. "PG-13", "R") from the TMDB
+    release_dates append_to_response data.
+
+    Iterates the US release date entries and returns the first non-empty
+    certification string.  Returns None if the US region has no entries or
+    none of its release dates carry a certification.
+    """
+    release_dates_data = raw.get("release_dates") or {}
+    results = release_dates_data.get("results") or []
+
+    for country_entry in results:
+        if country_entry.get("iso_3166_1") != "US":
+            continue
+
+        # Found the US entry — scan its release dates for a certification.
+        for rd in country_entry.get("release_dates") or []:
+            certification = (rd.get("certification") or "").strip()
+            if certification:
+                return certification
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Review content extraction — plain text from TMDB reviews
+# ---------------------------------------------------------------------------
+
+
+def _extract_review_contents(raw: dict) -> str | None:
+    """
+    Extract review text from the TMDB reviews append_to_response data.
+
+    Returns a JSON-encoded list of review content strings, or None if no
+    reviews exist.  Only the review body text is preserved — author info,
+    ratings, and other metadata are intentionally discarded.
+    """
+    reviews_data = raw.get("reviews") or {}
+    results = reviews_data.get("results") or []
+
+    contents = [
+        r["content"]
+        for r in results
+        if r.get("content")
+    ]
+
+    return json.dumps(contents, ensure_ascii=False) if contents else None
+
+
+# ---------------------------------------------------------------------------
 # Field extraction — TMDB JSON → flat dict matching tmdb_data columns
 # ---------------------------------------------------------------------------
 
@@ -215,51 +272,68 @@ def _extract_fields(raw: dict) -> dict:
         "has_production_countries": 1 if len(production_countries) > 0 else 0,
         "has_keywords": 1 if len(keywords_list) > 0 else 0,
         "has_cast_and_crew": 1 if (len(cast_list) > 0 and len(crew_list) > 0) else 0,
+        # TMDB backup fields — used as fallbacks when IMDB data is missing
+        "budget": budget,
+        "maturity_rating": _extract_us_maturity_rating(raw),
+        "reviews": _extract_review_contents(raw),
     }
 
 
 # ---------------------------------------------------------------------------
-# Persistence — write extracted fields into SQLite (no commit)
+# Result type returned by _process_movie
 # ---------------------------------------------------------------------------
 
 
-def _persist_movie(db, fields: dict) -> None:
+class _MovieResult(NamedTuple):
+    """Outcome of processing a single TMDB movie."""
+    tmdb_id: int
+    status: str          # "fetched", "missing_imdb_id", "filtered", or "error"
+    reason: str | None   # filter/error reason (None for "fetched")
+    fields: dict | None  # extracted fields (present for "fetched" and "missing_imdb_id")
+
+
+# ---------------------------------------------------------------------------
+# Persistence — bulk-write extracted fields into SQLite
+# ---------------------------------------------------------------------------
+
+
+def _persist_movies(db, results: list[_MovieResult]) -> None:
     """
-    Insert one movie's extracted data into ``tmdb_data`` and advance its
-    ``movie_progress`` status to ``tmdb_fetched``.
+    Bulk-insert tmdb_data and update movie_progress for all movies that
+    were successfully fetched (both "fetched" and "missing_imdb_id").
 
-    Does NOT commit — the caller batches commits for efficiency.
+    Does NOT commit — the caller handles the commit.
     """
-    packed_keys = _pack_provider_keys(fields["watch_provider_keys"])
+    # Collect all results that have extracted fields to persist
+    to_persist = [r for r in results if r.fields is not None]
+    if not to_persist:
+        return
 
-    db.execute(
-        _INSERT_TMDB_DATA_SQL,
-        (
-            fields["tmdb_id"],
-            fields["imdb_id"],
-            fields["title"],
-            fields["release_date"],
-            fields["duration"],
-            fields["poster_url"],
-            packed_keys,
-            fields["vote_count"],
-            fields["popularity"],
-            fields["vote_average"],
-            fields["overview_length"],
-            fields["genre_count"],
-            fields["has_revenue"],
-            fields["has_budget"],
-            fields["has_production_companies"],
-            fields["has_production_countries"],
-            fields["has_keywords"],
-            fields["has_cast_and_crew"],
-        ),
-    )
+    # Bulk insert into tmdb_data
+    tmdb_rows = []
+    for r in to_persist:
+        f = r.fields
+        packed_keys = _pack_provider_keys(f["watch_provider_keys"])
+        tmdb_rows.append((
+            f["tmdb_id"], f["imdb_id"], f["title"], f["release_date"],
+            f["duration"], f["poster_url"], packed_keys,
+            f["vote_count"], f["popularity"], f["vote_average"],
+            f["overview_length"], f["genre_count"], f["has_revenue"],
+            f["has_budget"], f["has_production_companies"],
+            f["has_production_countries"], f["has_keywords"],
+            f["has_cast_and_crew"], f["budget"], f["maturity_rating"],
+            f["reviews"],
+        ))
+    db.executemany(_INSERT_TMDB_DATA_SQL, tmdb_rows)
 
-    db.execute(
-        _UPDATE_PROGRESS_SQL,
-        (fields["imdb_id"], MovieStatus.TMDB_FETCHED, fields["tmdb_id"]),
-    )
+    # Bulk update movie_progress status to tmdb_fetched (only for movies
+    # that have an IMDB ID — missing_imdb_id movies get filtered below)
+    fetched_rows = [
+        (r.fields["imdb_id"], MovieStatus.TMDB_FETCHED, r.tmdb_id)
+        for r in to_persist if r.status == "fetched"
+    ]
+    if fetched_rows:
+        db.executemany(_UPDATE_PROGRESS_SQL, fetched_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -271,59 +345,40 @@ async def _process_movie(
     client: httpx.AsyncClient,
     rate_limiter: AdaptiveRateLimiter,
     tmdb_id: int,
-    db,
-    counters: dict,
-) -> None:
+) -> _MovieResult:
     """
-    Fetch, extract, persist, and filter-check a single movie.
+    Fetch and extract data for a single movie from TMDB.
 
-    All exception paths call ``log_filter`` so nothing is silently lost.
-    Updates ``counters`` dict in-place (safe in single-threaded asyncio).
+    Performs only HTTP fetching and field extraction. Returns a result
+    describing the outcome — all database writes are handled by the
+    caller in bulk after the async batch completes.
     """
     # --- Step 1: Fetch from TMDB ---
     try:
         raw = await fetch_movie_details(client, rate_limiter, tmdb_id)
     except TMDBFetchError:
-        log_filter(db, tmdb_id, _STAGE, reason="tmdb_fetch_error")
-        counters["errors"] += 1
-        return
+        return _MovieResult(tmdb_id, "error", "tmdb_fetch_error", None)
     except ValueError:
-        log_filter(db, tmdb_id, _STAGE, reason="tmdb_parse_error")
-        counters["errors"] += 1
-        return
+        return _MovieResult(tmdb_id, "error", "tmdb_parse_error", None)
 
     # --- Step 2: Handle 404 (movie deleted / not found on TMDB) ---
     if raw is None:
-        log_filter(db, tmdb_id, _STAGE, reason="tmdb_404")
-        counters["filtered"] += 1
-        return
+        return _MovieResult(tmdb_id, "filtered", "tmdb_404", None)
 
     # --- Step 3: Extract fields ---
     try:
         fields = _extract_fields(raw)
     except Exception:
-        log_filter(db, tmdb_id, _STAGE, reason="tmdb_extract_error")
-        counters["errors"] += 1
-        return
+        return _MovieResult(tmdb_id, "error", "tmdb_extract_error", None)
 
-    # --- Step 4: Persist BEFORE the IMDB ID check so log_filter can read
-    #     title/year from the tmdb_data table. ---
-    _persist_movie(db, fields)
-
-    # --- Step 5: Filter out movies without an IMDB ID (can't proceed to
-    #     Stage 4 IMDB scraping). ---
-    # NOTE: If the process crashes after this log_filter executes but before
-    # the batch db.commit(), the movie remains 'pending' and will be re-
-    # processed on restart.  _persist_movie is idempotent (INSERT OR REPLACE),
-    # but log_filter appends a new filter_log row, producing a duplicate entry.
-    # This is an accepted trade-off — the filter_log is a debugging aid, and
-    # deduplication can be done at query time with DISTINCT or GROUP BY.
+    # --- Step 4: Check for IMDB ID ---
+    # Movies without an IMDB ID can't proceed to Stage 4 (IMDB scraping).
+    # We still persist their tmdb_data (fields are included in the result)
+    # so the data is available for diagnostics.
     if not fields["imdb_id"]:
-        log_filter(db, tmdb_id, _STAGE, reason="missing_imdb_id")
-        counters["filtered"] += 1
-        return
+        return _MovieResult(tmdb_id, "missing_imdb_id", "missing_imdb_id", fields)
 
-    counters["fetched"] += 1
+    return _MovieResult(tmdb_id, "fetched", None, fields)
 
 
 # ---------------------------------------------------------------------------
@@ -336,8 +391,8 @@ async def _fetch_all(db, pending_ids: list[int]) -> dict:
     Process all pending movies in batches of ``_COMMIT_BATCH_SIZE``.
 
     Creates a shared httpx client and adaptive rate limiter, dispatches each
-    batch concurrently via ``asyncio.gather``, and commits after every batch.
-    Prints progress at ``_PROGRESS_INTERVAL`` boundaries.
+    batch concurrently via ``asyncio.gather``. After each batch's HTTP work
+    completes, writes all results to SQLite in bulk and commits.
 
     Returns:
         Counters dict with keys: fetched, filtered, errors.
@@ -359,22 +414,50 @@ async def _fetch_all(db, pending_ids: list[int]) -> dict:
         for i in range(0, total, _COMMIT_BATCH_SIZE):
             chunk = pending_ids[i : i + _COMMIT_BATCH_SIZE]
 
+            # --- Phase 1: Async HTTP fetching (no DB writes) ---
             tasks = [
-                _process_movie(client, rate_limiter, tmdb_id, db, counters)
+                _process_movie(client, rate_limiter, tmdb_id)
                 for tmdb_id in chunk
             ]
             # return_exceptions=True prevents one unexpected exception from
             # aborting the entire chunk.  We inspect results afterward to
             # log and count any exceptions that _process_movie didn't handle.
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Pair each result back to its tmdb_id so the debug log
-            # clearly identifies which movie caused the failure.
-            for tmdb_id, result in zip(chunk, results):
+            # --- Phase 2: Collect outcomes ---
+            movie_results: list[_MovieResult] = []
+            filtered_entries: list[tuple[int, str, str, str | None]] = []
+
+            for tmdb_id, result in zip(chunk, raw_results):
                 if isinstance(result, Exception):
                     _log_unexpected_error(tmdb_id, result)
                     counters["errors"] += 1
+                    continue
 
+                movie_results.append(result)
+
+                if result.status == "fetched":
+                    counters["fetched"] += 1
+                elif result.status == "missing_imdb_id":
+                    # Persisted to tmdb_data but filtered out (no IMDB ID)
+                    filtered_entries.append(
+                        (result.tmdb_id, _STAGE, "missing_imdb_id", None)
+                    )
+                    counters["filtered"] += 1
+                elif result.status == "filtered":
+                    filtered_entries.append(
+                        (result.tmdb_id, _STAGE, result.reason, None)
+                    )
+                    counters["filtered"] += 1
+                elif result.status == "error":
+                    filtered_entries.append(
+                        (result.tmdb_id, _STAGE, result.reason, None)
+                    )
+                    counters["errors"] += 1
+
+            # --- Phase 3: Bulk DB writes ---
+            _persist_movies(db, movie_results)
+            batch_log_filter(db, filtered_entries)
             db.commit()
 
             print(f"Committed batch {i}")
@@ -409,7 +492,7 @@ def run() -> None:
     try:
         rows = db.execute(
             "SELECT tmdb_id FROM movie_progress WHERE status = ?",
-            (MovieStatus.PENDING,)
+            (MovieStatus.IMDB_SCRAPED,)
         ).fetchall()
         pending_ids = [row[0] for row in rows]
 

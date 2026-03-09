@@ -15,15 +15,15 @@ ingestion) live outside this module.
 
 | File | Purpose |
 |------|---------|
-| `tracker.py` | Shared backbone — SQLite database at `./ingestion_data/tracker.db`. Manages `movie_progress`, `filter_log`, and `tmdb_data` tables. Defines `MovieStatus`/`PipelineStage` enums. Provides `log_filter()` helper. |
+| `tracker.py` | Shared backbone — SQLite database at `./ingestion_data/tracker.db`. Manages `movie_progress`, `filter_log`, and `tmdb_data` tables. Defines `MovieStatus`/`PipelineStage` enums. Provides `log_filter()` and `batch_log_filter()` helpers. |
 | `tmdb_fetching/daily_export.py` | Stage 1: Stream-download gzipped JSONL (~1M entries), filter (adult=False, video=False, popularity>0), insert ~800K as 'pending'. |
-| `tmdb_fetching/tmdb_fetcher.py` | Stage 2: Async TMDB detail fetch for all pending movies. Extracts fields into `tmdb_data` table. Filters movies missing IMDB ID. Uses adaptive rate limiting from `db/tmdb.py`. |
+| `tmdb_fetching/tmdb_fetcher.py` | Stage 2: Async TMDB detail fetch for all pending movies. Extracts fields into `tmdb_data` table. Filters movies missing IMDB ID. Uses adaptive rate limiting from `db/tmdb.py`. HTTP fetching and DB writes are separated: async tasks return result NamedTuples, all DB writes happen via `executemany` after `asyncio.gather()`. |
 | `tmdb_quality_scoring/tmdb_filter.py` | Stage 3: Apply 5 hard filters + quality score threshold. |
 | `tmdb_quality_scoring/tmdb_quality_scorer.py` | Quality scoring model: 10 weighted signals (weights sum to 1.0). |
 | `tmdb_quality_scoring/tmdb_data_analysis.py` | Diagnostic: per-attribute distributions from tmdb_data. |
 | `tmdb_quality_scoring/plot_quality_scores.py` | Diagnostic: Gaussian-smoothed survival curve + derivatives (determines threshold). |
-| `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch. |
-| `imdb_scraping/scraper.py` | Per-movie: fetch GraphQL → transform → persist JSON. |
+| `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch. HTTP fetching and DB writes are separated — async tasks return result NamedTuples, all DB writes happen via `executemany` after each batch. |
+| `imdb_scraping/scraper.py` | Per-movie: fetch GraphQL → transform → return result (does not write to DB). |
 | `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, random UA rotation. |
 | `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer. |
 | `imdb_scraping/models.py` | Pydantic models for IMDB scraped data. |
@@ -91,17 +91,48 @@ Floor of 5, cap of 15 keywords per movie.
 
 **Output**: Per-movie JSON at `ingestion_data/imdb/{tmdb_id}.json`.
 
+**Proxy tuning**: Successful fetches complete in <1s; the request
+timeout is set aggressively (2s) to fail fast on flagged IPs and
+trigger rotation. Optimal semaphore ceiling is ~35; beyond that,
+timeout rates increase without throughput gain — the bottleneck is
+IP quality, not parallelism.
+
 ## Tracker System
 
 The `tracker.py` module is the shared backbone. Key rules:
-- Always use `log_filter()` for filtering — it atomically updates
-  both `filter_log` and `movie_progress`.
+- Always use `log_filter()` or `batch_log_filter()` for filtering —
+  they atomically update both `filter_log` and `movie_progress`.
 - Never write to `filter_log` or update status to `filtered_out`
   directly from stage modules.
+- `filter_log` does NOT store `title` or `year` — JOIN on `tmdb_data`
+  to get those when needed for display.
 - Status progression: `pending` → `tmdb_fetched` →
   `tmdb_quality_passed` → `imdb_scraped` → `phase1_complete` →
   `phase2_complete` → `embedded` → `ingested`
 - Terminal statuses: `filtered_out`, `below_quality_cutoff`
+
+### Durability settings
+
+`init_db()` enables both `PRAGMA journal_mode=WAL` and
+`PRAGMA synchronous=FULL`. FULL sync ensures every commit is
+fsynced to disk, preventing corruption if the process is killed
+during a batch. Performance cost is negligible at the ~500-movie
+commit cadence used by Stages 2 and 4.
+
+## HTTP / DB Write Separation Pattern
+
+Stages 2 and 4 follow the same pattern to avoid mixing async HTTP
+with synchronous SQLite writes:
+
+1. `asyncio.gather()` dispatches all HTTP fetches; each task returns
+   a NamedTuple (success or failure) rather than writing to the DB.
+2. After gather completes, all results are written to SQLite in bulk
+   via `executemany`.
+3. A single `db.commit()` closes the batch.
+
+This was chosen over aiosqlite, semaphore-guarded per-row writes,
+or write queues because it is simpler, easier to reason about, and
+eliminates any uncertainty about concurrent DB access.
 
 ## Gotchas
 
@@ -116,3 +147,8 @@ The `tracker.py` module is the shared backbone. Key rules:
   based on missing IMDB data. All fields default to None/[].
 - DataImpulse proxy requires `DATA_IMPULSE_LOGIN` and
   `DATA_IMPULSE_PASSWORD` in `.env`.
+- IMDB can block datacenter proxy IPs while accepting residential
+  ones. Symptom: mass ConnectTimeouts and tiny response payloads
+  (1-2 MB/min vs 18+ MB/min when healthy). Switching to residential
+  proxies resolves this — planned for the daily-update pipeline.
+  See ADR-015 and `memory/imdb-scraping.md` for tuning history.
