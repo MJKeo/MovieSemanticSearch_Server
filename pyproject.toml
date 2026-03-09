@@ -27,9 +27,9 @@ dependencies = [
     "redis>=7.2.0",
     "requests>=2.32.5",
     "scikit-learn>=1.8.0",
-
     "tqdm>=4.66.0",
     "grpcio==1.78.0",
+    "docker>=7.1.0",
 ]
 
 [dependency-groups]
