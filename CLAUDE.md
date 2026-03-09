@@ -9,6 +9,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 - **Module summaries:** docs/modules/ — read when entering a module for the first time in a session
 - **Conventions:** docs/conventions.md — cross-codebase invariants and patterns
 - **Transient context:** DIFF_CONTEXT.md — what changed recently and why
+- **Action items:** docs/TODO.md — deferred TODOs discovered during sessions
 
 ## Autonomous Documentation
 
@@ -17,6 +18,10 @@ per the context-tracking rule in .claude/rules/.
 
 You MAY autonomously update docs/modules/ when you notice a doc
 is stale while working in that module (include in your changeset).
+
+You MAY autonomously add entries to docs/TODO.md when you discover
+actionable items during implementation work. Use /save-todo or write
+entries directly following the existing format.
 
 You must NEVER autonomously modify docs/PROJECT.md, docs/conventions.md,
 or docs/decisions/. See the docs-awareness rule for details.

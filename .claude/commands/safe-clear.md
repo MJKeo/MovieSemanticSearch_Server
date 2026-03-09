@@ -18,6 +18,7 @@ Read these files for context before analyzing:
 - docs/personal_preferences.md
 - docs/conventions_draft.md
 - docs/workflow_suggestions.md
+- docs/TODO.md
 
 Then review the session for three types of learnings:
 
@@ -70,6 +71,21 @@ append it in this format:
 **Rationale:** [Why this would save time]
 ```
 
+### TODO Items
+Look for actionable items that came up but were deferred:
+- Things the user said to do later or "when we get to X"
+- Known issues discovered but not fixed in this session
+- Improvements identified but out of scope for current work
+
+For each item not already in docs/TODO.md, append it in this
+format:
+```
+## [Brief description]
+**Context:** [What was discovered and why it matters]
+**When:** [When this should be addressed]
+**See:** [Reference to relevant files, memory, or docs if any]
+```
+
 ## After Both Tasks
 
 Report a brief summary:
@@ -77,6 +93,7 @@ Report a brief summary:
 - Preferences: N added or updated (list them)
 - Convention candidates: N added or updated (list them)
 - Workflow suggestions: N added (list them)
+- TODO items: N added (list them)
 - If nothing was learned, say "No new learnings from this session"
 
 Then tell me: "Context saved and learnings extracted.
