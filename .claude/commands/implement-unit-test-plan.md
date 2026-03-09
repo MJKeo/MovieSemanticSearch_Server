@@ -1,4 +1,4 @@
-# .claude/commands/test-implement.md
+# .claude/commands/implement-unit-test-plan.md
 
 Implement the test plan from the planning phase.
 Write all tests in ./unit_tests/.

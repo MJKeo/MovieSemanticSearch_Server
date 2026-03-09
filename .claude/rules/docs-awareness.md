@@ -6,8 +6,6 @@
   context, priorities, and constraints
 - The first time you work in a module's directory during a session,
   read its doc in docs/modules/ if one exists
-- When the module doc references a guide in guides/, read that
-  guide before making non-trivial changes
 - When making a tradeoff decision (performance vs readability,
   complexity vs simplicity, etc.), check docs/PROJECT.md priorities
   and scan docs/decisions/ for relevant precedent before choosing
@@ -23,7 +21,7 @@ You MAY autonomously update:
   the inaccurate parts.
 
 You must NEVER autonomously modify:
-- docs/PROJECT.md — human-only via /update-project
-- docs/conventions.md — flag inconsistencies to me, don't fix
-- docs/decisions/ — only written via /save-decisions, /promote,
+- docs/PROJECT.md — human-only via /extract-finalized-decisions
+- docs/conventions.md — only written via /solidify-draft-conventions
+- docs/decisions/ — only written via /extract-finalized-decisions
   or the docs-maintainer subagent

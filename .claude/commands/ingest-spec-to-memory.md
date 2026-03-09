@@ -1,4 +1,4 @@
-# .claude/commands/ingest-spec.md
+# .claude/commands/ingest-spec-to-memory.md
 
 I am providing a product spec. Your job is to read it thoroughly,
 cross-reference it against the existing documentation system, and

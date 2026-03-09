@@ -27,7 +27,7 @@ stay current.
       module doc exists and the changes are substantial enough to
       warrant one, create it. Keep module docs concise: what the
       module does, its boundaries, internal patterns, interactions,
-      and gotchas. Reference guides/ for deep technical detail.
+      and gotchas.
 
    b. **Decision detection:** Evaluate whether the entry represents
       a significant decision. Heuristics for "significant":
@@ -59,7 +59,7 @@ stay current.
       [What this enables or constrains]
 
       ## References
-      [Links to PROJECT.md, other decisions, module docs, guides/]
+      [Links to PROJECT.md, other decisions, module docs]
       ```
 
 4. After processing all entries, clear DIFF_CONTEXT.md by replacing

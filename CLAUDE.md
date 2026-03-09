@@ -8,7 +8,6 @@ This file provides guidance to Claude Code when working with code in this reposi
 - **Decision records:** docs/decisions/ — check for precedent before tradeoff decisions
 - **Module summaries:** docs/modules/ — read when entering a module for the first time in a session
 - **Conventions:** docs/conventions.md — cross-codebase invariants and patterns
-- **Architecture guides:** guides/ — deep technical docs (index below). When a guide and your intuition conflict, the guide wins unless there is a clear bug or omission.
 - **Transient context:** DIFF_CONTEXT.md — what changed recently and why
 
 ## Autonomous Documentation
@@ -98,7 +97,6 @@ Fetch display metadata → return JSON
 | `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
 | `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data) |
 | `unit_tests/` | pytest test suite (27 files); `conftest.py` provides `base_movie_factory` fixture |
-| `guides/` | Deep-dive architecture docs (23 markdown files) — **read the relevant guide before modifying any scoring logic** |
 | `docs/` | Project context, decision records, module summaries, conventions |
 
 ### Vector Search Design
@@ -201,25 +199,6 @@ Stage 5+: LLM Generation → Embedding → Ingestion (not in movie_ingestion/)
 ### LLM Provider
 
 The LLM calls use the **Moonshot/Kimi API** (`implementation/llms/generic_methods.py`) with structured output via `chat.completions.create()` using explicit `response_format` JSON schema + manual `json.loads()` / `model_validate()`. OpenAI's `chat.completions.parse()` is used only for the OpenAI client. OpenAI is used for embeddings (`text-embedding-3-small`, 1536 dims).
-
-### Guide Index
-
-The `guides/` directory contains authoritative design docs. **Read the relevant guide before implementing anything non-trivial.** When a guide and your intuition conflict, the guide wins unless there is a clear bug or omission.
-
-| Guide | Read when working on... |
-|-------|------------------------|
-| `server_architecture_guide.md` | Request lifecycle, service topology, caching, deployment |
-| `query_understanding_schema.md` | LLM query understanding pipeline, `QueryUnderstandingResponse`, channel weights, lexical entities, metadata preferences, vector subqueries |
-| `lexical_search_guide_final.md` | Inverted index tables, string normalization, title token matching, scoring formulas, INCLUDE/EXCLUDE entities, Postgres lexical queries |
-| `postgres_database_structure.md` | Postgres schemas, queries, indexes, ingest jobs (`public` and `lex` schemas) |
-| `qdrant_database_structure.md` | Vector storage, collection setup, point ingestion, payload filtering, quantization + memmap config |
-| `redis_database_structure.md` | Caching — embedding cache, QU cache, trending set, TMDB detail cache (key format, serialization, TTL) |
-| `vector_scoring_guide.md` | Vector scoring pipeline details |
-| `metadata_scoring_guide.md` | Metadata scoring logic |
-| `final_reranking_guide.md` | Quality reranking formula and components |
-| `movie_vector_definitions.md` | What each vector space represents; which query intent maps to which collection |
-| `movie_vector_schemas.md` | Ingest pipeline: which movie attributes go into each vector's text representation |
-| `movie_vector_analysis.md` | Debugging search quality, tuning vector subquery prompts, understanding embedding space content |
 
 ### Cross-Codebase Invariants
 

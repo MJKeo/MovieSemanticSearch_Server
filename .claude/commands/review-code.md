@@ -1,61 +1,70 @@
-# .claude/commands/understand-spec.md
+# .claude/commands/review-code.md
 
-I am providing a product spec. Your job is to deeply understand it,
-cross-reference it against the actual codebase, and surface every
-question, conflict, and decision that needs to be resolved before
-implementation begins.
+Review the code changes in this session (or the files specified)
+against the project's standards and design intent.
 
-Before analyzing the spec, read:
-- docs/PROJECT.md for priorities, constraints, and system overview
-- DIFF_CONTEXT.md for any recent changes that may be relevant
-- The module docs in docs/modules/ for any modules the spec touches
-- The relevant guides in guides/ for deep technical context
+Before reviewing, read:
+- docs/PROJECT.md for priorities and constraints
+- DIFF_CONTEXT.md for the intent behind recent changes
+- The relevant module doc in docs/modules/ for expected patterns
+- docs/conventions.md for cross-codebase invariants
 
-## Analysis Process
+## Review Process
 
-1. **Understand intent:** What is this spec trying to accomplish and
-   why? State it back in one paragraph to confirm understanding.
+1. Intent alignment: Do the changes accomplish what DIFF_CONTEXT.md
+   says they should? Is anything missing or divergent from the
+   stated intent? If no DIFF_CONTEXT.md exists, ask me what the
+   changes were intended to accomplish before proceeding.
 
-2. **Map to codebase:** Identify which files, modules, and systems
-   would need to change. Read them. Understand their current state.
+2. Bugs: Identify concrete bugs — not hypothetical concerns,
+   actual code paths that will produce wrong results. For each:
+   - What triggers it (specific input, state, or sequence)
+   - What happens vs what should happen
+   - Severity: critical (data corruption, security) / high
+     (blocks functionality) / medium (wrong output under
+     specific conditions) / low (edge case, cosmetic)
 
-3. **Surface conflicts:** Where does the spec assume something that
-   doesn't match the codebase? Where does it contradict an existing
-   decision in docs/decisions/? Where does it violate a convention
-   in docs/conventions.md or a cross-codebase invariant?
+3. Logic errors: Identify flawed reasoning in the code. Off-by-one,
+   incorrect boundary conditions, wrong operator, inverted boolean,
+   race conditions, incorrect null handling. For each:
+   - The specific location (file and function)
+   - What it does vs what it should do
+   - A concrete fix
 
-4. **Identify gaps:** What does the spec leave unspecified that must
-   be decided before implementation? Think about error handling,
-   edge cases, data migration, backward compatibility, and
-   performance implications given PROJECT.md priorities.
+4. Efficiency: Identify inefficiencies that matter given the
+   priority ordering in docs/PROJECT.md. Ignore micro-optimizations.
+   Focus on:
+   - Unnecessary API/DB calls, N+1 queries, unbounded loops
+   - Wasteful allocations in hot paths
+   - Missed opportunities to use existing utilities in the codebase
+   - Violations of cross-codebase invariants (e.g., per-candidate
+     Postgres queries instead of bulk fetch, partial DAG caching)
 
-5. **Challenge assumptions:** Where does the spec make a choice that
-   could be improved? Are there simpler approaches? Does it
-   over-engineer or under-engineer given the stated priorities?
+5. Standards compliance: Check against .claude/rules/coding-standards.md
+   and docs/conventions.md. Flag violations only — do not list
+   things that are already correct.
+
+6. Security: Check for unsanitized inputs, leaked secrets or PII
+   in logs, SQL injection vectors, and any authentication or
+   authorization gaps. Only flag concrete issues.
 
 ## Output
 
-Present your findings as discussion points organized by urgency:
+Organize findings by severity. Lead with what matters most:
 
-**Must resolve before implementation** — Ambiguities or conflicts
-that would lead to wrong implementation if assumed.
+**Critical** — Will cause incorrect behavior, data corruption,
+or security vulnerability. Must fix before commit.
 
-**Should discuss** — Design choices where alternatives exist and
-the tradeoff is worth exploring.
+**Warning** — Potential issue under specific conditions, or
+significant inefficiency worth addressing.
 
-**Worth noting** — Observations that don't block implementation but
-may matter later.
+**Suggestion** — Improvement that isn't blocking. Style, minor
+efficiency, or readability.
 
-For each point:
-- State the issue concretely (reference spec sections and code paths)
-- Explain why it matters
-- Offer your perspective where you have one, but frame it as input
-  for discussion, not a decision
+For each finding: state the file and function, describe the
+problem concretely, and propose a specific fix.
 
-Do not create a plan. Do not write code. Do not make implementation
-decisions. Only facilitate discussion.
-
-After we've resolved all discussion points, I will ask you to
-proceed to planning via /save-decisions and then implementation.
+Do not pad the review. If a category has no findings, skip it.
+If the code is clean, say so in one sentence.
 
 Focus on: $ARGUMENTS
