@@ -233,7 +233,7 @@ async def fetch_movie_details(
         ValueError:     If the 200 response body is not valid JSON.
     """
     url = f"{_TMDB_BASE_URL}/movie/{tmdb_id}"
-    params = {"append_to_response": "release_dates,keywords,watch/providers,credits"}
+    params = {"append_to_response": "release_dates,keywords,watch/providers,credits,reviews"}
 
     # Track transient-error retries separately from 429s.  429s are a normal
     # part of rate-limit convergence and should retry indefinitely (the rate
