@@ -30,6 +30,7 @@ dependencies = [
     "tqdm>=4.66.0",
     "grpcio==1.78.0",
     "docker>=7.1.0",
+    "orjson>=3.10.0",
 ]
 
 [dependency-groups]

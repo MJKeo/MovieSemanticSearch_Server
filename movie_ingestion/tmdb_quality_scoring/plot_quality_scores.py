@@ -69,11 +69,11 @@ def _fetch_quality_scores() -> list[float]:
             row[0]
             for row in db.execute(
                 """
-                SELECT quality_score
+                SELECT stage_3_quality_score
                 FROM movie_progress
                 WHERE status = ?
-                  AND quality_score IS NOT NULL
-                ORDER BY quality_score ASC
+                  AND stage_3_quality_score IS NOT NULL
+                ORDER BY stage_3_quality_score ASC
                 """,
                 (MovieStatus.TMDB_FETCHED,),
             )

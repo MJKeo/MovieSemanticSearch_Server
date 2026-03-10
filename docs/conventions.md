@@ -91,9 +91,9 @@ These rules apply everywhere and are not negotiable:
   helper in `implementation/misc/helpers.py` handles encoding.
 - **Ingestion statuses**: Progress through pipeline stages —
   `pending` → `tmdb_fetched` → `tmdb_quality_passed` →
-  `imdb_scraped` → `phase1_complete` → `phase2_complete` →
-  `embedded` → `ingested`. Terminal: `filtered_out`,
-  `below_quality_cutoff`.
+  `imdb_scraped` → `essential_data_passed` → `phase1_complete` →
+  `phase2_complete` → `embedded` → `ingested`. Terminal:
+  `filtered_out`.
 
 ## Scoring Conventions
 

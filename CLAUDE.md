@@ -10,6 +10,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 - **Conventions:** docs/conventions.md — cross-codebase invariants and patterns
 - **Transient context:** DIFF_CONTEXT.md — what changed recently and why
 - **Action items:** docs/TODO.md — deferred TODOs discovered during sessions
+- **Personal preferences:** docs/personal_preferences.md — communication and workflow preferences, read at session start
 
 ## Autonomous Documentation
 
@@ -133,7 +134,7 @@ Each vector space has LLM-generated metadata (`implementation/llms/vector_metada
 The ingestion pipeline processes ~1M TMDB movies down to ~100K high-quality movies through a multi-stage funnel. All stages are crash-safe and idempotent — restarting picks up where it left off.
 
 **Tracker system:** `movie_ingestion/tracker.py` is the shared backbone. It manages a SQLite database at `./ingestion_data/tracker.db` with two core tables:
-- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_passed` → `imdb_scraped` → `phase1_complete` → `phase2_complete` → `embedded` → `ingested`; terminal statuses: `filtered_out`, `below_quality_cutoff`)
+- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_passed` → `imdb_scraped` → `essential_data_passed` → `phase1_complete` → `phase2_complete` → `embedded` → `ingested`; terminal status: `filtered_out`)
 - `filter_log` — append-only audit trail of every filtered movie with stage, reason, and optional details JSON
 - `tmdb_data` — stores extracted TMDB fields needed by the quality scorer (vote counts, popularity, provider keys, boolean completeness flags)
 
@@ -161,7 +162,7 @@ Stage 3: TMDB Quality Funnel (movie_ingestion/tmdb_quality_scoring/tmdb_filter.p
      popularity (0.12), and 7 boolean/tiered signals for data completeness
   └─ Vote count scoring applies recency boost (2x for <1yr) and classic boost (1.5x for >20yr)
   └─ Five hard filters: zero_vote_count, missing_duration, missing_overview, no_genres, future_release
-  └─ Soft threshold: quality_score < -0.0441
+  └─ Soft threshold: stage_3_quality_score < -0.0441
   └─ Status: tmdb_fetched → tmdb_quality_passed (or filtered_out)
   └─ Run: python -m movie_ingestion.tmdb_quality_scoring.tmdb_filter
 
@@ -174,7 +175,18 @@ Stage 4: IMDB Scraping (movie_ingestion/imdb_scraping/)
   └─ Status: tmdb_quality_passed → imdb_scraped (or filtered_out)
   └─ Run: python -m movie_ingestion.imdb_scraping.run
 
-Stage 5+: LLM Generation → Embedding → Ingestion (not in movie_ingestion/)
+Stage 5: IMDB Quality Filtering (movie_ingestion/imdb_quality_scoring/)
+  └─ Hard filters on essential data (IMDB rating, directors, actors, keywords, etc.)
+  └─ Combined TMDB+IMDB quality scorer (8 signals, weights sum to 1.0):
+     imdb_vote_count (0.22), watch_providers (0.20), featured_reviews (0.16),
+     plot_text_depth (0.12), lexical_completeness (0.10), data_completeness (0.10),
+     tmdb_popularity (0.06), metacritic_rating (0.04)
+  └─ IMDB data primary, TMDB as fallback for overlapping fields
+  └─ Soft threshold via derivative analysis of quality score distribution
+  └─ Status: imdb_scraped → essential_data_passed (or filtered_out)
+  └─ Run: python -m movie_ingestion.imdb_quality_scoring.imdb_quality_scorer
+
+Stage 6+: LLM Generation → Embedding → Ingestion (not in movie_ingestion/)
   └─ implementation/llms/vector_metadata_generation_methods.py — generates 7 LLM metadata types per movie
   └─ implementation/vectorize.py — embeds metadata into 8 vector spaces via OpenAI
   └─ db/ingest_movie.py — upserts final data into Postgres, Qdrant, and Redis
@@ -197,6 +209,8 @@ Stage 5+: LLM Generation → Embedding → Ingestion (not in movie_ingestion/)
 | `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer (keyword scoring, synopsis priority) |
 | `imdb_scraping/models.py` | Pydantic models for IMDB scraped data (`IMDBScrapedMovie` and sub-models) |
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies |
+| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: hard filters + combined TMDB+IMDB quality scorer (8 signals, ADR-016) |
+| `scoring_utils.py` | Shared scoring utilities (vote_count, popularity, provider key unpacking) used by Stage 3 and Stage 5 |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data |
 
 **IMDB scraping environment:** Requires `DATA_IMPULSE_LOGIN` and `DATA_IMPULSE_PASSWORD` in `.env` for proxy access. Optional `DATA_IMPULSE_HOST`/`DATA_IMPULSE_PORT` (defaults to `gw.dataimpulse.com:823`).

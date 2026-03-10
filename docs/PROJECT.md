@@ -64,11 +64,12 @@ Processes TMDB daily exports through a multi-stage funnel:
 2. TMDB detail fetching (~800K movies)
 3. Quality scoring and filtering (~800K → ~100K)
 4. IMDB scraping via GraphQL (~100K enriched)
-5. LLM metadata generation (in development)
-6. Batch embedding (in development)
-7. Database ingestion into Postgres, Qdrant, Redis (implemented)
+5. IMDB quality filtering (hard filters + combined TMDB+IMDB quality scorer)
+6. LLM metadata generation (in development)
+7. Batch embedding (in development)
+8. Database ingestion into Postgres, Qdrant, Redis (implemented)
 
-Stages 1-4 and 7 are operational. Stages 5-6 still need to be
+Stages 1-5 and 8 are operational. Stages 6-7 still need to be
 fleshed out and implemented. All operational stages are crash-safe
 and idempotent.
 

@@ -13,6 +13,7 @@ import pytest
 from movie_ingestion.tracker import (
     INGESTION_DATA_DIR,
     TRACKER_DB_PATH,
+    MovieStatus,
     PipelineStage,
     _SCHEMA_SQL,
     batch_log_filter,
@@ -106,8 +107,9 @@ class TestInitDb:
         db.close()
 
         expected = {
-            "tmdb_id", "imdb_id", "status", "quality_score",
-            "batch1_custom_id", "batch2_custom_id", "updated_at",
+            "tmdb_id", "imdb_id", "status", "stage_3_quality_score",
+            "stage_5_quality_score", "batch1_custom_id", "batch2_custom_id",
+            "updated_at",
         }
         assert col_names == expected
 
@@ -593,3 +595,129 @@ class TestSaveJson:
 
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["name"] == "Am\u00e9lie"
+
+
+# ---------------------------------------------------------------------------
+# MovieStatus — new ESSENTIAL_DATA_PASSED member
+# ---------------------------------------------------------------------------
+
+
+class TestMovieStatus:
+    """Tests for MovieStatus enum additions."""
+
+    def test_movie_status_essential_data_passed_exists(self) -> None:
+        """MovieStatus.ESSENTIAL_DATA_PASSED == 'essential_data_passed'."""
+        assert MovieStatus.ESSENTIAL_DATA_PASSED == "essential_data_passed"
+
+
+# ---------------------------------------------------------------------------
+# Schema migrations — quality_score rename and stage_5_quality_score addition
+# ---------------------------------------------------------------------------
+
+
+class TestQualityScoreMigrations:
+    """Tests for the quality_score → stage_3_quality_score rename
+    and stage_5_quality_score column addition."""
+
+    def test_movie_progress_has_stage_3_quality_score_column(self, mocker, tmp_path) -> None:
+        """stage_3_quality_score column present after init_db."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(movie_progress)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "stage_3_quality_score" in col_names
+
+    def test_movie_progress_has_stage_5_quality_score_column(self, mocker, tmp_path) -> None:
+        """stage_5_quality_score column present after init_db."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(movie_progress)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "stage_5_quality_score" in col_names
+
+    def test_migration_renames_quality_score_to_stage_3(self, mocker, tmp_path) -> None:
+        """DB created with old schema → init_db migrates column name."""
+        data_dir = tmp_path / "ingestion_data"
+        db_path = data_dir / "tracker.db"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", db_path)
+
+        # Create old schema with quality_score column
+        data_dir.mkdir(parents=True, exist_ok=True)
+        old_db = sqlite3.connect(str(db_path))
+        old_db.execute("""
+            CREATE TABLE IF NOT EXISTS movie_progress (
+                tmdb_id          INTEGER PRIMARY KEY,
+                imdb_id          TEXT,
+                status           TEXT NOT NULL DEFAULT 'pending',
+                quality_score    REAL,
+                batch1_custom_id TEXT,
+                batch2_custom_id TEXT,
+                updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Insert a test row with a score to verify data survives migration
+        old_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, quality_score) VALUES (1, 0.75)"
+        )
+        old_db.commit()
+        old_db.close()
+
+        # Run init_db which should apply migrations
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(movie_progress)").fetchall()
+        col_names = {row[1] for row in cols}
+
+        # Old column should be gone, new column present
+        assert "quality_score" not in col_names
+        assert "stage_3_quality_score" in col_names
+
+        # Verify data was preserved through the rename
+        score = db.execute(
+            "SELECT stage_3_quality_score FROM movie_progress WHERE tmdb_id = 1"
+        ).fetchone()[0]
+        db.close()
+
+        assert score == pytest.approx(0.75)
+
+    def test_migration_adds_stage_5_quality_score(self, mocker, tmp_path) -> None:
+        """DB created without stage_5_quality_score → init_db adds it."""
+        data_dir = tmp_path / "ingestion_data"
+        db_path = data_dir / "tracker.db"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", db_path)
+
+        # Create old schema without stage_5_quality_score
+        data_dir.mkdir(parents=True, exist_ok=True)
+        old_db = sqlite3.connect(str(db_path))
+        old_db.execute("""
+            CREATE TABLE IF NOT EXISTS movie_progress (
+                tmdb_id               INTEGER PRIMARY KEY,
+                imdb_id               TEXT,
+                status                TEXT NOT NULL DEFAULT 'pending',
+                stage_3_quality_score REAL,
+                batch1_custom_id      TEXT,
+                batch2_custom_id      TEXT,
+                updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        old_db.commit()
+        old_db.close()
+
+        # Run init_db which should add the missing column
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(movie_progress)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "stage_5_quality_score" in col_names

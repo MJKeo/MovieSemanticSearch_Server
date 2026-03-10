@@ -7,7 +7,7 @@ filtered_out and logged to filter_log; survivors retain status='tmdb_fetched'
 and advanced to 'tmdb_quality_passed' for Stage 4 (IMDB scraping).
 
 Quality scores are computed inline via compute_quality_score() and persisted to
-movie_progress.quality_score for every movie, eliminating the need for a
+movie_progress.stage_3_quality_score for every movie, eliminating the need for a
 separate Stage 3b scoring pass.
 
 Filters (applied in priority order — first failing reason is logged):
@@ -235,7 +235,7 @@ def run() -> None:
 
             db.execute(
                 """UPDATE movie_progress
-                   SET quality_score = ?, updated_at = CURRENT_TIMESTAMP
+                   SET stage_3_quality_score = ?, updated_at = CURRENT_TIMESTAMP
                    WHERE tmdb_id = ?""",
                 (score, row["tmdb_id"]),
             )

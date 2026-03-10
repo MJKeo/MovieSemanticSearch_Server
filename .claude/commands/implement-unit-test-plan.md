@@ -1,6 +1,6 @@
 # .claude/commands/implement-unit-test-plan.md
 
-Implement the test plan from the planning phase.
+Implement the test plan ./unit_tests/TEST_PLAN.md.
 Write all tests in ./unit_tests/.
 
 ## Rules
@@ -18,4 +18,4 @@ Write all tests in ./unit_tests/.
 - Match patterns and conventions already used in ./unit_tests/
 
 After implementation, run the test suite and report results.
-Do NOT fix any failures.
+Do NOT fix any failures. If no failures are detected then delete TEST_PLAN.md.

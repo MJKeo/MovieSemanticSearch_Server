@@ -1,7 +1,7 @@
 """
 SQLite checkpoint tracker for the movie ingestion pipeline.
 
-Provides the shared infrastructure used by all 8 pipeline stages:
+Provides the shared infrastructure used by all 9 pipeline stages:
   - Schema initialization (movie_progress + filter_log tables)
   - The log_filter helper for recording filtered-out movies
   - JSON file I/O utilities (load_json, save_json)
@@ -48,22 +48,23 @@ class MovieStatus(StrEnum):
 
     Progression:
       PENDING → TMDB_FETCHED → TMDB_QUALITY_PASSED → IMDB_SCRAPED →
-      PHASE1_COMPLETE → PHASE2_COMPLETE → EMBEDDED → INGESTED
+      ESSENTIAL_DATA_PASSED → PHASE1_COMPLETE → PHASE2_COMPLETE →
+      EMBEDDED → INGESTED
 
     Terminal:
-      FILTERED_OUT, BELOW_QUALITY_CUTOFF
+      FILTERED_OUT (with variable reason strings in filter_log)
     """
     PENDING = "pending"
     TMDB_FETCHED = "tmdb_fetched"
     TMDB_QUALITY_PASSED = "tmdb_quality_passed"
     IMDB_SCRAPED = "imdb_scraped"
+    ESSENTIAL_DATA_PASSED = "essential_data_passed"
     PHASE1_COMPLETE = "phase1_complete"
     PHASE2_COMPLETE = "phase2_complete"
     EMBEDDED = "embedded"
     INGESTED = "ingested"
-    # Terminal statuses
+    # Terminal status — reason details are in filter_log.reason
     FILTERED_OUT = "filtered_out"
-    BELOW_QUALITY_CUTOFF = "below_quality_cutoff"
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +86,13 @@ CREATE TABLE IF NOT EXISTS movie_progress (
     status           TEXT NOT NULL DEFAULT 'pending',
     -- Statuses (in order) — defined in MovieStatus enum:
     --   pending → tmdb_fetched → tmdb_quality_passed → imdb_scraped →
-    --   phase1_complete → phase2_complete → embedded → ingested
+    --   essential_data_passed → phase1_complete → phase2_complete →
+    --   embedded → ingested
     --
     -- Terminal statuses:
-    --   filtered_out        (missing essential data, scrape failures, etc.)
-    --   below_quality_cutoff (didn't make the top ~100K in the TMDB quality funnel)
-    quality_score    REAL,
+    --   filtered_out        (all filtering — reason details in filter_log.reason)
+    stage_3_quality_score REAL,
+    stage_5_quality_score REAL,
     batch1_custom_id TEXT,
     batch2_custom_id TEXT,
     updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -178,6 +180,10 @@ def init_db() -> sqlite3.Connection:
         "ALTER TABLE tmdb_data ADD COLUMN reviews TEXT",
         "ALTER TABLE filter_log DROP COLUMN title",
         "ALTER TABLE filter_log DROP COLUMN year",
+        # Rename quality_score → stage_3_quality_score and add stage_5_quality_score
+        # for databases created before the column rename.
+        "ALTER TABLE movie_progress RENAME COLUMN quality_score TO stage_3_quality_score",
+        "ALTER TABLE movie_progress ADD COLUMN stage_5_quality_score REAL",
     ]
     for stmt in _MIGRATIONS:
         try:

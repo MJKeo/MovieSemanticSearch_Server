@@ -3,10 +3,10 @@ Stage 3b: TMDB Quality Scorer
 
 Computes a raw weighted quality score for every movie that has
 status='tmdb_fetched' in movie_progress and writes it to the pre-existing
-quality_score column.  The score is intentionally NOT normalised here — a
+stage_3_quality_score column.  The score is intentionally NOT normalised here — a
 separate pass will min-max normalise across all movies, plot the distribution,
 and apply the final quality cutoff that transitions movies to
-status='quality_passed' or status='below_quality_cutoff'.
+status='tmdb_quality_passed' or status='filtered_out'.
 
 Scoring model
 -------------
@@ -38,7 +38,7 @@ Raw score range
   Maximum ≈ +0.88   (vc=2000+, 3+ providers, pop=10+, all bonuses, no deficits)
   Minimum ≈ −0.34   (vc=1, no providers past window, all penalty fields absent)
 
-Idempotent: re-running overwrites existing quality_score values.  The movie's
+Idempotent: re-running overwrites existing stage_3_quality_score values.  The movie's
 status is not changed by this stage — that happens in the normalisation pass.
 
 Usage:
@@ -46,43 +46,17 @@ Usage:
 """
 
 import datetime
-import math
 import sqlite3
-import struct
 
+from movie_ingestion.scoring_utils import (
+    THEATER_WINDOW_DAYS,
+    VoteCountSource,
+    score_popularity,
+    score_vote_count,
+    unpack_provider_keys,
+    validate_weights,
+)
 from movie_ingestion.tracker import MovieStatus, init_db
-
-# ---------------------------------------------------------------------------
-# Tuning constants
-# ---------------------------------------------------------------------------
-
-# Days after a film's release date before the absence of US streaming providers
-# is treated as a genuine negative signal.  Within this window the film may
-# still be in a theatrical run (or very recent VOD-only release), so no penalty
-# is applied.
-THEATER_WINDOW_DAYS: int = 75
-
-# vote_count log-scale cap: log10(vc+1) / log10(VC_LOG_CAP) → 1.0 at vc=2000.
-# Chosen to place the ceiling just above p99 (1821), spreading discrimination
-# across the 1–2000 range where 98.4% of the corpus lives.
-VC_LOG_CAP: int = 2001
-
-# popularity log-scale cap: analogous cap just above p99 (8.95).
-POP_LOG_CAP: int = 11
-
-# Recency boost: films < VC_RECENCY_BOOST_MAX years old get a proportional
-# multiplier up to VC_RECENCY_BOOST_MAX×, compensating for their shorter
-# vote-accumulation window.  At exactly 1 year the multiplier is 2.0×; it
-# decays to 1.0× at 2 years (= VC_RECENCY_BOOST_MAX years), then disappears.
-VC_RECENCY_BOOST_MAX: float = 2.0
-
-# Classic boost: films older than VC_CLASSIC_START_YEARS receive a linearly
-# growing multiplier capped at VC_CLASSIC_BOOST_CAP, compensating for the
-# chronic underrepresentation of pre-TMDB-era films (TMDB launched 2008).
-# The multiplier reaches its cap at VC_CLASSIC_START_YEARS + VC_CLASSIC_RAMP_YEARS.
-VC_CLASSIC_START_YEARS: int = 20   # age at which the boost begins (years)
-VC_CLASSIC_RAMP_YEARS: int  = 30   # years of linear ramp from 1× to cap
-VC_CLASSIC_BOOST_CAP: float = 1.5  # maximum classic-film multiplier
 
 # Commit scored rows to disk every N movies.
 COMMIT_EVERY: int = 1_000
@@ -107,31 +81,8 @@ WEIGHTS: dict[str, float] = {
     "has_cast_and_crew":        0.02,
 }
 
-# Guard at module load time with an explicit ValueError rather than assert,
-# because assert is silently suppressed under `python -O` and a corrupt weights
-# table would then produce systematically wrong scores without any indication.
-if abs(sum(WEIGHTS.values()) - 1.0) > 1e-9:
-    raise ValueError(
-        f"WEIGHTS must sum to 1.0; got {sum(WEIGHTS.values()):.10f}"
-    )
-
-# ---------------------------------------------------------------------------
-# BLOB decoding
-# ---------------------------------------------------------------------------
-
-
-def _unpack_provider_keys(blob: bytes | None) -> list[int]:
-    """Unpack a watch_provider_keys BLOB into a list of integer provider keys.
-
-    The BLOB is packed as little-endian unsigned 32-bit integers ('<NI' format),
-    matching the encoding written by tmdb_fetcher.py.  Returns an empty list for
-    None or zero-length input.
-    """
-    if not blob:
-        return []
-    count = len(blob) // 4
-    return list(struct.unpack(f"<{count}I", blob[:count * 4]))
-
+# Guard at module load time — see scoring_utils.validate_weights docstring.
+validate_weights(WEIGHTS)
 
 # ---------------------------------------------------------------------------
 # Individual signal scoring functions
@@ -143,67 +94,12 @@ def _score_vote_count(
     release_date: str | None,
     today: datetime.date,
 ) -> float:
-    """Log-scaled vote_count score in [0, 1] with age-based multipliers.
+    """Log-scaled TMDB vote_count score in [0, 1] with age-based multipliers.
 
-    The log scale compresses the long tail: the gap between 1 and 10 votes
-    matters far more than the gap between 5000 and 10000.  The cap at vc=2000
-    places the ceiling just above p99 so scores are spread meaningfully across
-    the 98.4% of movies that live in the 1–2000 range.
-
-    Two non-overlapping age multipliers correct for systematic TMDB bias:
-
-      Recency multiplier (films < 2 years old):
-        Recent films have had less time to accumulate votes.  The multiplier
-        is VC_RECENCY_BOOST_MAX (2.0×) for films ≤ 1 year old and decays
-        hyperbolically to 1.0× at 2 years (VC_RECENCY_BOOST_MAX years),
-        beyond which it is floored at 1.0 so no penalty is applied to
-        middle-aged or old films.
-
-      Classic multiplier (films > VC_CLASSIC_START_YEARS years old):
-        Films made before TMDB was widely adopted (launched 2008) are
-        chronically under-rated on the platform relative to their true
-        cultural significance.  The multiplier grows linearly from 1.0× at
-        VC_CLASSIC_START_YEARS (20 yr) to VC_CLASSIC_BOOST_CAP (1.5×) at
-        VC_CLASSIC_START_YEARS + VC_CLASSIC_RAMP_YEARS (50 yr), then caps.
-
-    The two windows are mutually exclusive (0–2 yr vs. >20 yr); the larger
-    of the two multipliers is applied.  Films aged 2–20 years receive no
-    adjustment (multiplier = 1.0×).
+    Delegates to the shared score_vote_count() in scoring_utils with the TMDB
+    log cap (2001).  See scoring_utils.score_vote_count for full documentation.
     """
-    base = min(math.log10(vc + 1) / math.log10(VC_LOG_CAP), 1.0)
-
-    if release_date is not None:
-        try:
-            release = datetime.date.fromisoformat(release_date)
-            # Floor at 0.5yr to avoid division instability for very new films.
-            age_years = max((today - release).days / 365.0, 0.5)
-
-            # Recency: 2× at ≤1yr, hyperbolic decay to 1× at 2yr.
-            # max(1.0, …) ensures films older than 2yr are floored at 1×
-            # and never penalised by this branch.
-            recent_boost = max(
-                1.0,
-                min(VC_RECENCY_BOOST_MAX, VC_RECENCY_BOOST_MAX / age_years),
-            )
-
-            # Classic: grows linearly from 1× at VC_CLASSIC_START_YEARS to
-            # VC_CLASSIC_BOOST_CAP at VC_CLASSIC_START_YEARS + VC_CLASSIC_RAMP_YEARS.
-            # max(0.0, …) floors the ramp term at zero for films below the threshold,
-            # keeping classic_boost at 1.0 for younger films.
-            classic_boost = min(
-                VC_CLASSIC_BOOST_CAP,
-                1.0 + max(0.0, age_years - VC_CLASSIC_START_YEARS) / VC_CLASSIC_RAMP_YEARS,
-            )
-
-            # Apply the larger of the two adjustments; windows don't overlap so
-            # in practice only one will ever exceed 1.0 for any given film.
-            multiplier = max(recent_boost, classic_boost)
-            base = min(base * multiplier, 1.0)
-        except ValueError:
-            # Non-parseable date — use base score unchanged.
-            pass
-
-    return base
+    return score_vote_count(vc, release_date, today, VoteCountSource.TMDB)
 
 
 def _score_watch_providers(
@@ -249,13 +145,9 @@ def _score_watch_providers(
 def _score_popularity(popularity: float) -> float:
     """Log-scaled popularity score in [0, 1], capped at popularity=10.
 
-    popularity is TMDB's algorithmic activity score (page views, watchlist
-    additions, etc.).  It is complementary to vote_count — it captures current
-    momentum for new releases still accumulating votes, and for cult titles
-    with active but small audiences.  The cap at 10 places the ceiling just
-    above p99 (8.95).
+    Delegates to the shared score_popularity() in scoring_utils.
     """
-    return min(math.log10(max(popularity, 0.0) + 1) / math.log10(POP_LOG_CAP), 1.0)
+    return score_popularity(popularity)
 
 
 def _score_overview_length(length: int) -> float:
@@ -300,7 +192,7 @@ def compute_quality_score(row: sqlite3.Row, today: datetime.date) -> float:
     Returns:
         Raw quality score as a float.
     """
-    provider_count = len(_unpack_provider_keys(row["watch_provider_keys"]))
+    provider_count = len(unpack_provider_keys(row["watch_provider_keys"]))
     release_date: str | None = row["release_date"]
 
     vc_score  = _score_vote_count(row["vote_count"], release_date, today)
@@ -341,10 +233,10 @@ def compute_quality_score(row: sqlite3.Row, today: datetime.date) -> float:
 
 
 def run() -> None:
-    """Score all tmdb_fetched movies and write results to movie_progress.quality_score.
+    """Score all tmdb_fetched movies and write results to movie_progress.stage_3_quality_score.
 
     Processes every movie with status='tmdb_fetched', computes its raw quality
-    score, and stores it in the quality_score column.  The movie's status is
+    score, and stores it in the stage_3_quality_score column.  The movie's status is
     NOT changed — that happens in the separate normalisation/cutoff pass.
 
     Progress is reported every LOG_EVERY rows.  A summary with score
@@ -405,7 +297,7 @@ def run() -> None:
 
             db.execute(
                 """UPDATE movie_progress
-                   SET quality_score = ?, updated_at = CURRENT_TIMESTAMP
+                   SET stage_3_quality_score = ?, updated_at = CURRENT_TIMESTAMP
                    WHERE tmdb_id = ?""",
                 (score, row["tmdb_id"]),
             )
@@ -442,7 +334,7 @@ def run() -> None:
     print(f"  Score mean:    {score_mean:.4f}")
     print(f"  Score max:     {score_max:.4f}")
     print(
-        f"\nNext step: normalise quality_score to [0, 1] across all scored movies,"
+        f"\nNext step: normalise stage_3_quality_score to [0, 1] across all scored movies,"
         f" plot the distribution, and select a cutoff to advance to 'quality_passed'."
     )
 
