@@ -18,10 +18,10 @@ embedding, database ingestion) live outside this module.
 | `tracker.py` | Shared backbone — SQLite database at `./ingestion_data/tracker.db`. Manages `movie_progress`, `filter_log`, and `tmdb_data` tables. Defines `MovieStatus`/`PipelineStage` enums. Provides `log_filter()` and `batch_log_filter()` helpers. |
 | `tmdb_fetching/daily_export.py` | Stage 1: Stream-download gzipped JSONL (~1M entries), filter (adult=False, video=False, popularity>0), insert ~800K as 'pending'. |
 | `tmdb_fetching/tmdb_fetcher.py` | Stage 2: Async TMDB detail fetch for all pending movies. Extracts fields into `tmdb_data` table. Filters movies missing IMDB ID. Uses adaptive rate limiting from `db/tmdb.py`. HTTP fetching and DB writes are separated: async tasks return result NamedTuples, all DB writes happen via `executemany` after `asyncio.gather()`. |
-| `tmdb_quality_scoring/tmdb_filter.py` | Stage 3: Apply 5 hard filters + quality score threshold. |
-| `tmdb_quality_scoring/tmdb_quality_scorer.py` | Quality scoring model: 10 weighted signals (weights sum to 1.0). |
-| `tmdb_quality_scoring/tmdb_data_analysis.py` | Diagnostic: per-attribute distributions from tmdb_data. |
-| `tmdb_quality_scoring/plot_quality_scores.py` | Diagnostic: Gaussian-smoothed survival curve + derivatives (determines threshold). |
+| `tmdb_quality_scoring/tmdb_quality_scorer.py` | Stage 3 scorer: edge cases (unreleased → 0.0, has providers → 1.0) + 4-signal weighted formula for no-provider movies. |
+| `tmdb_quality_scoring/tmdb_filter.py` | Stage 3 filter: apply quality score threshold (0.2344) to scored movies. |
+| `tmdb_quality_scoring/tmdb_data_analysis.py` | Diagnostic: per-attribute distributions from tmdb_data, split into two output files by watch-provider availability (`tmdb_data_analysis_with_providers.json` and `tmdb_data_analysis_no_providers.json`). |
+| `tmdb_quality_scoring/plot_tmdb_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 3 scores. Plots both all-movies and no-provider-only populations using `survival_curve_utils`. |
 | `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch. HTTP fetching and DB writes are separated — async tasks return result NamedTuples, all DB writes happen via `executemany` after each batch. |
 | `imdb_scraping/scraper.py` | Per-movie: fetch GraphQL → transform → return result (does not write to DB). |
 | `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, random UA rotation. |
@@ -30,7 +30,13 @@ embedding, database ingestion) live outside this module.
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. |
 | `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: IMDB essential data hard-filter + quality score soft threshold. |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data. |
+| `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores (all movies). Thin wrapper around `survival_curve_utils`. |
+| `imdb_quality_scoring/plot_quality_scores_with_providers.py` | Diagnostic: survival curve for Stage 5 scores, movies with ≥1 US provider or within theater window only. |
+| `imdb_quality_scoring/plot_quality_scores_no_providers.py` | Diagnostic: survival curve for Stage 5 scores, movies with no providers and outside theater window only. |
+| `imdb_quality_scoring/sample_threshold_candidates.py` | Diagnostic: samples 15 movies below and above each of N candidate thresholds, writes full TMDB+IMDB data to `ingestion_data/threshold_candidate_samples.json` for manual review. |
+| `imdb_quality_scoring/top_no_providers.py` | Diagnostic: lists top-scoring movies with no US watch providers (>1yr past theater window) to audit watch_providers signal distortion. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Used by both Stage 3 and Stage 5 scorers. |
+| `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by all four `plot_quality_scores*.py` wrappers. |
 
 ## Boundaries
 
@@ -53,29 +59,31 @@ Stage 5: IMDB Quality Filter   ~100K filtered  (~5 min)
 
 ## Stage 3: Quality Scoring Model
 
-**Hard filters** (applied first, any failure = filtered_out):
-1. `zero_vote_count` — vote_count = 0
-2. `missing_or_zero_duration` — duration IS NULL or 0
-3. `missing_overview` — overview_length = 0
-4. `no_genres` — genre_count = 0
-5. `future_release` — release_date > today
+Stage 3 is deliberately lenient — it removes obvious gunk, not
+borderline candidates. The real quality gate is Stage 5 after
+IMDB data is available. Scoring and filtering are separate scripts
+(run scorer first, then filter). See ADR-017 for design rationale
+and the decision to simplify from the original 10-signal model.
 
-**Soft threshold**: quality_score < -0.0441
+**Edge cases** (bypass the formula entirely):
+- Unreleased movies (release_date > today) → automatic score 0.0
+- Movies with ≥1 US watch provider → automatic score 1.0
 
-**10-signal weighted model** (weights sum to 1.0):
+**4-signal weighted formula** (no-provider population only, weights
+sum to 1.0, all outputs in [0, 1]):
 
 | Signal | Weight | Scoring |
 |--------|--------|---------|
-| vote_count | 0.38 | Log-scaled, capped at 2000. Recency boost (up to 2x, peaking at ≤1yr, decaying to 1x at 2yr), classic boost (1.5x for >20yr) |
-| watch_providers | 0.25 | Tiered [-1, +1]. Harsh -1 for no US streaming |
-| popularity | 0.12 | Log-scaled, capped at 10 |
-| has_revenue | 0.05 | Rare (7%), bonus when present |
-| poster_url | 0.05 | Common (95%), penalty when absent |
-| overview_length | 0.04 | Tiered by character count |
-| has_keywords | 0.04 | Symmetric [-0.5, +0.5] |
-| has_production_companies | 0.03 | Penalty when absent |
-| has_budget | 0.02 | Bonus when present |
-| has_cast_and_crew | 0.02 | Penalty when absent |
+| vote_count | 0.50 | Log-scaled, log cap 101 (calibrated to no-provider p99=72). Recency boost (up to 2x for <2yr), classic boost (up to 1.5x for >20yr) |
+| popularity | 0.20 | Log-scaled, log cap 11 |
+| overview_length | 0.15 | Tiered by character count (0→0.0, 1–50→0.2, 51–100→0.5, 101–200→0.8, 201+→1.0) |
+| data_completeness | 0.15 | Average of 8 binary metadata indicators (genres, poster, cast/crew, countries, companies, keywords, budget, revenue) |
+
+**Soft threshold**: stage_3_quality_score < 0.2344 (inflection point
+from survival curve derivative analysis on the no-provider population)
+
+**Status progression**: tmdb_fetched → tmdb_quality_calculated (scored)
+→ tmdb_quality_passed (filtered)
 
 ## Stage 4: IMDB Scraping
 
@@ -140,7 +148,8 @@ for high-quality LLM metadata generation across the 7 vector spaces?
 Raw score range: approximately -0.55 to +0.95.
 
 **Soft threshold**: determined via survival-curve derivative analysis
-(same approach as Stage 3's `plot_quality_scores.py`).
+using `imdb_quality_scoring/plot_quality_scores.py` (and the
+provider-split variants for population-level analysis).
 
 ### Signal details
 
@@ -155,7 +164,9 @@ receive no adjustment. Result clamped to [0, 1].
 **watch_providers (0.20)** — Binary: +1 if ≥1 US provider or within
 75-day theater window; -1 otherwise. Null release date conservatively
 treated as past theater window. The -0.20 penalty makes it nearly
-impossible for unwatchable movies to survive.
+impossible for unwatchable movies to survive. Known limitation: penalizes
+genuine rights-gap films (e.g., Rififi, The Devils) that score high on
+all other signals. A graduated signal is a candidate future improvement.
 
 **featured_reviews_chars (0.16)** — Total chars across all review texts.
 IMDB `featured_reviews` primary; TMDB reviews JSON fallback. Reviews
@@ -191,7 +202,7 @@ At 15.2% presence, indicates professional critical coverage.
 
 `score_vote_count()` and `score_popularity()` are shared between
 Stage 3 and Stage 5 via `scoring_utils.py`. Stage 3 passes
-`VoteCountSource.TMDB` (log cap 2,001), Stage 5 passes
+`VoteCountSource.TMDB_NO_PROVIDER` (log cap 101), Stage 5 passes
 `VoteCountSource.IMDB` (log cap 12,001). Age-adjustment constants
 (`THEATER_WINDOW_DAYS=75`, `VC_RECENCY_BOOST_MAX=2.0`,
 `VC_CLASSIC_START_YEARS=20`, `VC_CLASSIC_RAMP_YEARS=30`,
@@ -224,8 +235,9 @@ The `tracker.py` module is the shared backbone. Key rules:
 - `filter_log` does NOT store `title` or `year` — JOIN on `tmdb_data`
   to get those when needed for display.
 - Status progression: `pending` → `tmdb_fetched` →
-  `tmdb_quality_passed` → `imdb_scraped` → `essential_data_passed` →
-  `phase1_complete` → `phase2_complete` → `embedded` → `ingested`
+  `tmdb_quality_calculated` → `tmdb_quality_passed` → `imdb_scraped` →
+  `essential_data_passed` → `phase1_complete` → `phase2_complete` →
+  `embedded` → `ingested`
 - Terminal statuses: `filtered_out`
 
 ### Durability settings
@@ -264,8 +276,11 @@ eliminates any uncertainty about concurrent DB access.
   based on missing IMDB data. All fields default to None/[].
 - DataImpulse proxy requires `DATA_IMPULSE_LOGIN` and
   `DATA_IMPULSE_PASSWORD` in `.env`.
-- IMDB can block datacenter proxy IPs while accepting residential
-  ones. Symptom: mass ConnectTimeouts and tiny response payloads
-  (1-2 MB/min vs 18+ MB/min when healthy). Switching to residential
-  proxies resolves this — planned for the daily-update pipeline.
+- IMDB blocks datacenter proxy IPs while accepting residential
+  ones. The bulk scrape already uses DataImpulse residential proxies
+  (see ADR-015). For the future daily-update pipeline, ensure
+  residential proxies remain configured.
   See ADR-015 and `memory/imdb-scraping.md` for tuning history.
+- Survival curve plot scripts call `plt.show()` which blocks in
+  headless environments. Use the `Agg` backend or redirect output
+  to a file when running without a display.

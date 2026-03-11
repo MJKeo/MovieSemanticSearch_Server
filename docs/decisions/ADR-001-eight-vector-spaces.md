@@ -53,7 +53,5 @@ All vectors use OpenAI `text-embedding-3-small` (1536 dims).
 
 ## References
 
-- guides/movie_vector_definitions.md (vector descriptions)
-- guides/movie_vector_schemas.md (what data goes into each)
-- guides/movie_vector_analysis.md (embedding space analysis)
-- guides/vector_scoring_guide.md (scoring pipeline)
+- docs/modules/db.md (vector scoring pipeline)
+- docs/modules/llms.md (vector metadata generation)

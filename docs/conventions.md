@@ -43,6 +43,32 @@ These rules apply everywhere and are not negotiable:
 - asyncio for all I/O-bound operations (database queries, API calls,
   LLM calls). Use `asyncio.gather` for concurrent fan-out.
 - httpx for async HTTP clients (TMDB, IMDB scraping)
+- Separate async I/O from DB writes in pipeline stages. Async
+  tasks (HTTP fetches, API calls) must not receive a DB connection
+  — they return result objects (e.g., NamedTuples). The calling
+  orchestrator collects results via `gather()`, then does all DB
+  writes in a single synchronous batch. This prevents SQLite
+  thread-safety issues and keeps error handling in one place.
+- Prefer batch DB operations (`executemany`, bulk inserts) over
+  row-at-a-time loops. Provide batch variants of helper functions
+  (e.g., `batch_log_filter`) for use in async orchestrators.
+- Push filtering to the data layer. Use SQL JOINs/WHERE clauses
+  to scope data before loading into Python, rather than loading
+  everything and filtering in application code. If a second data
+  source needs the same scope, derive its filter set from the
+  first query's results.
+- When computing multiple independent metrics over the same large
+  dataset (e.g., field coverage stats across 140K movies), do a
+  single pass that updates all accumulators at once — not one full
+  iteration per metric. Define a dataclass to hold running totals,
+  populate it in the loop, then read from it in reporting functions.
+- For bulk JSON I/O (hundreds+ files), use `orjson` with binary
+  file handles (`rb`/`wb`) — it's 5-10x faster than stdlib `json`
+  and avoids the encode/decode overhead of text mode. For bulk
+  file reads that are I/O-bound (not CPU-bound), wrap with
+  `ThreadPoolExecutor` to parallelize disk reads. Reserve stdlib
+  `json` for small one-off reads where adding the dependency
+  isn't justified.
 
 ## Error Handling
 
@@ -116,9 +142,9 @@ to [0, 1] unless explicitly noted otherwise:
 
 ## Caching Conventions
 
-- **QU cache**: Key includes prompt version prefix (`v{N}`). Bump
-  version when any system prompt changes. Old keys expire within
-  TTL (1 day) — no explicit invalidation needed.
+- *(Planned)* **QU cache**: Key will include prompt version prefix
+  (`v{N}`). Bump version when any system prompt changes. Old keys
+  expire within TTL (1 day) — no explicit invalidation needed.
 - **Embedding cache**: Key includes model name. Binary serialization
   (not JSON) for float arrays.
 - **TMDB detail cache**: TTL 1 day. Proxy TMDB through the server
@@ -137,3 +163,26 @@ to [0, 1] unless explicitly noted otherwise:
 - TMDB fetching is free (API key only, no proxy needed). IMDB
   scraping requires residential proxies. This cost asymmetry
   drives the TMDB-first funnel design.
+- SQLite tracker must always set `PRAGMA journal_mode=WAL` and
+  `PRAGMA synchronous=FULL` in `init_db()`. Never weaken the
+  synchronous pragma — WAL mode without it risks corruption on
+  crash.
+- When multiple pipeline stages share scoring or analysis logic,
+  extract to a shared module in `movie_ingestion/` with parametric
+  inputs (config dataclasses, enums) for stage-specific
+  differences. Each stage imports from the shared module but keeps
+  its own configuration.
+- Column names in the tracker DB that could be ambiguous across
+  stages must be prefixed with their scope (e.g.,
+  `stage_3_quality_score`, `stage_5_quality_score`).
+
+## Network & Retry Conventions
+
+- Tune timeout and retry strategy to match the failure mode of
+  the transport. With rotating proxies (fresh IP per request),
+  use aggressive timeouts (2-5s) paired with higher retry counts
+  (5+) and short backoffs (0.3-0.8s) — a slow response means a
+  flagged IP, and waiting longer cannot help.
+- For fixed-endpoint APIs (TMDB, OpenAI), use longer timeouts
+  with exponential backoff, since the same server will eventually
+  recover.

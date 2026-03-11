@@ -17,7 +17,7 @@ autonomously without risk of overwriting stable design decisions.
 Replace the flat `guides/` directory with a structured docs/ hierarchy:
 
 - `docs/PROJECT.md` — product context, priorities, constraints,
-  module map. Human-only updates via `/update-project`.
+  module map. Human-only updates via `/extract-finalized-decisions`.
 - `docs/conventions.md` — cross-codebase invariants and patterns.
   Human-only; agents flag inconsistencies rather than fixing.
 - `docs/modules/` — concise per-module summaries (what, boundaries,

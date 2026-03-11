@@ -55,5 +55,4 @@ With both enabled, Qdrant's working RAM footprint is ~2.5–3 GB
 
 ## References
 
-- guides/qdrant_database_structure.md
-- guides/server_architecture_guide.md (section 1C)
+- docs/modules/db.md (Qdrant configuration)

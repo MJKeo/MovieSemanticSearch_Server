@@ -156,15 +156,16 @@ Stage 2: TMDB Detail Fetching (movie_ingestion/tmdb_fetching/tmdb_fetcher.py)
   └─ Status: pending → tmdb_fetched
   └─ Run: python -m movie_ingestion.tmdb_fetching.tmdb_fetcher
 
-Stage 3: TMDB Quality Funnel (movie_ingestion/tmdb_quality_scoring/tmdb_filter.py)
-  └─ Computes a weighted quality score (10 signals, weights sum to 1.0) per movie inline
-  └─ Scoring logic in tmdb_quality_scorer.py: vote_count (0.38), watch_providers (0.25),
-     popularity (0.12), and 7 boolean/tiered signals for data completeness
-  └─ Vote count scoring applies recency boost (2x for <1yr) and classic boost (1.5x for >20yr)
-  └─ Five hard filters: zero_vote_count, missing_duration, missing_overview, no_genres, future_release
-  └─ Soft threshold: stage_3_quality_score < -0.0441
-  └─ Status: tmdb_fetched → tmdb_quality_passed (or filtered_out)
-  └─ Run: python -m movie_ingestion.tmdb_quality_scoring.tmdb_filter
+Stage 3: TMDB Quality Funnel (two scripts, run in order)
+  └─ Scorer: python -m movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer
+     └─ Edge cases: unreleased → 0.0, has US watch providers → 1.0
+     └─ No-provider formula (4 signals, weights sum to 1.0):
+        vote_count (0.50), popularity (0.20), overview_length (0.15), data_completeness (0.15)
+     └─ No hard filters — deliberately lenient, real quality gate is Stage 5
+     └─ Status: tmdb_fetched → tmdb_quality_calculated
+  └─ Filter: python -m movie_ingestion.tmdb_quality_scoring.tmdb_filter
+     └─ Soft threshold: stage_3_quality_score < 0.2344 (inflection point from derivative analysis)
+     └─ Status: tmdb_quality_calculated → tmdb_quality_passed (or filtered_out)
 
 Stage 4: IMDB Scraping (movie_ingestion/imdb_scraping/)
   └─ Single GraphQL query per movie to api.graphql.imdb.com (replaces 6 HTML page fetches)

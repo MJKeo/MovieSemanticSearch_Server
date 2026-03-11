@@ -38,6 +38,7 @@ numerator and denominator.
 | duration | 2 | [0, 1] (30-minute grace period) |
 | trending | 2 | [0, 1] (binary: in set or not) |
 | popular | 2 | [0, 1] (precomputed sigmoid of percentile) |
+| budget_size | 3 | [0, 1] (binary match) |
 
 ### Key Scoring Details
 
@@ -78,4 +79,4 @@ from Postgres. See ADR-010.
 
 ## References
 
-- guides/metadata_scoring_guide.md (complete specification)
+- docs/modules/db.md (metadata scoring description and constants)

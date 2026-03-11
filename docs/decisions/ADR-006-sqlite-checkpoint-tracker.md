@@ -53,5 +53,4 @@ scoring. Three core tables:
 
 ## References
 
-- guides/stage_2_tmdb_fetching.md (SQLite schema section)
-- guides/full_movie_fetch_pipeline_guide.md (tracker system)
+- docs/modules/ingestion.md (tracker system and pipeline stages)

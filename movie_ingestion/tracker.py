@@ -56,6 +56,7 @@ class MovieStatus(StrEnum):
     """
     PENDING = "pending"
     TMDB_FETCHED = "tmdb_fetched"
+    TMDB_QUALITY_CALCULATED = "tmdb_quality_calculated"
     TMDB_QUALITY_PASSED = "tmdb_quality_passed"
     IMDB_SCRAPED = "imdb_scraped"
     ESSENTIAL_DATA_PASSED = "essential_data_passed"

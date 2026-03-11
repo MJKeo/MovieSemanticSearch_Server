@@ -48,9 +48,15 @@ class VoteCountSource(StrEnum):
     2001.  IMDB votes are higher (p90 ≈ 10,625), so the cap is 12001 to
     spread discrimination across the 100–10,000 range where borderline movies
     live.
+
+    TMDB_NO_PROVIDER is used by Stage 3 scoring, which only applies the
+    weighted formula to movies without US watch providers.  That population
+    has p99 ≈ 72, so the cap of 101 spreads discrimination across 0–72
+    instead of the full TMDB 0–2000 range.
     """
     TMDB = "tmdb"
     IMDB = "imdb"
+    TMDB_NO_PROVIDER = "tmdb_no_provider"
 
 
 # Log caps keyed by source.  Each cap is set just above the relevant
@@ -59,6 +65,7 @@ class VoteCountSource(StrEnum):
 _VC_LOG_CAPS: dict[VoteCountSource, int] = {
     VoteCountSource.TMDB: 2001,
     VoteCountSource.IMDB: 12001,
+    VoteCountSource.TMDB_NO_PROVIDER: 101,
 }
 
 

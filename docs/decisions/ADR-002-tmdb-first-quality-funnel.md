@@ -60,6 +60,4 @@ Gaussian-smoothed survival curve analysis).
 
 ## References
 
-- guides/full_movie_fetch_pipeline_guide.md
-- guides/stage_2_tmdb_fetching.md
-- guides/post_filter_data_analysis.md
+- docs/modules/ingestion.md (pipeline stages and scoring models)

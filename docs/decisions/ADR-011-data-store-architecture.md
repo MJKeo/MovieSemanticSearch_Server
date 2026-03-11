@@ -22,7 +22,7 @@ reranking.
   movie_id (PK), tmdb_id, title, year, poster_url, release_ts,
   runtime_minutes, maturity_rank, genre_ids (INT[]),
   watch_offer_keys (INT[]), audio_language_ids (INT[]),
-  reception_score, popularity_score, imdb_vote_count
+  reception_score, popularity_score, imdb_vote_count, budget_bucket
 - `lex.*` — inverted index posting tables for lexical search:
   inv_person_postings, inv_character_postings, inv_studio_postings,
   inv_title_token_postings. Each stores (term_id, movie_id) pairs.
@@ -85,7 +85,4 @@ volatile-lru eviction policy (TTL-less keys immune to eviction).
 
 ## References
 
-- guides/postgres_database_structure.md
-- guides/qdrant_database_structure.md
-- guides/redis_database_structure.md
-- guides/server_architecture_guide.md
+- docs/modules/db.md (Postgres, Qdrant, and Redis details)

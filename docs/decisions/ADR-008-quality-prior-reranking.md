@@ -53,4 +53,4 @@ score is computed:
 
 ## References
 
-- guides/final_reranking_guide.md (complete specification)
+- docs/modules/db.md (reranking constants and gotchas)

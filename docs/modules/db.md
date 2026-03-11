@@ -20,7 +20,7 @@ into all three data stores.
 | `vector_search.py` | End-to-end vector search across 8 Qdrant collections. Two-stage: original query + LLM subqueries. Fires searches as embeddings arrive. |
 | `vector_scoring.py` | 5-stage pipeline converting raw Qdrant scores → single [0,1] score. Stages: execution flags → blend (80/20) → normalize (exp decay, k=3.0) → weight → sum. |
 | `lexical_search.py` | Entity-based search via Postgres inverted indexes. Resolves actors/directors/franchises/characters to term IDs, computes F-score (beta=2.0). |
-| `metadata_scoring.py` | Scores candidates against LLM-extracted metadata preferences (genres, date, providers, language, maturity, reception, trending, popularity). Weighted average, weights are static. |
+| `metadata_scoring.py` | Scores candidates against LLM-extracted metadata preferences (genres, date, providers, language, maturity, reception, trending, popularity, budget_size). Weighted average, weights are static. |
 | `reranking.py` | Quality-prior reranking: bucket by relevance score (precision=2), sort within buckets by reception score. |
 | `postgres.py` | Async connection pool, all SQL operations, posting list queries, movie card bulk fetch. |
 | `qdrant.py` | Minimal Qdrant async client singleton. |
@@ -54,11 +54,13 @@ into all three data stores.
 | SUBQUERY_BLEND_WEIGHT | 0.8 | vector_scoring.py | Subquery vs original blend ratio |
 | DECAY_K | 3.0 | vector_scoring.py | Exponential decay steepness |
 | ANCHOR_MEAN_FRACTION | 0.8 | vector_scoring.py | Anchor weight as fraction of active-space mean |
-| RELEVANCE_SMALL/MEDIUM/LARGE | 1.0/2.0/3.0 | vector_scoring.py | Raw weight mapping |
+| RELEVANCE_RAW_WEIGHTS | {SMALL: 1.0, MEDIUM: 2.0, LARGE: 3.0} | vector_scoring.py | RelevanceSize → raw weight dict |
 | BUCKET_PRECISION | 2 | reranking.py | Relevance score rounding |
 | RECEPTION_FLOOR/CEIL | 30.0/90.0 | reranking.py | Reception score normalization range |
 | TITLE_SCORE_BETA | 2.0 | lexical_search.py | F-score beta for title matching |
 | MAX_DF | 10000 | lexical_search.py | Max document frequency threshold |
+| TITLE_SCORE_THRESHOLD | 0.15 | lexical_search.py | Minimum title match score |
+| TITLE_MAX_CANDIDATES | 10,000 | lexical_search.py | Max title search candidates |
 
 ## Gotchas
 

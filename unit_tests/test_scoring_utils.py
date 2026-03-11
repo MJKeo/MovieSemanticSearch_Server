@@ -59,8 +59,35 @@ class TestVoteCountSource:
         """VoteCountSource.IMDB has string value 'imdb'."""
         assert VoteCountSource.IMDB == "imdb"
 
+    def test_tmdb_no_provider_value(self) -> None:
+        """VoteCountSource.TMDB_NO_PROVIDER has string value 'tmdb_no_provider'."""
+        assert VoteCountSource.TMDB_NO_PROVIDER == "tmdb_no_provider"
+
+    def test_tmdb_no_provider_log_cap_is_101(self) -> None:
+        """TMDB_NO_PROVIDER log cap is 101 (just above p99 ≈ 72 for no-provider population)."""
+        assert _VC_LOG_CAPS[VoteCountSource.TMDB_NO_PROVIDER] == 101
+
+    def test_tmdb_no_provider_saturates_at_100(self) -> None:
+        """vc=100 with TMDB_NO_PROVIDER source produces a score ≈ 1.0."""
+        score = score_vote_count(100, None, TODAY, VoteCountSource.TMDB_NO_PROVIDER)
+        assert score == pytest.approx(1.0, abs=0.01)
+
+    def test_tmdb_no_provider_discriminates_low_range(self) -> None:
+        """vc=10 with TMDB_NO_PROVIDER produces higher score than same vc with TMDB source.
+
+        The lower cap (101 vs 2001) spreads discrimination across the low range,
+        giving more resolution where the no-provider population lives.
+        """
+        no_prov_score = score_vote_count(10, None, TODAY, VoteCountSource.TMDB_NO_PROVIDER)
+        tmdb_score = score_vote_count(10, None, TODAY, VoteCountSource.TMDB)
+        assert no_prov_score > tmdb_score
+
+    def test_all_three_sources_in_enum(self) -> None:
+        """VoteCountSource enum has exactly 3 members."""
+        assert len(VoteCountSource) == 3
+
     def test_vote_count_source_is_strenum(self) -> None:
-        """Both members are valid strings (StrEnum contract)."""
+        """All members are valid strings (StrEnum contract)."""
         for member in VoteCountSource:
             assert isinstance(member, str)
             assert member == member.value

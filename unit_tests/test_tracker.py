@@ -609,6 +609,22 @@ class TestMovieStatus:
         """MovieStatus.ESSENTIAL_DATA_PASSED == 'essential_data_passed'."""
         assert MovieStatus.ESSENTIAL_DATA_PASSED == "essential_data_passed"
 
+    def test_tmdb_quality_calculated_value(self) -> None:
+        """MovieStatus.TMDB_QUALITY_CALCULATED == 'tmdb_quality_calculated'."""
+        assert MovieStatus.TMDB_QUALITY_CALCULATED == "tmdb_quality_calculated"
+
+    def test_tmdb_quality_calculated_in_status_progression(self) -> None:
+        """TMDB_QUALITY_CALCULATED exists between TMDB_FETCHED and TMDB_QUALITY_PASSED.
+
+        The enum members are defined in progression order; verify the new status
+        sits between its neighbors in the member list.
+        """
+        members = list(MovieStatus)
+        fetched_idx = members.index(MovieStatus.TMDB_FETCHED)
+        calculated_idx = members.index(MovieStatus.TMDB_QUALITY_CALCULATED)
+        passed_idx = members.index(MovieStatus.TMDB_QUALITY_PASSED)
+        assert fetched_idx < calculated_idx < passed_idx
+
 
 # ---------------------------------------------------------------------------
 # Schema migrations — quality_score rename and stage_5_quality_score addition

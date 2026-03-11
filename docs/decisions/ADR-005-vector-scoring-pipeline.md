@@ -67,9 +67,9 @@ weights. Normalize all weights to sum to 1.0.
 - The anchor vector always participates, providing general recall
   even when no specialized space matches.
 - Tunable parameters: SUBQUERY_BLEND_WEIGHT (0.8), DECAY_K (3.0),
-  ANCHOR_MEAN_FRACTION (0.8), RELEVANCE_SMALL/MEDIUM/LARGE
-  (1.0/2.0/3.0).
+  ANCHOR_MEAN_FRACTION (0.8), RELEVANCE_RAW_WEIGHTS
+  ({SMALL: 1.0, MEDIUM: 2.0, LARGE: 3.0}).
 
 ## References
 
-- guides/vector_scoring_guide.md (complete specification)
+- docs/modules/db.md (scoring pipeline constants and stages)

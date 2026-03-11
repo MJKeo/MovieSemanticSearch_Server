@@ -102,5 +102,4 @@ a distinct signal.
 
 ## References
 
-- guides/trending_metric_guide.md (complete specification)
-- guides/popularity_metric_guide.md (complete specification)
+- docs/modules/db.md (trending_movies.py and scoring constants)

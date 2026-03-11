@@ -55,4 +55,4 @@ via Let's Encrypt.
 
 ## References
 
-- guides/server_architecture_guide.md (sections 1, 8)
+- docs/modules/api.md (deployment context)

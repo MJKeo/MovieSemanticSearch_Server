@@ -56,4 +56,4 @@ all the data previously spread across 6 pages in one response.
 ## References
 
 - movie_ingestion/imdb_scraping/ (current implementation)
-- guides/stage_4_imdb_scraping_guide.md (original HTML approach)
+- docs/modules/ingestion.md (Stage 4 details)

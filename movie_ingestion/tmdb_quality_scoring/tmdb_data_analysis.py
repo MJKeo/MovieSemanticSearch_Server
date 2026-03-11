@@ -7,11 +7,14 @@ statistics to inform the Stage 3 quality funnel design:
   - Vote count survival curve (how many movies survive at each vote threshold)
   - Cross-attribute relationships (boolean completeness vs. vote_count bands, etc.)
 
-Output is written atomically to:
-    ./ingestion_data/tmdb_data_analysis.json
+Results are split by US watch-provider availability (movies WITH at least one
+US provider vs. movies WITHOUT) so that distributions can be compared between
+the two populations. Output is written atomically to:
+    ./ingestion_data/tmdb_data_analysis_with_providers.json
+    ./ingestion_data/tmdb_data_analysis_no_providers.json
 
 Usage:
-    python -m movie_ingestion.tmdb_data_analysis
+    python -m movie_ingestion.tmdb_quality_scoring.tmdb_data_analysis
 """
 
 import datetime
@@ -23,7 +26,8 @@ from movie_ingestion.tracker import INGESTION_DATA_DIR, init_db, save_json
 # Output path
 # ---------------------------------------------------------------------------
 
-OUTPUT_PATH = INGESTION_DATA_DIR / "tmdb_data_analysis.json"
+OUTPUT_PATH_WITH_PROVIDERS = INGESTION_DATA_DIR / "tmdb_data_analysis_with_providers.json"
+OUTPUT_PATH_NO_PROVIDERS   = INGESTION_DATA_DIR / "tmdb_data_analysis_no_providers.json"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -42,6 +46,11 @@ VOTE_COUNT_THRESHOLDS = [10, 50, 100, 500, 1_000, 5_000, 10_000, 50_000]
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _select(lst: list, indices: list[int]) -> list:
+    """Extract elements at the given indices from *lst*."""
+    return [lst[i] for i in indices]
 
 
 def _percentile(sorted_values: list, p: float) -> float | None:
@@ -783,72 +792,45 @@ def analyze_cross_attributes(
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Analysis builder — runs the full suite on a given set of column lists
 # ---------------------------------------------------------------------------
 
 
-def run() -> None:
+def _build_analysis(
+    titles: list[str | None],
+    release_dates: list[str | None],
+    durations: list[int | None],
+    poster_urls: list[str | None],
+    provider_key_counts: list[int],
+    vote_counts: list[int],
+    popularities: list[float],
+    vote_averages: list[float],
+    overview_lengths: list[int],
+    genre_counts: list[int],
+    has_revenue: list[int],
+    has_budget: list[int],
+    has_production_companies: list[int],
+    has_production_countries: list[int],
+    has_keywords: list[int],
+    has_cast_and_crew: list[int],
+) -> dict:
     """
-    Load all tmdb_data rows, compute the full analysis suite, and write results
-    atomically to OUTPUT_PATH.
+    Run the full analysis suite on the provided column lists and return
+    the results dict.
+
+    Computes percentiles from the group's own data so distributions are
+    self-contained and comparable across splits.
     """
-    db = init_db()
+    total = len(vote_counts)
 
-    print("Loading tmdb_data from database (excluding filtered_out movies)...")
-    rows = db.execute("""
-        SELECT
-            d.release_date, d.duration, d.poster_url, d.watch_provider_keys,
-            d.vote_count, d.popularity, d.vote_average, d.overview_length,
-            d.genre_count, d.has_revenue, d.has_budget, d.has_production_companies,
-            d.has_production_countries, d.has_keywords, d.has_cast_and_crew,
-            d.title
-        FROM tmdb_data d
-        JOIN movie_progress p ON d.tmdb_id = p.tmdb_id
-        WHERE p.status != 'filtered_out'
-    """).fetchall()
-    db.close()
-
-    total = len(rows)
-    if total == 0:
-        print("No rows found in tmdb_data. Has Stage 2 (TMDB fetching) completed?")
-        return
-
-    print(f"Loaded {total:,} rows. Computing statistics...")
-
-    # Extract each column into its own list. Using individual list comprehensions
-    # rather than zip(*rows) to avoid potential argument-count issues at large n.
-    release_dates          = [r[0]  for r in rows]
-    durations              = [r[1]  for r in rows]
-    poster_urls            = [r[2]  for r in rows]
-    provider_blobs         = [r[3]  for r in rows]
-    vote_counts            = [r[4]  for r in rows]
-    popularities           = [r[5]  for r in rows]
-    vote_averages          = [r[6]  for r in rows]
-    overview_lengths       = [r[7]  for r in rows]
-    genre_counts           = [r[8]  for r in rows]
-    has_revenue            = [r[9]  for r in rows]
-    has_budget             = [r[10] for r in rows]
-    has_production_companies  = [r[11] for r in rows]
-    has_production_countries  = [r[12] for r in rows]
-    has_keywords           = [r[13] for r in rows]
-    has_cast_and_crew      = [r[14] for r in rows]
-    titles                 = [r[15] for r in rows]
-
-    # Decode provider BLOBs once here and share the count list with both
-    # analyze_watch_providers and analyze_cross_attributes to avoid double work.
-    provider_key_counts = [len(_unpack_provider_keys(b)) for b in provider_blobs]
-
-    # Sort vote_counts once and compute percentiles.
-    # The sorted list and percentile dict are passed explicitly to any function
-    # that needs them, keeping analysis functions free of global state.
+    # Compute percentiles for this group's vote_count and popularity
     sorted_vcs = sorted(vote_counts)
     vc_percentiles = _compute_percentile_set(sorted_vcs)
 
-    # Compute popularity percentiles for analyze_popularity
     sorted_pops = sorted(popularities)
     pop_percentiles = _compute_percentile_set(sorted_pops)
 
-    results = {
+    return {
         "total_movies": total,
         # Top-level for quick reference without digging into the vote_count section
         "vote_count_percentiles": vc_percentiles,
@@ -876,8 +858,98 @@ def run() -> None:
         ),
     }
 
-    save_json(OUTPUT_PATH, results)
-    print(f"Analysis written to {OUTPUT_PATH}")
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def run() -> None:
+    """
+    Load all tmdb_data rows, split by US watch-provider availability, compute
+    the full analysis suite for each group, and write results to separate files.
+    """
+    db = init_db()
+
+    print("Loading tmdb_data from database (excluding filtered_out movies)...")
+    rows = db.execute("""
+        SELECT
+            d.release_date, d.duration, d.poster_url, d.watch_provider_keys,
+            d.vote_count, d.popularity, d.vote_average, d.overview_length,
+            d.genre_count, d.has_revenue, d.has_budget, d.has_production_companies,
+            d.has_production_countries, d.has_keywords, d.has_cast_and_crew,
+            d.title
+        FROM tmdb_data d
+        JOIN movie_progress p ON d.tmdb_id = p.tmdb_id
+        WHERE p.status != 'filtered_out'
+    """).fetchall()
+    db.close()
+
+    total = len(rows)
+    if total == 0:
+        print("No rows found in tmdb_data. Has Stage 2 (TMDB fetching) completed?")
+        return
+
+    print(f"Loaded {total:,} rows. Extracting columns...")
+
+    # Extract each column into its own list. Using individual list comprehensions
+    # rather than zip(*rows) to avoid potential argument-count issues at large n.
+    release_dates          = [r[0]  for r in rows]
+    durations              = [r[1]  for r in rows]
+    poster_urls            = [r[2]  for r in rows]
+    provider_blobs         = [r[3]  for r in rows]
+    vote_counts            = [r[4]  for r in rows]
+    popularities           = [r[5]  for r in rows]
+    vote_averages          = [r[6]  for r in rows]
+    overview_lengths       = [r[7]  for r in rows]
+    genre_counts           = [r[8]  for r in rows]
+    has_revenue            = [r[9]  for r in rows]
+    has_budget             = [r[10] for r in rows]
+    has_production_companies  = [r[11] for r in rows]
+    has_production_countries  = [r[12] for r in rows]
+    has_keywords           = [r[13] for r in rows]
+    has_cast_and_crew      = [r[14] for r in rows]
+    titles                 = [r[15] for r in rows]
+
+    # Decode provider BLOBs once here and share the count list with both
+    # analyze_watch_providers and analyze_cross_attributes to avoid double work.
+    provider_key_counts = [len(_unpack_provider_keys(b)) for b in provider_blobs]
+
+    # All 16 column lists in a fixed order matching _build_analysis's signature.
+    # Used by _select to partition each list by the same index set.
+    all_columns = [
+        titles, release_dates, durations, poster_urls,
+        provider_key_counts, vote_counts, popularities, vote_averages,
+        overview_lengths, genre_counts,
+        has_revenue, has_budget, has_production_companies,
+        has_production_countries, has_keywords, has_cast_and_crew,
+    ]
+
+    # Partition indices by US watch-provider availability
+    with_idx = [i for i, c in enumerate(provider_key_counts) if c > 0]
+    no_idx   = [i for i, c in enumerate(provider_key_counts) if c == 0]
+
+    # --- Group 1: movies WITH at least one US watch provider ---
+    print(f"\nWith US providers: {len(with_idx):,} movies")
+    if with_idx:
+        with_columns = [_select(col, with_idx) for col in all_columns]
+        with_results = _build_analysis(*with_columns)
+        save_json(OUTPUT_PATH_WITH_PROVIDERS, with_results)
+        print(f"  Written to {OUTPUT_PATH_WITH_PROVIDERS}")
+    else:
+        print("  (empty group — skipping)")
+
+    # --- Group 2: movies WITHOUT any US watch provider ---
+    print(f"Without US providers: {len(no_idx):,} movies")
+    if no_idx:
+        no_columns = [_select(col, no_idx) for col in all_columns]
+        no_results = _build_analysis(*no_columns)
+        save_json(OUTPUT_PATH_NO_PROVIDERS, no_results)
+        print(f"  Written to {OUTPUT_PATH_NO_PROVIDERS}")
+    else:
+        print("  (empty group — skipping)")
+
+    print(f"\nDone. Total: {total:,} = {len(with_idx):,} (with) + {len(no_idx):,} (without)")
 
 
 if __name__ == "__main__":

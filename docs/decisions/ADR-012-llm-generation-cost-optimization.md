@@ -94,6 +94,4 @@ Any change should be validated on 50-100 diverse movies:
 
 ## References
 
-- guides/llm_generation_token_reduction.md (token analysis)
-- guides/llm_generation_model_alternatives.md (model comparison)
-- guides/llm_generation_final_improvement_proposal.md (phased plan)
+- docs/modules/llms.md (ingestion-time LLM generation details)

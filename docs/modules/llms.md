@@ -39,8 +39,8 @@ user query. On Redis cache hit, the entire DAG is skipped.
 | `extract_lexical_entities_async()` | Actors, directors, franchises, characters | None |
 | `create_channel_weights_async()` | Lexical/vector/metadata relevance (RelevanceSize) | None |
 | `extract_all_metadata_preferences_async()` | Genre, date, rating, streaming, duration, trending, reception, language, popularity | None |
-| `run_vector_subqueries_async()` | 7 specialized queries (one per non-anchor space) | None |
-| `run_vector_weights_async()` | Per-space relevance weights | None |
+| `create_single_vector_subquery_async()` | One subquery per non-anchor vector space (called per-space, not as a batch) | None |
+| `create_single_vector_weight_async()` | Per-space relevance weight (called per-space, not as a batch) | None |
 
 All functions run in parallel. When caching is implemented, the
 cached blob will be the complete structured output — never cache
