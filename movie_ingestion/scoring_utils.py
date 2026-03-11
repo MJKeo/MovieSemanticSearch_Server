@@ -153,14 +153,21 @@ def score_vote_count(
     return base
 
 
-def score_popularity(popularity: float) -> float:
-    """Log-scaled popularity score in [0, 1], capped at popularity=10.
+def score_popularity(popularity: float, log_cap: float = POP_LOG_CAP) -> float:
+    """Log-scaled popularity score in [0, 1].
 
     TMDB's algorithmic activity score (page views, watchlist additions, etc.).
     Complementary to vote_count — captures current momentum for new releases
-    and cult titles.  The cap at 10 places the ceiling just above p99 (8.95).
+    and cult titles.
+
+    Args:
+        popularity: TMDB popularity value (any float; negative clamped to 0).
+        log_cap:    Saturation point — popularity values at or above
+                    ``log_cap - 1`` score 1.0.  Default POP_LOG_CAP (11)
+                    places the ceiling just above p99 (8.95).  Stage 5 passes
+                    a lower cap so that ~p75 of has_providers saturates.
     """
-    return min(math.log10(max(popularity, 0.0) + 1) / math.log10(POP_LOG_CAP), 1.0)
+    return min(math.log10(max(popularity, 0.0) + 1) / math.log10(log_cap), 1.0)
 
 
 def validate_weights(weights: dict[str, float], label: str = "WEIGHTS") -> None:

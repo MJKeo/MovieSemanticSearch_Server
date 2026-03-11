@@ -29,15 +29,13 @@ embedding, database ingestion) live outside this module.
 | `imdb_scraping/models.py` | Pydantic models for IMDB scraped data. |
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. |
 | `imdb_scraping/reconcile_cached.py` | Advances `tmdb_quality_passed` movies to `imdb_scraped` when their IMDB JSON already exists on disk — recovers from runs that wrote the cache file but crashed before committing the status update. |
-| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: IMDB essential data hard-filter + quality score soft threshold. |
-| `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data. |
-| `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores (all movies). Thin wrapper around `survival_curve_utils`. |
-| `imdb_quality_scoring/plot_quality_scores_with_providers.py` | Diagnostic: survival curve for Stage 5 scores, movies with ≥1 US provider or within theater window only. |
-| `imdb_quality_scoring/plot_quality_scores_no_providers.py` | Diagnostic: survival curve for Stage 5 scores, movies with no providers and outside theater window only. |
+| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: 8-signal combined TMDB+IMDB quality scorer (v2). No hard filters — score is the sole filtering mechanism. |
+| `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data, split into 3 groups matching the Stage 5 threshold groups (has_providers, recent_no_providers, old_no_providers). Produces `imdb_data_analysis_{group}.json` output files. |
+| `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores across 3 groups (with providers, no providers recent, no providers old). Thin wrapper around `survival_curve_utils`. |
 | `imdb_quality_scoring/sample_threshold_candidates.py` | Diagnostic: samples 15 movies below and above each of N candidate thresholds, writes full TMDB+IMDB data to `ingestion_data/threshold_candidate_samples.json` for manual review. |
 | `imdb_quality_scoring/top_no_providers.py` | Diagnostic: lists top-scoring movies with no US watch providers (>1yr past theater window) to audit watch_providers signal distortion. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Used by both Stage 3 and Stage 5 scorers. |
-| `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by all four `plot_quality_scores*.py` wrappers. |
+| `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
 ## Boundaries
 
@@ -113,104 +111,96 @@ flat retry delay 0.2–0.3s (vs. former exponential 2^n + rand), semaphore
 bottleneck is IP quality, not concurrency). See ADR-018 for the
 residential-vs-datacenter tuning tradeoffs.
 
-## Stage 5: Combined Quality Scoring Model
+## Stage 5: Combined Quality Scoring Model (v2)
 
-Stage 5 applies both hard filters (essential data checks) and a combined
-TMDB+IMDB quality scorer. IMDB data is primary; TMDB is fallback for
-overlapping fields. See ADR-016 for design rationale and alternatives
-considered.
+Stage 5 computes a combined TMDB+IMDB quality score for every
+`imdb_scraped` movie. IMDB data is primary; TMDB is fallback for
+overlapping fields. See `quality_score_design.md` for full design
+rationale. See ADR-019 for the v2 redesign decisions.
 
-The score answers two questions: (1) does this movie have sufficient data
-for high-quality LLM metadata generation across the 7 vector spaces?
-(2) is this movie a credible search target worth including?
+**No hard filters.** The quality score is the sole filtering mechanism.
+Movies with missing IMDB JSON are skipped (status unchanged).
 
-**Hard filters** (applied first, any failure = filtered_out):
-1. `missing_imdb_json` — no JSON file on disk
-2. `no_imdb_rating` — no audience engagement signal
-3. `no_directors` — fundamental lexical entity missing
-4. `no_poster_url` — display requirement
-5. `no_actors` — critical lexical entity
-6. `no_characters` — character-based search support
-7. `no_overall_keywords` — limits lexical and semantic signals
-8. `no_languages` — metadata filtering requirement
-9. `no_countries_of_origin` — region-based query support
-10. `no_release_date` — date-range filtering requirement
+The score answers two questions: (1) is this movie relevant — would
+users search for it or choose it? (2) is the data sufficient for
+reliable LLM metadata generation and multi-channel search?
 
-### 8-signal weighted model (weights sum to 1.0)
+**Three separate thresholds** (determined after scoring via
+survival-curve analysis, applied per provider group):
+- **has_providers** — movies with ≥1 US watch provider (lenient)
+- **recent_no_providers** — no providers, released ≤75 days ago (lenient)
+- **old_no_providers** — no providers, released >75 days ago (strictest)
 
-| Signal | Weight | Range | Scale |
-|--------|--------|-------|-------|
-| imdb_vote_count | 0.22 | [0, 1] | Log-scaled + recency/classic adj. |
-| watch_providers | 0.20 | [-1, +1] | Binary with theater-window logic |
-| featured_reviews_chars | 0.16 | [-1, +1] | Tiered by total char count |
-| plot_text_depth | 0.12 | [0, 1] | Log-scaled composite |
-| lexical_completeness | 0.10 | [-1, +1] | Capped entity-type composite |
-| data_completeness | 0.10 | [-1, +1] | Tiered/binary field composite |
-| tmdb_popularity | 0.06 | [0, 1] | Log-scaled |
-| metacritic_rating | 0.04 | [0, +1] | Binary bonus |
+**Status progression:** `imdb_scraped` → `imdb_quality_calculated` (scored)
+→ `imdb_quality_passed` (after threshold filtering).
+Stage name for filter_log: `imdb_quality_funnel`.
+See ADR-020 for the rationale behind the two-step status pattern.
 
-Raw score range: approximately -0.55 to +0.95.
+### 8-signal weighted model (weights sum to 1.0, all [0, 1])
 
-**Soft threshold**: determined via survival-curve derivative analysis
-using `imdb_quality_scoring/plot_quality_scores.py` (and the
-provider-split variants for population-level analysis).
+| Signal | Weight | Category | Scale |
+|--------|--------|----------|-------|
+| imdb_vote_count | 0.27 | Relevance | Log-scaled + recency/classic adj. |
+| critical_attention | 0.12 | Relevance | Presence of metacritic + reception_summary |
+| community_engagement | 0.08 | Relevance | Weighted presence of reviews/synopses/summaries/keywords |
+| tmdb_popularity | 0.08 | Relevance | Log-scaled (lowered cap, ~p75 saturates) |
+| featured_reviews_chars | 0.15 | Data sufficiency | Tiered by total char count |
+| plot_text_depth | 0.12 | Data sufficiency | Log-scaled composite |
+| lexical_completeness | 0.10 | Data sufficiency | Averaged entity-type composite |
+| data_completeness | 0.08 | Data sufficiency | Averaged field composite |
+
+Score range: [0, 1].
 
 ### Signal details
 
-**imdb_vote_count (0.22)** — Primary notability proxy. IMDB only (100%
-present, no TMDB fallback). Log cap at 12,001 (just above p90).
-Formula: `min(log10(vc + 1) / log10(12001), 1.0)`. Two age multipliers
-(mutually exclusive, larger applied): recency boost up to 2.0x for
-films < 2yr (hyperbolic decay, floored at 0.5yr), classic boost
-linearly ramping from 1.0x at 20yr to 1.5x cap at 35yr. Films 2–20yr
-receive no adjustment. Result clamped to [0, 1].
+**imdb_vote_count (0.27)** — Primary notability proxy. IMDB only.
+Log cap 12,001. Age multipliers: recency boost up to 2.0x for
+films <2yr, classic boost up to 1.5x for >20yr. Unchanged from v1.
 
-**watch_providers (0.20)** — Binary: +1 if ≥1 US provider or within
-75-day theater window; -1 otherwise. Null release date conservatively
-treated as past theater window. The -0.20 penalty makes it nearly
-impossible for unwatchable movies to survive. Known limitation: penalizes
-genuine rights-gap films (e.g., Rififi, The Devils) that score high on
-all other signals. A graduated signal is a candidate future improvement.
+**critical_attention (0.12)** — Count presence of `metacritic_rating`
+(not None) + `reception_summary` (truthy string). 0/2→0.0, 1/2→0.5,
+2/2→1.0. Pure bonus — absence is normal.
 
-**featured_reviews_chars (0.16)** — Total chars across all review texts.
-IMDB `featured_reviews` primary; TMDB reviews JSON fallback. Reviews
-feed 6/7 vector spaces — absence is a red flag. Tiers: 0 chars → -1.0,
-1–3,000 → 0.0, 3,001–8,000 → 0.5, 8,001+ → 1.0.
+**community_engagement (0.08)** — Weighted presence composite.
+Sub-weights: plot_keywords→1, featured_reviews→2 (IMDB or TMDB),
+plot_summaries→3, synopses→4. Score = sum of present sub-weights / 10.
+
+**tmdb_popularity (0.08)** — Log-scaled TMDB activity score. Lowered
+log cap (STAGE5_POP_LOG_CAP=4.0) so ~p75 of has_providers saturates.
+
+**featured_reviews_chars (0.15)** — Total chars across review texts.
+IMDB primary; TMDB fallback. Tiers: 0→0.0, 1–3K→0.33, 3K–8K→0.67,
+8K+→1.0.
 
 **plot_text_depth (0.12)** — Log-scaled composite of overview +
-plot_summaries + synopses total chars. IMDB primary per component;
-TMDB `overview_length` fallback for overview only. Log cap: 5,001.
-Formula: `min(log10(total + 1) / log10(5001), 1.0)`. These fields
-are substitutes — total text budget matters, not which field contributes.
+plot_summaries + synopses. IMDB primary; TMDB overview_length fallback.
+Log cap 5,001. Unchanged from v1.
 
-**lexical_completeness (0.10)** — 6 entity types, each capped at 0–1.0
-sub-score, total mapped [0, 6] → [-1, +1] via `(total - 3) / 3`.
-Actors/characters: <5 → 0.5, 5+ → 1.0. Writers, composers, producers:
-binary (0 → 0.0, 1+ → 1.0). Production companies: IMDB primary, TMDB
-`has_production_companies` fallback (binary).
+**lexical_completeness (0.10)** — 6 entity types averaged to [0, 1].
+Actors/characters: 0→0.0, 1–4→0.5, 5+→1.0. Writers, composers,
+producers: binary. Production companies: IMDB primary, TMDB fallback.
 
-**data_completeness (0.10)** — 6 vector-search-readiness fields, mapped
-[0, 6] → [-1, +1] via `(total - 3) / 3`. plot_keywords: 0 → 0.0,
-1–4 → 0.5, 5+ → 1.0. overall_keywords: 1 → 0.25, 2–3 → 0.5, 4+ → 1.0.
-filming_locations, parental_guide_items: binary. maturity_rating, budget:
-IMDB primary, TMDB fallback (binary).
+**data_completeness (0.08)** — 6 fields averaged to [0, 1].
+plot_keywords: tiered. overall_keywords: tiered. filming_locations,
+parental_guide_items: binary. maturity_rating, budget: IMDB/TMDB.
 
-**tmdb_popularity (0.06)** — Log-scaled TMDB activity score. Log cap: 11
-(just above p99). Formula: `min(log10(pop + 1) / log10(11), 1.0)`.
-Captures short-term buzz/momentum complementary to vote count.
+### Changes from v1
 
-**metacritic_rating (0.04)** — Binary bonus (0.0 absent, 1.0 present).
-At 15.2% presence, indicates professional critical coverage.
+- Removed all 10 hard filters — score is the sole filter
+- Removed `watch_providers` signal (0.20) — handled by per-group thresholds
+- Removed `metacritic_rating` signal (0.04) — folded into `critical_attention`
+- Added `critical_attention` (0.12) and `community_engagement` (0.08)
+- All signals normalised to [0, 1] (was mixed [-1, +1] and [0, 1])
+- Score range now [0, 1] (was ~[-0.55, +0.95])
+- Three thresholds per provider group (was single threshold)
 
 ### Shared scoring utilities (scoring_utils.py)
 
 `score_vote_count()` and `score_popularity()` are shared between
-Stage 3 and Stage 5 via `scoring_utils.py`. Stage 3 passes
-`VoteCountSource.TMDB_NO_PROVIDER` (log cap 101), Stage 5 passes
-`VoteCountSource.IMDB` (log cap 12,001). Age-adjustment constants
-(`THEATER_WINDOW_DAYS=75`, `VC_RECENCY_BOOST_MAX=2.0`,
-`VC_CLASSIC_START_YEARS=20`, `VC_CLASSIC_RAMP_YEARS=30`,
-`VC_CLASSIC_BOOST_CAP=1.5`) and `validate_weights()` are also shared.
+Stage 3 and Stage 5 via `scoring_utils.py`. `score_popularity()` accepts
+an optional `log_cap` parameter; Stage 5 passes `STAGE5_POP_LOG_CAP=4.0`.
+Stage 3 uses the default (11). Age-adjustment constants and
+`validate_weights()` are also shared.
 
 ### Downstream vector space coverage
 
@@ -224,10 +214,10 @@ How the scored fields map to the 7 LLM-generated vector spaces:
 | watch_context | featured_reviews, data_completeness (overall_keywords, plot_keywords) |
 | narrative_techniques | featured_reviews, plot_text_depth, data_completeness (overall_keywords, plot_keywords) |
 | production | featured_reviews, plot_text_depth, data_completeness (overall_keywords, plot_keywords, filming_locations) |
-| reception | featured_reviews, metacritic_rating |
+| reception | featured_reviews, critical_attention |
 
 Non-LLM channels: **lexical search** ← lexical_completeness;
-**metadata scoring** ← imdb_vote_count, watch_providers, tmdb_popularity.
+**metadata scoring** ← imdb_vote_count, tmdb_popularity.
 
 ## Tracker System
 
@@ -240,8 +230,8 @@ The `tracker.py` module is the shared backbone. Key rules:
   to get those when needed for display.
 - Status progression: `pending` → `tmdb_fetched` →
   `tmdb_quality_calculated` → `tmdb_quality_passed` → `imdb_scraped` →
-  `essential_data_passed` → `phase1_complete` → `phase2_complete` →
-  `embedded` → `ingested`
+  `imdb_quality_calculated` → `imdb_quality_passed` → `phase1_complete` →
+  `phase2_complete` → `embedded` → `ingested`
 - Terminal statuses: `filtered_out`
 
 ### Durability settings

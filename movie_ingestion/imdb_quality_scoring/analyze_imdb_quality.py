@@ -1,13 +1,21 @@
 """
-Merged TMDB + IMDB search quality analysis.
+Merged TMDB + IMDB search quality analysis, split by watch-provider group.
 
 Joins TMDB data (from tracker SQLite) with IMDB scraped JSON to produce
 a comprehensive report on data coverage and search-quality-relevant
-metrics across both sources. Designed to inform decisions about quality
-thresholds and identify which movies have sufficient data for high-quality
-semantic, lexical, and metadata search.
+metrics across both sources. Movies are classified into three groups:
 
-Sections:
+  1. has_providers         — movies with at least one US watch provider
+  2. recent_no_providers   — no providers, released within the last 75 days
+  3. old_no_providers      — no providers, released more than 75 days ago
+                             (or missing release date)
+
+Each group gets its own analysis sections and JSON export file:
+  ingestion_data/imdb_data_analysis_has_providers.json
+  ingestion_data/imdb_data_analysis_recent_no_providers.json
+  ingestion_data/imdb_data_analysis_old_no_providers.json
+
+Sections per group:
   1. Merge summary — counts for each source and their overlap
   2. Dual-source coverage — per-field presence from TMDB, IMDB, and either
   3. Search quality percentiles — scale-matters fields only (IMDB primary,
@@ -21,6 +29,7 @@ Usage:
     python -m movie_ingestion.imdb_quality_scoring.analyze_imdb_quality
 """
 
+import datetime
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -29,15 +38,33 @@ from typing import Callable
 
 import orjson
 
+from movie_ingestion.scoring_utils import THEATER_WINDOW_DAYS
 from movie_ingestion.tracker import INGESTION_DATA_DIR, MovieStatus, init_db
 
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths and group definitions
 # ---------------------------------------------------------------------------
 
 _IMDB_DIR = INGESTION_DATA_DIR / "imdb"
-_EXPORT_PATH = INGESTION_DATA_DIR / "imdb_data_quality_report.json"
+
+# Group keys and their human-readable labels.
+_GROUP_HAS_PROVIDERS = "has_providers"
+_GROUP_RECENT_NO_PROVIDERS = "recent_no_providers"
+_GROUP_OLD_NO_PROVIDERS = "old_no_providers"
+
+_GROUP_LABELS: dict[str, str] = {
+    _GROUP_HAS_PROVIDERS: "Has Watch Providers",
+    _GROUP_RECENT_NO_PROVIDERS: f"No Providers, Released <= {THEATER_WINDOW_DAYS} Days Ago",
+    _GROUP_OLD_NO_PROVIDERS: f"No Providers, Released > {THEATER_WINDOW_DAYS} Days Ago",
+}
+
+# Output paths — one JSON per group.
+_EXPORT_PATHS: dict[str, Path] = {
+    _GROUP_HAS_PROVIDERS: INGESTION_DATA_DIR / "imdb_data_analysis_has_providers.json",
+    _GROUP_RECENT_NO_PROVIDERS: INGESTION_DATA_DIR / "imdb_data_analysis_recent_no_providers.json",
+    _GROUP_OLD_NO_PROVIDERS: INGESTION_DATA_DIR / "imdb_data_analysis_old_no_providers.json",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +118,10 @@ def _pct_str(count: int, total: int) -> str:
 
 def _load_tmdb_data() -> dict[int, dict]:
     """
-    Load TMDB rows from the tracker database for movies with imdb_scraped
-    or essential_data_passed status. Uses a JOIN on movie_progress to filter
-    in SQL rather than pulling IDs into Python. Returns dict keyed by tmdb_id.
+    Load TMDB rows from the tracker database for movies at any Stage 5
+    status (imdb_scraped, imdb_quality_calculated, or imdb_quality_passed).
+    Uses a JOIN on movie_progress to filter in SQL rather than pulling IDs
+    into Python. Returns dict keyed by tmdb_id.
     """
     db = init_db()
     db.row_factory = None
@@ -109,7 +137,7 @@ def _load_tmdb_data() -> dict[int, dict]:
             td.maturity_rating, td.reviews
         FROM tmdb_data td
         JOIN movie_progress mp ON td.tmdb_id = mp.tmdb_id
-        WHERE mp.status IN (?, ?)
+        WHERE mp.status IN (?, ?, ?)
     """
     column_names = [
         "tmdb_id", "imdb_id", "title", "release_date", "duration",
@@ -121,7 +149,11 @@ def _load_tmdb_data() -> dict[int, dict]:
         "maturity_rating", "reviews",
     ]
 
-    rows = db.execute(query, (MovieStatus.IMDB_SCRAPED, MovieStatus.ESSENTIAL_DATA_PASSED)).fetchall()
+    rows = db.execute(query, (
+        MovieStatus.IMDB_SCRAPED,
+        MovieStatus.IMDB_QUALITY_CALCULATED,
+        MovieStatus.IMDB_QUALITY_PASSED,
+    )).fetchall()
     db.close()
 
     result: dict[int, dict] = {}
@@ -231,6 +263,39 @@ def _merge(
         "total": len(merged),
     }
     return merged, stats
+
+
+# ---------------------------------------------------------------------------
+# Group classification
+# ---------------------------------------------------------------------------
+
+
+def _classify_movie(m: MergedMovie, today: datetime.date) -> str:
+    """Classify a movie into one of the three watch-provider groups.
+
+    1. has_providers — at least one US watch provider key in TMDB data.
+    2. recent_no_providers — no providers, released within THEATER_WINDOW_DAYS.
+    3. old_no_providers — no providers, released beyond the window (or no date).
+    """
+    # Check for watch providers from TMDB data.
+    has_providers = False
+    if m.tmdb:
+        has_providers = _count_watch_provider_keys(m.tmdb.get("watch_provider_keys")) > 0
+
+    if has_providers:
+        return _GROUP_HAS_PROVIDERS
+
+    # No providers — classify by release recency.
+    release_date_str = m.tmdb.get("release_date") if m.tmdb else None
+    if release_date_str:
+        try:
+            release = datetime.date.fromisoformat(release_date_str)
+            if (today - release).days <= THEATER_WINDOW_DAYS:
+                return _GROUP_RECENT_NO_PROVIDERS
+        except ValueError:
+            pass  # Non-parseable date — treat as old.
+
+    return _GROUP_OLD_NO_PROVIDERS
 
 
 # ---------------------------------------------------------------------------
@@ -596,12 +661,8 @@ def _composite_review_depth(m: MergedMovie) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Single-pass stats accumulator — replaces the old multi-pass approach.
-#
-# Previously each print function iterated the full merged list per-field,
-# resulting in ~92 full passes over 140K movies. Now we iterate once and
-# accumulate all field presence counts, metric values, and composite values
-# in a single pass.
+# Single-pass stats accumulator — iterates movies once, accumulates stats
+# into 3 parallel group buckets based on watch-provider classification.
 # ---------------------------------------------------------------------------
 
 
@@ -624,74 +685,111 @@ _COMPOSITE_NAMES = [
     ("Search Readiness Score",    "/30"),
 ]
 
+# Type alias for the per-group stats tuple.
+GroupStats = tuple[dict[str, FieldStats], dict[str, list[float]], int]
+
+
+def _new_group_accumulators() -> tuple[dict[str, FieldStats], dict[str, list[float]]]:
+    """Create fresh field_stats and composite_values accumulators for one group."""
+    field_stats = {fd.name: FieldStats() for fd in FIELD_DEFS}
+    composite_values: dict[str, list[float]] = {name: [] for name, _ in _COMPOSITE_NAMES}
+    return field_stats, composite_values
+
+
+def _accumulate_movie(
+    m: MergedMovie,
+    field_stats: dict[str, FieldStats],
+    composite_values: dict[str, list[float]],
+) -> None:
+    """Accumulate a single movie's field presence, metrics, and composites
+    into the provided group accumulators. Extracted from the loop body so
+    the same logic serves all three groups without duplication."""
+
+    # --- Field presence + metrics (one check per field per movie) ---
+    for fd in FIELD_DEFS:
+        fs = field_stats[fd.name]
+        has_tmdb = fd.tmdb_present(m.tmdb) if fd.tmdb_present and m.tmdb else False
+        has_imdb = fd.imdb_present(m.imdb) if fd.imdb_present and m.imdb else False
+        if has_tmdb:
+            fs.tmdb_count += 1
+        if has_imdb:
+            fs.imdb_count += 1
+        if has_tmdb or has_imdb:
+            fs.either_count += 1
+        # Scale-matters fields: extract metric value
+        if fd.classification == "scale" and fd.extract_metric:
+            v = fd.extract_metric(m)
+            if v is not None and v > 0:
+                fs.metric_values.append(v)
+
+    # --- Composites: compute base metrics once, derive the rest ---
+    rich_text = _composite_rich_text(m)
+    lexical = _composite_lexical_entities(m)
+    metadata = _composite_metadata_completeness(m)
+    review = _composite_review_depth(m)
+
+    # Lexical + Text Combined: entity count only if text >= 500 chars
+    if lexical is not None:
+        lex_and_text = lexical if (rich_text is not None and rich_text >= 500) else 0
+    else:
+        lex_and_text = None
+
+    # Search Readiness: metadata (0-10) + lexical (0-10) + text (0-10)
+    readiness_score = metadata + min(lexical or 0, 30) / 3.0 + min(rich_text or 0, 5000) / 500.0
+    readiness = round(readiness_score, 1) if readiness_score > 0 else None
+
+    # Append non-None values to the composite lists
+    if rich_text is not None:
+        composite_values["Rich Text Data"].append(rich_text)
+    if lexical is not None:
+        composite_values["Lexical Entity Coverage"].append(lexical)
+    # Metadata completeness is always an int — always appended.
+    composite_values["Metadata Completeness"].append(metadata)
+    if review is not None:
+        composite_values["Review Depth"].append(review)
+    if lex_and_text is not None:
+        composite_values["Lexical + Text Combined"].append(lex_and_text)
+    if readiness is not None:
+        composite_values["Search Readiness Score"].append(readiness)
+
 
 def _compute_all_stats(
     merged: list[MergedMovie],
-) -> tuple[dict[str, FieldStats], dict[str, list[float]]]:
+    today: datetime.date,
+) -> dict[str, GroupStats]:
     """
-    Single pass over all movies. Computes per-field presence counts and
-    metric values, plus per-composite value lists. Each movie is visited
-    exactly once, and each composite is computed exactly once per movie
-    (with shared sub-results to avoid redundant work).
+    Single pass over all movies. Classifies each movie into one of three
+    watch-provider groups, then accumulates per-field presence counts,
+    metric values, and per-composite value lists into that group's stats.
+
+    Each movie is visited exactly once. Classification and accumulation
+    happen in the same iteration — no secondary passes needed.
 
     Returns:
-        field_stats:      dict mapping field name -> FieldStats
-        composite_values: dict mapping composite name -> list of non-None values
+        dict mapping group key -> (field_stats, composite_values, count)
     """
-    field_stats = {fd.name: FieldStats() for fd in FIELD_DEFS}
-    composite_values: dict[str, list[float]] = {name: [] for name, _ in _COMPOSITE_NAMES}
+    # Initialize accumulators for all three groups.
+    accumulators: dict[str, tuple[dict[str, FieldStats], dict[str, list[float]]]] = {
+        group: _new_group_accumulators()
+        for group in (_GROUP_HAS_PROVIDERS, _GROUP_RECENT_NO_PROVIDERS, _GROUP_OLD_NO_PROVIDERS)
+    }
+    counts: dict[str, int] = {
+        _GROUP_HAS_PROVIDERS: 0,
+        _GROUP_RECENT_NO_PROVIDERS: 0,
+        _GROUP_OLD_NO_PROVIDERS: 0,
+    }
 
     for m in merged:
-        # --- Field presence + metrics (one check per field per movie) ---
-        for fd in FIELD_DEFS:
-            fs = field_stats[fd.name]
-            has_tmdb = fd.tmdb_present(m.tmdb) if fd.tmdb_present and m.tmdb else False
-            has_imdb = fd.imdb_present(m.imdb) if fd.imdb_present and m.imdb else False
-            if has_tmdb:
-                fs.tmdb_count += 1
-            if has_imdb:
-                fs.imdb_count += 1
-            if has_tmdb or has_imdb:
-                fs.either_count += 1
-            # Scale-matters fields: extract metric value
-            if fd.classification == "scale" and fd.extract_metric:
-                v = fd.extract_metric(m)
-                if v is not None and v > 0:
-                    fs.metric_values.append(v)
+        group = _classify_movie(m, today)
+        counts[group] += 1
+        fs, cv = accumulators[group]
+        _accumulate_movie(m, fs, cv)
 
-        # --- Composites: compute base metrics once, derive the rest ---
-        rich_text = _composite_rich_text(m)
-        lexical = _composite_lexical_entities(m)
-        metadata = _composite_metadata_completeness(m)
-        review = _composite_review_depth(m)
-
-        # Lexical + Text Combined: entity count only if text >= 500 chars
-        if lexical is not None:
-            lex_and_text = lexical if (rich_text is not None and rich_text >= 500) else 0
-        else:
-            lex_and_text = None
-
-        # Search Readiness: metadata (0-10) + lexical (0-10) + text (0-10)
-        readiness_score = metadata + min(lexical or 0, 30) / 3.0 + min(rich_text or 0, 5000) / 500.0
-        readiness = round(readiness_score, 1) if readiness_score > 0 else None
-
-        # Append non-None values to the composite lists
-        if rich_text is not None:
-            composite_values["Rich Text Data"].append(rich_text)
-        if lexical is not None:
-            composite_values["Lexical Entity Coverage"].append(lexical)
-        # Metadata completeness is always an int (0 counts as present since
-        # the original extractor always returns an int, and the original loop
-        # used `if v is not None` which is always True for int)
-        composite_values["Metadata Completeness"].append(metadata)
-        if review is not None:
-            composite_values["Review Depth"].append(review)
-        if lex_and_text is not None:
-            composite_values["Lexical + Text Combined"].append(lex_and_text)
-        if readiness is not None:
-            composite_values["Search Readiness Score"].append(readiness)
-
-    return field_stats, composite_values
+    # Package into the return format: group -> (field_stats, composite_values, count).
+    return {
+        group: (accumulators[group][0], accumulators[group][1], counts[group])
+        for group in (_GROUP_HAS_PROVIDERS, _GROUP_RECENT_NO_PROVIDERS, _GROUP_OLD_NO_PROVIDERS)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -701,15 +799,13 @@ def _compute_all_stats(
 _LINE_WIDTH = 110
 
 
-def _print_merge_summary(stats: dict) -> None:
-    """Section 1: Merge summary."""
-    print(f"\nMerged TMDB + IMDB Search Quality Report ({stats['total']:,} movies)")
-    print("=" * _LINE_WIDTH)
-    print(f"  TMDB rows loaded:      {stats['tmdb_total']:>10,}")
-    print(f"  IMDB JSONs loaded:     {stats['imdb_total']:>10,}")
-    print(f"  Merged (both):         {stats['both']:>10,}")
-    print(f"  TMDB only (no IMDB):   {stats['tmdb_only']:>10,}")
-    print(f"  IMDB only (no TMDB):   {stats['imdb_only']:>10,}")
+def _print_merge_summary(group: str, total: int, overall_total: int) -> None:
+    """Section 1: Group summary header."""
+    label = _GROUP_LABELS[group]
+    pct = total / overall_total * 100 if overall_total > 0 else 0
+    print(f"\n{'#' * _LINE_WIDTH}")
+    print(f"  Group: {label}  —  {total:,} movies ({pct:.1f}% of {overall_total:,} total)")
+    print(f"{'#' * _LINE_WIDTH}")
 
 
 def _print_coverage_table(field_stats: dict[str, FieldStats], total: int) -> None:
@@ -826,14 +922,14 @@ def _build_percentile_dict(values: list[float | int]) -> dict | None:
 
 
 def _export_json(
-    stats: dict,
+    group: str,
     field_stats: dict[str, FieldStats],
     composite_values: dict[str, list[float]],
     total: int,
 ) -> None:
     """
-    Export all analysis data as JSON to ingestion_data/imdb_data_quality_report.json.
-    Structured so it can be fed into Claude or reused for further exploration.
+    Export analysis data for one group as JSON to its corresponding file
+    in ingestion_data/imdb_data_analysis_<group>.json.
     """
     # --- Field-level data ---
     fields = []
@@ -867,14 +963,17 @@ def _export_json(
         })
 
     report = {
-        "merge_summary": stats,
+        "group": group,
+        "group_label": _GROUP_LABELS[group],
+        "total_movies": total,
         "fields": fields,
         "composites": composites,
     }
 
-    with open(_EXPORT_PATH, "wb") as f:
+    export_path = _EXPORT_PATHS[group]
+    with open(export_path, "wb") as f:
         f.write(orjson.dumps(report, option=orjson.OPT_INDENT_2))
-    print(f"\nExported quality report to {_EXPORT_PATH}")
+    print(f"  Exported: {export_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -883,6 +982,8 @@ def _export_json(
 
 
 def main() -> None:
+    today = datetime.date.today()
+
     print("Loading TMDB data from tracker database (status = imdb_scraped)...")
     tmdb_data = _load_tmdb_data()
 
@@ -895,33 +996,44 @@ def main() -> None:
     imdb_data = _load_imdb_data(target_ids)
 
     merged, stats = _merge(tmdb_data, imdb_data)
-    total = stats["total"]
+    overall_total = stats["total"]
 
-    if total == 0:
+    if overall_total == 0:
         print("No data found. Ensure the ingestion pipeline has run.")
         return
 
-    # Single pass: compute all field stats and composite values at once
-    print("Analyzing data quality...")
-    field_stats, composite_values = _compute_all_stats(merged)
+    # Single pass: classify every movie and accumulate stats per group.
+    print(f"Analyzing data quality (reference date = {today})...")
+    group_stats = _compute_all_stats(merged, today)
 
-    # Section 1: Merge summary
-    _print_merge_summary(stats)
+    # Print and export results for each group.
+    for group in (_GROUP_HAS_PROVIDERS, _GROUP_RECENT_NO_PROVIDERS, _GROUP_OLD_NO_PROVIDERS):
+        field_stats, composite_values, total = group_stats[group]
 
-    # Section 2: Dual-source coverage
-    _print_coverage_table(field_stats, total)
+        # Section 1: Group header with count
+        _print_merge_summary(group, total, overall_total)
 
-    # Section 3: Search quality percentiles
-    _print_percentile_table(field_stats)
+        if total == 0:
+            print("  (no movies in this group)")
+            continue
 
-    # Section 4: Composite metrics
-    _print_composite_table(composite_values)
+        # Section 2: Dual-source coverage
+        _print_coverage_table(field_stats, total)
 
-    # Section 5: Highest missing rates
-    _print_missing_summary(field_stats, total)
+        # Section 3: Search quality percentiles
+        _print_percentile_table(field_stats)
 
-    # Export structured JSON for downstream use
-    _export_json(stats, field_stats, composite_values, total)
+        # Section 4: Composite metrics
+        _print_composite_table(composite_values)
+
+        # Section 5: Highest missing rates
+        _print_missing_summary(field_stats, total)
+
+    # Export structured JSON for each group.
+    print(f"\nExporting JSON reports...")
+    for group in (_GROUP_HAS_PROVIDERS, _GROUP_RECENT_NO_PROVIDERS, _GROUP_OLD_NO_PROVIDERS):
+        field_stats, composite_values, total = group_stats[group]
+        _export_json(group, field_stats, composite_values, total)
 
 
 if __name__ == "__main__":

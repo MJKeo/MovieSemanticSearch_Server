@@ -29,7 +29,7 @@ class PipelineStage(StrEnum):
     TMDB_FETCH = "tmdb_fetch"
     TMDB_QUALITY_FUNNEL = "tmdb_quality_funnel"
     IMDB_SCRAPE = "imdb_scrape"
-    ESSENTIAL_DATA_CHECK = "essential_data_check"
+    IMDB_QUALITY_FUNNEL = "imdb_quality_funnel"
     LLM_PHASE1 = "llm_phase1"
     LLM_PHASE2 = "llm_phase2"
     EMBEDDING = "embedding"
@@ -48,8 +48,8 @@ class MovieStatus(StrEnum):
 
     Progression:
       PENDING → TMDB_FETCHED → TMDB_QUALITY_PASSED → IMDB_SCRAPED →
-      ESSENTIAL_DATA_PASSED → PHASE1_COMPLETE → PHASE2_COMPLETE →
-      EMBEDDED → INGESTED
+      IMDB_QUALITY_CALCULATED → IMDB_QUALITY_PASSED → PHASE1_COMPLETE →
+      PHASE2_COMPLETE → EMBEDDED → INGESTED
 
     Terminal:
       FILTERED_OUT (with variable reason strings in filter_log)
@@ -59,7 +59,8 @@ class MovieStatus(StrEnum):
     TMDB_QUALITY_CALCULATED = "tmdb_quality_calculated"
     TMDB_QUALITY_PASSED = "tmdb_quality_passed"
     IMDB_SCRAPED = "imdb_scraped"
-    ESSENTIAL_DATA_PASSED = "essential_data_passed"
+    IMDB_QUALITY_CALCULATED = "imdb_quality_calculated"
+    IMDB_QUALITY_PASSED = "imdb_quality_passed"
     PHASE1_COMPLETE = "phase1_complete"
     PHASE2_COMPLETE = "phase2_complete"
     EMBEDDED = "embedded"
@@ -87,8 +88,8 @@ CREATE TABLE IF NOT EXISTS movie_progress (
     status           TEXT NOT NULL DEFAULT 'pending',
     -- Statuses (in order) — defined in MovieStatus enum:
     --   pending → tmdb_fetched → tmdb_quality_passed → imdb_scraped →
-    --   essential_data_passed → phase1_complete → phase2_complete →
-    --   embedded → ingested
+    --   imdb_quality_calculated → imdb_quality_passed → phase1_complete →
+    --   phase2_complete → embedded → ingested
     --
     -- Terminal statuses:
     --   filtered_out        (all filtering — reason details in filter_log.reason)
@@ -106,7 +107,7 @@ CREATE TABLE IF NOT EXISTS filter_log (
     tmdb_id    INTEGER NOT NULL,
     stage      TEXT NOT NULL,
     -- Stages: 'tmdb_export_filter', 'tmdb_fetch', 'tmdb_quality_funnel',
-    --         'imdb_scrape', 'essential_data_check', 'llm_phase1',
+    --         'imdb_scrape', 'imdb_quality_funnel', 'llm_phase1',
     --         'llm_phase2', 'embedding', 'ingestion'
     reason     TEXT NOT NULL,
     details    TEXT,
@@ -185,6 +186,13 @@ def init_db() -> sqlite3.Connection:
         # for databases created before the column rename.
         "ALTER TABLE movie_progress RENAME COLUMN quality_score TO stage_3_quality_score",
         "ALTER TABLE movie_progress ADD COLUMN stage_5_quality_score REAL",
+        # v2 scorer removed the essential_data_passed status; reset any movies
+        # at that status back to imdb_scraped so they can be re-scored.
+        "UPDATE movie_progress SET status = 'imdb_scraped', stage_5_quality_score = NULL WHERE status = 'essential_data_passed'",
+        # Split scoring from filtering: imdb_quality_passed is now post-filter.
+        # Any movies already at imdb_quality_passed (scored but not filtered yet)
+        # move to the new intermediate imdb_quality_calculated status.
+        "UPDATE movie_progress SET status = 'imdb_quality_calculated' WHERE status = 'imdb_quality_passed' AND stage_5_quality_score IS NOT NULL",
     ]
     for stmt in _MIGRATIONS:
         try:
