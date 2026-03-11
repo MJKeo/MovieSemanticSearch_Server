@@ -1,15 +1,24 @@
-Read docs/conventions_draft.md and docs/conventions.md.
+Read docs/conventions_draft.md, docs/conventions.md, and
+docs/personal_preferences.md.
 
-For each entry in conventions_draft.md:
-1. Check if it's already covered by an existing convention in
-   conventions.md (may be worded differently but same intent)
-2. If already covered, remove it from the draft
-3. If not covered, add it to the appropriate section in
-   conventions.md, using the same formatting style as existing
-   entries
+Process each entry in conventions_draft.md ONE AT A TIME. For each
+entry, present it to the user with:
 
-After processing all entries, clear conventions_draft.md back to
-its header:
+1. Whether it's already covered by an existing convention in
+   conventions.md (may be worded differently but same intent).
+   If so, recommend removing it and explain which existing
+   convention covers it.
+2. If not already covered, propose a **generalized** version of
+   the convention — abstract away the specific incident that
+   triggered it and frame it as a broad guideline. The goal is
+   to avoid accumulating many narrow, overlapping conventions.
+   Check if an existing convention can be widened to cover the
+   new case instead of adding a new entry.
+3. Wait for the user's approval, rejection, or revision before
+   moving to the next entry.
+
+After all entries are processed, clear conventions_draft.md back
+to its header:
 ```
 # Conventions Draft
 
@@ -21,9 +30,11 @@ Entries are added automatically during /safe-clear based on
 patterns observed in the session.
 ```
 
-Report what was promoted and what was removed as duplicates.
+Finally, review the decisions the user made during this process
+and the conventions themselves. Identify any broader patterns in
+how the user thinks about system design or organization that
+would be useful to remember. Propose these as additions to
+docs/personal_preferences.md — ask for approval before writing.
 
-Important: Before running this command, the user should have
-already reviewed conventions_draft.md and removed any entries
-they disagree with. Do NOT ask for confirmation on individual
-entries — assume everything still in the file is approved.
+Report what was promoted, what was removed as duplicates, and
+what preferences were extracted.

@@ -172,9 +172,13 @@ to [0, 1] unless explicitly noted otherwise:
   inputs (config dataclasses, enums) for stage-specific
   differences. Each stage imports from the shared module but keeps
   its own configuration.
-- Column names in the tracker DB that could be ambiguous across
-  stages must be prefixed with their scope (e.g.,
-  `stage_3_quality_score`, `stage_5_quality_score`).
+- Tracker DB identifiers (column names, status values, stage names)
+  that could be ambiguous across pipeline stages must be prefixed
+  with their data source scope (e.g., `tmdb_quality_passed`,
+  `imdb_scraped`, `stage_3_quality_score`).
+- Quality gates must use two distinct statuses: `*_calculated`
+  (score written, no filtering) and `*_passed` (survived threshold).
+  This keeps scoring and filtering independently re-runnable.
 
 ## Network & Retry Conventions
 
