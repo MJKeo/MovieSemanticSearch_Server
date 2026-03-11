@@ -4,13 +4,15 @@ Tracks actionable items discovered during development sessions.
 Items here are things to address when the relevant work begins,
 not urgent fixes.
 
-## Run v2 scorer and perform survival-curve threshold analysis
-**Context:** Stage 5 v2 scorer is implemented. Next step is to run it
-on the full dataset, then use plot_quality_scores.py to generate
-survival curves per provider group and determine thresholds.
-**When:** Next session — immediate next step for Stage 5.
-**See:** movie_ingestion/imdb_quality_scoring/imdb_quality_scorer.py,
-movie_ingestion/imdb_quality_scoring/plot_quality_scores.py
+## Run Stage 5 filter on scored movies
+**Context:** v4 scorer, threshold analysis, and filter script are all
+complete. Per-group thresholds determined (has_providers=0.486,
+no_providers_new=0.55, no_providers_old=0.654). Filter script at
+imdb_quality_scoring/imdb_filter.py is ready to run. Advances survivors
+from imdb_quality_calculated → imdb_quality_passed.
+**When:** Next session — run the filter to produce the final candidate set.
+**See:** movie_ingestion/imdb_quality_scoring/imdb_filter.py,
+movie_ingestion/scoring_utils.py (IMDB_QUALITY_THRESHOLDS)
 
 ## Update docs/conventions.md status progression
 **Context:** Line 120 of conventions.md still references

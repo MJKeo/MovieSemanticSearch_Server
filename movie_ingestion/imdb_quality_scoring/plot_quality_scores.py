@@ -14,7 +14,12 @@ Usage:
 
 import matplotlib.pyplot as plt
 
-from movie_ingestion.scoring_utils import THEATER_WINDOW_DAYS
+from movie_ingestion.scoring_utils import (
+    HAS_PROVIDERS_SQL,
+    NO_PROVIDERS_SQL,
+    THEATER_WINDOW_DAYS,
+    THEATER_WINDOW_SQL_PARAM,
+)
 from movie_ingestion.survival_curve_utils import (
     SurvivalCurveConfig,
     plot_survival_curve_with_derivatives,
@@ -24,16 +29,6 @@ from movie_ingestion.tracker import init_db
 # -- SQL fragments shared across queries ------------------------------------
 
 _SCORE_NOT_NULL = "mp.stage_5_quality_score IS NOT NULL"
-
-_HAS_PROVIDERS = (
-    "td.watch_provider_keys IS NOT NULL AND length(td.watch_provider_keys) > 0"
-)
-
-_NO_PROVIDERS = (
-    "(td.watch_provider_keys IS NULL OR length(td.watch_provider_keys) = 0)"
-)
-
-_THEATER_WINDOW_PARAM = f"-{THEATER_WINDOW_DAYS} days"
 
 
 # -- Fetch helpers -----------------------------------------------------------
@@ -65,14 +60,14 @@ def _fetch_scores(where_clause: str, params: tuple = ()) -> list[float]:
 
 def _fetch_with_providers() -> list[float]:
     """Movies that have at least one watch provider."""
-    return _fetch_scores(_HAS_PROVIDERS)
+    return _fetch_scores(HAS_PROVIDERS_SQL)
 
 
 def _fetch_no_providers_recent() -> list[float]:
     """Movies without providers, released within the theater window."""
     return _fetch_scores(
-        f"{_NO_PROVIDERS} AND td.release_date >= date('now', ?)",
-        (_THEATER_WINDOW_PARAM,),
+        f"{NO_PROVIDERS_SQL} AND td.release_date >= date('now', ?)",
+        (THEATER_WINDOW_SQL_PARAM,),
     )
 
 
@@ -80,8 +75,8 @@ def _fetch_no_providers_old() -> list[float]:
     """Movies without providers, released outside the theater window
     (or with no release date recorded)."""
     return _fetch_scores(
-        f"{_NO_PROVIDERS} AND (td.release_date IS NULL OR td.release_date < date('now', ?))",
-        (_THEATER_WINDOW_PARAM,),
+        f"{NO_PROVIDERS_SQL} AND (td.release_date IS NULL OR td.release_date < date('now', ?))",
+        (THEATER_WINDOW_SQL_PARAM,),
     )
 
 

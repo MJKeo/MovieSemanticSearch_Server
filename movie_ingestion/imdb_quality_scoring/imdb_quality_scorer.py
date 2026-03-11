@@ -1,5 +1,5 @@
 """
-Stage 5: Combined TMDB+IMDB Quality Scorer (v2)
+Stage 5: Combined TMDB+IMDB Quality Scorer (v4)
 
 Computes an 8-signal quality score for every 'imdb_scraped' movie and
 persists it to movie_progress.stage_5_quality_score.  Scored movies are
@@ -12,14 +12,31 @@ group after survival-curve analysis.
 Signals (weights sum to 1.0, all normalised to [0, 1]):
 
   Relevance (0.55):
-    imdb_vote_count (0.27), critical_attention (0.12),
+    imdb_notability (0.31), critical_attention (0.08),
     community_engagement (0.08), tmdb_popularity (0.08)
 
   Data sufficiency (0.45):
     featured_reviews_chars (0.15), plot_text_depth (0.12),
     lexical_completeness (0.10), data_completeness (0.08)
 
-See quality_score_design.md for full signal details and rationale.
+v4 changes from v3:
+  - imdb_vote_count → imdb_notability: pure log-scaled vote count replaced
+    with a vote-count × Bayesian-adjusted-rating blend.  Three confidence
+    tiers (< 100 / 100–999 / ≥ 1000 votes) control how much IMDB rating
+    modulates the score, based on rating-stability analysis showing that
+    rating reliability varies dramatically by vote count.
+  - Weights: imdb_notability 0.25→0.31, critical_attention 0.12→0.08,
+    community_engagement 0.10→0.08
+
+v3 changes from v2:
+  - featured_reviews: linear chars+count blend replaces 4-tier char-only system
+  - community_engagement: plot_keywords and featured_reviews use linear-to-cap
+    instead of binary presence
+  - lexical_completeness: composers removed, actors/characters linear to 10,
+    classic-film age boost added (1.0× at 20yr → 1.5× at 50yr)
+  - data_completeness: filming_locations removed, plot_keywords/overall_keywords/
+    parental_guide_items use linear-to-cap instead of coarse tiers
+  - Weights: imdb_vote_count 0.27→0.25, community_engagement 0.08→0.10
 
 Re-running processes any remaining unscored movies (crash recovery);
 already-scored movies at 'imdb_quality_calculated' are not re-selected.
@@ -39,9 +56,11 @@ from pathlib import Path
 import orjson
 
 from movie_ingestion.scoring_utils import (
-    VoteCountSource,
+    VC_CLASSIC_BOOST_CAP,
+    VC_CLASSIC_RAMP_YEARS,
+    VC_CLASSIC_START_YEARS,
+    VC_RECENCY_BOOST_MAX,
     score_popularity,
-    score_vote_count,
     validate_weights,
 )
 from movie_ingestion.tracker import (
@@ -77,12 +96,38 @@ PLOT_TEXT_LOG_CAP: int = 5001
 STAGE5_POP_LOG_CAP: float = 4.0
 
 # ---------------------------------------------------------------------------
+# imdb_notability signal: vote count × Bayesian-adjusted rating blend
+# ---------------------------------------------------------------------------
+# IMDB vote count log cap (same as scoring_utils._VC_LOG_CAPS[IMDB]).
+NOTABILITY_VC_LOG_CAP: int = 12001
+
+# Bayesian rating prior parameters.  m=500 sits at the midpoint of the medium
+# confidence tier so the prior decays at a rate that matches the tier logic.
+# C=6.0 is the observed mean IMDB rating across has_providers movies with votes.
+BAYESIAN_M: int = 500
+BAYESIAN_C: float = 6.0
+
+# Vote-count tier boundaries.  Derived from rating-stability analysis:
+#   < 100:  std ~1.37, 8+ ratings inflated 3-7× by self-selection — noise.
+#   100–999: 8+ inflation gone, 13-15% sub-4.0 — rating has real signal.
+#   ≥ 1000: std < 1.25, genuine quality drives attention — reliable.
+VC_TIER_LOW_CEILING: int = 100
+VC_TIER_MED_CEILING: int = 1000
+
+# Per-tier blend weights: (vote_count_weight, rating_weight).
+# Each pair sums to 1.0.  Controls how much the Bayesian-adjusted rating
+# modulates the log-scaled vote count base within each confidence tier.
+BLEND_LOW: tuple[float, float] = (0.95, 0.05)    # almost pure vote count
+BLEND_MED: tuple[float, float] = (0.70, 0.30)    # rating has meaningful influence
+BLEND_HIGH: tuple[float, float] = (0.85, 0.15)   # vote count dominates, rating modulates
+
+# ---------------------------------------------------------------------------
 # Signal weights — must sum to 1.0.
 # ---------------------------------------------------------------------------
 
 WEIGHTS: dict[str, float] = {
-    "imdb_vote_count":        0.27,
-    "critical_attention":     0.12,
+    "imdb_notability":        0.31,
+    "critical_attention":     0.08,
     "community_engagement":   0.08,
     "tmdb_popularity":        0.08,
     "featured_reviews_chars": 0.15,
@@ -124,16 +169,79 @@ class MovieContext:
 # ---------------------------------------------------------------------------
 
 
-def _score_imdb_vote_count(ctx: MovieContext, today: datetime.date) -> float:
-    """IMDB vote count score in [0, 1], log-scaled with age adjustments.
+def _score_imdb_notability(ctx: MovieContext, today: datetime.date) -> float:
+    """Notability score in [0, 1] blending vote count with Bayesian-adjusted rating.
 
-    Primary notability proxy.  Uses IMDB votes (more representative for a
-    US-focused app) with the IMDB log cap (12001).  Release date sourced
-    from TMDB for the recency/classic multiplier.
+    Replaces the pure vote-count signal with a confidence-tiered blend that
+    incorporates IMDB rating, weighted by how trustworthy the rating is at
+    the given vote count.
+
+    Three confidence tiers (thresholds from rating-stability analysis):
+      Low  (< 100 votes):   Rating is noise (std ~1.37, self-selection).
+                             Almost pure vote count (95/5 blend).
+      Med  (100–999 votes): Rating has real signal (8+ inflation gone).
+                             Balanced blend (70/30 vote/rating).
+      High (≥ 1000 votes):  Rating is reliable but movie is already notable.
+                             Vote count dominates (85/15 blend).
+
+    The rating component uses IMDB's Bayesian weighted average (m=500, C=6.0)
+    to shrink noisy low-vote ratings toward the population mean before blending.
+
+    Falls back to pure vote-count scoring when imdb_rating is absent.
+    Age multipliers (recency and classic boosts) are applied after blending.
     """
     vc = ctx.imdb.get("imdb_vote_count", 0)
+    imdb_rating = ctx.imdb.get("imdb_rating")
+
+    # --- Vote base: log-scaled vote count in [0, 1] ---
+    vote_base = min(math.log10(vc + 1) / math.log10(NOTABILITY_VC_LOG_CAP), 1.0)
+
+    # --- Blend with Bayesian-adjusted rating (when available) ---
+    if imdb_rating is not None and vc > 0:
+        # Bayesian weighted rating: shrinks toward C at low vote counts.
+        bayesian = (vc / (vc + BAYESIAN_M)) * imdb_rating + (BAYESIAN_M / (vc + BAYESIAN_M)) * BAYESIAN_C
+        rating_normalized = bayesian / 10.0  # IMDB scale is 1–10 → [0, 1]
+
+        # Select blend weights based on vote-count confidence tier.
+        if vc < VC_TIER_LOW_CEILING:
+            vote_w, rating_w = BLEND_LOW
+        elif vc < VC_TIER_MED_CEILING:
+            vote_w, rating_w = BLEND_MED
+        else:
+            vote_w, rating_w = BLEND_HIGH
+
+        base = vote_w * vote_base + rating_w * rating_normalized
+    else:
+        # No rating available — degrade gracefully to pure vote count.
+        base = vote_base
+
+    # --- Age multipliers (same logic as scoring_utils.score_vote_count) ---
     release_date = ctx.tmdb.get("release_date")
-    return score_vote_count(vc, release_date, today, VoteCountSource.IMDB)
+    if release_date is not None:
+        try:
+            release = datetime.date.fromisoformat(release_date)
+            # Floor at 0.5yr to avoid division instability for very new films.
+            age_years = max((today - release).days / 365.0, 0.5)
+
+            # Recency: 2× at ≤1yr, hyperbolic decay to 1× at 2yr.
+            recent_boost = max(
+                1.0,
+                min(VC_RECENCY_BOOST_MAX, VC_RECENCY_BOOST_MAX / age_years),
+            )
+
+            # Classic: linear ramp from 1× at 20yr to 1.5× at 50yr.
+            classic_boost = min(
+                VC_CLASSIC_BOOST_CAP,
+                1.0 + max(0.0, age_years - VC_CLASSIC_START_YEARS) / VC_CLASSIC_RAMP_YEARS,
+            )
+
+            # Apply the larger of the two adjustments.
+            multiplier = max(recent_boost, classic_boost)
+            base = min(base * multiplier, 1.0)
+        except ValueError:
+            pass  # Non-parseable date — use base score unchanged.
+
+    return base
 
 
 def _score_critical_attention(ctx: MovieContext) -> float:
@@ -163,37 +271,37 @@ def _score_community_engagement(ctx: MovieContext) -> float:
     Fields weighted inversely to prevalence: synopses (rare, ~4%) carry
     more weight than plot_keywords (common, ~65%).
 
-    Sub-weights:
-      plot_keywords    → 1  (most common, weakest signal)
-      featured_reviews → 2  (IMDB primary, TMDB reviews fallback)
-      plot_summaries   → 3
-      synopses         → 4  (rarest, strongest signal)
+    Sub-weights (unchanged):
+      plot_keywords    → 1  (linear to cap: 5+ = 1.0)
+      featured_reviews → 2  (linear to cap: 5+ = 1.0; IMDB primary, TMDB fallback)
+      plot_summaries   → 3  (binary)
+      synopses         → 4  (binary, rarest, strongest signal)
 
-    Score = sum of present sub-weights / 10 (max possible = 10).
+    Score = sum of (sub-weight × sub-score) / 10 (max possible = 10).
     """
-    total = 0
+    total = 0.0
 
-    # plot_keywords: IMDB list non-empty.
-    if ctx.imdb.get("plot_keywords"):
-        total += 1
+    # plot_keywords: linear growth, 5+ keywords = full credit.
+    pk_count = len(ctx.imdb.get("plot_keywords") or [])
+    total += 1 * min(pk_count / 5, 1.0)
 
-    # featured_reviews: IMDB list non-empty, OR TMDB reviews non-empty.
-    has_reviews = bool(ctx.imdb.get("featured_reviews"))
-    if not has_reviews:
+    # featured_reviews: linear growth by count, 5+ reviews = full credit.
+    # IMDB primary, TMDB reviews list as fallback.
+    review_count = len(ctx.imdb.get("featured_reviews") or [])
+    if review_count == 0:
         tmdb_reviews_json = ctx.tmdb.get("reviews")
         if tmdb_reviews_json:
             try:
-                has_reviews = bool(json.loads(tmdb_reviews_json))
+                review_count = len(json.loads(tmdb_reviews_json))
             except (json.JSONDecodeError, TypeError):
                 pass
-    if has_reviews:
-        total += 2
+    total += 2 * min(review_count / 5, 1.0)
 
-    # plot_summaries: IMDB list non-empty.
+    # plot_summaries: binary presence.
     if ctx.imdb.get("plot_summaries"):
         total += 3
 
-    # synopses: IMDB list non-empty.
+    # synopses: binary presence.
     if ctx.imdb.get("synopses"):
         total += 4
 
@@ -218,43 +326,47 @@ def _score_tmdb_popularity(ctx: MovieContext) -> float:
 
 
 def _score_featured_reviews_chars(ctx: MovieContext) -> float:
-    """Tiered featured-review score in [0, 1] based on total char count.
+    """Featured-review score in [0, 1] blending total chars and review count.
 
-    IMDB featured_reviews primary (sum of .text lengths); TMDB reviews JSON
-    as fallback when IMDB contributes zero chars.  Reviews feed 6 of 7
-    vector spaces, making absence a significant data gap.
+    IMDB featured_reviews primary; TMDB reviews JSON as fallback when IMDB
+    contributes zero.  Reviews feed 6 of 7 vector spaces, making absence a
+    significant data gap.
 
-    Tiers:  0 chars → 0.0,  1–3000 → 0.33,  3001–8000 → 0.67,  8001+ → 1.0
+    Two sub-scores, each linear to a "good enough" cap, then averaged:
+      char_score  = min(total_chars / 5000, 1.0)   — 5000+ chars saturates
+      count_score = min(review_count / 5, 1.0)      — 5+ reviews saturates
     """
     total_chars = 0
+    review_count = 0
 
-    # IMDB primary: sum character lengths across all featured review texts.
+    # IMDB primary: sum character lengths and count reviews.
     reviews = ctx.imdb.get("featured_reviews") or []
     for review in reviews:
         text = review.get("text", "")
         total_chars += len(text)
+    review_count = len(reviews)
 
-    # TMDB fallback: only used when IMDB contributes zero review chars.
-    # The reviews column stores a JSON-encoded list of review content strings.
-    if total_chars == 0:
+    # TMDB fallback: only used when IMDB contributes zero on both dimensions.
+    # Gate on both to avoid overwriting a valid IMDB review_count when IMDB
+    # entries happen to have empty text.
+    if total_chars == 0 and review_count == 0:
         tmdb_reviews_json = ctx.tmdb.get("reviews")
         if tmdb_reviews_json:
             try:
                 tmdb_reviews = json.loads(tmdb_reviews_json)
                 for text in tmdb_reviews:
                     total_chars += len(text)
+                review_count = len(tmdb_reviews)
             except (json.JSONDecodeError, TypeError):
                 pass  # Malformed JSON — treat as no reviews.
 
-    # Apply tiered scoring.
-    if total_chars == 0:
+    if total_chars == 0 and review_count == 0:
         return 0.0
-    elif total_chars <= 3_000:
-        return 0.33
-    elif total_chars <= 8_000:
-        return 0.67
-    else:
-        return 1.0
+
+    # Linear growth to "good enough" caps, then average the two dimensions.
+    char_score = min(total_chars / 5000, 1.0)
+    count_score = min(review_count / 5, 1.0)
+    return (char_score + count_score) / 2.0
 
 
 def _score_plot_text_depth(ctx: MovieContext) -> float:
@@ -295,37 +407,38 @@ def _score_plot_text_depth(ctx: MovieContext) -> float:
     return min(math.log10(total + 1) / math.log10(PLOT_TEXT_LOG_CAP), 1.0)
 
 
-def _score_lexical_completeness(ctx: MovieContext) -> float:
-    """Lexical completeness score in [0, 1].
+def _score_lexical_completeness(
+    ctx: MovieContext,
+    today: datetime.date,
+) -> float:
+    """Lexical completeness score in [0, 1] with classic-film age boost.
 
-    Measures how well lexical search can work with this movie.  Six entity
-    types, each contributing a capped sub-score of 0.0 to 1.0, then
-    averaged to [0, 1].
+    Measures how well lexical search can work with this movie.  Five entity
+    types (composers removed — not useful for search), each contributing a
+    capped sub-score of 0.0 to 1.0, then averaged.
 
-    Cap each entity type's contribution so a large cast (80 actors) cannot
-    mask missing writers or producers.
+    A classic-film boost (same ramp as vote_count: 1.0× at 20yr → 1.5× at
+    50yr) compensates for older movies having sparser IMDB entity data.
 
     Entity scoring:
-      actors:               0 → 0.0,  1–4 → 0.5,  5+ → 1.0
-      characters:           0 → 0.0,  1–4 → 0.5,  5+ → 1.0
-      writers:              0 → 0.0,  1+ → 1.0
-      composers:            0 → 0.0,  1+ → 1.0
-      producers:            0 → 0.0,  1+ → 1.0
-      production_companies: 0 → 0.0,  1+ → 1.0  (IMDB primary, TMDB fallback)
+      actors:               linear to 10 — min(count / 10, 1.0)
+      characters:           linear to 10 — min(count / 10, 1.0)
+      writers:              binary (most movies have 1–3)
+      producers:            binary
+      production_companies: binary (IMDB primary, TMDB fallback)
     """
     imdb = ctx.imdb
 
-    # Actors: threshold at 5 for full score, 3-tier with 0 handling.
+    # Actors: linear growth, 10+ = full credit.
     actor_count = len(imdb.get("actors") or [])
-    actors_sub = 1.0 if actor_count >= 5 else (0.5 if actor_count >= 1 else 0.0)
+    actors_sub = min(actor_count / 10, 1.0)
 
-    # Characters: same threshold as actors.
+    # Characters: same cap as actors.
     char_count = len(imdb.get("characters") or [])
-    chars_sub = 1.0 if char_count >= 5 else (0.5 if char_count >= 1 else 0.0)
+    chars_sub = min(char_count / 10, 1.0)
 
     # Binary presence for remaining entity types.
     writers_sub = 1.0 if imdb.get("writers") else 0.0
-    composers_sub = 1.0 if imdb.get("composers") else 0.0
     producers_sub = 1.0 if imdb.get("producers") else 0.0
 
     # Production companies: IMDB primary, TMDB has_production_companies fallback.
@@ -336,57 +449,59 @@ def _score_lexical_completeness(ctx: MovieContext) -> float:
     else:
         prodco_sub = 0.0
 
-    total = actors_sub + chars_sub + writers_sub + composers_sub + producers_sub + prodco_sub
-    # Average across 6 entity types → [0, 1].
-    return total / 6.0
+    # Average across 5 entity types → [0, 1].
+    raw = (actors_sub + chars_sub + writers_sub + producers_sub + prodco_sub) / 5.0
+
+    # Classic-film boost: compensate for sparser entity data on older movies.
+    # Same linear ramp as vote_count (1.0× at 20yr → 1.5× at 50yr).
+    release_date = ctx.tmdb.get("release_date")
+    if release_date is not None:
+        try:
+            release = datetime.date.fromisoformat(release_date)
+            age_years = (today - release).days / 365.0
+            classic_boost = min(
+                VC_CLASSIC_BOOST_CAP,
+                1.0 + max(0.0, age_years - VC_CLASSIC_START_YEARS) / VC_CLASSIC_RAMP_YEARS,
+            )
+            raw = min(raw * classic_boost, 1.0)
+        except ValueError:
+            pass  # Non-parseable date — use raw score unchanged.
+
+    return raw
 
 
 def _score_data_completeness(ctx: MovieContext) -> float:
     """Data completeness score in [0, 1].
 
     Measures supplementary fields that enrich LLM-generated vector metadata
-    beyond core entities and text.  Six fields, some with tiered sub-scoring,
+    beyond core entities and text.  Five fields (filming_locations removed —
+    irrelevant for animated/short films), some with linear-to-cap scoring,
     then averaged to [0, 1].
 
     Distinct from lexical_completeness: covers supplementary attributes
-    (keywords depth, filming locations, content advisories) rather than
-    named entities for lexical matching.
+    (keywords depth, content advisories) rather than named entities for
+    lexical matching.
 
     Field scoring:
-      plot_keywords:        0 → 0.0,  1–4 → 0.5,  5+ → 1.0
-      overall_keywords:     0 → 0.0,  1 → 0.25,  2–3 → 0.5,  4+ → 1.0
-      filming_locations:    0 → 0.0,  1+ → 1.0
-      parental_guide_items: 0 → 0.0,  1+ → 1.0
-      maturity_rating:      absent → 0.0, present → 1.0  (IMDB → TMDB fallback)
-      budget:               absent → 0.0, present → 1.0  (IMDB → TMDB fallback)
+      plot_keywords:        linear to 5 — min(count / 5, 1.0)
+      overall_keywords:     linear to 6 — min(count / 6, 1.0)
+      parental_guide_items: linear to 3 — min(count / 3, 1.0)
+      maturity_rating:      binary (IMDB → TMDB fallback)
+      budget:               binary (IMDB → TMDB fallback)
     """
     imdb = ctx.imdb
 
-    # Plot keywords: tiered by count.
+    # Plot keywords: linear growth, 5+ = full credit.
     pk_count = len(imdb.get("plot_keywords") or [])
-    if pk_count >= 5:
-        pk_sub = 1.0
-    elif pk_count >= 1:
-        pk_sub = 0.5
-    else:
-        pk_sub = 0.0
+    pk_sub = min(pk_count / 5, 1.0)
 
-    # Overall keywords: tiered.
+    # Overall keywords: linear growth, 6+ = full credit.
     ok_count = len(imdb.get("overall_keywords") or [])
-    if ok_count >= 4:
-        ok_sub = 1.0
-    elif ok_count >= 2:
-        ok_sub = 0.5
-    elif ok_count >= 1:
-        ok_sub = 0.25
-    else:
-        ok_sub = 0.0
+    ok_sub = min(ok_count / 6, 1.0)
 
-    # Filming locations: binary presence.
-    fl_sub = 1.0 if imdb.get("filming_locations") else 0.0
-
-    # Parental guide items: binary presence.
-    pg_sub = 1.0 if imdb.get("parental_guide_items") else 0.0
+    # Parental guide items: linear growth, 3+ categories = full credit.
+    pg_count = len(imdb.get("parental_guide_items") or [])
+    pg_sub = min(pg_count / 3, 1.0)
 
     # Maturity rating: IMDB primary, TMDB fallback.
     if imdb.get("maturity_rating"):
@@ -404,9 +519,9 @@ def _score_data_completeness(ctx: MovieContext) -> float:
     else:
         bud_sub = 0.0
 
-    total = pk_sub + ok_sub + fl_sub + pg_sub + mr_sub + bud_sub
-    # Average across 6 fields → [0, 1].
-    return total / 6.0
+    total = pk_sub + ok_sub + pg_sub + mr_sub + bud_sub
+    # Average across 5 fields → [0, 1].
+    return total / 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -433,13 +548,13 @@ def compute_imdb_quality_score(
         Quality score in [0, 1].
     """
     return (
-        WEIGHTS["imdb_vote_count"]        * _score_imdb_vote_count(ctx, today)
+        WEIGHTS["imdb_notability"]        * _score_imdb_notability(ctx, today)
         + WEIGHTS["critical_attention"]   * _score_critical_attention(ctx)
         + WEIGHTS["community_engagement"] * _score_community_engagement(ctx)
         + WEIGHTS["tmdb_popularity"]      * _score_tmdb_popularity(ctx)
         + WEIGHTS["featured_reviews_chars"] * _score_featured_reviews_chars(ctx)
         + WEIGHTS["plot_text_depth"]      * _score_plot_text_depth(ctx)
-        + WEIGHTS["lexical_completeness"] * _score_lexical_completeness(ctx)
+        + WEIGHTS["lexical_completeness"] * _score_lexical_completeness(ctx, today)
         + WEIGHTS["data_completeness"]    * _score_data_completeness(ctx)
     )
 
@@ -532,23 +647,22 @@ def _load_imdb_data(tmdb_ids: set[int]) -> dict[int, dict]:
 
 
 def score_all() -> None:
-    """Compute and persist quality scores for all imdb_scraped movies.
+    """Compute and persist quality scores for all imdb_quality_calculated movies.
 
-    For every movie with status='imdb_scraped':
+    For every movie with status='imdb_quality_calculated':
       1. Load TMDB data from tracker DB and IMDB data from JSON files.
       2. Skip movies with missing IMDB JSON (logged, status unchanged).
       3. Build a MovieContext for each movie with IMDB data.
       4. Compute the 8-signal quality score via compute_imdb_quality_score().
-      5. Persist the score to movie_progress.stage_5_quality_score.
-      6. Advance scored movies to 'imdb_quality_calculated' status.
+      5. Persist the updated score to movie_progress.stage_5_quality_score.
 
-    Re-running processes any remaining unscored movies (crash recovery);
-    already-scored movies at 'imdb_quality_calculated' are not re-selected.
+    Re-running rescores all imdb_quality_calculated movies (for formula updates
+    or crash recovery).
     """
     today = datetime.date.today()
     db = init_db()
 
-    print("Stage 5 quality scorer (v2): loading imdb_scraped movies...")
+    print("Stage 5 quality scorer (v4): loading imdb_scraped movies...")
     tmdb_data = _load_tmdb_data(db)
     tmdb_ids = set(tmdb_data.keys())
 
@@ -629,7 +743,7 @@ def score_all() -> None:
     # ---------------------------------------------------------------------------
     score_mean = score_sum / scored if scored > 0 else 0.0
 
-    print(f"\nStage 5 quality scorer (v2) complete")
+    print(f"\nStage 5 quality scorer (v4) complete")
     print(f"  Movies scored:    {scored:,}")
     if missing_json > 0:
         print(f"  Skipped (no JSON): {missing_json:,}")

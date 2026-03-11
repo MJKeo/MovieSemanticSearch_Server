@@ -5,6 +5,10 @@ Contains functions and constants used by both the Stage 3 (TMDB-only) and
 Stage 5 (combined TMDB+IMDB) quality scorers.  Centralised here to avoid
 duplication while keeping each stage's scorer focused on its own signal
 definitions and weights.
+
+Also provides the canonical movie group classification logic (PROVIDERS /
+NEW / OLD) used by Stage 5 filtering, threshold analysis, and survival
+curve plotting.
 """
 
 import datetime
@@ -183,3 +187,104 @@ def validate_weights(weights: dict[str, float], label: str = "WEIGHTS") -> None:
         raise ValueError(
             f"{label} must sum to 1.0; got {total:.10f}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Movie group classification — canonical bucketing for Stage 5 filtering
+# ---------------------------------------------------------------------------
+
+
+class MovieGroup(StrEnum):
+    """Three non-overlapping groups for per-group quality thresholds.
+
+    Classification logic:
+      HAS_PROVIDERS:    watch_provider_keys BLOB is non-empty (any release date).
+      NO_PROVIDERS_NEW: no providers AND released within THEATER_WINDOW_DAYS.
+      NO_PROVIDERS_OLD: no providers AND released outside the theater window
+                        (or release date missing).
+    """
+    HAS_PROVIDERS = "has_providers"
+    NO_PROVIDERS_NEW = "no_providers_new"
+    NO_PROVIDERS_OLD = "no_providers_old"
+
+
+def classify_movie_group(
+    provider_keys: bytes | None,
+    release_date: str | None,
+    today: datetime.date,
+) -> MovieGroup:
+    """Classify a movie into one of three quality-threshold groups.
+
+    Pure function — no database access.  Uses the same logic as the SQL CASE
+    expression in the analysis scripts, but callable from Python for filtering
+    and unit testing.
+
+    Args:
+        provider_keys: Raw watch_provider_keys BLOB from tmdb_data (may be
+                       None or zero-length if no US watch providers exist).
+        release_date:  ISO-format release date string from tmdb_data, or None.
+        today:         Reference date for the theater window calculation.
+
+    Returns:
+        The MovieGroup this movie belongs to.
+    """
+    # Non-empty BLOB means at least one US watch provider exists.
+    if provider_keys and len(provider_keys) > 0:
+        return MovieGroup.HAS_PROVIDERS
+
+    # No providers — check recency against the theater window.
+    if release_date is not None:
+        try:
+            release = datetime.date.fromisoformat(release_date)
+            cutoff = today - datetime.timedelta(days=THEATER_WINDOW_DAYS)
+            if release >= cutoff:
+                return MovieGroup.NO_PROVIDERS_NEW
+        except ValueError:
+            pass  # Non-parseable date — fall through to OLD.
+
+    return MovieGroup.NO_PROVIDERS_OLD
+
+
+# ---------------------------------------------------------------------------
+# IMDB quality thresholds — per-group cutoffs from survival-curve analysis
+# ---------------------------------------------------------------------------
+
+# Thresholds determined by survival-curve derivative analysis on each group's
+# stage_5_quality_score distribution.  Movies scoring below their group's
+# threshold are filtered out at Stage 5.
+IMDB_QUALITY_THRESHOLDS: dict[MovieGroup, float] = {
+    MovieGroup.HAS_PROVIDERS:    0.486,
+    MovieGroup.NO_PROVIDERS_NEW: 0.55,
+    MovieGroup.NO_PROVIDERS_OLD: 0.654,
+}
+
+
+def passes_imdb_quality_threshold(group: MovieGroup, score: float) -> bool:
+    """Return True if the movie's quality score meets its group's threshold.
+
+    Args:
+        group: The MovieGroup this movie belongs to (from classify_movie_group).
+        score: The movie's stage_5_quality_score.
+    """
+    return score >= IMDB_QUALITY_THRESHOLDS[group]
+
+
+# ---------------------------------------------------------------------------
+# SQL fragments for group classification — used by analysis/diagnostic scripts
+# ---------------------------------------------------------------------------
+# These mirror the Python logic in classify_movie_group() but operate inside
+# SQLite queries.  Centralised here so every script uses identical conditions.
+
+# Condition: movie has at least one US watch provider.
+HAS_PROVIDERS_SQL = (
+    "td.watch_provider_keys IS NOT NULL AND length(td.watch_provider_keys) > 0"
+)
+
+# Condition: movie has no US watch providers.
+NO_PROVIDERS_SQL = (
+    "(td.watch_provider_keys IS NULL OR length(td.watch_provider_keys) = 0)"
+)
+
+# SQLite date modifier for the theater window boundary.  Used as a parameter
+# in date('now', ?) expressions.
+THEATER_WINDOW_SQL_PARAM = f"-{THEATER_WINDOW_DAYS} days"

@@ -1,12 +1,16 @@
 """
 Sample movies near candidate quality-score thresholds for manual review.
 
-For each candidate threshold, selects the 15 closest movies immediately
-below and 15 immediately above.  Fetches full TMDB (tracker DB) and IMDB
-(per-movie JSON) data for each sampled movie and writes a single JSON
-file for manual inspection.
+Movies are split into three non-overlapping groups (same classification as
+plot_quality_scores.py), each with its own candidate thresholds from
+survival-curve analysis.  For each threshold, selects the 10 closest movies
+below/equal and 10 closest above.  Fetches full TMDB (tracker DB) and IMDB
+(per-movie JSON) data and writes one JSON file per group.
 
-Output: ingestion_data/threshold_candidate_samples.json
+Output:
+    ingestion_data/threshold_samples_has_providers.json
+    ingestion_data/threshold_samples_no_providers_new.json
+    ingestion_data/threshold_samples_no_providers_old.json
 
 Usage:
     python -m movie_ingestion.imdb_quality_scoring.sample_threshold_candidates
@@ -15,25 +19,52 @@ Usage:
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import orjson
 
-from movie_ingestion.scoring_utils import unpack_provider_keys
+from movie_ingestion.scoring_utils import (
+    HAS_PROVIDERS_SQL,
+    NO_PROVIDERS_SQL,
+    THEATER_WINDOW_SQL_PARAM,
+    unpack_provider_keys,
+)
 from movie_ingestion.tracker import INGESTION_DATA_DIR, init_db
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-# The 4 candidate threshold scores identified from survival-curve analysis.
-CANDIDATE_SCORES: list[float] = [0.27, 0.38, 0.43, 0.54]
+
+@dataclass(frozen=True)
+class GroupConfig:
+    """Configuration for a single movie group's threshold sampling."""
+    name: str
+    thresholds: list[float]
+    output_filename: str
+
+
+GROUPS: list[GroupConfig] = [
+    GroupConfig(
+        name="has_providers",
+        thresholds=[0.35, 0.486],
+        output_filename="threshold_samples_has_providers.json",
+    ),
+    GroupConfig(
+        name="no_providers_new",
+        thresholds=[0.37, 0.44, 0.5],
+        output_filename="threshold_samples_no_providers_new.json",
+    ),
+    GroupConfig(
+        name="no_providers_old",
+        thresholds=[0.6, 0.621, 0.654],
+        output_filename="threshold_samples_no_providers_old.json",
+    ),
+]
 
 # Number of movies to sample on each side of the candidate threshold.
-SAMPLES_PER_SIDE: int = 15
-
-# Output path for the JSON file.
-OUTPUT_PATH: Path = INGESTION_DATA_DIR / "threshold_candidate_samples.json"
+SAMPLES_PER_SIDE: int = 10
 
 # Directory containing per-movie IMDB JSON files ({tmdb_id}.json).
 _IMDB_DIR: Path = INGESTION_DATA_DIR / "imdb"
@@ -43,20 +74,46 @@ _IMDB_DIR: Path = INGESTION_DATA_DIR / "imdb"
 # ---------------------------------------------------------------------------
 
 
-def _fetch_scored_movies(db: sqlite3.Connection) -> list[tuple[int, float]]:
-    """Fetch all movies with a stage_5_quality_score, sorted by score.
+def _fetch_grouped_movies(
+    db: sqlite3.Connection,
+) -> dict[str, list[tuple[int, float]]]:
+    """Fetch all scored movies in one query, classified into groups.
 
-    Returns a list of (tmdb_id, score) tuples in ascending score order.
+    Returns a dict mapping group name → list of (tmdb_id, score) tuples,
+    each sorted by score ascending.  Group classification uses the same
+    logic as plot_quality_scores.py (provider status + release date).
     """
+    # Single query with CASE expression to classify movies into groups.
     rows = db.execute(
-        """
-        SELECT tmdb_id, stage_5_quality_score
-        FROM movie_progress
-        WHERE stage_5_quality_score IS NOT NULL
-        ORDER BY stage_5_quality_score ASC
-        """
+        f"""
+        SELECT
+            mp.tmdb_id,
+            mp.stage_5_quality_score,
+            CASE
+                WHEN {HAS_PROVIDERS_SQL} THEN 'has_providers'
+                WHEN {NO_PROVIDERS_SQL}
+                     AND td.release_date >= date('now', ?)
+                     THEN 'no_providers_new'
+                ELSE 'no_providers_old'
+            END AS group_name
+        FROM movie_progress mp
+        JOIN tmdb_data td ON td.tmdb_id = mp.tmdb_id
+        WHERE mp.stage_5_quality_score IS NOT NULL
+        ORDER BY mp.stage_5_quality_score ASC
+        """,
+        (THEATER_WINDOW_SQL_PARAM,),
     ).fetchall()
-    return [(row[0], row[1]) for row in rows]
+
+    # Partition into groups.  Already sorted by score from the query.
+    groups: dict[str, list[tuple[int, float]]] = {
+        "has_providers": [],
+        "no_providers_new": [],
+        "no_providers_old": [],
+    }
+    for tmdb_id, score, group_name in rows:
+        groups[group_name].append((tmdb_id, score))
+
+    return groups
 
 
 def _select_nearest(
@@ -64,25 +121,22 @@ def _select_nearest(
     candidate: float,
     n: int,
 ) -> list[tuple[int, float]]:
-    """Select the n closest movies below and n closest above the candidate.
+    """Select the n closest movies at/below and n closest above the candidate.
 
-    Movies are already sorted by score ascending, so we partition into
-    below/above and take the n nearest from each side.  Returns a combined
-    list sorted by score ascending (below first, then above).
+    Movies are already sorted by score ascending.  Partition:
+    - below/equal: score <= candidate  (take last n)
+    - above:       score > candidate   (take first n)
+
+    Returns a combined list sorted by score ascending.
     """
-    # Partition: below includes movies with score < candidate,
-    # above includes movies with score >= candidate.
     below: list[tuple[int, float]] = []
     above: list[tuple[int, float]] = []
     for tmdb_id, score in movies:
-        if score < candidate:
+        if score <= candidate:
             below.append((tmdb_id, score))
         else:
             above.append((tmdb_id, score))
 
-    # Take the n closest from each side.  Since movies are sorted ascending:
-    # - closest below = last n elements of `below`
-    # - closest above = first n elements of `above`
     nearest_below = below[-n:] if len(below) >= n else below
     nearest_above = above[:n] if len(above) >= n else above
 
@@ -102,7 +156,6 @@ def _load_all_tmdb_data(
     if not tmdb_ids:
         return {}
 
-    # SQLite doesn't support array binding — use a parameterized IN clause.
     placeholders = ",".join("?" for _ in tmdb_ids)
     cursor = db.execute(
         f"SELECT * FROM tmdb_data WHERE tmdb_id IN ({placeholders})",  # noqa: S608
@@ -113,12 +166,9 @@ def _load_all_tmdb_data(
     result: dict[int, dict] = {}
     for row in cursor:
         row_dict = dict(zip(columns, row))
-
-        # Unpack the BLOB column to a JSON-serializable list of provider IDs.
         row_dict["watch_provider_keys"] = unpack_provider_keys(
             row_dict.get("watch_provider_keys")
         )
-
         result[row_dict["tmdb_id"]] = row_dict
     return result
 
@@ -158,7 +208,7 @@ def _build_output(
     tmdb_data: dict[int, dict],
     imdb_data: dict[int, dict],
 ) -> dict:
-    """Assemble the final JSON structure.
+    """Assemble the final JSON structure for a single group.
 
     For each candidate threshold, produces a list of single-key dicts
     mapping tmdb_id → {quality_score, tmdb_data, imdb_data}, sorted by
@@ -194,32 +244,41 @@ def main() -> None:
     db = init_db()
 
     try:
-        # 1. Fetch all scored movies.
+        # 1. Fetch all scored movies, classified into groups (single DB pass).
         print("Fetching scored movies from tracker database...")
-        movies = _fetch_scored_movies(db)
-        print(f"  {len(movies):,} movies with stage_5_quality_score")
+        grouped_movies = _fetch_grouped_movies(db)
+        for name, movies in grouped_movies.items():
+            print(f"  {name}: {len(movies):,} movies")
 
-        # 2. Select nearest movies for each candidate threshold.
-        candidates: dict[float, list[tuple[int, float]]] = {}
+        # 2. Select nearest movies for each group's thresholds.
+        # Maps group_name → {threshold → [(tmdb_id, score), ...]}
+        group_candidates: dict[str, dict[float, list[tuple[int, float]]]] = {}
         all_tmdb_ids: set[int] = set()
 
-        for score in CANDIDATE_SCORES:
-            nearest = _select_nearest(movies, score, SAMPLES_PER_SIDE)
-            candidates[score] = nearest
-            all_tmdb_ids.update(tid for tid, _ in nearest)
+        for group in GROUPS:
+            movies = grouped_movies[group.name]
+            candidates: dict[float, list[tuple[int, float]]] = {}
 
-            # Report the score range for each candidate.
-            scores = [s for _, s in nearest]
-            below_count = sum(1 for s in scores if s < score)
-            above_count = len(scores) - below_count
-            print(
-                f"  Candidate {score}: {below_count} below, {above_count} above"
-                f"  | score range [{scores[0]:.4f}, {scores[-1]:.4f}]"
-            )
+            for threshold in group.thresholds:
+                nearest = _select_nearest(movies, threshold, SAMPLES_PER_SIDE)
+                candidates[threshold] = nearest
+                all_tmdb_ids.update(tid for tid, _ in nearest)
+
+                # Report the score range for each threshold.
+                scores = [s for _, s in nearest]
+                below_count = sum(1 for s in scores if s <= threshold)
+                above_count = len(scores) - below_count
+                print(
+                    f"  [{group.name}] {threshold}: "
+                    f"{below_count} below/equal, {above_count} above"
+                    f"  | score range [{scores[0]:.4f}, {scores[-1]:.4f}]"
+                )
+
+            group_candidates[group.name] = candidates
 
         print(f"\n  {len(all_tmdb_ids)} unique movies to load data for")
 
-        # 3. Bulk-load TMDB and IMDB data for all sampled movies.
+        # 3. Bulk-load TMDB data for all sampled movies (single DB query).
         print("Loading TMDB data...")
         tmdb_data = _load_all_tmdb_data(db, all_tmdb_ids)
         print(f"  Loaded {len(tmdb_data):,} TMDB records")
@@ -227,18 +286,22 @@ def main() -> None:
     finally:
         db.close()
 
+    # 4. Bulk-load IMDB JSON files (parallel I/O, outside DB connection).
     print("Loading IMDB JSON files...")
     imdb_data = _load_all_imdb_data(all_tmdb_ids)
     print(f"  Loaded {len(imdb_data):,} IMDB records")
 
-    # 4. Build and write the output JSON.
-    output = _build_output(candidates, tmdb_data, imdb_data)
+    # 5. Build and write one JSON file per group.
+    for group in GROUPS:
+        output = _build_output(
+            group_candidates[group.name], tmdb_data, imdb_data
+        )
+        output_path = INGESTION_DATA_DIR / group.output_filename
 
-    # Use json (not orjson) for pretty-printed, human-readable output.
-    with open(OUTPUT_PATH, "w") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+        with open(output_path, "w") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
 
-    print(f"\nWrote {OUTPUT_PATH}")
+        print(f"Wrote {output_path}")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,11 @@ from typing import Callable
 
 import orjson
 
-from movie_ingestion.scoring_utils import THEATER_WINDOW_DAYS
+from movie_ingestion.scoring_utils import (
+    THEATER_WINDOW_DAYS,
+    MovieGroup,
+    classify_movie_group,
+)
 from movie_ingestion.tracker import INGESTION_DATA_DIR, MovieStatus, init_db
 
 
@@ -273,29 +277,29 @@ def _merge(
 def _classify_movie(m: MergedMovie, today: datetime.date) -> str:
     """Classify a movie into one of the three watch-provider groups.
 
+    Delegates to the canonical classify_movie_group() in scoring_utils, then
+    maps to this module's group name strings (which use different naming for
+    the no-provider groups to match analysis output filenames).
+
     1. has_providers — at least one US watch provider key in TMDB data.
     2. recent_no_providers — no providers, released within THEATER_WINDOW_DAYS.
     3. old_no_providers — no providers, released beyond the window (or no date).
     """
-    # Check for watch providers from TMDB data.
-    has_providers = False
-    if m.tmdb:
-        has_providers = _count_watch_provider_keys(m.tmdb.get("watch_provider_keys")) > 0
+    provider_keys = m.tmdb.get("watch_provider_keys") if m.tmdb else None
+    release_date = m.tmdb.get("release_date") if m.tmdb else None
 
-    if has_providers:
-        return _GROUP_HAS_PROVIDERS
+    group = classify_movie_group(provider_keys, release_date, today)
 
-    # No providers — classify by release recency.
-    release_date_str = m.tmdb.get("release_date") if m.tmdb else None
-    if release_date_str:
-        try:
-            release = datetime.date.fromisoformat(release_date_str)
-            if (today - release).days <= THEATER_WINDOW_DAYS:
-                return _GROUP_RECENT_NO_PROVIDERS
-        except ValueError:
-            pass  # Non-parseable date — treat as old.
+    # Map canonical MovieGroup values to this module's local group name strings.
+    return _MOVIE_GROUP_TO_LOCAL[group]
 
-    return _GROUP_OLD_NO_PROVIDERS
+
+# Mapping from canonical MovieGroup enum to local group name strings.
+_MOVIE_GROUP_TO_LOCAL: dict[MovieGroup, str] = {
+    MovieGroup.HAS_PROVIDERS: _GROUP_HAS_PROVIDERS,
+    MovieGroup.NO_PROVIDERS_NEW: _GROUP_RECENT_NO_PROVIDERS,
+    MovieGroup.NO_PROVIDERS_OLD: _GROUP_OLD_NO_PROVIDERS,
+}
 
 
 # ---------------------------------------------------------------------------
