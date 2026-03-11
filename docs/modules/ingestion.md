@@ -28,6 +28,7 @@ embedding, database ingestion) live outside this module.
 | `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer. |
 | `imdb_scraping/models.py` | Pydantic models for IMDB scraped data. |
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. |
+| `imdb_scraping/reconcile_cached.py` | Advances `tmdb_quality_passed` movies to `imdb_scraped` when their IMDB JSON already exists on disk — recovers from runs that wrote the cache file but crashed before committing the status update. |
 | `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: IMDB essential data hard-filter + quality score soft threshold. |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data. |
 | `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores (all movies). Thin wrapper around `survival_curve_utils`. |
@@ -103,11 +104,14 @@ Floor of 5, cap of 15 keywords per movie.
 
 **Output**: Per-movie JSON at `ingestion_data/imdb/{tmdb_id}.json`.
 
-**Proxy tuning**: Successful fetches complete in <1s; the request
-timeout is set aggressively (2s) to fail fast on flagged IPs and
-trigger rotation. Optimal semaphore ceiling is ~35; beyond that,
-timeout rates increase without throughput gain — the bottleneck is
-IP quality, not parallelism.
+**Proxy tuning (residential proxies)**: Successful fetches complete
+in <1s. With residential proxies, each retry arrives from a fresh IP,
+so fast failure and immediate retry is better than exponential backoff.
+Current constants: request timeout 5s (fail fast without over-rotation),
+flat retry delay 0.2–0.3s (vs. former exponential 2^n + rand), semaphore
+60 (increasing to 100 raised timeout rates without throughput gain —
+bottleneck is IP quality, not concurrency). See ADR-018 for the
+residential-vs-datacenter tuning tradeoffs.
 
 ## Stage 5: Combined Quality Scoring Model
 

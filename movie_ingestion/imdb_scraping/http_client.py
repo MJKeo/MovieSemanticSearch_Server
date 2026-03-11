@@ -42,7 +42,9 @@ class FetchResult(StrEnum):
 _MAX_RETRIES = 3
 _MIN_DELAY = 0.05
 _MAX_DELAY = 0.25
-_REQUEST_TIMEOUT = 30.0
+# Successful fetches complete in <1s — fail fast on blocked/flagged IPs
+# so retries rotate to a fresh proxy IP quickly.
+_REQUEST_TIMEOUT = 5.0
 _MAX_CONNECTIONS = 80
 _JSON_CACHE_DIR = INGESTION_DATA_DIR / "imdb_graphql"
 
@@ -231,7 +233,7 @@ async def fetch_movie(
             # Network-level failure — retry with exponential backoff
             last_failure_reason = type(exc).__name__
             if attempt < _MAX_RETRIES:
-                backoff = 2 ** attempt + random.uniform(0, 1)
+                backoff = random.uniform(0.2, 0.3)
                 print(f"    {tag} Attempt {attempt}/{_MAX_RETRIES}: "
                       f"{last_failure_reason}, retrying in {backoff:.1f}s")
                 await asyncio.sleep(backoff)
@@ -248,7 +250,7 @@ async def fetch_movie(
         if response.status_code in (403, 429):
             last_failure_reason = f"HTTP {response.status_code}"
             if attempt < _MAX_RETRIES:
-                backoff = 2 ** attempt + random.uniform(0, 1)
+                backoff = random.uniform(0.2, 0.3)
                 print(f"    {tag} Attempt {attempt}/{_MAX_RETRIES}: "
                       f"{last_failure_reason}, retrying in {backoff:.1f}s")
                 await asyncio.sleep(backoff)
@@ -258,7 +260,7 @@ async def fetch_movie(
         if response.status_code >= 500:
             last_failure_reason = f"HTTP {response.status_code}"
             if attempt < _MAX_RETRIES:
-                backoff = 2 ** attempt + random.uniform(0, 1)
+                backoff = random.uniform(0.2, 0.3)
                 print(f"    {tag} Attempt {attempt}/{_MAX_RETRIES}: "
                       f"{last_failure_reason}, retrying in {backoff:.1f}s")
                 await asyncio.sleep(backoff)

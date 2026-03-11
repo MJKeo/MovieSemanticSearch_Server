@@ -77,10 +77,8 @@ level and map against the ~100K catalog target.
 **When:** After applying formula fixes above.
 **See:** ingestion_data/threshold_analysis_report.md
 
-## Switch to residential proxies for database refresh pipeline
-**Context:** Datacenter proxy IPs get flagged by IMDB, causing
-mass timeouts and 502s. Residential IPs (real ISP addresses) are
-much harder to block. DataImpulse offers residential on the same
-platform — just change the proxy port/host in `build_proxy_url()`.
-**When:** Building the daily update / database refresh pipeline.
-**See:** memory/imdb-scraping.md for full tuning findings.
+## ~~Switch to residential proxies for database refresh pipeline~~ DONE
+Now using residential proxies for IMDB scraping. Timeout tuned to
+5s, retry backoff flattened to ~0.25s. Increasing concurrency
+beyond sem=60 caused more timeouts — IMDB is the bottleneck, not
+proxy IP quality.

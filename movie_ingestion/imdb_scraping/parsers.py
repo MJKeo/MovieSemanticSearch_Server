@@ -255,7 +255,8 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
     overview = _strip_or_none(_safe_get(title_data, ["plot", "plotText", "plainText"]))
     imdb_rating = _safe_get(title_data, ["ratingsSummary", "aggregateRating"])
     metacritic_rating = _safe_get(title_data, ["metacritic", "metascore", "score"])
-    budget = _safe_get(title_data, ["productionBudget", "budget", "amount"])
+    raw_budget = _safe_get(title_data, ["productionBudget", "budget", "amount"])
+    budget = round(raw_budget) if raw_budget is not None else None
 
     # Vote count — defaults to 0, coerced to int
     imdb_vote_count_raw = _safe_get(title_data, ["ratingsSummary", "voteCount"], 0)
