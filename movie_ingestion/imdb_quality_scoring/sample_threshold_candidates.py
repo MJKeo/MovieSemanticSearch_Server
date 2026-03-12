@@ -4,8 +4,8 @@ Sample movies near candidate quality-score thresholds for manual review.
 Movies are split into three non-overlapping groups (same classification as
 plot_quality_scores.py), each with its own candidate thresholds from
 survival-curve analysis.  For each threshold, selects the 10 closest movies
-below/equal and 10 closest above.  Fetches full TMDB (tracker DB) and IMDB
-(per-movie JSON) data and writes one JSON file per group.
+below/equal and 10 closest above.  Fetches full TMDB and IMDB data from the
+tracker DB and writes one JSON file per group.
 
 Output:
     ingestion_data/threshold_samples_has_providers.json
@@ -18,11 +18,7 @@ Usage:
 
 import json
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
-
-import orjson
 
 from movie_ingestion.scoring_utils import (
     HAS_PROVIDERS_SQL,
@@ -30,7 +26,7 @@ from movie_ingestion.scoring_utils import (
     THEATER_WINDOW_SQL_PARAM,
     unpack_provider_keys,
 )
-from movie_ingestion.tracker import INGESTION_DATA_DIR, init_db
+from movie_ingestion.tracker import INGESTION_DATA_DIR, deserialize_imdb_row, init_db
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -65,9 +61,6 @@ GROUPS: list[GroupConfig] = [
 
 # Number of movies to sample on each side of the candidate threshold.
 SAMPLES_PER_SIDE: int = 10
-
-# Directory containing per-movie IMDB JSON files ({tmdb_id}.json).
-_IMDB_DIR: Path = INGESTION_DATA_DIR / "imdb"
 
 # ---------------------------------------------------------------------------
 # Data fetching
@@ -173,29 +166,24 @@ def _load_all_tmdb_data(
     return result
 
 
-def _load_one_imdb_json(path: Path) -> tuple[int, dict] | None:
-    """Load a single IMDB JSON file.  Returns (tmdb_id, data) or None."""
-    try:
-        tmdb_id = int(path.stem)
-    except ValueError:
-        return None
-    try:
-        with open(path, "rb") as f:
-            return tmdb_id, orjson.loads(f.read())
-    except FileNotFoundError:
-        return None
+def _load_all_imdb_data(db: sqlite3.Connection, tmdb_ids: set[int]) -> dict[int, dict]:
+    """Load IMDB data from the imdb_data SQLite table for the given tmdb_ids.
 
-
-def _load_all_imdb_data(tmdb_ids: set[int]) -> dict[int, dict]:
-    """Load IMDB JSON files for the given tmdb_ids using parallel I/O."""
-    paths = [_IMDB_DIR / f"{tid}.json" for tid in tmdb_ids]
-
-    result: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        for pair in pool.map(_load_one_imdb_json, paths):
-            if pair is not None:
-                result[pair[0]] = pair[1]
-    return result
+    Each row has individual columns for every IMDBScrapedMovie field.
+    JSON TEXT columns (lists/objects) are deserialized back to Python
+    types by deserialize_imdb_row().
+    """
+    if not tmdb_ids:
+        return {}
+    placeholders = ",".join("?" for _ in tmdb_ids)
+    prev_factory = db.row_factory
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        f"SELECT * FROM imdb_data WHERE tmdb_id IN ({placeholders})",  # noqa: S608
+        tuple(tmdb_ids),
+    ).fetchall()
+    db.row_factory = prev_factory
+    return {row["tmdb_id"]: deserialize_imdb_row(row) for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -283,13 +271,13 @@ def main() -> None:
         tmdb_data = _load_all_tmdb_data(db, all_tmdb_ids)
         print(f"  Loaded {len(tmdb_data):,} TMDB records")
 
+        # 4. Bulk-load IMDB data from SQLite (single query).
+        print("Loading IMDB data from SQLite...")
+        imdb_data = _load_all_imdb_data(db, all_tmdb_ids)
+        print(f"  Loaded {len(imdb_data):,} IMDB records")
+
     finally:
         db.close()
-
-    # 4. Bulk-load IMDB JSON files (parallel I/O, outside DB connection).
-    print("Loading IMDB JSON files...")
-    imdb_data = _load_all_imdb_data(all_tmdb_ids)
-    print(f"  Loaded {len(imdb_data):,} IMDB records")
 
     # 5. Build and write one JSON file per group.
     for group in GROUPS:

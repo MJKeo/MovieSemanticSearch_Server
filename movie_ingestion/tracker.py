@@ -2,7 +2,7 @@
 SQLite checkpoint tracker for the movie ingestion pipeline.
 
 Provides the shared infrastructure used by all 9 pipeline stages:
-  - Schema initialization (movie_progress + filter_log tables)
+  - Schema initialization (movie_progress, filter_log, tmdb_data, imdb_data tables)
   - The log_filter helper for recording filtered-out movies
   - JSON file I/O utilities (load_json, save_json)
 
@@ -17,6 +17,8 @@ import os
 import sqlite3
 from enum import StrEnum
 from pathlib import Path
+
+import orjson
 
 # ---------------------------------------------------------------------------
 # Pipeline stages — used as the `stage` value in filter_log entries.
@@ -145,6 +147,43 @@ CREATE TABLE IF NOT EXISTS tmdb_data (
     maturity_rating     TEXT,
     reviews             TEXT
 );
+
+-- IMDB scraped data: one row per movie scraped in Stage 4.
+-- Each IMDBScrapedMovie field gets its own column. List and object fields
+-- are stored as JSON TEXT arrays (SQLite has no native array type).
+CREATE TABLE IF NOT EXISTS imdb_data (
+    tmdb_id              INTEGER PRIMARY KEY,
+    -- Scalars from main page
+    original_title       TEXT,
+    maturity_rating      TEXT,
+    overview             TEXT,
+    imdb_rating          REAL,
+    imdb_vote_count      INTEGER DEFAULT 0,
+    metacritic_rating    REAL,
+    reception_summary    TEXT,
+    budget               INTEGER,
+    -- List-of-strings (JSON arrays)
+    overall_keywords     TEXT,    -- JSON array of strings
+    genres               TEXT,    -- JSON array of strings
+    countries_of_origin  TEXT,    -- JSON array of strings
+    production_companies TEXT,    -- JSON array of strings
+    filming_locations    TEXT,    -- JSON array of strings
+    languages            TEXT,    -- JSON array of strings
+    synopses             TEXT,    -- JSON array of strings
+    plot_summaries       TEXT,    -- JSON array of strings
+    plot_keywords        TEXT,    -- JSON array of strings
+    maturity_reasoning   TEXT,    -- JSON array of strings
+    directors            TEXT,    -- JSON array of strings
+    writers              TEXT,    -- JSON array of strings
+    actors               TEXT,    -- JSON array of strings
+    characters           TEXT,    -- JSON array of strings
+    producers            TEXT,    -- JSON array of strings
+    composers            TEXT,    -- JSON array of strings
+    -- List-of-objects (JSON arrays of objects)
+    review_themes        TEXT,    -- JSON array of {name, sentiment}
+    parental_guide_items TEXT,    -- JSON array of {category, severity}
+    featured_reviews     TEXT     -- JSON array of {summary, text}
+);
 """
 
 
@@ -200,9 +239,181 @@ def init_db() -> sqlite3.Connection:
         except sqlite3.OperationalError:
             pass  # Column already exists — nothing to do.
 
+    # Migrate imdb_data from single JSON blob to individual columns.
+    # Detects the old schema by checking for the `data` column.
+    _migrate_imdb_data_blob_to_columns(db)
+
     db.commit()
 
     return db
+
+
+# ---------------------------------------------------------------------------
+# imdb_data column definitions — the single source of truth for column
+# order, used by serialize_imdb_movie(), deserialize_imdb_row(), and the
+# blob→columns migration.
+# ---------------------------------------------------------------------------
+
+# Ordered list of imdb_data columns (excluding tmdb_id primary key).
+# This order MUST match the CREATE TABLE definition above.
+IMDB_DATA_COLUMNS: tuple[str, ...] = (
+    "original_title", "maturity_rating", "overview",
+    "imdb_rating", "imdb_vote_count", "metacritic_rating",
+    "reception_summary", "budget",
+    "overall_keywords", "genres", "countries_of_origin",
+    "production_companies", "filming_locations", "languages",
+    "synopses", "plot_summaries", "plot_keywords", "maturity_reasoning",
+    "directors", "writers", "actors", "characters", "producers", "composers",
+    "review_themes", "parental_guide_items", "featured_reviews",
+)
+
+# Columns that store JSON arrays/objects and need deserialization on read.
+IMDB_JSON_COLUMNS: frozenset[str] = frozenset({
+    "overall_keywords", "genres", "countries_of_origin",
+    "production_companies", "filming_locations", "languages",
+    "synopses", "plot_summaries", "plot_keywords", "maturity_reasoning",
+    "directors", "writers", "actors", "characters", "producers", "composers",
+    "review_themes", "parental_guide_items", "featured_reviews",
+})
+
+# Pre-built SQL fragments for INSERT, derived from IMDB_DATA_COLUMNS.
+_IMDB_INSERT_COLS = ", ".join(["tmdb_id"] + list(IMDB_DATA_COLUMNS))
+_IMDB_INSERT_PLACEHOLDERS = ", ".join("?" * (1 + len(IMDB_DATA_COLUMNS)))
+IMDB_INSERT_SQL = (
+    f"INSERT OR REPLACE INTO imdb_data ({_IMDB_INSERT_COLS}) "
+    f"VALUES ({_IMDB_INSERT_PLACEHOLDERS})"
+)
+
+
+def serialize_imdb_movie(tmdb_id: int, data: dict) -> tuple:
+    """Convert an IMDBScrapedMovie dict to a tuple for SQL INSERT.
+
+    Scalar fields are passed through directly. List/object fields are
+    serialized to compact JSON strings (or None if the list is empty).
+    Empty lists become NULL so IS NOT NULL works for presence checks.
+
+    Args:
+        tmdb_id: The TMDB movie ID (primary key).
+        data:    The model_dump(mode="json") dict from IMDBScrapedMovie.
+
+    Returns:
+        A tuple of values in IMDB_INSERT_SQL column order.
+    """
+    values: list = [tmdb_id]
+    for col in IMDB_DATA_COLUMNS:
+        val = data.get(col)
+        if col in IMDB_JSON_COLUMNS:
+            # Serialize lists/objects to JSON TEXT, or NULL if empty.
+            if val:
+                values.append(orjson.dumps(val).decode())
+            else:
+                values.append(None)
+        else:
+            values.append(val)
+    return tuple(values)
+
+
+def deserialize_imdb_row(row: sqlite3.Row) -> dict:
+    """Convert a raw imdb_data SQLite row to a dict with JSON columns parsed.
+
+    Scalar columns are returned as-is. JSON TEXT columns are deserialized
+    back to Python lists/dicts so consumers see the same dict shape as
+    the original IMDBScrapedMovie model_dump().
+
+    Args:
+        row: A sqlite3.Row from a SELECT on imdb_data.
+
+    Returns:
+        A dict with all fields, JSON columns deserialized to lists/dicts.
+    """
+    d = dict(row)
+    for col in IMDB_JSON_COLUMNS:
+        val = d.get(col)
+        d[col] = orjson.loads(val) if val is not None else []
+    return d
+
+
+# ---------------------------------------------------------------------------
+# imdb_data migration: single JSON blob → individual columns
+# ---------------------------------------------------------------------------
+
+
+def _migrate_imdb_data_blob_to_columns(db: sqlite3.Connection) -> None:
+    """Migrate imdb_data from the old single-blob schema to individual columns.
+
+    Detects the old schema by checking for a `data` column via PRAGMA
+    table_info. If found, uses json_extract() to expand the blob into the
+    new column layout. Safe to call multiple times — no-ops if the migration
+    has already been applied.
+    """
+    columns_info = db.execute("PRAGMA table_info(imdb_data)").fetchall()
+    col_names = {row[1] for row in columns_info}
+
+    # If there's no `data` column, the table already uses the new schema
+    # (or was just created fresh with individual columns).
+    if "data" not in col_names:
+        return
+
+    print("  Migrating imdb_data from JSON blob to individual columns...")
+
+    # Build the new table with the expanded schema, then copy data over
+    # using json_extract() to pull each field from the blob.
+    # Using a temp table + rename avoids ALTER TABLE limitations in SQLite.
+    col_defs = """
+        tmdb_id              INTEGER PRIMARY KEY,
+        original_title       TEXT,
+        maturity_rating      TEXT,
+        overview             TEXT,
+        imdb_rating          REAL,
+        imdb_vote_count      INTEGER DEFAULT 0,
+        metacritic_rating    REAL,
+        reception_summary    TEXT,
+        budget               INTEGER,
+        overall_keywords     TEXT,
+        genres               TEXT,
+        countries_of_origin  TEXT,
+        production_companies TEXT,
+        filming_locations    TEXT,
+        languages            TEXT,
+        synopses             TEXT,
+        plot_summaries       TEXT,
+        plot_keywords        TEXT,
+        maturity_reasoning   TEXT,
+        directors            TEXT,
+        writers              TEXT,
+        actors               TEXT,
+        characters           TEXT,
+        producers            TEXT,
+        composers            TEXT,
+        review_themes        TEXT,
+        parental_guide_items TEXT,
+        featured_reviews     TEXT
+    """
+
+    db.execute(f"CREATE TABLE imdb_data_new ({col_defs})")
+
+    # Build json_extract expressions for each column.
+    # Scalar fields: json_extract returns the native value directly.
+    # Array/object fields: json_extract returns the JSON sub-tree as TEXT,
+    # which is exactly what we want to store.
+    extract_exprs = ["tmdb_id"]
+    for col in IMDB_DATA_COLUMNS:
+        extract_exprs.append(f"json_extract(data, '$.{col}')")
+
+    insert_cols = ", ".join(["tmdb_id"] + list(IMDB_DATA_COLUMNS))
+    select_exprs = ", ".join(extract_exprs)
+
+    db.execute(
+        f"INSERT INTO imdb_data_new ({insert_cols}) "
+        f"SELECT {select_exprs} FROM imdb_data"
+    )
+
+    row_count = db.execute("SELECT COUNT(*) FROM imdb_data_new").fetchone()[0]
+
+    db.execute("DROP TABLE imdb_data")
+    db.execute("ALTER TABLE imdb_data_new RENAME TO imdb_data")
+
+    print(f"  Migration complete: {row_count:,} rows expanded to individual columns.")
 
 
 # ---------------------------------------------------------------------------

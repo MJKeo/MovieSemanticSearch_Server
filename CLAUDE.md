@@ -134,7 +134,7 @@ Each vector space has LLM-generated metadata (`implementation/llms/vector_metada
 The ingestion pipeline processes ~1M TMDB movies down to ~100K high-quality movies through a multi-stage funnel. All stages are crash-safe and idempotent — restarting picks up where it left off.
 
 **Tracker system:** `movie_ingestion/tracker.py` is the shared backbone. It manages a SQLite database at `./ingestion_data/tracker.db` with two core tables:
-- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_passed` → `imdb_scraped` → `essential_data_passed` → `phase1_complete` → `phase2_complete` → `embedded` → `ingested`; terminal status: `filtered_out`)
+- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_passed` → `phase1_complete` → `phase2_complete` → `embedded` → `ingested`; terminal status: `filtered_out`)
 - `filter_log` — append-only audit trail of every filtered movie with stage, reason, and optional details JSON
 - `tmdb_data` — stores extracted TMDB fields needed by the quality scorer (vote counts, popularity, provider keys, boolean completeness flags)
 
@@ -184,7 +184,7 @@ Stage 5: IMDB Quality Filtering (movie_ingestion/imdb_quality_scoring/)
      tmdb_popularity (0.06), metacritic_rating (0.04)
   └─ IMDB data primary, TMDB as fallback for overlapping fields
   └─ Soft threshold via derivative analysis of quality score distribution
-  └─ Status: imdb_scraped → essential_data_passed (or filtered_out)
+  └─ Status: imdb_scraped → imdb_quality_passed (or filtered_out)
   └─ Run: python -m movie_ingestion.imdb_quality_scoring.imdb_quality_scorer
 
 Stage 6+: LLM Generation → Embedding → Ingestion (not in movie_ingestion/)

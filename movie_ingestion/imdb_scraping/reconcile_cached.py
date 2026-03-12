@@ -1,29 +1,22 @@
 """
-Reconcile cached IMDB JSON files with the tracker database.
+Reconcile cached IMDB data with the tracker database.
 
-Finds movies at 'tmdb_quality_passed' status that already have cached
-IMDB data on disk (ingestion_data/imdb/{tmdb_id}.json) and advances
-them to 'imdb_scraped' without re-fetching. This handles the case
-where a prior scraping run wrote the JSON but crashed before committing
-the status update to SQLite.
+Finds movies at 'tmdb_quality_passed' status that already have IMDB data
+in the imdb_data SQLite table and advances them to 'imdb_scraped' without
+re-fetching. This handles the case where a prior scraping run persisted
+the data but crashed before committing the status update.
 
 Usage:
     python -m movie_ingestion.imdb_scraping.reconcile_cached
 """
 
-import time
-
 from movie_ingestion.tracker import (
-    INGESTION_DATA_DIR,
     MovieStatus,
     init_db,
 )
 
 # Commit after this many status updates to bound transaction size.
 _COMMIT_BATCH_SIZE = 500
-
-# Directory where Stage 4 writes per-movie IMDB JSON.
-_IMDB_CACHE_DIR = INGESTION_DATA_DIR / "imdb"
 
 # SQL for bulk-updating movie status after confirming cached data exists.
 _UPDATE_STATUS_SQL = """
@@ -35,7 +28,7 @@ _UPDATE_STATUS_SQL = """
 
 def run() -> None:
     """
-    Scan tmdb_quality_passed movies for existing IMDB cache files
+    Scan tmdb_quality_passed movies for existing IMDB data in SQLite
     and promote matching movies to imdb_scraped.
     """
     print("\n" + "=" * 60)
@@ -57,13 +50,21 @@ def run() -> None:
 
         print(f"\n  {len(candidates):,} movies at tmdb_quality_passed")
 
-        # Check which candidates already have cached IMDB JSON on disk.
+        # Find which candidates already have IMDB data in the imdb_data table.
+        # Use a single query to get the set of IDs that exist.
+        placeholders = ",".join("?" * len(candidates))
+        cached_rows = db.execute(
+            f"SELECT tmdb_id FROM imdb_data WHERE tmdb_id IN ({placeholders})",  # noqa: S608
+            candidates,
+        ).fetchall()
+        cached_ids = {row[0] for row in cached_rows}
+
+        # Promote cached movies in batches.
         promoted = 0
         batch: list[int] = []
 
         for tmdb_id in candidates:
-            cache_path = _IMDB_CACHE_DIR / f"{tmdb_id}.json"
-            if not cache_path.exists():
+            if tmdb_id not in cached_ids:
                 continue
 
             batch.append(tmdb_id)
@@ -93,7 +94,7 @@ def run() -> None:
         print(f"\n  Done.")
         print(f"  Total candidates:  {len(candidates):,}")
         print(f"  Promoted:          {promoted:,}")
-        print(f"  Skipped (no cache):{skipped:,}")
+        print(f"  Skipped (no data): {skipped:,}")
         print("=" * 60)
 
     finally:

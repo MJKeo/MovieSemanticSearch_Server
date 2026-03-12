@@ -49,11 +49,7 @@ import datetime
 import json
 import math
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
-
-import orjson
 
 from movie_ingestion.scoring_utils import (
     VC_CLASSIC_BOOST_CAP,
@@ -64,16 +60,10 @@ from movie_ingestion.scoring_utils import (
     validate_weights,
 )
 from movie_ingestion.tracker import (
-    INGESTION_DATA_DIR,
     MovieStatus,
+    deserialize_imdb_row,
     init_db,
 )
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-_IMDB_DIR = INGESTION_DATA_DIR / "imdb"
 
 # ---------------------------------------------------------------------------
 # Tuning constants
@@ -604,41 +594,24 @@ def _load_tmdb_data(db: sqlite3.Connection) -> dict[int, dict]:
     return result
 
 
-def _load_one_json(path: Path) -> tuple[int, dict] | None:
-    """Load a single IMDB JSON file.  Returns (tmdb_id, data) or None.
+def _load_imdb_data(db: sqlite3.Connection, tmdb_ids: set[int]) -> dict[int, dict]:
+    """Load IMDB data from the imdb_data SQLite table for the given tmdb_ids.
 
-    Returns None for missing files (FileNotFoundError) so the caller can
-    skip movies whose JSON hasn't been written yet.
+    Each row has individual columns for every IMDBScrapedMovie field.
+    JSON TEXT columns (lists/objects) are deserialized back to Python
+    types by deserialize_imdb_row().
     """
-    try:
-        tmdb_id = int(path.stem)
-    except ValueError:
-        return None
-    try:
-        with open(path, "rb") as f:
-            return tmdb_id, orjson.loads(f.read())
-    except FileNotFoundError:
-        return None
-
-
-def _load_imdb_data(tmdb_ids: set[int]) -> dict[int, dict]:
-    """Load IMDB JSON files for the given tmdb_ids.
-
-    Uses orjson for fast deserialization and ThreadPoolExecutor to overlap
-    file I/O across threads (I/O-bound, so threads are effective despite GIL).
-    Only loads files whose stem (tmdb_id) is in the target set.
-    """
-    # Build the list of paths to load — construct directly from target IDs.
-    # No existence check here; _load_one_json handles missing files via
-    # the FileNotFoundError path in the ThreadPoolExecutor.
-    json_files = [_IMDB_DIR / f"{tid}.json" for tid in tmdb_ids]
-
-    result: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        for pair in pool.map(_load_one_json, json_files):
-            if pair is not None:
-                result[pair[0]] = pair[1]
-    return result
+    if not tmdb_ids:
+        return {}
+    placeholders = ",".join("?" * len(tmdb_ids))
+    prev_factory = db.row_factory
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        f"SELECT * FROM imdb_data WHERE tmdb_id IN ({placeholders})",  # noqa: S608
+        tuple(tmdb_ids),
+    ).fetchall()
+    db.row_factory = prev_factory
+    return {row["tmdb_id"]: deserialize_imdb_row(row) for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -650,8 +623,8 @@ def score_all() -> None:
     """Compute and persist quality scores for all imdb_quality_calculated movies.
 
     For every movie with status='imdb_quality_calculated':
-      1. Load TMDB data from tracker DB and IMDB data from JSON files.
-      2. Skip movies with missing IMDB JSON (logged, status unchanged).
+      1. Load TMDB data and IMDB data from the tracker DB.
+      2. Skip movies with missing IMDB data (logged, status unchanged).
       3. Build a MovieContext for each movie with IMDB data.
       4. Compute the 8-signal quality score via compute_imdb_quality_score().
       5. Persist the updated score to movie_progress.stage_5_quality_score.
@@ -666,14 +639,14 @@ def score_all() -> None:
     tmdb_data = _load_tmdb_data(db)
     tmdb_ids = set(tmdb_data.keys())
 
-    print(f"Loading IMDB JSON files for {len(tmdb_ids):,} movies...")
-    imdb_data = _load_imdb_data(tmdb_ids)
+    print(f"Loading IMDB data from SQLite for {len(tmdb_ids):,} movies...")
+    imdb_data = _load_imdb_data(db, tmdb_ids)
 
     total = len(tmdb_data)
     missing_json = total - len(imdb_data)
     print(f"  {total:,} movies to score (reference date = {today})")
     if missing_json > 0:
-        print(f"  WARNING: {missing_json:,} movies have no IMDB JSON — skipping them")
+        print(f"  WARNING: {missing_json:,} movies have no IMDB data — skipping them")
 
     if total == 0:
         print("No imdb_scraped movies found. Has Stage 4 (IMDB scraping) completed?")
@@ -693,7 +666,7 @@ def score_all() -> None:
 
     try:
         for i, tid in enumerate(sorted_ids):
-            # Skip movies with missing IMDB JSON — don't score, don't change status.
+            # Skip movies with missing IMDB data — don't score, don't change status.
             imdb_row = imdb_data.get(tid)
             if imdb_row is None:
                 continue
@@ -752,7 +725,7 @@ def score_all() -> None:
         print(f"  Score mean:       {score_mean:.4f}")
         print(f"  Score max:        {score_max:.4f}")
     else:
-        print("  No movies scored (all missing IMDB JSON)")
+        print("  No movies scored (all missing IMDB data)")
     print(
         f"\nNext step: run survival-curve analysis on stage_5_quality_score"
         f" to determine per-group filtering thresholds."

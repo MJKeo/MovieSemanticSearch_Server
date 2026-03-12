@@ -1,17 +1,18 @@
 # implementation/llms/ — LLM Integration
 
-All LLM API calls for both search-time query understanding and
-ingestion-time vector metadata generation.
+All LLM API calls for search-time query understanding. Ingestion-time
+vector metadata generation has moved to `movie_ingestion/metadata_generation/`.
 
 ## What This Module Does
 
-Provides two distinct LLM integration paths:
-1. **Search-time**: Decomposes user queries into structured outputs
-   (entities, weights, preferences, subqueries) via parallel LLM
-   calls. Redis caching is planned but not yet implemented.
-2. **Ingestion-time**: Generates 7 types of vector metadata per
-   movie via LLM calls, producing the text that gets embedded into
-   the 8 vector spaces.
+Provides search-time LLM integration: decomposes user queries into
+structured outputs (entities, weights, preferences, subqueries) via
+parallel LLM calls.
+
+The ingestion-time generation pipeline (7 LLM metadata types per movie)
+now lives in `movie_ingestion/metadata_generation/` as a standalone
+Batch API workflow. See `docs/modules/ingestion.md` (Stage 6 section)
+and ADR-024.
 
 ## Key Files
 
@@ -19,15 +20,17 @@ Provides two distinct LLM integration paths:
 |------|---------|
 | `generic_methods.py` | LLM client initialization and base call functions. Two clients: OpenAI (embeddings via `text-embedding-3-small`, 1536 dims; structured output via `chat.completions.parse()`) and Moonshot/Kimi (structured output via `chat.completions.create()` with explicit `response_format` JSON schema + manual `json.loads()` / `model_validate()`). Sync and async variants for both. |
 | `query_understanding_methods.py` | Search-time DAG: 5 async functions that run in parallel with dependency management. Redis caching planned but not yet implemented (key format: `qu:v{N}:{hash}`, TTL 1 day). |
-| `vector_metadata_generation_methods.py` | Ingestion-time: 7 generator functions (plot_events, plot_analysis, viewer_experience, watch_context, narrative_techniques, production, reception). Organized in two waves — Wave 1 runs plot_events/watch_context/reception in parallel, Wave 2 depends on plot_events output. |
+| `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. These are being superseded by `movie_ingestion/metadata_generation/generators/`. Not used in the active pipeline. |
 
 ## Boundaries
 
-- **In scope**: LLM API calls, structured output parsing, embedding
-  generation, QU caching logic.
-- **Out of scope**: System prompts (live in `implementation/prompts/`),
-  output schemas (live in `implementation/classes/schemas.py`),
-  vector text construction (lives in `implementation/vectorize.py`).
+- **In scope**: Search-time LLM API calls, structured output parsing,
+  embedding generation, QU caching logic.
+- **Out of scope**: Ingestion-time metadata generation (now in
+  `movie_ingestion/metadata_generation/`), system prompts (live in
+  `implementation/prompts/`), output schemas (live in
+  `implementation/classes/schemas.py`), vector text construction
+  (lives in `implementation/vectorize.py`).
 
 ## Search-Time Query Understanding DAG
 
@@ -45,18 +48,6 @@ user query. On Redis cache hit, the entire DAG is skipped.
 All functions run in parallel. When caching is implemented, the
 cached blob will be the complete structured output — never cache
 partial DAG results.
-
-## Ingestion-Time LLM Generation
-
-8 LLM calls per movie organized in two waves:
-
-**Wave 1** (parallel): plot_events, watch_context, reception
-**Wave 2** (parallel, depends on plot_events for plot_synopsis):
-plot_analysis, viewer_experience, narrative_techniques,
-production_keywords, source_of_inspiration
-
-Current token usage: ~28K input + ~8K output per movie.
-See decision record ADR-012 for optimization proposals.
 
 ## Gotchas
 

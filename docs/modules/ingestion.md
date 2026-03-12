@@ -8,14 +8,16 @@ enrichment. All stages are crash-safe and idempotent.
 
 Manages the first five stages of the ingestion pipeline: TMDB daily
 export download, TMDB detail fetching, quality scoring/filtering,
-IMDB scraping, and IMDB quality filtering. Stages 6+ (LLM generation,
-embedding, database ingestion) live outside this module.
+IMDB scraping, and IMDB quality filtering. Also houses Stage 6
+(LLM metadata generation via Batch API) in the `metadata_generation/`
+subpackage. Stages 7+ (embedding, database ingestion) live outside
+this module.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `tracker.py` | Shared backbone — SQLite database at `./ingestion_data/tracker.db`. Manages `movie_progress`, `filter_log`, and `tmdb_data` tables. Defines `MovieStatus`/`PipelineStage` enums. Provides `log_filter()` and `batch_log_filter()` helpers. |
+| `tracker.py` | Shared backbone — SQLite database at `./ingestion_data/tracker.db`. Manages `movie_progress`, `filter_log`, `tmdb_data`, and `imdb_data` tables. Defines `MovieStatus`/`PipelineStage` enums. Provides `log_filter()`, `batch_log_filter()`, `serialize_imdb_movie()`, `deserialize_imdb_row()`, and `IMDB_DATA_COLUMNS`. |
 | `tmdb_fetching/daily_export.py` | Stage 1: Stream-download gzipped JSONL (~1M entries), filter (adult=False, video=False, popularity>0), insert ~800K as 'pending'. |
 | `tmdb_fetching/tmdb_fetcher.py` | Stage 2: Async TMDB detail fetch for all pending movies. Extracts fields into `tmdb_data` table. Filters movies missing IMDB ID. Uses adaptive rate limiting from `db/tmdb.py`. HTTP fetching and DB writes are separated: async tasks return result NamedTuples, all DB writes happen via `executemany` after `asyncio.gather()`. |
 | `tmdb_quality_scoring/tmdb_quality_scorer.py` | Stage 3 scorer: edge cases (unreleased → 0.0, has providers → 1.0) + 4-signal weighted formula for no-provider movies. |
@@ -23,28 +25,38 @@ embedding, database ingestion) live outside this module.
 | `tmdb_quality_scoring/tmdb_data_analysis.py` | Diagnostic: per-attribute distributions from tmdb_data, split into two output files by watch-provider availability (`tmdb_data_analysis_with_providers.json` and `tmdb_data_analysis_no_providers.json`). |
 | `tmdb_quality_scoring/plot_tmdb_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 3 scores. Plots both all-movies and no-provider-only populations using `survival_curve_utils`. |
 | `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch. HTTP fetching and DB writes are separated — async tasks return result NamedTuples, all DB writes happen via `executemany` after each batch. |
-| `imdb_scraping/scraper.py` | Per-movie: fetch GraphQL → transform → return result (does not write to DB). |
+| `imdb_scraping/scraper.py` | Per-movie: fetch GraphQL → transform → return result dict (does not write to DB). `MovieResult.data` is `dict | None` (not a JSON string). |
 | `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, random UA rotation. |
 | `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer. |
 | `imdb_scraping/models.py` | Pydantic models for IMDB scraped data. |
-| `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. |
-| `imdb_scraping/reconcile_cached.py` | Advances `tmdb_quality_passed` movies to `imdb_scraped` when their IMDB JSON already exists on disk — recovers from runs that wrote the cache file but crashed before committing the status update. |
+| `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. Bulk-queries `imdb_data` table. |
+| `imdb_scraping/reconcile_cached.py` | Advances `tmdb_quality_passed` movies to `imdb_scraped` when their IMDB data already exists in the `imdb_data` table — recovers from runs that wrote data but crashed before committing the status update. |
+| `imdb_scraping/migrate_json_to_sqlite.py` | One-off migration script: reads per-movie JSON files from `ingestion_data/imdb/` and inserts rows into the `imdb_data` table via `serialize_imdb_movie()`. |
 | `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5 scorer: 8-signal combined TMDB+IMDB quality scorer (v4). No hard filters — score is the sole filtering mechanism. Advances `imdb_scraped` → `imdb_quality_calculated`. |
 | `imdb_quality_scoring/imdb_filter.py` | Stage 5 filter: applies per-group quality-score thresholds from `scoring_utils.IMDB_QUALITY_THRESHOLDS`. Advances `imdb_quality_calculated` → `imdb_quality_passed` (or `filtered_out`). |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data, split into 3 groups matching the Stage 5 threshold groups (has_providers, recent_no_providers, old_no_providers). Produces `imdb_data_analysis_{group}.json` output files. |
 | `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores across 3 groups (with providers, no providers recent, no providers old). Thin wrapper around `survival_curve_utils`. |
 | `imdb_quality_scoring/sample_threshold_candidates.py` | Diagnostic: samples movies around each candidate threshold per group, writes full TMDB+IMDB data to per-group JSON files in `ingestion_data/` for manual review. |
+| `metadata_generation/run.py` | Stage 6 CLI entry point: `submit --wave 1/2`, `status`, `process`. Two-wave Batch API flow. |
+| `metadata_generation/state.py` | SQLite helpers for `metadata_batches` and `metadata_results` tables (added to tracker.db). |
+| `metadata_generation/request_builder.py` | Assembles JSONL files for batch submission. Wraps generator output in `{custom_id, method, url, body}` format. |
+| `metadata_generation/batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status, download. No movie/generation knowledge. |
+| `metadata_generation/result_processor.py` | Parses downloaded result JSONL, routes to generators, stores in `metadata_results`. Auto-submits Wave 2 after Wave 1 processing. |
+| `metadata_generation/inputs.py` | Assembles per-movie input dicts from `tmdb_data` + `imdb_data` for each generation. |
+| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. |
+| `metadata_generation/pre_consolidation.py` | Pre-consolidation steps: selective keyword routing, conditional maturity consolidation, sparse assessment. |
+| `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). Each returns a `body` dict suitable for Batch API or real-time calls. |
+| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
 ## Boundaries
 
 - **In scope**: TMDB export, TMDB detail fetching, quality scoring,
-  IMDB scraping, pipeline state tracking.
-- **Out of scope**: LLM metadata generation (Stage 6,
-  implementation/llms/), embedding (Stage 7,
-  implementation/vectorize.py), database ingestion (Stage 8,
-  db/ingest_movie.py).
+  IMDB scraping, pipeline state tracking, LLM metadata generation
+  (Stage 6, `metadata_generation/` subpackage).
+- **Out of scope**: Embedding (Stage 7, `implementation/vectorize.py`),
+  database ingestion (Stage 8, `db/ingest_movie.py`).
 
 ## Pipeline Stages
 
@@ -54,6 +66,7 @@ Stage 2: TMDB Detail Fetch     ~800K fetched   (~1-8 hrs)
 Stage 3: Quality Funnel        ~800K → ~100K   (~5 min)
 Stage 4: IMDB Scraping         ~100K enriched  (~4-8 hrs)
 Stage 5: IMDB Quality Filter   ~100K filtered  (~5 min)
+Stage 6: LLM Metadata Gen      ~112K movies    (Batch API, up to 48h)
 ```
 
 ## Stage 3: Quality Scoring Model
@@ -100,7 +113,16 @@ languages, countries, production companies.
 Dynamic threshold: `min(0.75 * N, N - 2)` where N = top keyword score.
 Floor of 5, cap of 15 keywords per movie.
 
-**Output**: Per-movie JSON at `ingestion_data/imdb/{tmdb_id}.json`.
+**Output**: Stored in `imdb_data` table in tracker.db (see ADR-023).
+Previously per-movie JSON files at `ingestion_data/imdb/{tmdb_id}.json`;
+those files are no longer the primary data store.
+
+**Data serialization**: `scraper.py` returns `model_dump()` dict in
+`MovieResult.data`. `run.py` calls `serialize_imdb_movie()` to convert
+to INSERT tuple, then writes via `executemany`. Readers call
+`deserialize_imdb_row()` to get back the same dict shape (JSON columns
+parsed back to Python lists/dicts). `IMDB_DATA_COLUMNS` in `tracker.py`
+is the single source of truth for column order.
 
 **Proxy tuning (residential proxies)**: Successful fetches complete
 in <1s. With residential proxies, each retry arrives from a fresh IP,
@@ -119,7 +141,8 @@ overlapping fields. See ADR-019 for the v2 redesign decisions,
 ADR-021 for the v4 notability signal change.
 
 **No hard filters.** The quality score is the sole filtering mechanism.
-Movies with missing IMDB JSON are skipped (status unchanged).
+Movies with missing IMDB data in the `imdb_data` table are skipped
+(status unchanged).
 
 The score answers two questions: (1) is this movie relevant — would
 users search for it or choose it? (2) is the data sufficient for
@@ -262,6 +285,42 @@ How the scored fields map to the 7 LLM-generated vector spaces:
 Non-LLM channels: **lexical search** ← lexical_completeness;
 **metadata scoring** ← imdb_notability, tmdb_popularity.
 
+## Stage 6: LLM Metadata Generation (Batch API)
+
+Stage 6 generates 7 types of LLM vector metadata per movie via
+OpenAI's Batch API. Lives in `metadata_generation/` subpackage.
+See ADR-024 for the Batch API architecture decision.
+
+**CLI workflow**:
+```
+python -m movie_ingestion.metadata_generation.run submit --wave 1
+python -m movie_ingestion.metadata_generation.run status
+python -m movie_ingestion.metadata_generation.run process   # auto-submits Wave 2
+python -m movie_ingestion.metadata_generation.run status
+python -m movie_ingestion.metadata_generation.run process
+```
+
+**Two-wave design**: Wave 1 generates `plot_events` and `reception` in
+parallel. Wave 2 uses `plot_synopsis` (from plot_events) and
+`review_insights_brief` (from reception) to generate the remaining 5
+generations (plot_analysis, viewer_experience, narrative_techniques,
+production, source_of_inspiration). Completion window is up to 24h per
+wave; `process` auto-submits Wave 2 after Wave 1 processing.
+
+**State tracking**: Two tables in tracker.db — `metadata_batches`
+(one row per batch submission) and `metadata_results` (one row per
+tmdb_id × generation_type). `plot_synopsis` and `review_insights_brief`
+are scalar columns in `metadata_results`, not buried in `result_json`,
+so Wave 2 request building can query them directly.
+
+**Generator contract**: Each generator file in `generators/` returns a
+`body` dict suitable for both Batch API (wrapped by `request_builder.py`)
+and real-time API calls. JSONL format: `{custom_id, method, url, body}`
+where `custom_id = "{tmdb_id}-{generation_type}"`.
+
+**Status progression**: `imdb_quality_passed` → `phase1_complete`
+(after Wave 1) → `phase2_complete` (after Wave 2).
+
 ## Tracker System
 
 The `tracker.py` module is the shared backbone. Key rules:
@@ -276,6 +335,17 @@ The `tracker.py` module is the shared backbone. Key rules:
   `imdb_quality_calculated` → `imdb_quality_passed` → `phase1_complete` →
   `phase2_complete` → `embedded` → `ingested`
 - Terminal statuses: `filtered_out`
+
+### Tables
+
+- `movie_progress` — one row per movie, status + quality scores +
+  `batch1_custom_id` / `batch2_custom_id` columns.
+- `filter_log` — append-only audit trail of every filtered movie.
+- `tmdb_data` — TMDB fields for quality scoring and downstream stages.
+- `imdb_data` — IMDB scraped fields: 8 scalar columns + 19 JSON TEXT
+  columns (empty lists stored as NULL). See ADR-023.
+- `metadata_batches` — OpenAI batch submissions (managed by `state.py`).
+- `metadata_results` — per-generation results (managed by `state.py`).
 
 ### Durability settings
 
@@ -305,10 +375,14 @@ eliminates any uncertainty about concurrent DB access.
 - TMDB fetching is free (API key only). IMDB scraping requires
   proxies (~$5-17 for 100K movies). This cost asymmetry drives
   the TMDB-first funnel design.
-- The SQLite tracker serves both as checkpoint DB and data store
-  for Stage 3 quality scoring. Single file at ~310-360 MB.
+- The SQLite tracker serves as checkpoint DB, data store for quality
+  scoring, and IMDB data store. Single file; size grows substantially
+  with `imdb_data` (28 columns × 425K rows of JSON text).
 - Watch provider keys in `tmdb_data` are stored as packed uint32
   BLOBs, not JSON arrays.
+- `MovieResult.data` in `scraper.py` is `dict | None` (not a JSON
+  string). Any code that unpacks it positionally needs awareness of
+  this type.
 - IMDB scraping uses graceful defaults — no movie is filtered out
   based on missing IMDB data. All fields default to None/[].
 - DataImpulse proxy requires `DATA_IMPULSE_LOGIN` and
@@ -321,3 +395,6 @@ eliminates any uncertainty about concurrent DB access.
 - Survival curve plot scripts call `plt.show()` which blocks in
   headless environments. Use the `Agg` backend or redirect output
   to a file when running without a display.
+- The `ingestion_data/imdb/` JSON file directory is now obsolete as
+  the primary data store. `migrate_json_to_sqlite.py` was used for
+  the one-time migration of 425,345 rows.

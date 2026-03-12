@@ -21,11 +21,13 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from movie_ingestion.tracker import (
+    IMDB_INSERT_SQL,
     INGESTION_DATA_DIR,
     MovieStatus,
     PipelineStage,
     batch_log_filter,
     init_db,
+    serialize_imdb_movie,
 )
 from .http_client import create_client, create_ua_generator
 from .scraper import MovieResult, process_movie
@@ -150,6 +152,10 @@ async def _scrape_all(db, candidates: list[tuple[int, str]]) -> dict:
             filtered_entries: list[tuple[int, str, str, str | None]] = []
             unexpected_errors = 0
 
+            # Rows for the imdb_data table — each tuple matches IMDB_INSERT_SQL
+            # column order (tmdb_id + all 27 IMDBScrapedMovie fields).
+            imdb_data_rows: list[tuple] = []
+
             for (tmdb_id, imdb_id), result in zip(chunk, results):
                 if isinstance(result, Exception):
                     _log_unexpected_error(tmdb_id, result)
@@ -159,6 +165,9 @@ async def _scrape_all(db, candidates: list[tuple[int, str]]) -> dict:
                           f"{type(result).__name__}: {result}")
                 elif result.status == "scraped":
                     scraped_ids.append(result.tmdb_id)
+                    imdb_data_rows.append(
+                        serialize_imdb_movie(result.tmdb_id, result.data)
+                    )
                     counters["scraped"] += 1
                 elif result.status == "filtered":
                     filtered_entries.append(
@@ -174,6 +183,8 @@ async def _scrape_all(db, candidates: list[tuple[int, str]]) -> dict:
                 _UPDATE_STATUS_SQL,
                 [(MovieStatus.IMDB_SCRAPED, tid) for tid in scraped_ids],
             )
+            # Persist scraped IMDB data as individual columns in imdb_data
+            db.executemany(IMDB_INSERT_SQL, imdb_data_rows)
             batch_log_filter(db, filtered_entries)
 
             commit_start = time.monotonic()

@@ -31,26 +31,21 @@ Usage:
 
 import datetime
 import json
-from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Callable
-
-import orjson
 
 from movie_ingestion.scoring_utils import (
     THEATER_WINDOW_DAYS,
     MovieGroup,
     classify_movie_group,
 )
-from movie_ingestion.tracker import INGESTION_DATA_DIR, MovieStatus, init_db
+from movie_ingestion.tracker import INGESTION_DATA_DIR, MovieStatus, deserialize_imdb_row, init_db
 
 
 # ---------------------------------------------------------------------------
 # Paths and group definitions
 # ---------------------------------------------------------------------------
-
-_IMDB_DIR = INGESTION_DATA_DIR / "imdb"
 
 # Group keys and their human-readable labels.
 _GROUP_HAS_PROVIDERS = "has_providers"
@@ -120,14 +115,13 @@ def _pct_str(count: int, total: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _load_tmdb_data() -> dict[int, dict]:
+def _load_tmdb_data(db: sqlite3.Connection) -> dict[int, dict]:
     """
     Load TMDB rows from the tracker database for movies at any Stage 5
     status (imdb_scraped, imdb_quality_calculated, or imdb_quality_passed).
     Uses a JOIN on movie_progress to filter in SQL rather than pulling IDs
     into Python. Returns dict keyed by tmdb_id.
     """
-    db = init_db()
     db.row_factory = None
 
     query = """
@@ -158,7 +152,6 @@ def _load_tmdb_data() -> dict[int, dict]:
         MovieStatus.IMDB_QUALITY_CALCULATED,
         MovieStatus.IMDB_QUALITY_PASSED,
     )).fetchall()
-    db.close()
 
     result: dict[int, dict] = {}
     for row in rows:
@@ -167,37 +160,24 @@ def _load_tmdb_data() -> dict[int, dict]:
     return result
 
 
-def _load_one_json(path: Path) -> tuple[int, dict] | None:
-    """Load a single IMDB JSON file. Returns (tmdb_id, data) or None."""
-    try:
-        tmdb_id = int(path.stem)
-    except ValueError:
-        return None
-    with open(path, "rb") as f:
-        return tmdb_id, orjson.loads(f.read())
+def _load_imdb_data(db: sqlite3.Connection, target_ids: set[int]) -> dict[int, dict]:
+    """Load IMDB data from the imdb_data SQLite table for the given tmdb_ids.
 
-
-def _load_imdb_data(target_ids: set[int]) -> dict[int, dict]:
+    Each row has individual columns for every IMDBScrapedMovie field.
+    JSON TEXT columns (lists/objects) are deserialized back to Python
+    types by deserialize_imdb_row().
     """
-    Load IMDB JSON files only for movies in the target ID set.
-    Files are stored as ingestion_data/imdb/<tmdb_id>.json, so we
-    construct paths directly from the ID set rather than globbing the
-    entire directory.
-
-    Uses orjson for faster deserialization and ThreadPoolExecutor to
-    overlap file I/O across multiple threads.
-    """
-    # Build the list of paths that should exist for target IDs
-    json_files = [_IMDB_DIR / f"{tid}.json" for tid in target_ids]
-    # Filter to files that actually exist on disk
-    existing_files = [p for p in json_files if p.exists()]
-
-    result: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        for pair in pool.map(_load_one_json, existing_files):
-            if pair is not None:
-                result[pair[0]] = pair[1]
-    return result
+    if not target_ids:
+        return {}
+    placeholders = ",".join("?" * len(target_ids))
+    prev_factory = db.row_factory
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        f"SELECT * FROM imdb_data WHERE tmdb_id IN ({placeholders})",  # noqa: S608
+        tuple(target_ids),
+    ).fetchall()
+    db.row_factory = prev_factory
+    return {row["tmdb_id"]: deserialize_imdb_row(row) for row in rows}
 
 
 def _count_watch_provider_keys(blob: bytes | None) -> int:
@@ -987,17 +967,19 @@ def _export_json(
 
 def main() -> None:
     today = datetime.date.today()
+    db = init_db()
 
     print("Loading TMDB data from tracker database (status = imdb_scraped)...")
-    tmdb_data = _load_tmdb_data()
+    tmdb_data = _load_tmdb_data(db)
 
-    # Use the TMDB result keys to scope IMDB file loading, so both
+    # Use the TMDB result keys to scope IMDB data loading, so both
     # sources cover exactly the same set of movies.
     target_ids = set(tmdb_data.keys())
     print(f"  Found {len(target_ids):,} movies")
 
-    print("Loading IMDB scraped JSON files...")
-    imdb_data = _load_imdb_data(target_ids)
+    print("Loading IMDB data from SQLite...")
+    imdb_data = _load_imdb_data(db, target_ids)
+    db.close()
 
     merged, stats = _merge(tmdb_data, imdb_data)
     overall_total = stats["total"]
