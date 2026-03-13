@@ -16,3 +16,8 @@ patterns observed in the session.
 **Observed:** Code review found 5 of 8 schema `__str__()` methods missing `.lower()` calls on terms, while the other 3 lowercased. Since these strings become embedding input text, inconsistent casing could affect embedding quality. All were fixed to lowercase uniformly.
 **Proposed convention:** All Pydantic schema classes whose `__str__()` output feeds the embedding pipeline must lowercase their concatenated terms. When adding a new schema, match the lowercasing pattern of existing schemas.
 **Sessions observed:** 1
+
+## Shared exception classes over per-module custom errors
+**Observed:** User directed replacing a `PlotEventsGenerationError` specific to plot_events.py with two shared exceptions (`MetadataGenerationError`, `MetadataGenerationEmptyResponseError`) in a central errors.py, parameterized by generation_type and title. Avoids proliferating N error classes as N generators are added.
+**Proposed convention:** When multiple modules have identical failure modes differing only by context (e.g., which generation type failed), use a single shared exception class parameterized with context fields rather than creating per-module exception subclasses.
+**Sessions observed:** 1

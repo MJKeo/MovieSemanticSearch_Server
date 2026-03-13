@@ -35,9 +35,9 @@ across all 7 metadata types. This gives the LLM better temporal context
 when generating plot analysis, viewer experience, reception, and other
 metadata — helping it distinguish remakes, place films in their era,
 and produce more accurate descriptions.
-**Status:** Addressed in the new metadata generation module design
-(Decision 6 in docs/llm_metadata_generation_new_flow.md). All generators
-in movie_ingestion/metadata_generation/generators/ use "Title (Year)" format.
-Will be fully resolved when prompts are implemented.
-**See:** movie_ingestion/metadata_generation/inputs.py (format_title),
+**Status:** Plot events generator and prompt now implemented with "Title (Year)"
+format. Remaining generators (reception, plot_analysis, viewer_experience,
+watch_context, narrative_techniques, production) still need prompt implementation.
+**See:** movie_ingestion/metadata_generation/generators/plot_events.py,
+movie_ingestion/metadata_generation/prompts/plot_events.py,
 docs/llm_metadata_generation_new_flow.md

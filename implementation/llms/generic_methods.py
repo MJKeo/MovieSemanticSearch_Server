@@ -77,6 +77,45 @@ def generate_openai_response(
     except Exception as e:
         raise ValueError(f"OpenAI failed to generate response: {e}")
 
+async def generate_openai_response_async(
+    user_prompt: str,
+    system_prompt: str,
+    response_format: BaseModel,
+    model: str = "gpt-5-mini",
+    reasoning_effort: str = "low",
+    verbosity: str = "low"
+) -> Tuple[BaseModel, int, int]:
+    """Async counterpart to generate_openai_response.
+
+    Uses async_openai_client.chat.completions.parse() with the same
+    parameters and return type as the sync version.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
+    try:
+        response = await async_openai_client.chat.completions.parse(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format=response_format,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity
+        )
+
+        usage = response.usage
+        input_tokens = usage.prompt_tokens
+        output_tokens = usage.completion_tokens
+
+        # Extract the parsed response - OpenAI automatically validates structure matches response_format
+        parsed = response.choices[0].message.parsed
+        return parsed, input_tokens, output_tokens
+    except Exception as e:
+        print(f"OpenAI async failed to generate response: {e}")
+        raise ValueError(f"OpenAI async failed to generate response: {e}")
+
+
 async def generate_kimi_response_async(
     user_prompt: str,
     system_prompt: str,

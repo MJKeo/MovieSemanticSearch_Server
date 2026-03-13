@@ -41,6 +41,25 @@ from dataclasses import dataclass, field
 
 
 # ---------------------------------------------------------------------------
+# Prompt formatting helpers
+# ---------------------------------------------------------------------------
+
+class MultiLineList(list):
+    """Marker for lists whose items should be formatted on separate lines.
+
+    When passed to build_user_prompt, items are rendered as:
+        key:
+        - item 1
+        - item 2
+
+    Regular lists are comma-separated on a single line. Use MultiLineList
+    for long-text items like plot_summaries and plot_synopses where each
+    entry is a multi-sentence block.
+    """
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Generation type constants
 # ---------------------------------------------------------------------------
 
@@ -146,8 +165,15 @@ def build_user_prompt(**labeled_fields: str | list | None) -> str:
     for key, value in labeled_fields.items():
         if value is None:
             continue
-        # Convert lists to comma-separated strings
-        if isinstance(value, list):
+        # Skip empty lists — avoids producing malformed lines like "key: \n- "
+        if isinstance(value, list) and not value:
+            continue
+        if isinstance(value, MultiLineList):
+            # Long-text items get one entry per line with bullet prefix
+            formatted_items = "\n- ".join(str(item) for item in value)
+            value = f"\n- {formatted_items}"
+        elif isinstance(value, list):
+            # Short items (keywords, genres) are comma-separated
             value = ", ".join(str(item) for item in value)
         lines.append(f"{key}: {value}")
     return "\n".join(lines)
