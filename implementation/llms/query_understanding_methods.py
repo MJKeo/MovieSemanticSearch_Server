@@ -97,11 +97,12 @@ async def extract_lexical_entities_async(query: str) -> Optional[ExtractedEntiti
         Async version of extract_lexical_entities.
         Extract lexical entities (characters, franchises, people, studios, titles) from query.
     """
-    return await generate_kimi_response_async(
+    parsed, _, _ = await generate_kimi_response_async(
         user_prompt=f'User query: "{query}"',
         system_prompt=EXTRACT_LEXICAL_ENTITIES_SYSTEM_PROMPT,
         response_format=ExtractedEntitiesResponse,
     )
+    return parsed
 
 
 # ===============================
@@ -113,11 +114,12 @@ async def create_channel_weights_async(query) -> Optional[ChannelWeightsResponse
         Extract channel weights (lexical, metadata, vector relevance) from query.
         Throws an error if anything fails.
     """
-    return await generate_kimi_response_async(
+    parsed, _, _ = await generate_kimi_response_async(
         user_prompt=f"User query: \"{query}\"",
         system_prompt=CHANNEL_WEIGHTS_SYSTEM_PROMPT,
         response_format=ChannelWeightsResponse,
     )
+    return parsed
 
 
 # ===============================
@@ -132,11 +134,12 @@ async def extract_single_metadata_preference_async(query: str, preference_name: 
     """
     response_schema, _ = _METADATA_PREFERENCE_TO_RESPONSE_MAPPING[preference_name]
     system_prompt = ALL_METADATA_EXTRACTION_PROMPTS[preference_name]
-    return await generate_kimi_response_async(
+    parsed, _, _ = await generate_kimi_response_async(
         user_prompt=f"User query: \"{query}\"",
         system_prompt=system_prompt,
         response_format=response_schema,
     )
+    return parsed
 
 
 async def extract_all_metadata_preferences_async(query: str) -> MetadataPreferencesResponse:
@@ -180,11 +183,12 @@ async def create_single_vector_subquery_async(
     query: str, collection_name: VectorName
 ) -> Optional[VectorCollectionSubqueryData]:
     """Create a single vector subquery (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception) from query."""
-    return await generate_kimi_response_async(
+    parsed, _, _ = await generate_kimi_response_async(
         user_prompt=f'User query: "{query}"',
         system_prompt=VECTOR_SUBQUERY_SYSTEM_PROMPTS[collection_name],
         response_format=VectorCollectionSubqueryData,
     )
+    return parsed
 
 
 # ===============================
@@ -193,8 +197,9 @@ async def create_single_vector_subquery_async(
 
 async def create_single_vector_weight_async(query: str, collection_name: VectorName) -> Optional[VectorCollectionWeightData]:
     """Create a single vector weight (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception) from query."""
-    return await generate_kimi_response_async(
+    parsed, _, _ = await generate_kimi_response_async(
         user_prompt=f'User query: "{query}"',
         system_prompt=VECTOR_WEIGHT_SYSTEM_PROMPTS[collection_name],
         response_format=VectorCollectionWeightData,
     )
+    return parsed

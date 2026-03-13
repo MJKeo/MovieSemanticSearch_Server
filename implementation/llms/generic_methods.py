@@ -7,6 +7,8 @@ import csv
  
 import gradio as gr
 from openai import OpenAI, AsyncOpenAI
+from google import genai
+from groq import AsyncGroq
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, field_validator, Field, RootModel
 from enum import Enum
@@ -19,6 +21,15 @@ from openai.lib._pydantic import to_strict_json_schema
 
 # Load environment variables (for API key)
 load_dotenv()
+
+
+class LLMProvider(Enum):
+    """Supported LLM provider backends for structured generation."""
+    OPENAI = "openai"
+    KIMI = "kimi"
+    GEMINI = "gemini"
+    GROQ = "groq"
+    ALIBABA = "alibaba"
 
 
 # ===============================
@@ -37,6 +48,21 @@ kimi_client = OpenAI(
 async_kimi_client = AsyncOpenAI(
     api_key=kimi_api_key,
     base_url="https://api.moonshot.ai/v1",
+)
+
+# Gemini — uses Google's native genai SDK
+gemini_api_key = os.getenv("GOOGLE_API_KEY")
+gemini_client = genai.Client(api_key=gemini_api_key)
+
+# Groq — uses native Groq SDK (async only, matching project pattern)
+groq_api_key = os.getenv("GROQ_API_KEY")
+async_groq_client = AsyncGroq(api_key=groq_api_key)
+
+# Alibaba/Qwen — uses OpenAI-compatible routing via DashScope
+alibaba_api_key = os.getenv("ALIBABA_API_KEY")
+async_alibaba_client = AsyncOpenAI(
+    api_key=alibaba_api_key,
+    base_url="https://dashscope-us.aliyuncs.com/compatible-mode/v1",
 )
 
 
@@ -121,7 +147,11 @@ async def generate_kimi_response_async(
     system_prompt: str,
     response_format: BaseModel,
     enable_thinking: bool = False,
-):
+) -> Tuple[BaseModel, int, int]:
+    """Generate a structured response using the Kimi (Moonshot) API.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
     try:
         thinking_type = "enabled" if enable_thinking else "disabled"
         schema = to_strict_json_schema(response_format)
@@ -137,7 +167,7 @@ async def generate_kimi_response_async(
             response_format={
                 "type": "json_schema",
                 "json_schema": {
-                    "name": response_format.__class__.__name__,
+                    "name": response_format.__name__,
                     "strict": True,
                     "schema": schema,
                 },
@@ -146,12 +176,17 @@ async def generate_kimi_response_async(
                 "thinking": {"type": thinking_type}
             }
         )
-        
+
         # Extract the parsed response and enforce schema structure
         raw = response.choices[0].message.content
         data = json.loads(raw)
         metadata = response_format.model_validate(data)
-        return metadata
+
+        usage = response.usage
+        input_tokens = usage.prompt_tokens
+        output_tokens = usage.completion_tokens
+
+        return metadata, input_tokens, output_tokens
     except Exception as e:
         raise ValueError(f"Kimi failed to generate response: {e}")
 
@@ -160,7 +195,11 @@ def generate_kimi_response(
     system_prompt: str,
     response_format: BaseModel,
     enable_thinking: bool = False,
-):
+) -> Tuple[BaseModel, int, int]:
+    """Generate a structured response using the Kimi (Moonshot) API (sync).
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
     try:
         thinking_type = "enabled" if enable_thinking else "disabled"
         schema = to_strict_json_schema(response_format)
@@ -176,7 +215,7 @@ def generate_kimi_response(
             response_format={
                 "type": "json_schema",
                 "json_schema": {
-                    "name": response_format.__class__.__name__,
+                    "name": response_format.__name__,
                     "strict": True,
                     "schema": schema,
                 },
@@ -185,14 +224,205 @@ def generate_kimi_response(
                 "thinking": {"type": thinking_type}
             }
         )
-        
+
         # Extract the parsed response and enforce schema structure
         raw = response.choices[0].message.content
         data = json.loads(raw)
         metadata = response_format.model_validate(data)
-        return metadata
+
+        usage = response.usage
+        input_tokens = usage.prompt_tokens
+        output_tokens = usage.completion_tokens
+
+        return metadata, input_tokens, output_tokens
     except Exception as e:
         raise ValueError(f"Kimi failed to generate response: {e}")
+
+
+async def generate_gemini_response_async(
+    user_prompt: str,
+    system_prompt: str,
+    response_format: BaseModel,
+    model: str = "gemini-2.5-flash",
+    **kwargs,
+) -> Tuple[BaseModel, int, int]:
+    """Generate a structured response using Google's Gemini API.
+
+    Uses the native google-genai SDK with JSON schema structured output.
+    Additional Gemini-specific params (temperature, top_p, top_k,
+    max_output_tokens, etc.) can be passed via kwargs.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
+    try:
+        # Build the generation config: caller kwargs first, then our
+        # required keys override to prevent accidental clobbering of
+        # structured output or system instruction settings.
+        config = {
+            **kwargs,
+            "response_mime_type": "application/json",
+            "response_json_schema": response_format.model_json_schema(),
+            "system_instruction": system_prompt,
+        }
+
+        response = await gemini_client.aio.models.generate_content(
+            model=model,
+            contents=user_prompt,
+            config=config,
+        )
+
+        # Parse the JSON response into the Pydantic model
+        parsed = response_format.model_validate_json(response.text)
+
+        # Extract token usage from Gemini's usage metadata
+        usage = response.usage_metadata
+        input_tokens = usage.prompt_token_count
+        output_tokens = usage.candidates_token_count
+
+        return parsed, input_tokens, output_tokens
+    except Exception as e:
+        raise ValueError(f"Gemini async failed to generate response: {e}")
+
+
+async def generate_groq_response_async(
+    user_prompt: str,
+    system_prompt: str,
+    response_format: BaseModel,
+    model: str = "llama-3.3-70b-versatile",
+    **kwargs,
+) -> Tuple[BaseModel, int, int]:
+    """Generate a structured response using Groq's native API.
+
+    Uses the Groq SDK with json_schema response format (same pattern as Kimi).
+    Additional Groq-specific params (temperature, top_p, max_completion_tokens,
+    etc.) can be passed via kwargs.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
+    try:
+        schema = to_strict_json_schema(response_format)
+
+        response = await async_groq_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_format.__name__,
+                    "strict": False,
+                    "schema": schema,
+                },
+            },
+            **kwargs,
+        )
+
+        # Parse the JSON string into the Pydantic model (same approach as Kimi)
+        raw = response.choices[0].message.content
+        data = json.loads(raw)
+        parsed = response_format.model_validate(data)
+
+        usage = response.usage
+        input_tokens = usage.prompt_tokens
+        output_tokens = usage.completion_tokens
+
+        return parsed, input_tokens, output_tokens
+    except Exception as e:
+        raise ValueError(f"Groq async failed to generate response: {e}")
+
+
+async def generate_alibaba_response_async(
+    user_prompt: str,
+    system_prompt: str,
+    response_format: BaseModel,
+    model: str = "qwen-plus",
+    **kwargs,
+) -> Tuple[BaseModel, int, int]:
+    """Generate a structured response using Alibaba's Qwen API via OpenAI-compatible routing.
+
+    Uses AsyncOpenAI.chat.completions.parse() pointed at DashScope's
+    compatible endpoint. Additional params (temperature, top_p, etc.)
+    can be passed via kwargs.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
+    try:
+        response = await async_alibaba_client.chat.completions.parse(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format=response_format,
+            **kwargs,
+        )
+
+        usage = response.usage
+        input_tokens = usage.prompt_tokens
+        output_tokens = usage.completion_tokens
+
+        parsed = response.choices[0].message.parsed
+        return parsed, input_tokens, output_tokens
+    except Exception as e:
+        raise ValueError(f"Alibaba/Qwen async failed to generate response: {e}")
+
+
+# ===============================
+#     Unified Routing Method
+# ===============================
+
+# Maps each provider to its async generation function.
+# Kimi ignores the model param (hardcoded internally), so we
+# strip it before forwarding.
+_PROVIDER_DISPATCH = {
+    LLMProvider.OPENAI: generate_openai_response_async,
+    LLMProvider.KIMI: generate_kimi_response_async,
+    LLMProvider.GEMINI: generate_gemini_response_async,
+    LLMProvider.GROQ: generate_groq_response_async,
+    LLMProvider.ALIBABA: generate_alibaba_response_async,
+}
+
+# Providers whose async function does not accept a `model` parameter
+_PROVIDERS_WITHOUT_MODEL_PARAM = {LLMProvider.KIMI}
+
+
+async def generate_llm_response_async(
+    provider: LLMProvider,
+    user_prompt: str,
+    system_prompt: str,
+    response_format: BaseModel,
+    model: str,
+    **kwargs,
+) -> Tuple[BaseModel, int, int]:
+    """Route a structured-output request to the appropriate provider.
+
+    Accepts provider-agnostic params (prompts, response_format, model) plus
+    any provider-specific kwargs (e.g. reasoning_effort for OpenAI,
+    enable_thinking for Kimi, temperature for Gemini/Groq/Alibaba).
+    Errors from the underlying provider method propagate unchanged.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
+    generate_fn = _PROVIDER_DISPATCH[provider]
+
+    # Some providers (Kimi) hardcode their model internally
+    if provider in _PROVIDERS_WITHOUT_MODEL_PARAM:
+        return await generate_fn(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            response_format=response_format,
+            **kwargs,
+        )
+
+    return await generate_fn(
+        user_prompt=user_prompt,
+        system_prompt=system_prompt,
+        response_format=response_format,
+        model=model,
+        **kwargs,
+    )
 
 
 async def generate_vector_embedding(

@@ -28,6 +28,17 @@ the search pipeline.
 **See:** db/vector_scoring.py, db/ingest_movie.py, movie_ingestion/imdb_scraping/models.py
 
 
+## Verify model IDs for playground notebook providers
+**Context:** The metadata generation playground notebook (Cell 2) uses several model IDs that were specified
+speculatively and may not be accurate. IDs to verify against each provider's current docs:
+- Alibaba/DashScope: `qwen3.5-flash`
+- Gemini: `gemini-2.5-flash-lite` (lite variant may have a different canonical ID)
+- OpenAI-compatible: `gpt-oss-120b` (internal/routing alias, may not be stable)
+- Groq: `meta-llama/llama-4-maverick-17b-128e-instruct` (verify exact string)
+**When:** Before running the notebook for real model comparisons.
+**See:** movie_ingestion/metadata_generation/metadata_generation_playground.ipynb (Cell 2)
+
+
 ## Add release year next to title in all LLM metadata generation
 **Context:** The LLM metadata generation prompts should include the
 release year alongside the movie title (e.g., "The Matrix (1999)")

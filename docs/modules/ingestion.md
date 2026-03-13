@@ -46,7 +46,7 @@ this module.
 | `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Justification fields removed; `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
 | `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, 8 per-generation `_check_*` eligibility methods, `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. |
 | `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
-| `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). Each returns a `body` dict suitable for Batch API or real-time calls. |
+| `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). `plot_events.py` is fully implemented as a real-time async caller (returns `Tuple[Output, TokenUsage]`). Remaining generators are scaffolds (docstring only). See ADR-026. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
@@ -317,10 +317,14 @@ tmdb_id × generation_type). `plot_synopsis` and `review_insights_brief`
 are scalar columns in `metadata_results`, not buried in `result_json`,
 so Wave 2 request building can query them directly.
 
-**Generator contract**: Each generator file in `generators/` returns a
-`body` dict suitable for both Batch API (wrapped by `request_builder.py`)
-and real-time API calls. JSONL format: `{custom_id, method, url, body}`
-where `custom_id = "{tmdb_id}-{generation_type}"`.
+**Generator contract**: The implemented contract (as of `plot_events.py`)
+is async real-time callers — each generator takes `MovieInputData` plus a
+`provider`/`model`, calls `generate_llm_response_async`, and returns
+`Tuple[Output, TokenUsage]`. This diverges from the original Batch API
+body-dict design in ADR-024. The Batch API scaffolding in `request_builder.py`
+and `run.py` was designed for a different generator interface; alignment is
+pending. See ADR-026 for the decision to implement generators as real-time
+callers first (model evaluation) before committing to Batch API wrapping.
 
 **Status progression**: `imdb_quality_passed` → `phase1_complete`
 (after Wave 1) → `phase2_complete` (after Wave 2).
