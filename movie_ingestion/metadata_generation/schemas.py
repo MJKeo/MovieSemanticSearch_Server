@@ -16,13 +16,13 @@ Changes from existing schemas:
       * MajorTheme.explanation_and_justification
       * MajorLessonLearned.explanation_and_justification
 
-    - ReceptionMetadata gains review_insights_brief field:
+    - ReceptionOutput gains review_insights_brief field:
       ~150-250 token dense paragraph capturing key thematic, emotional,
       structural, and source-material observations from reviews.
       This is an intermediate output consumed by Wave 2 generators,
       not embedded or stored in Qdrant.
 
-    - ProductionKeywordsResponse and SourceOfInspirationResponse are
+    - ProductionKeywordsOutput and SourceOfInspirationOutput are
       SEPARATE schemas (they're separate LLM calls). The existing
       ProductionMetadata merges them awkwardly into one model.
 
@@ -38,3 +38,486 @@ Pydantic's type_to_response_format_param() is used in generators
 to convert these schemas into the json_schema format required by
 the Batch API's response_format field.
 """
+
+from pydantic import BaseModel, Field, ConfigDict, constr, conlist
+
+
+# ---------------------------------------------------------------------------
+# Shared sub-models
+# ---------------------------------------------------------------------------
+
+class TermsSection(BaseModel):
+    """A section containing search-query-like term phrases.
+
+    Used by WatchContext, NarrativeTechniques, and ProductionKeywords
+    where each section is a flat list of terms without negations.
+    No justification field — removed per spec Decision 5.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
+        default_factory=list,
+        description="Search-query-like phrases.",
+    )
+
+
+class TermsWithNegationsSection(BaseModel):
+    """A section containing both positive terms and negation phrases.
+
+    Used by ViewerExperience where each section captures what the movie
+    IS and what it is NOT. No justification field — removed per spec
+    Decision 5.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
+        default_factory=list,
+        description=(
+            "Search-query-like phrases representing prominent "
+            "characteristics of the movie relevant to this section."
+        ),
+    )
+    negations: list[constr(strip_whitespace=True, min_length=1)] = Field(
+        default_factory=list,
+        description=(
+            'Search-query-like "avoidance" phrases for what the movie '
+            'does NOT have or is NOT like. ALWAYS has "not" or "no" in it.'
+        ),
+    )
+
+
+class OptionalTermsWithNegationsSection(BaseModel):
+    """Wrapper for viewer experience sections that may not apply.
+
+    The LLM sets should_skip=True when the section is irrelevant
+    for a given movie (e.g. disturbance_profile for a children's film).
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    should_skip: bool = Field(
+        False,
+        description=(
+            "Set to true only if this section is not applicable "
+            "to this movie. All data in section_data will be ignored."
+        ),
+    )
+    section_data: TermsWithNegationsSection
+
+
+# ---------------------------------------------------------------------------
+# Wave 1: Plot Events
+# ---------------------------------------------------------------------------
+
+class MajorCharacter(BaseModel):
+    """An essential character extracted from plot data."""
+    name: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="Character name as it appears in the film.",
+    )
+    description: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Who they are in plain terms (e.g., 'a disillusioned detective'). "
+            "Keep it short and plot-relevant."
+        ),
+    )
+    role: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Narrative role label: 'protagonist', 'antagonist', "
+            "'love interest', 'mentor', 'foil', etc."
+        ),
+    )
+    primary_motivations: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "1 concise sentence: what the character aims to achieve "
+            "overall and why (high-level)."
+        ),
+    )
+
+    def __str__(self) -> str:
+        return (
+            f"{self.name}: {self.description} "
+            f"Motivations: {self.primary_motivations}"
+        )
+
+
+class PlotEventsOutput(BaseModel):
+    """Structured output from the plot_events generation (Wave 1).
+
+    Produces a detailed chronological plot summary, setting, and
+    character list. The plot_summary field becomes plot_synopsis
+    for all downstream Wave 2 consumers.
+
+    Model: gpt-5-mini, reasoning_effort: minimal
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    plot_summary: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Detailed chronological, spoiler-containing plot summary "
+            "preserving character names and locations."
+        ),
+    )
+    setting: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Short phrase (10 words or less). Specific where/when the "
+            "story takes place. Focus on setting details that shape "
+            "what happens."
+        ),
+    )
+    major_characters: list[MajorCharacter] = Field(
+        default_factory=list,
+        description=(
+            "The ABSOLUTELY ESSENTIAL characters in the story."
+        ),
+    )
+
+    def __str__(self) -> str:
+        parts = []
+        if self.plot_summary:
+            parts.append(self.plot_summary.lower())
+        if self.setting:
+            parts.append(self.setting.lower())
+        if self.major_characters:
+            parts.extend(str(c).lower() for c in self.major_characters)
+        return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Wave 1: Reception
+# ---------------------------------------------------------------------------
+
+class ReceptionOutput(BaseModel):
+    """Structured output from the reception generation (Wave 1).
+
+    Produces a reception summary, praise/complaint attributes, and
+    the review_insights_brief intermediate output consumed by all
+    Wave 2 generators. review_insights_brief is NOT embedded — it
+    replaces raw reviews in downstream prompts.
+
+    Model: gpt-5-mini, reasoning_effort: low
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    reception_summary: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "2-3 sentence evaluative summary of how the movie was "
+            "received: 'what did people think?'"
+        ),
+    )
+    praise_attributes: conlist(str, max_length=4) = Field(
+        default_factory=list,
+        description="0-4 tag-like phrases for what audiences liked.",
+    )
+    complaint_attributes: conlist(str, max_length=4) = Field(
+        default_factory=list,
+        description="0-4 tag-like phrases for what audiences disliked.",
+    )
+    review_insights_brief: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "~150-250 token dense paragraph capturing thematic, "
+            "emotional, structural, and source-material observations "
+            "from reviews. Focus on 'what did people notice?' — NOT "
+            "embedded, consumed by Wave 2 generators only."
+        ),
+    )
+
+    def __str__(self) -> str:
+        parts = []
+        if self.reception_summary:
+            parts.append(self.reception_summary.lower())
+        if self.praise_attributes:
+            parts.append(", ".join(self.praise_attributes).lower())
+        if self.complaint_attributes:
+            parts.append(", ".join(self.complaint_attributes).lower())
+        # review_insights_brief intentionally excluded from embedding text
+        return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Plot Analysis
+# ---------------------------------------------------------------------------
+
+class CharacterArc(BaseModel):
+    """A key character transformation identified in plot analysis."""
+    character_name: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="The name of the character who undergoes the arc.",
+    )
+    arc_transformation_label: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Generic, search-query-like phrase classifying the "
+            "character's arc transformation."
+        ),
+    )
+
+    def __str__(self) -> str:
+        return self.arc_transformation_label
+
+
+class PlotAnalysisOutput(BaseModel):
+    """Structured output from the plot_analysis generation (Wave 2).
+
+    Extracts thematic meaning, character arcs, and genre signatures
+    from the plot synopsis. All justification/explanation fields
+    removed per spec Decision 5.
+
+    Model: gpt-5-mini, reasoning_effort: low
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    core_concept_label: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "The single dominant story concept representing the heart "
+            "of the movie. 6 words or less, simple concrete terms."
+        ),
+    )
+    genre_signatures: conlist(
+        constr(strip_whitespace=True, min_length=1),
+        min_length=2, max_length=6,
+    ) = Field(
+        ...,
+        description="2-6 search-query-like genre phrases.",
+    )
+    conflict_scale: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="Scale of consequences in the story's conflict.",
+    )
+    character_arcs: conlist(CharacterArc, min_length=1, max_length=3) = Field(
+        ...,
+        description="1-3 key character transformations.",
+    )
+    themes_primary: conlist(
+        constr(strip_whitespace=True, min_length=1),
+        min_length=1, max_length=3,
+    ) = Field(
+        ...,
+        description=(
+            "1-3 core thematic concepts. High-signal labels using "
+            "simple, generic, human-world-friendly terms."
+        ),
+    )
+    lessons_learned: conlist(
+        constr(strip_whitespace=True, min_length=1),
+        max_length=3,
+    ) = Field(
+        default_factory=list,
+        description=(
+            "0-3 key takeaways / lessons. High-signal labels using "
+            "simple, generic, human-world-friendly terms."
+        ),
+    )
+    generalized_plot_overview: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1-3 sentence thematic overview of the plot.",
+    )
+
+    def __str__(self) -> str:
+        parts = []
+        if self.generalized_plot_overview:
+            parts.append(self.generalized_plot_overview.lower())
+        if self.core_concept_label:
+            parts.append(self.core_concept_label.lower())
+        if self.genre_signatures:
+            parts.append(", ".join(self.genre_signatures).lower())
+        if self.conflict_scale:
+            parts.append(f"{self.conflict_scale.lower()} conflict")
+        if self.character_arcs:
+            parts.extend(str(arc).lower() for arc in self.character_arcs)
+        if self.themes_primary:
+            parts.extend(t.lower() for t in self.themes_primary)
+        if self.lessons_learned:
+            parts.extend(l.lower() for l in self.lessons_learned)
+        return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Viewer Experience
+# ---------------------------------------------------------------------------
+
+class ViewerExperienceOutput(BaseModel):
+    """Structured output from the viewer_experience generation (Wave 2).
+
+    8 sections capturing the emotional/sensory viewing experience.
+    3 sections (disturbance, sensory, volatility) are optional — the
+    LLM sets should_skip=True when not applicable.
+
+    Model: gpt-5-mini, reasoning_effort: low
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    emotional_palette: TermsWithNegationsSection
+    tension_adrenaline: TermsWithNegationsSection
+    tone_self_seriousness: TermsWithNegationsSection
+    cognitive_complexity: TermsWithNegationsSection
+    disturbance_profile: OptionalTermsWithNegationsSection
+    sensory_load: OptionalTermsWithNegationsSection
+    emotional_volatility: OptionalTermsWithNegationsSection
+    ending_aftertaste: TermsWithNegationsSection
+
+    def __str__(self) -> str:
+        combined_terms: list[str] = []
+
+        # Required sections — always included
+        for section in (
+            self.emotional_palette,
+            self.tension_adrenaline,
+            self.tone_self_seriousness,
+            self.cognitive_complexity,
+            self.ending_aftertaste,
+        ):
+            combined_terms.extend(section.terms)
+            combined_terms.extend(section.negations)
+
+        # Optional sections — included only when not skipped
+        for optional in (
+            self.disturbance_profile,
+            self.sensory_load,
+            self.emotional_volatility,
+        ):
+            if not optional.should_skip:
+                combined_terms.extend(optional.section_data.terms)
+                combined_terms.extend(optional.section_data.negations)
+
+        return ", ".join(t.lower() for t in combined_terms)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Watch Context
+# ---------------------------------------------------------------------------
+
+class WatchContextOutput(BaseModel):
+    """Structured output from the watch_context generation (Wave 2).
+
+    4 sections capturing when/why/how to watch the movie. Deliberately
+    receives NO plot information (Decision 2) — focuses on experiential
+    attributes.
+
+    Model: gpt-5-mini, reasoning_effort: medium
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    self_experience_motivations: TermsSection
+    external_motivations: TermsSection
+    key_movie_feature_draws: TermsSection
+    watch_scenarios: TermsSection
+
+    def __str__(self) -> str:
+        combined_terms = (
+            self.self_experience_motivations.terms
+            + self.external_motivations.terms
+            + self.key_movie_feature_draws.terms
+            + self.watch_scenarios.terms
+        )
+        return ", ".join(t.lower() for t in combined_terms)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Narrative Techniques
+# ---------------------------------------------------------------------------
+
+class NarrativeTechniquesOutput(BaseModel):
+    """Structured output from the narrative_techniques generation (Wave 2).
+
+    11 sections capturing storytelling structure, POV, delivery
+    mechanism, and narrative devices.
+
+    Model: gpt-5-mini, reasoning_effort: medium
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    pov_perspective: TermsSection
+    narrative_delivery: TermsSection
+    narrative_archetype: TermsSection
+    information_control: TermsSection
+    characterization_methods: TermsSection
+    character_arcs: TermsSection
+    audience_character_perception: TermsSection
+    conflict_stakes_design: TermsSection
+    thematic_delivery: TermsSection
+    meta_techniques: TermsSection
+    additional_plot_devices: TermsSection
+
+    def __str__(self) -> str:
+        combined_terms: list[str] = []
+        for section in (
+            self.pov_perspective,
+            self.narrative_delivery,
+            self.narrative_archetype,
+            self.information_control,
+            self.characterization_methods,
+            self.character_arcs,
+            self.audience_character_perception,
+            self.conflict_stakes_design,
+            self.thematic_delivery,
+            self.meta_techniques,
+            self.additional_plot_devices,
+        ):
+            combined_terms.extend(section.terms)
+        return ", ".join(t.lower() for t in combined_terms)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Production Keywords (separate LLM call)
+# ---------------------------------------------------------------------------
+
+class ProductionKeywordsOutput(BaseModel):
+    """Structured output from the production_keywords generation (Wave 2).
+
+    Classification task: the LLM filters merged_keywords to keep only
+    production-relevant ones. Not generative — purely selective.
+
+    Model: gpt-5-mini, reasoning_effort: low
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
+        default_factory=list,
+        description="Production-relevant keywords filtered from the input list.",
+    )
+
+    def __str__(self) -> str:
+        return ", ".join(t.lower() for t in self.terms)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Source of Inspiration (separate LLM call)
+# ---------------------------------------------------------------------------
+
+class SourceOfInspirationOutput(BaseModel):
+    """Structured output from the source_of_inspiration generation (Wave 2).
+
+    Identifies source material and production medium. ONLY generation
+    where parametric knowledge is explicitly allowed — the LLM may use
+    its training data for source material facts.
+
+    Model: gpt-5-mini, reasoning_effort: low
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    sources_of_inspiration: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Source material: novel, true story, original screenplay, "
+            "remake of [film], etc."
+        ),
+    )
+    production_mediums: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Production medium: live-action, animation, CGI, "
+            "practical effects, stop-motion, etc."
+        ),
+    )
+
+    def __str__(self) -> str:
+        all_terms = self.sources_of_inspiration + self.production_mediums
+        return ", ".join(t.lower() for t in all_terms)

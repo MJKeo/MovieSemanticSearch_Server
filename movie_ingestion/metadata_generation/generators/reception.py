@@ -13,9 +13,9 @@ Inputs (from ConsolidatedInputs):
       CALL that receives raw reviews (all Wave 2 calls get the brief instead)
 
 Skip condition: requires at least ONE of:
-    - featured_reviews (>=1 review)
+    - featured_reviews (combined text >=25 chars)
     - reception_summary
-    - audience_reception_attributes (>=2 attributes)
+    - audience_reception_attributes (>=1 attribute)
 
 Response schema: ReceptionMetadata
     - new_reception_summary (str): 2-3 sentence evaluative summary

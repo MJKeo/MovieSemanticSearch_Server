@@ -42,9 +42,10 @@ this module.
 | `metadata_generation/request_builder.py` | Assembles JSONL files for batch submission. Wraps generator output in `{custom_id, method, url, body}` format. |
 | `metadata_generation/batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status, download. No movie/generation knowledge. |
 | `metadata_generation/result_processor.py` | Parses downloaded result JSONL, routes to generators, stores in `metadata_results`. Auto-submits Wave 2 after Wave 1 processing. |
-| `metadata_generation/inputs.py` | Assembles per-movie input dicts from `tmdb_data` + `imdb_data` for each generation. |
-| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. |
-| `metadata_generation/pre_consolidation.py` | Pre-consolidation steps: selective keyword routing, conditional maturity consolidation, sparse assessment. |
+| `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()`. Contract between SQLite loading and pre-consolidation. |
+| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Justification fields removed; `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
+| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, 8 per-generation `_check_*` eligibility methods, `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. |
+| `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
 | `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). Each returns a `body` dict suitable for Batch API or real-time calls. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
@@ -287,9 +288,11 @@ Non-LLM channels: **lexical search** ← lexical_completeness;
 
 ## Stage 6: LLM Metadata Generation (Batch API)
 
-Stage 6 generates 7 types of LLM vector metadata per movie via
+Stage 6 generates 8 types of LLM metadata per movie (7 embedded vector
+spaces + `reception` which produces a non-embedded intermediate) via
 OpenAI's Batch API. Lives in `metadata_generation/` subpackage.
-See ADR-024 for the Batch API architecture decision.
+See ADR-024 for the Batch API architecture decision and ADR-025 for
+schema design decisions.
 
 **CLI workflow**:
 ```
@@ -302,10 +305,11 @@ python -m movie_ingestion.metadata_generation.run process
 
 **Two-wave design**: Wave 1 generates `plot_events` and `reception` in
 parallel. Wave 2 uses `plot_synopsis` (from plot_events) and
-`review_insights_brief` (from reception) to generate the remaining 5
-generations (plot_analysis, viewer_experience, narrative_techniques,
-production, source_of_inspiration). Completion window is up to 24h per
-wave; `process` auto-submits Wave 2 after Wave 1 processing.
+`review_insights_brief` (from reception) to generate the remaining 6
+generations: `plot_analysis`, `viewer_experience`, `watch_context`,
+`narrative_techniques`, `production_keywords`, `source_of_inspiration`.
+Completion window is up to 24h per wave; `process` auto-submits Wave 2
+after Wave 1 processing.
 
 **State tracking**: Two tables in tracker.db — `metadata_batches`
 (one row per batch submission) and `metadata_results` (one row per
@@ -320,6 +324,61 @@ where `custom_id = "{tmdb_id}-{generation_type}"`.
 
 **Status progression**: `imdb_quality_passed` → `phase1_complete`
 (after Wave 1) → `phase2_complete` (after Wave 2).
+
+### Pre-consolidation (pre_consolidation.py)
+
+Pure data processing before any LLM calls. Called by
+`request_builder.build_wave1_requests()` via `run_pre_consolidation()`.
+
+**Keyword routing** (`route_keywords()`): normalizes each keyword
+(`.lower().strip()`) and deduplicates within each list before merging.
+Produces three routed lists:
+- `plot_keywords` → plot_events, plot_analysis
+- `overall_keywords` → watch_context, narrative_techniques
+- `merged_keywords` (union, plot first) → viewer_experience,
+  production_keywords, source_of_inspiration
+
+**Maturity consolidation** (`consolidate_maturity()`): 4-step priority
+chain: reasoning list → parental guide items → MPAA rating definition
+→ None. Produces a single `maturity_summary` string passed to
+viewer_experience and watch_context.
+
+**Eligibility checks**: 8 individual `_check_<type>()` methods (one per
+generation type), each returning `str | None` (None = eligible, str =
+skip reason). Composed by `assess_skip_conditions()` into a
+`SkipAssessment`. Called twice: before Wave 1 (Wave 1 checks only),
+before Wave 2 (Wave 2 checks using actual Wave 1 outputs).
+
+Key skip thresholds:
+- `plot_events`: skips if all text sources are absent OR all sparse
+  (overview < 10 chars, each synopsis < 50 chars, combined summaries
+  < 50 chars)
+- `reception`: skips if no `reception_summary`, no
+  `audience_reception_attributes`, AND combined review text < 25 chars
+  (`_MIN_REVIEWS_CHARS`)
+- Wave 2 checks require `plot_synopsis` or `review_insights_brief`
+  as primary fallback paths; many have secondary fallbacks via
+  genre/keyword/maturity data
+
+### Output schemas (schemas.py)
+
+Pydantic `BaseModel` schemas for each generation. Key design decisions
+(see ADR-025):
+
+- **Justification fields removed** from all section models. The existing
+  `implementation/classes/schemas.py` schemas (used by the search pipeline)
+  retain their original structure; these generation-side schemas diverge
+  intentionally to reduce token cost.
+- **`review_insights_brief`** (on `ReceptionOutput`) is a ~150-250 token
+  dense paragraph extracted from reviews. It is an intermediate output:
+  stored as a scalar column in `metadata_results`, consumed by Wave 2
+  generator prompts, and **excluded from `__str__()`** so it is never
+  embedded into Qdrant.
+- **`ProductionKeywordsOutput` and `SourceOfInspirationOutput` are
+  separate schemas** (and separate LLM calls), unlike the existing
+  `ProductionMetadata` which merged them.
+- All `__str__()` methods lowercase their output to match the embedding
+  text convention used by the search-side schemas.
 
 ## Tracker System
 
@@ -398,3 +457,11 @@ eliminates any uncertainty about concurrent DB access.
 - The `ingestion_data/imdb/` JSON file directory is now obsolete as
   the primary data store. `migrate_json_to_sqlite.py` was used for
   the one-time migration of 425,345 rows.
+- `analyze_eligibility.py` uses character-length estimation for token
+  counts (~3.7 chars/token) and `orjson.loads` for JSON column
+  deserialization — both chosen for performance over 111K+ movies.
+  System prompt tokens still use exact tiktoken (computed once at import).
+- The generation-side schemas in `metadata_generation/schemas.py`
+  intentionally diverge from the search-side schemas in
+  `implementation/classes/schemas.py`. When deploying, align the
+  search-side schemas to match generation outputs.

@@ -11,9 +11,9 @@ Inputs (from ConsolidatedInputs):
     - plot_synopses: longest/most detailed plot recounts
     - plot_keywords: plot-specific keywords only (not overall)
 
-Skip condition: NEVER skips. Always attempts, even with sparse data.
-The no-hallucination prompt rule ensures thin-but-accurate output
-for the ~34% of movies lacking synopsis/summaries.
+Skip condition: Skips if ALL text sources (overview, synopses, summaries)
+are either missing or too sparse. See _check_plot_events() in
+pre_consolidation.py for exact thresholds.
 
 Response schema: PlotEventsMetadata
     - plot_summary (str): detailed chronological spoiler-containing summary
