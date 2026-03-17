@@ -4,9 +4,10 @@ import json
 import re
 import sys
 import csv
- 
+
 import gradio as gr
 from openai import OpenAI, AsyncOpenAI
+from anthropic import AsyncAnthropic
 from google import genai
 from groq import AsyncGroq
 from dotenv import load_dotenv
@@ -30,6 +31,7 @@ class LLMProvider(Enum):
     GEMINI = "gemini"
     GROQ = "groq"
     ALIBABA = "alibaba"
+    ANTHROPIC = "anthropic"
 
 
 # ===============================
@@ -64,6 +66,12 @@ async_alibaba_client = AsyncOpenAI(
     api_key=alibaba_api_key,
     base_url="https://dashscope-us.aliyuncs.com/compatible-mode/v1",
 )
+
+# Anthropic — uses OAuth token (ANTHROPIC_OAUTH_KEY) rather than API key;
+# intended for reference generation and judge calls in the evaluation pipeline,
+# but also available as a generation candidate.
+anthropic_oauth_token = os.getenv("ANTHROPIC_OAUTH_KEY")
+async_anthropic_client = AsyncAnthropic(auth_token=anthropic_oauth_token)
 
 
 # ===============================
@@ -369,6 +377,61 @@ async def generate_alibaba_response_async(
         raise ValueError(f"Alibaba/Qwen async failed to generate response: {e}")
 
 
+async def generate_anthropic_response_async(
+    user_prompt: str,
+    system_prompt: str,
+    response_format: BaseModel,
+    model: str = "claude-opus-4-6",
+    **kwargs,
+) -> Tuple[BaseModel, int, int]:
+    """Generate a structured response using the Anthropic API via OAuth token.
+
+    Uses tool use to force structured output: the response_format Pydantic
+    model is registered as a single tool, and tool_choice forces the model
+    to call it. This is the standard structured output approach for Claude.
+
+    max_tokens defaults to 4096 if not provided — it is required by the
+    Anthropic API but optional in the unified interface.
+
+    Additional Anthropic-specific params (temperature, top_p, etc.) can be
+    passed via kwargs.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
+    try:
+        # max_tokens is required by the Anthropic API; default if not specified
+        max_tokens = kwargs.pop("max_tokens", 8000)
+
+        # Register the response schema as a tool and force the model to call it.
+        # tool_choice={"type": "tool"} guarantees the output matches the schema.
+        response = await async_anthropic_client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+            tools=[{
+                "name": "structured_output",
+                "description": "Submit the structured output.",
+                "input_schema": response_format.model_json_schema(),
+            }],
+            tool_choice={"type": "tool", "name": "structured_output"},
+            **kwargs,
+        )
+
+        # Extract the tool_use block — guaranteed present when tool_choice forces it
+        tool_use_block = next(
+            block for block in response.content if block.type == "tool_use"
+        )
+        parsed = response_format.model_validate(tool_use_block.input)
+
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+
+        return parsed, input_tokens, output_tokens
+    except Exception as e:
+        raise ValueError(f"Anthropic async failed to generate response: {e}")
+
+
 # ===============================
 #     Unified Routing Method
 # ===============================
@@ -382,6 +445,7 @@ _PROVIDER_DISPATCH = {
     LLMProvider.GEMINI: generate_gemini_response_async,
     LLMProvider.GROQ: generate_groq_response_async,
     LLMProvider.ALIBABA: generate_alibaba_response_async,
+    LLMProvider.ANTHROPIC: generate_anthropic_response_async,
 }
 
 # Providers whose async function does not accept a `model` parameter

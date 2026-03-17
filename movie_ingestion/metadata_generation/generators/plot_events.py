@@ -39,6 +39,39 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 GENERATION_TYPE = "plot_events"
 
 
+def build_plot_events_user_prompt(movie: MovieInputData) -> str:
+    """Build the user prompt for plot_events generation from a movie's fields.
+
+    Shared by the production generator and the evaluation pipeline so the
+    prompt construction logic stays in one place.
+
+    Uses only the first synopsis (longest/most detailed), caps summaries
+    at 3 entries, and collapses embedded newlines in synopses.
+    """
+    # Only use the first synopsis — it's the longest/most detailed recount
+    # and additional entries add redundant token cost.
+    first_synopsis = movie.plot_synopses[0] if movie.plot_synopses else None
+
+    # Synopses sometimes contain embedded newlines that waste tokens and
+    # can confuse the LLM — collapse them into single spaces.
+    if first_synopsis:
+        first_synopsis = re.sub(r"\n+", " ", first_synopsis)
+
+    # Cap at 3 summaries — additional entries add diminishing value
+    # relative to the token cost.
+    plot_summaries = movie.plot_summaries[:3] if movie.plot_summaries else None
+
+    # plot_summaries uses MultiLineList because each entry is a
+    # multi-paragraph text block, not a short keyword.
+    return build_user_prompt(
+        title=movie.title_with_year(),
+        overview=movie.overview or None,
+        plot_summaries=MultiLineList(plot_summaries) if plot_summaries else None,
+        plot_synopsis=first_synopsis,
+        plot_keywords=movie.plot_keywords or None,
+    )
+
+
 async def generate_plot_events(
     movie: MovieInputData,
     provider: LLMProvider,
@@ -64,32 +97,8 @@ async def generate_plot_events(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
+    user_prompt = build_plot_events_user_prompt(movie)
     title_with_year = movie.title_with_year()
-
-    # Only use the first synopsis — it's the longest/most detailed recount
-    # and additional entries add redundant token cost.
-    first_synopsis = movie.plot_synopses[0] if movie.plot_synopses else None
-
-    # Synopses sometimes contain embedded newlines that waste tokens and
-    # can confuse the LLM — collapse them into single spaces.
-    if first_synopsis:
-        first_synopsis = re.sub(r"\n+", " ", first_synopsis)
-
-    # Cap at 3 summaries — additional entries add diminishing value
-    # relative to the token cost.
-    plot_summaries = movie.plot_summaries[:3] if movie.plot_summaries else None
-
-    # Build user prompt — plot_summaries uses MultiLineList because each
-    # entry is a multi-paragraph text block, not a short keyword.
-    user_prompt = build_user_prompt(
-        title=title_with_year,
-        overview=movie.overview or None,
-        plot_summaries=MultiLineList(plot_summaries) if plot_summaries else None,
-        plot_synopsis=first_synopsis,
-        plot_keywords=movie.plot_keywords or None,
-    )
-
-    print(f"user_prompt: \n{user_prompt}\n\n")
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(

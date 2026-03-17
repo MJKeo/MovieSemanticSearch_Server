@@ -24,6 +24,7 @@ from implementation.llms.generic_methods import (
     generate_gemini_response_async,
     generate_groq_response_async,
     generate_alibaba_response_async,
+    generate_anthropic_response_async,
     generate_llm_response_async,
 )
 
@@ -53,6 +54,17 @@ def _make_gemini_style_response(text: str, input_tokens: int = 10, output_tokens
     return SimpleNamespace(text=text, usage_metadata=usage)
 
 
+def _make_anthropic_style_response(
+    tool_input: dict,
+    input_tokens: int = 10,
+    output_tokens: int = 5,
+):
+    """Build a mock Anthropic API response with a tool_use content block."""
+    tool_use_block = SimpleNamespace(type="tool_use", input=tool_input)
+    usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    return SimpleNamespace(content=[tool_use_block], usage=usage)
+
+
 # ---------------------------------------------------------------------------
 # Tests: LLMProvider enum
 # ---------------------------------------------------------------------------
@@ -62,16 +74,21 @@ class TestLLMProvider:
     """Tests for the LLMProvider enum."""
 
     def test_llm_provider_values(self) -> None:
-        """All five members exist with expected string values."""
+        """All six members exist with expected string values."""
         expected = {
             "OPENAI": "openai",
             "KIMI": "kimi",
             "GEMINI": "gemini",
             "GROQ": "groq",
             "ALIBABA": "alibaba",
+            "ANTHROPIC": "anthropic",
         }
         for name, value in expected.items():
             assert LLMProvider[name].value == value
+
+    def test_llm_provider_includes_anthropic(self) -> None:
+        """LLMProvider.ANTHROPIC exists with value 'anthropic'."""
+        assert LLMProvider.ANTHROPIC.value == "anthropic"
 
     def test_llm_provider_is_enum(self) -> None:
         """LLMProvider members are proper Enum instances and support identity comparison."""
@@ -466,6 +483,233 @@ class TestGenerateAlibabaResponseAsync:
 
 
 # ---------------------------------------------------------------------------
+# Tests: generate_anthropic_response_async
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateAnthropicResponseAsync:
+    """Tests for the async Anthropic generation function."""
+
+    async def test_anthropic_async_returns_parsed_model_and_tokens(self) -> None:
+        """Return value is a 3-tuple of (parsed Pydantic model, input_tokens, output_tokens)."""
+        mock_response = _make_anthropic_style_response(
+            {"value": "anthropic-ok"}, input_tokens=80, output_tokens=40,
+        )
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+            )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        parsed, input_tokens, output_tokens = result
+        assert isinstance(parsed, _DummyResponse)
+        assert parsed.value == "anthropic-ok"
+        assert input_tokens == 80
+        assert output_tokens == 40
+
+    async def test_anthropic_async_uses_tool_use_pattern(self) -> None:
+        """The messages.create call receives a tools list with name='structured_output'
+        and tool_choice forcing that tool."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        # Verify tools contains a structured_output tool
+        tools = call_kwargs["tools"]
+        assert len(tools) == 1
+        assert tools[0]["name"] == "structured_output"
+        # Verify tool_choice forces the structured_output tool
+        assert call_kwargs["tool_choice"] == {"type": "tool", "name": "structured_output"}
+
+    async def test_anthropic_async_passes_system_as_system_param(self) -> None:
+        """system_prompt is passed as the system= param (not as a message)."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="You are a helpful assistant.",
+                response_format=_DummyResponse,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["system"] == "You are a helpful assistant."
+
+    async def test_anthropic_async_passes_user_prompt_as_message(self) -> None:
+        """Messages contain a single user message with the user_prompt content."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="Tell me about movies.",
+                system_prompt="test",
+                response_format=_DummyResponse,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["messages"] == [{"role": "user", "content": "Tell me about movies."}]
+
+    async def test_anthropic_async_default_max_tokens(self) -> None:
+        """max_tokens defaults to 8000 when not provided in kwargs."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["max_tokens"] == 8000
+
+    async def test_anthropic_async_custom_max_tokens_from_kwargs(self) -> None:
+        """max_tokens is extracted from kwargs and passed to messages.create (not double-passed)."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                max_tokens=2048,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["max_tokens"] == 2048
+
+    async def test_anthropic_async_forwards_additional_kwargs(self) -> None:
+        """Extra kwargs (e.g., temperature) are forwarded to messages.create."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                temperature=0.3,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["temperature"] == 0.3
+
+    async def test_anthropic_async_raises_value_error_on_failure(self) -> None:
+        """ValueError is raised with 'Anthropic async failed' prefix when the API call raises."""
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("connection refused"),
+        ):
+            with pytest.raises(ValueError, match="Anthropic async failed"):
+                await generate_anthropic_response_async(
+                    user_prompt="test",
+                    system_prompt="test",
+                    response_format=_DummyResponse,
+                )
+
+    async def test_anthropic_async_extracts_tool_use_block(self) -> None:
+        """Correctly finds the tool_use block from response.content and validates against response_format."""
+        # Response with a text block first, then the tool_use block
+        text_block = SimpleNamespace(type="text", text="Some thinking text")
+        tool_use_block = SimpleNamespace(type="tool_use", input={"value": "from-tool"})
+        usage = SimpleNamespace(input_tokens=10, output_tokens=5)
+        mock_response = SimpleNamespace(content=[text_block, tool_use_block], usage=usage)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            parsed, _, _ = await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+            )
+
+        assert isinstance(parsed, _DummyResponse)
+        assert parsed.value == "from-tool"
+
+    async def test_anthropic_async_no_tool_use_block_raises(self) -> None:
+        """StopIteration (from next()) is caught and wrapped in ValueError when no tool_use block exists."""
+        text_block = SimpleNamespace(type="text", text="No tool use here")
+        usage = SimpleNamespace(input_tokens=10, output_tokens=5)
+        mock_response = SimpleNamespace(content=[text_block], usage=usage)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            with pytest.raises(ValueError, match="Anthropic async failed"):
+                await generate_anthropic_response_async(
+                    user_prompt="test",
+                    system_prompt="test",
+                    response_format=_DummyResponse,
+                )
+
+    async def test_anthropic_async_max_tokens_not_double_passed(self) -> None:
+        """max_tokens is popped from kwargs, so it isn't passed twice to messages.create."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                max_tokens=4096,
+            )
+
+        # messages.create should have been called with max_tokens exactly once
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["max_tokens"] == 4096
+        # Verify max_tokens doesn't appear in any extra **kwargs expansion
+        # (if it were double-passed, the call would fail with a duplicate keyword arg)
+        mock_create.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Tests: generate_llm_response_async (unified router)
 # ---------------------------------------------------------------------------
 
@@ -604,3 +848,25 @@ class TestGenerateLLMResponseAsync:
                 )
 
         assert exc_info.value is original_error
+
+    async def test_router_dispatches_to_anthropic(self) -> None:
+        """Router calls the ANTHROPIC dispatch entry with model param."""
+        mock_fn = AsyncMock(return_value=(_DummyResponse(value="ok"), 10, 5))
+
+        with patch.dict(_PROVIDER_DISPATCH, {LLMProvider.ANTHROPIC: mock_fn}):
+            result = await generate_llm_response_async(
+                provider=LLMProvider.ANTHROPIC,
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                model="claude-opus-4-6",
+            )
+
+        mock_fn.assert_called_once()
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["model"] == "claude-opus-4-6"
+        assert result == (_DummyResponse(value="ok"), 10, 5)
+
+    def test_provider_dispatch_includes_anthropic(self) -> None:
+        """LLMProvider.ANTHROPIC is a key in _PROVIDER_DISPATCH."""
+        assert LLMProvider.ANTHROPIC in _PROVIDER_DISPATCH

@@ -52,3 +52,27 @@ watch_context, narrative_techniques, production) still need prompt implementatio
 **See:** movie_ingestion/metadata_generation/generators/plot_events.py,
 movie_ingestion/metadata_generation/prompts/plot_events.py,
 docs/llm_metadata_generation_new_flow.md
+
+
+## Iterate on plot_events evaluation rubric after initial run
+**Context:** The 4-dimension rubric (groundedness, plot_summary,
+character_quality, setting) was systematically improved pre-run based on
+a comparison against the generation SYSTEM_PROMPT (9 identified
+inconsistencies fixed). After running Phase 0 + Phase 1 on the first
+movie(s), manually inspect judge reasoning in the
+`plot_events_evaluations` table before running the full 70-movie corpus —
+calibration may still need adjustment based on observed judge behavior.
+**When:** After first small-scale evaluation run completes.
+**See:** movie_ingestion/metadata_generation/evaluations/plot_events.py (JUDGE_SYSTEM_PROMPT)
+
+
+## Implement request_builder.py in evaluations package
+**Context:** `movie_ingestion/metadata_generation/evaluations/request_builder.py`
+is currently a stub containing only a docstring. It will be needed for
+future evaluation types that require more complex prompt assembly.
+**When:** When building the next metadata type evaluation after plot_events.
+**See:** movie_ingestion/metadata_generation/evaluations/request_builder.py
+
+
+## ~~Remove debug print statement from plot_events generator~~ DONE
+Removed as a side effect of the `build_plot_events_user_prompt()` extraction refactor.

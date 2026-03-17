@@ -24,6 +24,7 @@ from movie_ingestion.metadata_generation.schemas import (
 from movie_ingestion.metadata_generation.pre_consolidation import (
     route_keywords,
     consolidate_maturity,
+    check_plot_events,
     _check_plot_events,
     _check_reception,
     _check_plot_analysis,
@@ -575,3 +576,18 @@ class TestRunPreConsolidation:
         assert len(result.skip_assessment.skip_reasons) > 0
         assert "plot_events" in result.skip_assessment.skip_reasons
         assert "reception" in result.skip_assessment.skip_reasons
+
+
+# ---------------------------------------------------------------------------
+# check_plot_events public name
+# ---------------------------------------------------------------------------
+
+class TestCheckPlotEventsPublicName:
+    def test_check_plot_events_public_name_accessible(self):
+        """check_plot_events (public name) works identically to _check_plot_events."""
+        movie = _make_movie(overview="A long enough overview for the test.")
+        assert check_plot_events(movie) is None
+
+    def test_check_plot_events_and_alias_are_same_function(self):
+        """check_plot_events is _check_plot_events (same object via alias)."""
+        assert check_plot_events is _check_plot_events

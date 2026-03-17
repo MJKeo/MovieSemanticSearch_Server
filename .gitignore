@@ -12,6 +12,7 @@ wheels/
 
 # Ingestion pipeline data (tracker DB, per-movie JSON files, embeddings)
 ingestion_data/
+evaluation_data/
 
 # Personal / transient
 .claude/settings.local.json
