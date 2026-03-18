@@ -107,31 +107,55 @@ def analyze_plot_events(
         return None
 
     # ------------------------------------------------------------------
-    # 2. Mean token usage per candidate
+    # 2. Mean token usage per candidate (overall, dense-only, sparse-only)
     # ------------------------------------------------------------------
-    where_clause = ""
-    params: list = []
-    if candidate_ids:
-        placeholders = ", ".join("?" * len(candidate_ids))
-        where_clause = f"WHERE candidate_id IN ({placeholders})"
-        params = list(candidate_ids)
+    def _query_mean_tokens(
+        extra_conditions: list[str] | None = None,
+        extra_params: list | None = None,
+    ) -> pd.DataFrame:
+        """Query mean input/output tokens from candidate_outputs with optional filters."""
+        conditions: list[str] = []
+        params_list: list = []
+        if candidate_ids:
+            placeholders = ", ".join("?" * len(candidate_ids))
+            conditions.append(f"candidate_id IN ({placeholders})")
+            params_list.extend(candidate_ids)
+        if extra_conditions:
+            conditions.extend(extra_conditions)
+            params_list.extend(extra_params or [])
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = conn.execute(
+            f"""
+            SELECT
+                candidate_id,
+                AVG(input_tokens)  AS mean_input_tokens,
+                AVG(output_tokens) AS mean_output_tokens
+            FROM plot_events_candidate_outputs
+            {where}
+            GROUP BY candidate_id
+            """,
+            params_list,
+        ).fetchall()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([dict(r) for r in rows]).set_index("candidate_id")
 
-    token_rows = conn.execute(
-        f"""
-        SELECT
-            candidate_id,
-            AVG(input_tokens)  AS mean_input_tokens,
-            AVG(output_tokens) AS mean_output_tokens
-        FROM plot_events_candidate_outputs
-        {where_clause}
-        GROUP BY candidate_id
-        """,
-        params,
-    ).fetchall()
+    # Overall token averages (used for the cost table)
+    tokens_df = _query_mean_tokens()
 
-    tokens_df = pd.DataFrame(
-        [dict(row) for row in token_rows],
-    ).set_index("candidate_id") if token_rows else pd.DataFrame()
+    # Dense-only and sparse-only token averages (used for the value ranking table)
+    dense_placeholders = ", ".join("?" * len(ORIGINAL_SET_TMDB_IDS))
+    dense_tokens_df = _query_mean_tokens(
+        extra_conditions=[f"movie_id IN ({dense_placeholders})"],
+        extra_params=list(ORIGINAL_SET_TMDB_IDS),
+    )
+
+    sparse_movie_ids_list = MEDIUM_SPARSITY_TMDB_IDS + HIGH_SPARSITY_TMDB_IDS
+    sparse_placeholders = ", ".join("?" * len(sparse_movie_ids_list))
+    sparse_tokens_df = _query_mean_tokens(
+        extra_conditions=[f"movie_id IN ({sparse_placeholders})"],
+        extra_params=list(sparse_movie_ids_list),
+    )
 
     # ------------------------------------------------------------------
     # 3. Model + provider from candidates table
@@ -156,13 +180,12 @@ def analyze_plot_events(
         movie_ids=ORIGINAL_SET_TMDB_IDS,
         score_weights=SCORE_WEIGHTS,
     )
-    sparse_movie_ids = MEDIUM_SPARSITY_TMDB_IDS + HIGH_SPARSITY_TMDB_IDS
     sparse_scores = compute_score_summary(
         conn=conn,
         table="plot_events_evaluations",
         score_columns=SCORE_COLUMNS,
         candidate_ids=candidate_ids,
-        movie_ids=sparse_movie_ids,
+        movie_ids=sparse_movie_ids_list,
         score_weights=SCORE_WEIGHTS,
     )
 
@@ -188,7 +211,10 @@ def analyze_plot_events(
     # ------------------------------------------------------------------
     # 6. Print formatted tables
     # ------------------------------------------------------------------
-    _print_plot_events_table(merged, dense_scores, sparse_scores)
+    _print_plot_events_table(
+        merged, dense_scores, sparse_scores,
+        dense_tokens_df, sparse_tokens_df,
+    )
 
     return merged
 
@@ -226,6 +252,8 @@ def _print_plot_events_table(
     df: pd.DataFrame,
     dense_scores: pd.DataFrame,
     sparse_scores: pd.DataFrame,
+    dense_tokens: pd.DataFrame,
+    sparse_tokens: pd.DataFrame,
 ) -> None:
     """Print formatted console tables for the plot_events analysis."""
     # Determine column widths
@@ -288,7 +316,7 @@ def _print_plot_events_table(
 
     # Value ranking table — sorted by overall_mean * cost_per_movie ascending
     # Lower product = better value (high quality at low cost)
-    _print_value_ranking_table(df, cid_w, num_w, cost_w)
+    _print_value_ranking_table(df, dense_tokens, sparse_tokens, cid_w, num_w, cost_w)
 
     print("=" * 120)
     print()
@@ -296,39 +324,81 @@ def _print_plot_events_table(
 
 def _print_value_ranking_table(
     df: pd.DataFrame,
+    dense_tokens: pd.DataFrame,
+    sparse_tokens: pd.DataFrame,
     cid_w: int,
     num_w: int,
     cost_w: int,
 ) -> None:
-    """Print a value-ranking table sorted by overall_mean descending."""
-    # Only include candidates that have both overall_mean and cost_per_movie
-    value_df = df[["overall_mean", "cost_per_movie"]].dropna()
+    """Print a value-ranking table with separate dense/sparse cost columns.
+
+    Computes cost/1K movies from the dense-only and sparse-only mean token
+    counts so users can see the cost difference between data-rich and
+    data-sparse movies.
+    """
+    # Need overall_mean and a model to compute costs
+    required_cols = {"overall_mean", "model"}
+    if not required_cols.issubset(df.columns):
+        return
+
+    value_df = df[["overall_mean", "model"]].dropna()
     if value_df.empty:
         return
 
     value_df = value_df.copy()
-    # Scale cost to per-1K movies for easier reading
-    value_df["cost_per_1k"] = value_df["cost_per_movie"] * 1_000
+
+    # Compute per-movie cost for dense and sparse subsets separately
+    def _cost_per_1k(tokens_df: pd.DataFrame, candidate_id: str, model: str) -> float | None:
+        if candidate_id not in tokens_df.index:
+            return None
+        row = tokens_df.loc[candidate_id]
+        mean_in = row.get("mean_input_tokens")
+        mean_out = row.get("mean_output_tokens")
+        if pd.isna(mean_in) or pd.isna(mean_out):
+            return None
+        per_movie = _compute_per_movie_cost(mean_in, mean_out, model)
+        return per_movie * 1_000 if per_movie is not None else None
+
+    dense_costs = []
+    sparse_costs = []
+    for cid, row in value_df.iterrows():
+        model = row["model"]
+        dense_costs.append(_cost_per_1k(dense_tokens, cid, model))
+        sparse_costs.append(_cost_per_1k(sparse_tokens, cid, model))
+
+    value_df["dense_cost_1k"] = dense_costs
+    value_df["sparse_cost_1k"] = sparse_costs
+
+    # Drop candidates missing both cost columns
+    has_any_cost = value_df["dense_cost_1k"].notna() | value_df["sparse_cost_1k"].notna()
+    value_df = value_df[has_any_cost]
+    if value_df.empty:
+        return
+
     value_sorted = value_df.sort_values("overall_mean", ascending=False)
 
-    cost_1k_w = 14
+    cost_1k_w = 16
     print()
     val_header = (
         f"{'candidate_id':<{cid_w}}"
         f"  {'overall':>{num_w}}"
-        f"  {'cost/1K movies':>{cost_1k_w}}"
+        f"  {'dense cost/1K':>{cost_1k_w}}"
+        f"  {'sparse cost/1K':>{cost_1k_w}}"
     )
     print(val_header)
     print("-" * len(val_header))
 
     for cid, row in value_sorted.iterrows():
         overall = row["overall_mean"]
-        cost_1k = row["cost_per_1k"]
-        cost_str = f"${cost_1k:>{cost_1k_w - 1},.2f}"
+        dense_c = row["dense_cost_1k"]
+        sparse_c = row["sparse_cost_1k"]
+        dense_str = f"${dense_c:>{cost_1k_w - 1},.2f}" if dense_c is not None else f"{'n/a':>{cost_1k_w}}"
+        sparse_str = f"${sparse_c:>{cost_1k_w - 1},.2f}" if sparse_c is not None else f"{'n/a':>{cost_1k_w}}"
         print(
             f"{cid:<{cid_w}}"
             f"  {overall:>{num_w}.2f}"
-            f"  {cost_str}"
+            f"  {dense_str}"
+            f"  {sparse_str}"
         )
 
 

@@ -39,3 +39,9 @@ Fix 10 stale documentation items identified by the docs-auditor scan.
 - TODO.md: Corrected request_builder.py path from evaluations/ to metadata_generation/
 - plot_events.py: Fixed module docstring (Claude Opus → GPT-5.4/WHAM)
 - generic_methods.py: Fixed WHAM docstring endpoint (wham/v1 → codex)
+
+## Split value ranking cost column into dense/sparse
+Files: movie_ingestion/metadata_generation/evaluations/analyze_results.py | The final value ranking table now shows two cost/1K columns (dense and sparse) instead of one overall cost. Token averages are queried separately by filtering candidate_outputs on the dense (ORIGINAL_SET) and sparse (MEDIUM+HIGH_SPARSITY) movie ID sets, so costs reflect actual input size differences.
+
+## Migrate plot_events generator to evaluation winner
+Files: movie_ingestion/metadata_generation/generators/plot_events.py | Switched production defaults to evaluation winner: Gemini 2.5 Flash Lite + short prompt + 1k thinking budget. Changed prompt import from SYSTEM_PROMPT to SYSTEM_PROMPT_SHORT. Added default provider/model/kwargs so callers don't need to specify them. Caller overrides still supported via **kwargs.

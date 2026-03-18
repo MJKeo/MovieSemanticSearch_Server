@@ -14,7 +14,7 @@ Inputs (from MovieInputData):
     - plot_keywords: plot-specific keywords only (not overall)
 
 Response schema: PlotEventsOutput
-Provider and model: caller must specify (no defaults).
+Provider/model defaults: Gemini 2.5 Flash Lite (evaluation winner).
 
 See docs/llm_metadata_generation_new_flow.md Section 4.1.
 """
@@ -28,7 +28,7 @@ from movie_ingestion.metadata_generation.inputs import (
     build_user_prompt,
 )
 from movie_ingestion.metadata_generation.schemas import PlotEventsOutput
-from movie_ingestion.metadata_generation.prompts.plot_events import SYSTEM_PROMPT
+from movie_ingestion.metadata_generation.prompts.plot_events import SYSTEM_PROMPT_SHORT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
     MetadataGenerationEmptyResponseError,
@@ -37,6 +37,11 @@ from implementation.llms.generic_methods import LLMProvider, generate_llm_respon
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
 GENERATION_TYPE = "plot_events"
+
+# Production defaults — evaluation winner: gemini-2.5-flash-lite + short prompt + think-1k
+_DEFAULT_PROVIDER = LLMProvider.GEMINI
+_DEFAULT_MODEL = "gemini-2.5-flash-lite"
+_DEFAULT_KWARGS = {"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}}
 
 
 def build_plot_events_user_prompt(movie: MovieInputData) -> str:
@@ -74,8 +79,8 @@ def build_plot_events_user_prompt(movie: MovieInputData) -> str:
 
 async def generate_plot_events(
     movie: MovieInputData,
-    provider: LLMProvider,
-    model: str,
+    provider: LLMProvider = _DEFAULT_PROVIDER,
+    model: str = _DEFAULT_MODEL,
     **kwargs,
 ) -> Tuple[PlotEventsOutput, TokenUsage]:
     """Generate plot events metadata for a single movie.
@@ -84,11 +89,16 @@ async def generate_plot_events(
     the specified LLM provider with structured output, and returns the
     parsed result alongside token usage.
 
+    Defaults to Gemini 2.5 Flash Lite with 1k thinking budget and the
+    short system prompt (evaluation winner). Callers can override
+    provider/model/kwargs to use a different configuration.
+
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        provider: Which LLM backend to use (e.g. LLMProvider.OPENAI).
-        model: Model identifier (e.g. "gpt-5-mini", "gemini-2.5-flash").
-        **kwargs: Provider-specific params (reasoning_effort, temperature, etc.).
+        provider: Which LLM backend to use. Defaults to GEMINI.
+        model: Model identifier. Defaults to "gemini-2.5-flash-lite".
+        **kwargs: Provider-specific params. If empty, uses _DEFAULT_KWARGS
+            (temperature=0.2, thinking_config with 1024 budget).
 
     Returns:
         Tuple of (PlotEventsOutput, TokenUsage).
@@ -97,6 +107,9 @@ async def generate_plot_events(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
+    # Merge production defaults with any caller overrides
+    effective_kwargs = {**_DEFAULT_KWARGS, **kwargs}
+
     user_prompt = build_plot_events_user_prompt(movie)
     title_with_year = movie.title_with_year()
 
@@ -104,10 +117,10 @@ async def generate_plot_events(
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
             provider=provider,
             user_prompt=user_prompt,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT_SHORT,
             response_format=PlotEventsOutput,
             model=model,
-            **kwargs,
+            **effective_kwargs,
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
