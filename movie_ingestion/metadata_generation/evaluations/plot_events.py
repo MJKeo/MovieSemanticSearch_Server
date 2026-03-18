@@ -36,6 +36,7 @@ import pandas as pd
 from pydantic import BaseModel
 
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
+from movie_ingestion.metadata_generation.evaluations.openai_oauth import get_valid_auth
 from movie_ingestion.metadata_generation.evaluations.shared import (
     EVAL_DB_PATH,
     EvaluationCandidate,
@@ -61,60 +62,60 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
     # -----------------------------------------------------------------------
     # Qwen 3.5 Flash — 2 candidates (thinking toggle)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__qwen3.5-flash",
-        provider=LLMProvider.ALIBABA,
-        model="qwen3.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.0, "extra_body": {"enable_thinking": False}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__qwen3.5-flash__think",
-        provider=LLMProvider.ALIBABA,
-        model="qwen3.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "extra_body": {"enable_thinking": True}},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__qwen3.5-flash",
+    #     provider=LLMProvider.ALIBABA,
+    #     model="qwen3.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.0, "extra_body": {"enable_thinking": False}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__qwen3.5-flash__think",
+    #     provider=LLMProvider.ALIBABA,
+    #     model="qwen3.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "extra_body": {"enable_thinking": True}},
+    # ),
     # -----------------------------------------------------------------------
     # Gemini 2.5 Flash — 3 candidates (thinking budget curve)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash__think-1k",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash__think-4k",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash__think-1k",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash__think-4k",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
+    # ),
     # -----------------------------------------------------------------------
     # Gemini 2.5 Flash Lite — 2 candidates (thinking on/off)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash-lite",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash-lite",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash-lite",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash-lite",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
+    # ),
     EvaluationCandidate(
         candidate_id="plot_events__gemini-2.5-flash-lite__think-1k",
         provider=LLMProvider.GEMINI,
@@ -123,17 +124,25 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         response_format=PlotEventsOutput,
         kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
     ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gemini-2.5-flash-lite__think-4k",
+        provider=LLMProvider.GEMINI,
+        model="gemini-2.5-flash-lite",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
+    ),
     # -----------------------------------------------------------------------
     # GPT-5-mini — 3 candidates (reasoning_effort x verbosity)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5-mini",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5-mini",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5-mini",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5-mini",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+    # ),
     EvaluationCandidate(
         candidate_id="plot_events__gpt-5-mini__reason-low",
         provider=LLMProvider.OPENAI,
@@ -142,33 +151,33 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         response_format=PlotEventsOutput,
         kwargs={"reasoning_effort": "low", "verbosity": "low"},
     ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5-mini__reason-low-verb-med",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5-mini",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "low", "verbosity": "medium"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5-mini__reason-low-verb-med",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5-mini",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "low", "verbosity": "medium"},
+    # ),
     # -----------------------------------------------------------------------
     # GPT-5-nano — 2 candidates (reasoning_effort)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5-nano",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5-nano",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5-nano__reason-low",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5-nano",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "low", "verbosity": "low"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5-nano",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5-nano",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5-nano__reason-low",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5-nano",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "low", "verbosity": "low"},
+    # ),
     # -----------------------------------------------------------------------
     # GPT-5.4-nano — 3 candidates (reasoning_effort x verbosity)
     # -----------------------------------------------------------------------
@@ -178,62 +187,62 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         model="gpt-5.4-nano",
         system_prompt=DEFAULT_SYSTEM_PROMPT,
         response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+        kwargs={"reasoning_effort": "none", "verbosity": "low"},
     ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5.4-nano__reason-low",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5.4-nano",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "low", "verbosity": "low"},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5.4-nano__reason-low-verb-med",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5.4-nano",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "low", "verbosity": "medium"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5.4-nano__reason-low",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5.4-nano",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "low", "verbosity": "low"},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5.4-nano__reason-low-verb-med",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5.4-nano",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "low", "verbosity": "medium"},
+    # ),
     # -----------------------------------------------------------------------
     # GPT-oss-120b — 2 candidates (reasoning_effort)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-oss-120b",
-        provider=LLMProvider.GROQ,
-        model="openai/gpt-oss-120b",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "reasoning_effort": "low", "reasoning_format": "hidden"},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-oss-120b__reason-med",
-        provider=LLMProvider.GROQ,
-        model="openai/gpt-oss-120b",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "reasoning_effort": "medium", "reasoning_format": "hidden"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-oss-120b",
+    #     provider=LLMProvider.GROQ,
+    #     model="openai/gpt-oss-120b",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "reasoning_effort": "low", "reasoning_format": "hidden"},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-oss-120b__reason-med",
+    #     provider=LLMProvider.GROQ,
+    #     model="openai/gpt-oss-120b",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "reasoning_effort": "medium", "reasoning_format": "hidden"},
+    # ),
     # -----------------------------------------------------------------------
     # Llama 4 Scout — 2 candidates (temperature)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__llama-4-scout",
-        provider=LLMProvider.GROQ,
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__llama-4-scout__temp-0",
-        provider=LLMProvider.GROQ,
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.0},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__llama-4-scout",
+    #     provider=LLMProvider.GROQ,
+    #     model="meta-llama/llama-4-scout-17b-16e-instruct",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__llama-4-scout__temp-0",
+    #     provider=LLMProvider.GROQ,
+    #     model="meta-llama/llama-4-scout-17b-16e-instruct",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.0},
+    # ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -271,17 +280,18 @@ _CREATE_EVALUATIONS_TABLE = """
     CREATE TABLE IF NOT EXISTS plot_events_evaluations (
         movie_id                       INTEGER NOT NULL,
         candidate_id                   TEXT NOT NULL,
-        groundedness_score             INTEGER,
+        groundedness_score             REAL,
         groundedness_reasoning         TEXT,
-        plot_summary_score             INTEGER,
+        plot_summary_score             REAL,
         plot_summary_reasoning         TEXT,
-        character_quality_score        INTEGER,
+        character_quality_score        REAL,
         character_quality_reasoning    TEXT,
-        setting_score                  INTEGER,
+        setting_score                  REAL,
         setting_reasoning              TEXT,
         judge_model                    TEXT,
         judge_input_tokens             INTEGER,
         judge_output_tokens            INTEGER,
+        judge_runs                     INTEGER,
         created_at                     TEXT NOT NULL,
         PRIMARY KEY (movie_id, candidate_id)
     )
@@ -301,6 +311,13 @@ def create_plot_events_tables(conn: sqlite3.Connection) -> None:
     conn.execute(_CREATE_REFERENCES_TABLE)
     conn.execute(_CREATE_CANDIDATE_OUTPUTS_TABLE)
     conn.execute(_CREATE_EVALUATIONS_TABLE)
+    # Add judge_runs column if missing (migrates tables created before multi-run support)
+    try:
+        conn.execute(
+            "ALTER TABLE plot_events_evaluations ADD COLUMN judge_runs INTEGER"
+        )
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
 
 
@@ -480,23 +497,29 @@ major_characters:
 
 async def generate_reference_responses(
     movie_inputs: dict[int, MovieInputData],
-    reference_model: str = "claude-opus-4-6",
+    reference_model: str = "gpt-5.4",
+    reference_provider: LLMProvider = LLMProvider.WHAM,
+    concurrency: int = 15,
     db_path: Path | None = None,
 ) -> None:
     """Generate and store reference PlotEventsOutputs for all movies.
 
-    Uses Claude Opus (via ANTHROPIC_OAUTH_KEY) and the same system prompt
-    and user prompt construction as the production generator, so the reference
-    represents what a stronger model would produce under identical conditions.
+    Uses the reference model (default: GPT-5.4 via OpenAI OAuth) with the same
+    system prompt and user prompt construction as the production generator, so
+    the reference represents what a stronger model would produce under identical
+    conditions.
 
-    Requests run in series to avoid rate limiting. If a 429 error is
-    encountered, pauses for 60 seconds and retries the request once.
+    Runs requests in parallel with semaphore-controlled concurrency. If a 429
+    error is encountered on a request, pauses 60s and retries that request once.
 
     Idempotent: movies with existing references are skipped.
 
     Args:
         movie_inputs: Dict of tmdb_id → MovieInputData for the test corpus.
-        reference_model: Claude model identifier to use as the reference.
+        reference_model: Model identifier to use as the reference.
+        reference_provider: LLM provider for the reference model.
+        concurrency: Max concurrent in-flight reference generation requests.
+            Defaults to 15 (aggressive). Reduce if hitting rate limits.
         db_path: Override the default eval DB path (useful for testing).
     """
     conn = get_eval_connection(db_path or EVAL_DB_PATH)
@@ -520,61 +543,73 @@ async def generate_reference_responses(
         return
 
     print(f"Phase 0: generating {len(pending)} reference responses "
-          f"(skipping {len(existing)} existing) using {reference_model}...")
+          f"(skipping {len(existing)} existing) using {reference_model} "
+          f"(concurrency={concurrency})...")
 
+    # Acquire valid WHAM auth (access_token + account_id) once before the loop;
+    # this avoids triggering a refresh check on every individual request.
+    wham_auth = get_valid_auth() if reference_provider == LLMProvider.WHAM else None
+
+    semaphore = asyncio.Semaphore(concurrency)
     completed = 0
     total = len(pending)
 
-    # Run requests in series to avoid rate limiting
-    for tmdb_id, movie in pending:
-        try:
-            user_prompt = build_plot_events_user_prompt(movie)
-
-            # Attempt the LLM call; on a 429 rate-limit error, pause 60s and retry once
+    async def _generate_one(tmdb_id: int, movie: MovieInputData) -> None:
+        nonlocal completed
+        async with semaphore:
             try:
-                parsed, in_tokens, out_tokens = await generate_llm_response_async(
-                    provider=LLMProvider.ANTHROPIC,
-                    user_prompt=user_prompt,
-                    system_prompt=DEFAULT_SYSTEM_PROMPT,
-                    response_format=PlotEventsOutput,
-                    model=reference_model,
-                    max_tokens=4096,
-                )
-            except ValueError as e:
-                if "429" not in str(e):
-                    raise
-                print(f"  [429] Rate limited on tmdb_id={tmdb_id} — "
-                      f"pausing 60s before retry...")
-                await asyncio.sleep(60)
-                parsed, in_tokens, out_tokens = await generate_llm_response_async(
-                    provider=LLMProvider.ANTHROPIC,
-                    user_prompt=user_prompt,
-                    system_prompt=DEFAULT_SYSTEM_PROMPT,
-                    response_format=PlotEventsOutput,
-                    model=reference_model,
-                    max_tokens=4096,
-                )
+                user_prompt = build_plot_events_user_prompt(movie)
 
-            plot_summary, setting, chars_json = _serialize_output(parsed)
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO plot_events_references
-                    (movie_id, plot_summary, setting, major_characters,
-                     reference_model, input_tokens, output_tokens, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    tmdb_id, plot_summary, setting, chars_json,
-                    reference_model, in_tokens, out_tokens,
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-            conn.commit()
-            completed += 1
-            print(f"  [{completed}/{total}] Reference generated: {movie.title_with_year()}")
-        except Exception as e:
-            print(f"  [ERROR] Reference generation failed for tmdb_id={tmdb_id} "
-                  f"({movie.title_with_year()}): {e}")
+                # Attempt the LLM call; on a 429 rate-limit error, pause 60s and retry once
+                try:
+                    parsed, in_tokens, out_tokens = await generate_llm_response_async(
+                        provider=reference_provider,
+                        user_prompt=user_prompt,
+                        system_prompt=DEFAULT_SYSTEM_PROMPT,
+                        response_format=PlotEventsOutput,
+                        model=reference_model,
+                        reasoning_effort="low",
+                        **({"api_key": wham_auth.access_token, "account_id": wham_auth.account_id} if wham_auth else {}),
+                    )
+                except ValueError as e:
+                    if "429" not in str(e):
+                        raise
+                    print(f"  [429] Rate limited on tmdb_id={tmdb_id} — "
+                          f"pausing 60s before retry...")
+                    await asyncio.sleep(60)
+                    parsed, in_tokens, out_tokens = await generate_llm_response_async(
+                        provider=reference_provider,
+                        user_prompt=user_prompt,
+                        system_prompt=DEFAULT_SYSTEM_PROMPT,
+                        response_format=PlotEventsOutput,
+                        model=reference_model,
+                        reasoning_effort="low",
+                        **({"api_key": wham_auth.access_token, "account_id": wham_auth.account_id} if wham_auth else {}),
+                    )
+
+                plot_summary, setting, chars_json = _serialize_output(parsed)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO plot_events_references
+                        (movie_id, plot_summary, setting, major_characters,
+                         reference_model, input_tokens, output_tokens, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tmdb_id, plot_summary, setting, chars_json,
+                        reference_model, in_tokens, out_tokens,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                conn.commit()
+                completed += 1
+                print(f"  [{completed}/{total}] Reference generated: {movie.title_with_year()}")
+            except Exception as e:
+                print(f"  [ERROR] Reference generation failed for tmdb_id={tmdb_id} "
+                      f"({movie.title_with_year()}): {e}")
+
+    tasks = [_generate_one(tmdb_id, movie) for tmdb_id, movie in pending]
+    await asyncio.gather(*tasks)
 
     print(f"Phase 0 complete: {completed}/{total} references generated.")
     conn.close()
@@ -587,25 +622,33 @@ async def generate_reference_responses(
 async def run_evaluation(
     candidates: list[EvaluationCandidate],
     movie_inputs: dict[int, MovieInputData],
-    judge_model: str = "claude-sonnet-4-6",
+    judge_model: str = "gpt-5.4",
+    judge_provider: LLMProvider = LLMProvider.WHAM,
     concurrency: int = 5,
+    judge_runs: int = 3,
     db_path: Path | None = None,
 ) -> None:
-    """Generate candidate outputs and score them with a Claude judge.
+    """Generate candidate outputs and score them with an LLM judge.
 
     For each (candidate, movie) pair:
     1. Skip if an evaluation result already exists (idempotent).
     2. Generate the candidate output if not already stored.
     3. Retrieve the reference response (Phase 0 must have run first).
     4. Reconstruct the original generation user prompt.
-    5. Call the Claude judge with rubric + generation prompt + reference + candidate.
-    6. Store per-dimension scores and reasoning.
+    5. Call the judge N times in parallel and average scores across runs.
+    6. Store averaged per-dimension scores and concatenated reasoning.
 
     Args:
         candidates: List of candidate configurations to evaluate.
         movie_inputs: Dict of tmdb_id → MovieInputData for the test corpus.
-        judge_model: Claude model to use as the evaluator judge.
+        judge_model: Model identifier to use as the evaluator judge.
+        judge_provider: LLM provider for the judge model.
         concurrency: Max concurrent in-flight requests (generation + judge combined).
+            Note: each evaluation fires judge_runs parallel judge calls within one
+            semaphore slot, so effective judge concurrency is concurrency × judge_runs.
+        judge_runs: Number of times to call the judge per (candidate, movie) pair.
+            Scores are averaged across runs; reasoning is concatenated with run
+            delimiters. Defaults to 3.
         db_path: Override the default eval DB path (useful for testing).
     """
     conn = get_eval_connection(db_path or EVAL_DB_PATH)
@@ -615,6 +658,10 @@ async def run_evaluation(
     # Register all candidates in the DB
     for candidate in candidates:
         store_candidate(conn, candidate, "plot_events")
+
+    # Acquire valid WHAM auth once before spawning tasks; avoids a separate
+    # refresh check per concurrent judge call.
+    judge_wham_auth = get_valid_auth() if judge_provider == LLMProvider.WHAM else None
 
     semaphore = asyncio.Semaphore(concurrency)
     total = len(candidates) * len(movie_inputs)
@@ -710,19 +757,28 @@ async def run_evaluation(
                 generation_user_prompt, reference, candidate_output
             )
 
-            # Call the judge
+            # Run the judge N times in parallel to reduce scoring noise.
+            # Each run uses identical parameters; stochastic LLM sampling
+            # produces variance that averaging smooths out.
+            judge_kwargs = {
+                "provider": judge_provider,
+                "user_prompt": judge_user_prompt,
+                "system_prompt": JUDGE_SYSTEM_PROMPT,
+                "response_format": PlotEventsJudgeOutput,
+                "model": judge_model,
+                "reasoning_effort": "low",
+                **({"api_key": judge_wham_auth.access_token, "account_id": judge_wham_auth.account_id} if judge_wham_auth else {}),
+            }
+            judge_coros = [
+                generate_llm_response_async(**judge_kwargs)
+                for _ in range(judge_runs)
+            ]
+
+            # Fail the entire evaluation if any run fails — avoids biased
+            # averages from fewer samples. Idempotent retry handles it on
+            # the next pipeline run.
             try:
-                judge_result, judge_in_tokens, judge_out_tokens = (
-                    await generate_llm_response_async(
-                        provider=LLMProvider.ANTHROPIC,
-                        user_prompt=judge_user_prompt,
-                        system_prompt=JUDGE_SYSTEM_PROMPT,
-                        response_format=PlotEventsJudgeOutput,
-                        model=judge_model,
-                        max_tokens=4096,
-                        temperature=0.2,
-                    )
-                )
+                judge_results = await asyncio.gather(*judge_coros)
             except Exception as e:
                 print(
                     f"  [ERROR] Judge call failed: "
@@ -730,6 +786,24 @@ async def run_evaluation(
                     f"tmdb_id={tmdb_id}: {e}"
                 )
                 return
+
+            # Unpack: each element is (parsed_output, input_tokens, output_tokens)
+            judge_outputs = [r[0] for r in judge_results]
+            total_judge_in_tokens = sum(r[1] for r in judge_results)
+            total_judge_out_tokens = sum(r[2] for r in judge_results)
+
+            # Average scores across all runs
+            avg_groundedness = sum(j.groundedness_score for j in judge_outputs) / judge_runs
+            avg_plot_summary = sum(j.plot_summary_score for j in judge_outputs) / judge_runs
+            avg_char_quality = sum(j.character_quality_score for j in judge_outputs) / judge_runs
+            avg_setting = sum(j.setting_score for j in judge_outputs) / judge_runs
+
+            # Concatenate reasoning from all runs with delimiters for transparency
+            def _combine_reasoning(field_name: str) -> str:
+                parts = []
+                for i, j in enumerate(judge_outputs, 1):
+                    parts.append(f"--- Run {i} ---\n{getattr(j, field_name)}")
+                return "\n\n".join(parts)
 
             conn.execute(
                 """
@@ -740,22 +814,23 @@ async def run_evaluation(
                     character_quality_score, character_quality_reasoning,
                     setting_score, setting_reasoning,
                     judge_model, judge_input_tokens, judge_output_tokens,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    judge_runs, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tmdb_id, candidate.candidate_id,
-                    judge_result.groundedness_score,
-                    judge_result.groundedness_reasoning,
-                    judge_result.plot_summary_score,
-                    judge_result.plot_summary_reasoning,
-                    judge_result.character_quality_score,
-                    judge_result.character_quality_reasoning,
-                    judge_result.setting_score,
-                    judge_result.setting_reasoning,
+                    avg_groundedness,
+                    _combine_reasoning("groundedness_reasoning"),
+                    avg_plot_summary,
+                    _combine_reasoning("plot_summary_reasoning"),
+                    avg_char_quality,
+                    _combine_reasoning("character_quality_reasoning"),
+                    avg_setting,
+                    _combine_reasoning("setting_reasoning"),
                     judge_model,
-                    judge_in_tokens,
-                    judge_out_tokens,
+                    total_judge_in_tokens,
+                    total_judge_out_tokens,
+                    judge_runs,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
@@ -765,16 +840,19 @@ async def run_evaluation(
                 f"  [{completed}/{total}] Evaluated: "
                 f"candidate={candidate.candidate_id}, "
                 f"movie={movie.title_with_year()} | "
-                f"scores: ground={judge_result.groundedness_score} "
-                f"summary={judge_result.plot_summary_score} "
-                f"char={judge_result.character_quality_score} "
-                f"setting={judge_result.setting_score}"
+                f"scores (avg of {judge_runs}): ground={avg_groundedness:.1f} "
+                f"summary={avg_plot_summary:.1f} "
+                f"char={avg_char_quality:.1f} "
+                f"setting={avg_setting:.1f}"
             )
 
+    # Iterate movies in the outer loop so that concurrent semaphore slots
+    # are filled by different candidates (and thus different providers),
+    # spreading rate-limit pressure across providers instead of hammering one.
     tasks = [
         _evaluate_one(candidate, tmdb_id, movie)
-        for candidate in candidates
         for tmdb_id, movie in movie_inputs.items()
+        for candidate in candidates
     ]
     await asyncio.gather(*tasks)
 

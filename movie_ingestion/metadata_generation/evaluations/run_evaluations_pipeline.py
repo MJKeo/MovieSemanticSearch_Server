@@ -73,16 +73,16 @@ async def main() -> None:
         print("No eligible movies — nothing to evaluate.")
         return
 
-    # Phase 0: generate reference responses using Claude Opus
+    # Phase 0: generate reference responses using GPT-5.4
     print("\n--- Phase 0: Reference Generation (plot_events) ---")
     await generate_reference_responses(eligible_inputs)
 
     # Phase 1: generate candidate outputs and score them with a judge
     print("\n--- Phase 1: Candidate Evaluation (plot_events) ---")
     await run_evaluation(
-        candidates=PLOT_EVENTS_CANDIDATES, 
+        candidates=PLOT_EVENTS_CANDIDATES,
         movie_inputs=eligible_inputs,
-        concurrency=3
+        concurrency=10,
     )
 
     print("\nPipeline complete.")

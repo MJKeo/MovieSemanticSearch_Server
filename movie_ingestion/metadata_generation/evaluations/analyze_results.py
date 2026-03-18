@@ -17,6 +17,9 @@ import pandas as pd
 from movie_ingestion.metadata_generation.evaluations.plot_events import SCORE_COLUMNS
 from movie_ingestion.metadata_generation.evaluations.shared import (
     EVAL_DB_PATH,
+    HIGH_SPARSITY_TMDB_IDS,
+    MEDIUM_SPARSITY_TMDB_IDS,
+    ORIGINAL_SET_TMDB_IDS,
     compute_score_summary,
     get_eval_connection,
 )
@@ -66,7 +69,7 @@ def analyze_plot_events(
     """Print a combined quality + cost summary for plot_events candidates.
 
     Merges three data sources into one table:
-      1. Mean/median scores per evaluation dimension (from plot_events_evaluations)
+      1. Mean scores per evaluation dimension (from plot_events_evaluations)
       2. Mean input/output token counts (from plot_events_candidate_outputs)
       3. Per-movie generation cost derived from model pricing
 
@@ -80,7 +83,7 @@ def analyze_plot_events(
     conn = get_eval_connection(db_path or EVAL_DB_PATH)
 
     # ------------------------------------------------------------------
-    # 1. Score summary (mean/median per dimension + overall_mean)
+    # 1. Score summary (mean per dimension + overall_mean)
     # ------------------------------------------------------------------
     table_exists = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' "
@@ -141,10 +144,29 @@ def analyze_plot_events(
         [dict(row) for row in candidate_rows],
     ).set_index("candidate_id") if candidate_rows else pd.DataFrame()
 
+    # ------------------------------------------------------------------
+    # 4. Score summaries for dense and sparse movie subsets
+    # ------------------------------------------------------------------
+    dense_scores = compute_score_summary(
+        conn=conn,
+        table="plot_events_evaluations",
+        score_columns=SCORE_COLUMNS,
+        candidate_ids=candidate_ids,
+        movie_ids=ORIGINAL_SET_TMDB_IDS,
+    )
+    sparse_movie_ids = MEDIUM_SPARSITY_TMDB_IDS + HIGH_SPARSITY_TMDB_IDS
+    sparse_scores = compute_score_summary(
+        conn=conn,
+        table="plot_events_evaluations",
+        score_columns=SCORE_COLUMNS,
+        candidate_ids=candidate_ids,
+        movie_ids=sparse_movie_ids,
+    )
+
     conn.close()
 
     # ------------------------------------------------------------------
-    # 4. Merge everything and compute cost
+    # 5. Merge everything and compute cost
     # ------------------------------------------------------------------
     merged = scores.join(tokens_df, how="left").join(candidates_df, how="left")
 
@@ -161,18 +183,48 @@ def analyze_plot_events(
     merged["cost_per_movie"] = costs
 
     # ------------------------------------------------------------------
-    # 5. Print formatted table
+    # 6. Print formatted tables
     # ------------------------------------------------------------------
-    _print_plot_events_table(merged)
+    _print_plot_events_table(merged, dense_scores, sparse_scores)
 
     return merged
 
 
-def _print_plot_events_table(df: pd.DataFrame) -> None:
-    """Print a formatted console table for the plot_events analysis."""
+def _print_score_table(
+    df: pd.DataFrame,
+    title: str,
+    cid_w: int,
+    num_w: int = 10,
+) -> None:
+    """Print a score table with overall_mean first, then per-dimension means."""
     dims = ["groundedness", "plot_summary", "character_quality", "setting"]
     short = ["grounded", "plot_summ", "char_qual", "setting"]
 
+    scores_sorted = df.sort_values("overall_mean", ascending=False)
+
+    print()
+    print(f"--- {title} ---")
+    header = f"{'candidate_id':<{cid_w}}  {'overall':>{num_w}}"
+    for s in short:
+        header += f"  {s + '_mean':>{num_w}}"
+    print(header)
+    print("-" * len(header))
+
+    for cid, row in scores_sorted.iterrows():
+        overall = row.get("overall_mean", float("nan"))
+        line = f"{cid:<{cid_w}}  {overall:>{num_w}.2f}"
+        for d in dims:
+            mean_val = row.get(f"{d}_mean", float("nan"))
+            line += f"  {mean_val:>{num_w}.2f}"
+        print(line)
+
+
+def _print_plot_events_table(
+    df: pd.DataFrame,
+    dense_scores: pd.DataFrame,
+    sparse_scores: pd.DataFrame,
+) -> None:
+    """Print formatted console tables for the plot_events analysis."""
     # Determine column widths
     cid_w = max(12, df.index.str.len().max() + 1)
     prov_w = 10
@@ -186,27 +238,14 @@ def _print_plot_events_table(df: pd.DataFrame) -> None:
     print("plot_events evaluation — quality scores, token usage, and per-movie cost")
     print("=" * 120)
 
-    # Score table — sorted by overall_mean descending
-    scores_sorted = df.sort_values("overall_mean", ascending=False)
+    # All-movies score table
+    _print_score_table(df, "All movies", cid_w, num_w)
 
-    header = f"{'candidate_id':<{cid_w}}"
-    for s in short:
-        header += f"  {s + '_mean':>{num_w}}"
-        header += f"  {s + '_med':>{num_w}}"
-    header += f"  {'overall':>{num_w}}"
-    print(header)
-    print("-" * len(header))
-
-    for cid, row in scores_sorted.iterrows():
-        line = f"{cid:<{cid_w}}"
-        for d in dims:
-            mean_val = row.get(f"{d}_mean", float("nan"))
-            med_val = row.get(f"{d}_median", float("nan"))
-            line += f"  {mean_val:>{num_w}.2f}"
-            line += f"  {med_val:>{num_w}.2f}"
-        overall = row.get("overall_mean", float("nan"))
-        line += f"  {overall:>{num_w}.2f}"
-        print(line)
+    # Dense and sparse subset score tables
+    if not dense_scores.empty:
+        _print_score_table(dense_scores, "Dense movie performance", cid_w, num_w)
+    if not sparse_scores.empty:
+        _print_score_table(sparse_scores, "Sparse movie performance", cid_w, num_w)
 
     # Cost table — sorted by cost_per_movie ascending
     cost_sorted = df.sort_values("cost_per_movie", ascending=True, na_position="last")
@@ -244,8 +283,50 @@ def _print_plot_events_table(df: pd.DataFrame) -> None:
             f"  {cost_str}"
         )
 
+    # Value ranking table — sorted by overall_mean * cost_per_movie ascending
+    # Lower product = better value (high quality at low cost)
+    _print_value_ranking_table(df, cid_w, num_w, cost_w)
+
     print("=" * 120)
     print()
+
+
+def _print_value_ranking_table(
+    df: pd.DataFrame,
+    cid_w: int,
+    num_w: int,
+    cost_w: int,
+) -> None:
+    """Print a value-ranking table sorted by overall_mean descending."""
+    # Only include candidates that have both overall_mean and cost_per_movie
+    value_df = df[["overall_mean", "cost_per_movie"]].dropna()
+    if value_df.empty:
+        return
+
+    value_df = value_df.copy()
+    # Scale cost to per-1K movies for easier reading
+    value_df["cost_per_1k"] = value_df["cost_per_movie"] * 1_000
+    value_sorted = value_df.sort_values("overall_mean", ascending=False)
+
+    cost_1k_w = 14
+    print()
+    val_header = (
+        f"{'candidate_id':<{cid_w}}"
+        f"  {'overall':>{num_w}}"
+        f"  {'cost/1K movies':>{cost_1k_w}}"
+    )
+    print(val_header)
+    print("-" * len(val_header))
+
+    for cid, row in value_sorted.iterrows():
+        overall = row["overall_mean"]
+        cost_1k = row["cost_per_1k"]
+        cost_str = f"${cost_1k:>{cost_1k_w - 1},.2f}"
+        print(
+            f"{cid:<{cid_w}}"
+            f"  {overall:>{num_w}.2f}"
+            f"  {cost_str}"
+        )
 
 
 # ---------------------------------------------------------------------------

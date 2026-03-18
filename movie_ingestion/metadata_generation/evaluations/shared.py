@@ -19,7 +19,7 @@ Data loading:
 
 Score analysis:
     compute_score_summary(conn, table, score_columns, candidate_ids) — return
-    a pandas DataFrame with mean and median per candidate per scoring dimension.
+    a pandas DataFrame with mean per candidate per scoring dimension.
 
 Test corpus:
     ORIGINAL_SET_TMDB_IDS, MEDIUM_SPARSITY_TMDB_IDS, HIGH_SPARSITY_TMDB_IDS,
@@ -289,13 +289,14 @@ def compute_score_summary(
     table: str,
     score_columns: list[str],
     candidate_ids: list[str] | None = None,
+    movie_ids: list[int] | None = None,
 ) -> pd.DataFrame:
-    """Compute mean and median scores per candidate per dimension.
+    """Compute mean scores per candidate per dimension.
 
     Queries the given evaluation results table and aggregates scores by
     candidate_id. Returns a DataFrame indexed by candidate_id with columns
-    for each dimension's mean and median score (e.g., 'plot_summary_mean',
-    'plot_summary_median'), plus an 'overall_mean' column.
+    for each dimension's mean score (e.g., 'plot_summary_mean'), plus an
+    'overall_mean' column.
 
     Args:
         conn: Open connection to the eval DB.
@@ -303,19 +304,27 @@ def compute_score_summary(
         score_columns: List of score column names to aggregate
             (e.g., ['plot_summary_score', 'setting_score']).
         candidate_ids: If provided, filter to only these candidate IDs.
+        movie_ids: If provided, filter to only these movie IDs.
 
     Returns:
-        DataFrame indexed by candidate_id with mean/median columns per dimension
+        DataFrame indexed by candidate_id with mean columns per dimension
         plus an overall_mean column.
     """
     score_cols_sql = ", ".join(score_columns)
-    where_clause = ""
+    conditions: list[str] = []
     params: list = []
 
     if candidate_ids:
         placeholders = ", ".join("?" * len(candidate_ids))
-        where_clause = f"WHERE candidate_id IN ({placeholders})"
-        params = list(candidate_ids)
+        conditions.append(f"candidate_id IN ({placeholders})")
+        params.extend(candidate_ids)
+
+    if movie_ids:
+        placeholders = ", ".join("?" * len(movie_ids))
+        conditions.append(f"movie_id IN ({placeholders})")
+        params.extend(movie_ids)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     rows = conn.execute(
         f"SELECT candidate_id, {score_cols_sql} FROM {table} {where_clause}",
@@ -332,7 +341,6 @@ def compute_score_summary(
         # Strip '_score' suffix to form the human-readable dimension label
         dim = col.removesuffix("_score")
         agg[f"{dim}_mean"] = df.groupby("candidate_id")[col].mean()
-        agg[f"{dim}_median"] = df.groupby("candidate_id")[col].median()
 
     summary = pd.DataFrame(agg)
 

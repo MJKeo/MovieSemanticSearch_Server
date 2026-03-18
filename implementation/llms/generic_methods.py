@@ -32,6 +32,7 @@ class LLMProvider(Enum):
     GROQ = "groq"
     ALIBABA = "alibaba"
     ANTHROPIC = "anthropic"
+    WHAM = "wham"  # ChatGPT WHAM backend (Codex models via OAuth)
 
 
 # ===============================
@@ -442,6 +443,113 @@ async def generate_anthropic_response_async(
 
 
 # ===============================
+#     WHAM (ChatGPT Backend)
+# ===============================
+
+# WHAM base URL — ChatGPT's internal backend for Codex models (gpt-5.4, etc.)
+# The SDK appends /responses to this, so the final endpoint becomes
+# chatgpt.com/backend-api/codex/responses (the actual WHAM Responses API path).
+WHAM_BASE_URL = "https://chatgpt.com/backend-api/codex"
+
+
+async def generate_wham_response_async(
+    user_prompt: str,
+    system_prompt: str,
+    response_format: BaseModel,
+    model: str = "gpt-5.4",
+    api_key: Optional[str] = None,
+    account_id: Optional[str] = None,
+    **kwargs,
+) -> Tuple[BaseModel, int, int]:
+    """Generate a structured response via ChatGPT's WHAM backend.
+
+    Uses the OpenAI Responses API (responses.parse) against the WHAM endpoint,
+    which is accessed via ChatGPT OAuth tokens rather than standard API keys.
+
+    WHAM-specific requirements:
+      - base_url must be chatgpt.com/backend-api/wham/v1
+      - ChatGPT-Account-Id header is required
+      - store=False is mandatory
+      - User content type must be "input_text" (not "text")
+      - System prompt goes in the 'instructions' parameter
+
+    Args:
+        api_key: OAuth access_token from the ChatGPT PKCE flow.
+        account_id: ChatGPT account ID extracted from the JWT claims.
+
+    Returns a tuple of (parsed_response, input_tokens, output_tokens).
+    """
+    if not api_key or not account_id:
+        raise ValueError(
+            "WHAM provider requires api_key and account_id from ChatGPT OAuth. "
+            "Ensure get_valid_auth() is called before making WHAM requests."
+        )
+
+    # Create a per-call client scoped to the WHAM endpoint with the
+    # account ID header. A new client per call avoids stale-token issues
+    # since OAuth tokens are short-lived.
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=WHAM_BASE_URL,
+        default_headers={"ChatGPT-Account-Id": account_id},
+    )
+
+    # Map common kwargs to Responses API parameter names.
+    # The caller may pass max_tokens (chat.completions convention)
+    # but the Responses API uses max_output_tokens.
+    max_output_tokens = kwargs.pop("max_tokens", kwargs.pop("max_output_tokens", None))
+    temperature = kwargs.pop("temperature", None)
+    verbosity = kwargs.pop("verbosity", None)
+
+    # Responses API uses a nested reasoning object: {"effort": "low"|"medium"|"high"}
+    # Accept reasoning_effort as a flat kwarg for caller convenience.
+    reasoning_effort = kwargs.pop("reasoning_effort", None)
+
+    # Build optional params dict — only include non-None values
+    optional_params = {}
+    if max_output_tokens is not None:
+        optional_params["max_output_tokens"] = max_output_tokens
+    if temperature is not None:
+        optional_params["temperature"] = temperature
+    if verbosity is not None:
+        optional_params["verbosity"] = verbosity
+    if reasoning_effort is not None:
+        optional_params["reasoning"] = {"effort": reasoning_effort}
+
+    try:
+        # WHAM requires stream=True for all requests. responses.parse() does
+        # not support streaming, so we use responses.stream() with text_format
+        # which gives us both mandatory streaming AND automatic Pydantic parsing.
+        async with client.responses.stream(
+            model=model,
+            instructions=system_prompt,
+            input=[{
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_prompt}],
+            }],
+            text_format=response_format,
+            store=False,
+            **optional_params,
+        ) as stream:
+            response = await stream.get_final_response()
+
+        parsed = response.output_parsed
+        if parsed is None:
+            raise ValueError(
+                "WHAM response did not contain parsed output. "
+                "The model may have refused or returned an unexpected format."
+            )
+
+        usage = response.usage
+        input_tokens = usage.input_tokens if usage else 0
+        output_tokens = usage.output_tokens if usage else 0
+
+        return parsed, input_tokens, output_tokens
+    except Exception as e:
+        raise ValueError(f"WHAM async failed to generate response: {e}")
+
+
+# ===============================
 #     Unified Routing Method
 # ===============================
 
@@ -455,6 +563,7 @@ _PROVIDER_DISPATCH = {
     LLMProvider.GROQ: generate_groq_response_async,
     LLMProvider.ALIBABA: generate_alibaba_response_async,
     LLMProvider.ANTHROPIC: generate_anthropic_response_async,
+    LLMProvider.WHAM: generate_wham_response_async,
 }
 
 # Providers whose async function does not accept a `model` parameter
