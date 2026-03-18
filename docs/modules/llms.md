@@ -26,7 +26,7 @@ lives in `movie_ingestion/metadata_generation/`. See
 
 | File | Purpose |
 |------|---------|
-| `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Six providers: OpenAI, Kimi, Gemini, Groq, Alibaba, Anthropic. Embeddings via OpenAI `text-embedding-3-small` (1536 dims). |
+| `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Seven providers: OpenAI, Kimi, Gemini, Groq, Alibaba, Anthropic, WHAM. Embeddings via OpenAI `text-embedding-3-small` (1536 dims). |
 | `query_understanding_methods.py` | Search-time DAG: 5 async functions that run in parallel with dependency management. Uses Kimi for all QU calls. Redis caching planned but not yet implemented (key format: `qu:v{N}:{hash}`, TTL 1 day). |
 | `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. Superseded by `movie_ingestion/metadata_generation/generators/`. Not used in the active pipeline. Provides `TokenUsage` NamedTuple (imported by generators). |
 
@@ -44,7 +44,7 @@ lives in `movie_ingestion/metadata_generation/`. See
 
 ## LLM Provider Architecture
 
-Six providers are supported, all accessed through `generate_llm_response_async`:
+Seven providers are supported, all accessed through `generate_llm_response_async`:
 
 | Provider | Enum | Client | SDK | Structured Output Pattern |
 |----------|------|--------|-----|--------------------------|
@@ -54,6 +54,7 @@ Six providers are supported, all accessed through `generate_llm_response_async`:
 | Groq | `LLMProvider.GROQ` | `async_groq_client` | `groq` | `json_schema` response_format with `strict: False` |
 | Alibaba/Qwen | `LLMProvider.ALIBABA` | `async_alibaba_client` | `openai` (DashScope compatible) | `chat.completions.parse()` with Pydantic model |
 | Anthropic | `LLMProvider.ANTHROPIC` | `async_anthropic_client` | `anthropic` | Tool-use pattern: schema registered as a tool, `tool_choice` forces the model to call it |
+| WHAM | `LLMProvider.WHAM` | per-call `AsyncOpenAI` | `openai` | `responses.stream()` with `text_format` (Responses API, requires streaming) |
 
 **Unified router (`generate_llm_response_async`)**: Dispatch table
 `_PROVIDER_DISPATCH` maps `LLMProvider` → async function. Kimi is
@@ -116,5 +117,13 @@ partial DAG results.
 - **`budget_tokens` is popped before forwarding** to the Anthropic API —
   it is not a native Anthropic parameter. Passing it through would cause
   an API error.
+- **WHAM requires `api_key` (OAuth access_token) and `account_id`** at every
+  call site. Call `get_valid_auth()` from `evaluations/openai_oauth.py` once
+  before constructing concurrent tasks, then pass the result through.
+  WHAM is evaluation-only; it uses `responses.stream()` (Responses API),
+  not `chat.completions`. With any `reasoning_effort` other than `"none"`,
+  GPT-5.4 rejects `temperature`, `top_p`, `max_output_tokens`, and
+  `logprobs`. See ADR-030.
 - Required env vars: `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, `GOOGLE_API_KEY`,
-  `GROQ_API_KEY`, `ALIBABA_API_KEY`, `ANTHROPIC_API_KEY`.
+  `GROQ_API_KEY`, `ALIBABA_API_KEY`, `ANTHROPIC_API_KEY`. WHAM uses OAuth
+  tokens managed by `evaluations/openai_oauth.py` (no dedicated env var).

@@ -467,7 +467,7 @@ async def generate_wham_response_async(
     which is accessed via ChatGPT OAuth tokens rather than standard API keys.
 
     WHAM-specific requirements:
-      - base_url must be chatgpt.com/backend-api/wham/v1
+      - base_url must be chatgpt.com/backend-api/codex
       - ChatGPT-Account-Id header is required
       - store=False is mandatory
       - User content type must be "input_text" (not "text")
@@ -494,11 +494,13 @@ async def generate_wham_response_async(
         default_headers={"ChatGPT-Account-Id": account_id},
     )
 
-    # Map common kwargs to Responses API parameter names.
-    # The caller may pass max_tokens (chat.completions convention)
-    # but the Responses API uses max_output_tokens.
-    max_output_tokens = kwargs.pop("max_tokens", kwargs.pop("max_output_tokens", None))
-    temperature = kwargs.pop("temperature", None)
+    # WHAM does not support max_tokens/max_output_tokens at all, and rejects
+    # temperature when reasoning_effort != "none". Pop them from kwargs so
+    # they don't leak into the API call if a caller passes them generically.
+    kwargs.pop("max_tokens", None)
+    kwargs.pop("max_output_tokens", None)
+    kwargs.pop("temperature", None)
+
     verbosity = kwargs.pop("verbosity", None)
 
     # Responses API uses a nested reasoning object: {"effort": "low"|"medium"|"high"}
@@ -507,10 +509,6 @@ async def generate_wham_response_async(
 
     # Build optional params dict — only include non-None values
     optional_params = {}
-    if max_output_tokens is not None:
-        optional_params["max_output_tokens"] = max_output_tokens
-    if temperature is not None:
-        optional_params["temperature"] = temperature
     if verbosity is not None:
         optional_params["verbosity"] = verbosity
     if reasoning_effort is not None:

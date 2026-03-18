@@ -39,9 +39,10 @@ increase).
 - Single EC2 t3.large instance running all services via Docker
   Compose (2 vCPU, 8 GB RAM)
 - LLM providers: Moonshot/Kimi API for search-time query
-  understanding (structured output); OpenAI GPT-5-mini for
-  ingestion-time vector metadata generation (subject to change
-  pending model evaluation); OpenAI text-embedding-3-small
+  understanding (structured output); ingestion-time vector metadata
+  generation model pending selection (evaluation running across
+  Gemini 2.5 Flash Lite, GPT-5-mini, GPT-5.4-nano and variants);
+  OpenAI text-embedding-3-small
   (1536 dims) for all embeddings
 - ~100K movies after quality filtering from ~1M TMDB daily exports
 - US-focused: watch provider data, IMDB proxy geo-targeting, and
@@ -64,14 +65,15 @@ Processes TMDB daily exports through a multi-stage funnel:
 2. TMDB detail fetching (~800K movies)
 3. Quality scoring and filtering (~800K → ~100K)
 4. IMDB scraping via GraphQL (~100K enriched)
-5. IMDB quality filtering (hard filters + combined TMDB+IMDB quality scorer)
-6. LLM metadata generation (in development)
+5. IMDB quality filtering (combined TMDB+IMDB quality scorer; score is the sole filter)
+6. LLM metadata generation (partially implemented — generator contract established, evaluation pipeline running, batch API integration pending model selection)
 7. Batch embedding (in development)
 8. Database ingestion into Postgres, Qdrant, Redis (implemented)
 
-Stages 1-5 and 8 are operational. Stages 6-7 still need to be
-fleshed out and implemented. All operational stages are crash-safe
-and idempotent.
+Stages 1-5 and 8 are operational. Stage 6 is partially implemented
+(evaluation pipeline active, production model pending selection).
+Stage 7 still needs implementation. All operational stages are
+crash-safe and idempotent.
 
 ## Module Map
 

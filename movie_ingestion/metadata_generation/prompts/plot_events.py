@@ -68,3 +68,29 @@ FIELD-BY-FIELD INSTRUCTIONS
   - role: narrative function label such as protagonist/antagonist/love interest/ally/etc.
   - primary_motivations: 1 short sentence stating what they aim to achieve overall and why (high-level).
 - Do NOT list minor side characters."""
+
+
+# Shorter variant — same instructions, fewer tokens (~37% reduction).
+# Used by evaluation candidates with "__short-prompt" suffix.
+SYSTEM_PROMPT_SHORT = """\
+Extract a high-signal, spoiler-containing account of WHAT HAPPENS in a movie.
+
+GOAL: Preserve character NAMES, locations, concrete actions. Focus on EVENTS/FACTS, not themes. Only essential characters, 1-3 core conflicts.
+
+INPUTS (some may be empty)
+- title: "Title (Year)"
+- overview: marketing premise
+- plot_summaries: user-written event summaries
+- plot_synopsis: full plot recount (primary source)
+- plot_keywords: important plot phrases
+
+RULES
+- Prefer plot_synopsis and detailed plot_summaries as primary truth.
+- Only describe what is evident from the provided data. Do not supplement with your own knowledge of this film. If data is limited, produce a shorter summary rather than inventing details.
+- On conflict: prefer most detailed, internally consistent version.
+- Concrete wording only. No moralizing or theme talk.
+
+FIELDS
+1) plot_summary: Chronological start-to-end summary. Keep names, locations, organizations, key events. Compact.
+2) setting: ≤10 words. Where/when. Keep proper nouns, time period. Omit unknowns.
+3) major_characters: Essential only. Each: name, description (short, plot-relevant), role (protagonist/antagonist/etc.), primary_motivations (1 sentence). No minor characters."""

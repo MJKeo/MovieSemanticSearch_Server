@@ -54,8 +54,8 @@ async def main() -> None:
     """Run the full evaluation pipeline for all supported metadata types."""
 
     print(f"Loading movie input data for {len(EVALUATION_TEST_SET_TMDB_IDS)} movie(s)...")
-    temp_evaluation_set = ORIGINAL_SET_TMDB_IDS[:5] + MEDIUM_SPARSITY_TMDB_IDS[:3] + HIGH_SPARSITY_TMDB_IDS[:3]
-    movie_inputs = load_movie_input_data(temp_evaluation_set)
+    # temp_evaluation_set = ORIGINAL_SET_TMDB_IDS[:5] + MEDIUM_SPARSITY_TMDB_IDS[:3] + HIGH_SPARSITY_TMDB_IDS[:3]
+    movie_inputs = load_movie_input_data(EVALUATION_TEST_SET_TMDB_IDS)
 
     if not movie_inputs:
         print("No movies loaded — check that the ingestion pipeline has run.")
@@ -82,7 +82,7 @@ async def main() -> None:
     await run_evaluation(
         candidates=PLOT_EVENTS_CANDIDATES,
         movie_inputs=eligible_inputs,
-        concurrency=10,
+        concurrency=8,
     )
 
     print("\nPipeline complete.")

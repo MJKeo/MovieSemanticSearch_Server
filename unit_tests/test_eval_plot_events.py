@@ -40,6 +40,10 @@ from movie_ingestion.metadata_generation.evaluations.shared import (
     get_eval_connection,
 )
 from movie_ingestion.metadata_generation.inputs import MovieInputData
+from movie_ingestion.metadata_generation.prompts.plot_events import (
+    SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT,
+    SYSTEM_PROMPT_SHORT as SHORT_SYSTEM_PROMPT,
+)
 from movie_ingestion.metadata_generation.schemas import (
     MajorCharacter,
     PlotEventsOutput,
@@ -541,8 +545,8 @@ class TestGenerateReferenceResponses:
             "First movie's row was not committed to the DB before the second LLM call"
         )
 
-    async def test_max_tokens_4096_in_reference_generation_calls(self, tmp_path: Path) -> None:
-        """Both the primary LLM call and the retry call explicitly use max_tokens=4096."""
+    async def test_reasoning_effort_low_in_reference_generation_calls(self, tmp_path: Path) -> None:
+        """Both the primary LLM call and the retry call use reasoning_effort='low'."""
         mock_output = _make_plot_events_output()
         # First call raises 429 to trigger retry, both calls' kwargs are captured
         captured_kwargs: list[dict] = []
@@ -562,8 +566,8 @@ class TestGenerateReferenceResponses:
             await generate_reference_responses(movie_inputs, db_path=tmp_path / "eval.db")
 
         assert len(captured_kwargs) == 2, "Expected both the primary call and the retry"
-        assert captured_kwargs[0]["max_tokens"] == 4096
-        assert captured_kwargs[1]["max_tokens"] == 4096
+        assert captured_kwargs[0]["reasoning_effort"] == "low"
+        assert captured_kwargs[1]["reasoning_effort"] == "low"
 
 
 # ---------------------------------------------------------------------------
@@ -597,8 +601,8 @@ def _insert_reference(conn, tmdb_id: int) -> None:
 class TestJudgeCallParameters:
     """Tests for the judge LLM call parameters inside run_evaluation._evaluate_one."""
 
-    async def test_judge_call_uses_max_tokens_4096(self, tmp_path: Path) -> None:
-        """The judge generate_llm_response_async call passes max_tokens=4096."""
+    async def test_judge_call_uses_reasoning_effort_low(self, tmp_path: Path) -> None:
+        """The judge generate_llm_response_async call passes reasoning_effort='low'."""
         db_path = tmp_path / "eval.db"
         tmdb_id = 800
         conn = get_eval_connection(db_path)
@@ -624,11 +628,11 @@ class TestJudgeCallParameters:
                 db_path=db_path,
             )
 
-        assert len(judge_call_kwargs) == 1, "Expected exactly one judge call"
-        assert judge_call_kwargs[0]["max_tokens"] == 4096
+        assert len(judge_call_kwargs) >= 1, "Expected at least one judge call"
+        assert judge_call_kwargs[0]["reasoning_effort"] == "low"
 
-    async def test_judge_call_uses_temperature_0_2(self, tmp_path: Path) -> None:
-        """The judge generate_llm_response_async call passes temperature=0.2."""
+    async def test_judge_call_does_not_pass_temperature(self, tmp_path: Path) -> None:
+        """The judge call does not include temperature in its kwargs."""
         db_path = tmp_path / "eval.db"
         tmdb_id = 801
         conn = get_eval_connection(db_path)
@@ -654,8 +658,8 @@ class TestJudgeCallParameters:
                 db_path=db_path,
             )
 
-        assert len(judge_call_kwargs) == 1, "Expected exactly one judge call"
-        assert judge_call_kwargs[0]["temperature"] == 0.2
+        assert len(judge_call_kwargs) >= 1, "Expected at least one judge call"
+        assert "temperature" not in judge_call_kwargs[0]
 
     async def test_candidate_generation_call_does_not_receive_temperature_from_judge(
         self, tmp_path: Path
@@ -689,3 +693,75 @@ class TestJudgeCallParameters:
         assert len(candidate_call_kwargs) == 1, "Expected exactly one candidate generation call"
         # temperature=0.2 belongs to the judge call, not the candidate call
         assert "temperature" not in candidate_call_kwargs[0]
+
+
+# ---------------------------------------------------------------------------
+# Tests: SYSTEM_PROMPT_SHORT invariants
+# ---------------------------------------------------------------------------
+
+
+class TestSystemPromptShort:
+    """Tests for the short system prompt variant used by evaluation candidates."""
+
+    def test_system_prompt_short_is_nonempty_string(self) -> None:
+        """SYSTEM_PROMPT_SHORT is a non-empty string."""
+        assert isinstance(SHORT_SYSTEM_PROMPT, str)
+        assert len(SHORT_SYSTEM_PROMPT) > 0
+
+    def test_system_prompt_short_contains_no_hallucination_rule(self) -> None:
+        """The critical no-hallucination instruction is preserved in the short variant."""
+        # The module docstring calls this out as an essential invariant
+        assert "Only describe what is evident from the provided data" in SHORT_SYSTEM_PROMPT
+
+    def test_system_prompt_short_mentions_all_output_fields(self) -> None:
+        """Short prompt mentions all 3 output fields: plot_summary, setting, major_characters."""
+        assert "plot_summary" in SHORT_SYSTEM_PROMPT
+        assert "setting" in SHORT_SYSTEM_PROMPT
+        assert "major_characters" in SHORT_SYSTEM_PROMPT
+
+    def test_system_prompt_short_is_shorter_than_default(self) -> None:
+        """The short prompt is strictly shorter than the default (the whole point of the variant)."""
+        assert len(SHORT_SYSTEM_PROMPT) < len(DEFAULT_SYSTEM_PROMPT)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Short-prompt candidate configuration consistency
+# ---------------------------------------------------------------------------
+
+
+class TestShortPromptCandidates:
+    """Tests for the short-prompt evaluation candidates in PLOT_EVENTS_CANDIDATES."""
+
+    def test_short_prompt_candidates_use_short_system_prompt(self) -> None:
+        """All candidates with '__short-prompt' in their ID use SHORT_SYSTEM_PROMPT."""
+        short_prompt_candidates = [
+            c for c in PLOT_EVENTS_CANDIDATES
+            if "__short-prompt" in c.candidate_id
+        ]
+        assert len(short_prompt_candidates) > 0, "No short-prompt candidates found"
+        for c in short_prompt_candidates:
+            assert c.system_prompt is SHORT_SYSTEM_PROMPT, (
+                f"Candidate {c.candidate_id} has '__short-prompt' in ID "
+                f"but does not use SHORT_SYSTEM_PROMPT"
+            )
+
+    def test_short_prompt_candidates_naming_convention(self) -> None:
+        """Every candidate using SHORT_SYSTEM_PROMPT has '__short-prompt' in its candidate_id."""
+        for c in PLOT_EVENTS_CANDIDATES:
+            if c.system_prompt is SHORT_SYSTEM_PROMPT:
+                assert "__short-prompt" in c.candidate_id, (
+                    f"Candidate {c.candidate_id} uses SHORT_SYSTEM_PROMPT "
+                    f"but lacks '__short-prompt' suffix"
+                )
+
+    def test_non_short_prompt_candidates_use_default_system_prompt(self) -> None:
+        """Candidates without '__short-prompt' in their ID use DEFAULT_SYSTEM_PROMPT."""
+        non_short_candidates = [
+            c for c in PLOT_EVENTS_CANDIDATES
+            if "__short-prompt" not in c.candidate_id
+        ]
+        for c in non_short_candidates:
+            assert c.system_prompt is DEFAULT_SYSTEM_PROMPT, (
+                f"Candidate {c.candidate_id} lacks '__short-prompt' in ID "
+                f"but does not use DEFAULT_SYSTEM_PROMPT"
+            )

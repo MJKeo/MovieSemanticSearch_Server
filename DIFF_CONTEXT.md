@@ -1,89 +1,41 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
-## Switch evaluation pipeline from Anthropic to GPT-5.4 via ChatGPT WHAM backend
-Files: `movie_ingestion/metadata_generation/evaluations/openai_oauth.py` (new),
-`implementation/llms/generic_methods.py`, `movie_ingestion/metadata_generation/evaluations/plot_events.py`,
-`movie_ingestion/metadata_generation/evaluations/run_evaluations_pipeline.py`
+## Clean up dead WHAM parameter handling
+Files: implementation/llms/generic_methods.py | Removed misleading max_output_tokens/temperature extraction from generate_wham_response_async — WHAM rejects both. Now explicitly pops and discards them with a comment explaining why, keeping only verbosity and reasoning_effort which WHAM supports.
+
+## TODO cleanup
+Files: docs/TODO.md | Removed 4 completed items (Stage 5 filter run, debug print, WHAM e2e verification, WHAM param cleanup).
+
+## Weighted overall_mean for plot_events evaluations
+Files: movie_ingestion/metadata_generation/evaluations/shared.py, plot_events.py, analyze_results.py | Added score_weights parameter to compute_score_summary so overall_mean is a weighted average instead of a simple mean. Plot events weights: summary 3x, grounded 2x, characters 1x, setting 1x.
+
+## Test plan + test implementation for current changes
+Files: unit_tests/TEST_PLAN.md, unit_tests/test_generic_methods.py, unit_tests/test_eval_plot_events.py, unit_tests/test_eval_run_pipeline.py
+
+### New tests added
+- **WHAM provider tests** (16 tests in test_generic_methods.py): parameter stripping (max_tokens, max_output_tokens, temperature), supported param forwarding (verbosity, reasoning_effort as nested object), validation errors (missing api_key/account_id, null parsed output), exception wrapping, return value shape, client construction (base_url, headers), stream call structure (store=False, instructions param).
+- **WHAM router tests** (3 tests): dispatch via _PROVIDER_DISPATCH, presence in dispatch table, LLMProvider enum includes WHAM.
+- **Short prompt invariant tests** (4 tests in test_eval_plot_events.py): non-empty, contains no-hallucination rule, mentions all output fields, shorter than default.
+- **Short-prompt candidate configuration tests** (3 tests): naming convention consistency, prompt assignment verification, non-short candidates use default.
+
+### Stale tests fixed
+- test_eval_plot_events.py: Replaced 3 tests that asserted max_tokens=4096 and temperature=0.2 in LLM calls (source code never passes these). Now test reasoning_effort='low' (which IS passed) and verify temperature is absent.
+- test_eval_run_pipeline.py: Replaced dead-code test (validated commented-out temp_evaluation_set) with tests verifying EVALUATION_TEST_SET_TMDB_IDS contains all sparsity subsets and has no duplicates.
+
+## Documentation staleness fixes (docs audit)
+Files: docs/decisions/ADR-028-llm-evaluation-pipeline-design.md, docs/decisions/ADR-029-anthropic-extended-thinking-integration.md, docs/decisions/ADR-026-multi-provider-llm-routing.md, docs/decisions/ADR-009-imdb-graphql-migration.md, docs/decisions/ADR-016-combined-imdb-quality-scorer.md, docs/PROJECT.md, docs/TODO.md, movie_ingestion/metadata_generation/evaluations/plot_events.py, implementation/llms/generic_methods.py
 
 ### Intent
-Replace Claude Opus 4.6 (reference) and Claude Sonnet 4.6 (judge) with GPT-5.4 accessed
-via ChatGPT OAuth through the WHAM backend, avoiding the standard OpenAI API which
-requires an organization_id we can't provide via OAuth.
+Fix 10 stale documentation items identified by the docs-auditor scan.
 
-### Key Decisions
-- **Separate `LLMProvider.WHAM`** rather than overloading the existing OpenAI provider,
-  because WHAM uses the Responses API (`responses.stream()`) not `chat.completions`,
-  requires different auth (OAuth + ChatGPT-Account-Id header), and has WHAM-specific
-  constraints (stream=True mandatory, store=False mandatory, input_text content type).
-- **`openai_oauth.py` created from scratch** — full OAuth2 PKCE flow with browser-based
-  consent, JWT decode for account_id/expiry extraction (no signature verification,
-  matching Codex CLI pattern), token persistence to `evaluation_data/openai_oauth_tokens.json`,
-  and automatic refresh when expired.
-- **RFC 8693 token exchange was a dead end** — standard API path requires `organization_id`
-  in JWT which OAuth doesn't provide. WHAM bypasses this entirely by using the raw
-  access_token directly.
-- **Base URL is `chatgpt.com/backend-api/codex`** (not `/wham/v1`) — SDK appends
-  `/responses` to base_url, so the final endpoint is `/backend-api/codex/responses`.
-- **Must use `responses.stream()` not `responses.parse()`** — WHAM requires `stream=True`
-  for all requests; `parse()` doesn't support streaming. `stream()` with `text_format`
-  gives both mandatory streaming and automatic Pydantic parsing.
-- **`reasoning_effort` mapped to nested `reasoning.effort`** for the Responses API.
-  Both reference and judge calls use `reasoning_effort="low"` for speed.
-
-### Planning Context
-Iterated through several approaches: initial PKCE → added RFC 8693 exchange →
-removed exchange after repeated 401 "missing organization_id" → switched to WHAM
-backend based on external guide. Plan file at `.claude/plans/adaptive-snacking-hopcroft.md`.
-
-### Testing Notes
-- Full end-to-end WHAM flow not yet verified (OAuth works, structured output via
-  streaming parse not yet confirmed working with PlotEventsOutput/PlotEventsJudgeOutput)
-- `max_tokens` → `max_output_tokens` mapping needs confirmation with actual calls
-- Token refresh flow tested implicitly (tokens saved with expiry from JWT)
-
-## Multi-run judge averaging for plot_events evaluation
-Files: `movie_ingestion/metadata_generation/evaluations/plot_events.py`
-
-### Intent
-Reduce LLM-as-judge scoring noise by running the judge 3 times per (candidate, movie) pair and storing averaged scores.
-
-### Approach
-- Added `judge_runs: int = 3` parameter to `run_evaluation()`
-- Judge calls fire in parallel via `asyncio.gather` within each evaluation task's semaphore slot
-- Scores averaged across runs (stored as REAL, not INTEGER)
-- Reasoning concatenated with `--- Run N ---` delimiters for transparency
-- Tokens summed across runs (actual API cost)
-- Schema: score columns changed from INTEGER to REAL, added `judge_runs` column with idempotent ALTER TABLE migration
-- Error handling: fail entire evaluation if any run fails (no partial averages)
-
-## Parallelize reference generation and spread evaluation across candidates
-Files: `movie_ingestion/metadata_generation/evaluations/plot_events.py`,
-`movie_ingestion/metadata_generation/evaluations/run_evaluations_pipeline.py`
-
-### Intent
-Speed up Phase 0 (serial → parallel) and distribute Phase 1 across providers to reduce rate-limit pressure.
-
-### Approach
-- **Phase 0**: Converted serial for-loop to `asyncio.gather` + semaphore with `concurrency=15` (aggressive default). Per-request 429 retry preserved inside each task.
-- **Phase 1**: Swapped task list iteration from `candidates × movies` to `movies × candidates` so concurrent semaphore slots fill with different candidates/providers. Bumped call-site concurrency from 3 to 10.
-
-## Fix unsupported WHAM parameters in judge call
-Files: `movie_ingestion/metadata_generation/evaluations/plot_events.py`
-
-### Intent
-Remove `temperature` from judge kwargs — not supported by WHAM/reasoning models (GPT-5.4 with reasoning_effort != "none"). Also confirmed `max_tokens`/`max_output_tokens` not supported by WHAM endpoint.
-
-### Key Finding
-Per OpenAI docs: GPT-5.4 only supports `temperature`, `top_p`, and `logprobs` when `reasoning_effort="none"`. With any other reasoning effort, these raise errors. WHAM also rejects `max_output_tokens`.
-
-## Simplify analyze_results: drop median, reorder columns, add value/subset tables
-Files: `movie_ingestion/metadata_generation/evaluations/shared.py`, `movie_ingestion/metadata_generation/evaluations/analyze_results.py`
-Why: Median added noise to the output without providing actionable insight; dense/sparse breakdowns and a cost summary help pick the best value candidate.
-Approach:
-- `compute_score_summary` now computes only mean (removed median aggregation)
-- Added `movie_ids` filter parameter to `compute_score_summary` for subset analysis
-- Score table shows `overall_mean` as the first column after `candidate_id`
-- New value-ranking table shows `candidate_id`, `overall_mean`, and `cost/1K movies`, sorted by overall descending
-- Two additional score tables: "Dense movie performance" (ORIGINAL_SET_TMDB_IDS) and "Sparse movie performance" (MEDIUM + HIGH sparsity IDs)
-- Extracted `_print_score_table` helper to avoid duplicating score table formatting
+### Key changes
+- ADR-028: Updated Phase 0/1 descriptions from Claude Opus/Anthropic to GPT-5.4/WHAM (reflects ADR-030 switch)
+- ADR-029: Corrected Consequences section — judge no longer uses Anthropic
+- ADR-026: Noted expansion from 5 to 7 providers (ANTHROPIC via ADR-029, WHAM via ADR-030)
+- ADR-009: Updated output format from per-movie JSON to SQLite (reflects ADR-023 migration)
+- ADR-016: Updated data loading description from per-movie JSON to tracker DB tables (reflects ADR-023)
+- PROJECT.md: Fixed Stage 5 (removed "hard filters"), Stage 6 (partially implemented, not "needs to be fleshed out"), and LLM provider (evaluation running, no model selected yet)
+- TODO.md: Corrected request_builder.py path from evaluations/ to metadata_generation/
+- plot_events.py: Fixed module docstring (Claude Opus → GPT-5.4/WHAM)
+- generic_methods.py: Fixed WHAM docstring endpoint (wham/v1 → codex)

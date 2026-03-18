@@ -18,8 +18,9 @@ Data loading:
     MovieInputData for the 70 test-corpus movies from the ingestion tracker.
 
 Score analysis:
-    compute_score_summary(conn, table, score_columns, candidate_ids) — return
-    a pandas DataFrame with mean per candidate per scoring dimension.
+    compute_score_summary(conn, table, score_columns, ...) — return a pandas
+    DataFrame with mean per candidate per scoring dimension. Supports optional
+    score_weights for weighted overall_mean computation.
 
 Test corpus:
     ORIGINAL_SET_TMDB_IDS, MEDIUM_SPARSITY_TMDB_IDS, HIGH_SPARSITY_TMDB_IDS,
@@ -290,6 +291,7 @@ def compute_score_summary(
     score_columns: list[str],
     candidate_ids: list[str] | None = None,
     movie_ids: list[int] | None = None,
+    score_weights: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Compute mean scores per candidate per dimension.
 
@@ -305,6 +307,10 @@ def compute_score_summary(
             (e.g., ['plot_summary_score', 'setting_score']).
         candidate_ids: If provided, filter to only these candidate IDs.
         movie_ids: If provided, filter to only these movie IDs.
+        score_weights: If provided, a mapping from score column name to its
+            weight for computing overall_mean as a weighted average. Columns
+            not in the dict get weight 1.0. If None, all columns are equally
+            weighted (simple average).
 
     Returns:
         DataFrame indexed by candidate_id with mean columns per dimension
@@ -344,8 +350,22 @@ def compute_score_summary(
 
     summary = pd.DataFrame(agg)
 
-    # overall_mean averages across all dimension means for a single aggregate view
+    # overall_mean: weighted average across dimension means (equal weights if none given)
     mean_cols = [c for c in summary.columns if c.endswith("_mean")]
-    summary["overall_mean"] = summary[mean_cols].mean(axis=1)
+    if score_weights:
+        # Build weight series aligned to mean_cols. Each mean_col is "{dim}_mean",
+        # and score_columns are "{dim}_score", so we map back to look up weights.
+        weights = []
+        for mc in mean_cols:
+            # Reverse the dim_mean → dim_score mapping to find the weight
+            dim = mc.removesuffix("_mean")
+            score_col = f"{dim}_score"
+            weights.append(score_weights.get(score_col, 1.0))
+        weight_series = pd.Series(weights, index=mean_cols)
+        summary["overall_mean"] = (
+            summary[mean_cols].mul(weight_series).sum(axis=1) / weight_series.sum()
+        )
+    else:
+        summary["overall_mean"] = summary[mean_cols].mean(axis=1)
 
     return summary.sort_values("overall_mean", ascending=False)

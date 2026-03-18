@@ -85,18 +85,21 @@ class TestFilterPlotEventsEligible:
 
 
 # ---------------------------------------------------------------------------
-# Tests: temp evaluation set (run_evaluations_pipeline.main)
+# Tests: evaluation test set composition
 # ---------------------------------------------------------------------------
 
 
-class TestTempEvaluationSet:
-    def test_temp_evaluation_set_is_proper_subset_of_full_set(self) -> None:
-        """The temporary sliced set has exactly 11 IDs, all contained in EVALUATION_TEST_SET_TMDB_IDS."""
-        # Mirrors the slice expression used in main()
-        temp_set = ORIGINAL_SET_TMDB_IDS[:5] + MEDIUM_SPARSITY_TMDB_IDS[:3] + HIGH_SPARSITY_TMDB_IDS[:3]
-
-        assert len(temp_set) == 11
-
+class TestEvaluationTestSet:
+    def test_evaluation_test_set_contains_all_sparsity_subsets(self) -> None:
+        """EVALUATION_TEST_SET_TMDB_IDS is a superset of all sparsity category lists."""
         full_set = set(EVALUATION_TEST_SET_TMDB_IDS)
-        for tmdb_id in temp_set:
-            assert tmdb_id in full_set, f"tmdb_id {tmdb_id} from temp set not in EVALUATION_TEST_SET_TMDB_IDS"
+        for tmdb_id in ORIGINAL_SET_TMDB_IDS:
+            assert tmdb_id in full_set, f"ORIGINAL tmdb_id {tmdb_id} not in EVALUATION_TEST_SET_TMDB_IDS"
+        for tmdb_id in MEDIUM_SPARSITY_TMDB_IDS:
+            assert tmdb_id in full_set, f"MEDIUM_SPARSITY tmdb_id {tmdb_id} not in EVALUATION_TEST_SET_TMDB_IDS"
+        for tmdb_id in HIGH_SPARSITY_TMDB_IDS:
+            assert tmdb_id in full_set, f"HIGH_SPARSITY tmdb_id {tmdb_id} not in EVALUATION_TEST_SET_TMDB_IDS"
+
+    def test_evaluation_test_set_has_no_duplicates(self) -> None:
+        """All IDs in EVALUATION_TEST_SET_TMDB_IDS are unique."""
+        assert len(EVALUATION_TEST_SET_TMDB_IDS) == len(set(EVALUATION_TEST_SET_TMDB_IDS))

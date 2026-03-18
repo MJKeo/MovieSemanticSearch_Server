@@ -4,17 +4,6 @@ Tracks actionable items discovered during development sessions.
 Items here are things to address when the relevant work begins,
 not urgent fixes.
 
-## Run Stage 5 filter on scored movies
-**Context:** v4 scorer, threshold analysis, and filter script are all
-complete. Per-group thresholds determined (has_providers=0.486,
-no_providers_new=0.55, no_providers_old=0.654). Filter script at
-imdb_quality_scoring/imdb_filter.py is ready to run. Advances survivors
-from imdb_quality_calculated → imdb_quality_passed.
-**When:** Next session — run the filter to produce the final candidate set.
-**See:** movie_ingestion/imdb_quality_scoring/imdb_filter.py,
-movie_ingestion/scoring_utils.py (IMDB_QUALITY_THRESHOLDS)
-
-
 ## Include imdb_vote_count in search reranking quality boost
 **Context:** The search reranking process should use `imdb_vote_count` as
 a signal in its automatic quality and relevance booster. This likely
@@ -66,39 +55,11 @@ calibration may still need adjustment based on observed judge behavior.
 **See:** movie_ingestion/metadata_generation/evaluations/plot_events.py (JUDGE_SYSTEM_PROMPT)
 
 
-## Implement request_builder.py in evaluations package
-**Context:** `movie_ingestion/metadata_generation/evaluations/request_builder.py`
+## Implement request_builder.py for Batch API integration
+**Context:** `movie_ingestion/metadata_generation/request_builder.py`
 is currently a stub containing only a docstring. It will be needed for
-future evaluation types that require more complex prompt assembly.
-**When:** When building the next metadata type evaluation after plot_events.
-**See:** movie_ingestion/metadata_generation/evaluations/request_builder.py
+Batch API request assembly during production-scale LLM generation.
+**When:** When building the Batch API integration for Stage 6 production runs.
+**See:** movie_ingestion/metadata_generation/request_builder.py
 
 
-## ~~Remove debug print statement from plot_events generator~~ DONE
-Removed as a side effect of the `build_plot_events_user_prompt()` extraction refactor.
-
-
-## Verify WHAM structured output end-to-end
-**Context:** The WHAM provider (`generate_wham_response_async`) has been implemented
-with `responses.stream()` + `text_format` for structured output, but hasn't been
-confirmed working end-to-end with `PlotEventsOutput` and `PlotEventsJudgeOutput`.
-OAuth flow and token refresh are working. The streaming parse path and
-`reasoning_effort="low"` parameter need runtime verification.
-**Update:** `temperature` removed from judge call (not supported with reasoning_effort != "none").
-`max_tokens`/`max_output_tokens` also confirmed unsupported by WHAM endpoint. The WHAM
-handler still maps `max_tokens` → `max_output_tokens` in generic_methods.py — this
-remapping code is dead for WHAM and could be cleaned up, but won't cause errors since
-callers no longer pass it.
-**When:** Next time the evaluation pipeline is run.
-**See:** `implementation/llms/generic_methods.py` (generate_wham_response_async),
-`movie_ingestion/metadata_generation/evaluations/plot_events.py`
-
-## Clean up dead WHAM parameter handling in generic_methods.py
-**Context:** `generate_wham_response_async` extracts and remaps `max_tokens` →
-`max_output_tokens` and `temperature` from kwargs, but WHAM rejects both when
-reasoning_effort != "none" (and max_output_tokens is never supported by WHAM).
-The extraction code is harmless (silently pops unused kwargs) but misleading —
-it suggests these params work. Should either remove the handling or add comments
-explaining the limitations.
-**When:** Low priority — during next cleanup pass on the LLM provider layer.
-**See:** `implementation/llms/generic_methods.py:500-513`

@@ -62,9 +62,9 @@ than managing the three-constraint bundle themselves.
 - `max_tokens` expansion formula: `budget_tokens + 4096`. The 4096
   ceiling covers the structured output; adjust if output schemas grow
   significantly larger.
-- The judge in the evaluation pipeline uses Anthropic without
-  `budget_tokens` (standard generation, `temperature=0.2`) to keep
-  scoring deterministic and cheap.
+- The judge in the evaluation pipeline now uses GPT-5.4 via WHAM
+  (see ADR-030), not Anthropic. This consequence is no longer
+  relevant to this ADR but is preserved for historical context.
 
 ## References
 

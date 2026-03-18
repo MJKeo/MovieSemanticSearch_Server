@@ -50,8 +50,9 @@ all the data previously spread across 6 pages in one response.
   movie, no partial-page logic needed.
 - Keyword scoring formula preserved from original design:
   `score = usersInterested - 0.75 * dislikes`.
-- Output format unchanged: per-movie JSON at
-  `ingestion_data/imdb/{tmdb_id}.json`.
+- Output format: originally per-movie JSON at
+  `ingestion_data/imdb/{tmdb_id}.json`; later migrated to the
+  `imdb_data` table in tracker.db (see ADR-023).
 
 ## References
 

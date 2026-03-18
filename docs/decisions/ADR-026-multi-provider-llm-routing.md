@@ -20,8 +20,9 @@ layer.
 ## Decision
 
 Add a `LLMProvider` enum and a `generate_llm_response_async` unified router
-to `implementation/llms/generic_methods.py`. Five providers are supported:
-OPENAI, KIMI, GEMINI, GROQ, ALIBABA.
+to `implementation/llms/generic_methods.py`. Originally five providers:
+OPENAI, KIMI, GEMINI, GROQ, ALIBABA. Later expanded to seven with
+ANTHROPIC (ADR-029) and WHAM (ADR-030).
 
 **Dispatch table pattern**: `_PROVIDER_DISPATCH` maps each `LLMProvider`
 to its async generation function. The router forwards provider-agnostic

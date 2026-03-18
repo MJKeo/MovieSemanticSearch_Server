@@ -4,14 +4,15 @@ Evaluation pipeline for plot_events metadata.
 Implements a two-phase pointwise evaluation:
 
 Phase 0 — generate_reference_responses():
-    Generates one reference PlotEventsOutput per movie using Claude Opus via
-    ANTHROPIC_OAUTH_KEY. References are fixed for the duration of the evaluation
-    and stored in plot_events_references. Run once before any candidate evaluation.
+    Generates one reference PlotEventsOutput per movie using GPT-5.4 via the
+    ChatGPT WHAM backend (see ADR-030). References are fixed for the duration
+    of the evaluation and stored in plot_events_references. Run once before any
+    candidate evaluation.
 
 Phase 1 — run_evaluation():
     For each (candidate, movie) pair: generates the candidate's PlotEventsOutput,
-    retrieves the reference, calls a Claude judge with the full rubric and both
-    outputs, and stores per-dimension scores and reasoning.
+    retrieves the reference, calls a GPT-5.4 judge (via WHAM) with the full rubric
+    and both outputs, and stores per-dimension scores and reasoning.
 
 Visualization — print_score_summary():
     Queries plot_events_evaluations and prints a formatted mean/median table
@@ -52,6 +53,7 @@ from movie_ingestion.metadata_generation.inputs import MovieInputData
 from movie_ingestion.metadata_generation.schemas import MajorCharacter, PlotEventsOutput
 from movie_ingestion.metadata_generation.prompts.plot_events import (
     SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT,
+    SYSTEM_PROMPT_SHORT as SHORT_SYSTEM_PROMPT,
 )
 
 # ---------------------------------------------------------------------------
@@ -243,6 +245,41 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
     #     response_format=PlotEventsOutput,
     #     kwargs={"temperature": 0.0},
     # ),
+    # -----------------------------------------------------------------------
+    # Short prompt variants — copies of active candidates using SHORT_SYSTEM_PROMPT
+    # -----------------------------------------------------------------------
+    EvaluationCandidate(
+        candidate_id="plot_events__gemini-2.5-flash-lite__think-1k__short-prompt",
+        provider=LLMProvider.GEMINI,
+        model="gemini-2.5-flash-lite",
+        system_prompt=SHORT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gemini-2.5-flash-lite__think-4k__short-prompt",
+        provider=LLMProvider.GEMINI,
+        model="gemini-2.5-flash-lite",
+        system_prompt=SHORT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5-mini__reason-low__short-prompt",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5-mini",
+        system_prompt=SHORT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "low", "verbosity": "low"},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5.4-nano__short-prompt",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5.4-nano",
+        system_prompt=SHORT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "none", "verbosity": "low"},
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -304,6 +341,15 @@ SCORE_COLUMNS = [
     "character_quality_score",
     "setting_score",
 ]
+
+# Weights for computing overall_mean — summary matters most, grounded next,
+# characters and setting are equally weighted at baseline.
+SCORE_WEIGHTS: dict[str, float] = {
+    "plot_summary_score": 3.0,
+    "groundedness_score": 2.0,
+    "character_quality_score": 1.0,
+    "setting_score": 1.0,
+}
 
 
 def create_plot_events_tables(conn: sqlite3.Connection) -> None:
@@ -897,6 +943,7 @@ def print_score_summary(
         table="plot_events_evaluations",
         score_columns=SCORE_COLUMNS,
         candidate_ids=candidate_ids,
+        score_weights=SCORE_WEIGHTS,
     )
     conn.close()
 

@@ -23,12 +23,13 @@ A **two-phase pointwise evaluation pipeline** in
 `movie_ingestion/metadata_generation/evaluations/`.
 
 **Phase 0** generates one gold-standard reference output per movie using
-Claude Opus via OAuth (`ANTHROPIC_API_KEY`). References are stored once
-and reused across all candidate evaluations.
+GPT-5.4 via the ChatGPT WHAM backend (see ADR-030). References are stored
+once and reused across all candidate evaluations. *(Originally Claude Opus
+via Anthropic OAuth; switched to GPT-5.4/WHAM for cost — see ADR-030.)*
 
 **Phase 1** generates each candidate's output for every movie, then calls
-a Claude judge that scores the candidate against the reference on
-per-dimension rubrics. Scores are stored as individual INTEGER columns —
+a GPT-5.4 judge (via WHAM) that scores the candidate against the reference
+on per-dimension rubrics. Scores are stored as individual INTEGER columns —
 not JSON blobs — so SQL aggregation works per dimension.
 
 **`EvaluationCandidate` frozen dataclass** (in `shared.py`) is the config

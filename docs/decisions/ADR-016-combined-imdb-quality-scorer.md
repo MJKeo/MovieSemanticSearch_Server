@@ -112,9 +112,10 @@ details, tier boundaries, formulas, and rationale.
   Stage 3's `plot_quality_scores.py`) to find the threshold.
 - Target survival: ~80-100K movies, but the actual cutoff depends on
   the shape of the score distribution.
-- The scoring function loads both TMDB data (from tracker DB) and IMDB
-  data (from per-movie JSON files) for each movie — same data loading
-  pattern as `analyze_imdb_quality.py`.
+- The scoring function loads both TMDB data and IMDB data from the
+  tracker DB (`tmdb_data` and `imdb_data` tables) for each movie.
+  *(Originally loaded IMDB data from per-movie JSON files; migrated
+  to SQLite in ADR-023.)*
 - Priority alignment: search quality (#1) drives the data-richness
   signals; cost (#3) drives the gating function itself (filtering
   before expensive LLM generation).

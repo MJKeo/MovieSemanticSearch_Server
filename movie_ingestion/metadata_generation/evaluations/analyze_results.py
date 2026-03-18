@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from movie_ingestion.metadata_generation.evaluations.plot_events import SCORE_COLUMNS
+from movie_ingestion.metadata_generation.evaluations.plot_events import SCORE_COLUMNS, SCORE_WEIGHTS
 from movie_ingestion.metadata_generation.evaluations.shared import (
     EVAL_DB_PATH,
     HIGH_SPARSITY_TMDB_IDS,
@@ -99,6 +99,7 @@ def analyze_plot_events(
         table="plot_events_evaluations",
         score_columns=SCORE_COLUMNS,
         candidate_ids=candidate_ids,
+        score_weights=SCORE_WEIGHTS,
     )
     if scores.empty:
         print("No evaluation results found for the requested candidates.")
@@ -153,6 +154,7 @@ def analyze_plot_events(
         score_columns=SCORE_COLUMNS,
         candidate_ids=candidate_ids,
         movie_ids=ORIGINAL_SET_TMDB_IDS,
+        score_weights=SCORE_WEIGHTS,
     )
     sparse_movie_ids = MEDIUM_SPARSITY_TMDB_IDS + HIGH_SPARSITY_TMDB_IDS
     sparse_scores = compute_score_summary(
@@ -161,6 +163,7 @@ def analyze_plot_events(
         score_columns=SCORE_COLUMNS,
         candidate_ids=candidate_ids,
         movie_ids=sparse_movie_ids,
+        score_weights=SCORE_WEIGHTS,
     )
 
     conn.close()

@@ -2,7 +2,7 @@
 Unit tests for implementation.llms.generic_methods.
 
 Tests the LLMProvider enum, individual provider generation functions
-(Kimi async/sync, Gemini, Groq, Alibaba), and the unified router
+(Kimi async/sync, Gemini, Groq, Alibaba, WHAM), and the unified router
 (generate_llm_response_async).
 
 All LLM client calls are mocked — no real API traffic.
@@ -25,6 +25,7 @@ from implementation.llms.generic_methods import (
     generate_groq_response_async,
     generate_alibaba_response_async,
     generate_anthropic_response_async,
+    generate_wham_response_async,
     generate_llm_response_async,
 )
 
@@ -74,7 +75,7 @@ class TestLLMProvider:
     """Tests for the LLMProvider enum."""
 
     def test_llm_provider_values(self) -> None:
-        """All six members exist with expected string values."""
+        """All seven members exist with expected string values."""
         expected = {
             "OPENAI": "openai",
             "KIMI": "kimi",
@@ -82,6 +83,7 @@ class TestLLMProvider:
             "GROQ": "groq",
             "ALIBABA": "alibaba",
             "ANTHROPIC": "anthropic",
+            "WHAM": "wham",
         }
         for name, value in expected.items():
             assert LLMProvider[name].value == value
@@ -89,6 +91,10 @@ class TestLLMProvider:
     def test_llm_provider_includes_anthropic(self) -> None:
         """LLMProvider.ANTHROPIC exists with value 'anthropic'."""
         assert LLMProvider.ANTHROPIC.value == "anthropic"
+
+    def test_llm_provider_includes_wham(self) -> None:
+        """LLMProvider.WHAM exists with value 'wham'."""
+        assert LLMProvider.WHAM.value == "wham"
 
     def test_llm_provider_is_enum(self) -> None:
         """LLMProvider members are proper Enum instances and support identity comparison."""
@@ -864,6 +870,333 @@ class TestGenerateAnthropicResponseAsync:
 
 
 # ---------------------------------------------------------------------------
+# Tests: generate_wham_response_async
+# ---------------------------------------------------------------------------
+
+
+class _MockWhamStream:
+    """Async context manager that mimics client.responses.stream().
+
+    Captures the kwargs passed to stream() for assertion, and returns
+    a configurable mock response from get_final_response().
+    """
+
+    def __init__(self, response):
+        self._response = response
+        self.call_kwargs: dict = {}
+
+    def __call__(self, **kwargs):
+        """Capture kwargs when used as stream(...)."""
+        self.call_kwargs = kwargs
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def get_final_response(self):
+        return self._response
+
+
+def _make_wham_response(parsed_output=None, input_tokens=10, output_tokens=5):
+    """Build a mock WHAM streaming final response."""
+    usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    return SimpleNamespace(output_parsed=parsed_output, usage=usage)
+
+
+def _setup_wham_mock(parsed_output=None, input_tokens=10, output_tokens=5):
+    """Create a mock AsyncOpenAI class and stream for WHAM tests.
+
+    Returns (mock_openai_cls, stream_mock) where stream_mock.call_kwargs
+    contains the args passed to responses.stream() after the function runs.
+    """
+    if parsed_output is None:
+        parsed_output = _DummyResponse(value="wham-ok")
+    response = _make_wham_response(parsed_output, input_tokens, output_tokens)
+    stream_mock = _MockWhamStream(response)
+
+    mock_client = MagicMock()
+    mock_client.responses.stream = stream_mock
+
+    mock_openai_cls = MagicMock(return_value=mock_client)
+    return mock_openai_cls, stream_mock
+
+
+class TestGenerateWhamResponseAsync:
+    """Tests for the async WHAM generation function.
+
+    All tests patch AsyncOpenAI to avoid real network calls and to capture
+    the parameters passed to the WHAM streaming API.
+    """
+
+    _OPENAI_CLS_PATCH = "implementation.llms.generic_methods.AsyncOpenAI"
+
+    # -- Parameter stripping ------------------------------------------------
+
+    async def test_wham_async_strips_max_tokens_from_kwargs(self) -> None:
+        """max_tokens passed in kwargs does NOT appear in the stream() call."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+                max_tokens=4096,
+            )
+
+        assert "max_tokens" not in stream.call_kwargs
+
+    async def test_wham_async_strips_max_output_tokens_from_kwargs(self) -> None:
+        """max_output_tokens passed in kwargs does NOT appear in the stream() call."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+                max_output_tokens=2048,
+            )
+
+        assert "max_output_tokens" not in stream.call_kwargs
+
+    async def test_wham_async_strips_temperature_from_kwargs(self) -> None:
+        """temperature passed in kwargs does NOT appear in the stream() call."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+                temperature=0.5,
+            )
+
+        assert "temperature" not in stream.call_kwargs
+
+    async def test_wham_async_strips_all_unsupported_params_simultaneously(self) -> None:
+        """All three unsupported params (max_tokens, max_output_tokens, temperature) stripped at once."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+                max_tokens=4096,
+                max_output_tokens=2048,
+                temperature=0.5,
+            )
+
+        for key in ("max_tokens", "max_output_tokens", "temperature"):
+            assert key not in stream.call_kwargs
+
+    # -- Supported param forwarding -----------------------------------------
+
+    async def test_wham_async_forwards_verbosity(self) -> None:
+        """verbosity kwarg is forwarded to the stream() call."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+                verbosity="low",
+            )
+
+        assert stream.call_kwargs["verbosity"] == "low"
+
+    async def test_wham_async_forwards_reasoning_effort_as_nested_object(self) -> None:
+        """reasoning_effort='low' becomes reasoning={"effort": "low"} in the stream() call."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+                reasoning_effort="low",
+            )
+
+        assert stream.call_kwargs["reasoning"] == {"effort": "low"}
+
+    async def test_wham_async_reasoning_effort_none_not_forwarded(self) -> None:
+        """When reasoning_effort is not passed, 'reasoning' key does not appear in stream() call."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+            )
+
+        assert "reasoning" not in stream.call_kwargs
+
+    # -- Validation and error paths -----------------------------------------
+
+    async def test_wham_async_raises_without_api_key(self) -> None:
+        """ValueError mentioning 'OAuth' when api_key is None."""
+        with pytest.raises(ValueError, match="OAuth"):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key=None,
+                account_id="acct",
+            )
+
+    async def test_wham_async_raises_without_account_id(self) -> None:
+        """ValueError when account_id is None."""
+        with pytest.raises(ValueError, match="account_id"):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id=None,
+            )
+
+    async def test_wham_async_raises_when_parsed_is_none(self) -> None:
+        """ValueError mentioning 'parsed output' when output_parsed is None."""
+        mock_cls, _ = _setup_wham_mock()
+        # Override the response to have output_parsed=None
+        response = _make_wham_response(parsed_output=None)
+        stream_mock = _MockWhamStream(response)
+        mock_client = MagicMock()
+        mock_client.responses.stream = stream_mock
+        mock_cls.return_value = mock_client
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            with pytest.raises(ValueError, match="parsed output"):
+                await generate_wham_response_async(
+                    user_prompt="test",
+                    system_prompt="test",
+                    response_format=_DummyResponse,
+                    api_key="tok",
+                    account_id="acct",
+                )
+
+    async def test_wham_async_wraps_exceptions_as_value_error(self) -> None:
+        """Generic exceptions are wrapped with 'WHAM async failed' prefix."""
+        mock_client = MagicMock()
+        # Make stream() raise when entered as a context manager
+        mock_stream = MagicMock()
+        mock_stream.__aenter__ = AsyncMock(side_effect=RuntimeError("connection lost"))
+        mock_stream.__aexit__ = AsyncMock()
+        mock_client.responses.stream = MagicMock(return_value=mock_stream)
+        mock_cls = MagicMock(return_value=mock_client)
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            with pytest.raises(ValueError, match="WHAM async failed"):
+                await generate_wham_response_async(
+                    user_prompt="test",
+                    system_prompt="test",
+                    response_format=_DummyResponse,
+                    api_key="tok",
+                    account_id="acct",
+                )
+
+    # -- Return value -------------------------------------------------------
+
+    async def test_wham_async_returns_tuple_of_three(self) -> None:
+        """Return value is a 3-tuple of (parsed_response, input_tokens, output_tokens)."""
+        mock_cls, _ = _setup_wham_mock(
+            parsed_output=_DummyResponse(value="wham-ok"),
+            input_tokens=100,
+            output_tokens=50,
+        )
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            result = await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+            )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        parsed, input_tokens, output_tokens = result
+        assert isinstance(parsed, _DummyResponse)
+        assert parsed.value == "wham-ok"
+        assert input_tokens == 100
+        assert output_tokens == 50
+
+    # -- Client construction ------------------------------------------------
+
+    async def test_wham_async_creates_client_with_correct_base_url_and_headers(self) -> None:
+        """AsyncOpenAI is constructed with WHAM base_url and ChatGPT-Account-Id header."""
+        mock_cls, _ = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="my-token",
+                account_id="my-account",
+            )
+
+        mock_cls.assert_called_once()
+        call_kwargs = mock_cls.call_args[1]
+        assert call_kwargs["api_key"] == "my-token"
+        assert "chatgpt.com" in call_kwargs["base_url"]
+        assert call_kwargs["default_headers"]["ChatGPT-Account-Id"] == "my-account"
+
+    # -- Stream call structure ----------------------------------------------
+
+    async def test_wham_async_stream_uses_store_false(self) -> None:
+        """store=False is always passed to the stream() call (WHAM requirement)."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+            )
+
+        assert stream.call_kwargs["store"] is False
+
+    async def test_wham_async_passes_instructions_not_system_message(self) -> None:
+        """System prompt is passed as 'instructions' param, not in messages."""
+        mock_cls, stream = _setup_wham_mock()
+
+        with patch(self._OPENAI_CLS_PATCH, mock_cls):
+            await generate_wham_response_async(
+                user_prompt="test",
+                system_prompt="You are helpful.",
+                response_format=_DummyResponse,
+                api_key="tok",
+                account_id="acct",
+            )
+
+        assert stream.call_kwargs["instructions"] == "You are helpful."
+
+
+# ---------------------------------------------------------------------------
 # Tests: generate_llm_response_async (unified router)
 # ---------------------------------------------------------------------------
 
@@ -1041,3 +1374,28 @@ class TestGenerateLLMResponseAsync:
 
         call_kwargs = mock_fn.call_args[1]
         assert call_kwargs["budget_tokens"] == 8000
+
+    async def test_router_dispatches_to_wham(self) -> None:
+        """Router calls the WHAM dispatch entry with model param and kwargs."""
+        mock_fn = AsyncMock(return_value=(_DummyResponse(value="ok"), 10, 5))
+
+        with patch.dict(_PROVIDER_DISPATCH, {LLMProvider.WHAM: mock_fn}):
+            result = await generate_llm_response_async(
+                provider=LLMProvider.WHAM,
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                model="gpt-5.4",
+                api_key="tok",
+                account_id="acct",
+            )
+
+        mock_fn.assert_called_once()
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["model"] == "gpt-5.4"
+        assert call_kwargs["api_key"] == "tok"
+        assert result == (_DummyResponse(value="ok"), 10, 5)
+
+    def test_provider_dispatch_includes_wham(self) -> None:
+        """LLMProvider.WHAM is a key in _PROVIDER_DISPATCH."""
+        assert LLMProvider.WHAM in _PROVIDER_DISPATCH
