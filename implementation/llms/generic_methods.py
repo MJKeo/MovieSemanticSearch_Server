@@ -70,7 +70,7 @@ async_alibaba_client = AsyncOpenAI(
 # Anthropic — uses OAuth token (ANTHROPIC_OAUTH_KEY) rather than API key;
 # intended for reference generation and judge calls in the evaluation pipeline,
 # but also available as a generation candidate.
-anthropic_oauth_token = os.getenv("ANTHROPIC_OAUTH_KEY")
+anthropic_oauth_token = os.getenv("ANTHROPIC_API_KEY")
 async_anthropic_client = AsyncAnthropic(auth_token=anthropic_oauth_token)
 
 
@@ -400,7 +400,16 @@ async def generate_anthropic_response_async(
     """
     try:
         # max_tokens is required by the Anthropic API; default if not specified
-        max_tokens = kwargs.pop("max_tokens", 8000)
+        max_tokens = kwargs.pop("max_tokens", 4096)
+
+        # Extended thinking: when budget_tokens is provided, enable Anthropic's
+        # extended thinking mode. max_tokens must cover both thinking tokens and
+        # the structured output, so we expand it to budget_tokens + 4096.
+        # Temperature must not be set when thinking is enabled (API enforces 1.0).
+        budget_tokens = kwargs.pop("budget_tokens", None)
+        if budget_tokens is not None:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
+            max_tokens = budget_tokens + 4096
 
         # Register the response schema as a tool and force the model to call it.
         # tool_choice={"type": "tool"} guarantees the output matches the schema.

@@ -44,9 +44,14 @@ this module.
 | `metadata_generation/result_processor.py` | Parses downloaded result JSONL, routes to generators, stores in `metadata_results`. Auto-submits Wave 2 after Wave 1 processing. |
 | `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()`. Contract between SQLite loading and pre-consolidation. |
 | `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Justification fields removed; `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
-| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, 8 per-generation `_check_*` eligibility methods, `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. |
+| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events` (public), `_check_reception`; Wave 2: 6 more), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. `_check_plot_events` alias retained for test backward compat. |
 | `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
 | `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). `plot_events.py` is fully implemented as a real-time async caller (returns `Tuple[Output, TokenUsage]`). Remaining generators are scaffolds (docstring only). See ADR-026. |
+| `metadata_generation/evaluations/` | Two-phase pointwise evaluation pipeline for comparing LLM candidates before production commits. See ADR-028. |
+| `metadata_generation/evaluations/shared.py` | `EvaluationCandidate` frozen dataclass, `EVALUATION_TEST_SET_TMDB_IDS` (70 movies stratified by sparsity), `get_eval_connection()`, `create_candidates_table()`, `store_candidate()`, `load_movie_input_data()`, `compute_score_summary()`. |
+| `metadata_generation/evaluations/plot_events.py` | Phase 0 (reference generation via Claude Opus) + Phase 1 (candidate generation + judge scoring) + `PLOT_EVENTS_CANDIDATES` list (19 candidates across 8 models). 4-dimension judge rubric: groundedness, plot_summary, character_quality, setting. |
+| `metadata_generation/evaluations/run_evaluations_pipeline.py` | CLI entry point: loads 70-movie corpus, filters ineligible movies via `check_plot_events`, runs Phase 0 then Phase 1. |
+| `metadata_generation/evaluations/analyze_results.py` | Read-only analysis: merges scores + token counts + model pricing into quality and cost tables. Run via `python -m movie_ingestion.metadata_generation.evaluations.analyze_results`. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
@@ -383,6 +388,48 @@ Pydantic `BaseModel` schemas for each generation. Key design decisions
   `ProductionMetadata` which merged them.
 - All `__str__()` methods lowercase their output to match the embedding
   text convention used by the search-side schemas.
+
+### Model Evaluation (evaluations/)
+
+Before committing to a model/provider for any generation type, the
+evaluation pipeline runs systematic side-by-side comparisons across
+candidates. See ADR-028 for design decisions.
+
+**Two-phase structure:**
+- **Phase 0** — generate reference outputs using Claude Opus (via
+  `ANTHROPIC_API_KEY`) as the gold-standard baseline, with `max_tokens=4096`.
+  References are stored in `evaluation_data/eval.db` (gitignored) and are
+  fixed for the duration of a comparison run. Run once before any candidate
+  evaluation.
+- **Phase 1** — for each (candidate, movie) pair: generate the candidate
+  output, retrieve the reference, call a Claude Sonnet judge
+  (`temperature=0.2`, `max_tokens=4096`) with the full rubric, and store
+  per-dimension scores. Both phases are idempotent — rerunning skips rows
+  that already exist.
+
+**Evaluation DB (`evaluation_data/eval.db`)**: Separate from tracker.db.
+Each metadata type gets its own set of tables
+(e.g., `plot_events_references`, `plot_events_candidate_outputs`,
+`plot_events_evaluations`). Scoring dimensions are individual columns
+(not JSON blobs) so SQL can aggregate per-dimension. WAL journal mode
+enabled for crash-safety.
+
+**plot_events candidates**: 19 candidates across 8 models (Qwen 3.5 Flash,
+Gemini 2.5 Flash, Gemini 2.5 Flash Lite, GPT-5-mini, GPT-5-nano,
+GPT-5.4-nano, GPT-oss-120b, Llama 4 Scout, Claude Sonnet 4.6). Candidate IDs use
+`{type}__{model}__{variant}` naming. Reasoning/thinking depth is the
+primary differentiation axis (task core challenges are reasoning problems).
+
+**4-dimension judge rubric for plot_events**: groundedness, plot_summary,
+character_quality, setting. Each scored 1–4. Rubric is aligned with the
+generation system prompt — it evaluates what the generator was instructed
+to do, not generic narrative quality.
+
+**CLI**:
+```
+python -m movie_ingestion.metadata_generation.evaluations.run_evaluations_pipeline
+python -m movie_ingestion.metadata_generation.evaluations.analyze_results
+```
 
 ## Tracker System
 

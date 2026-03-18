@@ -16,6 +16,11 @@ These rules apply everywhere and are not negotiable:
   (`implementation/misc/helpers.py:normalize_string`) applies:
   Unicode NFC normalization, lowercase, diacritic removal,
   hyphen preservation, apostrophe/period removal.
+- `__str__()` methods on Pydantic schema classes that feed the embedding
+  pipeline must normalize all concatenated text using `normalize_string()`
+  (`implementation/misc/helpers.py`). This applies the same NFC normalization,
+  lowercasing, and diacritic removal used at ingest time. Inconsistent
+  normalization silently degrades embedding quality.
 - Qdrant scores are final. Vector similarity is not recomputed at
   reranking. The reranker uses Qdrant scores directly, normalized
   via exponential decay within each vector space.
@@ -69,6 +74,20 @@ These rules apply everywhere and are not negotiable:
   `ThreadPoolExecutor` to parallelize disk reads. Reserve stdlib
   `json` for small one-off reads where adding the dependency
   isn't justified.
+- When a function evaluates N independent cases with distinct logic
+  (eligibility checks, validation rules, skip conditions), extract each
+  case into its own function. The caller becomes a thin orchestrator —
+  a loop or sequential calls — with no inlined case logic.
+- All LLM generation functions — sync and async, across all providers —
+  must return `Tuple[BaseModel, int, int]` (parsed_response, input_tokens,
+  output_tokens). The unified router dispatches to provider functions by
+  reference; any deviation in return shape is a silent runtime failure
+  that only surfaces when a specific provider is exercised.
+- Jupyter notebooks must resolve the project root dynamically using a
+  `find_project_root()` helper that walks up from `Path.cwd()` until
+  `pyproject.toml` is found, then inserts that path into `sys.path`.
+  Never use hardcoded `parent.parent` chains — they break silently when
+  a notebook is opened from a different working directory.
 
 ## Error Handling
 
@@ -87,6 +106,11 @@ These rules apply everywhere and are not negotiable:
 - **LLM calls**: Timeout set, bounded retries, structured logging
   (model, tokens, latency, error). If any required query understanding
   node fails after retries, the entire search request fails.
+- **Exception class design**: Prefer shared exception classes parameterized
+  with context fields over per-module subclasses. When N modules share the
+  same failure mode (e.g., "generation failed for type X"), one class with
+  a `generation_type` field scales to N modules; N subclasses proliferate
+  with no added expressiveness.
 - **Redis cache misses**: Graceful degradation. Missing trending data
   = log warning, treat as empty set, do not fail the request.
   Missing QU cache = run full DAG. Missing embedding cache = call
@@ -190,3 +214,37 @@ to [0, 1] unless explicitly noted otherwise:
 - For fixed-endpoint APIs (TMDB, OpenAI), use longer timeouts
   with exponential backoff, since the same server will eventually
   recover.
+
+## Evaluation Conventions
+
+- **Storage structure**: Evaluation results are stored in
+  `evaluation_data/eval.db`. Each metadata type gets three tables:
+  references, candidate_outputs, and evaluations. Scoring dimensions
+  are individual typed columns — not a JSON blob — so individual
+  scores are queryable via SQL. Aggregate summaries (mean scores,
+  rankings) are computed at read time, not stored.
+- **Candidate config**: LLM configurations under test are represented
+  as `EvaluationCandidate` instances (defined in `evaluations/shared.py`).
+  Each metadata type defines its own candidate list in its evaluation
+  file (e.g., `PLOT_EVENTS_CANDIDATES`) — not in `shared.py`. Evaluation
+  entry points take a list of these — never loose provider/model/prompt
+  keyword arguments.
+- **Two-phase structure**: All metadata-type evaluations follow a
+  two-phase structure. Phase 0 generates reference responses using the
+  judge model (Claude Opus); Phase 1 runs each candidate and scores it
+  against those references. Both phases are idempotent — they check for
+  existing rows before inserting. Phase 1 asserts Phase 0 is complete
+  before running. Never merge the phases or skip Phase 0 as an
+  optimization.
+- **Prompt reuse**: Evaluation pipelines must import prompt construction
+  from the production generator, not duplicate it. Extract prompt builders
+  as named public functions in the generator module (e.g.,
+  `build_plot_events_user_prompt()`). Duplicating the prompt in the eval
+  file creates silent drift — if the generator's prompt changes, the eval
+  copy diverges without any error.
+- **Judge prompt alignment**: Every judge prompt must include a summary
+  of the generation prompt's instructions — what the model was asked to
+  produce and what it was told to avoid. Rubric score anchors must align
+  with those instructions. A judge that penalizes behavior the generator
+  was explicitly asked to produce, or rewards what it was told to omit,
+  produces invalid scores.

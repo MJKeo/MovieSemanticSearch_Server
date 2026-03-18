@@ -16,6 +16,9 @@ import asyncio
 
 from movie_ingestion.metadata_generation.evaluations.shared import (
     EVALUATION_TEST_SET_TMDB_IDS,
+    ORIGINAL_SET_TMDB_IDS,
+    MEDIUM_SPARSITY_TMDB_IDS,
+    HIGH_SPARSITY_TMDB_IDS,
     load_movie_input_data,
 )
 from movie_ingestion.metadata_generation.evaluations.plot_events import (
@@ -51,7 +54,8 @@ async def main() -> None:
     """Run the full evaluation pipeline for all supported metadata types."""
 
     print(f"Loading movie input data for {len(EVALUATION_TEST_SET_TMDB_IDS)} movie(s)...")
-    movie_inputs = load_movie_input_data(EVALUATION_TEST_SET_TMDB_IDS)
+    temp_evaluation_set = ORIGINAL_SET_TMDB_IDS[:5] + MEDIUM_SPARSITY_TMDB_IDS[:3] + HIGH_SPARSITY_TMDB_IDS[:3]
+    movie_inputs = load_movie_input_data(temp_evaluation_set)
 
     if not movie_inputs:
         print("No movies loaded — check that the ingestion pipeline has run.")
@@ -78,7 +82,7 @@ async def main() -> None:
     await run_evaluation(
         candidates=PLOT_EVENTS_CANDIDATES, 
         movie_inputs=eligible_inputs,
-        concurrency=len(PLOT_EVENTS_CANDIDATES)
+        concurrency=3
     )
 
     print("\nPipeline complete.")

@@ -481,7 +481,6 @@ major_characters:
 async def generate_reference_responses(
     movie_inputs: dict[int, MovieInputData],
     reference_model: str = "claude-opus-4-6",
-    concurrency: int = 10,
     db_path: Path | None = None,
 ) -> None:
     """Generate and store reference PlotEventsOutputs for all movies.
@@ -490,12 +489,14 @@ async def generate_reference_responses(
     and user prompt construction as the production generator, so the reference
     represents what a stronger model would produce under identical conditions.
 
+    Requests run in series to avoid rate limiting. If a 429 error is
+    encountered, pauses for 60 seconds and retries the request once.
+
     Idempotent: movies with existing references are skipped.
 
     Args:
         movie_inputs: Dict of tmdb_id → MovieInputData for the test corpus.
         reference_model: Claude model identifier to use as the reference.
-        concurrency: Max concurrent Claude API calls.
         db_path: Override the default eval DB path (useful for testing).
     """
     conn = get_eval_connection(db_path or EVAL_DB_PATH)
@@ -521,46 +522,59 @@ async def generate_reference_responses(
     print(f"Phase 0: generating {len(pending)} reference responses "
           f"(skipping {len(existing)} existing) using {reference_model}...")
 
-    semaphore = asyncio.Semaphore(concurrency)
     completed = 0
     total = len(pending)
 
-    async def _generate_one(tmdb_id: int, movie: MovieInputData) -> None:
-        nonlocal completed
-        async with semaphore:
+    # Run requests in series to avoid rate limiting
+    for tmdb_id, movie in pending:
+        try:
+            user_prompt = build_plot_events_user_prompt(movie)
+
+            # Attempt the LLM call; on a 429 rate-limit error, pause 60s and retry once
             try:
-                # Use the default system prompt for reference generation
-                # and call the LLM directly so we control both prompts.
-                user_prompt = build_plot_events_user_prompt(movie)
                 parsed, in_tokens, out_tokens = await generate_llm_response_async(
                     provider=LLMProvider.ANTHROPIC,
                     user_prompt=user_prompt,
                     system_prompt=DEFAULT_SYSTEM_PROMPT,
                     response_format=PlotEventsOutput,
                     model=reference_model,
+                    max_tokens=4096,
                 )
-                plot_summary, setting, chars_json = _serialize_output(parsed)
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO plot_events_references
-                        (movie_id, plot_summary, setting, major_characters,
-                         reference_model, input_tokens, output_tokens, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        tmdb_id, plot_summary, setting, chars_json,
-                        reference_model, in_tokens, out_tokens,
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
+            except ValueError as e:
+                if "429" not in str(e):
+                    raise
+                print(f"  [429] Rate limited on tmdb_id={tmdb_id} — "
+                      f"pausing 60s before retry...")
+                await asyncio.sleep(60)
+                parsed, in_tokens, out_tokens = await generate_llm_response_async(
+                    provider=LLMProvider.ANTHROPIC,
+                    user_prompt=user_prompt,
+                    system_prompt=DEFAULT_SYSTEM_PROMPT,
+                    response_format=PlotEventsOutput,
+                    model=reference_model,
+                    max_tokens=4096,
                 )
-                conn.commit()
-                completed += 1
-                print(f"  [{completed}/{total}] Reference generated: {movie.title_with_year()}")
-            except Exception as e:
-                print(f"  [ERROR] Reference generation failed for tmdb_id={tmdb_id} "
-                      f"({movie.title_with_year()}): {e}")
 
-    await asyncio.gather(*[_generate_one(tid, m) for tid, m in pending])
+            plot_summary, setting, chars_json = _serialize_output(parsed)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO plot_events_references
+                    (movie_id, plot_summary, setting, major_characters,
+                     reference_model, input_tokens, output_tokens, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tmdb_id, plot_summary, setting, chars_json,
+                    reference_model, in_tokens, out_tokens,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            conn.commit()
+            completed += 1
+            print(f"  [{completed}/{total}] Reference generated: {movie.title_with_year()}")
+        except Exception as e:
+            print(f"  [ERROR] Reference generation failed for tmdb_id={tmdb_id} "
+                  f"({movie.title_with_year()}): {e}")
 
     print(f"Phase 0 complete: {completed}/{total} references generated.")
     conn.close()
@@ -705,7 +719,8 @@ async def run_evaluation(
                         system_prompt=JUDGE_SYSTEM_PROMPT,
                         response_format=PlotEventsJudgeOutput,
                         model=judge_model,
-                        max_tokens=2048,
+                        max_tokens=4096,
+                        temperature=0.2,
                     )
                 )
             except Exception as e:

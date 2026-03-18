@@ -576,7 +576,7 @@ class TestGenerateAnthropicResponseAsync:
         assert call_kwargs["messages"] == [{"role": "user", "content": "Tell me about movies."}]
 
     async def test_anthropic_async_default_max_tokens(self) -> None:
-        """max_tokens defaults to 8000 when not provided in kwargs."""
+        """max_tokens defaults to 4096 when not provided in kwargs."""
         mock_response = _make_anthropic_style_response({"value": "ok"})
         mock_create = AsyncMock(return_value=mock_response)
 
@@ -591,7 +591,7 @@ class TestGenerateAnthropicResponseAsync:
             )
 
         call_kwargs = mock_create.call_args[1]
-        assert call_kwargs["max_tokens"] == 8000
+        assert call_kwargs["max_tokens"] == 4096
 
     async def test_anthropic_async_custom_max_tokens_from_kwargs(self) -> None:
         """max_tokens is extracted from kwargs and passed to messages.create (not double-passed)."""
@@ -707,6 +707,160 @@ class TestGenerateAnthropicResponseAsync:
         # Verify max_tokens doesn't appear in any extra **kwargs expansion
         # (if it were double-passed, the call would fail with a duplicate keyword arg)
         mock_create.assert_called_once()
+
+    async def test_budget_tokens_activates_thinking_dict_in_api_call(self) -> None:
+        """When budget_tokens is passed, messages.create receives thinking={"type":"enabled","budget_tokens":N}."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                budget_tokens=8000,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["thinking"] == {"type": "enabled", "budget_tokens": 8000}
+
+    async def test_budget_tokens_overrides_max_tokens_to_budget_plus_4096(self) -> None:
+        """When budget_tokens=8000, the API call receives max_tokens=12096 (8000 + 4096)."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                budget_tokens=8000,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["max_tokens"] == 12096  # 8000 + 4096
+
+    async def test_budget_tokens_without_max_tokens_uses_budget_plus_4096(self) -> None:
+        """budget_tokens=2000 with no explicit max_tokens produces max_tokens=6096, not 4096."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                budget_tokens=2000,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["max_tokens"] == 6096  # 2000 + 4096, not the default 4096
+
+    async def test_budget_tokens_override_wins_over_explicit_max_tokens(self) -> None:
+        """When both max_tokens=1000 and budget_tokens=2000 are provided, budget_tokens+4096 wins."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                max_tokens=1000,
+                budget_tokens=2000,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        # The budget branch runs after the max_tokens pop, overriding whatever was there
+        assert call_kwargs["max_tokens"] == 6096  # 2000 + 4096, not 1000
+
+    async def test_budget_tokens_not_forwarded_to_messages_create(self) -> None:
+        """budget_tokens is consumed (popped) before the API call and must not appear in forwarded kwargs."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                budget_tokens=8000,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert "budget_tokens" not in call_kwargs
+
+    async def test_without_budget_tokens_no_thinking_key_injected(self) -> None:
+        """When budget_tokens is absent, the thinking key must not appear in the API call kwargs."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                temperature=0.3,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert "thinking" not in call_kwargs
+
+    async def test_budget_tokens_none_does_not_inject_thinking(self) -> None:
+        """Explicitly passing budget_tokens=None must not inject the thinking dict."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                budget_tokens=None,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert "thinking" not in call_kwargs
+
+    async def test_budget_tokens_boundary_zero_sets_thinking_dict(self) -> None:
+        """budget_tokens=0 still enables extended thinking mode with budget 0."""
+        mock_response = _make_anthropic_style_response({"value": "ok"})
+        mock_create = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_anthropic_client.messages.create",
+            mock_create,
+        ):
+            await generate_anthropic_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                budget_tokens=0,
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["thinking"] == {"type": "enabled", "budget_tokens": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -870,3 +1024,20 @@ class TestGenerateLLMResponseAsync:
     def test_provider_dispatch_includes_anthropic(self) -> None:
         """LLMProvider.ANTHROPIC is a key in _PROVIDER_DISPATCH."""
         assert LLMProvider.ANTHROPIC in _PROVIDER_DISPATCH
+
+    async def test_router_forwards_budget_tokens_to_anthropic(self) -> None:
+        """budget_tokens kwarg passes through the router unchanged to the Anthropic provider function."""
+        mock_fn = AsyncMock(return_value=(_DummyResponse(value="ok"), 10, 5))
+
+        with patch.dict(_PROVIDER_DISPATCH, {LLMProvider.ANTHROPIC: mock_fn}):
+            await generate_llm_response_async(
+                provider=LLMProvider.ANTHROPIC,
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                model="claude-sonnet-4-6",
+                budget_tokens=8000,
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["budget_tokens"] == 8000

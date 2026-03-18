@@ -15,7 +15,8 @@ Provides two distinct roles:
 2. **Shared LLM infrastructure for ingestion-time generation**:
    The `LLMProvider` enum, `generate_llm_response_async` router,
    and all provider-specific async generation functions are defined
-   here and imported by `movie_ingestion/metadata_generation/generators/`.
+   here and imported by `movie_ingestion/metadata_generation/generators/`
+   and `movie_ingestion/metadata_generation/evaluations/`.
 
 The ingestion-time generation pipeline (generators, schemas, prompts)
 lives in `movie_ingestion/metadata_generation/`. See
@@ -25,7 +26,7 @@ lives in `movie_ingestion/metadata_generation/`. See
 
 | File | Purpose |
 |------|---------|
-| `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Five providers: OpenAI, Kimi, Gemini, Groq, Alibaba. Embeddings via OpenAI `text-embedding-3-small` (1536 dims). |
+| `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Six providers: OpenAI, Kimi, Gemini, Groq, Alibaba, Anthropic. Embeddings via OpenAI `text-embedding-3-small` (1536 dims). |
 | `query_understanding_methods.py` | Search-time DAG: 5 async functions that run in parallel with dependency management. Uses Kimi for all QU calls. Redis caching planned but not yet implemented (key format: `qu:v{N}:{hash}`, TTL 1 day). |
 | `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. Superseded by `movie_ingestion/metadata_generation/generators/`. Not used in the active pipeline. Provides `TokenUsage` NamedTuple (imported by generators). |
 
@@ -33,7 +34,7 @@ lives in `movie_ingestion/metadata_generation/`. See
 
 - **In scope**: Search-time LLM API calls, structured output parsing,
   embedding generation, QU caching logic, shared provider clients and
-  routing for ingestion-time generators.
+  routing for ingestion-time generators and evaluations.
 - **Out of scope**: Ingestion-time metadata generator logic (now in
   `movie_ingestion/metadata_generation/generators/`), system prompts
   (live in `movie_ingestion/metadata_generation/prompts/` for ingestion
@@ -43,15 +44,16 @@ lives in `movie_ingestion/metadata_generation/`. See
 
 ## LLM Provider Architecture
 
-Five providers are supported, all accessed through `generate_llm_response_async`:
+Six providers are supported, all accessed through `generate_llm_response_async`:
 
 | Provider | Enum | Client | SDK | Structured Output Pattern |
 |----------|------|--------|-----|--------------------------|
 | OpenAI | `LLMProvider.OPENAI` | `async_openai_client` | `openai` | `chat.completions.parse()` with Pydantic model |
 | Kimi (Moonshot) | `LLMProvider.KIMI` | `async_kimi_client` | `openai` (compatible) | `chat.completions.create()` with explicit JSON schema + manual `json.loads()` / `model_validate()` |
 | Gemini | `LLMProvider.GEMINI` | `gemini_client` | `google-genai` | `response_mime_type` + `response_json_schema` in config dict |
-| Groq | `LMProvider.GROQ` | `async_groq_client` | `groq` | `json_schema` response_format with `strict: False` |
+| Groq | `LLMProvider.GROQ` | `async_groq_client` | `groq` | `json_schema` response_format with `strict: False` |
 | Alibaba/Qwen | `LLMProvider.ALIBABA` | `async_alibaba_client` | `openai` (DashScope compatible) | `chat.completions.parse()` with Pydantic model |
+| Anthropic | `LLMProvider.ANTHROPIC` | `async_anthropic_client` | `anthropic` | Tool-use pattern: schema registered as a tool, `tool_choice` forces the model to call it |
 
 **Unified router (`generate_llm_response_async`)**: Dispatch table
 `_PROVIDER_DISPATCH` maps `LLMProvider` → async function. Kimi is
@@ -104,5 +106,15 @@ partial DAG results.
   model compatibility.
 - Alibaba/Qwen uses the DashScope US endpoint
   (`https://dashscope-us.aliyuncs.com/compatible-mode/v1`).
+- Anthropic uses OAuth token authentication (`ANTHROPIC_API_KEY` env var)
+  rather than a standard API key. `max_tokens` defaults to 4096 if not
+  provided (required by Anthropic API). Extended thinking is supported
+  via the `budget_tokens` kwarg — when present, `thinking` is enabled
+  and `max_tokens` is expanded to `budget_tokens + 4096` to cover both
+  thinking and output tokens. Temperature must not be set when thinking
+  is enabled (Anthropic enforces this). See ADR-029.
+- **`budget_tokens` is popped before forwarding** to the Anthropic API —
+  it is not a native Anthropic parameter. Passing it through would cause
+  an API error.
 - Required env vars: `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, `GOOGLE_API_KEY`,
-  `GROQ_API_KEY`, `ALIBABA_API_KEY`.
+  `GROQ_API_KEY`, `ALIBABA_API_KEY`, `ANTHROPIC_API_KEY`.

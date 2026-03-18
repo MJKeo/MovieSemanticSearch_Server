@@ -10,6 +10,12 @@ No real LLM calls or DB access — tests use MovieInputData directly.
 from movie_ingestion.metadata_generation.evaluations.run_evaluations_pipeline import (
     _filter_plot_events_eligible,
 )
+from movie_ingestion.metadata_generation.evaluations.shared import (
+    EVALUATION_TEST_SET_TMDB_IDS,
+    HIGH_SPARSITY_TMDB_IDS,
+    MEDIUM_SPARSITY_TMDB_IDS,
+    ORIGINAL_SET_TMDB_IDS,
+)
 from movie_ingestion.metadata_generation.inputs import MovieInputData
 
 
@@ -76,3 +82,21 @@ class TestFilterPlotEventsEligible:
 
         result = _filter_plot_events_eligible(movie_inputs)
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests: temp evaluation set (run_evaluations_pipeline.main)
+# ---------------------------------------------------------------------------
+
+
+class TestTempEvaluationSet:
+    def test_temp_evaluation_set_is_proper_subset_of_full_set(self) -> None:
+        """The temporary sliced set has exactly 11 IDs, all contained in EVALUATION_TEST_SET_TMDB_IDS."""
+        # Mirrors the slice expression used in main()
+        temp_set = ORIGINAL_SET_TMDB_IDS[:5] + MEDIUM_SPARSITY_TMDB_IDS[:3] + HIGH_SPARSITY_TMDB_IDS[:3]
+
+        assert len(temp_set) == 11
+
+        full_set = set(EVALUATION_TEST_SET_TMDB_IDS)
+        for tmdb_id in temp_set:
+            assert tmdb_id in full_set, f"tmdb_id {tmdb_id} from temp set not in EVALUATION_TEST_SET_TMDB_IDS"
