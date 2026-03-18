@@ -46,13 +46,13 @@ this module.
 | `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Justification fields removed; `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
 | `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events` (public), `_check_reception`; Wave 2: 6 more), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. `_check_plot_events` alias retained for test backward compat. |
 | `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
-| `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). `plot_events.py` is fully implemented as a real-time async caller (returns `Tuple[Output, TokenUsage]`). Remaining generators are scaffolds (docstring only). See ADR-026. |
+| `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). `plot_events.py` is fully implemented: real-time async caller with production defaults baked in (Gemini 2.5 Flash Lite + `SYSTEM_PROMPT_SHORT` + 1k thinking budget — evaluation winner). Callers can override provider/model/kwargs. Remaining generators are scaffolds (docstring only). See ADR-026. |
 | `metadata_generation/evaluations/` | Two-phase pointwise evaluation pipeline for comparing LLM candidates before production commits. See ADR-028. |
-| `metadata_generation/evaluations/shared.py` | `EvaluationCandidate` frozen dataclass, `EVALUATION_TEST_SET_TMDB_IDS` (70 movies stratified by sparsity), `get_eval_connection()`, `create_candidates_table()`, `store_candidate()`, `load_movie_input_data()`, `compute_score_summary()`. |
+| `metadata_generation/evaluations/shared.py` | `EvaluationCandidate` frozen dataclass, `EVALUATION_TEST_SET_TMDB_IDS` and subset lists (`ORIGINAL_SET_TMDB_IDS`, `MEDIUM_SPARSITY_TMDB_IDS`, `HIGH_SPARSITY_TMDB_IDS`) — 70 movies stratified by sparsity, `get_eval_connection()`, `create_candidates_table()`, `store_candidate()`, `load_movie_input_data()`, `compute_score_summary()` (supports `score_weights` for weighted overall_mean). |
 | `metadata_generation/evaluations/plot_events.py` | Phase 0 (reference generation via GPT-5.4/WHAM) + Phase 1 (candidate generation + judge scoring, 3-run averaged) + `PLOT_EVENTS_CANDIDATES` list. 4-dimension judge rubric: groundedness, plot_summary, character_quality, setting. |
 | `metadata_generation/evaluations/openai_oauth.py` | ChatGPT OAuth2 PKCE token lifecycle: browser consent, JWT decode for account_id/expiry, token persistence to `evaluation_data/openai_oauth_tokens.json`, auto-refresh. `get_valid_auth()` is the sole entry point for WHAM callers. |
 | `metadata_generation/evaluations/run_evaluations_pipeline.py` | CLI entry point: loads 70-movie corpus, filters ineligible movies via `check_plot_events`, runs Phase 0 then Phase 1. |
-| `metadata_generation/evaluations/analyze_results.py` | Read-only analysis: merges scores + token counts + model pricing into quality and cost tables. Run via `python -m movie_ingestion.metadata_generation.evaluations.analyze_results`. |
+| `metadata_generation/evaluations/analyze_results.py` | Read-only analysis: merges scores + token counts + model pricing into quality and cost tables. Value ranking table shows separate dense/sparse cost/1K columns (dense = ORIGINAL_SET movies, sparse = MEDIUM+HIGH_SPARSITY). Run via `python -m movie_ingestion.metadata_generation.evaluations.analyze_results`. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
@@ -418,12 +418,13 @@ Each metadata type gets its own set of tables
 records how many runs contributed to each score. WAL journal mode enabled
 for crash-safety.
 
-**plot_events candidates**: Currently ~7 active candidates (remaining
-candidates from the original 19-candidate set are commented out after
-earlier evaluation runs narrowed the field). Active set: Gemini 2.5 Flash Lite
-(think-1k, think-4k), GPT-5-mini (reason-low), GPT-5.4-nano, plus short-prompt
-variants of each. Candidate IDs use `{type}__{model}__{variant}` naming.
-Reasoning/thinking depth is the primary differentiation axis.
+**plot_events candidates**: 8 active candidates (remaining candidates from
+the original 19-candidate set are commented out after evaluation runs narrowed
+the field). Active set: Gemini 2.5 Flash Lite (think-1k, think-4k),
+GPT-5-mini (reason-low), GPT-5.4-nano, plus short-prompt variants of each
+(4 total). Candidate IDs use `{type}__{model}__{variant}` naming. Evaluation
+complete — winner is `gemini-2.5-flash-lite__think-1k__short-prompt`, now
+set as production default in `generators/plot_events.py`.
 
 **Short-prompt variants**: `SYSTEM_PROMPT_SHORT` in
 `metadata_generation/prompts/plot_events.py` is a ~37% shorter version of
