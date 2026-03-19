@@ -1,41 +1,48 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code when working with code in this repository.
+This file provides guidance to Codex when working with code in this
+repository. It is a Codex-optimized port of the project's existing
+`CLAUDE.md`, and the structured docs it references remain the source
+of truth.
 
 ## Project Documentation
 
-- **Product context and priorities:** docs/PROJECT.md — read at session start
-- **Decision records:** docs/decisions/ — check for precedent before tradeoff decisions
-- **Module summaries:** docs/modules/ — read when entering a module for the first time in a session
-- **Conventions:** docs/conventions.md — cross-codebase invariants and patterns
-- **Transient context:** DIFF_CONTEXT.md — what changed recently and why
-- **Action items:** docs/TODO.md — deferred TODOs discovered during sessions
-- **Personal preferences:** docs/personal_preferences.md — communication and workflow preferences, read at session start
+- **Product context and priorities:** `docs/PROJECT.md` — read at session start
+- **Decision records:** `docs/decisions/` — check for precedent before tradeoff decisions
+- **Module summaries:** `docs/modules/` — read when entering a module for the first time in a session
+- **Conventions:** `docs/conventions.md` — cross-codebase invariants and patterns
+- **Transient context:** `DIFF_CONTEXT.md` — what changed recently and why
+- **Action items:** `docs/TODO.md` — deferred TODOs discovered during sessions
+- **Personal preferences:** `docs/personal_preferences.md` — communication and workflow preferences, read at session start
 
 ## Autonomous Documentation
 
-After completing each implementation task, update DIFF_CONTEXT.md
-per the context-tracking rule in .claude/rules/.
+After completing each implementation task, update `DIFF_CONTEXT.md`
+per the context-tracking rule in `.claude/rules/`.
 
-You MAY autonomously update docs/modules/ when you notice a doc
+You MAY autonomously update `docs/modules/` when you notice a doc
 is stale while working in that module (include in your changeset).
 
-You MAY autonomously add entries to docs/TODO.md when you discover
-actionable items during implementation work. Use /save-todo or write
-entries directly following the existing format.
+You MAY autonomously add entries to `docs/TODO.md` when you discover
+actionable items during implementation work. Write entries directly
+following the existing format.
 
-You must NEVER autonomously modify docs/PROJECT.md, docs/conventions.md,
-or docs/decisions/. See the docs-awareness rule for details.
+You must NEVER autonomously modify `docs/PROJECT.md`,
+`docs/conventions.md`, or `docs/decisions/`. See the docs-awareness
+rule for details.
 
 ## Session Learnings
 
-When I run /safe-clear, Claude extracts learnings from the session:
-- **Personal preferences** → docs/personal_preferences.md (auto-maintained)
-- **Convention candidates** → docs/conventions_draft.md (staged for review)
-- **Workflow suggestions** → docs/workflow_suggestions.md (staged for review)
+This repository's persistent knowledge base lives in the repo docs,
+not in any external memory system.
 
-Read docs/personal_preferences.md at session start to apply my
-communication and workflow preferences.
+When extracting learnings from work sessions:
+- **Personal preferences** → `docs/personal_preferences.md`
+- **Convention candidates** → `docs/conventions_draft.md`
+- **Workflow suggestions** → `docs/workflow_suggestions.md`
+
+Read `docs/personal_preferences.md` at session start to apply the
+user's communication and workflow preferences.
 
 ## Commands
 
@@ -59,17 +66,23 @@ docker-compose up
 uvicorn api.main:app --reload
 ```
 
-Python version is 3.13. Test runner uses `asyncio_mode = "auto"` (all async tests work without decorators).
+Python version is 3.13. Test runner uses `asyncio_mode = "auto"`
+(all async tests work without decorators).
 
-**Environment:** A `.env` file is required with keys for `TMDB_API_KEY`, `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, and Postgres/Redis/Qdrant connection strings. See `.env` for the full list.
+**Environment:** A `.env` file is required with keys for
+`TMDB_API_KEY`, `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, and
+Postgres/Redis/Qdrant connection strings. See `.env` for the full
+list.
 
 ## Architecture Overview
 
-This is a **multi-channel movie search engine** that decomposes natural language queries via LLM and executes parallel retrieval across three channels:
+This is a **multi-channel movie search engine** that decomposes
+natural language queries via LLM and executes parallel retrieval
+across three channels:
 
 ### Search Pipeline (end-to-end flow)
 
-```
+```text
 User Query
     ↓
 Query Understanding (parallel LLM calls)
@@ -107,7 +120,8 @@ Fetch display metadata → return JSON
 
 ### Vector Search Design
 
-8 named vectors per movie (OpenAI `text-embedding-3-small`, 1536 dims), stored in Qdrant with scalar quantization + memmap:
+8 named vectors per movie (OpenAI `text-embedding-3-small`, 1536
+dims), stored in Qdrant with scalar quantization + memmap:
 - `dense_anchor_vectors` — core thematic summary
 - `plot_events_vectors` — plot + characters
 - `plot_analysis_vectors` — themes, arcs, concepts
@@ -117,9 +131,17 @@ Fetch display metadata → return JSON
 - `production_vectors` — budget, locations, technical achievements
 - `reception_vectors` — critical reception, awards, audience reaction
 
-5-stage vector scoring pipeline (`db/vector_scoring.py`): execute → blend (80/20 original/subquery) → normalize (exponential decay) → weight → sum.
+5-stage vector scoring pipeline (`db/vector_scoring.py`): execute →
+blend (80/20 original/subquery) → normalize (exponential decay) →
+weight → sum.
 
-Each vector space has LLM-generated metadata covering 7 types: plot events, plot analysis, viewer experience, watch context, narrative techniques, reception, and production/source-of-inspiration style metadata. Generation now lives under `movie_ingestion/metadata_generation/` (generators, prompts, batch orchestration, and evaluations), and the resulting metadata is stored for embedding and ingestion.
+Each vector space has LLM-generated metadata covering 7 types:
+plot events, plot analysis, viewer experience, watch context,
+narrative techniques, reception, and production/source-of-inspiration
+style metadata. Generation now lives under
+`movie_ingestion/metadata_generation/` (generators, prompts,
+batch orchestration, and evaluations), and the resulting metadata is
+stored for embedding and ingestion.
 
 ### Data Stores
 
@@ -131,18 +153,32 @@ Each vector space has LLM-generated metadata covering 7 types: plot events, plot
 
 ### Movie Ingestion Pipeline
 
-The ingestion pipeline processes ~1M TMDB movies down to ~100K high-quality movies through a multi-stage funnel. All stages are crash-safe and idempotent — restarting picks up where it left off.
+The ingestion pipeline processes ~1M TMDB movies down to ~100K
+high-quality movies through a multi-stage funnel. All stages are
+crash-safe and idempotent — restarting picks up where it left off.
 
-**Tracker system:** `movie_ingestion/tracker.py` is the shared backbone. It manages a SQLite database at `./ingestion_data/tracker.db` with two core tables:
-- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_passed` → `phase1_complete` → `phase2_complete` → `embedded` → `ingested`; terminal status: `filtered_out`)
-- `filter_log` — append-only audit trail of every filtered movie with stage, reason, and optional details JSON
-- `tmdb_data` — stores extracted TMDB fields needed by the quality scorer (vote counts, popularity, provider keys, boolean completeness flags)
+**Tracker system:** `movie_ingestion/tracker.py` is the shared
+backbone. It manages a SQLite database at `./ingestion_data/tracker.db`
+with two core tables:
+- `movie_progress` — one row per movie, tracks status through the
+  pipeline (status column progresses: `pending` →
+  `tmdb_fetched` → `tmdb_quality_passed` → `imdb_scraped` →
+  `imdb_quality_passed` → `phase1_complete` →
+  `phase2_complete` → `embedded` → `ingested`; terminal
+  status: `filtered_out`)
+- `filter_log` — append-only audit trail of every filtered movie with
+  stage, reason, and optional details JSON
+- `tmdb_data` — stores extracted TMDB fields needed by the quality
+  scorer (vote counts, popularity, provider keys, boolean completeness
+  flags)
 
-The `log_filter()` helper handles both the filter_log INSERT and the movie_progress status update — never write to those tables directly from stage modules.
+The `log_filter()` helper handles both the `filter_log` INSERT and
+the `movie_progress` status update — never write to those tables
+directly from stage modules.
 
 **Pipeline stages:**
 
-```
+```text
 Stage 1: TMDB Daily Export (movie_ingestion/tmdb_fetching/daily_export.py)
   └─ Downloads gzipped JSONL (~1M entries), stream-decompresses line by line
   └─ Filters: adult=False, video=False, popularity > 0
@@ -217,7 +253,10 @@ Stage 6+: LLM Generation → Embedding → Ingestion
 | `scoring_utils.py` | Shared scoring utilities (vote_count, popularity, provider key unpacking) used by Stage 3 and Stage 5 |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data |
 
-**IMDB scraping environment:** Requires `DATA_IMPULSE_LOGIN` and `DATA_IMPULSE_PASSWORD` in `.env` for proxy access. Optional `DATA_IMPULSE_HOST`/`DATA_IMPULSE_PORT` (defaults to `gw.dataimpulse.com:823`).
+**IMDB scraping environment:** Requires `DATA_IMPULSE_LOGIN`
+and `DATA_IMPULSE_PASSWORD` in `.env` for proxy access. Optional
+`DATA_IMPULSE_HOST`/`DATA_IMPULSE_PORT` (defaults to
+`gw.dataimpulse.com:823`).
 
 ### LLM Provider
 
@@ -240,7 +279,7 @@ dims).
 
 ### Cross-Codebase Invariants
 
-See docs/conventions.md for the full list. Key invariants:
+See `docs/conventions.md` for the full list. Key invariants:
 
 - **`movie_id` is always `tmdb_id` (BIGINT/uint64).** Never introduce a secondary ID system.
 - **String normalization runs identically at ingest and query time.** A mismatch is a silent retrieval bug.
@@ -252,11 +291,12 @@ See docs/conventions.md for the full list. Key invariants:
 
 ### Coding Practices
 
-See .claude/rules/coding-standards.md for the full coding standards.
+See `.claude/rules/coding-standards.md` for the full coding
+standards.
 
-Write code from the perspective of an expert senior software engineer.
-Code must be generalizable, modular, and efficient. Always liberally
-include comments explaining what you are doing and why.
+Write code from the perspective of an expert senior software
+engineer. Code must be generalizable, modular, and efficient.
+Include comments when they help explain what you are doing and why.
 
-When making tradeoff decisions, consult docs/PROJECT.md for the
+When making tradeoff decisions, consult `docs/PROJECT.md` for the
 priority ordering.
