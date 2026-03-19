@@ -157,3 +157,58 @@ class TestGenerateSourceOfInspirationErrors:
                 )
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: system_prompt and response_format override
+# ---------------------------------------------------------------------------
+
+class TestSourceOfInspirationOverrides:
+    async def test_custom_system_prompt_forwarded(self):
+        """A custom system_prompt is forwarded to the LLM call."""
+        mock_fn = AsyncMock(return_value=(_make_soi_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_source_of_inspiration(
+                movie, system_prompt="CUSTOM_PROMPT",
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
+
+    async def test_custom_response_format_forwarded(self):
+        """A custom response_format is forwarded to the LLM call."""
+        from movie_ingestion.metadata_generation.schemas import SourceOfInspirationWithJustificationsOutput
+
+        mock_fn = AsyncMock(return_value=(_make_soi_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_source_of_inspiration(
+                movie,
+                response_format=SourceOfInspirationWithJustificationsOutput,
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["response_format"] is SourceOfInspirationWithJustificationsOutput
+
+
+# ---------------------------------------------------------------------------
+# Tests: no genres field in prompt
+# ---------------------------------------------------------------------------
+
+class TestSourceOfInspirationPromptFields:
+    def test_no_genres_in_prompt(self):
+        """source_of_inspiration does not include genres in the prompt."""
+        movie = _make_movie(genres=["Action", "Sci-Fi"])
+        # Need to add genres to _make_movie to test it's excluded
+        movie_with_genres = MovieInputData(
+            tmdb_id=12345, title="Test Movie", release_year=2020,
+            genres=["Action", "Sci-Fi"],
+            plot_keywords=["hacker"], overall_keywords=["cyberpunk"],
+        )
+        result = build_source_of_inspiration_user_prompt(movie_with_genres, None, None)
+        assert "genres" not in result

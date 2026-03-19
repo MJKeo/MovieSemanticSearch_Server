@@ -239,3 +239,58 @@ class TestGeneratePlotAnalysisErrors:
                 )
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: prompt uses merged_keywords (not plot_keywords)
+# ---------------------------------------------------------------------------
+
+class TestPlotAnalysisPromptUsesCorrectKeywordLabel:
+    def test_prompt_uses_merged_keywords_label(self):
+        """The prompt label for keywords is 'merged_keywords', not 'plot_keywords'.
+
+        build_plot_analysis_user_prompt passes `merged_keywords=movie.merged_keywords()`
+        to build_user_prompt, so the label in the output is 'merged_keywords'.
+        """
+        movie = _make_movie(plot_keywords=["hacker", "simulation"])
+        result = build_plot_analysis_user_prompt(movie, None, None)
+        assert "merged_keywords:" in result
+        assert "hacker" in result
+        assert "simulation" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: system_prompt and response_format override
+# ---------------------------------------------------------------------------
+
+class TestPlotAnalysisOverrides:
+    async def test_custom_system_prompt_forwarded(self):
+        """A custom system_prompt is forwarded to the LLM call."""
+        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_plot_analysis(
+                movie, system_prompt="CUSTOM_PROMPT",
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
+
+    async def test_custom_response_format_forwarded(self):
+        """A custom response_format is forwarded to the LLM call."""
+        from movie_ingestion.metadata_generation.schemas import PlotAnalysisWithJustificationsOutput
+
+        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_plot_analysis(
+                movie,
+                response_format=PlotAnalysisWithJustificationsOutput,
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["response_format"] is PlotAnalysisWithJustificationsOutput

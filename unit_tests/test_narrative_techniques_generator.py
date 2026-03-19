@@ -188,3 +188,54 @@ class TestGenerateNarrativeTechniquesErrors:
                 )
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: prompt uses overall_keywords (not merged_keywords or plot_keywords)
+# ---------------------------------------------------------------------------
+
+class TestNarrativeTechniquesPromptKeywords:
+    def test_prompt_uses_overall_keywords(self):
+        """Prompt uses overall_keywords label, not merged_keywords or plot_keywords."""
+        movie = _make_movie(overall_keywords=["nonlinear timeline", "unreliable narrator"])
+        result = build_narrative_techniques_user_prompt(movie, None, None)
+        assert "overall_keywords:" in result
+        assert "nonlinear timeline" in result
+        assert "unreliable narrator" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: system_prompt and response_format override
+# ---------------------------------------------------------------------------
+
+class TestNarrativeTechniquesOverrides:
+    async def test_custom_system_prompt_forwarded(self):
+        """A custom system_prompt is forwarded to the LLM call."""
+        mock_fn = AsyncMock(return_value=(_make_nt_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_narrative_techniques(
+                movie, system_prompt="CUSTOM_PROMPT",
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
+
+    async def test_custom_response_format_forwarded(self):
+        """A custom response_format is forwarded to the LLM call."""
+        from movie_ingestion.metadata_generation.schemas import NarrativeTechniquesWithJustificationsOutput
+
+        mock_fn = AsyncMock(return_value=(_make_nt_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_narrative_techniques(
+                movie,
+                response_format=NarrativeTechniquesWithJustificationsOutput,
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["response_format"] is NarrativeTechniquesWithJustificationsOutput

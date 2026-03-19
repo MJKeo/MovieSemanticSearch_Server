@@ -154,3 +154,25 @@ class TestGenerateProductionKeywordsErrors:
                 )
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: prompt contains only title and merged_keywords
+# ---------------------------------------------------------------------------
+
+class TestProductionKeywordsPromptFields:
+    def test_prompt_includes_only_title_and_merged_keywords(self):
+        """Prompt has only title and merged_keywords — no other fields."""
+        movie = _make_movie(genres=["Action"])
+        result = build_production_keywords_user_prompt(movie)
+        assert "title:" in result
+        assert "merged_keywords:" in result
+        assert "genres" not in result
+        assert "plot_synopsis" not in result
+        assert "review_insights_brief" not in result
+
+    def test_prompt_omits_merged_keywords_when_empty(self):
+        """merged_keywords is excluded when both keyword lists are empty."""
+        movie = _make_movie(plot_keywords=[], overall_keywords=[])
+        result = build_production_keywords_user_prompt(movie)
+        assert "merged_keywords" not in result

@@ -222,3 +222,64 @@ class TestGenerateViewerExperienceErrors:
                 )
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: maturity_summary in prompt
+# ---------------------------------------------------------------------------
+
+class TestViewerExperienceMaturityInPrompt:
+    def test_prompt_includes_maturity_summary_when_available(self):
+        """maturity_summary appears in prompt when maturity data exists."""
+        movie = _make_movie(
+            maturity_rating="R",
+            maturity_reasoning=["Rated R for violence"],
+        )
+        result = build_viewer_experience_user_prompt(movie, None, None)
+        assert "maturity_summary: Rated R for violence" in result
+
+    def test_prompt_omits_maturity_summary_when_none(self):
+        """maturity_summary is excluded when there's no maturity data."""
+        movie = _make_movie(
+            maturity_rating="",
+            maturity_reasoning=[],
+        )
+        result = build_viewer_experience_user_prompt(movie, None, None)
+        assert "maturity_summary" not in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: system_prompt and response_format override
+# ---------------------------------------------------------------------------
+
+class TestViewerExperienceOverrides:
+    async def test_custom_system_prompt_forwarded(self):
+        """A custom system_prompt is forwarded to the LLM call."""
+        mock_fn = AsyncMock(return_value=(_make_ve_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_viewer_experience(
+                movie, system_prompt="CUSTOM_PROMPT",
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
+
+    async def test_custom_response_format_forwarded(self):
+        """A custom response_format is forwarded to the LLM call."""
+        from movie_ingestion.metadata_generation.schemas import ViewerExperienceWithJustificationsOutput
+
+        mock_fn = AsyncMock(return_value=(_make_ve_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_viewer_experience(
+                movie,
+                response_format=ViewerExperienceWithJustificationsOutput,
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["response_format"] is ViewerExperienceWithJustificationsOutput

@@ -13,6 +13,8 @@ import pytest
 from pydantic import ValidationError
 
 from movie_ingestion.metadata_generation.schemas import (
+    MajorCharacter,
+    PlotEventsOutput,
     ReceptionOutput,
     CharacterArc,
     CoreConceptWithJustification,
@@ -517,3 +519,299 @@ class TestSourceOfInspirationWithJustificationsStrParity:
             production_mediums=["animation"],
         )
         assert "SOI_MARKER" not in str(with_j)
+
+
+# ---------------------------------------------------------------------------
+# PlotEventsOutput.__str__()
+# ---------------------------------------------------------------------------
+
+class TestPlotEventsOutputStr:
+    def test_plot_events_str_lowercases_and_joins(self):
+        """PlotEventsOutput.__str__() lowercases all parts and newline-joins."""
+        output = PlotEventsOutput(
+            plot_summary="Neo DISCOVERS the Matrix.",
+            setting="Near-Future Dystopia",
+            major_characters=[],
+        )
+        result = str(output)
+        assert "neo discovers the matrix." in result
+        assert "near-future dystopia" in result
+        # Parts are newline-separated
+        assert "\n" in result
+
+    def test_plot_events_str_includes_major_characters(self):
+        """Major characters are included via MajorCharacter.__str__()."""
+        output = PlotEventsOutput(
+            plot_summary="A plot.",
+            setting="A setting.",
+            major_characters=[
+                MajorCharacter(
+                    name="Neo",
+                    description="a hacker",
+                    role="protagonist",
+                    primary_motivations="Find the truth.",
+                ),
+            ],
+        )
+        result = str(output)
+        assert "neo: a hacker motivations: find the truth." in result
+
+    def test_plot_events_str_empty_major_characters(self):
+        """Empty major_characters list produces no character lines."""
+        output = PlotEventsOutput(
+            plot_summary="A plot.",
+            setting="A setting.",
+            major_characters=[],
+        )
+        result = str(output)
+        lines = result.split("\n")
+        # Only plot_summary and setting — no character lines
+        assert len(lines) == 2
+
+
+# ---------------------------------------------------------------------------
+# MajorCharacter
+# ---------------------------------------------------------------------------
+
+class TestMajorCharacter:
+    def test_major_character_str_format(self):
+        """MajorCharacter.__str__() produces 'name: description Motivations: motivations'."""
+        mc = MajorCharacter(
+            name="Trinity",
+            description="a skilled rebel fighter",
+            role="love interest",
+            primary_motivations="Protect Neo at all costs.",
+        )
+        assert str(mc) == "Trinity: a skilled rebel fighter Motivations: Protect Neo at all costs."
+
+    def test_major_character_extra_forbid(self):
+        """MajorCharacter rejects extra fields."""
+        with pytest.raises(ValidationError):
+            MajorCharacter(
+                name="Neo",
+                description="a hacker",
+                role="protagonist",
+                primary_motivations="Find the truth.",
+                extra_field="not allowed",
+            )
+
+
+# ---------------------------------------------------------------------------
+# PlotAnalysisOutput.__str__() independent content correctness
+# ---------------------------------------------------------------------------
+
+class TestPlotAnalysisOutputStrContent:
+    def test_conflict_scale_appends_conflict_suffix(self):
+        """PlotAnalysisOutput.__str__() appends ' conflict' to conflict_scale."""
+        output = PlotAnalysisOutput(
+            core_concept_label="forbidden knowledge",
+            genre_signatures=["cyberpunk thriller", "sci-fi"],
+            conflict_scale="global",
+            character_arcs=[
+                CharacterArc(
+                    character_name="Neo",
+                    arc_transformation_description="Awakens.",
+                    arc_transformation_label="hero's awakening",
+                ),
+            ],
+            themes_primary=["identity"],
+            lessons_learned=[],
+            generalized_plot_overview="A hacker discovers reality.",
+        )
+        result = str(output)
+        assert "global conflict" in result
+
+    def test_conlist_genre_signatures_min_length(self):
+        """genre_signatures requires min_length=2."""
+        with pytest.raises(ValidationError):
+            PlotAnalysisOutput(
+                core_concept_label="test",
+                genre_signatures=["only one"],
+                conflict_scale="personal",
+                character_arcs=[
+                    CharacterArc(
+                        character_name="A",
+                        arc_transformation_description="B.",
+                        arc_transformation_label="C",
+                    ),
+                ],
+                themes_primary=["theme"],
+                generalized_plot_overview="Overview.",
+            )
+
+    def test_conlist_character_arcs_min_length(self):
+        """character_arcs requires min_length=1."""
+        with pytest.raises(ValidationError):
+            PlotAnalysisOutput(
+                core_concept_label="test",
+                genre_signatures=["a", "b"],
+                conflict_scale="personal",
+                character_arcs=[],
+                themes_primary=["theme"],
+                generalized_plot_overview="Overview.",
+            )
+
+    def test_conlist_themes_primary_min_length(self):
+        """themes_primary requires min_length=1."""
+        with pytest.raises(ValidationError):
+            PlotAnalysisOutput(
+                core_concept_label="test",
+                genre_signatures=["a", "b"],
+                conflict_scale="personal",
+                character_arcs=[
+                    CharacterArc(
+                        character_name="A",
+                        arc_transformation_description="B.",
+                        arc_transformation_label="C",
+                    ),
+                ],
+                themes_primary=[],
+                generalized_plot_overview="Overview.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# ViewerExperienceOutput.__str__() independent content correctness
+# ---------------------------------------------------------------------------
+
+class TestViewerExperienceOutputStrContent:
+    def test_viewer_experience_str_comma_separated_and_lowercased(self):
+        """ViewerExperienceOutput.__str__() returns comma-separated, lowercased terms."""
+        output = ViewerExperienceOutput(
+            emotional_palette=_make_terms_section(["Warm", "Bittersweet"]),
+            tension_adrenaline=_make_terms_section(["Low Stakes"]),
+            tone_self_seriousness=_make_terms_section(),
+            cognitive_complexity=_make_terms_section(),
+            disturbance_profile=OptionalTermsWithNegationsSection(
+                should_skip=True,
+                section_data=_make_terms_section(),
+            ),
+            sensory_load=OptionalTermsWithNegationsSection(
+                should_skip=True,
+                section_data=_make_terms_section(),
+            ),
+            emotional_volatility=OptionalTermsWithNegationsSection(
+                should_skip=True,
+                section_data=_make_terms_section(),
+            ),
+            ending_aftertaste=_make_terms_section(),
+        )
+        result = str(output)
+        assert "warm" in result
+        assert "bittersweet" in result
+        assert "low stakes" in result
+        # Comma-separated, not newline-separated
+        assert "\n" not in result
+        assert ", " in result
+
+
+# ---------------------------------------------------------------------------
+# WatchContextOutput.__str__() independent content correctness
+# ---------------------------------------------------------------------------
+
+class TestWatchContextOutputStrContent:
+    def test_watch_context_str_comma_separated(self):
+        """WatchContextOutput.__str__() returns comma-separated, lowercased terms."""
+        output = WatchContextOutput(
+            self_experience_motivations=_make_terms_only_section(["Escape"]),
+            external_motivations=_make_terms_only_section(["Date Night"]),
+            key_movie_feature_draws=_make_terms_only_section(),
+            watch_scenarios=_make_terms_only_section(),
+        )
+        result = str(output)
+        assert "escape, date night" == result
+
+
+# ---------------------------------------------------------------------------
+# NarrativeTechniquesOutput.__str__() independent content correctness
+# ---------------------------------------------------------------------------
+
+class TestNarrativeTechniquesOutputStrContent:
+    def test_narrative_techniques_str_all_11_sections_contribute(self):
+        """NarrativeTechniquesOutput.__str__() includes terms from all 11 sections."""
+        section_names = [
+            "pov_perspective", "narrative_delivery", "narrative_archetype",
+            "information_control", "characterization_methods", "character_arcs",
+            "audience_character_perception", "conflict_stakes_design",
+            "thematic_delivery", "meta_techniques", "additional_plot_devices",
+        ]
+        sections = {
+            name: _make_terms_only_section([f"{name}_term"])
+            for name in section_names
+        }
+        output = NarrativeTechniquesOutput(**sections)
+        result = str(output)
+        for name in section_names:
+            assert f"{name}_term" in result
+
+
+# ---------------------------------------------------------------------------
+# ProductionKeywordsOutput.__str__() with empty terms
+# ---------------------------------------------------------------------------
+
+class TestProductionKeywordsOutputStrEmpty:
+    def test_production_keywords_str_empty_terms(self):
+        """ProductionKeywordsOutput.__str__() returns '' when terms is empty."""
+        output = ProductionKeywordsOutput(terms=[])
+        assert str(output) == ""
+
+
+# ---------------------------------------------------------------------------
+# SourceOfInspirationOutput.__str__() with empty lists
+# ---------------------------------------------------------------------------
+
+class TestSourceOfInspirationOutputStrEmpty:
+    def test_source_of_inspiration_str_empty_lists(self):
+        """SourceOfInspirationOutput.__str__() returns '' when both lists empty."""
+        output = SourceOfInspirationOutput(
+            sources_of_inspiration=[],
+            production_mediums=[],
+        )
+        assert str(output) == ""
+
+
+# ---------------------------------------------------------------------------
+# TermsSection / TermsWithNegationsSection extra="forbid"
+# ---------------------------------------------------------------------------
+
+class TestSectionExtraForbid:
+    def test_terms_section_extra_forbid(self):
+        with pytest.raises(ValidationError):
+            TermsSection(terms=["a"], extra_field="not allowed")
+
+    def test_terms_with_negations_section_extra_forbid(self):
+        with pytest.raises(ValidationError):
+            TermsWithNegationsSection(
+                terms=["a"], negations=[], extra_field="not allowed",
+            )
+
+
+# ---------------------------------------------------------------------------
+# OptionalTermsWithNegationsSection: section_data required even when skipped
+# ---------------------------------------------------------------------------
+
+class TestOptionalSectionDataRequired:
+    def test_section_data_required_when_skipped(self):
+        """section_data is required by schema even when should_skip=True."""
+        with pytest.raises(ValidationError):
+            OptionalTermsWithNegationsSection(should_skip=True)
+
+
+# ---------------------------------------------------------------------------
+# ReceptionOutput.__str__() with empty attributes
+# ---------------------------------------------------------------------------
+
+class TestReceptionOutputStrEmptyAttributes:
+    def test_reception_str_empty_praise_and_complaint(self):
+        """ReceptionOutput.__str__() handles empty attribute lists gracefully."""
+        output = ReceptionOutput(
+            new_reception_summary="A Fine Film.",
+            praise_attributes=[],
+            complaint_attributes=[],
+            review_insights_brief="Some insights.",
+        )
+        result = str(output)
+        # Only the summary should appear
+        assert "a fine film." in result
+        # No empty comma-separated sections
+        assert result.strip() == "a fine film."

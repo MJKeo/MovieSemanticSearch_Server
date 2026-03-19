@@ -303,3 +303,39 @@ class TestGenerateReceptionErrors:
                 await generate_reception(movie, LLMProvider.OPENAI, "gpt-5-mini")
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: _truncate_reviews edge case
+# ---------------------------------------------------------------------------
+
+class TestTruncateReviewsEdge:
+    def test_single_review_exactly_at_char_limit(self):
+        """A single review exactly at _MAX_REVIEW_CHARS is included."""
+        review = {"text": "x" * 5000}
+        result = _truncate_reviews([review])
+        assert len(result) == 1
+        assert result[0] is review
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_reception_user_prompt edge case
+# ---------------------------------------------------------------------------
+
+class TestBuildReceptionUserPromptEdge:
+    def test_empty_reception_summary_treated_as_none(self):
+        """An empty string '' for reception_summary is treated as None (omitted)."""
+        movie = _make_movie(
+            reception_summary="",
+            featured_reviews=[{"summary": "Fine", "text": "A fine and decent movie overall."}],
+        )
+        prompt = build_reception_user_prompt(movie)
+        assert "reception_summary" not in prompt
+
+    def test_generate_reception_uses_hardcoded_system_prompt(self):
+        """generate_reception does NOT accept system_prompt override — it uses the hardcoded one."""
+        import inspect
+        sig = inspect.signature(generate_reception)
+        # The function signature should NOT have system_prompt or response_format params
+        assert "system_prompt" not in sig.parameters
+        assert "response_format" not in sig.parameters

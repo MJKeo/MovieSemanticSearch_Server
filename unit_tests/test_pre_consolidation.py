@@ -32,6 +32,7 @@ from movie_ingestion.metadata_generation.pre_consolidation import (
     _check_narrative_techniques,
     _check_production_keywords,
     _check_source_of_inspiration,
+    _all_text_sources_sparse,
     assess_skip_conditions,
     run_pre_consolidation,
     MPAA_DEFINITIONS,
@@ -575,5 +576,138 @@ class TestRunPreConsolidation:
         assert len(result.skip_assessment.skip_reasons) > 0
         assert "plot_events" in result.skip_assessment.skip_reasons
         assert "reception" in result.skip_assessment.skip_reasons
+
+    def test_run_pre_consolidation_merged_keywords_normalized(self):
+        """run_pre_consolidation uses route_keywords (normalized/deduped), not raw lists."""
+        movie = _make_movie(
+            overview="A long enough overview for the test.",
+            plot_keywords=["Action", "  action  "],
+            overall_keywords=["ACTION"],
+        )
+        result = run_pre_consolidation(movie)
+        # Normalized + deduped: only one "action"
+        assert result.merged_keywords == ["action"]
+
+
+# ---------------------------------------------------------------------------
+# _all_text_sources_sparse boundary tests
+# ---------------------------------------------------------------------------
+
+class TestAllTextSourcesSparse:
+    def test_overview_exactly_10_chars_is_not_sparse(self):
+        """Overview of exactly 10 chars passes the threshold."""
+        movie = _make_movie(overview="0123456789")  # 10 chars
+        assert _all_text_sources_sparse(movie) is False
+
+    def test_overview_9_chars_is_sparse(self):
+        """Overview of 9 chars is below threshold — sparse if no other sources."""
+        movie = _make_movie(overview="012345678")  # 9 chars
+        assert _all_text_sources_sparse(movie) is True
+
+    def test_combined_summaries_exactly_50_chars_is_not_sparse(self):
+        """Combined summaries at exactly 50 chars passes threshold."""
+        movie = _make_movie(
+            overview="",
+            plot_summaries=["a" * 25, "b" * 25],  # 50 chars total
+        )
+        assert _all_text_sources_sparse(movie) is False
+
+    def test_multiple_short_synopses_each_below_threshold(self):
+        """Each synopsis checked individually — multiple short ones still sparse."""
+        movie = _make_movie(
+            overview="",
+            plot_synopses=["a" * 30, "b" * 30],  # Each < 50, but sum > 50
+        )
+        # Function checks each synopsis individually, not their sum
+        assert _all_text_sources_sparse(movie) is True
+
+
+# ---------------------------------------------------------------------------
+# consolidate_maturity with multiple parental_guide_items
+# ---------------------------------------------------------------------------
+
+class TestConsolidateMaturityMultipleItems:
+    def test_consolidate_maturity_multiple_items_comma_separated(self):
+        """Multiple parental_guide_items are comma-separated in output."""
+        result = consolidate_maturity(
+            "R",
+            [],
+            [
+                {"category": "violence", "severity": "severe"},
+                {"category": "language", "severity": "moderate"},
+                {"category": "nudity", "severity": "mild"},
+            ],
+        )
+        assert result == "R — severe violence, moderate language, mild nudity"
+
+
+# ---------------------------------------------------------------------------
+# assess_skip_conditions Wave 2: partial Wave 1 outputs
+# ---------------------------------------------------------------------------
+
+class TestAssessSkipConditionsWave2Partial:
+    def test_wave2_plot_events_present_reception_none(self):
+        """When reception_output is None, review_insights_brief is None."""
+        movie = _make_rich_movie()
+        pe_output = _make_plot_events_output()
+        result = assess_skip_conditions(
+            movie,
+            plot_events_output=pe_output,
+            reception_output=None,
+            merged_keywords=["hacker"],
+            maturity_summary="R — Restricted",
+        )
+        # plot_analysis should still be eligible (has plot_synopsis)
+        assert "plot_analysis" in result.generations_to_run
+
+    def test_wave2_reception_present_plot_events_none(self):
+        """When plot_events_output is None, plot_synopsis is None."""
+        movie = _make_rich_movie()
+        rec_output = _make_reception_output()
+        result = assess_skip_conditions(
+            movie,
+            plot_events_output=None,
+            reception_output=rec_output,
+            merged_keywords=["hacker"],
+            maturity_summary="R — Restricted",
+        )
+        # plot_analysis should still be eligible (has review_insights_brief)
+        assert "plot_analysis" in result.generations_to_run
+
+
+# ---------------------------------------------------------------------------
+# check_reception: reviews exactly at 25-char threshold
+# ---------------------------------------------------------------------------
+
+class TestCheckReceptionThreshold:
+    def test_check_reception_reviews_exactly_25_chars(self):
+        """Combined review text of exactly 25 chars passes threshold."""
+        movie = _make_movie(
+            reception_summary=None,
+            audience_reception_attributes=[],
+            featured_reviews=[{"text": "a" * 25}],
+        )
+        assert check_reception(movie) is None
+
+    def test_check_reception_reviews_24_chars_fails(self):
+        """Combined review text of 24 chars is below threshold."""
+        movie = _make_movie(
+            reception_summary=None,
+            audience_reception_attributes=[],
+            featured_reviews=[{"text": "a" * 24}],
+        )
+        assert check_reception(movie) is not None
+
+
+# ---------------------------------------------------------------------------
+# _check_source_of_inspiration: eligible via review_insights_brief alone
+# ---------------------------------------------------------------------------
+
+class TestCheckSourceOfInspirationEligibility:
+    def test_eligible_via_review_insights_brief_alone(self):
+        """source_of_inspiration is eligible with only review_insights_brief."""
+        assert _check_source_of_inspiration(
+            [], "Critics noted the source material.", None,
+        ) is None
 
 

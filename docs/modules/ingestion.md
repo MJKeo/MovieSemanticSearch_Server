@@ -38,22 +38,23 @@ this module.
 | `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores across 3 groups (with providers, no providers recent, no providers old). Thin wrapper around `survival_curve_utils`. |
 | `imdb_quality_scoring/sample_threshold_candidates.py` | Diagnostic: samples movies around each candidate threshold per group, writes full TMDB+IMDB data to per-group JSON files in `ingestion_data/` for manual review. |
 | `metadata_generation/run.py` | Stage 6 CLI entry point: `submit --wave 1/2`, `status`, `process`. Two-wave Batch API flow. |
+| `metadata_generation/wave1_runner.py` | Direct (non-batch) runner for Wave 1 generation. Generates plot_events and reception outputs for a movie set, stores results immediately to `wave1_results` table in tracker.db. Used to pre-generate Wave 1 outputs for Wave 2 evaluation. Async tasks return result tuples; all DB writes happen after `asyncio.gather()`. |
 | `metadata_generation/state.py` | SQLite helpers for `metadata_batches` and `metadata_results` tables (added to tracker.db). |
 | `metadata_generation/request_builder.py` | Assembles JSONL files for batch submission. Wraps generator output in `{custom_id, method, url, body}` format. |
 | `metadata_generation/batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status, download. No movie/generation knowledge. |
 | `metadata_generation/result_processor.py` | Parses downloaded result JSONL, routes to generators, stores in `metadata_results`. Auto-submits Wave 2 after Wave 1 processing. |
-| `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()`. Contract between SQLite loading and pre-consolidation. |
-| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Justification fields removed; `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
-| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception`; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. |
+| `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()` (deduplicated union of plot + overall keywords) and `maturity_summary()` (delegates to `pre_consolidation.consolidate_maturity()`). Contract between SQLite loading and pre-consolidation. |
+| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
+| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. |
 | `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
-| `metadata_generation/generators/` | 7 generator files (one per generation type; production.py has 2 sub-calls). `plot_events.py` is fully implemented: real-time async caller with production defaults baked in (Gemini 2.5 Flash Lite + `SYSTEM_PROMPT_SHORT` + 1k thinking budget — evaluation winner). Callers can override provider/model/kwargs. Remaining generators are scaffolds (docstring only). See ADR-026. |
+| `metadata_generation/generators/` | 8 generator files (one per generation type). All fully implemented as real-time async callers. `plot_events.py`: Gemini 2.5 Flash Lite + `SYSTEM_PROMPT_SHORT` + 1k thinking budget (evaluation winner). All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
 | `metadata_generation/evaluations/` | Two-phase pointwise evaluation pipeline for comparing LLM candidates before production commits. See ADR-028. |
 | `metadata_generation/evaluations/shared.py` | `EvaluationCandidate` frozen dataclass, `EVALUATION_TEST_SET_TMDB_IDS` and subset lists (`ORIGINAL_SET_TMDB_IDS`, `MEDIUM_SPARSITY_TMDB_IDS`, `HIGH_SPARSITY_TMDB_IDS`) — 70 movies stratified by sparsity, `get_eval_connection()`, `create_candidates_table()`, `store_candidate()`, `load_movie_input_data()`, `compute_score_summary()` (supports `score_weights` for weighted overall_mean). |
 | `metadata_generation/evaluations/plot_events.py` | Phase 0 (reference generation via GPT-5.4/WHAM) + Phase 1 (candidate generation + judge scoring, 3-run averaged) + `PLOT_EVENTS_CANDIDATES` list. 4-dimension judge rubric: groundedness, plot_summary, character_quality, setting. |
 | `metadata_generation/evaluations/openai_oauth.py` | ChatGPT OAuth2 PKCE token lifecycle: browser consent, JWT decode for account_id/expiry, token persistence to `evaluation_data/openai_oauth_tokens.json`, auto-refresh. `get_valid_auth()` is the sole entry point for WHAM callers. |
 | `metadata_generation/evaluations/run_evaluations_pipeline.py` | CLI entry point: loads 70-movie corpus, filters ineligible movies via `check_plot_events`, runs Phase 0 then Phase 1. |
 | `metadata_generation/evaluations/analyze_results.py` | Read-only analysis: merges scores + token counts + model pricing into quality and cost tables. Value ranking table shows separate dense/sparse cost/1K columns (dense = ORIGINAL_SET movies, sparse = MEDIUM+HIGH_SPARSITY). Run via `python -m movie_ingestion.metadata_generation.evaluations.analyze_results`. |
-| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). |
+| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant; Wave 2 generators also export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
@@ -323,14 +324,15 @@ tmdb_id × generation_type). `plot_synopsis` and `review_insights_brief`
 are scalar columns in `metadata_results`, not buried in `result_json`,
 so Wave 2 request building can query them directly.
 
-**Generator contract**: The implemented contract (as of `plot_events.py`)
-is async real-time callers — each generator takes `MovieInputData` plus a
-`provider`/`model`, calls `generate_llm_response_async`, and returns
-`Tuple[Output, TokenUsage]`. This diverges from the original Batch API
-body-dict design in ADR-024. The Batch API scaffolding in `request_builder.py`
-and `run.py` was designed for a different generator interface; alignment is
-pending. See ADR-026 for the decision to implement generators as real-time
-callers first (model evaluation) before committing to Batch API wrapping.
+**Generator contract**: All 8 generators are fully implemented as async
+real-time callers — each takes `MovieInputData` plus optional
+`provider`/`model`/`system_prompt`/`response_format`/`**kwargs`,
+calls `generate_llm_response_async`, and returns `Tuple[Output, TokenUsage]`.
+Wave 2 generators additionally accept `plot_synopsis` and/or
+`review_insights_brief` Wave 1 outputs as parameters. This diverges from
+the original Batch API body-dict design in ADR-024; the Batch API
+scaffolding in `request_builder.py` and `run.py` was built for a different
+interface; alignment is pending. See ADR-026, ADR-027.
 
 **Status progression**: `imdb_quality_passed` → `phase1_complete`
 (after Wave 1) → `phase2_complete` (after Wave 2).
@@ -343,21 +345,29 @@ Pure data processing before any LLM calls. Called by
 **Keyword routing** (`route_keywords()`): normalizes each keyword
 (`.lower().strip()`) and deduplicates within each list before merging.
 Produces three routed lists:
-- `plot_keywords` → plot_events, plot_analysis
-- `overall_keywords` → watch_context, narrative_techniques
-- `merged_keywords` (union, plot first) → viewer_experience,
-  production_keywords, source_of_inspiration
+- `plot_keywords` → plot_events only
+- `overall_keywords` → narrative_techniques only
+- `merged_keywords` (union, plot first) → plot_analysis, viewer_experience,
+  watch_context, production_keywords, source_of_inspiration
+
+Note: `plot_analysis` was changed from `plot_keywords` to `merged_keywords`
+because overall keywords provide additional thematic signal. `narrative_techniques`
+uses `overall_keywords` only — structural tags like "nonlinear timeline" live
+there and plot keywords add noise without structural signal.
 
 **Maturity consolidation** (`consolidate_maturity()`): 4-step priority
 chain: reasoning list → parental guide items → MPAA rating definition
 → None. Produces a single `maturity_summary` string passed to
-viewer_experience and watch_context.
+viewer_experience and watch_context. `MovieInputData.maturity_summary()`
+delegates to this function via lazy import (avoids circular import).
 
-**Eligibility checks**: 8 individual `_check_<type>()` methods (one per
-generation type), each returning `str | None` (None = eligible, str =
-skip reason). Composed by `assess_skip_conditions()` into a
-`SkipAssessment`. Called twice: before Wave 1 (Wave 1 checks only),
-before Wave 2 (Wave 2 checks using actual Wave 1 outputs).
+**Eligibility checks**: Wave 1 checks (`check_plot_events`, `check_reception`)
+are public functions — called by evaluation runners and `wave1_runner` to
+pre-filter ineligible movies. Wave 2 has 6 private `_check_<type>()` methods.
+All return `str | None` (None = eligible, str = skip reason), composed by
+`assess_skip_conditions()` into a `SkipAssessment`. Called twice: before
+Wave 1 (Wave 1 checks only), before Wave 2 (Wave 2 checks using actual
+Wave 1 outputs).
 
 Key skip thresholds:
 - `plot_events`: skips if all text sources are absent OR all sparse
@@ -375,10 +385,17 @@ Key skip thresholds:
 Pydantic `BaseModel` schemas for each generation. Key design decisions
 (see ADR-025):
 
-- **Justification fields removed** from all section models. The existing
-  `implementation/classes/schemas.py` schemas (used by the search pipeline)
-  retain their original structure; these generation-side schemas diverge
-  intentionally to reduce token cost.
+- **Base variants have justification fields removed** from all section
+  models. The existing `implementation/classes/schemas.py` schemas (used
+  by the search pipeline) retain their original structure; these
+  generation-side schemas diverge intentionally to reduce token cost.
+- **`WithJustificationsOutput` variants** exist for all Wave 2 generation
+  types (e.g., `PlotAnalysisWithJustificationsOutput`,
+  `ViewerExperienceWithJustificationsOutput`, etc.) for evaluation use.
+  `TermsWithJustificationSection` (adds a `justification` field to
+  `TermsSection`) is the shared sub-model for these variants. The
+  `__str__()` of each `WithJustificationsOutput` produces identical
+  embedding text to its base variant — this invariant is tested.
 - **`review_insights_brief`** (on `ReceptionOutput`) is a ~150-250 token
   dense paragraph extracted from reviews. It is an intermediate output:
   stored as a scalar column in `metadata_results`, consumed by Wave 2
@@ -467,6 +484,9 @@ The `tracker.py` module is the shared backbone. Key rules:
   columns (empty lists stored as NULL). See ADR-023.
 - `metadata_batches` — OpenAI batch submissions (managed by `state.py`).
 - `metadata_results` — per-generation results (managed by `state.py`).
+- `wave1_results` — direct generation results for evaluation use (managed
+  by `wave1_runner.py`). One row per tmdb_id, nullable `plot_events` and
+  `reception` JSON columns.
 
 ### Durability settings
 
@@ -490,6 +510,10 @@ with synchronous SQLite writes:
 This was chosen over aiosqlite, semaphore-guarded per-row writes,
 or write queues because it is simpler, easier to reason about, and
 eliminates any uncertainty about concurrent DB access.
+
+`wave1_runner.py` follows the same pattern for LLM generation: async
+tasks return result tuples (no DB access inside tasks); all DB writes
+happen in a synchronous batch after `asyncio.gather()`.
 
 ## Gotchas
 
@@ -527,3 +551,7 @@ eliminates any uncertainty about concurrent DB access.
   intentionally diverge from the search-side schemas in
   `implementation/classes/schemas.py`. When deploying, align the
   search-side schemas to match generation outputs.
+- Generator kwargs must be provider-specific. Do not pass a shared
+  `_DEFAULT_KWARGS` dict across providers — OpenAI-specific params
+  (e.g., `verbosity`, `reasoning_effort`) cause 400 errors on Gemini/Groq.
+  Each caller passes exactly the kwargs its provider needs.

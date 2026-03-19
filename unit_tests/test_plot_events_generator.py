@@ -368,3 +368,65 @@ class TestErrorPaths:
                 await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: _DEFAULT_KWARGS merge behavior
+# ---------------------------------------------------------------------------
+
+class TestPlotEventsDefaultKwargsMerge:
+    async def test_default_kwargs_present_when_no_override(self) -> None:
+        """Default thinking_config is present when caller provides no kwargs."""
+        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
+        movie = _make_movie(overview="A long enough overview for plot events.")
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_plot_events(movie, LLMProvider.GEMINI, "gemini-2.5-flash-lite")
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["temperature"] == 0.2
+        assert call_kwargs["thinking_config"] == {"thinking_budget": 1024}
+
+    async def test_caller_kwargs_override_defaults(self) -> None:
+        """Caller-provided kwargs override _DEFAULT_KWARGS values."""
+        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
+        movie = _make_movie(overview="A long enough overview for plot events.")
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_plot_events(
+                movie, LLMProvider.GEMINI, "gemini-2.5-flash-lite",
+                temperature=0.5,
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["temperature"] == 0.5
+        # thinking_config default should still be present
+        assert call_kwargs["thinking_config"] == {"thinking_budget": 1024}
+
+
+# ---------------------------------------------------------------------------
+# Tests: prompt formatting details
+# ---------------------------------------------------------------------------
+
+class TestPlotEventsPromptFormatting:
+    def test_plot_summaries_use_multiline_format(self) -> None:
+        """plot_summaries are formatted with dash-prefixed items (MultiLineList)."""
+        movie = _make_movie(
+            overview="A plot.",
+            plot_summaries=["First summary.", "Second summary."],
+        )
+        prompt = build_plot_events_user_prompt(movie)
+        # MultiLineList renders as "key:\n- item1\n- item2"
+        assert "- First summary." in prompt
+        assert "- Second summary." in prompt
+
+    def test_plot_keywords_are_comma_separated(self) -> None:
+        """plot_keywords are comma-separated (regular list), not dash-prefixed."""
+        movie = _make_movie(
+            overview="A plot.",
+            plot_keywords=["hacker", "simulation"],
+        )
+        prompt = build_plot_events_user_prompt(movie)
+        assert "plot_keywords: hacker, simulation" in prompt
+        # Should NOT use MultiLineList dash format
+        assert "- hacker" not in prompt

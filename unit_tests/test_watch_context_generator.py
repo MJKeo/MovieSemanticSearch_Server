@@ -188,3 +188,53 @@ class TestGenerateWatchContextErrors:
                 )
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: system_prompt and response_format override
+# ---------------------------------------------------------------------------
+
+class TestWatchContextOverrides:
+    async def test_custom_system_prompt_forwarded(self):
+        """A custom system_prompt is forwarded to the LLM call."""
+        mock_fn = AsyncMock(return_value=(_make_wc_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_watch_context(
+                movie, system_prompt="CUSTOM_PROMPT",
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
+
+    async def test_custom_response_format_forwarded(self):
+        """A custom response_format is forwarded to the LLM call."""
+        from movie_ingestion.metadata_generation.schemas import WatchContextWithJustificationsOutput
+
+        mock_fn = AsyncMock(return_value=(_make_wc_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_watch_context(
+                movie,
+                response_format=WatchContextWithJustificationsOutput,
+                provider=LLMProvider.OPENAI, model="gpt-5-mini",
+            )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["response_format"] is WatchContextWithJustificationsOutput
+
+
+# ---------------------------------------------------------------------------
+# Tests: SYSTEM_PROMPT_WITH_JUSTIFICATIONS import
+# ---------------------------------------------------------------------------
+
+class TestWatchContextImports:
+    def test_system_prompt_with_justifications_importable(self):
+        """SYSTEM_PROMPT_WITH_JUSTIFICATIONS is importable from the generator module."""
+        from movie_ingestion.metadata_generation.generators.watch_context import (
+            SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
+        )
+        assert isinstance(SYSTEM_PROMPT_WITH_JUSTIFICATIONS, str)

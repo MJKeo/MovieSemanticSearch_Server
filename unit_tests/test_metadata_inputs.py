@@ -293,3 +293,49 @@ class TestMaturitySummary:
             movie.parental_guide_items,
         )
         assert movie.maturity_summary() == expected
+
+
+# ---------------------------------------------------------------------------
+# build_user_prompt() edge cases
+# ---------------------------------------------------------------------------
+
+class TestBuildUserPromptEdgeCases:
+    def test_build_user_prompt_integer_value(self):
+        """Non-string scalars (integers) are formatted correctly via str()."""
+        result = build_user_prompt(year=1999)
+        assert result == "year: 1999"
+
+    def test_build_user_prompt_field_ordering_preserved(self):
+        """Kwargs order is preserved in output (Python 3.7+ dict ordering)."""
+        result = build_user_prompt(alpha="first", beta="second", gamma="third")
+        lines = result.split("\n")
+        assert lines[0] == "alpha: first"
+        assert lines[1] == "beta: second"
+        assert lines[2] == "gamma: third"
+
+
+# ---------------------------------------------------------------------------
+# MovieInputData.batch_id() edge cases
+# ---------------------------------------------------------------------------
+
+class TestBatchIdEdgeCases:
+    def test_batch_id_large_tmdb_id(self):
+        """Large tmdb_id values are formatted correctly."""
+        movie = _make_movie(tmdb_id=999999999)
+        assert movie.batch_id("plot_events") == "999999999-plot_events"
+
+    def test_batch_id_zero_tmdb_id(self):
+        """tmdb_id=0 is handled correctly."""
+        movie = _make_movie(tmdb_id=0)
+        assert movie.batch_id("reception") == "0-reception"
+
+
+# ---------------------------------------------------------------------------
+# MultiLineList isinstance check
+# ---------------------------------------------------------------------------
+
+class TestMultiLineList:
+    def test_multiline_list_is_list(self):
+        """MultiLineList inherits from list — isinstance check passes."""
+        ml = MultiLineList(["a", "b"])
+        assert isinstance(ml, list)
