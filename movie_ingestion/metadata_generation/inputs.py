@@ -14,6 +14,8 @@ MovieInputData (dataclass):
     Methods:
     - batch_id(generation_type) -> str: batch request custom_id
     - title_with_year() -> str: "Title (Year)" formatted string
+    - merged_keywords() -> list[str]: deduplicated union of plot + overall keywords
+    - maturity_summary() -> str | None: delegates to pre_consolidation.consolidate_maturity()
 
 ConsolidatedInputs (dataclass):
     Post-pre-consolidation data passed to generators. Contains:
@@ -36,6 +38,8 @@ build_user_prompt(**labeled_fields) -> str:
     Example: build_user_prompt(title="The Matrix (1999)", genres="Action, Sci-Fi")
     -> "title: The Matrix (1999)\\ngenres: Action, Sci-Fi"
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 
@@ -120,6 +124,34 @@ class MovieInputData:
         if self.release_year is not None:
             return f"{self.title} ({self.release_year})"
         return self.title
+
+    def merged_keywords(self) -> list[str]:
+        """Deduplicated union of plot + overall keywords, normalized.
+
+        Order-preserving: plot_keywords first, then unique overall_keywords
+        appended. Each keyword is lowercased and stripped before dedup.
+        Matches the merge logic in pre_consolidation.route_keywords().
+        """
+        return list(dict.fromkeys(
+            kw.lower().strip()
+            for kw in self.plot_keywords + self.overall_keywords
+        ))
+
+    def maturity_summary(self) -> str | None:
+        """Consolidated maturity string from available maturity data.
+
+        Delegates to pre_consolidation.consolidate_maturity() which is
+        the single source of truth for the priority chain logic.
+        """
+        # Import here to avoid circular import (pre_consolidation imports
+        # MovieInputData from this module).
+        from .pre_consolidation import consolidate_maturity
+
+        return consolidate_maturity(
+            self.maturity_rating,
+            self.maturity_reasoning,
+            self.parental_guide_items,
+        )
 
 
 @dataclass(slots=True)

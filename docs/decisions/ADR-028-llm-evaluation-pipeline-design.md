@@ -77,9 +77,9 @@ character minimalism), not generic narrative quality.
   a new `evaluations/<type>.py` file.
 - `evaluation_data/eval.db` must be gitignored — it accumulates API spend
   and contains evaluation results not needed in source control.
-- `check_plot_events()` was made public in `pre_consolidation.py` (with
-  `_check_plot_events` alias for test compat) so the evaluation runner
-  can call it directly to pre-filter ineligible movies before spend.
+- `check_plot_events()` and `check_reception()` are public in
+  `pre_consolidation.py` so evaluation runners and the wave1_runner
+  can call them directly to pre-filter ineligible movies before spend.
 - Model selection for production commits should reference the
   `analyze_results.py` output (quality score + per-movie cost).
 

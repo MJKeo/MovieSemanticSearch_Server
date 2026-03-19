@@ -4,7 +4,7 @@ Unit tests for movie_ingestion.metadata_generation.pre_consolidation.
 Covers:
   - route_keywords: normalization, dedup, merge ordering
   - consolidate_maturity: 4-step priority chain
-  - Per-generation eligibility checks (_check_* functions)
+  - Per-generation eligibility checks (check_*/_ check_* functions)
   - assess_skip_conditions: Wave 1 and Wave 2 orchestration
   - run_pre_consolidation: end-to-end orchestrator
 """
@@ -25,8 +25,7 @@ from movie_ingestion.metadata_generation.pre_consolidation import (
     route_keywords,
     consolidate_maturity,
     check_plot_events,
-    _check_plot_events,
-    _check_reception,
+    check_reception,
     _check_plot_analysis,
     _check_viewer_experience,
     _check_watch_context,
@@ -85,7 +84,7 @@ def _make_plot_events_output(**overrides) -> PlotEventsOutput:
 def _make_reception_output(**overrides) -> ReceptionOutput:
     """Build a minimal valid ReceptionOutput."""
     defaults = {
-        "reception_summary": "Widely acclaimed.",
+        "new_reception_summary": "Widely acclaimed.",
         "praise_attributes": ["groundbreaking"],
         "complaint_attributes": [],
         "review_insights_brief": "Critics praised the visual effects and philosophical depth.",
@@ -206,26 +205,26 @@ class TestConsolidateMaturity:
 
 
 # ---------------------------------------------------------------------------
-# _check_plot_events
+# check_plot_events
 # ---------------------------------------------------------------------------
 
 class TestCheckPlotEvents:
     def test_check_plot_events_eligible_overview(self):
         # Overview >= 10 chars → eligible
         movie = _make_movie(overview="A long enough overview for the test.")
-        assert _check_plot_events(movie) is None
+        assert check_plot_events(movie) is None
 
     def test_check_plot_events_eligible_synopsis(self):
         movie = _make_movie(overview="", plot_synopses=["A synopsis that is long enough to pass the threshold easily."])
-        assert _check_plot_events(movie) is None
+        assert check_plot_events(movie) is None
 
     def test_check_plot_events_eligible_summary(self):
         movie = _make_movie(overview="", plot_summaries=["A summary that is long enough to pass the threshold easily."])
-        assert _check_plot_events(movie) is None
+        assert check_plot_events(movie) is None
 
     def test_check_plot_events_skip_all_missing(self):
         movie = _make_movie(overview="", plot_synopses=[], plot_summaries=[])
-        reason = _check_plot_events(movie)
+        reason = check_plot_events(movie)
         assert reason is not None
         assert "No overview" in reason
 
@@ -236,7 +235,7 @@ class TestCheckPlotEvents:
             plot_synopses=["Tiny"],
             plot_summaries=["Small"],
         )
-        reason = _check_plot_events(movie)
+        reason = check_plot_events(movie)
         assert reason is not None
         assert "sparse" in reason
 
@@ -246,17 +245,17 @@ class TestCheckPlotEvents:
             overview="Short",
             plot_synopses=["This is a synopsis that is definitely longer than fifty characters to pass the threshold."],
         )
-        assert _check_plot_events(movie) is None
+        assert check_plot_events(movie) is None
 
     def test_check_plot_events_empty_overview_string(self):
         # overview="" is treated as missing (falsy)
         movie = _make_movie(overview="", plot_synopses=[], plot_summaries=[])
-        reason = _check_plot_events(movie)
+        reason = check_plot_events(movie)
         assert reason is not None
 
 
 # ---------------------------------------------------------------------------
-# _check_reception
+# check_reception
 # ---------------------------------------------------------------------------
 
 class TestCheckReception:
@@ -265,20 +264,20 @@ class TestCheckReception:
         movie = _make_movie(
             featured_reviews=[{"text": "A truly wonderful and groundbreaking film."}]
         )
-        assert _check_reception(movie) is None
+        assert check_reception(movie) is None
 
     def test_check_reception_eligible_summary_only(self):
         movie = _make_movie(
             reception_summary="Widely acclaimed.",
             featured_reviews=[],
         )
-        assert _check_reception(movie) is None
+        assert check_reception(movie) is None
 
     def test_check_reception_eligible_attributes_only(self):
         movie = _make_movie(
             audience_reception_attributes=[{"name": "visionary", "sentiment": "positive"}],
         )
-        assert _check_reception(movie) is None
+        assert check_reception(movie) is None
 
     def test_check_reception_skip_nothing(self):
         movie = _make_movie(
@@ -286,7 +285,7 @@ class TestCheckReception:
             audience_reception_attributes=[],
             featured_reviews=[],
         )
-        reason = _check_reception(movie)
+        reason = check_reception(movie)
         assert reason is not None
 
     def test_check_reception_skip_short_reviews(self):
@@ -296,7 +295,7 @@ class TestCheckReception:
             audience_reception_attributes=[],
             featured_reviews=[{"text": "Short."}],
         )
-        reason = _check_reception(movie)
+        reason = check_reception(movie)
         assert reason is not None
 
     def test_check_reception_reviews_at_threshold(self):
@@ -306,7 +305,7 @@ class TestCheckReception:
             audience_reception_attributes=[],
             featured_reviews=[{"text": "a" * 25}],
         )
-        assert _check_reception(movie) is None
+        assert check_reception(movie) is None
 
     def test_check_reception_reviews_missing_text_key(self):
         # Reviews without "text" key — get() returns "" → counted as 0 chars
@@ -315,7 +314,7 @@ class TestCheckReception:
             audience_reception_attributes=[],
             featured_reviews=[{"summary": "No text key here"}],
         )
-        reason = _check_reception(movie)
+        reason = check_reception(movie)
         assert reason is not None
 
 
@@ -578,16 +577,3 @@ class TestRunPreConsolidation:
         assert "reception" in result.skip_assessment.skip_reasons
 
 
-# ---------------------------------------------------------------------------
-# check_plot_events public name
-# ---------------------------------------------------------------------------
-
-class TestCheckPlotEventsPublicName:
-    def test_check_plot_events_public_name_accessible(self):
-        """check_plot_events (public name) works identically to _check_plot_events."""
-        movie = _make_movie(overview="A long enough overview for the test.")
-        assert check_plot_events(movie) is None
-
-    def test_check_plot_events_and_alias_are_same_function(self):
-        """check_plot_events is _check_plot_events (same object via alias)."""
-        assert check_plot_events is _check_plot_events

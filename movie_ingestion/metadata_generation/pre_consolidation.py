@@ -28,7 +28,7 @@ No LLM cost — all logic is deterministic and testable without mocking.
     by assess_skip_conditions() into a SkipAssessment.
 
     Wave 1 (need only movie_input):
-        check_plot_events, _check_reception
+        check_plot_events, check_reception
     Wave 2 (need Wave 1 outputs + derived data):
         _check_plot_analysis, _check_viewer_experience, _check_watch_context,
         _check_narrative_techniques, _check_production_keywords,
@@ -182,11 +182,7 @@ def check_plot_events(movie_input: MovieInputData) -> str | None:
     return None
 
 
-# Backward-compatible alias — test suite imports this name directly.
-_check_plot_events = check_plot_events
-
-
-def _check_reception(movie_input: MovieInputData) -> str | None:
+def check_reception(movie_input: MovieInputData) -> str | None:
     """Reception requires at least one reception signal with enough substance.
 
     Without any, the model would fabricate reception from parametric
@@ -374,7 +370,7 @@ def assess_skip_conditions(
     # Wave 1: no outputs provided yet — check plot_events + reception
     if plot_events_output is None and reception_output is None:
         _record("plot_events", check_plot_events(movie_input))
-        _record("reception", _check_reception(movie_input))
+        _record("reception", check_reception(movie_input))
         return SkipAssessment(
             generations_to_run=generations_to_run,
             skip_reasons=skip_reasons,

@@ -15,22 +15,17 @@ Optimal flow for generating LLM metadata, incorporating the findings from the [p
 
 ---
 
-## 1. Design Reasoning <a name="design-reasoning"></a>
+## 1. Design Reasoning 
 
 ### Starting point: what's wrong with the current flow?
 
 The current flow has 8 LLM calls across 2 waves, producing 7 metadata types. The efficiency analysis identified several structural problems:
 
 1. **Review duplication is the #1 cost driver.** `featured_reviews` (500-2500 tokens of raw review text) is serialized and sent to 6 of 8 LLM calls independently. That's ~3000-15000 tokens of duplicated review content per movie. Each call extracts a different slice of insight from the same text, but pays the full input cost.
-
 2. **The "reception triple" appears everywhere.** `reception_summary` + `audience_reception_attributes` + `featured_reviews` — three representations of the same underlying signal (what audiences think) — appear together in 4 calls. That's 3 encodings × 4 calls of redundant audience opinion data.
-
 3. **Wave structure creates an information gap.** Watch context runs in Wave 1 without access to review consolidation or other Wave 1 outputs.
-
 4. **Justification fields cost output tokens with questionable ROI.** 28-32 justification fields generate ~300-670 output tokens per movie that are never embedded or stored. With gpt-5-mini's internal chain-of-thought, these may be redundant.
-
 5. **Several inputs provide near-zero value to specific calls.** `overview` in Wave 2 (superseded by plot_synopsis), `featured_reviews` in source_of_inspiration (reviews rarely discuss production origins), `parental_guide_items` in viewer_experience (verbose, mostly for skipped sections).
-
 6. **Keywords are sent inconsistently.** `plot_keywords` and `overall_keywords` have different signal profiles but are sent without regard to which type is relevant per generation.
 
 ### Decision 1: Reception as a dual-purpose call
@@ -56,6 +51,7 @@ The most impactful change addresses problems #1 and #2 simultaneously.
 **Observation:** Watch context answers "WHY and WHEN to watch this movie" — not "WHAT HAPPENS in this movie." Plot detail (whether overview or full synopsis) risks anchoring the model on specific events rather than experiential attributes. A full synopsis might produce "watch this if you want to see a heist gone wrong" instead of the more useful "watch this if you want a high-tension cat-and-mouse thriller."
 
 **Decision:** Move watch context to Wave 2 so it receives `review_insights_brief`, but remove ALL plot information — no `overview`, no `plot_synopsis`. The real value drivers for watch context are:
+
 - `review_insights_brief` — tells you how the movie *feels* and what stands out
 - `genres` — strong signal for occasion matching (horror → halloween, romance → date night)
 - `overall_keywords` — categorical signals (family-friendly, dark comedy, etc.)
@@ -69,15 +65,17 @@ The most impactful change addresses problems #1 and #2 simultaneously.
 
 **Decision:** Route keywords selectively per generation based on which type provides value:
 
-| Generation | plot_keywords | overall_keywords | Rationale |
-|---|---|---|---|
-| Plot Events | yes | no | Plot keywords directly help identify events to cover |
-| Plot Analysis | yes | no | Thematic keywords support theme identification |
-| Viewer Experience | both | both | Broad signal useful for emotional/sensory assessment |
-| Watch Context | no | yes | Categorical tags inform occasions; plot events don't |
-| Narrative Techniques | no | yes | Structural tags ("nonlinear timeline", "unreliable narrator") live in overall |
-| Production Keywords | both | both | Filtering task — more keywords = more to filter from |
-| Source of Inspiration | both | both | Source tags could appear in either list |
+
+| Generation            | plot_keywords | overall_keywords | Rationale                                                                     |
+| --------------------- | ------------- | ---------------- | ----------------------------------------------------------------------------- |
+| Plot Events           | yes           | no               | Plot keywords directly help identify events to cover                          |
+| Plot Analysis         | yes           | no               | Thematic keywords support theme identification                                |
+| Viewer Experience     | both          | both             | Broad signal useful for emotional/sensory assessment                          |
+| Watch Context         | no            | yes              | Categorical tags inform occasions; plot events don't                          |
+| Narrative Techniques  | no            | yes              | Structural tags ("nonlinear timeline", "unreliable narrator") live in overall |
+| Production Keywords   | both          | both             | Filtering task — more keywords = more to filter from                          |
+| Source of Inspiration | both          | both             | Source tags could appear in either list                                       |
+
 
 For generations receiving both, keywords are merged and deduplicated: `list(dict.fromkeys(plot_keywords + overall_keywords))`.
 
@@ -98,6 +96,7 @@ For generations receiving both, keywords are merged and deduplicated: `list(dict
 **Observation:** `maturity_rating`, `maturity_reasoning`, and `parental_guide_items` are three separate inputs serving similar purposes. `parental_guide_items` is verbose (40-80 tokens per movie), primarily informs `disturbance_profile` and `sensory_load` in viewer_experience — both optional sections that get skipped for ~70-80% of movies. However, the severity detail in parental_guide_items IS valuable: there's a meaningful difference between "R for one F-bomb" and "R for prolonged graphic violence."
 
 **Decision:** Conditional consolidation:
+
 - If `maturity_reasoning` exists (≥1 item): consolidate to `"R — violence, strong language, brief nudity"` format. This captures the essential signal compactly.
 - If `maturity_reasoning` is absent: fall back to compact `parental_guide_items` formatted as `"severe violence, moderate language, mild nudity"` (severity + category, comma-separated). Preserves severity detail when the primary signal is missing.
 
@@ -128,6 +127,7 @@ For sparse movies, this produces thin but accurate plot_summaries. A thin accura
 **Observation:** The current flow treats plot_events failure as a RuntimeError that kills the entire movie. But several generations don't need plot_synopsis at all, or can work without it if review data exists.
 
 **Decision:** If plot_events fails (API error, timeout — not data sparsity, since we always attempt):
+
 - **Still runs:** reception (independent of plot), production (keywords-driven), watch_context (no plot input anyway), viewer_experience (if review_insights_brief exists — reviews carry strong emotional/tonal signal independently)
 - **Skips:** plot_analysis (requires plot detail), narrative_techniques (requires plot detail for structural analysis)
 
@@ -143,7 +143,7 @@ The movie gets partial vectors and remains searchable for queries matching its a
 
 ---
 
-## 2. New Pipeline Architecture <a name="new-pipeline-architecture"></a>
+## 2. New Pipeline Architecture 
 
 ```
 BaseMovie
@@ -178,25 +178,28 @@ Vector Text Generation → Embedding → Ingestion (unchanged)
 **If plot_events fails:** Wave 2 runs a partial pipeline — plot_analysis and narrative_techniques are skipped. Watch context, viewer_experience (if review_insights_brief exists), and production still run.
 
 **Current → New comparison:**
-| Aspect | Current | New |
-|--------|---------|-----|
-| Total LLM calls | 8 | 8 (same count, different distribution) |
-| Wave 1 tasks | 3 (plot_events, watch_context, reception) | 2 (plot_events, reception) |
-| Wave 2 tasks | 4 (plot_analysis, viewer_exp, narr_tech, production) | 5 (+ watch_context) |
-| Review tokens sent per movie | ~6000-15000 (raw reviews × 6 calls) | ~2000-3500 (raw reviews × 1 call + brief × 5 calls) |
-| Justification output tokens | ~300-670 | 0 (pending validation) |
-| Title format | title only | "Title (Year)" |
-| Watch context has plot info? | Yes (overview) | No (experiential inputs only) |
-| Narrative techniques has genres? | No | Yes |
-| Plot events on sparse movies | Skip if <50 words of source text | Always attempt, never hallucinate |
-| Plot events failure | RuntimeError — movie dropped | Partial pipeline — 3-4 generations still run |
-| Source of inspiration | No review signal, no parametric knowledge | review_insights_brief + parametric knowledge allowed |
-| Keyword routing | Inconsistent per-call | Selective routing by signal type |
-| Sparse movies waste LLM calls? | Yes | No (skip conditions per generation) |
+
+
+| Aspect                           | Current                                              | New                                                  |
+| -------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| Total LLM calls                  | 8                                                    | 8 (same count, different distribution)               |
+| Wave 1 tasks                     | 3 (plot_events, watch_context, reception)            | 2 (plot_events, reception)                           |
+| Wave 2 tasks                     | 4 (plot_analysis, viewer_exp, narr_tech, production) | 5 (+ watch_context)                                  |
+| Review tokens sent per movie     | ~6000-15000 (raw reviews × 6 calls)                  | ~2000-3500 (raw reviews × 1 call + brief × 5 calls)  |
+| Justification output tokens      | ~300-670                                             | 0 (pending validation)                               |
+| Title format                     | title only                                           | "Title (Year)"                                       |
+| Watch context has plot info?     | Yes (overview)                                       | No (experiential inputs only)                        |
+| Narrative techniques has genres? | No                                                   | Yes                                                  |
+| Plot events on sparse movies     | Skip if <50 words of source text                     | Always attempt, never hallucinate                    |
+| Plot events failure              | RuntimeError — movie dropped                         | Partial pipeline — 3-4 generations still run         |
+| Source of inspiration            | No review signal, no parametric knowledge            | review_insights_brief + parametric knowledge allowed |
+| Keyword routing                  | Inconsistent per-call                                | Selective routing by signal type                     |
+| Sparse movies waste LLM calls?   | Yes                                                  | No (skip conditions per generation)                  |
+
 
 ---
 
-## 3. Pre-Consolidation Phase <a name="pre-consolidation-phase"></a>
+## 3. Pre-Consolidation Phase 
 
 Three preprocessing steps run before any LLM calls. All are pure data processing — no LLM cost.
 
@@ -207,10 +210,12 @@ Three preprocessing steps run before any LLM calls. All are pure data processing
 **Why:** Plot keywords are community-tagged plot elements — noisy, potentially repetitive, and can over-emphasize minor plot points. Overall keywords are broader categorical tags. Each generation benefits from different keyword signals.
 
 **Input data:**
+
 - `plot_keywords` (list[str]) — IMDB community-tagged plot elements
 - `overall_keywords` (list[str]) — broader IMDB keywords about the movie
 
 **Output data:**
+
 - `plot_keywords` (list[str]) — passed directly to: plot_events, plot_analysis
 - `overall_keywords` (list[str]) — passed directly to: watch_context, narrative_techniques
 - `merged_keywords` (list[str]) — deduplicated union for: viewer_experience, production_keywords, source_of_inspiration
@@ -224,16 +229,19 @@ Three preprocessing steps run before any LLM calls. All are pure data processing
 **Why:** Three separate maturity fields (`maturity_rating`, `maturity_reasoning`, `parental_guide_items`) carry overlapping signal. A single consolidated string reduces token cost while preserving the essential content advisory signal — including severity detail when the primary signal is missing.
 
 **Input data:**
+
 - `maturity_rating` (str) — G / PG / PG-13 / R / NC-17
 - `maturity_reasoning` (list[str]) — why it received that rating (may be empty/absent)
 - `parental_guide_items` (list[dict]) — category + severity pairs (fallback only)
 
 **Output data:**
+
 - `maturity_summary` (str) — one of:
   - Primary (maturity_reasoning exists, ≥1 item): `"R — violence, strong language, brief nudity"`
   - Fallback (maturity_reasoning absent): `"R — severe violence, moderate language, mild nudity"` (compact parental_guide_items as "severity category" pairs, comma-separated)
 
 **Dropped from direct LLM input:**
+
 - `maturity_rating` — folded into maturity_summary
 - `maturity_reasoning` — folded into maturity_summary
 - `parental_guide_items` — either dropped (when reasoning exists) or compacted into fallback format
@@ -245,9 +253,11 @@ Three preprocessing steps run before any LLM calls. All are pure data processing
 **Why:** Running an LLM call on near-empty inputs wastes tokens and produces low-quality output that harms search when embedded. Better to skip and let the movie match on its strong vector spaces only.
 
 **Input data:**
+
 - All BaseMovie fields relevant to threshold checks (see [Section 6](#sparse-movie-skip-conditions) for per-generation thresholds)
 
 **Output data:**
+
 - `generations_to_run` (set[str]) — which of the 7 metadata types should be generated for this movie
 - `skip_reasons` (dict[str, str]) — for logging: which generations were skipped and why
 
@@ -255,7 +265,7 @@ Three preprocessing steps run before any LLM calls. All are pure data processing
 
 ---
 
-## 4. Wave 1: Foundation Metadata <a name="wave-1"></a>
+## 4. Wave 1: Foundation Metadata 
 
 Two tasks run in parallel. Both are independent — neither depends on the other's output.
 
@@ -269,13 +279,15 @@ Two tasks run in parallel. Both are independent — neither depends on the other
 
 #### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Was `title` only. Now formatted as `"Title (Year)"` for temporal grounding and disambiguation. |
-| `overview` | Unchanged | Marketing summary; important here because plot_synopses may be absent |
-| `plot_summaries` | Unchanged | Shorter user-written IMDB summaries |
-| `plot_synopses` | Unchanged | Longest/most detailed plot recounts (primary truth source) |
-| `plot_keywords` | Unchanged | Plot-specific keywords only (not overall). Directly relevant to identifying plot events. |
+
+| Input            | Status      | Notes                                                                                          |
+| ---------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `title (year)`   | **Changed** | Was `title` only. Now formatted as `"Title (Year)"` for temporal grounding and disambiguation. |
+| `overview`       | Unchanged   | Marketing summary; important here because plot_synopses may be absent                          |
+| `plot_summaries` | Unchanged   | Shorter user-written IMDB summaries                                                            |
+| `plot_synopses`  | Unchanged   | Longest/most detailed plot recounts (primary truth source)                                     |
+| `plot_keywords`  | Unchanged   | Plot-specific keywords only (not overall). Directly relevant to identifying plot events.       |
+
 
 #### Minimum required inputs
 
@@ -283,11 +295,13 @@ Two tasks run in parallel. Both are independent — neither depends on the other
 
 #### Outputs
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `plot_summary` | Unchanged | Detailed chronological spoiler-containing summary. **Fed to Wave 2 calls as `plot_synopsis` where applicable.** May be thin for sparse movies — this is by design. |
-| `setting` | Unchanged | 10-word where/when phrase. |
-| `major_characters` | Unchanged | Essential characters with name, description, role, motivations. |
+
+| Output             | Status    | Notes                                                                                                                                                              |
+| ------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `plot_summary`     | Unchanged | Detailed chronological spoiler-containing summary. **Fed to Wave 2 calls as `plot_synopsis` where applicable.** May be thin for sparse movies — this is by design. |
+| `setting`          | Unchanged | 10-word where/when phrase.                                                                                                                                         |
+| `major_characters` | Unchanged | Essential characters with name, description, role, motivations.                                                                                                    |
+
 
 **No justification fields exist in this schema currently — no change needed.**
 
@@ -301,12 +315,14 @@ Two tasks run in parallel. Both are independent — neither depends on the other
 
 #### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Now formatted as `"Title (Year)"`. |
-| `reception_summary` | Unchanged | Externally generated summary of audience opinion |
-| `audience_reception_attributes` | Unchanged | Key attributes with sentiment labels |
-| `featured_reviews` | Unchanged | Up to 5 full review texts — this is now the **only call** that receives raw reviews |
+
+| Input                           | Status      | Notes                                                                               |
+| ------------------------------- | ----------- | ----------------------------------------------------------------------------------- |
+| `title (year)`                  | **Changed** | Now formatted as `"Title (Year)"`.                                                  |
+| `reception_summary`             | Unchanged   | Externally generated summary of audience opinion                                    |
+| `audience_reception_attributes` | Unchanged   | Key attributes with sentiment labels                                                |
+| `featured_reviews`              | Unchanged   | Up to 5 full review texts — this is now the **only call** that receives raw reviews |
+
 
 #### Minimum required inputs
 
@@ -316,12 +332,14 @@ At least ONE of: `featured_reviews` (≥1 review), `reception_summary`, or `audi
 
 #### Outputs
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `new_reception_summary` | Unchanged | 2-3 sentence evaluative summary of what viewers thought |
-| `praise_attributes` | Unchanged | 0-4 short tag-like phrases for what audiences enjoyed |
-| `complaint_attributes` | Unchanged | 0-4 short tag-like phrases for what audiences disliked |
-| `review_insights_brief` | **NEW** | ~150-250 tokens. A dense paragraph capturing the key thematic, emotional, structural, evaluative, and **source-material** observations from the raw reviews. Designed to serve as a compact replacement for raw reviews in downstream calls. Not embedded, not stored — purely an intermediate input for Wave 2. |
+
+| Output                  | Status    | Notes                                                                                                                                                                                                                                                                                                            |
+| ----------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new_reception_summary` | Unchanged | 2-3 sentence evaluative summary of what viewers thought                                                                                                                                                                                                                                                          |
+| `praise_attributes`     | Unchanged | 0-4 short tag-like phrases for what audiences enjoyed                                                                                                                                                                                                                                                            |
+| `complaint_attributes`  | Unchanged | 0-4 short tag-like phrases for what audiences disliked                                                                                                                                                                                                                                                           |
+| `review_insights_brief` | **NEW**   | ~150-250 tokens. A dense paragraph capturing the key thematic, emotional, structural, evaluative, and **source-material** observations from the raw reviews. Designed to serve as a compact replacement for raw reviews in downstream calls. Not embedded, not stored — purely an intermediate input for Wave 2. |
+
 
 **Why `review_insights_brief` is distinct from `new_reception_summary`:** The reception summary is evaluative — focused on "was it good/bad and why." The insights brief is descriptive — focused on "what did reviewers observe?" covering themes, emotions, structural elements, and source material mentions. The summary answers "what did people think?" The brief answers "what did people notice?" Wave 2 calls need observations, not evaluations.
 
@@ -329,9 +347,10 @@ At least ONE of: `featured_reviews` (≥1 review), `reception_summary`, or `audi
 
 ---
 
-## 5. Wave 2: Analysis Metadata <a name="wave-2"></a>
+## 5. Wave 2: Analysis Metadata 
 
 Up to 5 tasks run in parallel, all dependent on Wave 1 outputs:
+
 - `plot_synopsis` from plot_events (available if plot_events succeeded)
 - `review_insights_brief` from reception (may be None if reception failed or was skipped)
 
@@ -345,16 +364,18 @@ Up to 5 tasks run in parallel, all dependent on Wave 1 outputs:
 
 #### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Now formatted as `"Title (Year)"`. |
-| `genres` | Unchanged | |
-| `plot_synopsis` | Unchanged | From plot_events Wave 1 output |
-| `plot_keywords` | Unchanged | Plot-specific keywords only. Thematic keywords support theme identification. |
+
+| Input                   | Status      | Notes                                                                                                                                                             |
+| ----------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title (year)`          | **Changed** | Now formatted as `"Title (Year)"`.                                                                                                                                |
+| `genres`                | Unchanged   |                                                                                                                                                                   |
+| `plot_synopsis`         | Unchanged   | From plot_events Wave 1 output                                                                                                                                    |
+| `plot_keywords`         | Unchanged   | Plot-specific keywords only. Thematic keywords support theme identification.                                                                                      |
 | `review_insights_brief` | **Changed** | Replaces `reception_summary` + `featured_reviews` (up to 5 raw reviews). The brief captures thematic observations at ~150-250 tokens instead of ~550-2600 tokens. |
-| ~~`overview`~~ | **Removed** | Superseded by `plot_synopsis`. The synopsis contains everything the overview has plus far more detail. ~30-80 tokens saved. |
-| ~~`reception_summary`~~ | **Removed** | Subsumed by `review_insights_brief`. |
-| ~~`featured_reviews`~~ | **Removed** | Subsumed by `review_insights_brief`. Saves ~500-2500 tokens. |
+| ~~`overview`~~          | **Removed** | Superseded by `plot_synopsis`. The synopsis contains everything the overview has plus far more detail. ~30-80 tokens saved.                                       |
+| ~~`reception_summary`~~ | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                              |
+| ~~`featured_reviews`~~  | **Removed** | Subsumed by `review_insights_brief`. Saves ~500-2500 tokens.                                                                                                      |
+
 
 #### Minimum required inputs
 
@@ -362,16 +383,18 @@ Up to 5 tasks run in parallel, all dependent on Wave 1 outputs:
 
 #### Outputs
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `core_concept` | Unchanged | Single dominant story concept (6 words or less). |
-| `genre_signatures` | Unchanged | 2-6 search-query-like genre phrases. |
-| `conflict_scale` | Unchanged | Scale of consequences. |
-| `character_arcs` | Unchanged | 1-3 key character transformations. |
-| `themes_primary` | Unchanged | 1-3 core thematic concepts. |
-| `lessons_learned` | Unchanged | 0-3 key takeaways. |
-| `generalized_plot_overview` | Unchanged | 1-3 sentence thematic overview. |
-| ~~justification fields~~ | **Removed** | `explanation_and_justification` on core_concept, themes, lessons, arcs. Pending empirical validation. ~50-150 output tokens saved. |
+
+| Output                      | Status      | Notes                                                                                                                              |
+| --------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `core_concept`              | Unchanged   | Single dominant story concept (6 words or less).                                                                                   |
+| `genre_signatures`          | Unchanged   | 2-6 search-query-like genre phrases.                                                                                               |
+| `conflict_scale`            | Unchanged   | Scale of consequences.                                                                                                             |
+| `character_arcs`            | Unchanged   | 1-3 key character transformations.                                                                                                 |
+| `themes_primary`            | Unchanged   | 1-3 core thematic concepts.                                                                                                        |
+| `lessons_learned`           | Unchanged   | 0-3 key takeaways.                                                                                                                 |
+| `generalized_plot_overview` | Unchanged   | 1-3 sentence thematic overview.                                                                                                    |
+| ~~justification fields~~    | **Removed** | `explanation_and_justification` on core_concept, themes, lessons, arcs. Pending empirical validation. ~50-150 output tokens saved. |
+
 
 **Note on `arc_transformation_description`:** This field on `CharacterArc` is not a justification — it's a longer explanation of the arc that may help the model produce a more accurate `arc_transformation_label`. However, it IS never embedded. Recommend keeping it for now but flagging for the same empirical validation as justifications.
 
@@ -387,22 +410,24 @@ Up to 5 tasks run in parallel, all dependent on Wave 1 outputs:
 
 #### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Now formatted as `"Title (Year)"`. |
-| `genres` | Unchanged | |
-| `plot_synopsis` | Unchanged | From plot_events Wave 1 output. May be absent if plot_events failed — viewer_experience can still run from review data. |
-| `merged_keywords` | **Changed** | Was `plot_keywords` + `overall_keywords` as separate inputs. Now receives the deduplicated merged keyword list (both types). Broad signal useful for emotional/sensory assessment. |
-| `maturity_summary` | **Changed** | Replaces `maturity_rating` + `maturity_reasoning` + `parental_guide_items` as three separate inputs. Single consolidated string with conditional fallback (see Pre-Consolidation 3.2). |
-| `review_insights_brief` | **Changed** | Replaces `reception_summary` + `audience_reception_attributes` + `featured_reviews`. Saves ~550-2650 tokens while preserving emotional observations from reviews. |
-| ~~`plot_keywords`~~ | **Removed** | Merged into `merged_keywords`. |
-| ~~`overall_keywords`~~ | **Removed** | Merged into `merged_keywords`. |
-| ~~`maturity_rating`~~ | **Removed** | Merged into `maturity_summary`. |
-| ~~`maturity_reasoning`~~ | **Removed** | Merged into `maturity_summary`. |
-| ~~`parental_guide_items`~~ | **Removed** | Conditionally folded into `maturity_summary` fallback or dropped when reasoning exists. Severity detail preserved when needed. |
-| ~~`reception_summary`~~ | **Removed** | Subsumed by `review_insights_brief`. |
-| ~~`audience_reception_attributes`~~ | **Removed** | Subsumed by `review_insights_brief`. |
-| ~~`featured_reviews`~~ | **Removed** | Subsumed by `review_insights_brief`. |
+
+| Input                               | Status      | Notes                                                                                                                                                                                  |
+| ----------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title (year)`                      | **Changed** | Now formatted as `"Title (Year)"`.                                                                                                                                                     |
+| `genres`                            | Unchanged   |                                                                                                                                                                                        |
+| `plot_synopsis`                     | Unchanged   | From plot_events Wave 1 output. May be absent if plot_events failed — viewer_experience can still run from review data.                                                                |
+| `merged_keywords`                   | **Changed** | Was `plot_keywords` + `overall_keywords` as separate inputs. Now receives the deduplicated merged keyword list (both types). Broad signal useful for emotional/sensory assessment.     |
+| `maturity_summary`                  | **Changed** | Replaces `maturity_rating` + `maturity_reasoning` + `parental_guide_items` as three separate inputs. Single consolidated string with conditional fallback (see Pre-Consolidation 3.2). |
+| `review_insights_brief`             | **Changed** | Replaces `reception_summary` + `audience_reception_attributes` + `featured_reviews`. Saves ~550-2650 tokens while preserving emotional observations from reviews.                      |
+| ~~`plot_keywords`~~                 | **Removed** | Merged into `merged_keywords`.                                                                                                                                                         |
+| ~~`overall_keywords`~~              | **Removed** | Merged into `merged_keywords`.                                                                                                                                                         |
+| ~~`maturity_rating`~~               | **Removed** | Merged into `maturity_summary`.                                                                                                                                                        |
+| ~~`maturity_reasoning`~~            | **Removed** | Merged into `maturity_summary`.                                                                                                                                                        |
+| ~~`parental_guide_items`~~          | **Removed** | Conditionally folded into `maturity_summary` fallback or dropped when reasoning exists. Severity detail preserved when needed.                                                         |
+| ~~`reception_summary`~~             | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                                                   |
+| ~~`audience_reception_attributes`~~ | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                                                   |
+| ~~`featured_reviews`~~              | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                                                   |
+
 
 #### Minimum required inputs
 
@@ -414,17 +439,19 @@ Up to 5 tasks run in parallel, all dependent on Wave 1 outputs:
 
 All 8 sections unchanged:
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `emotional_palette` | Unchanged | Terms + negations for dominant emotions |
-| `tension_adrenaline` | Unchanged | Terms + negations for stress/energy/suspense |
-| `tone_self_seriousness` | Unchanged | Terms + negations for earnest vs ironic |
-| `cognitive_complexity` | Unchanged | Terms + negations for mental effort |
-| `disturbance_profile` | Unchanged | Optional. Terms + negations for unsettling elements |
-| `sensory_load` | Unchanged | Optional. Terms + negations for visual/auditory intensity |
-| `emotional_volatility` | Unchanged | Optional. Terms + negations for tone changes |
-| `ending_aftertaste` | Unchanged | Terms + negations for final emotion |
+
+| Output                   | Status      | Notes                                                                                 |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------------- |
+| `emotional_palette`      | Unchanged   | Terms + negations for dominant emotions                                               |
+| `tension_adrenaline`     | Unchanged   | Terms + negations for stress/energy/suspense                                          |
+| `tone_self_seriousness`  | Unchanged   | Terms + negations for earnest vs ironic                                               |
+| `cognitive_complexity`   | Unchanged   | Terms + negations for mental effort                                                   |
+| `disturbance_profile`    | Unchanged   | Optional. Terms + negations for unsettling elements                                   |
+| `sensory_load`           | Unchanged   | Optional. Terms + negations for visual/auditory intensity                             |
+| `emotional_volatility`   | Unchanged   | Optional. Terms + negations for tone changes                                          |
+| `ending_aftertaste`      | Unchanged   | Terms + negations for final emotion                                                   |
 | ~~justification fields~~ | **Removed** | One per section (8 total). Pending empirical validation. ~80-160 output tokens saved. |
+
 
 ---
 
@@ -438,19 +465,21 @@ All 8 sections unchanged:
 
 #### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Now formatted as `"Title (Year)"`. |
-| `genres` | Unchanged | Strong signal for occasion matching: horror → halloween, romance → date night. |
-| `overall_keywords` | **Changed** | Was `plot_keywords` + `overall_keywords` as separate inputs. Now receives `overall_keywords` only. Categorical tags ("family-friendly", "cult classic", "dark comedy") inform viewing occasions; plot-specific tags ("murder investigation") don't. |
-| `maturity_summary` | **Added** | Content advisory context — "don't watch this with kids" is a valid watch context signal. |
-| `review_insights_brief` | **Changed** | Replaces `reception_summary` + `audience_reception_attributes` + `featured_reviews`. The primary value driver for watch context — tells you how the movie *feels* and what stands out. Saves ~550-2650 tokens. |
-| ~~`overview`~~ | **Removed** | No plot info in watch context. Experiential inputs (reviews, genres, keywords) are sufficient. |
-| ~~`plot_synopsis`~~ | **Not added** | Originally proposed in the first draft. Removed after design review — plot detail anchors on events rather than attributes. |
-| ~~`plot_keywords`~~ | **Removed** | Plot-specific keywords ("murder investigation", "time travel") provide limited signal for viewing occasion decisions. |
-| ~~`reception_summary`~~ | **Removed** | Subsumed by `review_insights_brief`. |
-| ~~`audience_reception_attributes`~~ | **Removed** | Subsumed by `review_insights_brief`. |
-| ~~`featured_reviews`~~ | **Removed** | Subsumed by `review_insights_brief`. |
+
+| Input                               | Status        | Notes                                                                                                                                                                                                                                               |
+| ----------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title (year)`                      | **Changed**   | Now formatted as `"Title (Year)"`.                                                                                                                                                                                                                  |
+| `genres`                            | Unchanged     | Strong signal for occasion matching: horror → halloween, romance → date night.                                                                                                                                                                      |
+| `overall_keywords`                  | **Changed**   | Was `plot_keywords` + `overall_keywords` as separate inputs. Now receives `overall_keywords` only. Categorical tags ("family-friendly", "cult classic", "dark comedy") inform viewing occasions; plot-specific tags ("murder investigation") don't. |
+| `maturity_summary`                  | **Added**     | Content advisory context — "don't watch this with kids" is a valid watch context signal.                                                                                                                                                            |
+| `review_insights_brief`             | **Changed**   | Replaces `reception_summary` + `audience_reception_attributes` + `featured_reviews`. The primary value driver for watch context — tells you how the movie *feels* and what stands out. Saves ~550-2650 tokens.                                      |
+| ~~`overview`~~                      | **Removed**   | No plot info in watch context. Experiential inputs (reviews, genres, keywords) are sufficient.                                                                                                                                                      |
+| ~~`plot_synopsis`~~                 | **Not added** | Originally proposed in the first draft. Removed after design review — plot detail anchors on events rather than attributes.                                                                                                                         |
+| ~~`plot_keywords`~~                 | **Removed**   | Plot-specific keywords ("murder investigation", "time travel") provide limited signal for viewing occasion decisions.                                                                                                                               |
+| ~~`reception_summary`~~             | **Removed**   | Subsumed by `review_insights_brief`.                                                                                                                                                                                                                |
+| ~~`audience_reception_attributes`~~ | **Removed**   | Subsumed by `review_insights_brief`.                                                                                                                                                                                                                |
+| ~~`featured_reviews`~~              | **Removed**   | Subsumed by `review_insights_brief`.                                                                                                                                                                                                                |
+
 
 #### Minimum required inputs
 
@@ -460,13 +489,15 @@ All 8 sections unchanged:
 
 All 4 sections unchanged:
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `self_experience_motivations` | Unchanged | 4-8 self-focused experiential reasons to watch |
-| `external_motivations` | Unchanged | 1-4 value-beyond-viewing reasons |
-| `key_movie_feature_draws` | Unchanged | 1-4 standout attribute draws |
-| `watch_scenarios` | Unchanged | 3-6 real-world occasions and contexts |
-| ~~justification fields~~ | **Removed** | One per section (4 total). Pending empirical validation. ~40-80 output tokens saved. |
+
+| Output                        | Status      | Notes                                                                                |
+| ----------------------------- | ----------- | ------------------------------------------------------------------------------------ |
+| `self_experience_motivations` | Unchanged   | 4-8 self-focused experiential reasons to watch                                       |
+| `external_motivations`        | Unchanged   | 1-4 value-beyond-viewing reasons                                                     |
+| `key_movie_feature_draws`     | Unchanged   | 1-4 standout attribute draws                                                         |
+| `watch_scenarios`             | Unchanged   | 3-6 real-world occasions and contexts                                                |
+| ~~justification fields~~      | **Removed** | One per section (4 total). Pending empirical validation. ~40-80 output tokens saved. |
+
 
 ---
 
@@ -480,16 +511,18 @@ All 4 sections unchanged:
 
 #### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Now formatted as `"Title (Year)"`. |
-| `genres` | **Added** | ~5-10 tokens. Helps ground structural analysis — "mystery" implies information control techniques, "documentary" implies specific POV structures. Essentially free. |
-| `plot_synopsis` | Unchanged | From plot_events Wave 1 output |
-| `overall_keywords` | **Changed** | Was `plot_keywords` + `overall_keywords` as separate inputs. Now receives `overall_keywords` only. Structural tags ("nonlinear timeline", "unreliable narrator") tend to live in overall keywords. Plot keywords add noise without structural signal. |
+
+| Input                   | Status      | Notes                                                                                                                                                                                                                                                     |
+| ----------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title (year)`          | **Changed** | Now formatted as `"Title (Year)"`.                                                                                                                                                                                                                        |
+| `genres`                | **Added**   | ~5-10 tokens. Helps ground structural analysis — "mystery" implies information control techniques, "documentary" implies specific POV structures. Essentially free.                                                                                       |
+| `plot_synopsis`         | Unchanged   | From plot_events Wave 1 output                                                                                                                                                                                                                            |
+| `overall_keywords`      | **Changed** | Was `plot_keywords` + `overall_keywords` as separate inputs. Now receives `overall_keywords` only. Structural tags ("nonlinear timeline", "unreliable narrator") tend to live in overall keywords. Plot keywords add noise without structural signal.     |
 | `review_insights_brief` | **Changed** | Replaces `reception_summary` + `featured_reviews`. Saves ~550-2600 tokens. Reviews often reveal structural observations (e.g., "the twist was predictable", "the non-linear storytelling was confusing") — the brief preserves these structural insights. |
-| ~~`plot_keywords`~~ | **Removed** | Plot-specific keywords rarely carry structural narrative signal. Overall keywords are the relevant source. |
-| ~~`reception_summary`~~ | **Removed** | Subsumed by `review_insights_brief`. |
-| ~~`featured_reviews`~~ | **Removed** | Subsumed by `review_insights_brief`. |
+| ~~`plot_keywords`~~     | **Removed** | Plot-specific keywords rarely carry structural narrative signal. Overall keywords are the relevant source.                                                                                                                                                |
+| ~~`reception_summary`~~ | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                                                                                                                      |
+| ~~`featured_reviews`~~  | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                                                                                                                      |
+
 
 #### Minimum required inputs
 
@@ -501,20 +534,22 @@ All 4 sections unchanged:
 
 All 11 sections unchanged:
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `pov_perspective` | Unchanged | 1-2 phrases |
-| `narrative_delivery` | Unchanged | 1-2 phrases |
-| `narrative_archetype` | Unchanged | 1 phrase |
-| `information_control` | Unchanged | 1-2 phrases |
-| `characterization_methods` | Unchanged | 1-3 phrases |
-| `character_arcs` | Unchanged | 1-3 phrases |
-| `audience_character_perception` | Unchanged | 1-3 phrases |
-| `conflict_stakes_design` | Unchanged | 1-2 phrases |
-| `thematic_delivery` | Unchanged | 1-2 phrases |
-| `meta_techniques` | Unchanged | 0-2 phrases |
-| `additional_plot_devices` | Unchanged | Misc phrases |
-| ~~justification fields~~ | **Removed** | One per section (11 total). Pending empirical validation. ~100-220 output tokens saved. |
+
+| Output                          | Status      | Notes                                                                                   |
+| ------------------------------- | ----------- | --------------------------------------------------------------------------------------- |
+| `pov_perspective`               | Unchanged   | 1-2 phrases                                                                             |
+| `narrative_delivery`            | Unchanged   | 1-2 phrases                                                                             |
+| `narrative_archetype`           | Unchanged   | 1 phrase                                                                                |
+| `information_control`           | Unchanged   | 1-2 phrases                                                                             |
+| `characterization_methods`      | Unchanged   | 1-3 phrases                                                                             |
+| `character_arcs`                | Unchanged   | 1-3 phrases                                                                             |
+| `audience_character_perception` | Unchanged   | 1-3 phrases                                                                             |
+| `conflict_stakes_design`        | Unchanged   | 1-2 phrases                                                                             |
+| `thematic_delivery`             | Unchanged   | 1-2 phrases                                                                             |
+| `meta_techniques`               | Unchanged   | 0-2 phrases                                                                             |
+| `additional_plot_devices`       | Unchanged   | Misc phrases                                                                            |
+| ~~justification fields~~        | **Removed** | One per section (11 total). Pending empirical validation. ~100-220 output tokens saved. |
+
 
 ---
 
@@ -530,10 +565,12 @@ All 11 sections unchanged:
 
 ##### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Now formatted as `"Title (Year)"`. |
+
+| Input             | Status      | Notes                                                                                                                                                                                                                                                                                                                                  |
+| ----------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title (year)`    | **Changed** | Now formatted as `"Title (Year)"`.                                                                                                                                                                                                                                                                                                     |
 | `merged_keywords` | **Changed** | Was `overall_keywords` only. Now receives the full deduplicated merged keyword list (both plot and overall). Gives the classifier more material — some plot_keywords may have production relevance (e.g., "shot on location"). The model's job is filtering, so extra keywords just mean more to filter, not more noise in the output. |
+
 
 ##### Minimum required inputs
 
@@ -543,10 +580,12 @@ All 11 sections unchanged:
 
 ##### Outputs
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `terms` | Unchanged | Filtered subset of input keywords that relate to production |
-| ~~`justification`~~ | **Removed** | Pending empirical validation. ~10-20 output tokens saved. |
+
+| Output              | Status      | Notes                                                       |
+| ------------------- | ----------- | ----------------------------------------------------------- |
+| `terms`             | Unchanged   | Filtered subset of input keywords that relate to production |
+| ~~`justification`~~ | **Removed** | Pending empirical validation. ~10-20 output tokens saved.   |
+
 
 #### Sub-call B: Source of Inspiration
 
@@ -556,13 +595,15 @@ All 11 sections unchanged:
 
 ##### Inputs
 
-| Input | Status | Notes |
-|-------|--------|-------|
-| `title (year)` | **Changed** | Now formatted as `"Title (Year)"`. Particularly valuable here — helps model identify known adaptations and disambiguate remakes. |
-| `plot_synopsis` | Unchanged | From plot_events Wave 1 output. May reveal the story follows a known real event. |
-| `merged_keywords` | **Changed** | Was `plot_keywords` + `overall_keywords` concatenated. Now receives the pre-deduplicated merged list. Same content, already cleaned. |
-| `review_insights_brief` | **Added** | Was raw `featured_reviews` (removed in first draft, now restored via brief). Reviews frequently mention source material: "faithful adaptation of the novel," "inspired by true events." The brief captures these observations at ~150-250 tokens instead of ~500-2000 tokens of raw reviews. |
-| ~~`featured_reviews`~~ | **Removed** | Replaced by `review_insights_brief`. The brief preserves source-material observations at a fraction of the token cost. |
+
+| Input                   | Status      | Notes                                                                                                                                                                                                                                                                                        |
+| ----------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title (year)`          | **Changed** | Now formatted as `"Title (Year)"`. Particularly valuable here — helps model identify known adaptations and disambiguate remakes.                                                                                                                                                             |
+| `plot_synopsis`         | Unchanged   | From plot_events Wave 1 output. May reveal the story follows a known real event.                                                                                                                                                                                                             |
+| `merged_keywords`       | **Changed** | Was `plot_keywords` + `overall_keywords` concatenated. Now receives the pre-deduplicated merged list. Same content, already cleaned.                                                                                                                                                         |
+| `review_insights_brief` | **Added**   | Was raw `featured_reviews` (removed in first draft, now restored via brief). Reviews frequently mention source material: "faithful adaptation of the novel," "inspired by true events." The brief captures these observations at ~150-250 tokens instead of ~500-2000 tokens of raw reviews. |
+| ~~`featured_reviews`~~  | **Removed** | Replaced by `review_insights_brief`. The brief preserves source-material observations at a fraction of the token cost.                                                                                                                                                                       |
+
 
 ##### Minimum required inputs
 
@@ -570,38 +611,44 @@ All 11 sections unchanged:
 
 ##### Outputs
 
-| Output | Status | Notes |
-|--------|--------|-------|
-| `sources_of_inspiration` | Unchanged | E.g., "based on a true story", "based on a novel" |
-| `production_mediums` | Unchanged | E.g., "live action", "hand-drawn animation" |
-| ~~`justification`~~ | **Removed** | Pending empirical validation. ~20-40 output tokens saved. |
+
+| Output                   | Status      | Notes                                                     |
+| ------------------------ | ----------- | --------------------------------------------------------- |
+| `sources_of_inspiration` | Unchanged   | E.g., "based on a true story", "based on a novel"         |
+| `production_mediums`     | Unchanged   | E.g., "live action", "hand-drawn animation"               |
+| ~~`justification`~~      | **Removed** | Pending empirical validation. ~20-40 output tokens saved. |
+
 
 ---
 
-## 6. Sparse Movie Skip Conditions <a name="sparse-movie-skip-conditions"></a>
+## 6. Sparse Movie Skip Conditions 
 
 Each generation has a minimum data threshold. If a movie's data falls below the threshold, that generation is skipped — no LLM call, no embedding for that vector space. The movie is still searchable via its other vectors.
 
-| Generation | Minimum Required | Skip Impact | Expected Skip Rate |
-|-----------|-----------------|-------------|-------------------|
-| **Plot Events** | Always attempts (no skip) | If fails (API error): partial pipeline — skip plot_analysis + narrative_techniques | ~0% skip (failures only) |
-| **Reception** | ≥1 of: featured_reviews, reception_summary, or audience_reception_attributes (≥2) | No reception vector; no review_insights_brief for Wave 2 | Low-Medium (~5-10%) |
-| **Plot Analysis** | plot_synopsis (requires plot_events success) | No plot_analysis vector | ~0% (only on plot_events failure) |
-| **Viewer Experience** | plot_synopsis OR review_insights_brief (at least one) | No viewer_experience vector | Very low — only when both plot_events fails AND reception is skipped/fails |
-| **Watch Context** | genres ≥1 | No watch_context vector | ~0% — virtually every movie has genres |
-| **Narrative Techniques** | plot_synopsis >100 words (requires plot_events success + sufficient output) | No narrative_techniques vector | Low (~3-5%) — depends on plot_events output quality, higher for the ~34% sparse movies |
-| **Production Keywords** | merged_keywords ≥5 | Production metadata uses only source_of_inspiration | Very low (<1%) — only 21 movies lack all keywords |
-| **Source of Inspiration** | title + year (always available; parametric knowledge allowed) | Always runs | 0% |
+
+| Generation                | Minimum Required                                                                  | Skip Impact                                                                        | Expected Skip Rate                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **Plot Events**           | Always attempts (no skip)                                                         | If fails (API error): partial pipeline — skip plot_analysis + narrative_techniques | ~0% skip (failures only)                                                               |
+| **Reception**             | ≥1 of: featured_reviews, reception_summary, or audience_reception_attributes (≥2) | No reception vector; no review_insights_brief for Wave 2                           | Low-Medium (~5-10%)                                                                    |
+| **Plot Analysis**         | plot_synopsis (requires plot_events success)                                      | No plot_analysis vector                                                            | ~0% (only on plot_events failure)                                                      |
+| **Viewer Experience**     | plot_synopsis OR review_insights_brief (at least one)                             | No viewer_experience vector                                                        | Very low — only when both plot_events fails AND reception is skipped/fails             |
+| **Watch Context**         | genres ≥1                                                                         | No watch_context vector                                                            | ~0% — virtually every movie has genres                                                 |
+| **Narrative Techniques**  | plot_synopsis >100 words (requires plot_events success + sufficient output)       | No narrative_techniques vector                                                     | Low (~3-5%) — depends on plot_events output quality, higher for the ~34% sparse movies |
+| **Production Keywords**   | merged_keywords ≥5                                                                | Production metadata uses only source_of_inspiration                                | Very low (<1%) — only 21 movies lack all keywords                                      |
+| **Source of Inspiration** | title + year (always available; parametric knowledge allowed)                     | Always runs                                                                        | 0%                                                                                     |
+
 
 ### The partial pipeline
 
 If **plot_events fails** (API error — not data sparsity), the following still run:
+
 - **Reception** — independent, doesn't need plot_synopsis
 - **Watch context** — no plot input by design
 - **Viewer experience** — if review_insights_brief exists (reviews provide independent emotional signal)
 - **Production** — keywords-driven; source_of_inspiration uses title + year + parametric knowledge
 
 The following are skipped:
+
 - **Plot analysis** — requires plot detail for thematic analysis
 - **Narrative techniques** — requires plot detail for structural analysis
 
@@ -610,6 +657,7 @@ The movie gets 3-5 partial vectors (reception, watch_context, viewer_experience,
 ### The sparse data cascade
 
 For the ~34% of movies lacking synopsis/summaries:
+
 1. Plot events runs with title + overview + keywords → produces a thin but accurate plot_summary (no-hallucination rule)
 2. The thin plot_summary cascades to Wave 2 as a shorter-than-usual plot_synopsis
 3. Narrative techniques may be skipped if plot_synopsis is <100 words
@@ -618,21 +666,23 @@ For the ~34% of movies lacking synopsis/summaries:
 
 ---
 
-## 7. Estimated Savings Summary <a name="estimated-savings"></a>
+## 7. Estimated Savings Summary 
 
 ### Per-movie token savings (for a movie with all data present)
 
-| Change | Input Tokens Saved | Output Tokens Saved |
-|--------|-------------------|-------------------|
-| Review consolidation via `review_insights_brief` | ~3000-5000 | 0 |
-| Remove justification fields | 0 | ~300-670 |
-| Drop `featured_reviews` from source_of_inspiration (replaced by brief) | ~350-1750 | 0 |
-| Drop `overview` from plot_analysis | ~30-80 | 0 |
-| Drop `overview` + `plot_synopsis` from watch_context | ~30-680 | 0 |
-| Drop `audience_reception_attributes` from watch_context | ~30-60 | 0 |
-| Conditional maturity consolidation | ~20-60 | 0 |
-| Selective keyword routing (reduced keywords per call) | ~20-100 | 0 |
-| **Total** | **~3480-7730** | **~300-670** |
+
+| Change                                                                 | Input Tokens Saved | Output Tokens Saved |
+| ---------------------------------------------------------------------- | ------------------ | ------------------- |
+| Review consolidation via `review_insights_brief`                       | ~3000-5000         | 0                   |
+| Remove justification fields                                            | 0                  | ~300-670            |
+| Drop `featured_reviews` from source_of_inspiration (replaced by brief) | ~350-1750          | 0                   |
+| Drop `overview` from plot_analysis                                     | ~30-80             | 0                   |
+| Drop `overview` + `plot_synopsis` from watch_context                   | ~30-680            | 0                   |
+| Drop `audience_reception_attributes` from watch_context                | ~30-60             | 0                   |
+| Conditional maturity consolidation                                     | ~20-60             | 0                   |
+| Selective keyword routing (reduced keywords per call)                  | ~20-100            | 0                   |
+| **Total**                                                              | **~3480-7730**     | **~300-670**        |
+
 
 ### Additional savings for sparse movies
 
@@ -641,31 +691,35 @@ For movies that skip narrative_techniques: 1 fewer LLM call + no narrative_techn
 
 ### Quality improvements (zero cost)
 
-| Change | Quality Impact |
-|--------|---------------|
-| "Title (Year)" format | Better temporal grounding, remake disambiguation across all generations |
-| Watch context receives no plot info | More experiential, less event-anchored watch scenarios |
-| Narrative techniques receives `genres` | Better-grounded structural analysis |
-| Selective keyword routing | Each generation gets the relevant keyword type, reducing noise |
-| Sparse movies skip weak generations | Removes garbage vectors from search index, improving precision |
-| Source of inspiration uses parametric knowledge | Captures adaptation facts the data may not contain |
-| Review insights brief captures source material | Source_of_inspiration gets review signal without raw review cost |
-| Conditional maturity fallback | Preserves severity detail when primary reasoning is absent |
-| No-hallucination rule for plot events | Thin but accurate over detailed but fabricated |
-| Partial pipeline on failure | Movies retain searchability via non-plot vectors instead of being dropped |
+
+| Change                                          | Quality Impact                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| "Title (Year)" format                           | Better temporal grounding, remake disambiguation across all generations   |
+| Watch context receives no plot info             | More experiential, less event-anchored watch scenarios                    |
+| Narrative techniques receives `genres`          | Better-grounded structural analysis                                       |
+| Selective keyword routing                       | Each generation gets the relevant keyword type, reducing noise            |
+| Sparse movies skip weak generations             | Removes garbage vectors from search index, improving precision            |
+| Source of inspiration uses parametric knowledge | Captures adaptation facts the data may not contain                        |
+| Review insights brief captures source material  | Source_of_inspiration gets review signal without raw review cost          |
+| Conditional maturity fallback                   | Preserves severity detail when primary reasoning is absent                |
+| No-hallucination rule for plot events           | Thin but accurate over detailed but fabricated                            |
+| Partial pipeline on failure                     | Movies retain searchability via non-plot vectors instead of being dropped |
+
 
 ### Changes requiring empirical validation
 
-| Change | What to Test | How |
-|--------|-------------|-----|
-| Justification field removal | Does output quality degrade without explicit justifications? | Generate metadata for 50-100 movies with/without justification fields; blind-evaluate quality |
-| `review_insights_brief` fidelity | Does the brief preserve sufficient signal for downstream calls? | Compare Wave 2 output quality using raw reviews vs. brief for 50 movies |
-| Dual-purpose reception quality | Does adding review_insights_brief to reception degrade the evaluative outputs? | Compare reception summary + praise/complaint quality with and without the brief field |
-| Sparse movie thresholds | Are the word-count thresholds correct? | Sample movies at various data density levels; evaluate metadata quality to find the quality cliff |
+
+| Change                           | What to Test                                                                   | How                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Justification field removal      | Does output quality degrade without explicit justifications?                   | Generate metadata for 50-100 movies with/without justification fields; blind-evaluate quality     |
+| `review_insights_brief` fidelity | Does the brief preserve sufficient signal for downstream calls?                | Compare Wave 2 output quality using raw reviews vs. brief for 50 movies                           |
+| Dual-purpose reception quality   | Does adding review_insights_brief to reception degrade the evaluative outputs? | Compare reception summary + praise/complaint quality with and without the brief field             |
+| Sparse movie thresholds          | Are the word-count thresholds correct?                                         | Sample movies at various data density levels; evaluate metadata quality to find the quality cliff |
+
 
 ---
 
-## 8. Pending Optimizations <a name="pending-optimizations"></a>
+## 8. Pending Optimizations 
 
 ### Synopsis compression (empirical testing required)
 

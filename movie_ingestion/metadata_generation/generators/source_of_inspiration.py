@@ -1,30 +1,35 @@
 """
-Narrative Techniques generator (Wave 2).
+Source of Inspiration generator (Wave 2).
 
-Async method that generates narrative techniques metadata for a single movie.
-Extracts HOW the story is told -- cinematic narrative craft, structure,
-storytelling mechanics. Powers queries like "movie with an unreliable narrator"
-or "non-linear timeline."
+Async method that generates source of inspiration metadata for a single
+movie. Determines source material (novel, true story, etc.) and production
+medium (live-action, animation, etc.).
+
+This is the ONLY generation that allows parametric knowledge -- the LLM
+may use its training data for source material facts. This is safe because
+source material facts are categorical and verifiable, and this is a
+leaf-node classification that doesn't cascade to other generations.
 
 Inputs:
-    - movie (MovieInputData): raw fields for title, genres, overall_keywords
+    - movie (MovieInputData): raw fields for title, merged_keywords
     - plot_synopsis: from Wave 1 plot_events output (may be None)
     - review_insights_brief: from Wave 1 reception output (may be None)
 
 Removed inputs (vs current system):
-    - plot_keywords: rarely carry structural narrative signal
-    - reception_summary / featured_reviews: subsumed by review_insights_brief
+    - featured_reviews: subsumed by review_insights_brief
+    - plot_keywords / overall_keywords as separate inputs: merged via
+      movie.merged_keywords()
 
-Skip condition: requires plot_synopsis OR review_insights_brief OR
-    (genres AND keywords). Enforced by pre_consolidation.
+Skip condition: NEVER skips. Title + year always available, and parametric
+    knowledge is explicitly allowed.
 
-Response schema: NarrativeTechniquesOutput (no justifications) by default.
-    NarrativeTechniquesWithJustificationsOutput available for evaluation.
+Response schema: SourceOfInspirationOutput (no justifications) by default.
+    SourceOfInspirationWithJustificationsOutput available for evaluation.
 
-Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: medium
-    (matching current system; will be re-evaluated).
+Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: low,
+    verbosity: low.
 
-See docs/llm_metadata_generation_new_flow.md Section 5.4.
+See docs/llm_metadata_generation_new_flow.md Section 5.5.
 """
 
 from typing import Tuple
@@ -33,11 +38,8 @@ from movie_ingestion.metadata_generation.inputs import (
     MovieInputData,
     build_user_prompt,
 )
-from movie_ingestion.metadata_generation.schemas import NarrativeTechniquesOutput
-from movie_ingestion.metadata_generation.prompts.narrative_techniques import (
-    SYSTEM_PROMPT,
-    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,  # noqa: F401 — exported for evaluation pipeline
-)
+from movie_ingestion.metadata_generation.schemas import SourceOfInspirationOutput
+from movie_ingestion.metadata_generation.prompts.source_of_inspiration import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
     MetadataGenerationEmptyResponseError,
@@ -45,58 +47,59 @@ from movie_ingestion.metadata_generation.errors import (
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
-GENERATION_TYPE = "narrative_techniques"
+GENERATION_TYPE = "source_of_inspiration"
 
-# Production defaults — matching current system (gpt-5-mini with medium reasoning).
+# Production defaults — matching legacy system (gpt-5-mini with low reasoning).
 # Will be re-evaluated via the evaluation pipeline and updated to the winner.
 _DEFAULT_PROVIDER = LLMProvider.OPENAI
 _DEFAULT_MODEL = "gpt-5-mini"
 
 
-def build_narrative_techniques_user_prompt(
+def build_source_of_inspiration_user_prompt(
     movie: MovieInputData,
     plot_synopsis: str | None,
     review_insights_brief: str | None,
 ) -> str:
-    """Build the user prompt for narrative_techniques generation from a movie's fields.
+    """Build the user prompt for source_of_inspiration generation.
 
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
 
-    Uses overall_keywords only (not merged_keywords) — structural tags like
-    "nonlinear timeline" and "unreliable narrator" live in overall keywords.
-    Plot keywords add noise without structural signal.
-
     Inputs are labeled for the LLM to match the SYSTEM_PROMPT's INPUTS
     section. None values and empty lists are skipped by build_user_prompt.
+    Reviews frequently mention source material, so review_insights_brief
+    is particularly valuable here.
     """
     return build_user_prompt(
         title=movie.title_with_year(),
-        genres=movie.genres or None,
         plot_synopsis=plot_synopsis,
-        overall_keywords=movie.overall_keywords or None,
+        merged_keywords=movie.merged_keywords() or None,
         review_insights_brief=review_insights_brief,
     )
 
 
-async def generate_narrative_techniques(
+async def generate_source_of_inspiration(
     movie: MovieInputData,
     plot_synopsis: str | None = None,
     review_insights_brief: str | None = None,
     provider: LLMProvider = _DEFAULT_PROVIDER,
     model: str = _DEFAULT_MODEL,
     system_prompt: str = SYSTEM_PROMPT,
-    response_format: type = NarrativeTechniquesOutput,
+    response_format: type = SourceOfInspirationOutput,
     **kwargs,
-) -> Tuple[NarrativeTechniquesOutput, TokenUsage]:
-    """Generate narrative techniques metadata for a single movie.
+) -> Tuple[SourceOfInspirationOutput, TokenUsage]:
+    """Generate source of inspiration metadata for a single movie.
 
     Builds the user prompt from the movie's fields plus Wave 1 outputs,
     calls the specified LLM provider with structured output, and returns
     the parsed result alongside token usage.
 
-    Defaults to OpenAI gpt-5-mini with reasoning_effort: medium (matching
-    the current system). Callers can override provider/model/kwargs to
+    This is the ONLY generation where parametric knowledge is allowed --
+    the LLM may contribute source material facts from its training data
+    for well-known films.
+
+    Defaults to OpenAI gpt-5-mini with reasoning_effort: low (matching
+    the legacy system). Callers can override provider/model/kwargs to
     test different configurations during evaluation.
 
     Args:
@@ -108,16 +111,17 @@ async def generate_narrative_techniques(
         provider: Which LLM backend to use. Defaults to OPENAI.
         model: Model identifier. Defaults to "gpt-5-mini".
         **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
-            (reasoning_effort="medium").
 
     Returns:
-        Tuple of (NarrativeTechniquesOutput, TokenUsage).
+        Tuple of (SourceOfInspirationOutput, TokenUsage).
 
     Raises:
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
-    user_prompt = build_narrative_techniques_user_prompt(movie, plot_synopsis, review_insights_brief)
+    user_prompt = build_source_of_inspiration_user_prompt(
+        movie, plot_synopsis, review_insights_brief,
+    )
     title_with_year = movie.title_with_year()
 
     try:

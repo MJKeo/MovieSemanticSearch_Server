@@ -64,60 +64,60 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
     # -----------------------------------------------------------------------
     # Qwen 3.5 Flash — 2 candidates (thinking toggle)
     # -----------------------------------------------------------------------
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__qwen3.5-flash",
-    #     provider=LLMProvider.ALIBABA,
-    #     model="qwen3.5-flash",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.0, "extra_body": {"enable_thinking": False}},
-    # ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__qwen3.5-flash__think",
-    #     provider=LLMProvider.ALIBABA,
-    #     model="qwen3.5-flash",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2, "extra_body": {"enable_thinking": True}},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__qwen3.5-flash",
+        provider=LLMProvider.ALIBABA,
+        model="qwen3.5-flash",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.0, "extra_body": {"enable_thinking": False}},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__qwen3.5-flash__think",
+        provider=LLMProvider.ALIBABA,
+        model="qwen3.5-flash",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "extra_body": {"enable_thinking": True}},
+    ),
     # -----------------------------------------------------------------------
     # Gemini 2.5 Flash — 3 candidates (thinking budget curve)
     # -----------------------------------------------------------------------
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gemini-2.5-flash",
-    #     provider=LLMProvider.GEMINI,
-    #     model="gemini-2.5-flash",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
-    # ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gemini-2.5-flash__think-1k",
-    #     provider=LLMProvider.GEMINI,
-    #     model="gemini-2.5-flash",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
-    # ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gemini-2.5-flash__think-4k",
-    #     provider=LLMProvider.GEMINI,
-    #     model="gemini-2.5-flash",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gemini-2.5-flash",
+        provider=LLMProvider.GEMINI,
+        model="gemini-2.5-flash",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gemini-2.5-flash__think-1k",
+        provider=LLMProvider.GEMINI,
+        model="gemini-2.5-flash",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gemini-2.5-flash__think-4k",
+        provider=LLMProvider.GEMINI,
+        model="gemini-2.5-flash",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
+    ),
     # -----------------------------------------------------------------------
     # Gemini 2.5 Flash Lite — 2 candidates (thinking on/off)
     # -----------------------------------------------------------------------
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gemini-2.5-flash-lite",
-    #     provider=LLMProvider.GEMINI,
-    #     model="gemini-2.5-flash-lite",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gemini-2.5-flash-lite",
+        provider=LLMProvider.GEMINI,
+        model="gemini-2.5-flash-lite",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
+    ),
     EvaluationCandidate(
         candidate_id="plot_events__gemini-2.5-flash-lite__think-1k",
         provider=LLMProvider.GEMINI,
@@ -137,14 +137,14 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
     # -----------------------------------------------------------------------
     # GPT-5-mini — 3 candidates (reasoning_effort x verbosity)
     # -----------------------------------------------------------------------
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-5-mini",
-    #     provider=LLMProvider.OPENAI,
-    #     model="gpt-5-mini",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5-mini",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5-mini",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+    ),
     EvaluationCandidate(
         candidate_id="plot_events__gpt-5-mini__reason-low",
         provider=LLMProvider.OPENAI,
@@ -153,33 +153,33 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         response_format=PlotEventsOutput,
         kwargs={"reasoning_effort": "low", "verbosity": "low"},
     ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-5-mini__reason-low-verb-med",
-    #     provider=LLMProvider.OPENAI,
-    #     model="gpt-5-mini",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"reasoning_effort": "low", "verbosity": "medium"},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5-mini__reason-low-verb-med",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5-mini",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "low", "verbosity": "medium"},
+    ),
     # -----------------------------------------------------------------------
     # GPT-5-nano — 2 candidates (reasoning_effort)
     # -----------------------------------------------------------------------
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-5-nano",
-    #     provider=LLMProvider.OPENAI,
-    #     model="gpt-5-nano",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
-    # ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-5-nano__reason-low",
-    #     provider=LLMProvider.OPENAI,
-    #     model="gpt-5-nano",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"reasoning_effort": "low", "verbosity": "low"},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5-nano",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5-nano",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5-nano__reason-low",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5-nano",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "low", "verbosity": "low"},
+    ),
     # -----------------------------------------------------------------------
     # GPT-5.4-nano — 3 candidates (reasoning_effort x verbosity)
     # -----------------------------------------------------------------------
@@ -191,60 +191,60 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         response_format=PlotEventsOutput,
         kwargs={"reasoning_effort": "none", "verbosity": "low"},
     ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-5.4-nano__reason-low",
-    #     provider=LLMProvider.OPENAI,
-    #     model="gpt-5.4-nano",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"reasoning_effort": "low", "verbosity": "low"},
-    # ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-5.4-nano__reason-low-verb-med",
-    #     provider=LLMProvider.OPENAI,
-    #     model="gpt-5.4-nano",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"reasoning_effort": "low", "verbosity": "medium"},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5.4-nano__reason-low",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5.4-nano",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "low", "verbosity": "low"},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-5.4-nano__reason-low-verb-med",
+        provider=LLMProvider.OPENAI,
+        model="gpt-5.4-nano",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"reasoning_effort": "low", "verbosity": "medium"},
+    ),
     # -----------------------------------------------------------------------
     # GPT-oss-120b — 2 candidates (reasoning_effort)
     # -----------------------------------------------------------------------
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-oss-120b",
-    #     provider=LLMProvider.GROQ,
-    #     model="openai/gpt-oss-120b",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2, "reasoning_effort": "low", "reasoning_format": "hidden"},
-    # ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__gpt-oss-120b__reason-med",
-    #     provider=LLMProvider.GROQ,
-    #     model="openai/gpt-oss-120b",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2, "reasoning_effort": "medium", "reasoning_format": "hidden"},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-oss-120b",
+        provider=LLMProvider.GROQ,
+        model="openai/gpt-oss-120b",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "reasoning_effort": "low", "reasoning_format": "hidden"},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__gpt-oss-120b__reason-med",
+        provider=LLMProvider.GROQ,
+        model="openai/gpt-oss-120b",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2, "reasoning_effort": "medium", "reasoning_format": "hidden"},
+    ),
     # -----------------------------------------------------------------------
     # Llama 4 Scout — 2 candidates (temperature)
     # -----------------------------------------------------------------------
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__llama-4-scout",
-    #     provider=LLMProvider.GROQ,
-    #     model="meta-llama/llama-4-scout-17b-16e-instruct",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.2},
-    # ),
-    # EvaluationCandidate(
-    #     candidate_id="plot_events__llama-4-scout__temp-0",
-    #     provider=LLMProvider.GROQ,
-    #     model="meta-llama/llama-4-scout-17b-16e-instruct",
-    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
-    #     response_format=PlotEventsOutput,
-    #     kwargs={"temperature": 0.0},
-    # ),
+    EvaluationCandidate(
+        candidate_id="plot_events__llama-4-scout",
+        provider=LLMProvider.GROQ,
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.2},
+    ),
+    EvaluationCandidate(
+        candidate_id="plot_events__llama-4-scout__temp-0",
+        provider=LLMProvider.GROQ,
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        response_format=PlotEventsOutput,
+        kwargs={"temperature": 0.0},
+    ),
     # -----------------------------------------------------------------------
     # Short prompt variants — copies of active candidates using SHORT_SYSTEM_PROMPT
     # -----------------------------------------------------------------------
