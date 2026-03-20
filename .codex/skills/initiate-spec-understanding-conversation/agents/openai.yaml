@@ -1,0 +1,4 @@
+interface:
+  display_name: "Initiate Spec Understanding"
+  short_description: "Run a deep pre-implementation spec review conversation against the codebase."
+  default_prompt: "Read the relevant project docs and touched modules, map the spec to the current codebase, surface must-resolve questions and conflicts, and facilitate discussion without creating a plan or writing code."

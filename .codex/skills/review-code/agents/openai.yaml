@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Code"
+  short_description: "Perform a standards- and intent-aware code review focused on real findings."
+  default_prompt: "Read the project priorities, DIFF_CONTEXT intent, relevant module docs, and conventions, then produce a severity-ordered review with concrete findings and fixes rather than a vague summary."

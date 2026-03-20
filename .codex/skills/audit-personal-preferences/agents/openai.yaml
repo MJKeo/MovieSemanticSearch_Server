@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit Personal Preferences"
+  short_description: "Review and clean up docs/personal_preferences.md one entry at a time."
+  default_prompt: "Review docs/personal_preferences.md entry by entry, ask whether each should be kept, updated, or removed, and then apply the approved changes."

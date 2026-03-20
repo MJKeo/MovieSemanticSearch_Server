@@ -1,0 +1,4 @@
+interface:
+  display_name: "Extract Finalized Decisions"
+  short_description: "Turn settled discussion outcomes into numbered decision records."
+  default_prompt: "Review the current conversation, identify only explicitly finalized decisions, draft numbered decision records, update affected module docs when appropriate, and propose any PROJECT.md or CLAUDE.md changes for approval."

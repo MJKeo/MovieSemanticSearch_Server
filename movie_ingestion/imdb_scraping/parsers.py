@@ -90,14 +90,13 @@ def _extract_synopses_and_summaries(
     """
     Apply synopsis priority logic to the GraphQL plots response.
 
-    Priority logic (matches the original HTML parser):
-      1. If synopses exist → take the FIRST synopsis only. Return
-         plot_summaries=[]. A single synopsis is a comprehensive
-         chronological retelling (500-2000 words).
-      2. If no synopses → take the first 3 summaries, EXCLUDING the
-         first entry (which duplicates the overview from the main page).
-         Return synopses=[].
-      3. If neither exists → both fields return empty.
+    Extraction logic:
+      - Synopses: take the FIRST synopsis only. A single synopsis is a
+        comprehensive chronological retelling (500-2000 words).
+      - Plot summaries: always extracted independently of synopses. Skip
+        the first summary (duplicates the overview from the main page),
+        take up to the next 3.
+      - If neither exists → both fields return empty.
 
     GraphQL distinguishes plot types via the "plotType" field:
       - "SYNOPSIS" for synopses
@@ -122,18 +121,26 @@ def _extract_synopses_and_summaries(
         else:
             summaries.append(text)
 
-    # Priority 1: if synopses exist, take the first one only
-    if synopses:
-        return [synopses[0]], []
+    # Synopses: take the first one only (if any exist)
+    result_synopses = [synopses[0]] if synopses else []
 
-    # Priority 2: skip first summary (duplicates overview), take next 3
+    # Summaries: always extracted independently. Skip first entry
+    # (duplicates the overview from the main page), take next 3.
     summaries_excluding_overview = summaries[1:] if summaries else []
-    return [], summaries_excluding_overview[:3]
+    result_summaries = summaries_excluding_overview[:3]
+
+    return result_synopses, result_summaries
 
 
 # ---------------------------------------------------------------------------
 # Keyword scoring logic
 # ---------------------------------------------------------------------------
+
+# Tunable bounds for the number of plot keywords returned per movie.
+# MIN is used as both the no-signal fallback count and the floor when
+# vote-based scoring produces fewer results. MAX caps the output.
+_MIN_PLOT_KEYWORDS = 10
+_MAX_PLOT_KEYWORDS = 15
 
 
 def _score_and_filter_keywords(keyword_edges: list | None) -> list[str]:
@@ -150,12 +157,12 @@ def _score_and_filter_keywords(keyword_edges: list | None) -> list[str]:
 
     Threshold logic:
       N = max score across all keywords
-      If N <= 0: take first 5 by position (no meaningful vote signal)
+      If N <= 0: take first _MIN_PLOT_KEYWORDS by position (no meaningful vote signal)
       If N > 0: threshold = min(0.75 * N, N - 2)
         - For popular movies (N=20): threshold=15 (tight 75% band)
         - For low-engagement (N=4): threshold=2 (wider absolute band)
       Include all keywords with score >= threshold
-      Floor of 5, cap of 15
+      Floor of _MIN_PLOT_KEYWORDS, cap of _MAX_PLOT_KEYWORDS
     """
     if not keyword_edges:
         return []
@@ -185,9 +192,9 @@ def _score_and_filter_keywords(keyword_edges: list | None) -> list[str]:
     # Find the highest score (N)
     max_score = max(score for _, score in scored_keywords)
 
-    # If N <= 0, no keyword has meaningful votes — take first 5 by position
+    # If N <= 0, no keyword has meaningful votes — take first batch by position
     if max_score <= 0:
-        return [kw for kw, _ in scored_keywords[:5]]
+        return [kw for kw, _ in scored_keywords[:_MIN_PLOT_KEYWORDS]]
 
     # Compute inclusion threshold
     threshold = min(0.75 * max_score, max_score - 2)
@@ -210,8 +217,8 @@ def _score_and_filter_keywords(keyword_edges: list | None) -> list[str]:
             passing_deduped.append(kw)
     passing = passing_deduped
 
-    # Enforce floor of 5: pad with next-highest-scoring below-threshold keywords
-    if len(passing) < 5:
+    # Enforce floor: pad with next-highest-scoring below-threshold keywords
+    if len(passing) < _MIN_PLOT_KEYWORDS:
         below_threshold = sorted(
             [(kw, s) for kw, s in scored_keywords if kw not in seen],
             key=lambda x: x[1],
@@ -221,13 +228,13 @@ def _score_and_filter_keywords(keyword_edges: list | None) -> list[str]:
             if kw not in seen:
                 seen.add(kw)
                 passing.append(kw)
-            if len(passing) >= 5:
+            if len(passing) >= _MIN_PLOT_KEYWORDS:
                 break
 
-    # Enforce cap of 15: keep top 15 by score
-    if len(passing) > 15:
+    # Enforce cap: keep top keywords by score
+    if len(passing) > _MAX_PLOT_KEYWORDS:
         passing.sort(key=lambda kw: score_map.get(kw, 0), reverse=True)
-        passing = passing[:15]
+        passing = passing[:_MAX_PLOT_KEYWORDS]
 
     return passing
 

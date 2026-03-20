@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Workflow Suggestions"
+  short_description: "Process docs/workflow_suggestions.md one suggestion at a time."
+  default_prompt: "Read docs/workflow_suggestions.md, present each suggestion individually with the required decision options, implement or remove items according to the user's choices, and finish with a concise tally."

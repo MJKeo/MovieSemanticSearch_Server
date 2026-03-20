@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Unit Test Plan"
+  short_description: "Write a source-driven testing plan into unit_tests/TEST_PLAN.md."
+  default_prompt: "Analyze the changed code, review existing tests for conventions and coverage, and write a detailed plan to unit_tests/TEST_PLAN.md following the repository's expected format."

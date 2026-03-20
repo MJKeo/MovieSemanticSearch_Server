@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Test Planner"
+  short_description: "Produce an independent TEST_PLAN audit using the legacy test-planner workflow."
+  default_prompt: "Run the legacy test-planner analysis, write unit_tests/TEST_PLAN.md, and return the short summary sentence the command expects."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Safe Clear"
+  short_description: "Save session context and extract reusable learnings before clearing context."
+  default_prompt: "Ensure DIFF_CONTEXT.md is current, then mine the session for new preferences, convention candidates, workflow suggestions, and deferred TODO items, updating only the approved project files before giving the user the clear-ready message."

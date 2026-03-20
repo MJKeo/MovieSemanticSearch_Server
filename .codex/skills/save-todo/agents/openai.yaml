@@ -1,0 +1,4 @@
+interface:
+  display_name: "Save TODO"
+  short_description: "Append a deduplicated TODO entry to docs/TODO.md from a user-supplied idea."
+  default_prompt: "Read docs/TODO.md, check for overlap, append a concise entry in the repo's TODO format if it is genuinely new, and confirm what was written."

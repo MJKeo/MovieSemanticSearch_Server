@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ingest Spec To Docs"
+  short_description: "Reconcile a product spec against the project's documentation system before writing updates."
+  default_prompt: "Read the spec plus the existing documentation system, classify extracted knowledge, stop on conflicts for user resolution, and only then update decisions and module docs while gating PROJECT.md and conventions changes behind approval."

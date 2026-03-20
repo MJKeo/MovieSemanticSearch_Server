@@ -7,6 +7,7 @@ import csv
 
 import gradio as gr
 from openai import OpenAI, AsyncOpenAI
+import anthropic
 from anthropic import AsyncAnthropic
 from google import genai
 from groq import AsyncGroq
@@ -394,6 +395,12 @@ async def generate_anthropic_response_async(
     max_tokens defaults to 4096 if not provided — it is required by the
     Anthropic API but optional in the unified interface.
 
+    When cache_control=True, the system prompt, user message, and tool
+    schema are wrapped in content blocks with cache_control breakpoints
+    for Anthropic's prompt caching (90% discount on cached token reads).
+    Callers should stagger repeated calls so the first response populates
+    the cache before subsequent calls fire.
+
     Additional Anthropic-specific params (temperature, top_p, etc.) can be
     passed via kwargs.
 
@@ -412,18 +419,52 @@ async def generate_anthropic_response_async(
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
             max_tokens = budget_tokens + 4096
 
+        # Prompt caching: when enabled, wrap system/user/tool content in
+        # cache_control blocks so repeated calls with the same prefix get
+        # 90% input token discount. Popped from kwargs to prevent leaking
+        # to the Anthropic API.
+        enable_cache = kwargs.pop("cache_control", False)
+
+        # Build system parameter — content block list when caching, plain string otherwise
+        if enable_cache:
+            system_param = [{
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }]
+        else:
+            system_param = system_prompt
+
+        # Build messages — content block list when caching, plain string otherwise
+        if enable_cache:
+            messages_param = [{
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": user_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+            }]
+        else:
+            messages_param = [{"role": "user", "content": user_prompt}]
+
+        # Build tool definition — add cache_control when caching is enabled
+        tool_def = {
+            "name": "structured_output",
+            "description": "Submit the structured output.",
+            "input_schema": response_format.model_json_schema(),
+        }
+        if enable_cache:
+            tool_def["cache_control"] = {"type": "ephemeral"}
+
         # Register the response schema as a tool and force the model to call it.
         # tool_choice={"type": "tool"} guarantees the output matches the schema.
         response = await async_anthropic_client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            tools=[{
-                "name": "structured_output",
-                "description": "Submit the structured output.",
-                "input_schema": response_format.model_json_schema(),
-            }],
+            system=system_param,
+            messages=messages_param,
+            tools=[tool_def],
             tool_choice={"type": "tool", "name": "structured_output"},
             **kwargs,
         )
@@ -438,6 +479,8 @@ async def generate_anthropic_response_async(
         output_tokens = response.usage.output_tokens
 
         return parsed, input_tokens, output_tokens
+    except anthropic.RateLimitError:
+        raise  # Let rate limits propagate for caller-side retry
     except Exception as e:
         raise ValueError(f"Anthropic async failed to generate response: {e}")
 

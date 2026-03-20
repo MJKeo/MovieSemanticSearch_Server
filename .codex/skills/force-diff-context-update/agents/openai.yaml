@@ -1,0 +1,4 @@
+interface:
+  display_name: "Force DIFF Context Update"
+  short_description: "Audit DIFF_CONTEXT.md and append anything still missing from the session."
+  default_prompt: "Review session work and discussion, compare it against DIFF_CONTEXT.md, append any missing context using the repository's scale-appropriate format, and otherwise confirm the file is already current."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Docs Auditor"
+  short_description: "Perform a full permanent-doc staleness audit modeled on the legacy docs-auditor subagent."
+  default_prompt: "Execute the docs-auditor workflow, produce a report of stale or missing documentation, and do not modify files unless the user separately asks for remediation."

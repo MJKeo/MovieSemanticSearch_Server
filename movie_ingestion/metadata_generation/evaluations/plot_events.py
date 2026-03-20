@@ -1,29 +1,27 @@
 """
 Evaluation pipeline for plot_events metadata.
 
-Implements a two-phase pointwise evaluation:
+Reference-free pointwise evaluation: for each (candidate, movie) pair,
+generates the candidate's PlotEventsOutput, then scores it against a
+detailed rubric using an LLM judge (Claude Opus 4.6). The judge sees
+the raw source data (not the generation prompt) alongside the candidate
+output and scores 4 dimensions: groundedness, plot_summary,
+character_quality, and setting.
 
-Phase 0 — generate_reference_responses():
-    Generates one reference PlotEventsOutput per movie using GPT-5.4 via the
-    ChatGPT WHAM backend (see ADR-030). References are fixed for the duration
-    of the evaluation and stored in plot_events_references. Run once before any
-    candidate evaluation.
-
-Phase 1 — run_evaluation():
-    For each (candidate, movie) pair: generates the candidate's PlotEventsOutput,
-    retrieves the reference, calls a GPT-5.4 judge (via WHAM) with the full rubric
-    and both outputs, and stores per-dimension scores and reasoning.
+Each evaluation runs the judge 2 times sequentially (run 1 populates the
+Anthropic prompt cache, run 2 benefits from cached reads). On 429 rate
+limits, each call sleeps 30s and retries. Scores are averaged across
+runs; reasoning is concatenated.
 
 Visualization — print_score_summary():
     Queries plot_events_evaluations and prints a formatted mean/median table
     per candidate per dimension.
 
 Storage (evaluation_data/eval.db):
-    - plot_events_references: (movie_id) → reference output
     - plot_events_candidate_outputs: (movie_id, candidate_id) → candidate output
     - plot_events_evaluations: (movie_id, candidate_id) → 4-dimension scores + reasoning
 
-Both phases are idempotent — re-running skips rows that already exist.
+Idempotent — re-running skips rows that already exist.
 """
 
 import asyncio
@@ -33,11 +31,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import anthropic
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
-from movie_ingestion.metadata_generation.evaluations.openai_oauth import get_valid_auth
 from movie_ingestion.metadata_generation.evaluations.shared import (
     EVAL_DB_PATH,
     EvaluationCandidate,
@@ -83,57 +81,57 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
     # -----------------------------------------------------------------------
     # Gemini 2.5 Flash — 3 candidates (thinking budget curve)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash__think-1k",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash__think-4k",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash__think-1k",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash__think-4k",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
+    # ),
     # -----------------------------------------------------------------------
     # Gemini 2.5 Flash Lite — 2 candidates (thinking on/off)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash-lite",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash-lite",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash-lite__think-1k",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash-lite",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash-lite__think-4k",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash-lite",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash-lite",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash-lite",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 0}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash-lite__think-1k",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash-lite",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash-lite__think-4k",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash-lite",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
+    # ),
     # -----------------------------------------------------------------------
     # GPT-5-mini — 3 candidates (reasoning_effort x verbosity)
     # -----------------------------------------------------------------------
@@ -153,14 +151,14 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         response_format=PlotEventsOutput,
         kwargs={"reasoning_effort": "low", "verbosity": "low"},
     ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5-mini__reason-low-verb-med",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5-mini",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "low", "verbosity": "medium"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5-mini__reason-low-verb-med",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5-mini",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "low", "verbosity": "medium"},
+    # ),
     # -----------------------------------------------------------------------
     # GPT-5-nano — 2 candidates (reasoning_effort)
     # -----------------------------------------------------------------------
@@ -199,25 +197,25 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         response_format=PlotEventsOutput,
         kwargs={"reasoning_effort": "low", "verbosity": "low"},
     ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-5.4-nano__reason-low-verb-med",
-        provider=LLMProvider.OPENAI,
-        model="gpt-5.4-nano",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"reasoning_effort": "low", "verbosity": "medium"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-5.4-nano__reason-low-verb-med",
+    #     provider=LLMProvider.OPENAI,
+    #     model="gpt-5.4-nano",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"reasoning_effort": "low", "verbosity": "medium"},
+    # ),
     # -----------------------------------------------------------------------
     # GPT-oss-120b — 2 candidates (reasoning_effort)
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gpt-oss-120b",
-        provider=LLMProvider.GROQ,
-        model="openai/gpt-oss-120b",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "reasoning_effort": "low", "reasoning_format": "hidden"},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gpt-oss-120b",
+    #     provider=LLMProvider.GROQ,
+    #     model="openai/gpt-oss-120b",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "reasoning_effort": "low", "reasoning_format": "hidden"},
+    # ),
     EvaluationCandidate(
         candidate_id="plot_events__gpt-oss-120b__reason-med",
         provider=LLMProvider.GROQ,
@@ -237,33 +235,33 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
         response_format=PlotEventsOutput,
         kwargs={"temperature": 0.2},
     ),
-    EvaluationCandidate(
-        candidate_id="plot_events__llama-4-scout__temp-0",
-        provider=LLMProvider.GROQ,
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.0},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__llama-4-scout__temp-0",
+    #     provider=LLMProvider.GROQ,
+    #     model="meta-llama/llama-4-scout-17b-16e-instruct",
+    #     system_prompt=DEFAULT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.0},
+    # ),
     # -----------------------------------------------------------------------
     # Short prompt variants — copies of active candidates using SHORT_SYSTEM_PROMPT
     # -----------------------------------------------------------------------
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash-lite__think-1k__short-prompt",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash-lite",
-        system_prompt=SHORT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
-    ),
-    EvaluationCandidate(
-        candidate_id="plot_events__gemini-2.5-flash-lite__think-4k__short-prompt",
-        provider=LLMProvider.GEMINI,
-        model="gemini-2.5-flash-lite",
-        system_prompt=SHORT_SYSTEM_PROMPT,
-        response_format=PlotEventsOutput,
-        kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
-    ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash-lite__think-1k__short-prompt",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash-lite",
+    #     system_prompt=SHORT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}},
+    # ),
+    # EvaluationCandidate(
+    #     candidate_id="plot_events__gemini-2.5-flash-lite__think-4k__short-prompt",
+    #     provider=LLMProvider.GEMINI,
+    #     model="gemini-2.5-flash-lite",
+    #     system_prompt=SHORT_SYSTEM_PROMPT,
+    #     response_format=PlotEventsOutput,
+    #     kwargs={"temperature": 0.2, "thinking_config": {"thinking_budget": 4096}},
+    # ),
     EvaluationCandidate(
         candidate_id="plot_events__gpt-5-mini__reason-low__short-prompt",
         provider=LLMProvider.OPENAI,
@@ -285,19 +283,6 @@ PLOT_EVENTS_CANDIDATES: list[EvaluationCandidate] = [
 # ---------------------------------------------------------------------------
 # SQLite table DDL
 # ---------------------------------------------------------------------------
-
-_CREATE_REFERENCES_TABLE = """
-    CREATE TABLE IF NOT EXISTS plot_events_references (
-        movie_id         INTEGER PRIMARY KEY,
-        plot_summary     TEXT NOT NULL,
-        setting          TEXT NOT NULL,
-        major_characters TEXT NOT NULL,   -- JSON array of MajorCharacter dicts
-        reference_model  TEXT NOT NULL,
-        input_tokens     INTEGER,
-        output_tokens    INTEGER,
-        created_at       TEXT NOT NULL
-    )
-"""
 
 _CREATE_CANDIDATE_OUTPUTS_TABLE = """
     CREATE TABLE IF NOT EXISTS plot_events_candidate_outputs (
@@ -353,8 +338,7 @@ SCORE_WEIGHTS: dict[str, float] = {
 
 
 def create_plot_events_tables(conn: sqlite3.Connection) -> None:
-    """Create all three plot_events evaluation tables if they don't exist."""
-    conn.execute(_CREATE_REFERENCES_TABLE)
+    """Create the plot_events evaluation tables if they don't exist."""
     conn.execute(_CREATE_CANDIDATE_OUTPUTS_TABLE)
     conn.execute(_CREATE_EVALUATIONS_TABLE)
     # Add judge_runs column if missing (migrates tables created before multi-run support)
@@ -381,11 +365,12 @@ class PlotEventsJudgeOutput(BaseModel):
     Scores use Literal[1, 2, 3, 4] to constrain the 4-point scale and
     prevent the judge from returning out-of-range values.
     """
-    # Reasoning before scores (spec requirement: explicit CoT before scores)
-    groundedness_reasoning: str
-    plot_summary_reasoning: str
-    character_quality_reasoning: str
-    setting_reasoning: str
+    # Reasoning before scores (spec requirement: explicit CoT before scores).
+    # Written in caveman-speak, one sentence, max 30 words each.
+    groundedness_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
+    plot_summary_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
+    character_quality_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
+    setting_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
     # Scores — 4-point scale per dimension
     groundedness_score: Literal[1, 2, 3, 4]
     plot_summary_score: Literal[1, 2, 3, 4]
@@ -403,7 +388,7 @@ CONTEXT: plot_events metadata is a structured representation of WHAT HAPPENS in 
 1. Vector embeddings for semantic search — preserving character names, location names, and concrete plot actions enables specific queries to match
 2. Primary input to downstream metadata generators that analyze themes, character arcs, and viewer experience
 
-THE GENERATION PROMPT instructs the model to:
+A HIGH-QUALITY OUTPUT should:
 - Extract a HIGH-SIGNAL, SPOILER-CONTAINING representation of what happens
 - Preserve specificity: character NAMES, location names, concrete plot actions
 - Include ONLY essential characters and ONLY the 1-3 core conflicts
@@ -421,13 +406,13 @@ SCORE SCALE:
 ---
 
 DIMENSION 1: groundedness
-Evaluates factual accuracy across ALL output fields (plot_summary, setting, major_characters). Every detail must be traceable to the provided input data. This is the most important dimension — hallucinated content propagates into downstream metadata and creates false search matches.
+Evaluates factual accuracy across ALL output fields (plot_summary, setting, major_characters). Every detail must be traceable to the provided SOURCE DATA. This is the most important dimension — hallucinated content propagates into downstream metadata and creates false search matches.
 
 Source hierarchy for adjudicating conflicts: plot_synopsis and detailed plot_summaries are the primary truth. If sources conflict, the most detailed, internally consistent version takes precedence. Overview is a marketing summary and is the weakest source.
 
-Score 4: All details across all fields directly supported by the input data. No fabricated characters, events, locations, or relationships.
-Score 3: All major claims supported. At most 1-2 minor details that are reasonable inferences from the inputs rather than directly stated (e.g., inferring a relationship dynamic that's strongly implied but not explicit).
-Score 2: 1-2 details clearly absent from all input fields. Not egregious fabrication, but clearly unsupported claims.
+Score 4: All details across all fields directly supported by the SOURCE DATA. No fabricated characters, events, locations, or relationships.
+Score 3: All major claims supported. At most 1-2 minor details that are reasonable inferences from the SOURCE DATA rather than directly stated (e.g., inferring a relationship dynamic that's strongly implied but not explicit).
+Score 2: 1-2 details clearly absent from all SOURCE DATA fields. Not egregious fabrication, but clearly unsupported claims.
 Score 1: Any clearly fabricated plot event, character name, character relationship, or setting detail. OR multiple unsupported details across fields.
 
 ---
@@ -435,21 +420,21 @@ Score 1: Any clearly fabricated plot event, character name, character relationsh
 DIMENSION 2: plot_summary
 Evaluates whether the summary provides chronological coverage of concrete events with enough specific detail for the output to be useful as a search embedding and as input to downstream generators.
 
-The generation prompt instructs: chronological summary of the entire film, preserving character names, location names, key organizations, and important events. Compact wording, no filler, no abstract moralizing or theme talk. Only the 1-3 core conflicts that define the movie.
+A high-quality summary provides: chronological coverage of the entire film, preserving character names, location names, key organizations, and important events. Compact wording, no filler, no abstract moralizing or theme talk. Only the 1-3 core conflicts that define the movie.
 
-Score 4: Chronological event coverage from beginning to end, focused on the 1-3 core conflicts. Character names, locations, and concrete plot actions preserved throughout. Compact, plot-grounded wording with no filler, padding, or thematic commentary. When inputs provide specific detail, the summary reflects that specificity.
-Score 3: Event coverage substantially complete but the ending is thin, or 1-2 concrete details available in the inputs are generalized. Mostly compact — at most minor instances of vague phrasing where inputs gave specific detail. No significant theme talk or moralizing.
+Score 4: Chronological event coverage from beginning to end, focused on the 1-3 core conflicts. Character names, locations, and concrete plot actions preserved throughout. Compact, plot-grounded wording with no filler, padding, or thematic commentary. When SOURCE DATA provides specific detail, the summary reflects that specificity.
+Score 3: Event coverage substantially complete but the ending is thin, or 1-2 concrete details available in the SOURCE DATA are generalized. Mostly compact — at most minor instances of vague phrasing where SOURCE DATA gave specific detail. No significant theme talk or moralizing.
 Score 2: Significant events missing (ending omitted, or a major section collapsed to one sentence). OR accurate but so high-level that it reads as a premise description rather than a plot recount. OR contains noticeable filler, flowery prose, or abstract thematic commentary.
 Score 1: Major plot events missing. OR so brief/generic as to be minimally useful. OR dominated by thematic analysis rather than concrete events.
 
-When inputs are sparse (only overview + keywords, no synopsis or summaries): do not penalize a shorter summary. Penalize padding or speculation instead. A concise, grounded summary from sparse inputs can score 4.
+When SOURCE DATA is sparse (only overview + keywords, no synopsis or summaries): do not penalize a shorter summary. Penalize padding or speculation instead. A concise, grounded summary from sparse SOURCE DATA can score 4.
 
 ---
 
 DIMENSION 3: character_quality
 Evaluates both WHO is included (selection) and HOW they're described (accuracy and specificity), scored as one dimension across all listed characters.
 
-The generation prompt instructs: include ONLY the absolutely essential characters needed to understand the plot (only a few). Do NOT list minor side characters. For each: exact name, short plot-relevant description, narrative role label, and 1 short sentence stating primary motivations (high-level).
+A high-quality character list includes ONLY the absolutely essential characters needed to understand the plot (only a few). It does NOT list minor side characters. For each: exact name, short plot-relevant description, narrative role label, and 1 short sentence stating primary motivations (high-level).
 
 Score 4: Only the characters essential to understanding the core plot are included — no peripheral or minor characters. Count is small and proportionate to the film's complexity. Each character has: correct name, short plot-relevant description, appropriate role label, and a concise single-sentence motivation.
 Score 3: All essential characters present. May include 1 borderline-peripheral character, or 1-2 characters have slightly vague descriptions, marginally imprecise roles, or motivations that are correct but not concise (multi-sentence or overly granular). All names correct.
@@ -461,12 +446,12 @@ Score 1: Essential characters not identified, entirely wrong character set, OR m
 DIMENSION 4: setting
 Evaluates the accuracy and specificity of the WHERE/WHEN setting phrase.
 
-The generation prompt instructs: 10 words or less. Details that are unknown are omitted — never make up details. Preserve meaningful proper nouns and time period when relevant.
+A high-quality setting is 10 words or less. Details that are unknown are omitted — never made up. Meaningful proper nouns and time period are preserved when relevant.
 
-Score 4: Includes specific named location AND time period where inputs provide them. Omits dimensions the inputs don't support (this is correct behavior, not a gap). Accurately characterizes the environment. 10 words or fewer. All details grounded in inputs.
-Score 3: Specific but omits one dimension (where OR when) when inputs clearly provided both. OR slightly generic where inputs had more detail. OR marginally over 10 words.
-Score 2: Generic to the point of being minimally useful (e.g., "modern urban setting" when inputs provided a specific city). OR entirely omits a dimension when inputs clearly provided it.
-Score 1: Contradicts inputs, hallucinated location/time, or so generic as to be content-free.
+Score 4: Includes specific named location AND time period where SOURCE DATA provides them. Omits dimensions the SOURCE DATA doesn't support (this is correct behavior, not a gap). Accurately characterizes the environment. 10 words or fewer. All details grounded in SOURCE DATA.
+Score 3: Specific but omits one dimension (where OR when) when SOURCE DATA clearly provided both. OR slightly generic where SOURCE DATA had more detail. OR marginally over 10 words.
+Score 2: Generic to the point of being minimally useful (e.g., "modern urban setting" when SOURCE DATA provided a specific city). OR entirely omits a dimension when SOURCE DATA clearly provided it.
+Score 1: Contradicts SOURCE DATA, hallucinated location/time, or so generic as to be content-free.
 
 ---
 
@@ -474,10 +459,12 @@ SCORING INSTRUCTIONS:
 1. For each dimension, write reasoning FIRST, then state the score.
 2. Score each dimension independently — a factual error penalized in groundedness should not also lower plot_summary or character_quality scores.
 3. Evaluate semantic content, not surface form. Two outputs expressing the same meaning differently receive the same score.
-4. The reference response is a calibration anchor showing what quality looks like — it is NOT ground truth. Do not penalize for different but defensible choices (e.g., selecting different characters, different granularity).
-5. For verifiable facts (character names, plot events), use the inputs as the authority. For subjective elements (how much detail, which characters are "essential"), score based on defensibility.
-6. Only penalize in groundedness if a detail is absent from ALL fields in the generation prompt.
-7. Filler, flowery prose, abstract moralizing, and thematic commentary should be penalized in plot_summary, not groundedness (they are style violations, not factual errors)."""
+4. For verifiable facts (character names, plot events), use the SOURCE DATA as the authority. For subjective elements (how much detail, which characters are "essential"), score based on defensibility.
+5. Only penalize in groundedness if a detail is absent from ALL fields in the SOURCE DATA.
+6. Filler, flowery prose, abstract moralizing, and thematic commentary should be penalized in plot_summary, not groundedness (they are style violations, not factual errors).
+
+REASONING FORMAT:
+Each reasoning field must be exactly ONE sentence, maximum 30 words. Write in caveman-speak: drop articles (a, an, the), drop filler words, use blunt short phrasing. Example: "Plot cover whole story good, names kept, no fluff found, ending strong." NOT full English prose."""
 
 
 # ---------------------------------------------------------------------------
@@ -512,21 +499,18 @@ def _format_characters_for_prompt(output: PlotEventsOutput) -> str:
 
 
 def _build_judge_user_prompt(
-    generation_user_prompt: str,
-    reference: PlotEventsOutput,
+    source_data: str,
     candidate_output: PlotEventsOutput,
 ) -> str:
-    """Assemble the judge's user prompt from generation context + both outputs."""
-    return f"""GENERATION PROMPT:
-{generation_user_prompt}
+    """Assemble the judge's user prompt from source data + candidate output.
 
----
-
-REFERENCE RESPONSE:
-plot_summary: {reference.plot_summary}
-setting: {reference.setting}
-major_characters:
-{_format_characters_for_prompt(reference)}
+    The source data section contains the raw movie fields (title, overview,
+    synopses, summaries, keywords) that were available to the candidate —
+    NOT the generation instructions. This gives the judge ground truth for
+    factual verification without exposing the candidate's system prompt.
+    """
+    return f"""SOURCE DATA:
+{source_data}
 
 ---
 
@@ -538,151 +522,31 @@ major_characters:
 
 
 # ---------------------------------------------------------------------------
-# Phase 0: generate reference responses
-# ---------------------------------------------------------------------------
-
-async def generate_reference_responses(
-    movie_inputs: dict[int, MovieInputData],
-    reference_model: str = "gpt-5.4",
-    reference_provider: LLMProvider = LLMProvider.WHAM,
-    concurrency: int = 15,
-    db_path: Path | None = None,
-) -> None:
-    """Generate and store reference PlotEventsOutputs for all movies.
-
-    Uses the reference model (default: GPT-5.4 via OpenAI OAuth) with the same
-    system prompt and user prompt construction as the production generator, so
-    the reference represents what a stronger model would produce under identical
-    conditions.
-
-    Runs requests in parallel with semaphore-controlled concurrency. If a 429
-    error is encountered on a request, pauses 60s and retries that request once.
-
-    Idempotent: movies with existing references are skipped.
-
-    Args:
-        movie_inputs: Dict of tmdb_id → MovieInputData for the test corpus.
-        reference_model: Model identifier to use as the reference.
-        reference_provider: LLM provider for the reference model.
-        concurrency: Max concurrent in-flight reference generation requests.
-            Defaults to 15 (aggressive). Reduce if hitting rate limits.
-        db_path: Override the default eval DB path (useful for testing).
-    """
-    conn = get_eval_connection(db_path or EVAL_DB_PATH)
-    create_candidates_table(conn)
-    create_plot_events_tables(conn)
-
-    # Determine which movies still need reference responses
-    existing = {
-        row["movie_id"]
-        for row in conn.execute("SELECT movie_id FROM plot_events_references").fetchall()
-    }
-    pending = [
-        (tmdb_id, movie)
-        for tmdb_id, movie in movie_inputs.items()
-        if tmdb_id not in existing
-    ]
-
-    if not pending:
-        print("Phase 0: all reference responses already exist — nothing to do.")
-        conn.close()
-        return
-
-    print(f"Phase 0: generating {len(pending)} reference responses "
-          f"(skipping {len(existing)} existing) using {reference_model} "
-          f"(concurrency={concurrency})...")
-
-    # Acquire valid WHAM auth (access_token + account_id) once before the loop;
-    # this avoids triggering a refresh check on every individual request.
-    wham_auth = get_valid_auth() if reference_provider == LLMProvider.WHAM else None
-
-    semaphore = asyncio.Semaphore(concurrency)
-    completed = 0
-    total = len(pending)
-
-    async def _generate_one(tmdb_id: int, movie: MovieInputData) -> None:
-        nonlocal completed
-        async with semaphore:
-            try:
-                user_prompt = build_plot_events_user_prompt(movie)
-
-                # Attempt the LLM call; on a 429 rate-limit error, pause 60s and retry once
-                try:
-                    parsed, in_tokens, out_tokens = await generate_llm_response_async(
-                        provider=reference_provider,
-                        user_prompt=user_prompt,
-                        system_prompt=DEFAULT_SYSTEM_PROMPT,
-                        response_format=PlotEventsOutput,
-                        model=reference_model,
-                        reasoning_effort="low",
-                        **({"api_key": wham_auth.access_token, "account_id": wham_auth.account_id} if wham_auth else {}),
-                    )
-                except ValueError as e:
-                    if "429" not in str(e):
-                        raise
-                    print(f"  [429] Rate limited on tmdb_id={tmdb_id} — "
-                          f"pausing 60s before retry...")
-                    await asyncio.sleep(60)
-                    parsed, in_tokens, out_tokens = await generate_llm_response_async(
-                        provider=reference_provider,
-                        user_prompt=user_prompt,
-                        system_prompt=DEFAULT_SYSTEM_PROMPT,
-                        response_format=PlotEventsOutput,
-                        model=reference_model,
-                        reasoning_effort="low",
-                        **({"api_key": wham_auth.access_token, "account_id": wham_auth.account_id} if wham_auth else {}),
-                    )
-
-                plot_summary, setting, chars_json = _serialize_output(parsed)
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO plot_events_references
-                        (movie_id, plot_summary, setting, major_characters,
-                         reference_model, input_tokens, output_tokens, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        tmdb_id, plot_summary, setting, chars_json,
-                        reference_model, in_tokens, out_tokens,
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
-                conn.commit()
-                completed += 1
-                print(f"  [{completed}/{total}] Reference generated: {movie.title_with_year()}")
-            except Exception as e:
-                print(f"  [ERROR] Reference generation failed for tmdb_id={tmdb_id} "
-                      f"({movie.title_with_year()}): {e}")
-
-    tasks = [_generate_one(tmdb_id, movie) for tmdb_id, movie in pending]
-    await asyncio.gather(*tasks)
-
-    print(f"Phase 0 complete: {completed}/{total} references generated.")
-    conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Phase 1: generate candidate outputs and run evaluation
+# Candidate evaluation
 # ---------------------------------------------------------------------------
 
 async def run_evaluation(
     candidates: list[EvaluationCandidate],
     movie_inputs: dict[int, MovieInputData],
-    judge_model: str = "gpt-5.4",
-    judge_provider: LLMProvider = LLMProvider.WHAM,
+    judge_model: str = "claude-opus-4-6",
+    judge_provider: LLMProvider = LLMProvider.ANTHROPIC,
     concurrency: int = 5,
-    judge_runs: int = 3,
+    judge_runs: int = 2,
     db_path: Path | None = None,
 ) -> None:
     """Generate candidate outputs and score them with an LLM judge.
 
+    Reference-free evaluation: the judge scores each candidate output
+    against a detailed rubric using the raw source data (not a reference
+    output) for factual verification.
+
     For each (candidate, movie) pair:
     1. Skip if an evaluation result already exists (idempotent).
     2. Generate the candidate output if not already stored.
-    3. Retrieve the reference response (Phase 0 must have run first).
-    4. Reconstruct the original generation user prompt.
-    5. Call the judge N times in parallel and average scores across runs.
-    6. Store averaged per-dimension scores and concatenated reasoning.
+    3. Build the judge prompt with SOURCE DATA + CANDIDATE OUTPUT.
+    4. Call the judge: run 1 first (populates Anthropic prompt cache),
+       then runs 2+ in parallel (benefit from cached reads).
+    5. Average scores across runs; concatenate reasoning with delimiters.
 
     Args:
         candidates: List of candidate configurations to evaluate.
@@ -690,8 +554,6 @@ async def run_evaluation(
         judge_model: Model identifier to use as the evaluator judge.
         judge_provider: LLM provider for the judge model.
         concurrency: Max concurrent in-flight requests (generation + judge combined).
-            Note: each evaluation fires judge_runs parallel judge calls within one
-            semaphore slot, so effective judge concurrency is concurrency × judge_runs.
         judge_runs: Number of times to call the judge per (candidate, movie) pair.
             Scores are averaged across runs; reasoning is concatenated with run
             delimiters. Defaults to 3.
@@ -704,10 +566,6 @@ async def run_evaluation(
     # Register all candidates in the DB
     for candidate in candidates:
         store_candidate(conn, candidate, "plot_events")
-
-    # Acquire valid WHAM auth once before spawning tasks; avoids a separate
-    # refresh check per concurrent judge call.
-    judge_wham_auth = get_valid_auth() if judge_provider == LLMProvider.WHAM else None
 
     semaphore = asyncio.Semaphore(concurrency)
     total = len(candidates) * len(movie_inputs)
@@ -730,20 +588,6 @@ async def run_evaluation(
                 completed += 1
                 return
 
-            # Check if Phase 0 reference exists — required before evaluation
-            ref_row = conn.execute(
-                "SELECT * FROM plot_events_references WHERE movie_id = ?",
-                (tmdb_id,),
-            ).fetchone()
-            if ref_row is None:
-                print(
-                    f"  [ERROR] No reference for tmdb_id={tmdb_id}. "
-                    "Run generate_reference_responses() first (Phase 0)."
-                )
-                return
-
-            reference = _deserialize_output(ref_row)
-
             # Retrieve or generate candidate output
             output_row = conn.execute(
                 "SELECT * FROM plot_events_candidate_outputs "
@@ -751,21 +595,21 @@ async def run_evaluation(
                 (tmdb_id, candidate.candidate_id),
             ).fetchone()
 
-            # Reconstruct the generation user prompt — both generation and judge
-            # need this, so build it once regardless of whether output exists.
-            generation_user_prompt = build_plot_events_user_prompt(movie)
+            # Build the source data prompt — same raw fields the candidate
+            # received (title, overview, synopses, summaries, keywords).
+            source_data = build_plot_events_user_prompt(movie)
 
             if output_row is not None:
                 candidate_output = _deserialize_output(output_row)
+                print(f"  [LOADED] {candidate.candidate_id} × {movie.title_with_year()}")
             else:
                 try:
                     # Call the LLM directly with the candidate's system prompt.
-                    # This is the critical difference from calling generate_plot_events():
-                    # each candidate may have a distinct system_prompt, and we must
+                    # Each candidate may have a distinct system_prompt, and we must
                     # honour it rather than falling back to the module-level default.
                     parsed, gen_in_tokens, gen_out_tokens = await generate_llm_response_async(
                         provider=candidate.provider,
-                        user_prompt=generation_user_prompt,
+                        user_prompt=source_data,
                         system_prompt=candidate.system_prompt,
                         response_format=candidate.response_format,
                         model=candidate.model,
@@ -778,7 +622,7 @@ async def run_evaluation(
                     print(
                         f"  [ERROR] Candidate generation failed: "
                         f"candidate={candidate.candidate_id}, "
-                        f"tmdb_id={tmdb_id}: {e}"
+                        f"tmdb_id={tmdb_id}: {type(e).__name__}: {e}"
                     )
                     return
 
@@ -798,38 +642,51 @@ async def run_evaluation(
                     ),
                 )
                 conn.commit()
+                print(
+                    f"  [GENERATED] {candidate.candidate_id} × {movie.title_with_year()}"
+                )
 
             judge_user_prompt = _build_judge_user_prompt(
-                generation_user_prompt, reference, candidate_output
+                source_data, candidate_output
             )
 
-            # Run the judge N times in parallel to reduce scoring noise.
-            # Each run uses identical parameters; stochastic LLM sampling
-            # produces variance that averaging smooths out.
+            # Judge kwargs — prompt caching enabled for Anthropic (90% discount
+            # on cached input tokens for runs 2+).
             judge_kwargs = {
                 "provider": judge_provider,
                 "user_prompt": judge_user_prompt,
                 "system_prompt": JUDGE_SYSTEM_PROMPT,
                 "response_format": PlotEventsJudgeOutput,
                 "model": judge_model,
-                "reasoning_effort": "low",
-                **({"api_key": judge_wham_auth.access_token, "account_id": judge_wham_auth.account_id} if judge_wham_auth else {}),
+                "cache_control": True,
+                "thinking": {"type": "disabled"},
             }
-            judge_coros = [
-                generate_llm_response_async(**judge_kwargs)
-                for _ in range(judge_runs)
-            ]
 
-            # Fail the entire evaluation if any run fails — avoids biased
-            # averages from fewer samples. Idempotent retry handles it on
-            # the next pipeline run.
+            # Run judge calls sequentially so each call benefits from
+            # Anthropic's prompt cache populated by the previous call.
+            # On 429 rate limits, sleep 30s and retry the same call.
+            # Fail the entire evaluation if any non-retryable error occurs —
+            # avoids biased averages from fewer samples. Idempotent retry
+            # handles it on the next pipeline run.
             try:
-                judge_results = await asyncio.gather(*judge_coros)
+                judge_results = []
+                for run_idx in range(judge_runs):
+                    while True:
+                        try:
+                            result = await generate_llm_response_async(**judge_kwargs)
+                            judge_results.append(result)
+                            break
+                        except anthropic.RateLimitError:
+                            print(
+                                f"  [429] Rate limited on judge run {run_idx + 1}/{judge_runs}, "
+                                f"sleeping 30s..."
+                            )
+                            await asyncio.sleep(30)
             except Exception as e:
                 print(
                     f"  [ERROR] Judge call failed: "
                     f"candidate={candidate.candidate_id}, "
-                    f"tmdb_id={tmdb_id}: {e}"
+                    f"tmdb_id={tmdb_id}: {type(e).__name__}: {e}"
                 )
                 return
 
@@ -882,14 +739,17 @@ async def run_evaluation(
             )
             conn.commit()
             completed += 1
+            # Per-run scores for visibility into judge variance
+            per_run_scores = " | ".join(
+                f"run{i}: g={j.groundedness_score} s={j.plot_summary_score} "
+                f"c={j.character_quality_score} st={j.setting_score}"
+                for i, j in enumerate(judge_outputs, 1)
+            )
             print(
-                f"  [{completed}/{total}] Evaluated: "
-                f"candidate={candidate.candidate_id}, "
-                f"movie={movie.title_with_year()} | "
-                f"scores (avg of {judge_runs}): ground={avg_groundedness:.1f} "
-                f"summary={avg_plot_summary:.1f} "
-                f"char={avg_char_quality:.1f} "
-                f"setting={avg_setting:.1f}"
+                f"  [{completed}/{total}] {candidate.candidate_id} × {movie.title_with_year()} | "
+                f"avg: ground={avg_groundedness:.2f} summary={avg_plot_summary:.2f} "
+                f"char={avg_char_quality:.2f} setting={avg_setting:.2f} | "
+                f"{per_run_scores}"
             )
 
     # Iterate movies in the outer loop so that concurrent semaphore slots
@@ -900,9 +760,10 @@ async def run_evaluation(
         for tmdb_id, movie in movie_inputs.items()
         for candidate in candidates
     ]
+    print(f"  Launching {len(tasks)} evaluation tasks...")
     await asyncio.gather(*tasks)
 
-    print(f"Phase 1 complete: {completed}/{total} evaluations done.")
+    print(f"\nEvaluation complete: {completed}/{total} evaluations done.")
     conn.close()
 
 

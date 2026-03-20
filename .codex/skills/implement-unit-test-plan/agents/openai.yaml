@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Unit Test Plan"
+  short_description: "Turn unit_tests/TEST_PLAN.md into actual tests without touching source code."
+  default_prompt: "Implement every planned test case from unit_tests/TEST_PLAN.md, keep changes confined to unit_tests/, run the relevant test suite, and report results without changing production source files."

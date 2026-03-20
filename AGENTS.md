@@ -1,302 +1,351 @@
 # AGENTS.md
 
-This file provides guidance to Codex when working with code in this
-repository. It is a Codex-optimized port of the project's existing
-`CLAUDE.md`, and the structured docs it references remain the source
-of truth.
+Instructions for Codex in this repository. This file is the
+Codex-native bootstrap doc and should contain the practical guidance
+needed to work here without separately re-reading Claude-specific
+rule files every time.
 
-## Project Documentation
+The structured docs under `docs/` remain the source of truth for
+product context, architecture, conventions, and decisions.
 
-- **Product context and priorities:** `docs/PROJECT.md` — read at session start
-- **Decision records:** `docs/decisions/` — check for precedent before tradeoff decisions
-- **Module summaries:** `docs/modules/` — read when entering a module for the first time in a session
-- **Conventions:** `docs/conventions.md` — cross-codebase invariants and patterns
-- **Transient context:** `DIFF_CONTEXT.md` — what changed recently and why
-- **Action items:** `docs/TODO.md` — deferred TODOs discovered during sessions
-- **Personal preferences:** `docs/personal_preferences.md` — communication and workflow preferences, read at session start
+## Session Startup
 
-## Autonomous Documentation
+Read these at the start of every session:
 
-After completing each implementation task, update `DIFF_CONTEXT.md`
-per the context-tracking rule in `.claude/rules/`.
+- `docs/PROJECT.md` for product context, priorities, constraints
+- `docs/personal_preferences.md` for the user's collaboration style
 
-You MAY autonomously update `docs/modules/` when you notice a doc
-is stale while working in that module (include in your changeset).
+Read these when relevant:
 
-You MAY autonomously add entries to `docs/TODO.md` when you discover
-actionable items during implementation work. Write entries directly
-following the existing format.
+- `docs/modules/<module>.md` the first time you work in that module
+  during a session
+- `docs/decisions/` before making non-trivial tradeoff decisions
+- `docs/TODO.md` when starting work in an area, in case there is
+  already queued follow-up work there
+- `DIFF_CONTEXT.md` for current-session uncommitted context
 
-You must NEVER autonomously modify `docs/PROJECT.md`,
-`docs/conventions.md`, or `docs/decisions/`. See the docs-awareness
-rule for details.
+## Decision Framework
 
-## Session Learnings
+When priorities are in tension, optimize in this order:
 
-This repository's persistent knowledge base lives in the repo docs,
-not in any external memory system.
+1. Search quality
+2. Latency
+3. Cost
+4. Code simplicity
 
-When extracting learnings from work sessions:
-- **Personal preferences** → `docs/personal_preferences.md`
-- **Convention candidates** → `docs/conventions_draft.md`
-- **Workflow suggestions** → `docs/workflow_suggestions.md`
+For local code choices, use this implementation order:
 
-Read `docs/personal_preferences.md` at session start to apply the
-user's communication and workflow preferences.
+1. Correctness and security
+2. Readability and maintainability
+3. Performance and efficiency
 
-## Commands
+Major wins in a lower project priority can justify minor costs in a
+higher one, but do that deliberately.
+
+## Opinion And Assessment Rules
+
+When asked for an opinion, assessment, or recommendation:
+
+- Do not default to agreement
+- Independently evaluate the user's position and any source material
+- If you agree, explain why with concrete reasoning
+- If you disagree or see weakness, say so directly and explain why
+- Do not rubber-stamp with vague approval
+
+Before giving an opinion, make sure you understand:
+
+- The desired outcome
+- What success looks like concretely
+- What separates good from great in this context
+
+If those are unclear, ask before advising.
+
+Back claims with evidence:
+
+- Do not rely only on memory for factual or current best-practice claims
+- Use docs, code, decision records, and web research when warranted
+- Distinguish facts, conventions, and your own reasoning
+- Recommend approaches via explicit tradeoffs, not taste alone
+
+For complex questions, reason in this order:
+
+1. Break down the problem
+2. Clarify the goal
+3. Gather context from code/docs/decision records and external sources if needed
+4. Evaluate realistic options with tradeoffs
+5. Reach a conclusion tied back to the goal and evidence
+
+## Documentation Rules
+
+The repo docs are the persistent knowledge base for this project.
+Do not rely on external memory systems for project knowledge.
+
+Autonomous doc updates allowed:
+
+- `docs/modules/` when you notice module docs are stale while
+  working in that module; keep fixes proportional
+- `docs/TODO.md` when you discover actionable follow-up work; use
+  the existing format
+
+Autonomous doc updates forbidden:
+
+- `docs/PROJECT.md`
+- `docs/conventions.md`
+- `docs/decisions/`
+
+Session learnings belong here:
+
+- Personal preferences -> `docs/personal_preferences.md`
+- Convention candidates -> `docs/conventions_draft.md`
+- Workflow suggestions -> `docs/workflow_suggestions.md`
+
+## Context Tracking
+
+After completing each implementation task that writes or modifies
+code, append a structured entry to `DIFF_CONTEXT.md` before
+reporting results.
+
+If `DIFF_CONTEXT.md` does not exist, create it with:
+
+```md
+# DIFF_CONTEXT
+Active context for uncommitted changes in the current working session.
+```
+
+Organize entries by intent, not by file.
+
+Small change:
+
+```md
+## [brief description of intent]
+Files: [paths] | [one sentence: what and why]
+```
+
+Medium change:
+
+```md
+## [intent]
+Files: [paths]
+Why: [motivation]
+Approach: [what you did and why]
+Design context: [relevant docs/decisions/PROJECT references]
+Testing notes: [coverage or risks]
+```
+
+Large change:
+
+```md
+## [intent]
+Files: [paths]
+
+### Intent
+[What this achieves and why]
+
+### Key Decisions
+[Justification, alternatives, references]
+
+### Planning Context
+[Planning choices that shaped implementation]
+
+### Testing Notes
+[Coverage needs, risks, edge cases]
+```
+
+Rules:
+
+- Match entry length to the amount of reasoning a fresh reader needs
+- Include decisions and justifications, not just what changed
+- Reference permanent docs instead of restating them
+- Do not rewrite old entries
+- Do not include code snippets
+
+## Coding Standards
+
+Architecture and structure:
+
+- Prefer small single-responsibility functions, roughly under 40 lines
+- Extract shared logic instead of duplicating it
+- Prefer dependency injection over hard-coded dependencies
+- Keep public interfaces stable and implementation details private
+- Follow the surrounding codebase's established patterns
+
+Error handling:
+
+- Validate inputs at system boundaries
+- Prefer typed/custom exceptions over generic failures
+- Fail with meaningful debugging context
+- Never silently swallow exceptions; log or propagate them
+
+Security:
+
+- Sanitize user-provided input
+- Never log secrets, tokens, or PII
+- Use parameterized queries; never interpolate SQL or shell values
+- If you notice a security issue, flag it and fix it
+
+Performance:
+
+- Prefer lazy evaluation and streaming for large data sets
+- Avoid unnecessary allocations in hot paths
+- Use appropriate data structures
+- Do not add complexity before profiling justifies it
+
+Code quality:
+
+- Choose names that explain what and why, not how
+- Add comments when they help explain intent or non-obvious behavior
+- Avoid magic numbers/strings; use named constants
+- Keep nesting shallow with early returns
+
+## Test Boundaries
+
+Unless the user explicitly asks:
+
+- Do not read test files
+- Do not edit test files
+- Do not run tests
+
+If another command incidentally triggers tests and they fail:
+
+- Stop and report the failures
+- Do not investigate or fix them in the same pass unless asked
+
+Never modify tests just to make them pass. Tests define expected
+behavior.
+
+## Commands And Environment
 
 ```bash
-# Install dependencies (uses UV package manager, not pip)
+# Install dependencies
 uv sync
 
 # Run all tests
 pytest unit_tests/
 
-# Run a single test file
+# Run one test file
 pytest unit_tests/test_search.py -v
 
-# Run a single test
+# Run one test
 pytest unit_tests/test_metadata_scoring.py::TestClassName::test_method_name -v
 
-# Start all services (PostgreSQL, Redis, Qdrant, API)
+# Start services
 docker-compose up
 
-# Run the API locally (requires services running)
+# Run API locally
 uvicorn api.main:app --reload
 ```
 
-Python version is 3.13. Test runner uses `asyncio_mode = "auto"`
-(all async tests work without decorators).
+Environment notes:
 
-**Environment:** A `.env` file is required with keys for
-`TMDB_API_KEY`, `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, and
-Postgres/Redis/Qdrant connection strings. See `.env` for the full
-list.
+- Python 3.13
+- `pytest` uses `asyncio_mode = "auto"`
+- `.env` must define `TMDB_API_KEY`, `OPENAI_API_KEY`,
+  `MOONSHOT_API_KEY`, Postgres/Redis/Qdrant connection strings, and
+  IMDB proxy credentials when scraping
 
-## Architecture Overview
+## Project Overview
 
-This is a **multi-channel movie search engine** that decomposes
-natural language queries via LLM and executes parallel retrieval
-across three channels:
+This is a multi-channel movie search engine for US users trying to
+find something to watch, especially on streaming right now.
 
-### Search Pipeline (end-to-end flow)
+Search flow:
 
-```text
-User Query
-    ↓
-Query Understanding (parallel LLM calls)
-    ├── Extract lexical entities (actors, directors, franchises, characters)
-    ├── Assign channel weights (lexical vs. vector vs. metadata importance)
-    ├── Extract metadata preferences (date, genre, runtime, streaming, ratings)
-    ├── Generate vector subqueries (one per vector space)
-    └── Assign vector space weights
-    ↓
-Parallel Retrieval
-    ├── Lexical Search → PostgreSQL entity matching
-    ├── Vector Search → Qdrant similarity across 8 embedding spaces
-    └── Metadata Scoring → in-memory structured attribute scoring
-    ↓
-Score Merging: final = w_L*lex + w_V*vec + w_M*meta (all normalized [0,1])
-    ↓
-Quality Reranking: bucket by relevance, sort by reception score within buckets
-    ↓
-Fetch display metadata → return JSON
-```
+1. LLM query understanding decomposes a natural-language request
+2. Retrieval runs in parallel across lexical, vector, and metadata channels
+3. Scores are normalized and merged
+4. Results are reranked and enriched with display metadata
 
-### Key Directories
+Core directories:
 
-| Path | Purpose |
-|------|---------|
-| `db/` | All database access: search orchestration, vector/lexical/metadata scoring, Postgres/Qdrant/Redis clients |
-| `implementation/classes/` | Pydantic data models (`schemas.py`), `BaseMovie`, enums, watch providers |
-| `implementation/llms/` | Shared LLM clients and routing for query understanding and metadata generation |
-| `implementation/prompts/` | System prompts for each LLM task |
-| `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
-| `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
-| `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data) |
-| `unit_tests/` | pytest test suite (27 files); `conftest.py` provides `base_movie_factory` fixture |
-| `docs/` | Project context, decision records, module summaries, conventions |
+- `db/` search orchestration, scoring, Postgres/Qdrant/Redis clients
+- `implementation/classes/` Pydantic models and shared enums
+- `implementation/llms/` shared LLM routing and structured output handling
+- `implementation/prompts/` prompts for query understanding tasks
+- `implementation/misc/` normalization and utility helpers
+- `movie_ingestion/` TMDB -> IMDB -> metadata generation -> embed -> ingest
+- `unit_tests/` pytest suite
+- `docs/` project context, modules, decisions, conventions
 
-### Vector Search Design
+## Search And Storage Architecture
 
-8 named vectors per movie (OpenAI `text-embedding-3-small`, 1536
-dims), stored in Qdrant with scalar quantization + memmap:
-- `dense_anchor_vectors` — core thematic summary
-- `plot_events_vectors` — plot + characters
-- `plot_analysis_vectors` — themes, arcs, concepts
-- `narrative_techniques_vectors` — storytelling style/tone
-- `viewer_experience_vectors` — emotional tone, pacing
-- `watch_context_vectors` — when/how to watch (date night, background, etc.)
-- `production_vectors` — budget, locations, technical achievements
-- `reception_vectors` — critical reception, awards, audience reaction
+Search combines:
 
-5-stage vector scoring pipeline (`db/vector_scoring.py`): execute →
-blend (80/20 original/subquery) → normalize (exponential decay) →
-weight → sum.
+- Lexical search in PostgreSQL
+- Vector search in Qdrant
+- Structured metadata scoring in memory
 
-Each vector space has LLM-generated metadata covering 7 types:
-plot events, plot analysis, viewer experience, watch context,
-narrative techniques, reception, and production/source-of-inspiration
-style metadata. Generation now lives under
-`movie_ingestion/metadata_generation/` (generators, prompts,
-batch orchestration, and evaluations), and the resulting metadata is
-stored for embedding and ingestion.
+Final score is a weighted merge of lexical, vector, and metadata
+channels after normalization to `[0, 1]`.
 
-### Data Stores
+There are 8 vector spaces in Qdrant:
 
-| Service | Technology | Purpose |
-|---------|-----------|---------|
-| PostgreSQL 15 | `db/postgres.py` | Movie metadata, lexical entities, posting lists |
-| Qdrant | `db/qdrant.py`, `db/vector_search.py` | 8 vector spaces × 150K movies |
-| Redis 7 | `db/redis.py` | Embeddings cache, query understanding cache, trending set, TMDB detail cache |
+- `dense_anchor_vectors`
+- `plot_events_vectors`
+- `plot_analysis_vectors`
+- `narrative_techniques_vectors`
+- `viewer_experience_vectors`
+- `watch_context_vectors`
+- `production_vectors`
+- `reception_vectors`
 
-### Movie Ingestion Pipeline
+Embeddings use OpenAI `text-embedding-3-small` (1536 dims).
 
-The ingestion pipeline processes ~1M TMDB movies down to ~100K
-high-quality movies through a multi-stage funnel. All stages are
-crash-safe and idempotent — restarting picks up where it left off.
+Data stores:
 
-**Tracker system:** `movie_ingestion/tracker.py` is the shared
-backbone. It manages a SQLite database at `./ingestion_data/tracker.db`
-with two core tables:
-- `movie_progress` — one row per movie, tracks status through the
-  pipeline (status column progresses: `pending` →
-  `tmdb_fetched` → `tmdb_quality_passed` → `imdb_scraped` →
-  `imdb_quality_passed` → `phase1_complete` →
-  `phase2_complete` → `embedded` → `ingested`; terminal
-  status: `filtered_out`)
-- `filter_log` — append-only audit trail of every filtered movie with
-  stage, reason, and optional details JSON
-- `tmdb_data` — stores extracted TMDB fields needed by the quality
-  scorer (vote counts, popularity, provider keys, boolean completeness
-  flags)
+- PostgreSQL 15 for movie metadata and lexical entities
+- Qdrant for vector retrieval
+- Redis 7 for caches and trending data
 
-The `log_filter()` helper handles both the `filter_log` INSERT and
-the `movie_progress` status update — never write to those tables
-directly from stage modules.
+## Ingestion Pipeline
 
-**Pipeline stages:**
+High-level stages:
 
-```text
-Stage 1: TMDB Daily Export (movie_ingestion/tmdb_fetching/daily_export.py)
-  └─ Downloads gzipped JSONL (~1M entries), stream-decompresses line by line
-  └─ Filters: adult=False, video=False, popularity > 0
-  └─ Result: ~800K movies inserted as 'pending' in movie_progress
-  └─ Run: python -m movie_ingestion.tmdb_fetching.daily_export
+1. TMDB daily export download and initial filtering
+2. TMDB detail fetch
+3. TMDB quality scoring and filter
+4. IMDB scraping via GraphQL through US-targeted proxies
+5. IMDB quality filtering
+6. LLM metadata generation
+7. Embedding generation
+8. Ingestion into Postgres, Qdrant, and Redis
 
-Stage 2: TMDB Detail Fetching (movie_ingestion/tmdb_fetching/tmdb_fetcher.py)
-  └─ Async HTTP fetches via httpx with adaptive rate limiting (db/tmdb.py)
-  └─ Extracts fields into tmdb_data table, encodes watch provider keys as packed uint32 BLOBs
-  └─ Filters out movies missing an IMDB ID (can't proceed to Stage 4)
-  └─ Status: pending → tmdb_fetched
-  └─ Run: python -m movie_ingestion.tmdb_fetching.tmdb_fetcher
+Important tracker invariant:
 
-Stage 3: TMDB Quality Funnel (two scripts, run in order)
-  └─ Scorer: python -m movie_ingestion.tmdb_quality_scoring.tmdb_quality_scorer
-     └─ Edge cases: unreleased → 0.0, has US watch providers → 1.0
-     └─ No-provider formula (4 signals, weights sum to 1.0):
-        vote_count (0.50), popularity (0.20), overview_length (0.15), data_completeness (0.15)
-     └─ No hard filters — deliberately lenient, real quality gate is Stage 5
-     └─ Status: tmdb_fetched → tmdb_quality_calculated
-  └─ Filter: python -m movie_ingestion.tmdb_quality_scoring.tmdb_filter
-     └─ Soft threshold: stage_3_quality_score < 0.2344 (inflection point from derivative analysis)
-     └─ Status: tmdb_quality_calculated → tmdb_quality_passed (or filtered_out)
+- `movie_ingestion/tracker.py` owns pipeline progress tracking
+- Use `log_filter()` rather than directly mutating tracker tables
 
-Stage 4: IMDB Scraping (movie_ingestion/imdb_scraping/)
-  └─ Single GraphQL query per movie to api.graphql.imdb.com (replaces 6 HTML page fetches)
-  └─ Routed through DataImpulse residential proxies with US geo-targeting
-  └─ Async with semaphore-controlled concurrency (default 60), random UA rotation, exponential backoff
-  └─ Extracts: credits, keywords (with community vote scoring), synopses, parental guide, reviews
-  └─ Output: per-movie JSON at ingestion_data/imdb/{tmdb_id}.json (IMDBScrapedMovie Pydantic model)
-  └─ Status: tmdb_quality_passed → imdb_scraped (or filtered_out)
-  └─ Run: python -m movie_ingestion.imdb_scraping.run
+## LLM Routing
 
-Stage 5: IMDB Quality Filtering (movie_ingestion/imdb_quality_scoring/)
-  └─ Hard filters on essential data (IMDB rating, directors, actors, keywords, etc.)
-  └─ Combined TMDB+IMDB quality scorer (8 signals, weights sum to 1.0):
-     imdb_vote_count (0.22), watch_providers (0.20), featured_reviews (0.16),
-     plot_text_depth (0.12), lexical_completeness (0.10), data_completeness (0.10),
-     tmdb_popularity (0.06), metacritic_rating (0.04)
-  └─ IMDB data primary, TMDB as fallback for overlapping fields
-  └─ Soft threshold via derivative analysis of quality score distribution
-  └─ Status: imdb_scraped → imdb_quality_passed (or filtered_out)
-  └─ Run: python -m movie_ingestion.imdb_quality_scoring.imdb_quality_scorer
+LLM routing is centralized in
+`implementation/llms/generic_methods.py` and is multi-provider.
 
-Stage 6+: LLM Generation → Embedding → Ingestion
-  └─ movie_ingestion/metadata_generation/ — Stage 6 batch metadata generation pipeline
-     └─ generators/ — per-type generation functions and prompt builders
-     └─ run.py — submit/status/process CLI for Wave 1 and Wave 2 OpenAI Batch jobs
-     └─ request_builder.py, batch_manager.py, result_processor.py — batch orchestration and result handling
-  └─ implementation/vectorize.py — embeds metadata into 8 vector spaces via OpenAI
-  └─ db/ingest_movie.py — upserts final data into Postgres, Qdrant, and Redis
-```
+Supported backends include OpenAI, Moonshot/Kimi, Gemini, Groq,
+Alibaba/Qwen, Anthropic, and WHAM. Query understanding and metadata
+generation share this routing layer.
 
-**`movie_ingestion/` subpackage structure:**
+Structured output handling is provider-specific. OpenAI uses parsed
+structured outputs; other providers use adapter-specific handling and
+validation in the same module.
 
-| Path | Purpose |
-|------|---------|
-| `tracker.py` | SQLite tracker DB init, `MovieStatus`/`PipelineStage` enums, `log_filter()`, atomic JSON I/O |
-| `tmdb_fetching/daily_export.py` | Stage 1: stream-download and filter TMDB daily export |
-| `tmdb_fetching/tmdb_fetcher.py` | Stage 2: async TMDB detail fetch, field extraction, watch provider key encoding |
-| `tmdb_quality_scoring/tmdb_filter.py` | Stage 3: hard filters + quality score threshold |
-| `tmdb_quality_scoring/tmdb_quality_scorer.py` | Quality scoring model (10 weighted signals, age-adjusted multipliers) |
-| `tmdb_quality_scoring/tmdb_data_analysis.py` | Diagnostic: per-attribute distributions from tmdb_data (informs funnel design) |
-| `tmdb_quality_scoring/plot_quality_scores.py` | Diagnostic: Gaussian-smoothed survival curve + derivatives (determines threshold) |
-| `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch |
-| `imdb_scraping/scraper.py` | Per-movie orchestration: fetch → transform → persist |
-| `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, and raw JSON caching |
-| `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer (keyword scoring, synopsis priority) |
-| `imdb_scraping/models.py` | Pydantic models for IMDB scraped data (`IMDBScrapedMovie` and sub-models) |
-| `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies |
-| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: hard filters + combined TMDB+IMDB quality scorer (8 signals, ADR-016) |
-| `scoring_utils.py` | Shared scoring utilities (vote_count, popularity, provider key unpacking) used by Stage 3 and Stage 5 |
-| `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data |
+## Cross-Codebase Invariants
 
-**IMDB scraping environment:** Requires `DATA_IMPULSE_LOGIN`
-and `DATA_IMPULSE_PASSWORD` in `.env` for proxy access. Optional
-`DATA_IMPULSE_HOST`/`DATA_IMPULSE_PORT` (defaults to
-`gw.dataimpulse.com:823`).
+- `movie_id` is always `tmdb_id`
+- String normalization must match between ingest and query time
+- Qdrant scores are final and are not recomputed during reranking
+- Never query Postgres per candidate; bulk fetch with `WHERE movie_id = ANY($1)`
+- Cache the full `QueryUnderstandingResponse` atomically, not partial DAG outputs
+- Embedding-cache normalization and query-understanding-cache normalization differ; do not collapse them
+- Qdrant payload is for hard filters only; full metadata lives in Postgres
 
-### LLM Provider
+## Working Style
 
-LLM routing is centralized in `implementation/llms/generic_methods.py`
-and is now **multi-provider**, not Kimi-only. Supported backends
-include OpenAI, Kimi/Moonshot, Gemini, Groq, Alibaba/Qwen,
-Anthropic, and WHAM. Query understanding remains a shared LLM layer,
-while Stage 6 metadata generation lives in
-`movie_ingestion/metadata_generation/` and calls the shared router.
-
-Structured output handling varies by provider:
-- OpenAI uses `chat.completions.parse()`
-- Kimi uses OpenAI-compatible `chat.completions.create()` with an
-  explicit JSON schema and manual validation
-- Other providers are routed through provider-specific adapters in
-  the same module
-
-OpenAI is also used for embeddings (`text-embedding-3-small`, 1536
-dims).
-
-### Cross-Codebase Invariants
-
-See `docs/conventions.md` for the full list. Key invariants:
-
-- **`movie_id` is always `tmdb_id` (BIGINT/uint64).** Never introduce a secondary ID system.
-- **String normalization runs identically at ingest and query time.** A mismatch is a silent retrieval bug.
-- **Qdrant scores are final.** Not recomputed at reranking.
-- **Never query Postgres per-candidate.** Bulk fetch with `WHERE movie_id = ANY($1)`.
-- **Never cache partial DAG outputs.** Entire `QueryUnderstandingResponse` is one atomic Redis key.
-- **Embedding cache does not lowercase.** QU cache normalizer lowercases; embedding cache does not.
-- **Qdrant payload is for hard filters only.** Full metadata lives in Postgres.
-
-### Coding Practices
-
-See `.claude/rules/coding-standards.md` for the full coding
-standards.
-
-Write code from the perspective of an expert senior software
-engineer. Code must be generalizable, modular, and efficient.
-Include comments when they help explain what you are doing and why.
-
-When making tradeoff decisions, consult `docs/PROJECT.md` for the
-priority ordering.
+- Prefer simple structural fixes over clever abstractions
+- Teach while doing when explaining non-obvious design choices
+- Prefer bulk operations over per-row loops
+- Diagnose from hard data instead of locking onto early assumptions
+- Save structured analysis output to files when it will be consumed downstream
+- Treat analytical conclusions as hypotheses to validate, not overconfident verdicts
+- When the user gives explicit criteria, evaluate strictly against those criteria
+- Answer the scoped question that was asked; do not spiral outward
+- Finish design discussion before writing docs or implementation when the user is still iterating
+- Require explicit parameters instead of hiding important choices behind defaults when designing configurable APIs

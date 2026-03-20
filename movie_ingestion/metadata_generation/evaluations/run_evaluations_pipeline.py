@@ -2,8 +2,8 @@
 CLI entry point for the LLM metadata evaluation pipeline.
 
 Loads test corpus movies, filters out movies that lack sufficient data,
-then runs reference generation (Phase 0) and candidate evaluation (Phase 1)
-for each metadata type.
+then runs candidate evaluation for each metadata type. Each candidate
+output is scored by a rubric-based LLM judge (no reference outputs).
 
 Currently supports:
     - plot_events
@@ -23,7 +23,6 @@ from movie_ingestion.metadata_generation.evaluations.shared import (
 )
 from movie_ingestion.metadata_generation.evaluations.plot_events import (
     PLOT_EVENTS_CANDIDATES,
-    generate_reference_responses,
     run_evaluation,
 )
 from movie_ingestion.metadata_generation.inputs import MovieInputData
@@ -73,12 +72,8 @@ async def main() -> None:
         print("No eligible movies — nothing to evaluate.")
         return
 
-    # Phase 0: generate reference responses using GPT-5.4
-    print("\n--- Phase 0: Reference Generation (plot_events) ---")
-    await generate_reference_responses(eligible_inputs)
-
-    # Phase 1: generate candidate outputs and score them with a judge
-    print("\n--- Phase 1: Candidate Evaluation (plot_events) ---")
+    # Candidate evaluation: generate outputs and score with rubric-based judge
+    print("\n--- Candidate Evaluation (plot_events) ---")
     await run_evaluation(
         candidates=PLOT_EVENTS_CANDIDATES,
         movie_inputs=eligible_inputs,

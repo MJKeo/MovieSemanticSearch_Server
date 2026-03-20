@@ -1,0 +1,4 @@
+interface:
+  display_name: "New Metadata Evaluation"
+  short_description: "Scaffold a new metadata evaluation module and then open the rubric-design conversation."
+  default_prompt: "Follow the reference implementation and schema files to scaffold the evaluation module, pipeline hooks, serialization helpers, and rubric placeholders for a new metadata type, then transition into the spec-understanding discussion for rubric design."

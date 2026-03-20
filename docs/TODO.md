@@ -112,6 +112,17 @@ plot_events unchanged (retains its defaults).
 Removed temporary user prompt print statements from all 6 generators.
 
 
+## Update test_eval_plot_events.py for reference-free evaluation
+**Context:** `unit_tests/test_eval_plot_events.py` imports `generate_reference_responses`
+which was removed during the evaluation pipeline restructuring. The test file will fail
+at collection time. Tests need updating to remove reference-related test cases and verify
+the new reference-free flow (source data in judge prompt, staggered runs, Anthropic
+provider defaults).
+**When:** Next time evaluation tests are being worked on.
+**See:** unit_tests/test_eval_plot_events.py,
+movie_ingestion/metadata_generation/evaluations/plot_events.py
+
+
 ## Replace .lower() with normalize_string() in all generation-side __str__() methods
 **Context:** docs/conventions.md states that `__str__()` methods on Pydantic
 schema classes feeding the embedding pipeline must use `normalize_string()`

@@ -41,6 +41,36 @@ of how structurally different the schemas are.
 **Proposed convention:** When defining model candidate configurations outside the evaluation pipeline (playgrounds, scripts, etc.), always cross-reference kwargs against the corresponding `EvaluationCandidate` definitions in `movie_ingestion/metadata_generation/evaluations/`. Those are the authoritative source for provider/model/kwargs combinations.
 **Sessions observed:** 1
 
+## Evaluation conventions — reference-free, source-data-based judging
+**Observed:** The evaluation pipeline was restructured to remove reference-based
+evaluation (Phase 0) entirely. Research showed rubric matters ~2.7x more than
+reference for human judgment alignment on subjective metadata tasks. The judge
+now receives raw SOURCE DATA (the same movie fields the candidate saw) instead
+of the generation prompt's instructions, and scores against quality criteria
+defined in the rubric. Storage is two tables per metadata type (candidate_outputs,
+evaluations) — the references table is no longer created.
+**Proposed convention:** Replace the current Evaluation Conventions section
+(lines 218-251 of conventions.md) with:
+- **Storage structure**: two tables per metadata type: candidate_outputs and
+  evaluations. Scoring dimensions are individual typed columns.
+- **Two-phase structure** bullet → replace with: Reference-free pointwise
+  evaluation. For each (candidate, movie) pair, generate output, score with
+  rubric-based LLM judge (Claude Opus 4.6, thinking disabled). Judge sees raw
+  source data, not generation instructions or reference outputs. Multi-run
+  averaging (2 sequential runs for prompt caching). Idempotent. 429 rate
+  limits trigger 30s sleep + retry.
+- **Judge prompt alignment** bullet → replace with: Every judge prompt must
+  include the raw source data that was available to the candidate, plus the
+  candidate output. Rubric score anchors define quality criteria independently
+  of the generation prompt. The judge evaluates against SOURCE DATA for factual
+  verification and against the rubric's quality standards for style/completeness.
+**Sessions observed:** 1
+
+## Let retryable exceptions propagate through generic error wrappers
+**Observed:** `generate_anthropic_response_async` wrapped all exceptions into `ValueError`, making it impossible for callers to distinguish rate limits from parse errors. Had to add an explicit `except anthropic.RateLimitError: raise` before the catch-all so callers can implement retry logic.
+**Proposed convention:** When a function wraps exceptions into a generic type (e.g., `except Exception as e: raise ValueError(...)`), always re-raise retryable exceptions (rate limits, transient network errors) before the catch-all. Callers need the original exception type to decide whether to retry or fail.
+**Sessions observed:** 1
+
 ## Always use current library API conventions
 **Observed:** Code accessed `model_fields` on a Pydantic v2 instance instead of the class, triggering a deprecation warning. The deprecated pattern still worked but will break in v3.
 **Proposed convention:** Always code against the current, non-deprecated API patterns of whatever library version is installed. Do not rely on deprecated access patterns even if they still function. When unsure, verify the recommended usage for the installed version. This applies to all libraries, not just Pydantic.

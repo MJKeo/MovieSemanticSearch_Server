@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Docs Maintainer"
+  short_description: "Process DIFF_CONTEXT.md into durable documentation updates using the legacy maintainer workflow."
+  default_prompt: "Run the docs-maintainer workflow against DIFF_CONTEXT.md, update eligible docs, draft decision records where warranted, clear DIFF_CONTEXT.md only when that workflow is complete, and summarize what happened."

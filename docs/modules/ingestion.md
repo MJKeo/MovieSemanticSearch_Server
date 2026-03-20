@@ -48,11 +48,11 @@ this module.
 | `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. |
 | `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
 | `metadata_generation/generators/` | 8 generator files (one per generation type). All fully implemented as real-time async callers. `plot_events.py`: Gemini 2.5 Flash Lite + `SYSTEM_PROMPT_SHORT` + 1k thinking budget (evaluation winner). All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
-| `metadata_generation/evaluations/` | Two-phase pointwise evaluation pipeline for comparing LLM candidates before production commits. See ADR-028. |
+| `metadata_generation/evaluations/` | Reference-free pointwise evaluation pipeline for comparing LLM candidates before production commits. See ADR-028. |
 | `metadata_generation/evaluations/shared.py` | `EvaluationCandidate` frozen dataclass, `EVALUATION_TEST_SET_TMDB_IDS` and subset lists (`ORIGINAL_SET_TMDB_IDS`, `MEDIUM_SPARSITY_TMDB_IDS`, `HIGH_SPARSITY_TMDB_IDS`) — 70 movies stratified by sparsity, `get_eval_connection()`, `create_candidates_table()`, `store_candidate()`, `load_movie_input_data()`, `compute_score_summary()` (supports `score_weights` for weighted overall_mean). |
-| `metadata_generation/evaluations/plot_events.py` | Phase 0 (reference generation via GPT-5.4/WHAM) + Phase 1 (candidate generation + judge scoring, 3-run averaged) + `PLOT_EVENTS_CANDIDATES` list. 4-dimension judge rubric: groundedness, plot_summary, character_quality, setting. |
+| `metadata_generation/evaluations/plot_events.py` | Reference-free candidate evaluation (candidate generation + Opus 4.6 judge scoring, 3-run averaged with prompt caching) + `PLOT_EVENTS_CANDIDATES` list. 4-dimension judge rubric: groundedness, plot_summary, character_quality, setting. |
 | `metadata_generation/evaluations/openai_oauth.py` | ChatGPT OAuth2 PKCE token lifecycle: browser consent, JWT decode for account_id/expiry, token persistence to `evaluation_data/openai_oauth_tokens.json`, auto-refresh. `get_valid_auth()` is the sole entry point for WHAM callers. |
-| `metadata_generation/evaluations/run_evaluations_pipeline.py` | CLI entry point: loads 70-movie corpus, filters ineligible movies via `check_plot_events`, runs Phase 0 then Phase 1. |
+| `metadata_generation/evaluations/run_evaluations_pipeline.py` | CLI entry point: loads 70-movie corpus, filters ineligible movies via `check_plot_events`, runs candidate evaluation. |
 | `metadata_generation/evaluations/analyze_results.py` | Read-only analysis: merges scores + token counts + model pricing into quality and cost tables. Value ranking table shows separate dense/sparse cost/1K columns (dense = ORIGINAL_SET movies, sparse = MEDIUM+HIGH_SPARSITY). Run via `python -m movie_ingestion.metadata_generation.evaluations.analyze_results`. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant; Wave 2 generators also export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
@@ -413,27 +413,23 @@ Before committing to a model/provider for any generation type, the
 evaluation pipeline runs systematic side-by-side comparisons across
 candidates. See ADR-028 for design decisions.
 
-**Two-phase structure:**
-- **Phase 0** — generate reference outputs using GPT-5.4 via the ChatGPT WHAM
-  backend (ChatGPT OAuth, `LLMProvider.WHAM`, `reasoning_effort="low"`).
-  References are stored in `evaluation_data/eval.db` (gitignored) and are
-  fixed for the duration of a comparison run. Phase 0 runs in parallel
-  with `concurrency=15`; per-request 429 retry pauses 60s and retries once.
-  Run once before any candidate evaluation.
-- **Phase 1** — for each (candidate, movie) pair: generate the candidate
-  output, retrieve the reference, call a GPT-5.4 judge (`reasoning_effort="low"`)
-  **3 times in parallel**, average the scores across runs, and store
-  per-dimension averaged scores (REAL columns) plus concatenated reasoning.
-  Both phases are idempotent — rerunning skips rows that already exist.
-  See ADR-031 for the multi-run averaging decision.
+**Reference-free pointwise evaluation:** For each (candidate, movie) pair,
+the pipeline generates the candidate's output, then scores it against a
+detailed rubric using Claude Opus 4.6 as the judge. The judge sees raw
+source data (not the generation prompt or a reference output) alongside
+the candidate output and scores each dimension independently. Each
+evaluation runs the judge 3 times with staggered calls (run 1 populates
+the Anthropic prompt cache, runs 2-3 benefit from cached reads at 90%
+discount). Scores are averaged across runs; reasoning is concatenated.
+Idempotent — rerunning skips rows that already exist. See ADR-031 for the
+multi-run averaging decision.
 
 **Evaluation DB (`evaluation_data/eval.db`)**: Separate from tracker.db.
 Each metadata type gets its own set of tables
-(e.g., `plot_events_references`, `plot_events_candidate_outputs`,
-`plot_events_evaluations`). Scoring dimensions are individual REAL columns
-(not JSON blobs) so SQL can aggregate per-dimension. `judge_runs` column
-records how many runs contributed to each score. WAL journal mode enabled
-for crash-safety.
+(e.g., `plot_events_candidate_outputs`, `plot_events_evaluations`).
+Scoring dimensions are individual REAL columns (not JSON blobs) so SQL
+can aggregate per-dimension. `judge_runs` column records how many runs
+contributed to each score. WAL journal mode enabled for crash-safety.
 
 **plot_events candidates**: 8 active candidates (remaining candidates from
 the original 19-candidate set are commented out after evaluation runs narrowed
@@ -449,9 +445,9 @@ the full system prompt. Four `__short-prompt` candidates (one per active
 non-WHAM candidate) isolate prompt length as the sole independent variable.
 
 **4-dimension judge rubric for plot_events**: groundedness, plot_summary,
-character_quality, setting. Each scored 1–4. Rubric is aligned with the
-generation system prompt — it evaluates what the generator was instructed
-to do, not generic narrative quality.
+character_quality, setting. Each scored 1–4. Rubric defines quality criteria
+aligned with the generation intent — it evaluates against the source data
+and quality standards, not the generation prompt itself.
 
 **CLI**:
 ```

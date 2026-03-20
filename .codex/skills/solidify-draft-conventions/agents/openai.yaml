@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solidify Draft Conventions"
+  short_description: "Promote or prune staged conventions one item at a time."
+  default_prompt: "Process each draft convention individually, check whether it is already covered, propose a generalized version when needed, wait for approval before each promotion, then clear the draft file header and optionally extract broader user-preference patterns for approval."
