@@ -109,7 +109,7 @@ def _extract_synopses_and_summaries(
     summaries: list[str] = []
 
     for edge in plots_edges:
-        node = edge.get("node") or {} if isinstance(edge, dict) else {}
+        node = (edge.get("node") or {}) if isinstance(edge, dict) else {}
         plot_type = _safe_get(node, ["plotType"]) or ""
         text = _safe_get(node, ["plotText", "plainText"])
         if not text or not isinstance(text, str) or not text.strip():
@@ -170,7 +170,7 @@ def _score_and_filter_keywords(keyword_edges: list | None) -> list[str]:
     # Build list of (keyword_text, score) tuples
     scored_keywords: list[tuple[str, float]] = []
     for edge in keyword_edges:
-        node = edge.get("node") or {} if isinstance(edge, dict) else {}
+        node = (edge.get("node") or {}) if isinstance(edge, dict) else {}
         keyword_text = _safe_get(node, ["keyword", "text", "text"])
         if not keyword_text or not isinstance(keyword_text, str) or not keyword_text.strip():
             continue
@@ -256,6 +256,11 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
     empty lists, never raises.
     """
     # -- Scalar fields -------------------------------------------------------
+
+    # IMDB title type — deterministic indicator of content kind (e.g. "movie",
+    # "tvSeries", "videoGame"). Useful for filtering non-movie titles that
+    # slip through TMDB.
+    imdb_title_type = _strip_or_none(_safe_get(title_data, ["titleType", "id"]))
 
     original_title = _strip_or_none(_safe_get(title_data, ["originalTitleText", "text"]))
     maturity_rating = _strip_or_none(_safe_get(title_data, ["certificate", "rating"]))
@@ -422,7 +427,7 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
     review_edges = _safe_get(title_data, ["reviews", "edges"]) or []
     featured_reviews: list[FeaturedReview] = []
     for edge in review_edges[:10]:
-        node = edge.get("node") or {} if isinstance(edge, dict) else {}
+        node = (edge.get("node") or {}) if isinstance(edge, dict) else {}
         summary = _safe_get(node, ["summary", "originalText"])
         text = _safe_get(node, ["text", "originalText", "plainText"])
         # Both summary and text must be present for a usable review
@@ -432,6 +437,7 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
     # -- Assemble the final model --------------------------------------------
 
     return IMDBScrapedMovie(
+        imdb_title_type=imdb_title_type,
         original_title=original_title,
         maturity_rating=maturity_rating,
         overview=overview,

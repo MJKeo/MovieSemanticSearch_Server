@@ -1,22 +1,23 @@
 """
 Plot Events generator (Wave 1).
 
-Async method that generates plot events metadata for a single movie.
-Accepts MovieInputData, builds a user prompt, calls the specified LLM
-provider via the unified routing method, and returns the parsed
-PlotEventsOutput with token usage.
+Two-branch design (ADR-033): build_plot_events_prompts() selects
+both the user prompt inputs and the system prompt based on whether
+the movie has a quality synopsis:
 
-Inputs (from MovieInputData):
-    - title_with_year(): "Title (Year)" format
-    - overview: TMDB marketing summary
-    - plot_summaries: shorter IMDB user-written summaries
-    - plot_synopses: first entry only (longest/most detailed plot recount)
-    - plot_keywords: plot-specific keywords only (not overall)
+- Synopsis branch (condensation): Synopsis is the primary source.
+  LLM condenses it into a shorter summary. Uses SYSTEM_PROMPT_SYNOPSIS.
+  Only selected when the first synopsis meets MIN_SYNOPSIS_CHARS.
+- Synthesis branch: No synopsis, or synopsis too short to condense
+  reliably. LLM unifies summaries, overview, and keywords into a
+  coherent plot picture. Uses SYSTEM_PROMPT_SYNTHESIS. Short synopses
+  are demoted into the summaries list as supplementary input.
+
+All branching is contained in build_plot_events_prompts(), which
+returns (user_prompt, system_prompt). Callers just unpack both.
 
 Response schema: PlotEventsOutput
-Provider/model defaults: Gemini 2.5 Flash Lite (evaluation winner).
-
-See docs/llm_metadata_generation_new_flow.md Section 4.1.
+No provider/model defaults — caller must specify.
 """
 
 import re
@@ -28,7 +29,10 @@ from movie_ingestion.metadata_generation.inputs import (
     build_user_prompt,
 )
 from movie_ingestion.metadata_generation.schemas import PlotEventsOutput
-from movie_ingestion.metadata_generation.prompts.plot_events import SYSTEM_PROMPT_SHORT
+from movie_ingestion.metadata_generation.prompts.plot_events import (
+    SYSTEM_PROMPT_SYNOPSIS,
+    SYSTEM_PROMPT_SYNTHESIS,
+)
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
     MetadataGenerationEmptyResponseError,
@@ -38,49 +42,81 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
 GENERATION_TYPE = "plot_events"
 
-# Production defaults — evaluation winner: gemini-2.5-flash-lite + short prompt + think-1k
-_DEFAULT_PROVIDER = LLMProvider.GEMINI
-_DEFAULT_MODEL = "gemini-2.5-flash-lite"
-_DEFAULT_KWARGS = {"temperature": 0.2, "thinking_config": {"thinking_budget": 1024}}
+# Synopses below this length are too thin to condense reliably (often
+# review blurbs or marketing copy rather than chronological plot recounts).
+# Derived from the real corpus: 30K synopsis movies show that entries under
+# ~1,000 chars are consistently non-plot text, while 1,000+ consistently
+# contain named characters performing plot actions. The IMDB parser itself
+# expects synopses to be 500-2,000 words (~2,500-15,000 chars), so 1,000
+# chars is a conservative floor. ~21% of synopsis movies fall below this.
+MIN_SYNOPSIS_CHARS = 1000
 
 
-def build_plot_events_user_prompt(movie: MovieInputData) -> str:
-    """Build the user prompt for plot_events generation from a movie's fields.
+def build_plot_events_prompts(movie: MovieInputData) -> Tuple[str, str]:
+    """Build both user and system prompts for plot_events generation.
+
+    Branches on whether the movie has a quality synopsis, selecting
+    different inputs and system prompts for each case:
+
+    - Synopsis branch (condensation): The synopsis is a comprehensive
+      plot recount (>= MIN_SYNOPSIS_CHARS). The LLM condenses it into
+      a shorter summary.
+      Inputs: title, overview, plot_synopsis, plot_keywords.
+
+    - Synthesis branch: No synopsis, or synopsis too short to condense
+      reliably. The LLM unifies multiple partial sources into a coherent
+      plot picture. Short synopses are demoted into the summaries list
+      as supplementary input rather than discarded.
+      Inputs: title, overview, plot_summaries, plot_keywords.
+
+    Returns (user_prompt, system_prompt) so all branching logic is
+    contained here. Callers just unpack both prompts.
 
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
-
-    Uses only the first synopsis (longest/most detailed), caps summaries
-    at 3 entries, and collapses embedded newlines in synopses.
     """
-    # Only use the first synopsis — it's the longest/most detailed recount
-    # and additional entries add redundant token cost.
-    first_synopsis = movie.plot_synopses[0] if movie.plot_synopses else None
+    first_synopsis = None
+    if movie.plot_synopses:
+        first_synopsis = re.sub(r"\n+", " ", movie.plot_synopses[0])
 
-    # Synopses sometimes contain embedded newlines that waste tokens and
-    # can confuse the LLM — collapse them into single spaces.
-    if first_synopsis:
-        first_synopsis = re.sub(r"\n+", " ", first_synopsis)
+    has_quality_synopsis = first_synopsis is not None and len(first_synopsis) >= MIN_SYNOPSIS_CHARS
 
-    # Cap at 3 summaries — additional entries add diminishing value
-    # relative to the token cost.
-    plot_summaries = movie.plot_summaries[:3] if movie.plot_summaries else None
+    if has_quality_synopsis:
+        # Synopsis branch — condense the detailed recount.
+        user_prompt = build_user_prompt(
+            title=movie.title_with_year(),
+            overview=movie.overview or None,
+            plot_synopsis=first_synopsis,
+            plot_keywords=movie.plot_keywords or None,
+        )
+        return user_prompt, SYSTEM_PROMPT_SYNOPSIS
+    else:
+        # Synthesis branch — unify partial sources.
+        # Cap at 3 summaries — additional entries add diminishing value
+        # relative to the token cost.
+        plot_summaries = list(movie.plot_summaries[:3]) if movie.plot_summaries else []
 
-    # plot_summaries uses MultiLineList because each entry is a
-    # multi-paragraph text block, not a short keyword.
-    return build_user_prompt(
-        title=movie.title_with_year(),
-        overview=movie.overview or None,
-        plot_summaries=MultiLineList(plot_summaries) if plot_summaries else None,
-        plot_synopsis=first_synopsis,
-        plot_keywords=movie.plot_keywords or None,
-    )
+        # If a synopsis exists but was too short to condense, demote it
+        # into the summaries list as supplementary input. Prepend so it
+        # appears first (it's still the most plot-like text available).
+        if first_synopsis is not None and not has_quality_synopsis:
+            plot_summaries.insert(0, first_synopsis)
+
+        # plot_summaries uses MultiLineList because each entry is a
+        # multi-paragraph text block, not a short keyword.
+        user_prompt = build_user_prompt(
+            title=movie.title_with_year(),
+            overview=movie.overview or None,
+            plot_summaries=MultiLineList(plot_summaries) if plot_summaries else None,
+            plot_keywords=movie.plot_keywords or None,
+        )
+        return user_prompt, SYSTEM_PROMPT_SYNTHESIS
 
 
 async def generate_plot_events(
     movie: MovieInputData,
-    provider: LLMProvider = _DEFAULT_PROVIDER,
-    model: str = _DEFAULT_MODEL,
+    provider: LLMProvider,
+    model: str,
     **kwargs,
 ) -> Tuple[PlotEventsOutput, TokenUsage]:
     """Generate plot events metadata for a single movie.
@@ -89,16 +125,11 @@ async def generate_plot_events(
     the specified LLM provider with structured output, and returns the
     parsed result alongside token usage.
 
-    Defaults to Gemini 2.5 Flash Lite with 1k thinking budget and the
-    short system prompt (evaluation winner). Callers can override
-    provider/model/kwargs to use a different configuration.
-
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        provider: Which LLM backend to use. Defaults to GEMINI.
-        model: Model identifier. Defaults to "gemini-2.5-flash-lite".
-        **kwargs: Provider-specific params. If empty, uses _DEFAULT_KWARGS
-            (temperature=0.2, thinking_config with 1024 budget).
+        provider: Which LLM backend to use.
+        model: Model identifier.
+        **kwargs: Provider-specific params passed through to the LLM call.
 
     Returns:
         Tuple of (PlotEventsOutput, TokenUsage).
@@ -107,20 +138,17 @@ async def generate_plot_events(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
-    # Merge production defaults with any caller overrides
-    effective_kwargs = {**_DEFAULT_KWARGS, **kwargs}
-
-    user_prompt = build_plot_events_user_prompt(movie)
+    user_prompt, system_prompt = build_plot_events_prompts(movie)
     title_with_year = movie.title_with_year()
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
             provider=provider,
             user_prompt=user_prompt,
-            system_prompt=SYSTEM_PROMPT_SHORT,
+            system_prompt=system_prompt,
             response_format=PlotEventsOutput,
             model=model,
-            **effective_kwargs,
+            **kwargs,
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")

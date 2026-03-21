@@ -70,6 +70,7 @@ _SESSION_HEADERS = {
 _GRAPHQL_QUERY = """
 query MovieData($id: ID!) {
   title(id: $id) {
+    titleType { id }
     originalTitleText { text }
     certificate { rating ratingReason }
     plot { plotText { plainText } }

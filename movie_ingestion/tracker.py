@@ -153,6 +153,8 @@ CREATE TABLE IF NOT EXISTS tmdb_data (
 -- are stored as JSON TEXT arrays (SQLite has no native array type).
 CREATE TABLE IF NOT EXISTS imdb_data (
     tmdb_id              INTEGER PRIMARY KEY,
+    -- IMDB title type (e.g. "movie", "videoGame")
+    imdb_title_type      TEXT,
     -- Scalars from main page
     original_title       TEXT,
     maturity_rating      TEXT,
@@ -228,10 +230,8 @@ def init_db() -> sqlite3.Connection:
         # v2 scorer removed the essential_data_passed status; reset any movies
         # at that status back to imdb_scraped so they can be re-scored.
         "UPDATE movie_progress SET status = 'imdb_scraped', stage_5_quality_score = NULL WHERE status = 'essential_data_passed'",
-        # Split scoring from filtering: imdb_quality_passed is now post-filter.
-        # Any movies already at imdb_quality_passed (scored but not filtered yet)
-        # move to the new intermediate imdb_quality_calculated status.
-        "UPDATE movie_progress SET status = 'imdb_quality_calculated' WHERE status = 'imdb_quality_passed' AND stage_5_quality_score IS NOT NULL",
+        # Add imdb_title_type column for existing databases.
+        "ALTER TABLE imdb_data ADD COLUMN imdb_title_type TEXT",
     ]
     for stmt in _MIGRATIONS:
         try:
@@ -257,6 +257,7 @@ def init_db() -> sqlite3.Connection:
 # Ordered list of imdb_data columns (excluding tmdb_id primary key).
 # This order MUST match the CREATE TABLE definition above.
 IMDB_DATA_COLUMNS: tuple[str, ...] = (
+    "imdb_title_type",
     "original_title", "maturity_rating", "overview",
     "imdb_rating", "imdb_vote_count", "metacritic_rating",
     "reception_summary", "budget",

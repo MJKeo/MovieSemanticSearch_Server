@@ -109,31 +109,24 @@ class OptionalTermsWithNegationsSection(BaseModel):
 # ---------------------------------------------------------------------------
 
 class MajorCharacter(BaseModel):
-    """An essential character extracted from plot data."""
+    """An essential character extracted from plot data.
+
+    Field descriptions are intentionally minimal — behavioral
+    instructions (detail level, what to preserve, what to omit) live
+    in the branch-specific system prompts so they can differ between
+    the synopsis-condensation and synthesis tasks.
+    """
     name: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="Character name as it appears in the film.",
+        ..., description="Character name.",
     )
     description: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Who they are in plain terms (e.g., 'a disillusioned detective'). "
-            "Keep it short and plot-relevant."
-        ),
+        ..., description="Brief character description.",
     )
     role: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Narrative role label: 'protagonist', 'antagonist', "
-            "'love interest', 'mentor', 'foil', etc."
-        ),
+        ..., description="Narrative role.",
     )
     primary_motivations: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "1 concise sentence: what the character aims to achieve "
-            "overall and why (high-level)."
-        ),
+        ..., description="Character's primary goal.",
     )
 
     def __str__(self) -> str:
@@ -146,34 +139,28 @@ class MajorCharacter(BaseModel):
 class PlotEventsOutput(BaseModel):
     """Structured output from the plot_events generation (Wave 1).
 
-    Produces a detailed chronological plot summary, setting, and
-    character list. The plot_summary field becomes plot_synopsis
-    for all downstream Wave 2 consumers.
+    Produces a chronological plot summary, setting, and character list.
+    The plot_summary field becomes plot_synopsis for all downstream
+    Wave 2 consumers.
+
+    Field descriptions are intentionally minimal — behavioral
+    instructions (detail level, length targets, what to preserve vs.
+    omit) live in the branch-specific system prompts so they can
+    differ between the synopsis-condensation and synthesis tasks.
 
     Model: gpt-5-mini, reasoning_effort: minimal
     """
     model_config = ConfigDict(extra="forbid")
 
     plot_summary: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Detailed chronological, spoiler-containing plot summary "
-            "preserving character names and locations."
-        ),
+        ..., description="Chronological plot summary.",
     )
     setting: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Short phrase (10 words or less). Specific where/when the "
-            "story takes place. Focus on setting details that shape "
-            "what happens."
-        ),
+        ..., description="Where and when the story takes place.",
     )
     major_characters: list[MajorCharacter] = Field(
         default_factory=list,
-        description=(
-            "The ABSOLUTELY ESSENTIAL characters in the story."
-        ),
+        description="Key characters.",
     )
 
     def __str__(self) -> str:

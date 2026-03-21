@@ -75,6 +75,10 @@ COMMIT_EVERY: int = 1_000
 # Emit a progress line every N rows processed.
 LOG_EVERY: int = 10_000
 
+# Title types that represent actual movies/shorts — anything else (tvSeries,
+# tvMiniSeries, videoGame, etc.) gets an automatic score of 0.
+ALLOWED_TITLE_TYPES: set[str] = {"movie", "tvMovie", "short", "video"}
+
 # Log cap for plot_text_depth: overview + plot_summaries + synopses total chars.
 # 5001 chars places the ceiling so movies with rich synopses (~p75) saturate
 # at 1.0, while overview-only movies (~150 chars) score ~0.59.
@@ -537,6 +541,21 @@ def compute_imdb_quality_score(
     Returns:
         Quality score in [0, 1].
     """
+    # Non-movie title types (tvSeries, videoGame, etc.) are not useful for the
+    # search index.  Score them at 0 so the downstream threshold filter removes them.
+    title_type = ctx.imdb.get("imdb_title_type")
+    if title_type not in ALLOWED_TITLE_TYPES:
+        return 0.0
+
+    # Movies with no text sources (plot_summaries, synopses, featured_reviews) cannot
+    # produce meaningful LLM-generated metadata — score them at 0.
+    if (
+        not ctx.imdb.get("plot_summaries")
+        and not ctx.imdb.get("synopses")
+        and not ctx.imdb.get("featured_reviews")
+    ):
+        return 0.0
+
     return (
         WEIGHTS["imdb_notability"]        * _score_imdb_notability(ctx, today)
         + WEIGHTS["critical_attention"]   * _score_critical_attention(ctx)

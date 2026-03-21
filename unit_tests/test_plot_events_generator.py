@@ -20,7 +20,7 @@ from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationEmptyResponseError,
 )
 from movie_ingestion.metadata_generation.generators.plot_events import (
-    build_plot_events_user_prompt,
+    build_plot_events_prompts,
     generate_plot_events,
     GENERATION_TYPE,
 )
@@ -68,13 +68,13 @@ class TestBuildPlotEventsUserPrompt:
     def test_build_plot_events_user_prompt_returns_string(self) -> None:
         """Return value is a str."""
         movie = _make_movie()
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert isinstance(result, str)
 
     def test_build_plot_events_user_prompt_includes_title_with_year(self) -> None:
         """Title with year appears in the prompt."""
         movie = _make_movie(title="Inception", release_year=2010)
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "Inception (2010)" in result
 
     def test_build_plot_events_user_prompt_first_synopsis_only(self) -> None:
@@ -84,7 +84,7 @@ class TestBuildPlotEventsUserPrompt:
             "Second synopsis with different details.",
             "Third synopsis entirely different.",
         ])
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "First synopsis about the story." in result
         assert "Second synopsis" not in result
         assert "Third synopsis" not in result
@@ -92,7 +92,7 @@ class TestBuildPlotEventsUserPrompt:
     def test_build_plot_events_user_prompt_collapses_newlines(self) -> None:
         """Newlines in the synopsis are collapsed to single spaces."""
         movie = _make_movie(plot_synopses=["Line one.\n\nLine two.\nLine three."])
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "Line one. Line two. Line three." in result
 
     def test_build_plot_events_user_prompt_caps_summaries_at_three(self) -> None:
@@ -100,7 +100,7 @@ class TestBuildPlotEventsUserPrompt:
         movie = _make_movie(plot_summaries=[
             "Summary 1.", "Summary 2.", "Summary 3.", "Summary 4.", "Summary 5.",
         ])
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "Summary 1." in result
         assert "Summary 2." in result
         assert "Summary 3." in result
@@ -109,19 +109,19 @@ class TestBuildPlotEventsUserPrompt:
     def test_build_plot_events_user_prompt_empty_synopses_omits_field(self) -> None:
         """plot_synopsis field is absent when synopses list is empty."""
         movie = _make_movie(plot_synopses=[])
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "plot_synopsis:" not in result
 
     def test_build_plot_events_user_prompt_empty_overview_omits_field(self) -> None:
         """overview field is absent when overview is empty string."""
         movie = _make_movie(overview="")
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "overview:" not in result
 
     def test_build_plot_events_user_prompt_empty_keywords_omits_field(self) -> None:
         """plot_keywords field is absent when keywords list is empty."""
         movie = _make_movie(plot_keywords=[])
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "plot_keywords:" not in result
 
     def test_build_plot_events_user_prompt_all_fields_present(self) -> None:
@@ -132,7 +132,7 @@ class TestBuildPlotEventsUserPrompt:
             plot_summaries=["Summary one."],
             plot_keywords=["keyword1", "keyword2"],
         )
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "title:" in result
         assert "overview:" in result
         assert "plot_synopsis:" in result
@@ -142,7 +142,7 @@ class TestBuildPlotEventsUserPrompt:
     def test_build_plot_events_user_prompt_no_year(self) -> None:
         """Movie with release_year=None returns just the title, prompt still well-formed."""
         movie = _make_movie(release_year=None)
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "title: Test Movie" in result
         # Should not contain parenthesized year
         assert "(None)" not in result
@@ -150,7 +150,7 @@ class TestBuildPlotEventsUserPrompt:
     def test_build_plot_events_user_prompt_empty_strings_in_summaries(self) -> None:
         """Empty strings in plot_summaries are included (not filtered as None)."""
         movie = _make_movie(plot_summaries=["", "Real summary."])
-        result = build_plot_events_user_prompt(movie)
+        result = build_plot_events_prompts(movie)
         assert "Real summary." in result
 
 
@@ -415,7 +415,7 @@ class TestPlotEventsPromptFormatting:
             overview="A plot.",
             plot_summaries=["First summary.", "Second summary."],
         )
-        prompt = build_plot_events_user_prompt(movie)
+        prompt = build_plot_events_prompts(movie)
         # MultiLineList renders as "key:\n- item1\n- item2"
         assert "- First summary." in prompt
         assert "- Second summary." in prompt
@@ -426,7 +426,7 @@ class TestPlotEventsPromptFormatting:
             overview="A plot.",
             plot_keywords=["hacker", "simulation"],
         )
-        prompt = build_plot_events_user_prompt(movie)
+        prompt = build_plot_events_prompts(movie)
         assert "plot_keywords: hacker, simulation" in prompt
         # Should NOT use MultiLineList dash format
         assert "- hacker" not in prompt

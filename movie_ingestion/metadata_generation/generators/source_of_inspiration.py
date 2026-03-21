@@ -12,10 +12,10 @@ leaf-node classification that doesn't cascade to other generations.
 
 Inputs:
     - movie (MovieInputData): raw fields for title, merged_keywords
-    - plot_synopsis: from Wave 1 plot_events output (may be None)
     - review_insights_brief: from Wave 1 reception output (may be None)
 
 Removed inputs (vs current system):
+    - plot_synopsis: removed per ADR-033 (barely used, saves ~83.6M tokens)
     - featured_reviews: subsumed by review_insights_brief
     - plot_keywords / overall_keywords as separate inputs: merged via
       movie.merged_keywords()
@@ -57,7 +57,6 @@ _DEFAULT_MODEL = "gpt-5-mini"
 
 def build_source_of_inspiration_user_prompt(
     movie: MovieInputData,
-    plot_synopsis: str | None,
     review_insights_brief: str | None,
 ) -> str:
     """Build the user prompt for source_of_inspiration generation.
@@ -69,10 +68,12 @@ def build_source_of_inspiration_user_prompt(
     section. None values and empty lists are skipped by build_user_prompt.
     Reviews frequently mention source material, so review_insights_brief
     is particularly valuable here.
+
+    plot_synopsis was removed per ADR-033 — this generator barely uses
+    plot data, and removing it saves ~83.6M input tokens across the corpus.
     """
     return build_user_prompt(
         title=movie.title_with_year(),
-        plot_synopsis=plot_synopsis,
         merged_keywords=movie.merged_keywords() or None,
         review_insights_brief=review_insights_brief,
     )
@@ -80,7 +81,6 @@ def build_source_of_inspiration_user_prompt(
 
 async def generate_source_of_inspiration(
     movie: MovieInputData,
-    plot_synopsis: str | None = None,
     review_insights_brief: str | None = None,
     provider: LLMProvider = _DEFAULT_PROVIDER,
     model: str = _DEFAULT_MODEL,
@@ -104,8 +104,6 @@ async def generate_source_of_inspiration(
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        plot_synopsis: Plot summary from Wave 1 plot_events. May be None
-            if plot_events failed or was skipped.
         review_insights_brief: Dense observation paragraph from Wave 1
             reception. May be None if reception failed or was skipped.
         provider: Which LLM backend to use. Defaults to OPENAI.
@@ -120,7 +118,7 @@ async def generate_source_of_inspiration(
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
     user_prompt = build_source_of_inspiration_user_prompt(
-        movie, plot_synopsis, review_insights_brief,
+        movie, review_insights_brief,
     )
     title_with_year = movie.title_with_year()
 

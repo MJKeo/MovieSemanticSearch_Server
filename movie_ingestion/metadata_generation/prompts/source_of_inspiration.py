@@ -12,19 +12,18 @@ This is safe because source material facts are categorical and verifiable
 hallucination cascades to downstream generations, source-of-inspiration
 claims are leaf-node classifications that don't cascade.
 
-Receives review_insights_brief (restored via brief after being removed
-in first draft). Reviews frequently mention source material: "faithful
-adaptation of the novel", "inspired by true events."
+Inputs: title, merged_keywords, review_insights_brief.
+plot_synopsis was removed per ADR-033 (barely used, saves ~83.6M tokens).
+Reviews frequently mention source material: "faithful adaptation of the
+novel", "inspired by true events."
 
-Based on existing prompt at:
-implementation/prompts/vector_metadata_generation_prompts.py (PRODUCTION section)
-
-Key modifications:
+Key modifications (vs legacy prompt):
     - Title input described as "Title (Year)" format -- particularly
       valuable here for disambiguation and known adaptation identification
     - Explicit parametric knowledge allowance added
     - review_insights_brief replaces raw featured_reviews
     - merged_keywords replaces concatenated keyword inputs
+    - plot_synopsis removed (ADR-033)
     - Justification removed from base variant output spec
 
 Two prompt variants exported:
@@ -43,7 +42,6 @@ of inspiration the movie is based on and how the film was produced visually. Onl
 
 INPUTS YOU MAY RECEIVE (some may be empty or not provided)
 - title: the title of the movie, formatted as "Title (Year)" for temporal context and disambiguation. Particularly valuable for identifying known adaptations and disambiguating remakes.
-- plot_synopsis: the entire plot of the movie, detailed, spoiler-filled
 - merged_keywords: a deduplicated list of keywords representing plot elements and high-level movie attributes
 - review_insights_brief: a dense synthesis of audience observations -- thematic, emotional, structural, and source-material observations extracted from reviews. Reviews frequently mention source material (e.g., "faithful adaptation of the novel", "inspired by true events").
 

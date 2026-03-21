@@ -107,6 +107,9 @@ class IMDBScrapedMovie(BaseModel):
     Field names use the final downstream names (matching BaseMovie) from the
     start, so no rename step is needed when constructing BaseMovie later.
     """
+    # IMDB title type (e.g. "movie", "tvSeries", "videoGame")
+    imdb_title_type: Optional[str] = None
+
     # From main page
     original_title: Optional[str] = None
     maturity_rating: Optional[str] = None

@@ -123,6 +123,31 @@ provider defaults).
 movie_ingestion/metadata_generation/evaluations/plot_events.py
 
 
+
+## Backfill plot_summaries after IMDB re-scrape
+**Context:** Currently 0 movies have both synopses AND plot_summaries in
+imdb_data because the scraper was only fetching one or the other. The user
+plans to redo the IMDB fetch to save both. After the re-scrape, 17,563+
+synopsis movies should also gain summaries, which affects the plot_events
+Branch A input strategy (synopsis is always dominant, summaries are not
+passed to avoid redundant tokens).
+**When:** After the IMDB re-scrape is complete.
+**See:** movie_ingestion/imdb_scraping/parsers.py, docs/decisions/ADR-033-plot-events-cost-optimization.md
+
+
+## Handle long synopses (>8K chars) before embedding
+**Context:** ~2,752 synopsis movies exceed 8K chars (~2K tokens), with some
+reaching 60K chars. The embedding model (text-embedding-3-small) has a hard
+8,191 token limit and quality degrades with longer inputs. LLM-based
+distillation via gpt-5-nano was tested and abandoned — the model compressed
+too aggressively (76% reduction vs target ~30%) and introduced hallucinations.
+Alternative approaches: truncation to a char/token limit, or handling in the
+plot_events generator (Option A prompt can instruct the LLM to work with a
+truncated version).
+**When:** Before generating production embeddings for synopsis movies.
+**See:** docs/decisions/ADR-033-plot-events-cost-optimization.md (Section 1)
+
+
 ## Replace .lower() with normalize_string() in all generation-side __str__() methods
 **Context:** docs/conventions.md states that `__str__()` methods on Pydantic
 schema classes feeding the embedding pipeline must use `normalize_string()`
@@ -135,5 +160,41 @@ with-justifications variants. Should be a single cross-cutting change.
 **See:** docs/conventions.md (lines 19-23),
 movie_ingestion/metadata_generation/schemas.py (all __str__ methods),
 implementation/misc/helpers.py (normalize_string)
+
+
+## Update unit tests for ADR-033 signature changes
+**Context:** The ADR-033 implementation changed signatures in plot_events and
+source_of_inspiration generators. `build_plot_events_user_prompt` now returns
+`Tuple[str, str]` instead of `str`. `build_source_of_inspiration_user_prompt`
+and `generate_source_of_inspiration` no longer accept `plot_synopsis`. Unit
+tests for both generators will fail at import/call time until updated.
+**When:** Next time generator tests are being worked on.
+**See:** unit_tests/test_source_of_inspiration_generator.py,
+unit_tests/test_plot_events_generator.py (if it exists),
+movie_ingestion/metadata_generation/generators/plot_events.py,
+movie_ingestion/metadata_generation/generators/source_of_inspiration.py
+
+
+## Update plot_events embedding to use synopsis when available, generated plot_summary as fallback
+**Context:** The plot_events vector space embedding process should prefer
+the IMDB synopsis (human-written, detailed) as the embedding input text
+when one exists for a movie. For movies without a synopsis, the
+LLM-generated `plot_summary` from the plot_events metadata should be used
+instead. This aligns with ADR-033's two-branch strategy where synopsis
+movies (Branch A) skip LLM generation for plot_events entirely — their
+synopsis is the higher-quality signal for embedding. The embedding
+pipeline needs to implement this conditional logic: check for synopsis
+presence, use it if available, otherwise fall back to the generated
+plot_summary output. **Important:** the same `MIN_SYNOPSIS_CHARS` threshold
+(1,000 chars) from the plot_events generator must be applied here — synopses
+below this length are review blurbs, not plot recounts, and the generated
+plot_summary will be higher quality for embedding. See
+`movie_ingestion/metadata_generation/generators/plot_events.py` for the
+threshold constant and rationale.
+**When:** When building the production embedding pipeline for plot_events
+vectors (after ADR-033 implementation is complete).
+**See:** docs/decisions/ADR-033-plot-events-cost-optimization.md,
+implementation/vectorize.py, movie_ingestion/metadata_generation/schemas.py (PlotEventsOutput),
+movie_ingestion/metadata_generation/generators/plot_events.py (MIN_SYNOPSIS_CHARS)
 
 

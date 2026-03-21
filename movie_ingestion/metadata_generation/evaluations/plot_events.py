@@ -45,13 +45,15 @@ from movie_ingestion.metadata_generation.evaluations.shared import (
     store_candidate,
 )
 from movie_ingestion.metadata_generation.generators.plot_events import (
-    build_plot_events_user_prompt,
+    build_plot_events_prompts,
 )
 from movie_ingestion.metadata_generation.inputs import MovieInputData
 from movie_ingestion.metadata_generation.schemas import MajorCharacter, PlotEventsOutput
 from movie_ingestion.metadata_generation.prompts.plot_events import (
     SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT,
     SYSTEM_PROMPT_SHORT as SHORT_SYSTEM_PROMPT,
+    SYSTEM_PROMPT_SYNOPSIS,
+    SYSTEM_PROMPT_SYNTHESIS,
 )
 
 # ---------------------------------------------------------------------------
@@ -596,8 +598,10 @@ async def run_evaluation(
             ).fetchone()
 
             # Build the source data prompt — same raw fields the candidate
-            # received (title, overview, synopses, summaries, keywords).
-            source_data = build_plot_events_user_prompt(movie)
+            # received (title, overview, synopses/summaries, keywords).
+            # build_plot_events_user_prompt returns (user_prompt, system_prompt);
+            # the judge only needs the user prompt as source data.
+            source_data, _ = build_plot_events_prompts(movie)
 
             if output_row is not None:
                 candidate_output = _deserialize_output(output_row)

@@ -292,12 +292,11 @@ def _check_production_keywords(merged_keywords: list[str]) -> str | None:
 def _check_source_of_inspiration(
     merged_keywords: list[str],
     review_insights_brief: str | None,
-    plot_synopsis: str | None,
 ) -> str | None:
-    """Source of inspiration: any of keywords, review insights, or plot synopsis."""
-    if merged_keywords or review_insights_brief or plot_synopsis:
+    """Source of inspiration: any of keywords or review insights."""
+    if merged_keywords or review_insights_brief:
         return None
-    return "No keywords, review insights, or plot synopsis available"
+    return "No keywords or review insights available"
 
 
 def _all_text_sources_sparse(movie_input: MovieInputData) -> bool:
@@ -411,7 +410,7 @@ def assess_skip_conditions(
     ))
     _record("production_keywords", _check_production_keywords(merged_keywords))
     _record("source_of_inspiration", _check_source_of_inspiration(
-        merged_keywords, review_insights_brief, plot_synopsis,
+        merged_keywords, review_insights_brief,
     ))
 
     return SkipAssessment(

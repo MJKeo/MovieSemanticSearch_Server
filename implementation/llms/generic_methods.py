@@ -86,10 +86,14 @@ def generate_openai_response(
     response_format: BaseModel,
     model: str = "gpt-5-mini",
     reasoning_effort: str = "low",
-    verbosity: str = "low"
+    verbosity: str = "low",
+    **kwargs,
 ) -> Tuple[BaseModel, int, int]:
     """
     Returns a tuple of (parsed_response, input_tokens, output_tokens).
+
+    Additional OpenAI-specific params (max_completion_tokens, etc.)
+    can be passed via kwargs.
     """
     try:
         response = openai_client.chat.completions.parse(
@@ -100,7 +104,8 @@ def generate_openai_response(
             ],
             response_format=response_format,
             reasoning_effort=reasoning_effort,
-            verbosity=verbosity
+            verbosity=verbosity,
+            **kwargs,
         )
 
         usage = response.usage
@@ -119,12 +124,16 @@ async def generate_openai_response_async(
     response_format: BaseModel,
     model: str = "gpt-5-mini",
     reasoning_effort: str = "low",
-    verbosity: str = "low"
+    verbosity: str = "low",
+    **kwargs,
 ) -> Tuple[BaseModel, int, int]:
     """Async counterpart to generate_openai_response.
 
     Uses async_openai_client.chat.completions.parse() with the same
     parameters and return type as the sync version.
+
+    Additional OpenAI-specific params (max_completion_tokens, etc.)
+    can be passed via kwargs.
 
     Returns a tuple of (parsed_response, input_tokens, output_tokens).
     """
@@ -137,7 +146,8 @@ async def generate_openai_response_async(
             ],
             response_format=response_format,
             reasoning_effort=reasoning_effort,
-            verbosity=verbosity
+            verbosity=verbosity,
+            **kwargs,
         )
 
         usage = response.usage
