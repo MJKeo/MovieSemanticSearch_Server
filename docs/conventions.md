@@ -88,6 +88,21 @@ These rules apply everywhere and are not negotiable:
   `pyproject.toml` is found, then inserts that path into `sys.path`.
   Never use hardcoded `parent.parent` chains — they break silently when
   a notebook is opened from a different working directory.
+- Default values in signatures, not body fallbacks. When a function
+  parameter has a known default available at module scope, declare it
+  in the signature (`param: str = DEFAULT`) rather than using `None`
+  with a body-level fallback (`param = param or DEFAULT`). Reserve
+  `None` defaults for cases where the default must be computed at call
+  time or depends on other arguments.
+- No backward-compatibility aliases. When renaming a variable,
+  function, or parameter, update all references to use the new name
+  directly. Don't create aliases (`new_name = old_name`) or
+  re-exports to preserve the old name. Aliases add indirection
+  without value and let stale references persist silently.
+- Use current, non-deprecated API patterns. Always code against the
+  current API of installed library versions. Do not rely on deprecated
+  access patterns even if they still function. When unsure, verify
+  the recommended usage for the installed version.
 
 ## Error Handling
 
@@ -111,6 +126,11 @@ These rules apply everywhere and are not negotiable:
   same failure mode (e.g., "generation failed for type X"), one class with
   a `generation_type` field scales to N modules; N subclasses proliferate
   with no added expressiveness.
+- **Preserve retryable exception types**: When a function wraps
+  exceptions into a generic type (e.g., `except Exception as e:
+  raise ValueError(...)`), re-raise retryable exceptions (rate limits,
+  transient network errors) before the catch-all. Callers need the
+  original exception type to decide whether to retry or fail.
 - **Redis cache misses**: Graceful degradation. Missing trending data
   = log warning, treat as empty set, do not fail the request.
   Missing QU cache = run full DAG. Missing embedding cache = call
@@ -218,33 +238,45 @@ to [0, 1] unless explicitly noted otherwise:
 ## Evaluation Conventions
 
 - **Storage structure**: Evaluation results are stored in
-  `evaluation_data/eval.db`. Each metadata type gets three tables:
-  references, candidate_outputs, and evaluations. Scoring dimensions
-  are individual typed columns — not a JSON blob — so individual
-  scores are queryable via SQL. Aggregate summaries (mean scores,
-  rankings) are computed at read time, not stored.
+  `evaluation_data/eval.db`. Each metadata type gets two tables:
+  candidate_outputs and evaluations. Scoring dimensions are individual
+  typed columns — not a JSON blob — so individual scores are queryable
+  via SQL. Aggregate summaries (mean scores, rankings) are computed at
+  read time, not stored.
 - **Candidate config**: LLM configurations under test are represented
   as `EvaluationCandidate` instances (defined in `evaluations/shared.py`).
   Each metadata type defines its own candidate list in its evaluation
   file (e.g., `PLOT_EVENTS_CANDIDATES`) — not in `shared.py`. Evaluation
   entry points take a list of these — never loose provider/model/prompt
   keyword arguments.
-- **Two-phase structure**: All metadata-type evaluations follow a
-  two-phase structure. Phase 0 generates reference responses using the
-  judge model (Claude Opus); Phase 1 runs each candidate and scores it
-  against those references. Both phases are idempotent — they check for
-  existing rows before inserting. Phase 1 asserts Phase 0 is complete
-  before running. Never merge the phases or skip Phase 0 as an
-  optimization.
+- **Reference-free pointwise evaluation**: For each (candidate, movie)
+  pair, generate output, then score with a rubric-based LLM judge
+  (Claude Opus 4.6, thinking disabled). The judge sees raw source data
+  (the same movie fields the candidate saw), not generation instructions
+  or reference outputs. Multi-run averaging (2 sequential runs for
+  prompt caching). Idempotent — checks for existing rows before
+  inserting. 429 rate limits trigger 30s sleep + retry.
 - **Prompt reuse**: Evaluation pipelines must import prompt construction
   from the production generator, not duplicate it. Extract prompt builders
   as named public functions in the generator module (e.g.,
   `build_plot_events_prompts()`). Duplicating the prompt in the eval
   file creates silent drift — if the generator's prompt changes, the eval
   copy diverges without any error.
-- **Judge prompt alignment**: Every judge prompt must include a summary
-  of the generation prompt's instructions — what the model was asked to
-  produce and what it was told to avoid. Rubric score anchors must align
-  with those instructions. A judge that penalizes behavior the generator
-  was explicitly asked to produce, or rewards what it was told to omit,
-  produces invalid scores.
+- **Judge prompt alignment**: Every judge prompt must include the raw
+  source data that was available to the candidate, plus the candidate
+  output. Rubric score anchors define quality criteria independently
+  of the generation prompt. The judge evaluates against source data
+  for factual verification and against the rubric's quality standards
+  for style and completeness.
+
+## Prompt Authoring Conventions
+
+- **Principle-based constraints, not failure catalogs.** When updating
+  LLM prompts based on evaluation findings or observed failures,
+  express constraints as general principles the model can apply to
+  novel cases — not enumerated lists of observed bad behaviors. A
+  principle ("Only characters who actively drive plot decisions")
+  scales better than a catalog of exclusions ("not plot devices, not
+  kidnap targets, not one-mention characters..."). Reactive lists
+  grow long, confuse the model, and only cover previously seen
+  failures.

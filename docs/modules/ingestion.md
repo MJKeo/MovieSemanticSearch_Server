@@ -346,6 +346,14 @@ the original Batch API body-dict design in ADR-024; the Batch API
 scaffolding in `request_builder.py` and `run.py` was built for a different
 interface; alignment is pending. See ADR-026, ADR-027.
 
+**No provider-specific default kwargs**: Generators must not define
+default kwargs, default provider, or default model. The generic LLM
+router passes kwargs through without normalization, so callers must
+pass the complete kwargs for their target provider using
+provider-specific parameter names (e.g., `max_tokens` for OpenAI vs
+`max_output_tokens` for Gemini). Document provider-specific params
+in comments at the call site.
+
 **Status progression**: `imdb_quality_passed` → `phase1_complete`
 (after Wave 1) → `phase2_complete` (after Wave 2).
 
