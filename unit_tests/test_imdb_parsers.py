@@ -35,6 +35,7 @@ def _graphql_title_data(**overrides) -> dict:
     Callers override specific keys to test individual extraction paths.
     """
     base = {
+        "titleType": {"id": "movie"},
         "originalTitleText": {"text": "Test Movie"},
         "ratingsSummary": {"aggregateRating": 7.5, "voteCount": 1000},
         "certificate": {"rating": "R", "ratingReason": None},
@@ -255,15 +256,16 @@ class TestSynopsisPriority:
         assert synopses == []
         assert summaries == []
 
-    def test_synopsis_priority_over_summaries(self) -> None:
-        """When both types exist, synopses take priority and summaries are dropped."""
+    def test_synopses_and_summaries_extracted_independently(self) -> None:
+        """When both types exist, synopses and summaries are extracted independently."""
         edges = _plot_edges(
             synopses=["The full synopsis."],
             summaries=["Overview", "Summary 1", "Summary 2"],
         )
         synopses, summaries = _extract_synopses_and_summaries(edges)
         assert synopses == ["The full synopsis."]
-        assert summaries == []
+        # Summaries extracted independently — first skipped (overview dup), next taken
+        assert summaries == ["Summary 1", "Summary 2"]
 
 
 # ---------------------------------------------------------------------------
@@ -348,24 +350,24 @@ class TestKeywordScoring:
         assert "ok" in result
         assert "weak" in result
 
-    def test_max_score_zero_takes_first_five(self) -> None:
-        """All scores = 0: returns first 5 by position (no meaningful vote signal)."""
-        edges = _keyword_edges([(f"kw_{i}", 0, 0) for i in range(8)])
+    def test_max_score_zero_takes_first_ten(self) -> None:
+        """All scores = 0: returns first 10 by position (no meaningful vote signal)."""
+        edges = _keyword_edges([(f"kw_{i}", 0, 0) for i in range(12)])
         result = _score_and_filter_keywords(edges)
-        assert len(result) == 5
-        assert result == [f"kw_{i}" for i in range(5)]
+        assert len(result) == 10
+        assert result == [f"kw_{i}" for i in range(10)]
 
-    def test_max_score_negative_takes_first_five(self) -> None:
-        """All scores negative: returns first 5 by position."""
-        edges = _keyword_edges([(f"neg_{i}", 0, 5) for i in range(7)])
+    def test_max_score_negative_takes_first_ten(self) -> None:
+        """All scores negative: returns first 10 by position."""
+        edges = _keyword_edges([(f"neg_{i}", 0, 5) for i in range(12)])
         result = _score_and_filter_keywords(edges)
-        assert len(result) == 5
-        assert result == [f"neg_{i}" for i in range(5)]
+        assert len(result) == 10
+        assert result == [f"neg_{i}" for i in range(10)]
 
     # --- Floor and cap tests ---
 
-    def test_floor_of_five_pads_from_below_threshold(self) -> None:
-        """Fewer than 5 keywords pass threshold: pads with next-highest below-threshold."""
+    def test_floor_of_ten_pads_from_below_threshold(self) -> None:
+        """Fewer than 10 keywords pass threshold: pads with next-highest below-threshold."""
         edges = _keyword_edges([
             ("pass_1", 20, 20),    # score=20 → passes
             ("pass_2", 16, 16),    # score=16 → passes
@@ -373,15 +375,21 @@ class TestKeywordScoring:
             ("fail_2", 10, 10),    # score=10 → fails
             ("fail_3", 5, 5),      # score=5 → fails
             ("fail_4", 1, 1),      # score=1 → fails
+            ("fail_5", 0, 0),      # score=0
+            ("fail_6", 0, 0),      # score=0
+            ("fail_7", 0, 0),      # score=0
+            ("fail_8", 0, 0),      # score=0
+            ("fail_9", 0, 0),      # score=0
+            ("fail_10", 0, 0),     # score=0
         ])
         result = _score_and_filter_keywords(edges)
-        assert len(result) == 5
+        assert len(result) == 10
         assert "pass_1" in result
         assert "pass_2" in result
         assert "fail_1" in result  # Padded (highest below threshold)
 
-    def test_floor_of_five_with_fewer_total(self) -> None:
-        """Fewer than 5 total keywords returns all of them."""
+    def test_floor_of_ten_with_fewer_total(self) -> None:
+        """Fewer than 10 total keywords returns all of them."""
         edges = _keyword_edges([
             ("only_1", 5, 5),
             ("only_2", 3, 3),
@@ -430,11 +438,11 @@ class TestKeywordScoring:
         """Missing interestScore block defaults to 0 interested, 0 voted."""
         edges = [
             {"node": {"keyword": {"text": {"text": f"kw_{i}"}}}}
-            for i in range(6)
+            for i in range(12)
         ]
         result = _score_and_filter_keywords(edges)
-        # All scores are 0, so N=0, first 5 by position
-        assert len(result) == 5
+        # All scores are 0, so N=0, first 10 by position
+        assert len(result) == 10
 
     def test_realistic_keyword_set(self) -> None:
         """Realistic keyword set with varied vote data produces a sensible subset."""
@@ -451,8 +459,8 @@ class TestKeywordScoring:
         ])
         result = _score_and_filter_keywords(edges)
         # N=46.25, threshold=min(34.6875, 44.25)=34.6875
-        # Only "time travel" and "plot twist" pass → floor pads to 5
-        assert len(result) == 5
+        # Only "time travel" and "plot twist" pass → floor pads to 10, but only 9 total
+        assert len(result) == 9
         assert "time travel" in result
         assert "plot twist" in result
         assert "revenge" in result
@@ -992,3 +1000,98 @@ class TestTransformGraphqlResponse:
         assert result.producers == []
         assert result.composers == []
         assert result.featured_reviews == []
+
+    # --- imdb_title_type extraction ---
+
+    def test_extracts_imdb_title_type(self) -> None:
+        """titleType.id mapped to imdb_title_type."""
+        data = _graphql_title_data(titleType={"id": "movie"})
+        result = transform_graphql_response(data)
+        assert result.imdb_title_type == "movie"
+
+    def test_imdb_title_type_none_when_absent(self) -> None:
+        """Missing titleType produces imdb_title_type=None."""
+        data = _graphql_title_data()
+        del data["titleType"]
+        result = transform_graphql_response(data)
+        assert result.imdb_title_type is None
+
+    def test_imdb_title_type_none_when_id_is_null(self) -> None:
+        """titleType.id=None produces imdb_title_type=None."""
+        data = _graphql_title_data(titleType={"id": None})
+        result = transform_graphql_response(data)
+        assert result.imdb_title_type is None
+
+    def test_imdb_title_type_strips_whitespace(self) -> None:
+        """titleType.id with whitespace is stripped."""
+        data = _graphql_title_data(titleType={"id": "  tvSeries  "})
+        result = transform_graphql_response(data)
+        assert result.imdb_title_type == "tvSeries"
+
+
+# ---------------------------------------------------------------------------
+# Tests: operator precedence fix in _extract_synopses_and_summaries
+# ---------------------------------------------------------------------------
+
+
+class TestPrecedenceFix:
+    """Tests for the operator-precedence fix in edge extraction."""
+
+    def test_synopses_non_dict_edge_does_not_raise(self) -> None:
+        """Non-dict edge element (e.g., None) is handled gracefully."""
+        edges = [None, {"node": {"plotText": {"plainText": "Valid"}, "plotType": "SYNOPSIS"}}]
+        synopses, summaries = _extract_synopses_and_summaries(edges)
+        assert synopses == ["Valid"]
+        assert summaries == []
+
+    def test_synopses_int_edge_does_not_raise(self) -> None:
+        """Int edge element is handled gracefully."""
+        edges = [42, {"node": {"plotText": {"plainText": "Summary"}, "plotType": "SUMMARY"}}]
+        # First entry is skipped (non-dict), second becomes a summary
+        # but since it's the first summary, it's treated as overview duplicate
+        synopses, summaries = _extract_synopses_and_summaries(edges)
+        assert synopses == []
+
+    def test_keywords_non_dict_edge_does_not_raise(self) -> None:
+        """Non-dict edge element in keyword edges is handled gracefully."""
+        edges = [
+            None,
+            {"node": {"keyword": {"text": {"text": "valid"}}, "interestScore": {"usersInterested": 5, "usersVoted": 5}}},
+        ]
+        result = _score_and_filter_keywords(edges)
+        assert "valid" in result
+
+    def test_featured_reviews_non_dict_edge_does_not_raise(self) -> None:
+        """Non-dict edge element in review edges is handled gracefully."""
+        data = _graphql_title_data(
+            reviews={"edges": [
+                None,
+                {
+                    "node": {
+                        "summary": {"originalText": "Valid"},
+                        "text": {"originalText": {"plainText": "Body text"}},
+                    }
+                },
+            ]}
+        )
+        result = transform_graphql_response(data)
+        assert len(result.featured_reviews) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: IMDBScrapedMovie model — imdb_title_type field
+# ---------------------------------------------------------------------------
+
+
+class TestIMDBScrapedMovieModel:
+    """Tests for the IMDBScrapedMovie Pydantic model."""
+
+    def test_imdb_title_type_defaults_to_none(self) -> None:
+        """imdb_title_type defaults to None when not provided."""
+        movie = IMDBScrapedMovie()
+        assert movie.imdb_title_type is None
+
+    def test_imdb_title_type_set_correctly(self) -> None:
+        """imdb_title_type can be set to a string value."""
+        movie = IMDBScrapedMovie(imdb_title_type="movie")
+        assert movie.imdb_title_type == "movie"

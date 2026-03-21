@@ -259,7 +259,7 @@ class TestComputeScoreSummary:
         return conn
 
     def test_compute_score_summary_basic(self, tmp_path: Path) -> None:
-        """Mean and median computed correctly per candidate."""
+        """Mean computed correctly per candidate."""
         conn = self._setup_table_with_data(tmp_path)
         result = compute_score_summary(
             conn, "test_evaluations", ["dim_a_score", "dim_b_score"],
@@ -268,9 +268,6 @@ class TestComputeScoreSummary:
         # candidate-a: dim_a mean=3.0, dim_b mean=3.0
         assert result.loc["candidate-a", "dim_a_mean"] == 3.0
         assert result.loc["candidate-a", "dim_b_mean"] == 3.0
-        # candidate-a: dim_a median=3.0, dim_b median=3.0
-        assert result.loc["candidate-a", "dim_a_median"] == 3.0
-        assert result.loc["candidate-a", "dim_b_median"] == 3.0
         # candidate-b: dim_a mean=1.0, dim_b mean=4.0
         assert result.loc["candidate-b", "dim_a_mean"] == 1.0
         assert result.loc["candidate-b", "dim_b_mean"] == 4.0
@@ -327,7 +324,7 @@ class TestComputeScoreSummary:
         conn.close()
 
     def test_compute_score_summary_identical_scores(self, tmp_path: Path) -> None:
-        """When all scores are identical, mean equals median."""
+        """When all scores are identical, mean equals the constant value."""
         conn = get_eval_connection(tmp_path / "eval.db")
         _create_eval_table_with_scores(conn)
         conn.executemany(
@@ -339,8 +336,8 @@ class TestComputeScoreSummary:
         result = compute_score_summary(
             conn, "test_evaluations", ["dim_a_score", "dim_b_score"],
         )
-        assert result.loc["same", "dim_a_mean"] == result.loc["same", "dim_a_median"]
-        assert result.loc["same", "dim_b_mean"] == result.loc["same", "dim_b_median"]
+        assert result.loc["same", "dim_a_mean"] == 3.0
+        assert result.loc["same", "dim_b_mean"] == 3.0
         conn.close()
 
 

@@ -70,27 +70,30 @@ class TestMovieResult:
     """Tests for the MovieResult NamedTuple."""
 
     def test_movie_result_fields(self) -> None:
-        """MovieResult has tmdb_id (int), status (str), reason (str|None) fields."""
-        result = MovieResult(tmdb_id=42, status="scraped", reason=None)
+        """MovieResult has tmdb_id, status, reason, and data fields."""
+        result = MovieResult(tmdb_id=42, status="scraped", reason=None, data=None)
 
         assert result.tmdb_id == 42
         assert result.status == "scraped"
         assert result.reason is None
+        assert result.data is None
 
     def test_movie_result_is_namedtuple(self) -> None:
         """MovieResult supports indexing and unpacking like a NamedTuple."""
-        result = MovieResult(tmdb_id=1, status="filtered", reason="imdb_404")
+        result = MovieResult(tmdb_id=1, status="filtered", reason="imdb_404", data=None)
 
         # Supports indexing
         assert result[0] == 1
         assert result[1] == "filtered"
         assert result[2] == "imdb_404"
+        assert result[3] is None
 
         # Supports unpacking
-        tid, status, reason = result
+        tid, status, reason, data = result
         assert tid == 1
         assert status == "filtered"
         assert reason == "imdb_404"
+        assert data is None
 
 
 # ---------------------------------------------------------------------------
@@ -110,11 +113,8 @@ class TestProcessMovie:
         )
 
     async def test_success_returns_scraped_result(self) -> None:
-        """Successful fetch+transform returns MovieResult with status='scraped', reason=None."""
-        with (
-            self._patch_fetch(_success()),
-            patch("movie_ingestion.imdb_scraping.scraper.save_json"),
-        ):
+        """Successful fetch+transform returns MovieResult with status='scraped' and data dict."""
+        with self._patch_fetch(_success()):
             result = await process_movie(
                 AsyncMock(), MagicMock(), MagicMock(),
                 tmdb_id=100, imdb_id="tt0000100",
@@ -124,24 +124,18 @@ class TestProcessMovie:
         assert result.status == "scraped"
         assert result.reason is None
         assert result.tmdb_id == 100
+        assert isinstance(result.data, dict)
 
-    async def test_success_saves_json_file(self) -> None:
-        """Successful path: save_json called with correct path and model dump."""
-        with (
-            self._patch_fetch(_success()),
-            patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
-        ):
-            await process_movie(
+    async def test_success_returns_data_dict(self) -> None:
+        """Successful path: result.data contains a model_dump dict with expected fields."""
+        with self._patch_fetch(_success()):
+            result = await process_movie(
                 AsyncMock(), MagicMock(), MagicMock(),
                 tmdb_id=42, imdb_id="tt0000042",
             )
 
-        mock_save.assert_called_once()
-        path_arg = mock_save.call_args[0][0]
-        assert str(path_arg).endswith("42.json")
-        # Second arg should be a dict (model_dump output)
-        data_arg = mock_save.call_args[0][1]
-        assert isinstance(data_arg, dict)
+        assert isinstance(result.data, dict)
+        assert "original_title" in result.data
 
     async def test_http_404_returns_filtered_result(self) -> None:
         """HTTP_404 fetch returns MovieResult(status='filtered', reason='imdb_404')."""
@@ -154,18 +148,15 @@ class TestProcessMovie:
         assert result.status == "filtered"
         assert result.reason == "imdb_404"
 
-    async def test_http_404_does_not_save_json(self) -> None:
-        """HTTP_404 path: save_json is NOT called."""
-        with (
-            self._patch_fetch(_http_404()),
-            patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
-        ):
-            await process_movie(
+    async def test_http_404_returns_no_data(self) -> None:
+        """HTTP_404 path: result.data is None."""
+        with self._patch_fetch(_http_404()):
+            result = await process_movie(
                 AsyncMock(), MagicMock(), MagicMock(),
                 tmdb_id=100, imdb_id="tt0000100",
             )
 
-        mock_save.assert_not_called()
+        assert result.data is None
 
     async def test_fetch_failed_returns_filtered_result(self) -> None:
         """FAILED fetch returns MovieResult(status='filtered', reason='fetch_failed')."""
@@ -178,18 +169,15 @@ class TestProcessMovie:
         assert result.status == "filtered"
         assert result.reason == "fetch_failed"
 
-    async def test_fetch_failed_does_not_save_json(self) -> None:
-        """FAILED path: save_json is NOT called."""
-        with (
-            self._patch_fetch(_failed()),
-            patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
-        ):
-            await process_movie(
+    async def test_fetch_failed_returns_no_data(self) -> None:
+        """FAILED path: result.data is None."""
+        with self._patch_fetch(_failed()):
+            result = await process_movie(
                 AsyncMock(), MagicMock(), MagicMock(),
                 tmdb_id=100, imdb_id="tt0000100",
             )
 
-        mock_save.assert_not_called()
+        assert result.data is None
 
     async def test_transform_exception_returns_error_result(self) -> None:
         """Transform raises exception: returns MovieResult(status='error', reason=None)."""
@@ -208,29 +196,25 @@ class TestProcessMovie:
         assert result.status == "error"
         assert result.reason is None
 
-    async def test_transform_exception_does_not_save_json(self) -> None:
-        """Transform error path: save_json is NOT called."""
+    async def test_transform_exception_returns_no_data(self) -> None:
+        """Transform error path: result.data is None."""
         with (
             self._patch_fetch(_success()),
             patch(
                 "movie_ingestion.imdb_scraping.scraper.transform_graphql_response",
                 side_effect=ValueError("bad data"),
             ),
-            patch("movie_ingestion.imdb_scraping.scraper.save_json") as mock_save,
         ):
-            await process_movie(
+            result = await process_movie(
                 AsyncMock(), MagicMock(), MagicMock(),
                 tmdb_id=100, imdb_id="tt0000100",
             )
 
-        mock_save.assert_not_called()
+        assert result.data is None
 
     async def test_no_db_interaction(self) -> None:
         """process_movie never touches a database — it only returns a result."""
-        with (
-            self._patch_fetch(_success()),
-            patch("movie_ingestion.imdb_scraping.scraper.save_json"),
-        ):
+        with self._patch_fetch(_success()):
             # process_movie takes no db parameter — this test verifies the
             # API contract: it returns a result, not writes to a database.
             result = await process_movie(

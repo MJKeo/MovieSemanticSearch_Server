@@ -326,3 +326,16 @@ class TestFetchMovie:
         # URL should be the GraphQL endpoint
         call_args = client.post.call_args[0]
         assert call_args[0] == _GRAPHQL_URL
+
+
+# ---------------------------------------------------------------------------
+# Tests: GraphQL query contains titleType
+# ---------------------------------------------------------------------------
+
+
+class TestGraphQLQueryContent:
+    """Tests for the _GRAPHQL_QUERY constant."""
+
+    def test_graphql_query_contains_title_type(self) -> None:
+        """_GRAPHQL_QUERY requests the titleType field."""
+        assert "titleType" in _GRAPHQL_QUERY

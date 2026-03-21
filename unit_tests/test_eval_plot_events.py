@@ -32,7 +32,6 @@ from movie_ingestion.metadata_generation.evaluations.plot_events import (
     _format_characters_for_prompt,
     _serialize_output,
     create_plot_events_tables,
-    generate_reference_responses,
     run_evaluation,
 )
 from movie_ingestion.metadata_generation.evaluations.shared import (
@@ -111,17 +110,16 @@ def _make_eval_movie(**overrides) -> MovieInputData:
 
 class TestCreatePlotEventsTables:
     def test_create_plot_events_tables_idempotent(self, tmp_path: Path) -> None:
-        """Calling twice doesn't raise, all 3 tables created."""
+        """Calling twice doesn't raise, both tables created."""
         conn = get_eval_connection(tmp_path / "eval.db")
         create_plot_events_tables(conn)
         create_plot_events_tables(conn)  # Should not raise
 
-        # Verify all three tables exist
+        # Verify both tables exist
         tables = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()
         table_names = {row["name"] for row in tables}
-        assert "plot_events_references" in table_names
         assert "plot_events_candidate_outputs" in table_names
         assert "plot_events_evaluations" in table_names
         conn.close()
@@ -222,23 +220,20 @@ class TestFormatCharactersForPrompt:
 
 class TestBuildJudgeUserPrompt:
     def test_build_judge_user_prompt_contains_all_sections(self) -> None:
-        """Output contains 'GENERATION PROMPT', 'REFERENCE RESPONSE', 'CANDIDATE OUTPUT' sections."""
-        reference = _make_plot_events_output()
+        """Output contains 'SOURCE DATA' and 'CANDIDATE OUTPUT' sections."""
         candidate = _make_plot_events_output(plot_summary="Different summary.")
-        result = _build_judge_user_prompt("Test generation prompt", reference, candidate)
+        result = _build_judge_user_prompt("Test source data", candidate)
 
-        assert "GENERATION PROMPT:" in result
-        assert "REFERENCE RESPONSE:" in result
+        assert "SOURCE DATA:" in result
         assert "CANDIDATE OUTPUT:" in result
 
-    def test_build_judge_user_prompt_includes_generation_prompt(self) -> None:
-        """The generation_user_prompt text appears in the output."""
-        reference = _make_plot_events_output()
+    def test_build_judge_user_prompt_includes_source_data(self) -> None:
+        """The source_data text appears in the output."""
         candidate = _make_plot_events_output()
-        gen_prompt = "title: The Matrix (1999)\noverview: A computer hacker learns about reality."
-        result = _build_judge_user_prompt(gen_prompt, reference, candidate)
+        source_data = "title: The Matrix (1999)\noverview: A computer hacker learns about reality."
+        result = _build_judge_user_prompt(source_data, candidate)
 
-        assert gen_prompt in result
+        assert source_data in result
 
 
 # ---------------------------------------------------------------------------
@@ -333,241 +328,11 @@ class TestScoreColumns:
 
 
 # ---------------------------------------------------------------------------
-# Tests: generate_reference_responses
+# Patch targets for run_evaluation tests
 # ---------------------------------------------------------------------------
 
-# Patch targets for generate_reference_responses
 _LLM_PATCH = "movie_ingestion.metadata_generation.evaluations.plot_events.generate_llm_response_async"
-_PROMPT_PATCH = "movie_ingestion.metadata_generation.evaluations.plot_events.build_plot_events_user_prompt"
-_SLEEP_PATCH = "movie_ingestion.metadata_generation.evaluations.plot_events.asyncio.sleep"
-_CONN_PATCH = "movie_ingestion.metadata_generation.evaluations.plot_events.get_eval_connection"
-
-
-class TestGenerateReferenceResponses:
-    """Tests for generate_reference_responses (Phase 0 of the eval pipeline).
-
-    All tests use tmp_path for ephemeral SQLite databases and mock the LLM.
-    The real get_eval_connection is used via db_path= for most tests;
-    a patched wrapper is used for the commit-ordering test.
-    """
-
-    async def test_all_pending_movies_processed_in_series(self, tmp_path: Path) -> None:
-        """LLM is called once per pending movie and all rows are inserted."""
-        # Arrange
-        movie_inputs = {
-            101: _make_eval_movie(tmdb_id=101, title="Movie A"),
-            102: _make_eval_movie(tmdb_id=102, title="Movie B"),
-            103: _make_eval_movie(tmdb_id=103, title="Movie C"),
-        }
-        mock_output = _make_plot_events_output()
-        mock_llm = AsyncMock(return_value=(mock_output, 10, 5))
-
-        # Act
-        with patch(_LLM_PATCH, mock_llm), patch(_PROMPT_PATCH, return_value="test prompt"):
-            await generate_reference_responses(movie_inputs, db_path=tmp_path / "eval.db")
-
-        # Assert: LLM called once per movie
-        assert mock_llm.call_count == 3
-
-        # Assert: all 3 rows in the DB
-        conn = get_eval_connection(tmp_path / "eval.db")
-        row_count = conn.execute(
-            "SELECT COUNT(*) FROM plot_events_references"
-        ).fetchone()[0]
-        conn.close()
-        assert row_count == 3
-
-    async def test_all_pending_movies_processed_with_zero_pending(self, tmp_path: Path) -> None:
-        """When all movies already have references, LLM is never called."""
-        # Pre-insert a reference so there's nothing pending
-        movie = _make_eval_movie(tmdb_id=201, title="Already Done")
-        conn = get_eval_connection(tmp_path / "eval.db")
-        create_plot_events_tables(conn)
-        output = _make_plot_events_output()
-        plot_summary, setting, chars_json = _serialize_output(output)
-        conn.execute(
-            "INSERT INTO plot_events_references "
-            "(movie_id, plot_summary, setting, major_characters, reference_model, input_tokens, output_tokens, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (201, plot_summary, setting, chars_json, "claude-opus-4-6", 10, 5, "2026-01-01T00:00:00+00:00"),
-        )
-        conn.commit()
-        conn.close()
-
-        mock_llm = AsyncMock()
-
-        with patch(_LLM_PATCH, mock_llm), patch(_PROMPT_PATCH, return_value="test prompt"):
-            await generate_reference_responses({201: movie}, db_path=tmp_path / "eval.db")
-
-        mock_llm.assert_not_called()
-
-    async def test_429_error_triggers_sleep_and_retry(self, tmp_path: Path) -> None:
-        """A ValueError containing '429' causes a 60s sleep and one retry; retry success stores the row."""
-        # Arrange: first call raises 429, second call succeeds
-        mock_output = _make_plot_events_output()
-        mock_llm = AsyncMock(
-            side_effect=[ValueError("rate limited: 429 too many requests"), (mock_output, 10, 5)]
-        )
-        mock_sleep = AsyncMock()
-        movie_inputs = {301: _make_eval_movie(tmdb_id=301)}
-
-        # Act
-        with patch(_LLM_PATCH, mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test prompt"), \
-             patch(_SLEEP_PATCH, mock_sleep):
-            await generate_reference_responses(movie_inputs, db_path=tmp_path / "eval.db")
-
-        # Assert: sleep called with 60 seconds
-        mock_sleep.assert_called_once_with(60)
-        # Assert: LLM called exactly twice (original + retry)
-        assert mock_llm.call_count == 2
-        # Assert: row was successfully stored after retry
-        conn = get_eval_connection(tmp_path / "eval.db")
-        row = conn.execute(
-            "SELECT movie_id FROM plot_events_references WHERE movie_id = 301"
-        ).fetchone()
-        conn.close()
-        assert row is not None
-
-    async def test_429_retry_failure_caught_without_inserting_row(self, tmp_path: Path) -> None:
-        """When the retry after 429 also fails, the outer except catches it and no row is inserted."""
-        mock_sleep = AsyncMock()
-        # Both calls fail: first with 429, retry with a different error
-        mock_llm = AsyncMock(
-            side_effect=[
-                ValueError("429 rate limit"),
-                ValueError("Anthropic async failed: server error"),
-            ]
-        )
-        movie_inputs = {302: _make_eval_movie(tmdb_id=302)}
-
-        with patch(_LLM_PATCH, mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test prompt"), \
-             patch(_SLEEP_PATCH, mock_sleep):
-            await generate_reference_responses(movie_inputs, db_path=tmp_path / "eval.db")
-
-        # Sleep was called (we did try to retry)
-        mock_sleep.assert_called_once_with(60)
-        # No row inserted since retry also failed
-        conn = get_eval_connection(tmp_path / "eval.db")
-        row_count = conn.execute(
-            "SELECT COUNT(*) FROM plot_events_references WHERE movie_id = 302"
-        ).fetchone()[0]
-        conn.close()
-        assert row_count == 0
-
-    async def test_non_429_value_error_no_retry(self, tmp_path: Path) -> None:
-        """A ValueError not containing '429' is caught by the outer except; no sleep, no retry, no row."""
-        mock_sleep = AsyncMock()
-        mock_llm = AsyncMock(side_effect=ValueError("Anthropic async failed: auth error"))
-        movie_inputs = {401: _make_eval_movie(tmdb_id=401)}
-
-        with patch(_LLM_PATCH, mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test prompt"), \
-             patch(_SLEEP_PATCH, mock_sleep):
-            await generate_reference_responses(movie_inputs, db_path=tmp_path / "eval.db")
-
-        # No sleep — not a 429
-        mock_sleep.assert_not_called()
-        # LLM called exactly once (no retry)
-        assert mock_llm.call_count == 1
-        # No row inserted
-        conn = get_eval_connection(tmp_path / "eval.db")
-        row_count = conn.execute(
-            "SELECT COUNT(*) FROM plot_events_references WHERE movie_id = 401"
-        ).fetchone()[0]
-        conn.close()
-        assert row_count == 0
-
-    async def test_idempotency_existing_references_skipped(self, tmp_path: Path) -> None:
-        """Movies with pre-existing references are skipped; LLM only called for the new movie."""
-        db_path = tmp_path / "eval.db"
-
-        # Pre-insert references for tmdb_ids 501 and 502
-        conn = get_eval_connection(db_path)
-        create_plot_events_tables(conn)
-        output = _make_plot_events_output()
-        plot_summary, setting, chars_json = _serialize_output(output)
-        for tmdb_id in (501, 502):
-            conn.execute(
-                "INSERT INTO plot_events_references "
-                "(movie_id, plot_summary, setting, major_characters, reference_model, input_tokens, output_tokens, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (tmdb_id, plot_summary, setting, chars_json, "claude-opus-4-6", 10, 5, "2026-01-01T00:00:00+00:00"),
-            )
-        conn.commit()
-        conn.close()
-
-        # movie_inputs has the 2 existing movies + 1 new one
-        movie_inputs = {
-            501: _make_eval_movie(tmdb_id=501),
-            502: _make_eval_movie(tmdb_id=502),
-            503: _make_eval_movie(tmdb_id=503),
-        }
-        mock_output = _make_plot_events_output()
-        mock_llm = AsyncMock(return_value=(mock_output, 10, 5))
-
-        with patch(_LLM_PATCH, mock_llm), patch(_PROMPT_PATCH, return_value="test prompt"):
-            await generate_reference_responses(movie_inputs, db_path=db_path)
-
-        # Only the new movie triggered an LLM call
-        assert mock_llm.call_count == 1
-
-    async def test_each_successful_response_committed_immediately(self, tmp_path: Path) -> None:
-        """Row for movie 1 is committed before the LLM call for movie 2 begins."""
-        db_path = tmp_path / "eval.db"
-        movie_inputs = {
-            601: _make_eval_movie(tmdb_id=601, title="First"),
-            602: _make_eval_movie(tmdb_id=602, title="Second"),
-        }
-        mock_output = _make_plot_events_output()
-        # Track whether the first row was committed by the time the second call starts
-        first_row_committed_before_second_call = [False]
-        call_count = [0]
-
-        async def mock_llm(**kwargs):
-            call_count[0] += 1
-            if call_count[0] == 2:
-                # Open a fresh read connection — only sees committed data in WAL mode
-                check_conn = get_eval_connection(db_path)
-                row_count = check_conn.execute(
-                    "SELECT COUNT(*) FROM plot_events_references"
-                ).fetchone()[0]
-                check_conn.close()
-                first_row_committed_before_second_call[0] = row_count >= 1
-            return (mock_output, 10, 5)
-
-        with patch(_LLM_PATCH, side_effect=mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test prompt"):
-            await generate_reference_responses(movie_inputs, db_path=db_path)
-
-        assert first_row_committed_before_second_call[0], (
-            "First movie's row was not committed to the DB before the second LLM call"
-        )
-
-    async def test_reasoning_effort_low_in_reference_generation_calls(self, tmp_path: Path) -> None:
-        """Both the primary LLM call and the retry call use reasoning_effort='low'."""
-        mock_output = _make_plot_events_output()
-        # First call raises 429 to trigger retry, both calls' kwargs are captured
-        captured_kwargs: list[dict] = []
-
-        async def mock_llm(**kwargs):
-            captured_kwargs.append(dict(kwargs))
-            if len(captured_kwargs) == 1:
-                raise ValueError("429 rate limit exceeded")
-            return (mock_output, 10, 5)
-
-        mock_sleep = AsyncMock()
-        movie_inputs = {701: _make_eval_movie(tmdb_id=701)}
-
-        with patch(_LLM_PATCH, side_effect=mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test prompt"), \
-             patch(_SLEEP_PATCH, mock_sleep):
-            await generate_reference_responses(movie_inputs, db_path=tmp_path / "eval.db")
-
-        assert len(captured_kwargs) == 2, "Expected both the primary call and the retry"
-        assert captured_kwargs[0]["reasoning_effort"] == "low"
-        assert captured_kwargs[1]["reasoning_effort"] == "low"
+_PROMPT_PATCH = "movie_ingestion.metadata_generation.evaluations.plot_events.build_plot_events_prompts"
 
 
 # ---------------------------------------------------------------------------
@@ -585,19 +350,6 @@ _TEST_CANDIDATE = EvaluationCandidate(
 )
 
 
-def _insert_reference(conn, tmdb_id: int) -> None:
-    """Insert a pre-built reference row for the given tmdb_id."""
-    output = _make_plot_events_output()
-    plot_summary, setting, chars_json = _serialize_output(output)
-    conn.execute(
-        "INSERT INTO plot_events_references "
-        "(movie_id, plot_summary, setting, major_characters, reference_model, input_tokens, output_tokens, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (tmdb_id, plot_summary, setting, chars_json, "claude-opus-4-6", 100, 50, "2026-01-01T00:00:00+00:00"),
-    )
-    conn.commit()
-
-
 class TestJudgeCallParameters:
     """Tests for the judge LLM call parameters inside run_evaluation._evaluate_one."""
 
@@ -605,10 +357,6 @@ class TestJudgeCallParameters:
         """The judge generate_llm_response_async call passes reasoning_effort='low'."""
         db_path = tmp_path / "eval.db"
         tmdb_id = 800
-        conn = get_eval_connection(db_path)
-        create_plot_events_tables(conn)
-        _insert_reference(conn, tmdb_id)
-        conn.close()
 
         candidate_output = _make_plot_events_output()
         judge_output = _make_judge_output()
@@ -621,7 +369,7 @@ class TestJudgeCallParameters:
             return (candidate_output, 10, 5)
 
         with patch(_LLM_PATCH, side_effect=mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test user prompt"):
+             patch(_PROMPT_PATCH, return_value=("test user prompt", "test system prompt")):
             await run_evaluation(
                 candidates=[_TEST_CANDIDATE],
                 movie_inputs={tmdb_id: _make_eval_movie(tmdb_id=tmdb_id)},
@@ -629,16 +377,14 @@ class TestJudgeCallParameters:
             )
 
         assert len(judge_call_kwargs) >= 1, "Expected at least one judge call"
-        assert judge_call_kwargs[0]["reasoning_effort"] == "low"
+        # Judge calls use cache_control and disabled thinking, no reasoning_effort
+        assert judge_call_kwargs[0]["cache_control"] is True
+        assert judge_call_kwargs[0]["thinking"] == {"type": "disabled"}
 
     async def test_judge_call_does_not_pass_temperature(self, tmp_path: Path) -> None:
         """The judge call does not include temperature in its kwargs."""
         db_path = tmp_path / "eval.db"
         tmdb_id = 801
-        conn = get_eval_connection(db_path)
-        create_plot_events_tables(conn)
-        _insert_reference(conn, tmdb_id)
-        conn.close()
 
         candidate_output = _make_plot_events_output()
         judge_output = _make_judge_output()
@@ -651,7 +397,7 @@ class TestJudgeCallParameters:
             return (candidate_output, 10, 5)
 
         with patch(_LLM_PATCH, side_effect=mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test user prompt"):
+             patch(_PROMPT_PATCH, return_value=("test user prompt", "test system prompt")):
             await run_evaluation(
                 candidates=[_TEST_CANDIDATE],
                 movie_inputs={tmdb_id: _make_eval_movie(tmdb_id=tmdb_id)},
@@ -667,10 +413,6 @@ class TestJudgeCallParameters:
         """temperature=0.2 is passed to the judge call only, not to the candidate generation call."""
         db_path = tmp_path / "eval.db"
         tmdb_id = 802
-        conn = get_eval_connection(db_path)
-        create_plot_events_tables(conn)
-        _insert_reference(conn, tmdb_id)
-        conn.close()
 
         candidate_output = _make_plot_events_output()
         judge_output = _make_judge_output()
@@ -683,7 +425,7 @@ class TestJudgeCallParameters:
             return (candidate_output, 10, 5)
 
         with patch(_LLM_PATCH, side_effect=mock_llm), \
-             patch(_PROMPT_PATCH, return_value="test user prompt"):
+             patch(_PROMPT_PATCH, return_value=("test user prompt", "test system prompt")):
             await run_evaluation(
                 candidates=[_TEST_CANDIDATE],
                 movie_inputs={tmdb_id: _make_eval_movie(tmdb_id=tmdb_id)},

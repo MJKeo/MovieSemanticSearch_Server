@@ -27,6 +27,8 @@ from implementation.llms.generic_methods import (
     generate_anthropic_response_async,
     generate_wham_response_async,
     generate_llm_response_async,
+    generate_openai_response,
+    generate_openai_response_async,
 )
 
 
@@ -1399,3 +1401,54 @@ class TestGenerateLLMResponseAsync:
     def test_provider_dispatch_includes_wham(self) -> None:
         """LLMProvider.WHAM is a key in _PROVIDER_DISPATCH."""
         assert LLMProvider.WHAM in _PROVIDER_DISPATCH
+
+
+# ---------------------------------------------------------------------------
+# Tests: generate_openai_response — kwargs passthrough
+# ---------------------------------------------------------------------------
+
+
+class TestOpenAIKwargsPassthrough:
+    """Tests for **kwargs passthrough in OpenAI generation functions."""
+
+    def test_sync_forwards_extra_kwargs(self) -> None:
+        """generate_openai_response forwards extra kwargs to the API call."""
+        mock_response = _make_openai_style_response(
+            json.dumps({"value": "ok"}), input_tokens=10, output_tokens=5
+        )
+        mock_parse = MagicMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.openai_client.chat.completions.parse",
+            mock_parse,
+        ):
+            generate_openai_response(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                max_completion_tokens=500,
+            )
+
+        call_kwargs = mock_parse.call_args[1]
+        assert call_kwargs["max_completion_tokens"] == 500
+
+    async def test_async_forwards_extra_kwargs(self) -> None:
+        """generate_openai_response_async forwards extra kwargs to the API call."""
+        mock_response = _make_openai_style_response(
+            json.dumps({"value": "ok"}), input_tokens=10, output_tokens=5
+        )
+        mock_parse = AsyncMock(return_value=mock_response)
+
+        with patch(
+            "implementation.llms.generic_methods.async_openai_client.chat.completions.parse",
+            mock_parse,
+        ):
+            await generate_openai_response_async(
+                user_prompt="test",
+                system_prompt="test",
+                response_format=_DummyResponse,
+                max_completion_tokens=500,
+            )
+
+        call_kwargs = mock_parse.call_args[1]
+        assert call_kwargs["max_completion_tokens"] == 500

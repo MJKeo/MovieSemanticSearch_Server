@@ -11,16 +11,20 @@ import sqlite3
 import pytest
 
 from movie_ingestion.tracker import (
+    IMDB_DATA_COLUMNS,
+    IMDB_JSON_COLUMNS,
     INGESTION_DATA_DIR,
     TRACKER_DB_PATH,
     MovieStatus,
     PipelineStage,
     _SCHEMA_SQL,
     batch_log_filter,
+    deserialize_imdb_row,
     init_db,
     load_json,
     log_filter,
     save_json,
+    serialize_imdb_movie,
 )
 
 
@@ -59,7 +63,7 @@ class TestPipelineStage:
             "tmdb_fetch",
             "tmdb_quality_funnel",
             "imdb_scrape",
-            "essential_data_check",
+            "imdb_quality_funnel",
             "llm_phase1",
             "llm_phase2",
             "embedding",
@@ -598,16 +602,12 @@ class TestSaveJson:
 
 
 # ---------------------------------------------------------------------------
-# MovieStatus — new ESSENTIAL_DATA_PASSED member
+# MovieStatus
 # ---------------------------------------------------------------------------
 
 
 class TestMovieStatus:
-    """Tests for MovieStatus enum additions."""
-
-    def test_movie_status_essential_data_passed_exists(self) -> None:
-        """MovieStatus.ESSENTIAL_DATA_PASSED == 'essential_data_passed'."""
-        assert MovieStatus.ESSENTIAL_DATA_PASSED == "essential_data_passed"
+    """Tests for MovieStatus enum."""
 
     def test_tmdb_quality_calculated_value(self) -> None:
         """MovieStatus.TMDB_QUALITY_CALCULATED == 'tmdb_quality_calculated'."""
@@ -737,3 +737,93 @@ class TestQualityScoreMigrations:
         db.close()
 
         assert "stage_5_quality_score" in col_names
+
+
+# ---------------------------------------------------------------------------
+# IMDB_DATA_COLUMNS / IMDB_JSON_COLUMNS — imdb_title_type
+# ---------------------------------------------------------------------------
+
+
+class TestImdbDataColumns:
+    """Tests for the IMDB data column definitions."""
+
+    def test_imdb_title_type_is_first_column(self) -> None:
+        """imdb_title_type is the first entry in IMDB_DATA_COLUMNS."""
+        assert IMDB_DATA_COLUMNS[0] == "imdb_title_type"
+
+    def test_imdb_title_type_not_in_json_columns(self) -> None:
+        """imdb_title_type is a scalar TEXT field, not JSON."""
+        assert "imdb_title_type" not in IMDB_JSON_COLUMNS
+
+
+# ---------------------------------------------------------------------------
+# serialize_imdb_movie / deserialize_imdb_row — imdb_title_type round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestSerializeImdbMovie:
+    """Tests for serialize_imdb_movie and deserialize_imdb_row."""
+
+    def test_serialize_includes_imdb_title_type(self) -> None:
+        """imdb_title_type appears in the serialized tuple at position 1 (after tmdb_id)."""
+        data = {"imdb_title_type": "movie"}
+        result = serialize_imdb_movie(12345, data)
+        # result[0] is tmdb_id, result[1] is the first IMDB_DATA_COLUMN
+        assert result[0] == 12345
+        assert result[1] == "movie"
+
+    def test_serialize_imdb_title_type_passthrough(self) -> None:
+        """imdb_title_type is a scalar — passed through directly (not JSON-serialized)."""
+        data = {"imdb_title_type": "tvMovie"}
+        result = serialize_imdb_movie(42, data)
+        assert result[1] == "tvMovie"
+
+    def test_round_trip_imdb_title_type(self, in_memory_db) -> None:
+        """serialize → INSERT → SELECT → deserialize round-trips imdb_title_type."""
+        data = {
+            "imdb_title_type": "short",
+            "original_title": "Test",
+            "maturity_rating": "PG",
+            "overview": "A test movie.",
+            "imdb_rating": 7.0,
+            "imdb_vote_count": 100,
+            "metacritic_rating": None,
+            "reception_summary": None,
+            "budget": None,
+            "overall_keywords": ["kw"],
+            "genres": ["Drama"],
+            "countries_of_origin": [],
+            "production_companies": [],
+            "filming_locations": [],
+            "languages": ["English"],
+            "synopses": [],
+            "plot_summaries": [],
+            "plot_keywords": [],
+            "maturity_reasoning": [],
+            "directors": ["Director"],
+            "writers": [],
+            "actors": [],
+            "characters": [],
+            "producers": [],
+            "composers": [],
+            "review_themes": [],
+            "parental_guide_items": [],
+            "featured_reviews": [],
+        }
+        row_tuple = serialize_imdb_movie(999, data)
+
+        from movie_ingestion.tracker import IMDB_INSERT_SQL
+        in_memory_db.execute(IMDB_INSERT_SQL, row_tuple)
+        in_memory_db.commit()
+
+        prev_factory = in_memory_db.row_factory
+        in_memory_db.row_factory = sqlite3.Row
+        row = in_memory_db.execute(
+            "SELECT * FROM imdb_data WHERE tmdb_id = 999"
+        ).fetchone()
+        in_memory_db.row_factory = prev_factory
+
+        result = deserialize_imdb_row(row)
+        assert result["imdb_title_type"] == "short"
+        assert result["original_title"] == "Test"
+        assert result["genres"] == ["Drama"]

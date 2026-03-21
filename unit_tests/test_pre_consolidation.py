@@ -413,13 +413,13 @@ class TestCheckProductionAndInspiration:
         assert _check_production_keywords([]) is not None
 
     def test_check_source_of_inspiration_eligible_keywords(self):
-        assert _check_source_of_inspiration(["keyword"], None, None) is None
+        assert _check_source_of_inspiration(["keyword"], None) is None
 
-    def test_check_source_of_inspiration_eligible_synopsis(self):
-        assert _check_source_of_inspiration([], None, "synopsis") is None
+    def test_check_source_of_inspiration_eligible_review_insights(self):
+        assert _check_source_of_inspiration([], "review insights") is None
 
     def test_check_source_of_inspiration_skip_nothing(self):
-        assert _check_source_of_inspiration([], None, None) is not None
+        assert _check_source_of_inspiration([], None) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +707,17 @@ class TestCheckSourceOfInspirationEligibility:
     def test_eligible_via_review_insights_brief_alone(self):
         """source_of_inspiration is eligible with only review_insights_brief."""
         assert _check_source_of_inspiration(
-            [], "Critics noted the source material.", None,
+            [], "Critics noted the source material.",
         ) is None
+
+    def test_returns_none_when_only_keywords_provided(self):
+        """source_of_inspiration is eligible with only merged_keywords."""
+        assert _check_source_of_inspiration(["keyword"], None) is None
+
+    def test_returns_skip_reason_when_both_empty(self):
+        """source_of_inspiration returns skip reason string when both are empty/None."""
+        result = _check_source_of_inspiration([], None)
+        assert result is not None
+        assert isinstance(result, str)
 
 

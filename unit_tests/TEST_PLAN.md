@@ -1,197 +1,171 @@
 # Test Plan
-Generated from diff against main branch (last 5 commits).
+Generated: 2026-03-21
+Based on: uncommitted changes vs main
 
 ## Summary
-The recent commits introduced a complete metadata generation pipeline under `movie_ingestion/metadata_generation/`. This includes Pydantic response schemas, input data structures, pre-consolidation logic, 8 generator modules (Wave 1: plot_events, reception; Wave 2: plot_analysis, viewer_experience, watch_context, narrative_techniques, production_keywords, source_of_inspiration), a Wave 1 runner with SQLite persistence, and a WHAM LLM provider in `generic_methods.py`. Existing test files cover the core modules well but have specific gaps identified below.
 
-## Changed Files
+The changes span three areas: (1) adding `imdb_title_type` across the IMDB scraping, tracker, and quality scoring pipeline, (2) a major refactor of the plot_events generator from a single-prompt to a two-branch (synopsis/synthesis) design per ADR-033, and (3) smaller signature changes removing `plot_synopsis` from source_of_inspiration and adding `**kwargs` passthrough to OpenAI generation methods. Several operator-precedence bugs in parsers.py were also fixed.
 
-| File | Description |
-|------|-------------|
-| `movie_ingestion/metadata_generation/schemas.py` | Pydantic schemas for all 8 generation types + WithJustifications variants |
-| `movie_ingestion/metadata_generation/inputs.py` | MovieInputData, ConsolidatedInputs, SkipAssessment, build_user_prompt, MultiLineList |
-| `movie_ingestion/metadata_generation/pre_consolidation.py` | route_keywords, consolidate_maturity, 8 eligibility checks, assess_skip_conditions, run_pre_consolidation |
-| `movie_ingestion/metadata_generation/errors.py` | MetadataGenerationError, MetadataGenerationEmptyResponseError |
-| `movie_ingestion/metadata_generation/generators/plot_events.py` | Wave 1 generator: build prompt + async LLM call |
-| `movie_ingestion/metadata_generation/generators/reception.py` | Wave 1 generator: _truncate_reviews, _format_attributes, build prompt + async LLM call |
-| `movie_ingestion/metadata_generation/generators/plot_analysis.py` | Wave 2 generator |
-| `movie_ingestion/metadata_generation/generators/viewer_experience.py` | Wave 2 generator |
-| `movie_ingestion/metadata_generation/generators/watch_context.py` | Wave 2 generator |
-| `movie_ingestion/metadata_generation/generators/narrative_techniques.py` | Wave 2 generator |
-| `movie_ingestion/metadata_generation/generators/production_keywords.py` | Wave 2 generator |
-| `movie_ingestion/metadata_generation/generators/source_of_inspiration.py` | Wave 2 generator |
-| `movie_ingestion/metadata_generation/wave1_runner.py` | SQLite-backed runner for Wave 1 generation + fetch helper |
-| `implementation/llms/generic_methods.py` | Added WHAM LLMProvider enum value + generate_wham_response_async |
+The highest-risk change is the new early-return guards in `compute_imdb_quality_score()` -- existing test fixtures that lack `imdb_title_type` will silently return 0.0 instead of computing the real score. The plot_events generator refactor renames the public prompt-building function and changes its return type, which will break existing tests.
 
-## Test Coverage Analysis
+## Changed Files Analysis
 
-### schemas.py
-**Changed behavior:** All output schemas with `__str__()` methods, extra="forbid" on all models, WithJustifications variants that must produce identical `__str__()` to base variants.
-**Existing coverage:** `test_metadata_schemas.py` -- good coverage of `__str__()` parity for all 6 WithJustifications pairs, ReceptionOutput field rename, CharacterArc updates.
-**Gaps:**
-- [ ] PlotEventsOutput.__str__() -- no direct test. Verify lowercasing, newline joining, and that major_characters are included via MajorCharacter.__str__()
-- [ ] PlotEventsOutput.__str__() with empty major_characters list
-- [ ] MajorCharacter.__str__() -- no direct test for its format ("name: description Motivations: motivations")
-- [ ] MajorCharacter extra="forbid" -- verify extra fields rejected (only CharacterArc is tested, not MajorCharacter)
-- [ ] PlotAnalysisOutput.__str__() directly -- only tested via parity, not independently for content correctness (e.g., verify "conflict" suffix on conflict_scale)
-- [ ] ViewerExperienceOutput.__str__() independently -- verify comma-separated format, lowercasing
-- [ ] WatchContextOutput.__str__() independently -- verify comma-separated format
-- [ ] NarrativeTechniquesOutput.__str__() independently -- verify all 11 sections contribute terms
-- [ ] ProductionKeywordsOutput.__str__() with empty terms list -- should return ""
-- [ ] SourceOfInspirationOutput.__str__() with empty lists -- should return ""
-- [ ] TermsSection / TermsWithNegationsSection extra="forbid" validation
-- [ ] OptionalTermsWithNegationsSection with should_skip=True -- verify section_data is still required by schema even when skipped
-- [ ] constr/conlist constraints -- verify min_length/max_length on PlotAnalysisOutput fields (e.g., genre_signatures min_length=2, character_arcs min_length=1)
-- [ ] ReceptionOutput with empty praise_attributes and complaint_attributes -- verify __str__() handles gracefully
+### movie_ingestion/imdb_quality_scoring/imdb_quality_scorer.py
+**What changed:** Added two early-return guards to `compute_imdb_quality_score()`: (a) returns 0.0 if `imdb_title_type` is not in `ALLOWED_TITLE_TYPES` {"movie", "tvMovie", "short", "video"}, (b) returns 0.0 if the movie has no text sources (no plot_summaries, synopses, or featured_reviews). Added `ALLOWED_TITLE_TYPES` constant.
+**Current test coverage:** `unit_tests/test_imdb_quality_scorer.py`
+**Recommended tests:**
+- [ ] Test `compute_imdb_quality_score()` returns 0.0 for `imdb_title_type="tvSeries"` -- validates the title type filter rejects non-movie content
+- [ ] Test `compute_imdb_quality_score()` returns 0.0 for `imdb_title_type="videoGame"` -- validates another non-movie type
+- [ ] Test `compute_imdb_quality_score()` returns 0.0 for `imdb_title_type=None` -- None is not in ALLOWED_TITLE_TYPES
+- [ ] Test `compute_imdb_quality_score()` returns >0.0 for `imdb_title_type="movie"` with sufficient data -- validates allowed types pass through
+- [ ] Test `compute_imdb_quality_score()` returns >0.0 for each of "tvMovie", "short", "video" -- validates all allowed types
+- [ ] Test returns 0.0 when all text sources are empty (no plot_summaries, no synopses, no featured_reviews) but title type is valid -- validates the text source guard
+- [ ] Test returns >0.0 when only featured_reviews are present (no summaries/synopses) -- validates that any single text source is sufficient
+- [ ] Test returns >0.0 when only plot_summaries are present -- validates alternate text source
+- [ ] Verify `ALLOWED_TITLE_TYPES` contains exactly {"movie", "tvMovie", "short", "video"} -- guards against accidental changes
 
-### inputs.py
-**Changed behavior:** MovieInputData dataclass, build_user_prompt utility, MultiLineList, SkipAssessment, ConsolidatedInputs.
-**Existing coverage:** `test_metadata_inputs.py` -- comprehensive coverage of batch_id, title_with_year, defaults, build_user_prompt (basic, None skipping, lists, MultiLineList), merged_keywords, maturity_summary.
-**Gaps:**
-- [ ] build_user_prompt with integer values -- verify non-string scalars are formatted correctly
-- [ ] build_user_prompt field ordering -- verify kwargs order is preserved in output
-- [ ] MovieInputData.batch_id with different tmdb_id types (large int, 0)
-- [ ] MultiLineList inherits from list -- verify isinstance(MultiLineList([]), list) is True
+### movie_ingestion/metadata_generation/generators/plot_events.py
+**What changed:** Major refactor: (a) Renamed `build_plot_events_user_prompt()` to `build_plot_events_prompts()` which now returns `(user_prompt, system_prompt)` tuple. (b) Added two-branch logic: synopsis branch (>= 1000 chars) uses `SYSTEM_PROMPT_SYNOPSIS`, synthesis branch uses `SYSTEM_PROMPT_SYNTHESIS`. (c) Short synopses (< 1000 chars) are demoted into the summaries list as the first entry. (d) Removed default provider/model -- now required args. (e) Added `MIN_SYNOPSIS_CHARS = 1000` constant.
+**Current test coverage:** `unit_tests/test_plot_events_generator.py`
+**Recommended tests:**
+- [ ] Test `build_plot_events_prompts()` with a long synopsis (>= 1000 chars) returns `SYSTEM_PROMPT_SYNOPSIS` and includes "plot_synopsis" label in user prompt
+- [ ] Test `build_plot_events_prompts()` with a long synopsis does NOT include "plot_summaries" label in user prompt
+- [ ] Test `build_plot_events_prompts()` with no synopsis returns `SYSTEM_PROMPT_SYNTHESIS` and includes "plot_summaries" label
+- [ ] Test `build_plot_events_prompts()` with no synopsis does NOT include "plot_synopsis" label
+- [ ] Test `build_plot_events_prompts()` with a short synopsis (< 1000 chars) returns `SYSTEM_PROMPT_SYNTHESIS` and demotes the synopsis into plot_summaries
+- [ ] Test short synopsis demotion prepends to summaries list (appears first before existing summaries)
+- [ ] Test `build_plot_events_prompts()` with exactly 1000 chars synopsis selects synopsis branch -- boundary test for `>=`
+- [ ] Test `build_plot_events_prompts()` with exactly 999 chars synopsis selects synthesis branch -- boundary test
+- [ ] Test newline collapsing in synopsis -- `\n` characters should be replaced with spaces before length check and before inclusion
+- [ ] Test summaries capped at 3 entries in synthesis branch -- 4+ summaries should be truncated to 3 (before demotion prepend)
+- [ ] Test `generate_plot_events()` requires provider and model args (no defaults) -- call without them should raise TypeError
 
-### pre_consolidation.py
-**Changed behavior:** Keyword routing, maturity consolidation, 8 eligibility checks, skip condition orchestrator, run_pre_consolidation.
-**Existing coverage:** `test_pre_consolidation.py` -- thorough coverage of route_keywords, consolidate_maturity priority chain, all 8 check functions, assess_skip_conditions for both waves, run_pre_consolidation.
-**Gaps:**
-- [ ] _all_text_sources_sparse() -- boundary tests: overview exactly 10 chars (should pass), exactly 9 chars (should be sparse)
-- [ ] _all_text_sources_sparse() -- combined summaries exactly at 50 char threshold
-- [ ] _all_text_sources_sparse() -- multiple short synopses where each is < 50 chars but combined would be >= 50 (function checks each individually, not sum)
-- [ ] consolidate_maturity with multiple parental_guide_items -- verify comma-separated formatting
-- [ ] assess_skip_conditions Wave 2: verify that when plot_events_output is not None but reception_output IS None, review_insights_brief correctly becomes None
-- [ ] assess_skip_conditions Wave 2: verify that when reception_output is not None but plot_events_output IS None, plot_synopsis correctly becomes None
-- [ ] run_pre_consolidation -- verify merged_keywords uses normalized/deduped keywords (not raw)
-- [ ] check_reception: multiple reviews whose combined text is exactly at threshold (25 chars)
-- [ ] _check_source_of_inspiration: eligible via review_insights_brief alone (tested only for keywords and synopsis)
+### movie_ingestion/metadata_generation/generators/source_of_inspiration.py
+**What changed:** Removed `plot_synopsis` parameter from `build_source_of_inspiration_user_prompt()` and `generate_source_of_inspiration()` per ADR-033.
+**Current test coverage:** `unit_tests/test_source_of_inspiration_generator.py`
+**Recommended tests:**
+- [ ] Verify `build_source_of_inspiration_user_prompt()` does not accept `plot_synopsis` as a positional or keyword arg -- passing it should raise TypeError
+- [ ] Verify the user prompt does not contain a "plot_synopsis" section
+- [ ] Verify `generate_source_of_inspiration()` does not accept `plot_synopsis` -- same concern
 
-### errors.py
-**Changed behavior:** Two custom exception classes with structured attributes.
-**Existing coverage:** Tested indirectly via generator error path tests.
-**Gaps:**
-- [ ] MetadataGenerationError -- direct test: verify attributes (generation_type, title, cause) and message format
-- [ ] MetadataGenerationEmptyResponseError -- direct test: verify attributes and message format
-- [ ] Both exceptions inherit from Exception (not a custom base)
+### movie_ingestion/imdb_scraping/parsers.py
+**What changed:** (a) Fixed operator-precedence bug in 3 places: `edge.get("node") or {} if isinstance(edge, dict) else {}` corrected to `(edge.get("node") or {}) if isinstance(edge, dict) else {}`. (b) Added `imdb_title_type` extraction to `transform_graphql_response()`.
+**Current test coverage:** `unit_tests/test_imdb_parsers.py`
+**Recommended tests:**
+- [ ] Test `_extract_synopses_and_summaries()` with a non-dict edge element (e.g., None, int) -- validates the precedence fix prevents AttributeError
+- [ ] Test `_score_and_filter_keywords()` with a non-dict edge element -- same precedence fix
+- [ ] Test featured reviews extraction with non-dict edge element in the reviews edges list
+- [ ] Test `transform_graphql_response()` with `titleType: {"id": "movie"}` -- verifies `imdb_title_type` is extracted as "movie"
+- [ ] Test `transform_graphql_response()` with `titleType` absent -- verifies graceful fallback to None
+- [ ] Test `transform_graphql_response()` with `titleType: {"id": null}` -- verifies None handling
+- [ ] Test `transform_graphql_response()` with `titleType: {"id": "  tvSeries  "}` -- verifies stripping
 
-### generators/plot_events.py
-**Changed behavior:** build_plot_events_user_prompt (first synopsis only, newline collapse, summary cap at 3), generate_plot_events (Gemini defaults, _DEFAULT_KWARGS merge).
-**Existing coverage:** `test_plot_events_generator.py` -- good coverage: prompt building (synopsis selection, newline collapse, summary cap, empty fields), LLM delegation, return values, error paths.
-**Gaps:**
-- [ ] _DEFAULT_KWARGS merge: verify that caller-provided kwargs override defaults (e.g., temperature=0.5 overrides default 0.2)
-- [ ] _DEFAULT_KWARGS merge: verify that thinking_config default is present when no override
-- [ ] Prompt building: verify plot_summaries use MultiLineList format (dash-prefixed items)
-- [ ] Prompt building: verify plot_keywords are comma-separated (not dash-prefixed)
+### movie_ingestion/tracker.py
+**What changed:** (a) Added `imdb_title_type TEXT` column to `imdb_data` CREATE TABLE. (b) Added migration `ALTER TABLE imdb_data ADD COLUMN imdb_title_type TEXT`. (c) Added `"imdb_title_type"` as first entry in `IMDB_DATA_COLUMNS`. (d) Replaced an old migration with the new column migration.
+**Current test coverage:** `unit_tests/test_tracker.py`
+**Recommended tests:**
+- [ ] Verify `IMDB_DATA_COLUMNS[0]` is `"imdb_title_type"` -- ensures column order matches the CREATE TABLE definition
+- [ ] Verify `"imdb_title_type"` is NOT in `IMDB_JSON_COLUMNS` -- it's a scalar TEXT field, not a JSON array
+- [ ] Verify `serialize_imdb_movie()` includes `imdb_title_type` in the output tuple at the correct position (index 1, after tmdb_id)
+- [ ] Verify `deserialize_imdb_row()` passes `imdb_title_type` through as a plain string (not JSON-parsed)
+- [ ] Verify end-to-end: serialize then deserialize round-trips `imdb_title_type` correctly
 
-### generators/reception.py
-**Changed behavior:** _truncate_reviews, _format_attributes, build_reception_user_prompt (review formatting, newline collapse), generate_reception.
-**Existing coverage:** `test_reception_generator.py` -- comprehensive: truncation logic, attribute formatting, prompt building, LLM delegation, error paths.
-**Gaps:**
-- [ ] _truncate_reviews: single review exactly at char limit -- verify it is included
-- [ ] build_reception_user_prompt: verify empty reception_summary string ("") is treated as None (omitted)
-- [ ] generate_reception: does NOT have system_prompt/response_format override params (unlike Wave 2 generators) -- verify the hardcoded system_prompt and response_format are used
+### movie_ingestion/imdb_scraping/models.py
+**What changed:** Added `imdb_title_type: Optional[str] = None` field to `IMDBScrapedMovie`.
+**Current test coverage:** `unit_tests/test_imdb_parsers.py` (indirect)
+**Recommended tests:**
+- [ ] Verify `IMDBScrapedMovie` defaults `imdb_title_type` to None when not provided -- backwards compatibility
+- [ ] Verify `IMDBScrapedMovie(imdb_title_type="movie")` sets the field correctly
 
-### generators/plot_analysis.py
-**Changed behavior:** build_plot_analysis_user_prompt (uses merged_keywords not plot_keywords), generate_plot_analysis (supports system_prompt and response_format override).
-**Existing coverage:** `test_plot_analysis_generator.py` -- covers prompt building, LLM delegation, kwargs, error paths.
-**Gaps:**
-- [ ] Prompt uses merged_keywords (not plot_keywords) -- the test checks "plot_keywords" label but the actual prompt uses "merged_keywords" label. Verify the test is correct or stale.
-- [ ] system_prompt override -- verify custom system_prompt is forwarded to LLM
-- [ ] response_format override -- verify custom response_format (e.g., PlotAnalysisWithJustificationsOutput) is forwarded
+### movie_ingestion/imdb_scraping/http_client.py
+**What changed:** Added `titleType { id }` to the `_GRAPHQL_QUERY` string.
+**Current test coverage:** `unit_tests/test_imdb_http_client.py`
+**Recommended tests:**
+- [ ] Verify `_GRAPHQL_QUERY` contains `titleType` -- simple assertion on the constant to prevent accidental removal
 
-### generators/viewer_experience.py
-**Changed behavior:** build_viewer_experience_user_prompt (includes maturity_summary), generate_viewer_experience (system_prompt/response_format override).
-**Existing coverage:** `test_viewer_experience_generator.py` -- covers prompt fields, LLM delegation, error paths.
-**Gaps:**
-- [ ] Prompt includes maturity_summary -- verify it appears in the prompt when available
-- [ ] Prompt omits maturity_summary when None -- verify it is excluded
-- [ ] system_prompt override -- verify custom system_prompt is forwarded
-- [ ] response_format override -- verify custom response_format is forwarded
+### movie_ingestion/metadata_generation/pre_consolidation.py
+**What changed:** Removed `plot_synopsis` parameter from `_check_source_of_inspiration()`. Updated `assess_skip_conditions()` to match the new signature.
+**Current test coverage:** `unit_tests/test_pre_consolidation.py`
+**Recommended tests:**
+- [ ] Test `_check_source_of_inspiration()` returns None when only `merged_keywords` is provided
+- [ ] Test `_check_source_of_inspiration()` returns None when only `review_insights_brief` is provided
+- [ ] Test `_check_source_of_inspiration()` returns skip reason string when both are empty/None
+- [ ] Test `assess_skip_conditions()` Wave 2 path correctly forwards to updated `_check_source_of_inspiration` without plot_synopsis
 
-### generators/watch_context.py
-**Changed behavior:** No plot_synopsis parameter, includes maturity_summary, system_prompt/response_format override.
-**Existing coverage:** `test_watch_context_generator.py` -- covers prompt fields, no-plot-info constraint, LLM delegation, error paths.
-**Gaps:**
-- [ ] Stale test: `test_default_reasoning_effort_is_medium` (line 138-149) asserts `reasoning_effort == "medium"` but the generator does NOT define _DEFAULT_KWARGS and does NOT inject reasoning_effort. This test may be checking behavior that was intended but not implemented. **Needs investigation.**
-- [ ] system_prompt override -- verify custom system_prompt is forwarded
-- [ ] response_format override -- verify custom response_format is forwarded
-- [ ] SYSTEM_PROMPT_WITH_JUSTIFICATIONS is imported and re-exported -- verify import does not fail
+### movie_ingestion/metadata_generation/schemas.py
+**What changed:** Simplified field descriptions on `MajorCharacter` and `PlotEventsOutput` to minimal text (behavioral instructions moved to branch-specific system prompts per ADR-033).
+**Current test coverage:** `unit_tests/test_metadata_schemas.py`
+**Recommended tests:**
+- [ ] Verify `PlotEventsOutput.__str__()` still produces expected format -- ensures simplified descriptions didn't break embedding text
+- [ ] Verify `MajorCharacter.__str__()` still produces expected format
+- [ ] Verify `PlotEventsOutput` schema validates with minimal valid data -- `constr(min_length=1)` constraints intact
 
-### generators/narrative_techniques.py
-**Changed behavior:** Uses overall_keywords (not merged_keywords), system_prompt/response_format override.
-**Existing coverage:** `test_narrative_techniques_generator.py`
-**Gaps:**
-- [ ] Verify prompt uses overall_keywords (not merged_keywords or plot_keywords)
-- [ ] system_prompt override -- verify custom system_prompt is forwarded
-- [ ] response_format override -- verify custom response_format is forwarded
+### movie_ingestion/metadata_generation/prompts/plot_events.py
+**What changed:** Added `SYSTEM_PROMPT_SYNOPSIS` (condensation task) and `SYSTEM_PROMPT_SYNTHESIS` (consolidation task with strict no-hallucination framing). Legacy prompts kept for backwards compatibility.
+**Current test coverage:** Indirectly via `unit_tests/test_plot_events_generator.py`
+**Recommended tests:**
+- [ ] Verify `SYSTEM_PROMPT_SYNOPSIS` is non-empty and contains "condense" or "condensation" -- basic sanity
+- [ ] Verify `SYSTEM_PROMPT_SYNTHESIS` is non-empty and contains "consolidat" -- basic sanity
+- [ ] Verify `SYSTEM_PROMPT_SYNOPSIS` mentions plot_synopsis as PRIMARY source
+- [ ] Verify `SYSTEM_PROMPT_SYNTHESIS` contains anti-hallucination constraint ("no knowledge of any film" or similar)
 
-### generators/production_keywords.py
-**Changed behavior:** Simplest generator -- only title + merged_keywords, no Wave 1 outputs.
-**Existing coverage:** `test_production_keywords_generator.py`
-**Gaps:**
-- [ ] Verify prompt includes only title and merged_keywords (no other fields)
-- [ ] Verify prompt omits merged_keywords when empty
+### movie_ingestion/metadata_generation/prompts/source_of_inspiration.py
+**What changed:** Added `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` variant. Updated preamble to describe `review_insights_brief` and document ADR-033 removal of plot_synopsis.
+**Current test coverage:** Indirectly via `unit_tests/test_source_of_inspiration_generator.py`
+**Recommended tests:**
+- [ ] Verify `SYSTEM_PROMPT` does not mention "justification" in the OUTPUT section
+- [ ] Verify `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` mentions "justification" in the OUTPUT section
+- [ ] Verify both prompts contain the parametric knowledge allowance text
 
-### generators/source_of_inspiration.py
-**Changed behavior:** Uses merged_keywords + plot_synopsis + review_insights_brief.
-**Existing coverage:** `test_source_of_inspiration_generator.py`
-**Gaps:**
-- [ ] system_prompt override -- verify custom system_prompt is forwarded
-- [ ] response_format override -- verify custom response_format is forwarded
-- [ ] Verify no genres field in prompt (source_of_inspiration does not use genres)
+### implementation/llms/generic_methods.py
+**What changed:** Added `**kwargs` passthrough to `generate_openai_response()` and `generate_openai_response_async()`.
+**Current test coverage:** `unit_tests/test_generic_methods.py`
+**Recommended tests:**
+- [ ] Verify `generate_openai_response()` forwards extra kwargs (e.g., `max_completion_tokens=500`) to the underlying API call
+- [ ] Verify `generate_openai_response_async()` forwards extra kwargs similarly
 
-### wave1_runner.py
-**Changed behavior:** SQLite table creation, generate_and_store for plot_events and reception, get_wave1_results fetch helper, idempotent re-runs.
-**Existing coverage:** No test file exists.
-**Gaps:**
-- [ ] init_wave1_table: creates table, is idempotent (call twice without error)
-- [ ] generate_and_store_plot_events: skips movies already in DB (idempotent)
-- [ ] generate_and_store_plot_events: stores JSON result in correct column
-- [ ] generate_and_store_plot_events: handles LLM failures gracefully (failed movies not stored)
-- [ ] generate_and_store_plot_events: skips ineligible movies via check_plot_events
-- [ ] generate_and_store_plot_events: empty input dict returns early
-- [ ] generate_and_store_reception: same set of tests as plot_events above
-- [ ] get_wave1_results: returns deserialized PlotEventsOutput and ReceptionOutput
-- [ ] get_wave1_results: handles NULL columns (returns None in dict)
-- [ ] get_wave1_results: omits movies not in table from result dict
-- [ ] get_wave1_results: empty tmdb_ids list returns empty dict
+### movie_ingestion/metadata_generation/evaluations/run_evaluations_pipeline.py
+**What changed:** Added branch filtering (`--branch synopsis|synthesis`). Added `_filter_plot_events_eligible()` function. Updated imports.
+**Current test coverage:** `unit_tests/test_eval_run_pipeline.py`
+**Recommended tests:**
+- [ ] Test `_filter_plot_events_eligible()` with `branch="synopsis"` skips movies without synopsis
+- [ ] Test `_filter_plot_events_eligible()` with `branch="synthesis"` skips movies with synopsis
+- [ ] Test `_filter_plot_events_eligible()` with `branch=None` includes all eligible movies
+- [ ] Test `_filter_plot_events_eligible()` respects `check_plot_events()` eligibility before branch filtering
 
-### implementation/llms/generic_methods.py (WHAM provider)
-**Changed behavior:** Added LLMProvider.WHAM enum value, generate_wham_response_async function.
-**Existing coverage:** No tests for WHAM provider.
-**Gaps:**
-- [ ] LLMProvider.WHAM enum value exists
-- [ ] generate_wham_response_async: raises ValueError when api_key is None
-- [ ] generate_wham_response_async: raises ValueError when account_id is None
-- [ ] generate_wham_response_async: strips max_tokens, max_output_tokens, temperature from kwargs
-- [ ] generate_wham_response_async: constructs correct base_url and headers
-- [ ] generate_wham_response_async: forwards reasoning_effort correctly
-- [ ] generate_llm_response_async routing: LLMProvider.WHAM dispatches to generate_wham_response_async
+### movie_ingestion/metadata_generation/evaluations/plot_events.py
+**What changed:** Updated evaluation candidates to use the new two-branch design.
+**Current test coverage:** `unit_tests/test_eval_plot_events.py`
+**Recommended tests:**
+- [ ] Verify `PLOT_EVENTS_CANDIDATES` is non-empty and each candidate has expected attributes
 
 ## Stale Tests
 
-1. **`test_watch_context_generator.py::TestGenerateWatchContext::test_default_reasoning_effort_is_medium`** -- This test asserts that `reasoning_effort == "medium"` appears in the LLM call kwargs by default. However, `generate_watch_context` does NOT define `_DEFAULT_KWARGS` and does NOT inject reasoning_effort. The test may be checking for behavior that was intended but not implemented, or may rely on a caller convention. Needs investigation.
+The following existing tests are likely broken or need updating:
 
-2. **`test_plot_analysis_generator.py::TestBuildPlotAnalysisUserPrompt::test_includes_plot_keywords`** -- The test checks for `plot_keywords` label but `build_plot_analysis_user_prompt` passes `merged_keywords=movie.merged_keywords()` to `build_user_prompt`. The label in the output will be "merged_keywords", not "plot_keywords". This test may be asserting the wrong field name. Needs investigation.
+1. **`test_plot_events_generator.py`** -- **WILL BREAK.** Function renamed from `build_plot_events_user_prompt()` to `build_plot_events_prompts()` with different return type (tuple vs string). Default provider/model removed from `generate_plot_events()`. All tests calling the old API will fail.
 
-## Priority
+2. **`test_source_of_inspiration_generator.py`** -- **WILL BREAK.** Tests calling `build_source_of_inspiration_user_prompt(movie, plot_synopsis, ...)` or `generate_source_of_inspiration(movie, plot_synopsis=..., ...)` will get TypeError since `plot_synopsis` parameter was removed.
 
-### Critical (correctness of core pipeline)
-1. **wave1_runner.py** -- zero test coverage for SQLite persistence, idempotent re-runs, and the fetch helper that Wave 2 evaluation depends on
-2. **Stale test investigation** -- watch_context reasoning_effort and plot_analysis keyword label tests may be silently passing with wrong assertions or failing
+3. **`test_pre_consolidation.py`** -- **WILL BREAK.** Tests for `_check_source_of_inspiration()` that pass `plot_synopsis` as an argument will fail. Tests for `assess_skip_conditions()` Wave 2 path may also need updating if they verify the skip reason string (changed from "No keywords, review insights, or plot synopsis available" to "No keywords or review insights available").
 
-### High (schema correctness for embedding)
-3. **PlotEventsOutput.__str__()** and **MajorCharacter.__str__()** -- these directly affect vector embeddings
-4. **Schema constraint validation** -- conlist min_length/max_length enforcement on PlotAnalysisOutput
-5. **Empty list edge cases** in __str__() methods across all schemas
+4. **`test_imdb_quality_scorer.py`** -- **SILENT FAILURES.** Existing test fixtures that construct `MovieContext` without `imdb_title_type` in the imdb dict will now hit the early-return guard (None not in ALLOWED_TITLE_TYPES) and return 0.0. Tests that assert specific non-zero scores will fail; tests that only assert score > 0 will also fail. All test fixtures need `"imdb_title_type": "movie"` added to the imdb dict. Tests also need `"plot_summaries"`, `"synopses"`, or `"featured_reviews"` to be non-empty to pass the second guard.
 
-### Medium (generator robustness)
-6. **system_prompt/response_format override** tests across Wave 2 generators -- needed for evaluation pipeline
-7. **_DEFAULT_KWARGS merge** behavior in plot_events generator
-8. **errors.py** direct tests
+5. **`test_imdb_parsers.py`** -- **MAY BREAK.** Tests that assert the exact fields of `transform_graphql_response()` output need to expect `imdb_title_type` in the result. Tests using real-ish GraphQL response fixtures need `titleType` in the input.
 
-### Low (defense in depth)
-9. **WHAM provider** tests in generic_methods.py
-10. **build_user_prompt** edge cases (integer values, field ordering)
-11. **MultiLineList** isinstance checks
+6. **`test_tracker.py`** -- **MAY BREAK.** Tests that verify `IMDB_DATA_COLUMNS` length or exact content, or that verify `serialize_imdb_movie()` tuple length/content, will break since a new column was added at the beginning.
+
+7. **`test_eval_run_pipeline.py`** -- **MAY BREAK.** Imports or function references may be stale if they reference the old API.
+
+## Priority Order
+
+1. **`test_imdb_quality_scorer.py` fixture updates + new guard tests** -- Highest risk: silent score changes break all existing scorer tests. Every existing fixture needs `imdb_title_type` and text source data added. Then add new tests for both early-return guards.
+2. **`test_plot_events_generator.py` rewrite** -- All tests broken by rename and signature change. Rewrite to test two-branch `build_plot_events_prompts()` with boundary cases (999/1000 chars, demotion, newline collapsing).
+3. **`test_source_of_inspiration_generator.py` update** -- Remove `plot_synopsis` from all test calls. Verify prompt no longer includes plot_synopsis section.
+4. **`test_pre_consolidation.py` update** -- Remove `plot_synopsis` from `_check_source_of_inspiration` tests. Update skip reason string assertions.
+5. **`test_imdb_parsers.py` update** -- Add `imdb_title_type` to transform tests. Add non-dict edge element tests for precedence fix validation.
+6. **`test_tracker.py` update** -- Update column list assertions and serialization tuple assertions for new `imdb_title_type` column.
+7. **`test_generic_methods.py`** -- Add kwargs passthrough verification for both sync and async OpenAI functions.
+8. **`test_metadata_schemas.py`** -- Verify `__str__()` methods still produce expected output after description simplification.
+9. **`test_eval_run_pipeline.py`** -- Add tests for `_filter_plot_events_eligible()` branch filtering.
+10. **Prompt constant tests** -- Verify new `SYSTEM_PROMPT_SYNOPSIS` / `SYSTEM_PROMPT_SYNTHESIS` / `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` exist and contain expected keywords.

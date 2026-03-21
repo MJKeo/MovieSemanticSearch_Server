@@ -120,7 +120,7 @@ class TestScrapeAll:
         mocker.patch(
             "movie_ingestion.imdb_scraping.run.process_movie",
             new_callable=AsyncMock,
-            return_value=MovieResult(1, "scraped", None),
+            return_value=MovieResult(1, "scraped", None, {"original_title": "Test"}),
         )
         mocker.patch("movie_ingestion.imdb_scraping.run.batch_log_filter")
 
@@ -137,7 +137,7 @@ class TestScrapeAll:
         mocker.patch(
             "movie_ingestion.imdb_scraping.run.process_movie",
             new_callable=AsyncMock,
-            return_value=MovieResult(100, "scraped", None),
+            return_value=MovieResult(100, "scraped", None, {"original_title": "Test"}),
         )
         mocker.patch("movie_ingestion.imdb_scraping.run.batch_log_filter")
 
@@ -160,7 +160,7 @@ class TestScrapeAll:
         mocker.patch(
             "movie_ingestion.imdb_scraping.run.process_movie",
             new_callable=AsyncMock,
-            return_value=MovieResult(100, "filtered", "imdb_404"),
+            return_value=MovieResult(100, "filtered", "imdb_404", None),
         )
         blf_mock = mocker.patch("movie_ingestion.imdb_scraping.run.batch_log_filter")
 
@@ -181,7 +181,7 @@ class TestScrapeAll:
         mocker.patch(
             "movie_ingestion.imdb_scraping.run.process_movie",
             new_callable=AsyncMock,
-            return_value=MovieResult(100, "error", None),
+            return_value=MovieResult(100, "error", None, None),
         )
         mocker.patch("movie_ingestion.imdb_scraping.run.batch_log_filter")
 
@@ -230,7 +230,7 @@ class TestScrapeAll:
         mocker.patch(
             "movie_ingestion.imdb_scraping.run.process_movie",
             new_callable=AsyncMock,
-            return_value=MovieResult(1, "scraped", None),
+            return_value=MovieResult(1, "scraped", None, {"original_title": "Test"}),
         )
         mocker.patch("movie_ingestion.imdb_scraping.run.batch_log_filter")
 
@@ -249,7 +249,7 @@ class TestScrapeAll:
         mocker.patch(
             "movie_ingestion.imdb_scraping.run.process_movie",
             new_callable=AsyncMock,
-            return_value=MovieResult(1, "scraped", None),
+            return_value=MovieResult(1, "scraped", None, {"original_title": "Test"}),
         )
         mocker.patch("movie_ingestion.imdb_scraping.run.batch_log_filter")
 

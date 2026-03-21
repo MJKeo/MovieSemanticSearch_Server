@@ -135,8 +135,8 @@ class TestGenerateWatchContext:
         assert parsed is expected
         assert isinstance(token_usage, TokenUsage)
 
-    async def test_default_reasoning_effort_is_medium(self):
-        """Watch context uses reasoning_effort='medium' by default."""
+    async def test_no_default_reasoning_effort_injected(self):
+        """No default reasoning_effort is injected when caller doesn't provide one."""
         mock_fn = AsyncMock(return_value=(_make_wc_output(), 100, 50))
         movie = _make_movie()
 
@@ -146,7 +146,7 @@ class TestGenerateWatchContext:
             )
 
         call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["reasoning_effort"] == "medium"
+        assert "reasoning_effort" not in call_kwargs
 
 
 # ---------------------------------------------------------------------------

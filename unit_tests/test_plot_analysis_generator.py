@@ -86,10 +86,10 @@ class TestBuildPlotAnalysisUserPrompt:
         result = build_plot_analysis_user_prompt(movie, "A detailed synopsis.", None)
         assert "plot_synopsis: A detailed synopsis." in result
 
-    def test_includes_plot_keywords(self):
+    def test_includes_merged_keywords(self):
         movie = _make_movie(plot_keywords=["hacker", "simulation"])
         result = build_plot_analysis_user_prompt(movie, None, None)
-        assert "plot_keywords: hacker, simulation" in result
+        assert "merged_keywords: hacker, simulation" in result
 
     def test_includes_review_insights_brief(self):
         movie = _make_movie()
@@ -111,10 +111,10 @@ class TestBuildPlotAnalysisUserPrompt:
         result = build_plot_analysis_user_prompt(movie, None, None)
         assert "genres" not in result
 
-    def test_omits_empty_plot_keywords(self):
-        movie = _make_movie(plot_keywords=[])
+    def test_omits_empty_merged_keywords(self):
+        movie = _make_movie(plot_keywords=[], overall_keywords=[])
         result = build_plot_analysis_user_prompt(movie, None, None)
-        assert "plot_keywords" not in result
+        assert "merged_keywords" not in result
 
     def test_minimal_inputs(self):
         """Only title present; all other fields None/empty."""
@@ -159,8 +159,8 @@ class TestGeneratePlotAnalysis:
         assert call_kwargs["model"] == "gemini-2.5-flash"
         assert call_kwargs["response_format"] is PlotAnalysisOutput
 
-    async def test_merges_default_kwargs_with_overrides(self):
-        """Default reasoning_effort='low' is present when no override."""
+    async def test_no_default_reasoning_effort_injected(self):
+        """No default reasoning_effort is injected when caller doesn't provide one."""
         mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
         movie = _make_movie()
 
@@ -170,7 +170,7 @@ class TestGeneratePlotAnalysis:
             )
 
         call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["reasoning_effort"] == "low"
+        assert "reasoning_effort" not in call_kwargs
 
     async def test_override_replaces_default_kwarg(self):
         mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))

@@ -584,16 +584,16 @@ class TestMajorCharacter:
         )
         assert str(mc) == "Trinity: a skilled rebel fighter Motivations: Protect Neo at all costs."
 
-    def test_major_character_extra_forbid(self):
-        """MajorCharacter rejects extra fields."""
-        with pytest.raises(ValidationError):
-            MajorCharacter(
-                name="Neo",
-                description="a hacker",
-                role="protagonist",
-                primary_motivations="Find the truth.",
-                extra_field="not allowed",
-            )
+    def test_major_character_accepts_extra_fields(self):
+        """MajorCharacter allows extra fields (no extra='forbid')."""
+        mc = MajorCharacter(
+            name="Neo",
+            description="a hacker",
+            role="protagonist",
+            primary_motivations="Find the truth.",
+            extra_field="allowed",
+        )
+        assert mc.name == "Neo"
 
 
 # ---------------------------------------------------------------------------

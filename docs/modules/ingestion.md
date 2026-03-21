@@ -26,13 +26,13 @@ this module.
 | `tmdb_quality_scoring/plot_tmdb_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 3 scores. Plots both all-movies and no-provider-only populations using `survival_curve_utils`. |
 | `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch. HTTP fetching and DB writes are separated — async tasks return result NamedTuples, all DB writes happen via `executemany` after each batch. |
 | `imdb_scraping/scraper.py` | Per-movie: fetch GraphQL → transform → return result dict (does not write to DB). `MovieResult.data` is `dict | None` (not a JSON string). |
-| `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, random UA rotation. |
-| `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer. |
-| `imdb_scraping/models.py` | Pydantic models for IMDB scraped data. |
+| `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, random UA rotation. Fetches `titleType { id }` as part of the standard query. |
+| `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer. Extracts `imdb_title_type`, `plot_summaries` (always extracted independently from synopses), and `plot_keywords` (floor 10, cap 15). |
+| `imdb_scraping/models.py` | Pydantic models for IMDB scraped data. `IMDBScrapedMovie` includes `imdb_title_type: str | None`. |
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. Bulk-queries `imdb_data` table. |
 | `imdb_scraping/reconcile_cached.py` | Advances `tmdb_quality_passed` movies to `imdb_scraped` when their IMDB data already exists in the `imdb_data` table — recovers from runs that wrote data but crashed before committing the status update. |
 | `imdb_scraping/migrate_json_to_sqlite.py` | One-off migration script: reads per-movie JSON files from `ingestion_data/imdb/` and inserts rows into the `imdb_data` table via `serialize_imdb_movie()`. |
-| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5 scorer: 8-signal combined TMDB+IMDB quality scorer (v4). No hard filters — score is the sole filtering mechanism. Advances `imdb_scraped` → `imdb_quality_calculated`. |
+| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5 scorer: two hard gates (title-type, missing-text) + 8-signal combined TMDB+IMDB quality scorer (v4). See ADR-037. Advances `imdb_scraped` → `imdb_quality_calculated`. |
 | `imdb_quality_scoring/imdb_filter.py` | Stage 5 filter: applies per-group quality-score thresholds from `scoring_utils.IMDB_QUALITY_THRESHOLDS`. Advances `imdb_quality_calculated` → `imdb_quality_passed` (or `filtered_out`). |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data, split into 3 groups matching the Stage 5 threshold groups (has_providers, recent_no_providers, old_no_providers). Produces `imdb_data_analysis_{group}.json` output files. |
 | `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores across 3 groups (with providers, no providers recent, no providers old). Thin wrapper around `survival_curve_utils`. |
@@ -44,17 +44,17 @@ this module.
 | `metadata_generation/batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status, download. No movie/generation knowledge. |
 | `metadata_generation/result_processor.py` | Parses downloaded result JSONL, routes to generators, stores in `metadata_results`. Auto-submits Wave 2 after Wave 1 processing. |
 | `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()` (deduplicated union of plot + overall keywords) and `maturity_summary()` (delegates to `pre_consolidation.consolidate_maturity()`). Contract between SQLite loading and pre-consolidation. |
-| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
-| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. |
+| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` and `MajorCharacter` use minimal neutral field descriptions — behavioral instructions live in branch-specific prompts, not the schema (see ADR-036). `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
+| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. `source_of_inspiration` skip check uses only `merged_keywords` and `review_insights_brief` (no `plot_synopsis`). |
 | `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
-| `metadata_generation/generators/` | 8 generator files (one per generation type). All fully implemented as real-time async callers. `plot_events.py`: Gemini 2.5 Flash Lite + `SYSTEM_PROMPT_SHORT` + 1k thinking budget (evaluation winner). All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
-| `metadata_generation/evaluations/` | Reference-free pointwise evaluation pipeline for comparing LLM candidates before production commits. See ADR-028. |
+| `metadata_generation/generators/` | 8 generator files (one per generation type). All fully implemented as real-time async callers. `plot_events.py`: two-branch generation (synopsis condensation vs. synthesis) — see Stage 6 section. All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
+| `metadata_generation/evaluations/` | Reference-free pointwise evaluation pipeline for comparing LLM candidates before production commits. See ADR-028, ADR-034. |
 | `metadata_generation/evaluations/shared.py` | `EvaluationCandidate` frozen dataclass, `EVALUATION_TEST_SET_TMDB_IDS` and subset lists (`ORIGINAL_SET_TMDB_IDS`, `MEDIUM_SPARSITY_TMDB_IDS`, `HIGH_SPARSITY_TMDB_IDS`) — 70 movies stratified by sparsity, `get_eval_connection()`, `create_candidates_table()`, `store_candidate()`, `load_movie_input_data()`, `compute_score_summary()` (supports `score_weights` for weighted overall_mean). |
-| `metadata_generation/evaluations/plot_events.py` | Reference-free candidate evaluation (candidate generation + Opus 4.6 judge scoring, 3-run averaged with prompt caching) + `PLOT_EVENTS_CANDIDATES` list. 4-dimension judge rubric: groundedness, plot_summary, character_quality, setting. |
-| `metadata_generation/evaluations/openai_oauth.py` | ChatGPT OAuth2 PKCE token lifecycle: browser consent, JWT decode for account_id/expiry, token persistence to `evaluation_data/openai_oauth_tokens.json`, auto-refresh. `get_valid_auth()` is the sole entry point for WHAM callers. |
-| `metadata_generation/evaluations/run_evaluations_pipeline.py` | CLI entry point: loads 70-movie corpus, filters ineligible movies via `check_plot_events`, runs candidate evaluation. |
+| `metadata_generation/evaluations/plot_events.py` | Reference-free candidate evaluation (candidate generation + Opus 4.6 judge scoring, 2-run sequential with prompt caching) + `PLOT_EVENTS_CANDIDATES` list. 4-dimension judge rubric: groundedness, plot_summary, character_quality, setting. Accepts `--branch synopsis\|synthesis` flag to filter test corpus by branch. |
+| `metadata_generation/evaluations/openai_oauth.py` | ChatGPT OAuth2 PKCE token lifecycle: browser consent, JWT decode for account_id/expiry, token persistence to `evaluation_data/openai_oauth_tokens.json`, auto-refresh. `get_valid_auth()` is the sole entry point for WHAM callers. (WHAM is no longer used by the plot_events evaluator — retained for any future WHAM callers.) |
+| `metadata_generation/evaluations/run_evaluations_pipeline.py` | CLI entry point: loads 70-movie corpus, filters ineligible movies via `check_plot_events`, runs candidate evaluation. Accepts `--branch synopsis\|synthesis` flag. |
 | `metadata_generation/evaluations/analyze_results.py` | Read-only analysis: merges scores + token counts + model pricing into quality and cost tables. Value ranking table shows separate dense/sparse cost/1K columns (dense = ORIGINAL_SET movies, sparse = MEDIUM+HIGH_SPARSITY). Run via `python -m movie_ingestion.metadata_generation.evaluations.analyze_results`. |
-| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant; Wave 2 generators also export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. |
+| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant; Wave 2 generators also export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
@@ -115,11 +115,18 @@ DataImpulse residential proxies with US geo-targeting.
 producers, composers), keywords (with community vote scoring),
 synopses/plot summaries, parental guide, featured reviews,
 maturity rating, reception data, filming locations, budget,
-languages, countries, production companies.
+languages, countries, production companies, and `imdb_title_type`
+(IMDB's `titleType.id` — e.g. "movie", "videoGame", "tvSeries").
 
 **Keyword scoring formula**: `score = usersInterested - 0.75 * dislikes`.
 Dynamic threshold: `min(0.75 * N, N - 2)` where N = top keyword score.
-Floor of 5, cap of 15 keywords per movie.
+Floor of 10, cap of 15 keywords per movie (`_MIN_PLOT_KEYWORDS = 10`,
+`_MAX_PLOT_KEYWORDS = 15`).
+
+**plot_summaries extraction**: Always extracted independently of synopses.
+Previously, plot_summaries were discarded when a synopsis was present;
+now both are extracted since they serve different downstream purposes
+(synopses go to the condensation branch; summaries serve as fallback).
 
 **Output**: Stored in `imdb_data` table in tracker.db (see ADR-023).
 Previously per-movie JSON files at `ingestion_data/imdb/{tmdb_id}.json`;
@@ -148,9 +155,13 @@ Stage 5 computes a combined TMDB+IMDB quality score for every
 overlapping fields. See ADR-019 for the v2 redesign decisions,
 ADR-021 for the v4 notability signal change.
 
-**No hard filters.** The quality score is the sole filtering mechanism.
-Movies with missing IMDB data in the `imdb_data` table are skipped
-(status unchanged).
+**Two hard gates (early return 0.0 before signal computation)**:
+1. **Title-type gate**: `ALLOWED_TITLE_TYPES = {"movie", "tvMovie", "short", "video"}`. Movies whose `imdb_title_type` is not in this set (including None) score 0.0. Catches tvSeries, tvEpisode, videoGame, etc. that passed TMDB's classification. See ADR-037.
+2. **Missing-text gate**: Movies with no `plot_summaries`, no `synopses`, AND no `featured_reviews` score 0.0. Without any text source, LLM metadata generation cannot produce meaningful vector space content.
+
+**No other hard filters.** After the two gates, the quality score is the
+sole filtering mechanism. Movies with missing IMDB data in the `imdb_data`
+table are skipped (status unchanged).
 
 The score answers two questions: (1) is this movie relevant — would
 users search for it or choose it? (2) is the data sufficient for
@@ -254,7 +265,8 @@ binary (IMDB/TMDB fallback). Filming_locations removed.
 
 ### Changes from v1
 
-- Removed all 10 hard filters — score is the sole filter
+- Removed all 10 hard filters — score is the sole filter (supplemented
+  by the two hard gates added for title-type and missing-text, ADR-037)
 - Removed `watch_providers` signal (0.20) — handled by per-group thresholds
 - Removed `metacritic_rating` signal (0.04) — folded into `critical_attention`
 - Added `critical_attention` (0.12) and `community_engagement` (0.08)
@@ -337,6 +349,42 @@ interface; alignment is pending. See ADR-026, ADR-027.
 **Status progression**: `imdb_quality_passed` → `phase1_complete`
 (after Wave 1) → `phase2_complete` (after Wave 2).
 
+### plot_events Generator: Two-Branch Design
+
+The plot_events generator branches on synopsis presence and quality.
+See ADR-033 for the full design rationale.
+
+**`build_plot_events_prompts(movie)` returns `(user_prompt, system_prompt)`.**
+All branching logic is contained here; callers do not need to know about
+the branching.
+
+**Branch A — synopsis condensation** (`MIN_SYNOPSIS_CHARS = 1000`):
+When a synopsis exists and is ≥ 1,000 chars, route to condensation.
+Inputs: synopsis + overview + plot_keywords. System prompt:
+`SYSTEM_PROMPT_SYNOPSIS` (frames task as abbreviation of a rich source).
+
+**Synopsis quality gate**: When a synopsis exists but is under 1,000 chars
+(consistently non-plot text in practice), demote it into the summaries
+list and route to Branch B instead. Prevents condensation branch (which
+prohibits model knowledge) from fabricating content from an inadequate
+source.
+
+**Branch B — synthesis/consolidation**: When no synopsis (or thin synopsis
+demoted above). Inputs: summaries (first 3) + overview + plot_keywords.
+System prompt: `SYSTEM_PROMPT_SYNTHESIS` — frames task as text
+consolidation, not narrative creation. Model is told it "has no knowledge
+of any film" to eliminate the self-assessment problem that allowed
+parametric knowledge to undermine anti-fabrication guardrails.
+Output: 4K token soft cap + `max_tokens=5000` hard safety net.
+See ADR-035.
+
+**Provider default**: OpenAI `gpt-5-mini`. (Gemini cannot be the default
+because it requires `max_output_tokens` not `max_tokens`; the generic
+router does not normalize this parameter.)
+
+**`source_of_inspiration` no longer receives `plot_synopsis`**: Saves
+~83.6M input tokens. Keywords + reviews + title are sufficient.
+
 ### Pre-consolidation (pre_consolidation.py)
 
 Pure data processing before any LLM calls. Called by
@@ -379,11 +427,13 @@ Key skip thresholds:
 - Wave 2 checks require `plot_synopsis` or `review_insights_brief`
   as primary fallback paths; many have secondary fallbacks via
   genre/keyword/maturity data
+- `source_of_inspiration` check requires only `merged_keywords` or
+  `review_insights_brief` (no `plot_synopsis` dependency)
 
 ### Output schemas (schemas.py)
 
 Pydantic `BaseModel` schemas for each generation. Key design decisions
-(see ADR-025):
+(see ADR-025, ADR-036):
 
 - **Base variants have justification fields removed** from all section
   models. The existing `implementation/classes/schemas.py` schemas (used
@@ -396,6 +446,13 @@ Pydantic `BaseModel` schemas for each generation. Key design decisions
   `TermsSection`) is the shared sub-model for these variants. The
   `__str__()` of each `WithJustificationsOutput` produces identical
   embedding text to its base variant — this invariant is tested.
+- **`PlotEventsOutput` and `MajorCharacter` use minimal neutral field
+  descriptions** ("Chronological plot summary.", "Character name.", etc.).
+  Behavioral instructions — what the model should do with each field —
+  live in the branch-specific system prompts (SYSTEM_PROMPT_SYNOPSIS
+  and SYSTEM_PROMPT_SYNTHESIS), not the schema. This prevents schema
+  field descriptions from competing with prompt-level constraints.
+  See ADR-036.
 - **`review_insights_brief`** (on `ReceptionOutput`) is a ~150-250 token
   dense paragraph extracted from reviews. It is an intermediate output:
   stored as a scalar column in `metadata_results`, consumed by Wave 2
@@ -411,18 +468,32 @@ Pydantic `BaseModel` schemas for each generation. Key design decisions
 
 Before committing to a model/provider for any generation type, the
 evaluation pipeline runs systematic side-by-side comparisons across
-candidates. See ADR-028 for design decisions.
+candidates. See ADR-028 for the overall design, ADR-034 for the
+current reference-free approach.
 
-**Reference-free pointwise evaluation:** For each (candidate, movie) pair,
-the pipeline generates the candidate's output, then scores it against a
-detailed rubric using Claude Opus 4.6 as the judge. The judge sees raw
-source data (not the generation prompt or a reference output) alongside
-the candidate output and scores each dimension independently. Each
-evaluation runs the judge 3 times with staggered calls (run 1 populates
-the Anthropic prompt cache, runs 2-3 benefit from cached reads at 90%
-discount). Scores are averaged across runs; reasoning is concatenated.
-Idempotent — rerunning skips rows that already exist. See ADR-031 for the
-multi-run averaging decision.
+**Reference-free pointwise evaluation (current):** For each (candidate,
+movie) pair, the pipeline generates the candidate's output, then scores
+it using Claude Opus 4.6 as the judge. The judge sees raw source data
+(the labeled input fields from `build_plot_events_user_prompt`) and a
+quality rubric ("A HIGH-QUALITY OUTPUT should:"), not a reference output
+or the generation prompt itself. Each evaluation runs the judge 2 times
+sequentially — run 1 primes the Anthropic prompt cache, run 2 benefits
+from cached reads at 90% discount. Scores are averaged; reasoning is
+concatenated. Idempotent — rerunning skips rows that already exist.
+See ADR-031 for the multi-run averaging decision, ADR-034 for the
+reference removal and judge switch decision.
+
+**Thinking disabled, caveman-speak reasoning**: Judge runs with
+`thinking: disabled`. Reasoning fields are constrained to one sentence,
+max 30 words, caveman-speak (no articles, filler) to compress output
+tokens.
+
+**Rate-limit retry**: Judge calls retry indefinitely on 429, sleeping
+30s between attempts.
+
+**`--branch` flag**: `run_evaluations_pipeline.py` accepts
+`--branch synopsis|synthesis` to filter the test corpus by synopsis
+presence, enabling separate evaluation of each generation branch.
 
 **Evaluation DB (`evaluation_data/eval.db`)**: Separate from tracker.db.
 Each metadata type gets its own set of tables
@@ -436,8 +507,9 @@ the original 19-candidate set are commented out after evaluation runs narrowed
 the field). Active set: Gemini 2.5 Flash Lite (think-1k, think-4k),
 GPT-5-mini (reason-low), GPT-5.4-nano, plus short-prompt variants of each
 (4 total). Candidate IDs use `{type}__{model}__{variant}` naming. Evaluation
-complete — winner is `gemini-2.5-flash-lite__think-1k__short-prompt`, now
-set as production default in `generators/plot_events.py`.
+complete — winner is `gemini-2.5-flash-lite__think-1k__short-prompt`.
+Production default has not been committed to the generator; callers must
+pass provider/model explicitly (see `generators/plot_events.py`).
 
 **Short-prompt variants**: `SYSTEM_PROMPT_SHORT` in
 `metadata_generation/prompts/plot_events.py` is a ~37% shorter version of
@@ -446,12 +518,14 @@ non-WHAM candidate) isolate prompt length as the sole independent variable.
 
 **4-dimension judge rubric for plot_events**: groundedness, plot_summary,
 character_quality, setting. Each scored 1–4. Rubric defines quality criteria
-aligned with the generation intent — it evaluates against the source data
-and quality standards, not the generation prompt itself.
+aligned with the generation intent — evaluates against source data and
+quality standards, not the generation prompt.
 
 **CLI**:
 ```
 python -m movie_ingestion.metadata_generation.evaluations.run_evaluations_pipeline
+python -m movie_ingestion.metadata_generation.evaluations.run_evaluations_pipeline --branch synopsis
+python -m movie_ingestion.metadata_generation.evaluations.run_evaluations_pipeline --branch synthesis
 python -m movie_ingestion.metadata_generation.evaluations.analyze_results
 ```
 
@@ -476,8 +550,9 @@ The `tracker.py` module is the shared backbone. Key rules:
   `batch1_custom_id` / `batch2_custom_id` columns.
 - `filter_log` — append-only audit trail of every filtered movie.
 - `tmdb_data` — TMDB fields for quality scoring and downstream stages.
-- `imdb_data` — IMDB scraped fields: 8 scalar columns + 19 JSON TEXT
-  columns (empty lists stored as NULL). See ADR-023.
+- `imdb_data` — IMDB scraped fields: 8 scalar columns (including
+  `imdb_title_type`) + 19 JSON TEXT columns (empty lists stored as NULL).
+  See ADR-023.
 - `metadata_batches` — OpenAI batch submissions (managed by `state.py`).
 - `metadata_results` — per-generation results (managed by `state.py`).
 - `wave1_results` — direct generation results for evaluation use (managed
@@ -525,7 +600,8 @@ happen in a synchronous batch after `asyncio.gather()`.
   string). Any code that unpacks it positionally needs awareness of
   this type.
 - IMDB scraping uses graceful defaults — no movie is filtered out
-  based on missing IMDB data. All fields default to None/[].
+  based on missing IMDB data at scrape time. All fields default to None/[].
+  Hard gates in Stage 5 handle content-type and text-availability filtering.
 - DataImpulse proxy requires `DATA_IMPULSE_LOGIN` and
   `DATA_IMPULSE_PASSWORD` in `.env`.
 - IMDB blocks datacenter proxy IPs while accepting residential
@@ -551,3 +627,13 @@ happen in a synchronous batch after `asyncio.gather()`.
   `_DEFAULT_KWARGS` dict across providers — OpenAI-specific params
   (e.g., `verbosity`, `reasoning_effort`) cause 400 errors on Gemini/Groq.
   Each caller passes exactly the kwargs its provider needs.
+- `MIN_SYNOPSIS_CHARS = 1000` threshold in `generators/plot_events.py`
+  must also be applied at embedding time when the pipeline uses
+  `plot_synopsis` from `imdb_data` directly. If a short synopsis is
+  passed raw to the embedding step, it will not match the generated
+  `plot_summary` that was produced by Branch B.
+- The operator precedence bug (`edge.get("node") or {} if isinstance(...)`
+  parsing incorrectly) was fixed in `parsers.py` — correct form is
+  `(edge.get("node") or {}) if isinstance(edge, dict) else {}`. Latent
+  in practice (GraphQL edges are always dicts) but any new edge-parsing
+  code must use the parenthesized form.

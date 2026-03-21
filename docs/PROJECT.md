@@ -86,7 +86,7 @@ crash-safe and idempotent.
 | implementation/misc/ | String normalization, SQL escaping | — |
 | movie_ingestion/ | Ingestion pipeline (TMDB → IMDB → LLM → embed → ingest) | docs/modules/ingestion.md |
 | api/ | FastAPI application | docs/modules/api.md |
-| unit_tests/ | pytest suite (27 files) | — |
+| unit_tests/ | pytest suite (57 files) | — |
 
 Module docs in docs/modules/ provide concise summaries with
 boundaries, interactions, and gotchas. Decision records in

@@ -15,6 +15,7 @@ import math
 import pytest
 
 from movie_ingestion.imdb_quality_scoring.imdb_quality_scorer import (
+    ALLOWED_TITLE_TYPES,
     BAYESIAN_C,
     BAYESIAN_M,
     BLEND_HIGH,
@@ -76,6 +77,7 @@ def _make_ctx(
         tmdb.update(tmdb_overrides)
 
     imdb = {
+        "imdb_title_type": "movie",
         "imdb_rating": 7.2,
         "imdb_vote_count": 5000,
         "directors": ["Christopher Nolan"],
@@ -1178,13 +1180,14 @@ class TestComputeImdbQualityScore:
         """All signals at min -> score near 0.0."""
         ctx = _make_ctx(
             imdb_overrides={
+                "imdb_title_type": "movie",
                 "imdb_vote_count": 0,
                 "imdb_rating": None,
                 "metacritic_rating": None,
                 "reception_summary": None,
                 "featured_reviews": [],
                 "overview": "",
-                "plot_summaries": [],
+                "plot_summaries": ["placeholder"],  # Need at least one text source
                 "synopses": [],
                 "actors": [],
                 "characters": [],
@@ -1207,8 +1210,8 @@ class TestComputeImdbQualityScore:
             },
         )
         score = compute_imdb_quality_score(ctx, TODAY)
-        # All signals return 0.0 -> weighted sum = 0.0.
-        assert score == pytest.approx(0.0, abs=1e-6)
+        # All signals return near 0.0 (plot_text_depth > 0 due to placeholder).
+        assert score < 0.1
 
     def test_weights_sum_to_one(self) -> None:
         """WEIGHTS dict sums to 1.0 (module-level guard)."""
@@ -1275,3 +1278,105 @@ class TestWeights:
             "data_completeness",
         }
         assert set(WEIGHTS.keys()) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# ALLOWED_TITLE_TYPES constant
+# ---------------------------------------------------------------------------
+
+
+class TestAllowedTitleTypes:
+    """Tests for the ALLOWED_TITLE_TYPES constant."""
+
+    def test_allowed_title_types_contains_expected_values(self) -> None:
+        """ALLOWED_TITLE_TYPES contains exactly the 4 expected types."""
+        assert ALLOWED_TITLE_TYPES == {"movie", "tvMovie", "short", "video"}
+
+
+# ---------------------------------------------------------------------------
+# Title type early-return guard
+# ---------------------------------------------------------------------------
+
+
+class TestTitleTypeGuard:
+    """Tests for the imdb_title_type early-return guard in compute_imdb_quality_score."""
+
+    def test_returns_zero_for_tv_series(self) -> None:
+        """imdb_title_type='tvSeries' returns 0.0."""
+        ctx = _make_ctx(imdb_overrides={"imdb_title_type": "tvSeries"})
+        assert compute_imdb_quality_score(ctx, TODAY) == 0.0
+
+    def test_returns_zero_for_video_game(self) -> None:
+        """imdb_title_type='videoGame' returns 0.0."""
+        ctx = _make_ctx(imdb_overrides={"imdb_title_type": "videoGame"})
+        assert compute_imdb_quality_score(ctx, TODAY) == 0.0
+
+    def test_returns_zero_for_none_title_type(self) -> None:
+        """imdb_title_type=None (not in ALLOWED_TITLE_TYPES) returns 0.0."""
+        ctx = _make_ctx(imdb_overrides={"imdb_title_type": None})
+        assert compute_imdb_quality_score(ctx, TODAY) == 0.0
+
+    def test_returns_positive_for_movie(self) -> None:
+        """imdb_title_type='movie' passes through to scoring."""
+        ctx = _make_ctx(imdb_overrides={"imdb_title_type": "movie"})
+        assert compute_imdb_quality_score(ctx, TODAY) > 0.0
+
+    def test_returns_positive_for_tv_movie(self) -> None:
+        """imdb_title_type='tvMovie' passes through to scoring."""
+        ctx = _make_ctx(imdb_overrides={"imdb_title_type": "tvMovie"})
+        assert compute_imdb_quality_score(ctx, TODAY) > 0.0
+
+    def test_returns_positive_for_short(self) -> None:
+        """imdb_title_type='short' passes through to scoring."""
+        ctx = _make_ctx(imdb_overrides={"imdb_title_type": "short"})
+        assert compute_imdb_quality_score(ctx, TODAY) > 0.0
+
+    def test_returns_positive_for_video(self) -> None:
+        """imdb_title_type='video' passes through to scoring."""
+        ctx = _make_ctx(imdb_overrides={"imdb_title_type": "video"})
+        assert compute_imdb_quality_score(ctx, TODAY) > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Text source early-return guard
+# ---------------------------------------------------------------------------
+
+
+class TestTextSourceGuard:
+    """Tests for the text source early-return guard in compute_imdb_quality_score."""
+
+    def test_returns_zero_when_all_text_sources_empty(self) -> None:
+        """No plot_summaries, synopses, or featured_reviews returns 0.0."""
+        ctx = _make_ctx(imdb_overrides={
+            "plot_summaries": [],
+            "synopses": [],
+            "featured_reviews": [],
+        })
+        assert compute_imdb_quality_score(ctx, TODAY) == 0.0
+
+    def test_returns_positive_when_only_featured_reviews_present(self) -> None:
+        """featured_reviews alone is sufficient to pass the text source guard."""
+        ctx = _make_ctx(imdb_overrides={
+            "plot_summaries": [],
+            "synopses": [],
+            "featured_reviews": [{"text": "A review."}],
+        })
+        assert compute_imdb_quality_score(ctx, TODAY) > 0.0
+
+    def test_returns_positive_when_only_plot_summaries_present(self) -> None:
+        """plot_summaries alone is sufficient to pass the text source guard."""
+        ctx = _make_ctx(imdb_overrides={
+            "plot_summaries": ["A summary."],
+            "synopses": [],
+            "featured_reviews": [],
+        })
+        assert compute_imdb_quality_score(ctx, TODAY) > 0.0
+
+    def test_returns_positive_when_only_synopses_present(self) -> None:
+        """synopses alone is sufficient to pass the text source guard."""
+        ctx = _make_ctx(imdb_overrides={
+            "plot_summaries": [],
+            "synopses": ["A synopsis."],
+            "featured_reviews": [],
+        })
+        assert compute_imdb_quality_score(ctx, TODAY) > 0.0

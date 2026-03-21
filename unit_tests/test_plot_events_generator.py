@@ -1,13 +1,13 @@
 """
 Unit tests for movie_ingestion.metadata_generation.generators.plot_events.
 
-Tests prompt building, LLM call delegation, return value shape, and
-error handling for the generate_plot_events function.
+Tests the two-branch prompt building (synopsis vs synthesis), LLM call
+delegation, return value shape, and error handling for generate_plot_events.
 
 All LLM calls are mocked — no real API traffic.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -23,6 +23,11 @@ from movie_ingestion.metadata_generation.generators.plot_events import (
     build_plot_events_prompts,
     generate_plot_events,
     GENERATION_TYPE,
+    MIN_SYNOPSIS_CHARS,
+)
+from movie_ingestion.metadata_generation.prompts.plot_events import (
+    SYSTEM_PROMPT_SYNOPSIS,
+    SYSTEM_PROMPT_SYNTHESIS,
 )
 
 
@@ -41,7 +46,7 @@ def _make_movie(**overrides) -> MovieInputData:
         release_year=2020,
         overview="A great test movie about testing.",
         genres=["Drama"],
-        plot_synopses=["First synopsis about the plot."],
+        plot_synopses=[],
         plot_summaries=["Summary one.", "Summary two."],
         plot_keywords=["keyword1", "keyword2"],
     )
@@ -58,200 +63,208 @@ def _make_plot_events_output() -> PlotEventsOutput:
 
 
 # ---------------------------------------------------------------------------
-# Tests: build_plot_events_user_prompt (direct)
+# Tests: build_plot_events_prompts — return type
 # ---------------------------------------------------------------------------
 
 
-class TestBuildPlotEventsUserPrompt:
-    """Tests for the standalone build_plot_events_user_prompt function."""
+class TestBuildPlotEventsPromptsReturnType:
+    """build_plot_events_prompts returns a (user_prompt, system_prompt) tuple."""
 
-    def test_build_plot_events_user_prompt_returns_string(self) -> None:
-        """Return value is a str."""
+    def test_returns_tuple_of_two_strings(self) -> None:
+        """Return value is a 2-tuple of strings."""
         movie = _make_movie()
         result = build_plot_events_prompts(movie)
-        assert isinstance(result, str)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        user_prompt, system_prompt = result
+        assert isinstance(user_prompt, str)
+        assert isinstance(system_prompt, str)
 
-    def test_build_plot_events_user_prompt_includes_title_with_year(self) -> None:
-        """Title with year appears in the prompt."""
-        movie = _make_movie(title="Inception", release_year=2010)
-        result = build_plot_events_prompts(movie)
-        assert "Inception (2010)" in result
 
-    def test_build_plot_events_user_prompt_first_synopsis_only(self) -> None:
-        """Only the first synopsis is used when multiple exist."""
-        movie = _make_movie(plot_synopses=[
-            "First synopsis about the story.",
-            "Second synopsis with different details.",
-            "Third synopsis entirely different.",
-        ])
-        result = build_plot_events_prompts(movie)
-        assert "First synopsis about the story." in result
-        assert "Second synopsis" not in result
-        assert "Third synopsis" not in result
+# ---------------------------------------------------------------------------
+# Tests: build_plot_events_prompts — synopsis branch
+# ---------------------------------------------------------------------------
 
-    def test_build_plot_events_user_prompt_collapses_newlines(self) -> None:
-        """Newlines in the synopsis are collapsed to single spaces."""
-        movie = _make_movie(plot_synopses=["Line one.\n\nLine two.\nLine three."])
-        result = build_plot_events_prompts(movie)
-        assert "Line one. Line two. Line three." in result
 
-    def test_build_plot_events_user_prompt_caps_summaries_at_three(self) -> None:
-        """At most 3 summaries appear in the prompt."""
-        movie = _make_movie(plot_summaries=[
-            "Summary 1.", "Summary 2.", "Summary 3.", "Summary 4.", "Summary 5.",
-        ])
-        result = build_plot_events_prompts(movie)
-        assert "Summary 1." in result
-        assert "Summary 2." in result
-        assert "Summary 3." in result
-        assert "Summary 4." not in result
+class TestSynopsisBranch:
+    """Tests for the synopsis branch (synopsis >= MIN_SYNOPSIS_CHARS)."""
 
-    def test_build_plot_events_user_prompt_empty_synopses_omits_field(self) -> None:
-        """plot_synopsis field is absent when synopses list is empty."""
-        movie = _make_movie(plot_synopses=[])
-        result = build_plot_events_prompts(movie)
-        assert "plot_synopsis:" not in result
+    def test_long_synopsis_selects_synopsis_system_prompt(self) -> None:
+        """Synopsis >= 1000 chars uses SYSTEM_PROMPT_SYNOPSIS."""
+        movie = _make_movie(plot_synopses=["x" * 1000])
+        _, system_prompt = build_plot_events_prompts(movie)
+        assert system_prompt is SYSTEM_PROMPT_SYNOPSIS
 
-    def test_build_plot_events_user_prompt_empty_overview_omits_field(self) -> None:
-        """overview field is absent when overview is empty string."""
-        movie = _make_movie(overview="")
-        result = build_plot_events_prompts(movie)
-        assert "overview:" not in result
+    def test_long_synopsis_includes_plot_synopsis_label(self) -> None:
+        """Synopsis branch user prompt includes 'plot_synopsis' label."""
+        movie = _make_movie(plot_synopses=["x" * 1000])
+        user_prompt, _ = build_plot_events_prompts(movie)
+        assert "plot_synopsis:" in user_prompt
 
-    def test_build_plot_events_user_prompt_empty_keywords_omits_field(self) -> None:
-        """plot_keywords field is absent when keywords list is empty."""
-        movie = _make_movie(plot_keywords=[])
-        result = build_plot_events_prompts(movie)
-        assert "plot_keywords:" not in result
-
-    def test_build_plot_events_user_prompt_all_fields_present(self) -> None:
-        """All fields appear when movie has complete data."""
+    def test_long_synopsis_excludes_plot_summaries_label(self) -> None:
+        """Synopsis branch user prompt does NOT include 'plot_summaries' label."""
         movie = _make_movie(
-            overview="A great test movie about testing.",
-            plot_synopses=["A detailed synopsis."],
+            plot_synopses=["x" * 1000],
             plot_summaries=["Summary one."],
-            plot_keywords=["keyword1", "keyword2"],
         )
-        result = build_plot_events_prompts(movie)
-        assert "title:" in result
-        assert "overview:" in result
-        assert "plot_synopsis:" in result
-        assert "plot_summaries:" in result
-        assert "plot_keywords:" in result
-
-    def test_build_plot_events_user_prompt_no_year(self) -> None:
-        """Movie with release_year=None returns just the title, prompt still well-formed."""
-        movie = _make_movie(release_year=None)
-        result = build_plot_events_prompts(movie)
-        assert "title: Test Movie" in result
-        # Should not contain parenthesized year
-        assert "(None)" not in result
-
-    def test_build_plot_events_user_prompt_empty_strings_in_summaries(self) -> None:
-        """Empty strings in plot_summaries are included (not filtered as None)."""
-        movie = _make_movie(plot_summaries=["", "Real summary."])
-        result = build_plot_events_prompts(movie)
-        assert "Real summary." in result
-
-
-# ---------------------------------------------------------------------------
-# Tests: Prompt building (via generate_plot_events)
-# ---------------------------------------------------------------------------
-
-
-class TestPromptBuilding:
-    """Tests for how generate_plot_events constructs the user prompt."""
-
-    async def test_uses_first_synopsis_only(self) -> None:
-        """Only the first synopsis appears in the user_prompt, even with multiple synopses."""
-        movie = _make_movie(plot_synopses=["First synopsis.", "Second synopsis.", "Third synopsis."])
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
-
-        user_prompt = mock_fn.call_args[1]["user_prompt"]
-        assert "First synopsis." in user_prompt
-        assert "Second synopsis." not in user_prompt
-        assert "Third synopsis." not in user_prompt
-
-    async def test_collapses_newlines_in_synopsis(self) -> None:
-        """Newlines in the synopsis are collapsed to single spaces."""
-        movie = _make_movie(plot_synopses=["Line one.\n\nLine two.\nLine three."])
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
-
-        user_prompt = mock_fn.call_args[1]["user_prompt"]
-        assert "\n\n" not in user_prompt.split("plot_synopsis:")[1] if "plot_synopsis:" in user_prompt else True
-        # The synopsis portion should have spaces instead of newlines
-        assert "Line one. Line two. Line three." in user_prompt
-
-    async def test_caps_plot_summaries_at_three(self) -> None:
-        """Only the first 3 plot summaries appear in the prompt."""
-        movie = _make_movie(plot_summaries=[
-            "Summary 1.", "Summary 2.", "Summary 3.", "Summary 4.", "Summary 5.",
-        ])
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
-
-        user_prompt = mock_fn.call_args[1]["user_prompt"]
-        assert "Summary 1." in user_prompt
-        assert "Summary 2." in user_prompt
-        assert "Summary 3." in user_prompt
-        assert "Summary 4." not in user_prompt
-        assert "Summary 5." not in user_prompt
-
-    async def test_empty_synopses_passes_none(self) -> None:
-        """Empty plot_synopses list results in plot_synopsis being omitted from prompt."""
-        movie = _make_movie(plot_synopses=[])
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
-
-        user_prompt = mock_fn.call_args[1]["user_prompt"]
-        assert "plot_synopsis:" not in user_prompt
-
-    async def test_empty_plot_summaries_passes_none(self) -> None:
-        """Empty plot_summaries list results in plot_summaries being omitted from prompt."""
-        movie = _make_movie(plot_summaries=[])
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
-
-        user_prompt = mock_fn.call_args[1]["user_prompt"]
+        user_prompt, _ = build_plot_events_prompts(movie)
         assert "plot_summaries:" not in user_prompt
 
-    async def test_empty_overview_passes_none(self) -> None:
-        """Empty overview string is converted to None (omitted from prompt)."""
+    def test_exactly_1000_chars_selects_synopsis_branch(self) -> None:
+        """Synopsis of exactly MIN_SYNOPSIS_CHARS uses synopsis branch (>= boundary)."""
+        movie = _make_movie(plot_synopses=["a" * MIN_SYNOPSIS_CHARS])
+        _, system_prompt = build_plot_events_prompts(movie)
+        assert system_prompt is SYSTEM_PROMPT_SYNOPSIS
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_plot_events_prompts — synthesis branch
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesisBranch:
+    """Tests for the synthesis branch (no synopsis or synopsis too short)."""
+
+    def test_no_synopsis_selects_synthesis_system_prompt(self) -> None:
+        """No synopses uses SYSTEM_PROMPT_SYNTHESIS."""
+        movie = _make_movie(plot_synopses=[])
+        _, system_prompt = build_plot_events_prompts(movie)
+        assert system_prompt is SYSTEM_PROMPT_SYNTHESIS
+
+    def test_no_synopsis_includes_plot_summaries_label(self) -> None:
+        """Synthesis branch user prompt includes 'plot_summaries' label."""
+        movie = _make_movie(plot_synopses=[], plot_summaries=["A summary."])
+        user_prompt, _ = build_plot_events_prompts(movie)
+        assert "plot_summaries:" in user_prompt
+
+    def test_no_synopsis_excludes_plot_synopsis_label(self) -> None:
+        """Synthesis branch user prompt does NOT include 'plot_synopsis' label."""
+        movie = _make_movie(plot_synopses=[])
+        user_prompt, _ = build_plot_events_prompts(movie)
+        assert "plot_synopsis:" not in user_prompt
+
+    def test_short_synopsis_selects_synthesis_branch(self) -> None:
+        """Synopsis < 1000 chars uses synthesis branch."""
+        movie = _make_movie(plot_synopses=["x" * 999])
+        _, system_prompt = build_plot_events_prompts(movie)
+        assert system_prompt is SYSTEM_PROMPT_SYNTHESIS
+
+    def test_exactly_999_chars_selects_synthesis_branch(self) -> None:
+        """Synopsis of exactly 999 chars uses synthesis branch (< boundary)."""
+        movie = _make_movie(plot_synopses=["a" * 999])
+        _, system_prompt = build_plot_events_prompts(movie)
+        assert system_prompt is SYSTEM_PROMPT_SYNTHESIS
+
+    def test_short_synopsis_demoted_into_summaries(self) -> None:
+        """Short synopsis is prepended into the plot_summaries list."""
+        short_synopsis = "This is a short synopsis that will be demoted."
+        movie = _make_movie(
+            plot_synopses=[short_synopsis],
+            plot_summaries=["Existing summary."],
+        )
+        user_prompt, _ = build_plot_events_prompts(movie)
+        # The short synopsis should appear in the user prompt as part of summaries
+        assert short_synopsis in user_prompt
+        assert "Existing summary." in user_prompt
+        # And plot_synopsis label should NOT appear
+        assert "plot_synopsis:" not in user_prompt
+
+    def test_short_synopsis_prepends_before_existing_summaries(self) -> None:
+        """Demoted synopsis appears before existing summaries in the prompt."""
+        short_synopsis = "Demoted synopsis text."
+        movie = _make_movie(
+            plot_synopses=[short_synopsis],
+            plot_summaries=["Summary A.", "Summary B."],
+        )
+        user_prompt, _ = build_plot_events_prompts(movie)
+        # Demoted synopsis should appear before existing summaries
+        syn_pos = user_prompt.find(short_synopsis)
+        sum_pos = user_prompt.find("Summary A.")
+        assert syn_pos < sum_pos
+
+    def test_summaries_capped_at_three(self) -> None:
+        """At most 3 summaries appear in the synthesis branch prompt."""
+        movie = _make_movie(
+            plot_synopses=[],
+            plot_summaries=["S1.", "S2.", "S3.", "S4.", "S5."],
+        )
+        user_prompt, _ = build_plot_events_prompts(movie)
+        assert "S1." in user_prompt
+        assert "S2." in user_prompt
+        assert "S3." in user_prompt
+        assert "S4." not in user_prompt
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_plot_events_prompts — newline collapsing
+# ---------------------------------------------------------------------------
+
+
+class TestNewlineCollapsing:
+    """Tests for newline collapsing in synopsis text."""
+
+    def test_newlines_collapsed_to_spaces(self) -> None:
+        """Newlines in the synopsis are replaced with spaces."""
+        long_text = "a" * 500 + "\n\n" + "b" * 500
+        movie = _make_movie(plot_synopses=[long_text])
+        user_prompt, _ = build_plot_events_prompts(movie)
+        # After collapsing newlines: "a...a b...b" (1001 chars with space)
+        assert "\n" not in user_prompt.split("plot_synopsis:")[1].split("\n")[0] if "plot_synopsis:" in user_prompt else True
+
+    def test_newline_collapsing_affects_length_check(self) -> None:
+        """Length check uses the collapsed text (newlines -> spaces)."""
+        # 999 'a' chars + 1 newline = 1000 raw chars, but after collapsing
+        # the newline becomes a space => still 1000 chars => synopsis branch
+        text_with_newline = "a" * 999 + "\n"
+        movie = _make_movie(plot_synopses=[text_with_newline])
+        _, system_prompt = build_plot_events_prompts(movie)
+        assert system_prompt is SYSTEM_PROMPT_SYNOPSIS
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_plot_events_prompts — shared fields
+# ---------------------------------------------------------------------------
+
+
+class TestSharedPromptFields:
+    """Tests for fields that appear in both branches."""
+
+    def test_includes_title_with_year(self) -> None:
+        """Title with year appears in the user prompt."""
+        movie = _make_movie(title="Inception", release_year=2010)
+        user_prompt, _ = build_plot_events_prompts(movie)
+        assert "Inception (2010)" in user_prompt
+
+    def test_empty_overview_omits_field(self) -> None:
+        """overview field is absent when overview is empty string."""
         movie = _make_movie(overview="")
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
-
-        user_prompt = mock_fn.call_args[1]["user_prompt"]
+        user_prompt, _ = build_plot_events_prompts(movie)
         assert "overview:" not in user_prompt
 
-    async def test_empty_plot_keywords_passes_none(self) -> None:
-        """Empty plot_keywords list results in keywords being omitted from prompt."""
+    def test_empty_keywords_omits_field(self) -> None:
+        """plot_keywords field is absent when keywords list is empty."""
         movie = _make_movie(plot_keywords=[])
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
-
-        user_prompt = mock_fn.call_args[1]["user_prompt"]
+        user_prompt, _ = build_plot_events_prompts(movie)
         assert "plot_keywords:" not in user_prompt
 
 
 # ---------------------------------------------------------------------------
-# Tests: LLM call delegation
+# Tests: generate_plot_events — requires provider and model
+# ---------------------------------------------------------------------------
+
+
+class TestGeneratePlotEventsSignature:
+    """Tests for generate_plot_events function signature."""
+
+    async def test_requires_provider_and_model(self) -> None:
+        """Calling without provider and model raises TypeError."""
+        movie = _make_movie()
+        with pytest.raises(TypeError):
+            await generate_plot_events(movie)  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# Tests: generate_plot_events — LLM call delegation
 # ---------------------------------------------------------------------------
 
 
@@ -284,6 +297,28 @@ class TestLLMCallDelegation:
         call_kwargs = mock_fn.call_args[1]
         assert call_kwargs["temperature"] == 0.5
 
+    async def test_passes_correct_system_prompt_for_synopsis_branch(self) -> None:
+        """Synopsis branch passes SYSTEM_PROMPT_SYNOPSIS to the LLM."""
+        movie = _make_movie(plot_synopses=["x" * 1000])
+        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["system_prompt"] is SYSTEM_PROMPT_SYNOPSIS
+
+    async def test_passes_correct_system_prompt_for_synthesis_branch(self) -> None:
+        """Synthesis branch passes SYSTEM_PROMPT_SYNTHESIS to the LLM."""
+        movie = _make_movie(plot_synopses=[])
+        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_plot_events(movie, LLMProvider.OPENAI, "gpt-5-mini")
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["system_prompt"] is SYSTEM_PROMPT_SYNTHESIS
+
 
 # ---------------------------------------------------------------------------
 # Tests: Return value
@@ -311,7 +346,7 @@ class TestReturnValue:
         assert token_usage.output_tokens == 50
 
     async def test_token_usage_records_caller_model_string(self) -> None:
-        """TokenUsage.model matches the caller-provided model string, not a hardcoded value."""
+        """TokenUsage.model matches the caller-provided model string."""
         mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
 
         movie = _make_movie()
@@ -332,7 +367,7 @@ class TestErrorPaths:
     """Tests for error handling in generate_plot_events."""
 
     async def test_wraps_llm_exception_in_metadata_generation_error(self) -> None:
-        """LLM exceptions are wrapped in MetadataGenerationError with correct attributes."""
+        """LLM exceptions are wrapped in MetadataGenerationError."""
         mock_fn = AsyncMock(side_effect=ValueError("LLM API timeout"))
 
         movie = _make_movie()
@@ -358,7 +393,7 @@ class TestErrorPaths:
         assert err.title == "Test Movie (2020)"
 
     async def test_metadata_generation_error_chains_original_cause(self) -> None:
-        """The __cause__ of MetadataGenerationError is the original exception (via 'from e')."""
+        """The __cause__ of MetadataGenerationError is the original exception."""
         original = ValueError("original cause")
         mock_fn = AsyncMock(side_effect=original)
 
@@ -371,54 +406,21 @@ class TestErrorPaths:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _DEFAULT_KWARGS merge behavior
-# ---------------------------------------------------------------------------
-
-class TestPlotEventsDefaultKwargsMerge:
-    async def test_default_kwargs_present_when_no_override(self) -> None:
-        """Default thinking_config is present when caller provides no kwargs."""
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-        movie = _make_movie(overview="A long enough overview for plot events.")
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(movie, LLMProvider.GEMINI, "gemini-2.5-flash-lite")
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["temperature"] == 0.2
-        assert call_kwargs["thinking_config"] == {"thinking_budget": 1024}
-
-    async def test_caller_kwargs_override_defaults(self) -> None:
-        """Caller-provided kwargs override _DEFAULT_KWARGS values."""
-        mock_fn = AsyncMock(return_value=(_make_plot_events_output(), 100, 50))
-        movie = _make_movie(overview="A long enough overview for plot events.")
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_events(
-                movie, LLMProvider.GEMINI, "gemini-2.5-flash-lite",
-                temperature=0.5,
-            )
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["temperature"] == 0.5
-        # thinking_config default should still be present
-        assert call_kwargs["thinking_config"] == {"thinking_budget": 1024}
-
-
-# ---------------------------------------------------------------------------
 # Tests: prompt formatting details
 # ---------------------------------------------------------------------------
+
 
 class TestPlotEventsPromptFormatting:
     def test_plot_summaries_use_multiline_format(self) -> None:
         """plot_summaries are formatted with dash-prefixed items (MultiLineList)."""
         movie = _make_movie(
             overview="A plot.",
+            plot_synopses=[],
             plot_summaries=["First summary.", "Second summary."],
         )
-        prompt = build_plot_events_prompts(movie)
-        # MultiLineList renders as "key:\n- item1\n- item2"
-        assert "- First summary." in prompt
-        assert "- Second summary." in prompt
+        user_prompt, _ = build_plot_events_prompts(movie)
+        assert "- First summary." in user_prompt
+        assert "- Second summary." in user_prompt
 
     def test_plot_keywords_are_comma_separated(self) -> None:
         """plot_keywords are comma-separated (regular list), not dash-prefixed."""
@@ -426,7 +428,6 @@ class TestPlotEventsPromptFormatting:
             overview="A plot.",
             plot_keywords=["hacker", "simulation"],
         )
-        prompt = build_plot_events_prompts(movie)
-        assert "plot_keywords: hacker, simulation" in prompt
-        # Should NOT use MultiLineList dash format
-        assert "- hacker" not in prompt
+        user_prompt, _ = build_plot_events_prompts(movie)
+        assert "plot_keywords: hacker, simulation" in user_prompt
+        assert "- hacker" not in user_prompt

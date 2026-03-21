@@ -1,7 +1,13 @@
 # [028] — LLM Evaluation Pipeline Design for Metadata Generation
 
 ## Status
-Active
+Superseded by ADR-034 (for plot_events evaluation)
+
+> **Note:** ADR-034 removed Phase 0 (reference generation), replaced
+> the WHAM/GPT-5.4 judge with Claude Opus 4.6, and reduced the judge
+> from 3 runs to 2 sequential runs. The structural design (separate
+> eval DB, `EvaluationCandidate` dataclass, per-dimension SQL columns)
+> remains active and is not superseded.
 
 ## Context
 

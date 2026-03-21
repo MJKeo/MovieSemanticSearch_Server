@@ -117,6 +117,17 @@ partial DAG results.
 - **`budget_tokens` is popped before forwarding** to the Anthropic API —
   it is not a native Anthropic parameter. Passing it through would cause
   an API error.
+- **`cache_control` kwarg enables Anthropic prompt caching**: When
+  `cache_control=True` is passed to `generate_anthropic_response_async`,
+  it wraps system, user, and tool content in `cache_control` blocks.
+  Subsequent calls with the same content benefit from Anthropic's
+  ~90% prompt cache discount. Used by the plot_events evaluation judge
+  (run 1 primes the cache, run 2 reads it). Default is False.
+- **`anthropic.RateLimitError` is re-raised explicitly** before the
+  catch-all `ValueError` wrapper in the Anthropic handler, so callers
+  can distinguish rate limit errors from other failures and implement
+  retry logic (e.g., sleep 30s and retry indefinitely, as the
+  evaluation judge does).
 - **WHAM requires `api_key` (OAuth access_token) and `account_id`** at every
   call site. Call `get_valid_auth()` from `evaluations/openai_oauth.py` once
   before constructing concurrent tasks, then pass the result through.

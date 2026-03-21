@@ -102,7 +102,7 @@ Fetch display metadata → return JSON
 | `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
 | `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
 | `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data) |
-| `unit_tests/` | pytest test suite (27 files); `conftest.py` provides `base_movie_factory` fixture |
+| `unit_tests/` | pytest test suite (57 files); `conftest.py` provides `base_movie_factory` fixture |
 | `docs/` | Project context, decision records, module summaries, conventions |
 
 ### Vector Search Design
@@ -179,9 +179,10 @@ Stage 4: IMDB Scraping (movie_ingestion/imdb_scraping/)
 Stage 5: IMDB Quality Filtering (movie_ingestion/imdb_quality_scoring/)
   └─ Hard filters on essential data (IMDB rating, directors, actors, keywords, etc.)
   └─ Combined TMDB+IMDB quality scorer (8 signals, weights sum to 1.0):
-     imdb_vote_count (0.22), watch_providers (0.20), featured_reviews (0.16),
-     plot_text_depth (0.12), lexical_completeness (0.10), data_completeness (0.10),
-     tmdb_popularity (0.06), metacritic_rating (0.04)
+     imdb_notability (0.31), featured_reviews_chars (0.15),
+     plot_text_depth (0.12), lexical_completeness (0.10),
+     critical_attention (0.08), community_engagement (0.08),
+     tmdb_popularity (0.08), data_completeness (0.08)
   └─ IMDB data primary, TMDB as fallback for overlapping fields
   └─ Soft threshold via derivative analysis of quality score distribution
   └─ Status: imdb_scraped → imdb_quality_passed (or filtered_out)

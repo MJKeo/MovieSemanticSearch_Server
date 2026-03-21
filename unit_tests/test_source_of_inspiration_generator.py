@@ -59,32 +59,38 @@ def _make_soi_output() -> SourceOfInspirationOutput:
 class TestBuildSourceOfInspirationUserPrompt:
     def test_includes_title_with_year(self):
         movie = _make_movie(title="Inception", release_year=2010)
-        result = build_source_of_inspiration_user_prompt(movie, None, None)
+        result = build_source_of_inspiration_user_prompt(movie, None)
         assert "Inception (2010)" in result
-
-    def test_includes_plot_synopsis(self):
-        movie = _make_movie()
-        result = build_source_of_inspiration_user_prompt(movie, "A synopsis.", None)
-        assert "plot_synopsis: A synopsis." in result
 
     def test_includes_merged_keywords(self):
         movie = _make_movie(plot_keywords=["hacker"], overall_keywords=["cyberpunk"])
-        result = build_source_of_inspiration_user_prompt(movie, None, None)
+        result = build_source_of_inspiration_user_prompt(movie, None)
         assert "merged_keywords:" in result
         assert "hacker" in result
         assert "cyberpunk" in result
 
     def test_includes_review_insights_brief(self):
         movie = _make_movie()
-        result = build_source_of_inspiration_user_prompt(movie, None, "Critics noted source material.")
+        result = build_source_of_inspiration_user_prompt(movie, "Critics noted source material.")
         assert "review_insights_brief: Critics noted source material." in result
 
     def test_omits_none_fields(self):
         movie = _make_movie(plot_keywords=[], overall_keywords=[])
-        result = build_source_of_inspiration_user_prompt(movie, None, None)
-        assert "plot_synopsis" not in result
+        result = build_source_of_inspiration_user_prompt(movie, None)
         assert "merged_keywords" not in result
         assert "review_insights_brief" not in result
+
+    def test_does_not_accept_plot_synopsis_argument(self):
+        """plot_synopsis was removed per ADR-033 — passing it should raise TypeError."""
+        movie = _make_movie()
+        with pytest.raises(TypeError):
+            build_source_of_inspiration_user_prompt(movie, "A synopsis.", "insights")  # type: ignore[call-arg]
+
+    def test_prompt_does_not_contain_plot_synopsis_section(self):
+        """User prompt should not contain a plot_synopsis section."""
+        movie = _make_movie()
+        result = build_source_of_inspiration_user_prompt(movie, None)
+        assert "plot_synopsis" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +111,8 @@ class TestGenerateSourceOfInspiration:
         assert parsed is expected
         assert isinstance(token_usage, TokenUsage)
 
-    async def test_merges_default_kwargs(self):
+    async def test_no_default_reasoning_effort_injected(self):
+        """No default reasoning_effort is injected when caller doesn't provide one."""
         mock_fn = AsyncMock(return_value=(_make_soi_output(), 100, 50))
         movie = _make_movie()
 
@@ -115,7 +122,7 @@ class TestGenerateSourceOfInspiration:
             )
 
         call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["reasoning_effort"] == "low"
+        assert "reasoning_effort" not in call_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -203,12 +210,17 @@ class TestSourceOfInspirationOverrides:
 class TestSourceOfInspirationPromptFields:
     def test_no_genres_in_prompt(self):
         """source_of_inspiration does not include genres in the prompt."""
-        movie = _make_movie(genres=["Action", "Sci-Fi"])
-        # Need to add genres to _make_movie to test it's excluded
         movie_with_genres = MovieInputData(
             tmdb_id=12345, title="Test Movie", release_year=2020,
             genres=["Action", "Sci-Fi"],
             plot_keywords=["hacker"], overall_keywords=["cyberpunk"],
         )
-        result = build_source_of_inspiration_user_prompt(movie_with_genres, None, None)
+        result = build_source_of_inspiration_user_prompt(movie_with_genres, None)
         assert "genres" not in result
+
+    def test_generate_does_not_accept_plot_synopsis(self):
+        """generate_source_of_inspiration does not accept plot_synopsis parameter."""
+        # The old signature had plot_synopsis — verify it's gone
+        import inspect
+        sig = inspect.signature(generate_source_of_inspiration)
+        assert "plot_synopsis" not in sig.parameters

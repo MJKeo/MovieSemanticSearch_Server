@@ -239,7 +239,7 @@ to [0, 1] unless explicitly noted otherwise:
 - **Prompt reuse**: Evaluation pipelines must import prompt construction
   from the production generator, not duplicate it. Extract prompt builders
   as named public functions in the generator module (e.g.,
-  `build_plot_events_user_prompt()`). Duplicating the prompt in the eval
+  `build_plot_events_prompts()`). Duplicating the prompt in the eval
   file creates silent drift — if the generator's prompt changes, the eval
   copy diverges without any error.
 - **Judge prompt alignment**: Every judge prompt must include a summary

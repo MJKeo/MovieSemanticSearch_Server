@@ -1,7 +1,16 @@
 # ADR-016 — Combined TMDB+IMDB Quality Scoring Model
 
 ## Status
-Active
+Active (scoring model evolved — see note below)
+
+> **Model evolution:** The original 8-signal weight table in this ADR
+> reflects the v1 design. The scoring model has since been revised
+> through ADR-019 (v2 adjustments) and ADR-021 (v4 notability signal).
+> The current v4 weights are defined in
+> `movie_ingestion/imdb_quality_scoring/imdb_quality_scorer.py` and
+> documented in `docs/modules/ingestion.md` (Stage 5 section). The
+> architectural decisions in this ADR (combined scorer approach, IMDB
+> primary with TMDB fallback, independent from Stage 3) remain active.
 
 ## Context
 

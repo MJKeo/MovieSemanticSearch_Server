@@ -170,7 +170,8 @@ class TestGenerateViewerExperience:
         assert call_kwargs["model"] == "gemini-2.5-flash"
         assert call_kwargs["response_format"] is ViewerExperienceOutput
 
-    async def test_merges_default_kwargs(self):
+    async def test_no_default_reasoning_effort_injected(self):
+        """No default reasoning_effort is injected when caller doesn't provide one."""
         mock_fn = AsyncMock(return_value=(_make_ve_output(), 100, 50))
         movie = _make_movie()
 
@@ -180,7 +181,7 @@ class TestGenerateViewerExperience:
             )
 
         call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["reasoning_effort"] == "low"
+        assert "reasoning_effort" not in call_kwargs
 
 
 # ---------------------------------------------------------------------------
