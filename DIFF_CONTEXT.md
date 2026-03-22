@@ -15,3 +15,8 @@ Fix all STALE findings from a full docs audit.
 - Replaced v1 Stage 5 weight table with v4 weights in CLAUDE.md
 - Marked ADR-028 as Superseded by ADR-034 (for plot_events eval), noting structural design remains active
 - Added model evolution note to ADR-016 pointing to ADR-019/ADR-021 and current code
+
+## Tighten check_plot_events eligibility to 600-char minimum
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`
+Why: Previous check was too lenient — movies with very short plot text produced low-quality plot_events output.
+Approach: Replaced the three-source existence + sparseness check with a single rule: longest text among first synopsis and all summaries must be >= 600 chars. Removed unused `_all_text_sources_sparse()` helper and old per-source threshold constants.

@@ -124,15 +124,11 @@ movie_ingestion/metadata_generation/evaluations/plot_events.py
 
 
 
-## Backfill plot_summaries after IMDB re-scrape
-**Context:** Currently 0 movies have both synopses AND plot_summaries in
-imdb_data because the scraper was only fetching one or the other. The user
-plans to redo the IMDB fetch to save both. After the re-scrape, 17,563+
-synopsis movies should also gain summaries, which affects the plot_events
-Branch A input strategy (synopsis is always dominant, summaries are not
-passed to avoid redundant tokens).
-**When:** After the IMDB re-scrape is complete.
-**See:** movie_ingestion/imdb_scraping/parsers.py, docs/decisions/ADR-033-plot-events-cost-optimization.md
+## ~~Backfill plot_summaries after IMDB re-scrape~~ STALE
+The premise was wrong — the `imdb_data` table already has movies with both
+synopses and plot_summaries. DB query (2026-03-21) shows: of 109,277
+imdb_quality_passed movies, 22,655 have synopses across all plot_summary
+counts (5,215 with 0 plots, 7,881 with 1, 4,665 with 2, 4,894 with 3).
 
 
 ## Handle long synopses (>8K chars) before embedding

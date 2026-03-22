@@ -216,6 +216,12 @@ to [0, 1] unless explicitly noted otherwise:
   inputs (config dataclasses, enums) for stage-specific
   differences. Each stage imports from the shared module but keeps
   its own configuration.
+- Tracker DB is the authoritative data source for ingested movie
+  data. When querying IMDB or TMDB fields for analysis, scoring,
+  or pipeline logic, always read from the `imdb_data` / `tmdb_data`
+  tables in `tracker.db`. Per-movie JSON files in
+  `ingestion_data/imdb/` are raw scrape backups — they may be stale
+  relative to the DB and must not be used as a data source.
 - Tracker DB identifiers (column names, status values, stage names)
   that could be ambiguous across pipeline stages must be prefixed
   with their data source scope (e.g., `tmdb_quality_passed`,

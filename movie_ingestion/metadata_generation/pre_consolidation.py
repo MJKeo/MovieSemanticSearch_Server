@@ -68,10 +68,11 @@ MPAA_DEFINITIONS: dict[str, str] = {
     "NC-17": "Adults Only",
 }
 
-# Sparseness thresholds for plot_events skip condition
-_MIN_OVERVIEW_CHARS = 10
-_MIN_SYNOPSIS_CHARS = 50
-_MIN_SUMMARIES_CHARS = 50
+# Minimum length (chars) for the longest plot text source to qualify
+# for plot_events generation. Measured across the first synopsis entry
+# and all plot_summaries entries.
+_MIN_PLOT_TEXT_CHARS = 600
+
 _MIN_REVIEWS_CHARS = 25
 
 
@@ -159,27 +160,30 @@ def consolidate_maturity(
 #   str   = skip reason (generation should be skipped)
 
 def check_plot_events(movie_input: MovieInputData) -> str | None:
-    """Plot events requires meaningful text data from at least one source.
+    """Plot events requires substantial plot text from synopses or summaries.
 
-    Skips if all three text sources (overview, synopses, summaries) are
-    either missing or too sparse to produce useful LLM output.
+    Eligible only if the longest text among the first synopsis entry
+    (if any) and all plot_summaries entries (if any) is >= 600 chars.
+    Overview is deliberately excluded — it's too short to anchor
+    plot event extraction on its own.
 
     Returns None if eligible, or a skip reason string if not.
     """
-    has_overview = bool(movie_input.overview)
-    has_synopses = len(movie_input.plot_synopses) >= 1
-    has_summaries = len(movie_input.plot_summaries) >= 1
+    # Collect candidate texts: first synopsis + all summaries
+    candidates: list[str] = []
+    if movie_input.plot_synopses:
+        candidates.append(movie_input.plot_synopses[0])
+    candidates.extend(movie_input.plot_summaries)
 
-    if not has_overview and not has_synopses and not has_summaries:
-        return "No overview, plot synopses, or plot summaries available"
+    longest = max((len(t) for t in candidates), default=0)
 
-    if _all_text_sources_sparse(movie_input):
-        return (
-            "All available plot text sources are too sparse "
-            "(overview <10 chars, synopses <50 chars, summaries <50 chars)"
-        )
+    if longest >= _MIN_PLOT_TEXT_CHARS:
+        return None
 
-    return None
+    return (
+        f"Longest plot text source is {longest} chars "
+        f"(need >={_MIN_PLOT_TEXT_CHARS}); skipping plot_events"
+    )
 
 
 def check_reception(movie_input: MovieInputData) -> str | None:
@@ -298,27 +302,6 @@ def _check_source_of_inspiration(
         return None
     return "No keywords or review insights available"
 
-
-def _all_text_sources_sparse(movie_input: MovieInputData) -> bool:
-    """Check if all present text sources fall below sparseness thresholds.
-
-    Returns True only if every present source is too short to be useful:
-    - overview present but < 10 chars
-    - each synopsis present but < 50 chars
-    - combined summaries < 50 chars total
-    """
-    if movie_input.overview and len(movie_input.overview) >= _MIN_OVERVIEW_CHARS:
-        return False
-
-    for synopsis in movie_input.plot_synopses:
-        if len(synopsis) >= _MIN_SYNOPSIS_CHARS:
-            return False
-
-    combined_summaries_len = sum(len(s) for s in movie_input.plot_summaries)
-    if combined_summaries_len >= _MIN_SUMMARIES_CHARS:
-        return False
-
-    return True
 
 
 # ---------------------------------------------------------------------------
