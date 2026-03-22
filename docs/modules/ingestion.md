@@ -426,9 +426,10 @@ Wave 1 (Wave 1 checks only), before Wave 2 (Wave 2 checks using actual
 Wave 1 outputs).
 
 Key skip thresholds:
-- `plot_events`: skips if all text sources are absent OR all sparse
-  (overview < 10 chars, each synopsis < 50 chars, combined summaries
-  < 50 chars)
+- `plot_events`: skips if the longest text among the first synopsis
+  entry (if any) and all plot_summaries entries is < 600 chars
+  (`_MIN_PLOT_TEXT_CHARS`). Overview is excluded — too short to anchor
+  plot event extraction on its own.
 - `reception`: skips if no `reception_summary`, no
   `audience_reception_attributes`, AND combined review text < 25 chars
   (`_MIN_REVIEWS_CHARS`)
@@ -482,7 +483,7 @@ current reference-free approach.
 **Reference-free pointwise evaluation (current):** For each (candidate,
 movie) pair, the pipeline generates the candidate's output, then scores
 it using Claude Opus 4.6 as the judge. The judge sees raw source data
-(the labeled input fields from `build_plot_events_user_prompt`) and a
+(the labeled input fields from `build_plot_events_prompts()`) and a
 quality rubric ("A HIGH-QUALITY OUTPUT should:"), not a reference output
 or the generation prompt itself. Each evaluation runs the judge 2 times
 sequentially — run 1 primes the Anthropic prompt cache, run 2 benefits
