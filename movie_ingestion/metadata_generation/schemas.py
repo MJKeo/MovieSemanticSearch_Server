@@ -108,45 +108,17 @@ class OptionalTermsWithNegationsSection(BaseModel):
 # Wave 1: Plot Events
 # ---------------------------------------------------------------------------
 
-class MajorCharacter(BaseModel):
-    """An essential character extracted from plot data.
-
-    Field descriptions are intentionally minimal — behavioral
-    instructions (detail level, what to preserve, what to omit) live
-    in the branch-specific system prompts so they can differ between
-    the synopsis-condensation and synthesis tasks.
-    """
-    name: constr(strip_whitespace=True, min_length=1) = Field(
-        ..., description="Character name.",
-    )
-    description: constr(strip_whitespace=True, min_length=1) = Field(
-        ..., description="Brief character description.",
-    )
-    role: constr(strip_whitespace=True, min_length=1) = Field(
-        ..., description="Narrative role.",
-    )
-    primary_motivations: constr(strip_whitespace=True, min_length=1) = Field(
-        ..., description="Character's primary goal.",
-    )
-
-    def __str__(self) -> str:
-        return (
-            f"{self.name}: {self.description} "
-            f"Motivations: {self.primary_motivations}"
-        )
-
-
 class PlotEventsOutput(BaseModel):
     """Structured output from the plot_events generation (Wave 1).
 
-    Produces a chronological plot summary, setting, and character list.
-    The plot_summary field becomes plot_synopsis for all downstream
-    Wave 2 consumers.
+    Produces a single chronological plot summary. The plot_summary
+    field becomes plot_synopsis for all downstream Wave 2 consumers.
 
-    Field descriptions are intentionally minimal — behavioral
-    instructions (detail level, length targets, what to preserve vs.
-    omit) live in the branch-specific system prompts so they can
-    differ between the synopsis-condensation and synthesis tasks.
+    Setting and major_characters fields were removed after evaluation
+    showed setting is redundant (already in the summary) and structured
+    character extraction adds analytical burden better handled by the
+    downstream plot_analysis generator. Character names appear naturally
+    in the plot_summary text.
 
     Model: gpt-5-mini, reasoning_effort: minimal
     """
@@ -155,23 +127,9 @@ class PlotEventsOutput(BaseModel):
     plot_summary: constr(strip_whitespace=True, min_length=1) = Field(
         ..., description="Chronological plot summary.",
     )
-    setting: constr(strip_whitespace=True, min_length=1) = Field(
-        ..., description="Where and when the story takes place.",
-    )
-    major_characters: list[MajorCharacter] = Field(
-        default_factory=list,
-        description="Key characters.",
-    )
 
     def __str__(self) -> str:
-        parts = []
-        if self.plot_summary:
-            parts.append(self.plot_summary.lower())
-        if self.setting:
-            parts.append(self.setting.lower())
-        if self.major_characters:
-            parts.extend(str(c).lower() for c in self.major_characters)
-        return "\n".join(parts)
+        return self.plot_summary.lower()
 
 
 # ---------------------------------------------------------------------------

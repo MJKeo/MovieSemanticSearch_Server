@@ -48,7 +48,7 @@ from movie_ingestion.metadata_generation.generators.plot_events import (
     build_plot_events_prompts,
 )
 from movie_ingestion.metadata_generation.inputs import MovieInputData
-from movie_ingestion.metadata_generation.schemas import MajorCharacter, PlotEventsOutput
+from movie_ingestion.metadata_generation.schemas import PlotEventsOutput
 from movie_ingestion.metadata_generation.prompts.plot_events import (
     SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT,
     SYSTEM_PROMPT_SHORT as SHORT_SYSTEM_PROMPT,
@@ -291,8 +291,6 @@ _CREATE_CANDIDATE_OUTPUTS_TABLE = """
         movie_id         INTEGER NOT NULL,
         candidate_id     TEXT NOT NULL,
         plot_summary     TEXT NOT NULL,
-        setting          TEXT NOT NULL,
-        major_characters TEXT NOT NULL,   -- JSON array of MajorCharacter dicts
         input_tokens     INTEGER,
         output_tokens    INTEGER,
         created_at       TEXT NOT NULL,
@@ -308,10 +306,6 @@ _CREATE_EVALUATIONS_TABLE = """
         groundedness_reasoning         TEXT,
         plot_summary_score             REAL,
         plot_summary_reasoning         TEXT,
-        character_quality_score        REAL,
-        character_quality_reasoning    TEXT,
-        setting_score                  REAL,
-        setting_reasoning              TEXT,
         judge_model                    TEXT,
         judge_input_tokens             INTEGER,
         judge_output_tokens            INTEGER,
@@ -325,17 +319,12 @@ _CREATE_EVALUATIONS_TABLE = """
 SCORE_COLUMNS = [
     "groundedness_score",
     "plot_summary_score",
-    "character_quality_score",
-    "setting_score",
 ]
 
-# Weights for computing overall_mean — summary matters most, grounded next,
-# characters and setting are equally weighted at baseline.
+# Weights for computing overall_mean — summary matters most, grounded next.
 SCORE_WEIGHTS: dict[str, float] = {
     "plot_summary_score": 3.0,
     "groundedness_score": 2.0,
-    "character_quality_score": 1.0,
-    "setting_score": 1.0,
 }
 
 
@@ -371,22 +360,18 @@ class PlotEventsJudgeOutput(BaseModel):
     # Written in caveman-speak, one sentence, max 30 words each.
     groundedness_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
     plot_summary_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
-    character_quality_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
-    setting_reasoning: str = Field(description="One caveman-speak sentence, max 30 words. No articles, no filler, short grunts.")
     # Scores — 4-point scale per dimension
     groundedness_score: Literal[1, 2, 3, 4]
     plot_summary_score: Literal[1, 2, 3, 4]
-    character_quality_score: Literal[1, 2, 3, 4]
-    setting_score: Literal[1, 2, 3, 4]
 
 
 # ---------------------------------------------------------------------------
 # Judge system prompt (rubric)
 # ---------------------------------------------------------------------------
 
-JUDGE_SYSTEM_PROMPT = """You are an expert evaluator of movie metadata quality. Score LLM-generated plot_events metadata on a 4-point scale across 4 independent dimensions.
+JUDGE_SYSTEM_PROMPT = """You are an expert evaluator of movie metadata quality. Score LLM-generated plot_events metadata on a 4-point scale across 2 independent dimensions.
 
-CONTEXT: plot_events metadata is a structured representation of WHAT HAPPENS in a movie — concrete events, essential characters, and setting. It is about events and facts, not themes or analysis. The output serves two purposes:
+CONTEXT: plot_events metadata is a single chronological plot_summary of WHAT HAPPENS in a movie — concrete events, characters, and setting woven into one text. It is about events and facts, not themes or analysis. The output serves two purposes:
 1. Vector embeddings for semantic search — preserving character names, location names, and concrete plot actions enables specific queries to match
 2. Primary input to downstream metadata generators that analyze themes, character arcs, and viewer experience
 
@@ -408,14 +393,14 @@ SCORE SCALE:
 ---
 
 DIMENSION 1: groundedness
-Evaluates factual accuracy across ALL output fields (plot_summary, setting, major_characters). Every detail must be traceable to the provided SOURCE DATA. This is the most important dimension — hallucinated content propagates into downstream metadata and creates false search matches.
+Evaluates factual accuracy of the plot_summary. Every detail must be traceable to the provided SOURCE DATA. This is the most important dimension — hallucinated content propagates into downstream metadata and creates false search matches.
 
 Source hierarchy for adjudicating conflicts: plot_synopsis and detailed plot_summaries are the primary truth. If sources conflict, the most detailed, internally consistent version takes precedence. Overview is a marketing summary and is the weakest source.
 
-Score 4: All details across all fields directly supported by the SOURCE DATA. No fabricated characters, events, locations, or relationships.
+Score 4: All details directly supported by the SOURCE DATA. No fabricated characters, events, locations, or relationships.
 Score 3: All major claims supported. At most 1-2 minor details that are reasonable inferences from the SOURCE DATA rather than directly stated (e.g., inferring a relationship dynamic that's strongly implied but not explicit).
 Score 2: 1-2 details clearly absent from all SOURCE DATA fields. Not egregious fabrication, but clearly unsupported claims.
-Score 1: Any clearly fabricated plot event, character name, character relationship, or setting detail. OR multiple unsupported details across fields.
+Score 1: Any clearly fabricated plot event, character name, character relationship, or setting detail. OR multiple unsupported details.
 
 ---
 
@@ -429,39 +414,15 @@ Score 3: Event coverage substantially complete but the ending is thin, or 1-2 co
 Score 2: Significant events missing (ending omitted, or a major section collapsed to one sentence). OR accurate but so high-level that it reads as a premise description rather than a plot recount. OR contains noticeable filler, flowery prose, or abstract thematic commentary.
 Score 1: Major plot events missing. OR so brief/generic as to be minimally useful. OR dominated by thematic analysis rather than concrete events.
 
-When SOURCE DATA is sparse (only overview + keywords, no synopsis or summaries): do not penalize a shorter summary. Penalize padding or speculation instead. A concise, grounded summary from sparse SOURCE DATA can score 4.
-
----
-
-DIMENSION 3: character_quality
-Evaluates both WHO is included (selection) and HOW they're described (accuracy and specificity), scored as one dimension across all listed characters.
-
-A high-quality character list includes ONLY the absolutely essential characters needed to understand the plot (only a few). It does NOT list minor side characters. For each: exact name, short plot-relevant description, narrative role label, and 1 short sentence stating primary motivations (high-level).
-
-Score 4: Only the characters essential to understanding the core plot are included — no peripheral or minor characters. Count is small and proportionate to the film's complexity. Each character has: correct name, short plot-relevant description, appropriate role label, and a concise single-sentence motivation.
-Score 3: All essential characters present. May include 1 borderline-peripheral character, or 1-2 characters have slightly vague descriptions, marginally imprecise roles, or motivations that are correct but not concise (multi-sentence or overly granular). All names correct.
-Score 2: Misses a clear protagonist, antagonist, or major plot driver. OR multiple characters have vague/inaccurate descriptions or motivations. OR includes several clearly minor characters, inflating the list beyond what's needed to understand the plot.
-Score 1: Essential characters not identified, entirely wrong character set, OR majority of descriptions are inaccurate or too vague to be useful.
-
----
-
-DIMENSION 4: setting
-Evaluates the accuracy and specificity of the WHERE/WHEN setting phrase.
-
-A high-quality setting is 10 words or less. Details that are unknown are omitted — never made up. Meaningful proper nouns and time period are preserved when relevant.
-
-Score 4: Includes specific named location AND time period where SOURCE DATA provides them. Omits dimensions the SOURCE DATA doesn't support (this is correct behavior, not a gap). Accurately characterizes the environment. 10 words or fewer. All details grounded in SOURCE DATA.
-Score 3: Specific but omits one dimension (where OR when) when SOURCE DATA clearly provided both. OR slightly generic where SOURCE DATA had more detail. OR marginally over 10 words.
-Score 2: Generic to the point of being minimally useful (e.g., "modern urban setting" when SOURCE DATA provided a specific city). OR entirely omits a dimension when SOURCE DATA clearly provided it.
-Score 1: Contradicts SOURCE DATA, hallucinated location/time, or so generic as to be content-free.
+When SOURCE DATA is sparse (only overview, no synopsis or summaries): do not penalize a shorter summary. Penalize padding or speculation instead. A concise, grounded summary from sparse SOURCE DATA can score 4.
 
 ---
 
 SCORING INSTRUCTIONS:
 1. For each dimension, write reasoning FIRST, then state the score.
-2. Score each dimension independently — a factual error penalized in groundedness should not also lower plot_summary or character_quality scores.
+2. Score each dimension independently — a factual error penalized in groundedness should not also lower plot_summary score.
 3. Evaluate semantic content, not surface form. Two outputs expressing the same meaning differently receive the same score.
-4. For verifiable facts (character names, plot events), use the SOURCE DATA as the authority. For subjective elements (how much detail, which characters are "essential"), score based on defensibility.
+4. For verifiable facts (character names, plot events), use the SOURCE DATA as the authority. For subjective elements (how much detail), score based on defensibility.
 5. Only penalize in groundedness if a detail is absent from ALL fields in the SOURCE DATA.
 6. Filler, flowery prose, abstract moralizing, and thematic commentary should be penalized in plot_summary, not groundedness (they are style violations, not factual errors).
 
@@ -473,31 +434,16 @@ Each reasoning field must be exactly ONE sentence, maximum 30 words. Write in ca
 # Helper: serialize / deserialize PlotEventsOutput for storage
 # ---------------------------------------------------------------------------
 
-def _serialize_output(output: PlotEventsOutput) -> tuple[str, str, str]:
-    """Return (plot_summary, setting, major_characters_json) for DB storage."""
-    chars_json = json.dumps([c.model_dump() for c in output.major_characters])
-    return output.plot_summary, output.setting, chars_json
+def _serialize_output(output: PlotEventsOutput) -> str:
+    """Return plot_summary for DB storage."""
+    return output.plot_summary
 
 
 def _deserialize_output(row: sqlite3.Row) -> PlotEventsOutput:
     """Reconstruct a PlotEventsOutput from a DB row."""
-    chars = [MajorCharacter.model_validate(c) for c in json.loads(row["major_characters"])]
     return PlotEventsOutput(
         plot_summary=row["plot_summary"],
-        setting=row["setting"],
-        major_characters=chars,
     )
-
-
-def _format_characters_for_prompt(output: PlotEventsOutput) -> str:
-    """Format the character list as readable text for the judge user prompt."""
-    lines = []
-    for c in output.major_characters:
-        lines.append(
-            f"  - {c.name} ({c.role}): {c.description} "
-            f"Motivations: {c.primary_motivations}"
-        )
-    return "\n".join(lines) if lines else "  (none)"
 
 
 def _build_judge_user_prompt(
@@ -517,10 +463,7 @@ def _build_judge_user_prompt(
 ---
 
 CANDIDATE OUTPUT:
-plot_summary: {candidate_output.plot_summary}
-setting: {candidate_output.setting}
-major_characters:
-{_format_characters_for_prompt(candidate_output)}"""
+plot_summary: {candidate_output.plot_summary}"""
 
 
 # ---------------------------------------------------------------------------
@@ -630,17 +573,17 @@ async def run_evaluation(
                     )
                     return
 
-                plot_summary, setting, chars_json = _serialize_output(candidate_output)
+                plot_summary = _serialize_output(candidate_output)
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO plot_events_candidate_outputs
-                        (movie_id, candidate_id, plot_summary, setting,
-                         major_characters, input_tokens, output_tokens, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (movie_id, candidate_id, plot_summary,
+                         input_tokens, output_tokens, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         tmdb_id, candidate.candidate_id,
-                        plot_summary, setting, chars_json,
+                        plot_summary,
                         gen_input_tokens, gen_output_tokens,
                         datetime.now(timezone.utc).isoformat(),
                     ),
@@ -702,8 +645,6 @@ async def run_evaluation(
             # Average scores across all runs
             avg_groundedness = sum(j.groundedness_score for j in judge_outputs) / judge_runs
             avg_plot_summary = sum(j.plot_summary_score for j in judge_outputs) / judge_runs
-            avg_char_quality = sum(j.character_quality_score for j in judge_outputs) / judge_runs
-            avg_setting = sum(j.setting_score for j in judge_outputs) / judge_runs
 
             # Concatenate reasoning from all runs with delimiters for transparency
             def _combine_reasoning(field_name: str) -> str:
@@ -718,11 +659,9 @@ async def run_evaluation(
                     movie_id, candidate_id,
                     groundedness_score, groundedness_reasoning,
                     plot_summary_score, plot_summary_reasoning,
-                    character_quality_score, character_quality_reasoning,
-                    setting_score, setting_reasoning,
                     judge_model, judge_input_tokens, judge_output_tokens,
                     judge_runs, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tmdb_id, candidate.candidate_id,
@@ -730,10 +669,6 @@ async def run_evaluation(
                     _combine_reasoning("groundedness_reasoning"),
                     avg_plot_summary,
                     _combine_reasoning("plot_summary_reasoning"),
-                    avg_char_quality,
-                    _combine_reasoning("character_quality_reasoning"),
-                    avg_setting,
-                    _combine_reasoning("setting_reasoning"),
                     judge_model,
                     total_judge_in_tokens,
                     total_judge_out_tokens,
@@ -745,14 +680,12 @@ async def run_evaluation(
             completed += 1
             # Per-run scores for visibility into judge variance
             per_run_scores = " | ".join(
-                f"run{i}: g={j.groundedness_score} s={j.plot_summary_score} "
-                f"c={j.character_quality_score} st={j.setting_score}"
+                f"run{i}: g={j.groundedness_score} s={j.plot_summary_score}"
                 for i, j in enumerate(judge_outputs, 1)
             )
             print(
                 f"  [{completed}/{total}] {candidate.candidate_id} × {movie.title_with_year()} | "
-                f"avg: ground={avg_groundedness:.2f} summary={avg_plot_summary:.2f} "
-                f"char={avg_char_quality:.2f} setting={avg_setting:.2f} | "
+                f"avg: ground={avg_groundedness:.2f} summary={avg_plot_summary:.2f} | "
                 f"{per_run_scores}"
             )
 
@@ -821,8 +754,8 @@ def print_score_summary(
     cid_width = max(len("candidate_id"), summary.index.str.len().max())
     dim_width = 14  # wide enough for "mean" / "median" values
 
-    dims = ["groundedness", "plot_summary", "character_quality", "setting"]
-    short_labels = ["grounded", "plot_summ", "char_qual", "setting"]
+    dims = ["groundedness", "plot_summary"]
+    short_labels = ["grounded", "plot_summ"]
 
     # Header row
     header = f"{'candidate_id':<{cid_width}}"

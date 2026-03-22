@@ -226,8 +226,8 @@ def _print_score_table(
     num_w: int = 10,
 ) -> None:
     """Print a score table with overall_mean first, then per-dimension means."""
-    dims = ["groundedness", "plot_summary", "character_quality", "setting"]
-    short = ["grounded", "plot_summ", "char_qual", "setting"]
+    dims = ["groundedness", "plot_summary"]
+    short = ["grounded", "plot_summ"]
 
     scores_sorted = df.sort_values("overall_mean", ascending=False)
 

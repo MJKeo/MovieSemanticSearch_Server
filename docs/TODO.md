@@ -44,12 +44,11 @@ docs/llm_metadata_generation_new_flow.md
 
 
 ## Iterate on plot_events evaluation rubric after initial run
-**Context:** The 4-dimension rubric (groundedness, plot_summary,
-character_quality, setting) was systematically improved pre-run based on
-a comparison against the generation SYSTEM_PROMPT (9 identified
-inconsistencies fixed). After running Phase 0 + Phase 1 on the first
-movie(s), manually inspect judge reasoning in the
-`plot_events_evaluations` table before running the full 70-movie corpus —
+**Context:** The 2-dimension rubric (groundedness, plot_summary) was
+simplified from 4 dimensions after evaluation showed setting and
+character_quality were redundant. After running Phase 0 + Phase 1 on the
+first movie(s), manually inspect judge reasoning in the
+`plot_events_evaluations` table before running the full corpus —
 calibration may still need adjustment based on observed judge behavior.
 **When:** After first small-scale evaluation run completes.
 **See:** movie_ingestion/metadata_generation/evaluations/plot_events.py (JUDGE_SYSTEM_PROMPT)
@@ -102,10 +101,11 @@ source_of_inspiration). They now pass `**kwargs` directly, matching reception's 
 plot_events unchanged (retains its defaults).
 
 
-## Retry failed Gemini plot_events generations with fallback provider
-**Context:** 2 of 70 evaluation test set movies (Forrest Gump tmdb_id=13, Fifty Shades of Grey tmdb_id=216015) consistently fail plot_events generation via Gemini 2.5 Flash Lite — the model returns None, likely due to content filtering. These movies have rows in `wave1_results` but with NULL `plot_events`. Consider retrying with a fallback provider (e.g., OpenAI gpt-5-mini) for movies that fail the primary provider.
-**When:** Before running Wave 2 evaluation that depends on complete plot_events coverage.
-**See:** movie_ingestion/metadata_generation/wave1_runner.py, ingestion_data/tracker.db (wave1_results table)
+## ~~Retry failed Gemini plot_events generations with fallback provider~~ STALE
+plot_events is now fixed to gpt-5-mini (no longer uses Gemini). The Gemini
+content-filtering failures are no longer relevant. Any existing wave1_results
+with NULL plot_events from the old Gemini runs will be regenerated with the
+new model.
 
 
 ## ~~Remove debug print statements from metadata generators~~ DONE
@@ -182,8 +182,8 @@ synopsis is the higher-quality signal for embedding. The embedding
 pipeline needs to implement this conditional logic: check for synopsis
 presence, use it if available, otherwise fall back to the generated
 plot_summary output. **Important:** the same `MIN_SYNOPSIS_CHARS` threshold
-(1,000 chars) from the plot_events generator must be applied here — synopses
-below this length are review blurbs, not plot recounts, and the generated
+(2,500 chars) from the plot_events generator must be applied here — synopses
+below this length are too thin for faithful condensation, and the generated
 plot_summary will be higher quality for embedding. See
 `movie_ingestion/metadata_generation/generators/plot_events.py` for the
 threshold constant and rationale.
