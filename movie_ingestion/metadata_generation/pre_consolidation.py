@@ -73,7 +73,7 @@ MPAA_DEFINITIONS: dict[str, str] = {
 # and all plot_summaries entries.
 _MIN_PLOT_TEXT_CHARS = 600
 
-_MIN_REVIEWS_CHARS = 25
+_MIN_REVIEWS_CHARS = 400
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def check_reception(movie_input: MovieInputData) -> str | None:
 
     return (
         "No reception summary, no audience reception attributes, "
-        "and insufficient review text (combined <25 chars)"
+        "and insufficient review text (combined <400 chars)"
     )
 
 

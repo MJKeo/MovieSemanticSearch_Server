@@ -22,14 +22,18 @@ Synthesis zone (embedded into reception_vectors):
 Inputs (from MovieInputData):
     - title_with_year(): "Title (Year)" format
     - genres: genre labels for contextual grounding
-    - overview: brief TMDB plot summary for context
     - reception_summary: externally generated audience opinion summary
     - audience_reception_attributes: key attributes with sentiment labels
-    - featured_reviews: up to 5 full review texts (this is the ONLY call
-      that receives raw reviews — Wave 2 calls get the brief instead)
+    - featured_reviews: raw review texts truncated to 6K combined chars
+      (this is the ONLY call that receives raw reviews — Wave 2 calls
+      get the brief instead)
 
 Response schema: ReceptionOutput
-Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: low.
+Provider/model: OpenAI gpt-5-mini, reasoning_effort: minimal, verbosity: low.
+Provider/model are fixed — evaluated across 36 movies in 6 input-richness
+buckets against multiple candidates and reasoning efforts. Minimal reasoning
+with the revised prompt matched or exceeded low-reasoning quality on the
+old prompt while halving output token cost.
 
 See docs/llm_metadata_generation_new_flow.md Section 4.2.
 """
@@ -54,32 +58,54 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
 GENERATION_TYPE = MetadataType.RECEPTION
 
-# Production defaults — gpt-5-mini with low reasoning effort
-_DEFAULT_PROVIDER = LLMProvider.OPENAI
-_DEFAULT_MODEL = "gpt-5-mini"
+# Fixed LLM configuration — see module docstring for rationale.
+_PROVIDER = LLMProvider.OPENAI
+_MODEL = "gpt-5-mini"
+_MODEL_KWARGS = {"reasoning_effort": "minimal", "verbosity": "low"}
 
-# Review truncation limits — balance token cost vs signal quality
-_MAX_REVIEW_COUNT = 5
-_MAX_REVIEW_CHARS = 5000
+# Review truncation limit — balance token cost vs signal quality.
+# No count cap: the character budget naturally limits bloat while
+# allowing more diverse perspectives when individual reviews are short.
+# 6K chars keeps ~2x headroom above the observed output saturation
+# point (~3K chars of review content) while trimming the long tail.
+_MAX_REVIEW_CHARS = 6000
 
 
 def _truncate_reviews(
     reviews: list[dict],
-    max_count: int = _MAX_REVIEW_COUNT,
     max_chars: int = _MAX_REVIEW_CHARS,
 ) -> list[dict]:
-    """Select reviews up to count and character limits.
+    """Select reviews up to the character budget, prioritising diversity.
 
-    Adds reviews one at a time. Stops after the review that causes
-    either limit to be hit — so the review that crosses the char
-    threshold IS included, but no further reviews are added.
+    Reviews are sorted shortest-first so that many short perspectives
+    are included before a single long review can consume the budget.
+    Adds reviews one at a time, stopping after the review that causes
+    the character threshold to be crossed (that review IS included).
+
+    Edge case: if every review individually exceeds the budget, the
+    shortest review is truncated to fit — some signal is always better
+    than none.
     """
+    if not reviews:
+        return []
+
+    # Sort ascending by text length so shorter (more diverse) reviews
+    # are packed in first.
+    sorted_reviews = sorted(reviews, key=lambda r: len(r.get("text", "")))
+
+    # Edge case: even the shortest review exceeds the budget.
+    # Truncate its text to fit rather than returning nothing.
+    shortest_text = sorted_reviews[0].get("text", "")
+    if len(shortest_text) >= max_chars:
+        truncated = {**sorted_reviews[0], "text": shortest_text[:max_chars]}
+        return [truncated]
+
     kept: list[dict] = []
     accumulated_chars = 0
-    for review in reviews:
+    for review in sorted_reviews:
         kept.append(review)
         accumulated_chars += len(review.get("text", ""))
-        if len(kept) >= max_count or accumulated_chars >= max_chars:
+        if accumulated_chars >= max_chars:
             break
     return kept
 
@@ -98,11 +124,11 @@ def build_reception_user_prompt(movie: MovieInputData) -> str:
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
 
-    Includes genres and overview for contextual grounding (placed before
+    Includes genres for contextual grounding (placed before
     reception-specific fields to prime the model with movie context).
-    Reviews are truncated to at most 5 entries or 5000 combined chars of
-    review text, whichever limit is hit first. Each review is formatted
-    as "summary: text" and passed as a MultiLineList.
+    Reviews are sorted shortest-first for perspective diversity, then
+    truncated to 6K combined chars of review text. Each review is
+    formatted as "summary: text" and passed as a MultiLineList.
     """
     # Format audience_reception_attributes as "name (sentiment)" pairs
     formatted_attributes = (
@@ -126,7 +152,6 @@ def build_reception_user_prompt(movie: MovieInputData) -> str:
     return build_user_prompt(
         title=movie.title_with_year(),
         genres=movie.genres or None,
-        overview=movie.overview or None,
         reception_summary=movie.reception_summary or None,
         audience_reception_attributes=formatted_attributes,
         featured_reviews=formatted_reviews,
@@ -135,26 +160,17 @@ def build_reception_user_prompt(movie: MovieInputData) -> str:
 
 async def generate_reception(
     movie: MovieInputData,
-    provider: LLMProvider = _DEFAULT_PROVIDER,
-    model: str = _DEFAULT_MODEL,
-    **kwargs,
 ) -> Tuple[ReceptionOutput, TokenUsage]:
     """Generate reception metadata for a single movie.
 
     Builds the user prompt from the movie's reception-related fields,
-    calls the specified LLM provider with structured output, and returns
+    calls gpt-5-mini via OpenAI with structured output, and returns
     the parsed result alongside token usage.
 
-    Defaults to OpenAI gpt-5-mini with low reasoning effort. Callers
-    can override provider/model/kwargs to use a different configuration
-    (e.g., for evaluation).
+    Provider/model are fixed — see module docstring for rationale.
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        provider: Which LLM backend to use. Defaults to OPENAI.
-        model: Model identifier. Defaults to "gpt-5-mini".
-        **kwargs: Provider-specific params (e.g. reasoning_effort, temperature,
-            thinking_config). Passed directly to generate_llm_response_async.
 
     Returns:
         Tuple of (ReceptionOutput, TokenUsage).
@@ -168,12 +184,12 @@ async def generate_reception(
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=provider,
+            provider=_PROVIDER,
             user_prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT,
             response_format=ReceptionOutput,
-            model=model,
-            **kwargs,
+            model=_MODEL,
+            **_MODEL_KWARGS,
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
@@ -183,4 +199,4 @@ async def generate_reception(
         print(f"{GENERATION_TYPE} generation returned None for '{title_with_year}'")
         raise MetadataGenerationEmptyResponseError(GENERATION_TYPE, title_with_year)
 
-    return parsed, TokenUsage(input_tokens, output_tokens, model)
+    return parsed, TokenUsage(input_tokens, output_tokens, _MODEL)
