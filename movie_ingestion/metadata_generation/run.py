@@ -27,7 +27,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sqlite3
+import time
+from datetime import datetime
 from pathlib import Path
 
 from movie_ingestion.tracker import TRACKER_DB_PATH, init_db
@@ -49,7 +52,14 @@ from movie_ingestion.metadata_generation.result_processor import (
     process_plot_events_results,
     process_error_file,
 )
-from movie_ingestion.metadata_generation.generators.plot_events import GENERATION_TYPE
+from movie_ingestion.metadata_generation.generators.plot_events import (
+    GENERATION_TYPE,
+    generate_plot_events,
+)
+from movie_ingestion.metadata_generation.errors import (
+    MetadataGenerationError,
+    MetadataGenerationEmptyResponseError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -278,9 +288,198 @@ def cmd_process(tracker_db_path: Path = TRACKER_DB_PATH) -> None:
         print(f"  Cleared batch_id for processed movies.")
 
 
+def cmd_autopilot(
+    tracker_db_path: Path = TRACKER_DB_PATH,
+    batch_size: int = 1000,
+    max_concurrent: int = 3,
+    live_batch_size: int = 25,
+    live_concurrency: int = 5,
+) -> None:
+    """Interleave live generations with batch polling.
+
+    Each iteration:
+    1. Run a batch of live_batch_size direct API calls (live_concurrency parallel).
+    2. Check batch statuses — process any completed/failed batches.
+    3. Submit new batches to fill freed slots (up to max_concurrent in-flight).
+    4. Repeat until no batches remain and no eligible movies exist.
+
+    The live generation serves as a natural poll interval (~30-60s for 25
+    requests at 5 concurrent), so no explicit sleep is needed.
+    """
+    # Ensure DB is initialized
+    init_db().close()
+
+    print(
+        f"Autopilot started: batch_size={batch_size}, "
+        f"max_concurrent={max_concurrent}, live_batch_size={live_batch_size}, "
+        f"live_concurrency={live_concurrency}"
+    )
+
+    while True:
+        now = datetime.now().strftime("%H:%M:%S")
+
+        # Step 1: Run live generation batch
+        live_ids = _get_live_eligible_tmdb_ids(tracker_db_path, limit=live_batch_size)
+        if live_ids:
+            print(f"[{now}] Running live generation for {len(live_ids)} movies...")
+            succeeded, failed = asyncio.run(
+                _run_live_generation_batch(live_ids, live_concurrency, tracker_db_path)
+            )
+            print(f"  Live generation: {succeeded} succeeded, {failed} failed")
+
+        # Step 2: Check batch statuses
+        batch_ids = _get_active_batch_ids(tracker_db_path)
+        in_progress_batches = 0
+        completed_batches = 0
+        failed_batches = 0
+        total_requests = 0
+        completed_requests = 0
+
+        for bid in batch_ids:
+            status = check_batch_status(bid)
+            total_requests += status.total
+            completed_requests += status.completed
+            if status.status == "completed":
+                completed_batches += 1
+            elif status.status == "failed":
+                failed_batches += 1
+            else:
+                in_progress_batches += 1
+
+        now = datetime.now().strftime("%H:%M:%S")
+        print(
+            f"[{now}] Batches — in progress: {in_progress_batches}, "
+            f"completed: {completed_batches}, failed: {failed_batches} | "
+            f"Requests — {completed_requests:,}/{total_requests:,} completed"
+        )
+
+        # Step 3: Process completed/failed batches
+        if completed_batches > 0 or failed_batches > 0:
+            print(f"  Processing {completed_batches + failed_batches} completed/failed batch(es)...")
+            cmd_process(tracker_db_path)
+
+        # Step 4: Submit new batches to fill freed slots
+        slots = max_concurrent - in_progress_batches
+        if slots > 0:
+            print(f"  Submitting up to {slots} new batch(es)...")
+            cmd_submit(
+                tracker_db_path=tracker_db_path,
+                batch_size=batch_size,
+                max_batches=slots,
+            )
+
+        # Step 5: Termination check — no active batches and no eligible movies
+        remaining_batch_ids = _get_active_batch_ids(tracker_db_path)
+        remaining_eligible = _get_live_eligible_tmdb_ids(tracker_db_path, limit=1)
+        if not remaining_batch_ids and not remaining_eligible:
+            now = datetime.now().strftime("%H:%M:%S")
+            print(f"[{now}] All batches processed and no eligible movies remain. Done.")
+            return
+
+        # If no live-eligible movies were found this iteration but batches
+        # are still running, sleep briefly before re-checking.
+        if not live_ids:
+            time.sleep(60)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _get_live_eligible_tmdb_ids(
+    tracker_db_path: Path, limit: int,
+) -> list[int]:
+    """Get tmdb_ids eligible for live plot_events generation.
+
+    Eligible means: imdb_quality_passed status, eligible_for_plot_events=1,
+    no existing plot_events result, and not currently queued in a batch.
+    """
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        rows = db.execute(
+            """
+            SELECT gm.tmdb_id FROM generated_metadata gm
+            JOIN movie_progress mp ON gm.tmdb_id = mp.tmdb_id
+            LEFT JOIN metadata_batch_ids mb ON gm.tmdb_id = mb.tmdb_id
+            WHERE mp.status = 'imdb_quality_passed'
+              AND gm.eligible_for_plot_events = 1
+              AND gm.plot_events IS NULL
+              AND (mb.plot_events_batch_id IS NULL OR mb.tmdb_id IS NULL)
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    return [row[0] for row in rows]
+
+
+async def _run_live_generation_batch(
+    tmdb_ids: list[int],
+    concurrency: int,
+    tracker_db_path: Path,
+) -> tuple[int, int]:
+    """Run live generate_plot_events() for a batch of movies.
+
+    Uses a semaphore to limit parallel calls. Stores results to
+    generated_metadata on success, records failures to generation_failures.
+
+    Returns (succeeded, failed) counts.
+    """
+    movies = load_movie_input_data(tmdb_ids, tracker_db_path)
+    semaphore = asyncio.Semaphore(concurrency)
+
+    # Each task returns (tmdb_id, json_content) on success or
+    # (tmdb_id, None, error_msg) on failure.
+    async def _generate_one(tmdb_id: int) -> tuple[int, str | None, str | None]:
+        movie = movies.get(tmdb_id)
+        if movie is None:
+            return tmdb_id, None, "Movie data could not be loaded"
+
+        async with semaphore:
+            try:
+                result, _usage = await generate_plot_events(movie)
+                content = result.model_dump_json()
+                return tmdb_id, content, None
+            except (MetadataGenerationError, MetadataGenerationEmptyResponseError) as e:
+                return tmdb_id, None, str(e)
+
+    tasks = [_generate_one(tid) for tid in tmdb_ids]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Write all results to DB in one batch
+    succeeded = 0
+    failed = 0
+
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        for i, res in enumerate(results):
+            tmdb_id = tmdb_ids[i]
+
+            # Handle unexpected exceptions from gather
+            if isinstance(res, Exception):
+                db.execute(
+                    "INSERT INTO generation_failures (tmdb_id, metadata_type, error_message) VALUES (?, ?, ?)",
+                    (tmdb_id, GENERATION_TYPE, str(res)),
+                )
+                failed += 1
+                continue
+
+            tmdb_id, content, error_msg = res
+            if content is not None:
+                db.execute(
+                    "UPDATE generated_metadata SET plot_events = ? WHERE tmdb_id = ?",
+                    (content, tmdb_id),
+                )
+                succeeded += 1
+            else:
+                db.execute(
+                    "INSERT INTO generation_failures (tmdb_id, metadata_type, error_message) VALUES (?, ?, ?)",
+                    (tmdb_id, GENERATION_TYPE, error_msg),
+                )
+                failed += 1
+
+        db.commit()
+
+    return succeeded, failed
+
 
 def _get_quality_passed_tmdb_ids(db: sqlite3.Connection) -> list[int]:
     """Get all tmdb_ids at imdb_quality_passed status."""
@@ -421,6 +620,34 @@ def main() -> None:
         "process",
         help="Download and process results from completed batches",
     )
+    autopilot_parser = subparsers.add_parser(
+        "autopilot",
+        help="Interleave live generations with batch polling until done",
+    )
+    autopilot_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1000,
+        help="Max requests per Batch API batch (default: 1000).",
+    )
+    autopilot_parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=3,
+        help="Max Batch API batches in-flight at once (default: 3).",
+    )
+    autopilot_parser.add_argument(
+        "--live-batch-size",
+        type=int,
+        default=25,
+        help="Movies per live generation round (default: 25).",
+    )
+    autopilot_parser.add_argument(
+        "--live-concurrency",
+        type=int,
+        default=5,
+        help="Parallel live API calls (default: 5).",
+    )
 
     args = parser.parse_args()
 
@@ -432,6 +659,13 @@ def main() -> None:
         cmd_status()
     elif args.command == "process":
         cmd_process()
+    elif args.command == "autopilot":
+        cmd_autopilot(
+            batch_size=args.batch_size,
+            max_concurrent=args.max_concurrent,
+            live_batch_size=args.live_batch_size,
+            live_concurrency=args.live_concurrency,
+        )
 
 
 if __name__ == "__main__":
