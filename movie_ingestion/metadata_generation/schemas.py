@@ -16,11 +16,12 @@ Changes from existing schemas:
       * MajorTheme.explanation_and_justification
       * MajorLessonLearned.explanation_and_justification
 
-    - ReceptionOutput gains review_insights_brief field:
-      ~150-250 token dense paragraph capturing key thematic, emotional,
-      structural, and source-material observations from reviews.
-      This is an intermediate output consumed by Wave 2 generators,
-      not embedded or stored in Qdrant.
+    - ReceptionOutput uses a dual-zone structure:
+      Extraction zone (4 nullable observation fields consumed by Wave 2
+      generators, NOT embedded): source_material_hint, thematic_observations,
+      emotional_observations, craft_observations.
+      Synthesis zone (embedded into reception_vectors): reception_summary,
+      praised_qualities, criticized_qualities.
 
     - ProductionKeywordsOutput and SourceOfInspirationOutput are
       SEPARATE schemas (they're separate LLM calls). The existing
@@ -139,49 +140,89 @@ class PlotEventsOutput(BaseModel):
 class ReceptionOutput(BaseModel):
     """Structured output from the reception generation (Wave 1).
 
-    Produces a reception summary, praise/complaint attributes, and
-    the review_insights_brief intermediate output consumed by all
-    Wave 2 generators. review_insights_brief is NOT embedded — it
-    replaces raw reviews in downstream prompts.
+    Dual-zone output structure:
+
+    Extraction zone (NOT embedded, consumed by Wave 2 generators):
+        source_material_hint — short classifying phrase for adaptations/remakes
+        thematic_observations — themes, meaning, messages from reviews
+        emotional_observations — emotional tone, mood, atmosphere
+        craft_observations — narrative structure, pacing, performances as craft
+
+    Synthesis zone (embedded into reception_vectors):
+        reception_summary — evaluative summary of audience opinion
+        praised_qualities — tag phrases for what audiences liked
+        criticized_qualities — tag phrases for what audiences disliked
+
+    Fields are ordered extraction-first so that structured output
+    models produce observations before synthesizing evaluative content.
 
     Model: gpt-5-mini, reasoning_effort: low
     """
     model_config = ConfigDict(extra="forbid")
 
-    new_reception_summary: constr(strip_whitespace=True, min_length=1) = Field(
+    # -- Extraction zone: observations for downstream generators (NOT embedded) --
+
+    source_material_hint: str | None = Field(
+        default=None,
+        description=(
+            "Short classifying phrase for source material, adaptation, "
+            "or remake status. Only if explicitly supported by input "
+            "data. Examples: 'based on autobiography', 'remake', "
+            "'based on book, sequel'. Null for originals or when unsure."
+        ),
+    )
+    thematic_observations: str | None = Field(
+        default=None,
+        description=(
+            "1-4 sentences: what did reviewers observe about themes, "
+            "meaning, and messages? Descriptive, not evaluative. "
+            "Null when input data has nothing for this dimension."
+        ),
+    )
+    emotional_observations: str | None = Field(
+        default=None,
+        description=(
+            "1-4 sentences: what did reviewers observe about emotional "
+            "tone, mood, atmosphere, and viewing experience? "
+            "Null when input data has nothing for this dimension."
+        ),
+    )
+    craft_observations: str | None = Field(
+        default=None,
+        description=(
+            "1-4 sentences: what did reviewers observe about narrative "
+            "structure, pacing, and performances as craft? "
+            "Null when input data has nothing for this dimension."
+        ),
+    )
+
+    # -- Synthesis zone: evaluative content for embedding --
+
+    reception_summary: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
             "2-3 sentence evaluative summary of how the movie was "
             "received: 'what did people think?'"
         ),
     )
-    praise_attributes: conlist(str, max_length=4) = Field(
+    praised_qualities: conlist(str, max_length=6) = Field(
         default_factory=list,
-        description="0-4 tag-like phrases for what audiences liked.",
+        description="0-6 tag-like phrases for what audiences liked.",
     )
-    complaint_attributes: conlist(str, max_length=4) = Field(
+    criticized_qualities: conlist(str, max_length=6) = Field(
         default_factory=list,
-        description="0-4 tag-like phrases for what audiences disliked.",
-    )
-    review_insights_brief: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "~150-250 token dense paragraph capturing thematic, "
-            "emotional, structural, and source-material observations "
-            "from reviews. Focus on 'what did people notice?' — NOT "
-            "embedded, consumed by Wave 2 generators only."
-        ),
+        description="0-6 tag-like phrases for what audiences disliked.",
     )
 
     def __str__(self) -> str:
         parts = []
-        if self.new_reception_summary:
-            parts.append(self.new_reception_summary.lower())
-        if self.praise_attributes:
-            parts.append(", ".join(self.praise_attributes).lower())
-        if self.complaint_attributes:
-            parts.append(", ".join(self.complaint_attributes).lower())
-        # review_insights_brief intentionally excluded from embedding text
+        if self.reception_summary:
+            parts.append(self.reception_summary.lower())
+        if self.praised_qualities:
+            parts.append(", ".join(self.praised_qualities).lower())
+        if self.criticized_qualities:
+            parts.append(", ".join(self.criticized_qualities).lower())
+        # Extraction-zone fields intentionally excluded from embedding text
         return "\n".join(parts)
 
 

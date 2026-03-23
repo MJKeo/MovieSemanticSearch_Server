@@ -11,3 +11,8 @@ patterns observed in the session.
 **Observed:** User corrected hardcoded `GENERATION_TYPE = "plot_events"` strings across 8 generator files, saying "We really shouldn't be hardcoding strings like 'plot_events' anywhere." Created `MetadataType(StrEnum)` as the canonical source, with all callers required to use enum members.
 **Proposed convention:** When a set of related string constants is used across multiple modules (metadata types, pipeline stages, etc.), define them as a `StrEnum` in a shared location. Callers must reference the enum — never hardcode the string value. `StrEnum` keeps SQLite/JSON compatibility while preventing typos and enabling IDE support.
 **Sessions observed:** 1
+
+## Extraction-first field ordering in structured output schemas
+**Observed:** During the reception generator revamp, field ordering in the Pydantic schema was set extraction-first (observation fields before evaluative/synthesis fields) because OpenAI structured output generates fields in schema order. Placing concrete extraction before abstract synthesis improved cheap-model output quality at low reasoning effort.
+**Proposed convention:** When a structured output schema serves both extraction (from source data) and synthesis (evaluative/summary content), order extraction fields first. This creates a natural cognitive flow where the model anchors on concrete observations before producing synthesized judgments. Applies to all generation-side schemas in movie_ingestion/metadata_generation/schemas.py.
+**Sessions observed:** 1

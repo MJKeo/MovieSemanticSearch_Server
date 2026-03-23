@@ -164,6 +164,44 @@ The signature now requires `MetadataType` enum values, and the format changed to
 movie_ingestion/metadata_generation/inputs.py (build_custom_id, batch_id)
 
 
+## Update downstream consumers for new ReceptionOutput structure
+**Context:** The reception generator now produces structured observation fields
+(thematic_observations, emotional_observations, craft_observations, source_material_hint)
+instead of a monolithic review_insights_brief. A backward-compat @property bridges the
+gap, but Wave 2 generators should be updated to consume individual fields for targeted
+signal: plot_analysis + source_of_inspiration get thematic_observations (+source_material_hint),
+viewer_experience + watch_context get emotional_observations, narrative_techniques gets
+craft_observations. This reduces downstream input tokens by ~50-60% per generator.
+**When:** After verifying reception generation quality with new schema.
+**See:** movie_ingestion/metadata_generation/schemas.py (ReceptionOutput),
+movie_ingestion/metadata_generation/generators/ (all Wave 2 generators),
+movie_ingestion/metadata_generation/pre_consolidation.py (skip conditions)
+
+
+## Update search-side ReceptionMetadata and embedding for new field names
+**Context:** The generation-side ReceptionOutput renamed fields: new_reception_summary →
+reception_summary, praise_attributes → praised_qualities, complaint_attributes →
+criticized_qualities, and raised tag cap from 4→6. The search-side ReceptionMetadata in
+implementation/classes/schemas.py and create_reception_vector_text() in vectorize.py still
+use the old names. These need updating together, plus the empty-list guard fix in
+vectorize.py (currently emits "Praises: " with nothing after it when list is empty).
+**When:** When deploying new reception generation results to the search index.
+**See:** implementation/classes/schemas.py (ReceptionMetadata),
+implementation/vectorize.py (create_reception_vector_text),
+movie_ingestion/metadata_generation/schemas.py (ReceptionOutput)
+
+
+## Update test_reception_generator.py for revamped schema
+**Context:** test_reception_generator.py references old field names (new_reception_summary,
+praise_attributes, complaint_attributes) and review_insights_brief as a model field.
+The schema now uses reception_summary, praised_qualities, criticized_qualities, with
+review_insights_brief as a @property. Tests need updating for new field names, new
+observation fields, and the property behavior.
+**When:** Next time reception tests are being worked on.
+**See:** unit_tests/test_reception_generator.py,
+movie_ingestion/metadata_generation/schemas.py (ReceptionOutput)
+
+
 ## Update unit tests for ADR-033 signature changes
 **Context:** The ADR-033 implementation changed signatures in plot_events and
 source_of_inspiration generators. `build_plot_events_user_prompt` now returns

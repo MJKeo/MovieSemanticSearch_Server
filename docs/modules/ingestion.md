@@ -42,7 +42,7 @@ this module.
 | `metadata_generation/openai_batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status (`BatchStatus` dataclass includes batch-level `errors`), download. In-memory JSONL upload/download (no temp files). No movie/generation knowledge. |
 | `metadata_generation/result_processor.py` | Parses downloaded result JSONL, stores results in `generated_metadata`, records per-request failures to `generation_failures`. Clears `plot_events_batch_id` after processing (skips if `output_file_id` is None). |
 | `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, and `batch_id()`. `build_custom_id(MetadataType, tmdb_id)` / `parse_custom_id(str) -> MetadataType` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads from tracker.db (moved from deleted `evaluations/shared.py`). |
-| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` includes `review_insights_brief` intermediate. See ADR-025. |
+| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` uses dual-zone structure: extraction zone (4 observation fields for Wave 2, not embedded) + synthesis zone (summary + quality tags, embedded). Backward-compat `review_insights_brief` @property bridges old consumers. See ADR-025. |
 | `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. `source_of_inspiration` skip check uses only `merged_keywords` and `review_insights_brief` (no `plot_synopsis`). |
 | `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
 | `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. `plot_events.py`: two-branch generation locked to OpenAI gpt-5-mini with `reasoning_effort=minimal, verbosity=low` — provider/model are module-level constants, not caller params. All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
@@ -461,11 +461,13 @@ Pydantic `BaseModel` schemas for each generation. Key design decisions
   and SYSTEM_PROMPT_SYNTHESIS), not the schema. This prevents schema
   field descriptions from competing with prompt-level constraints.
   See ADR-036.
-- **`review_insights_brief`** (on `ReceptionOutput`) is a ~150-250 token
-  dense paragraph extracted from reviews. It is an intermediate output:
-  stored as a JSON column in `generated_metadata`, consumed by Wave 2
-  generator prompts, and **excluded from `__str__()`** so it is never
-  embedded into Qdrant.
+- **`ReceptionOutput` dual-zone structure**: extraction zone has 4
+  nullable observation fields (`source_material_hint`, `thematic_observations`,
+  `emotional_observations`, `craft_observations`) consumed by Wave 2
+  generators, excluded from `__str__()` and never embedded. Synthesis zone
+  has `reception_summary`, `praised_qualities` (0-6), `criticized_qualities`
+  (0-6) — these ARE embedded. A backward-compat `review_insights_brief`
+  `@property` concatenates observation fields for consumers not yet updated.
 - **`ProductionKeywordsOutput` and `SourceOfInspirationOutput` are
   separate schemas** (and separate LLM calls), unlike the existing
   `ProductionMetadata` which merged them.

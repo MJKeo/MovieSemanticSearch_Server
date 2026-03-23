@@ -6,12 +6,23 @@ Accepts MovieInputData, builds a user prompt, calls the specified LLM
 provider via the unified routing method, and returns the parsed
 ReceptionOutput with token usage.
 
-Dual purpose: produces both evaluative reception metadata (summary,
-praise/complaint attributes) AND a review_insights_brief intermediate
-output consumed by all Wave 2 generators.
+Dual-zone output:
+
+Extraction zone (NOT embedded, consumed by Wave 2 generators):
+    - source_material_hint: classifying phrase for adaptations/remakes
+    - thematic_observations: themes, meaning, messages
+    - emotional_observations: emotional tone, mood, atmosphere
+    - craft_observations: narrative structure, pacing, craft
+
+Synthesis zone (embedded into reception_vectors):
+    - reception_summary: evaluative summary of audience opinion
+    - praised_qualities: 0-6 tag phrases for what audiences liked
+    - criticized_qualities: 0-6 tag phrases for what audiences disliked
 
 Inputs (from MovieInputData):
     - title_with_year(): "Title (Year)" format
+    - genres: genre labels for contextual grounding
+    - overview: brief TMDB plot summary for context
     - reception_summary: externally generated audience opinion summary
     - audience_reception_attributes: key attributes with sentiment labels
     - featured_reviews: up to 5 full review texts (this is the ONLY call
@@ -87,6 +98,8 @@ def build_reception_user_prompt(movie: MovieInputData) -> str:
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
 
+    Includes genres and overview for contextual grounding (placed before
+    reception-specific fields to prime the model with movie context).
     Reviews are truncated to at most 5 entries or 5000 combined chars of
     review text, whichever limit is hit first. Each review is formatted
     as "summary: text" and passed as a MultiLineList.
@@ -112,6 +125,8 @@ def build_reception_user_prompt(movie: MovieInputData) -> str:
 
     return build_user_prompt(
         title=movie.title_with_year(),
+        genres=movie.genres or None,
+        overview=movie.overview or None,
         reception_summary=movie.reception_summary or None,
         audience_reception_attributes=formatted_attributes,
         featured_reviews=formatted_reviews,
