@@ -24,6 +24,7 @@ See docs/llm_metadata_generation_new_flow.md Section 5.5.
 from typing import Tuple
 
 from movie_ingestion.metadata_generation.inputs import (
+    MetadataType,
     MovieInputData,
     build_user_prompt,
 )
@@ -36,7 +37,7 @@ from movie_ingestion.metadata_generation.errors import (
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
-GENERATION_TYPE = "production_keywords"
+GENERATION_TYPE = MetadataType.PRODUCTION_KEYWORDS
 
 # Production defaults — matching legacy system (gpt-5-mini with low reasoning).
 # Will be re-evaluated via the evaluation pipeline and updated to the winner.

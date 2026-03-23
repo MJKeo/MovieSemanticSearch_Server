@@ -45,3 +45,53 @@ Reduce hallucination and simplify the plot_events output based on evaluation of 
 - Unit tests referencing MajorCharacter, setting, or major_characters will need updating.
 - Evaluation DB tables have changed schema — existing eval DBs need to be recreated (clean slate confirmed).
 - Notebook cell 4 will produce simplified output (just plot_summary in result.model_dump()).
+
+## Restructure tracker DB for batch generation
+Files: `movie_ingestion/tracker.py`, `movie_ingestion/metadata_generation/inputs.py`
+
+### Intent
+Clean up evaluation-phase artifacts and add proper tables for batch metadata generation at scale.
+
+### Key Decisions
+- **Deleted `wave1_runner.py`**: Direct (non-batch) runner built for evaluation. Obsolete now that batch generation uses the new tables.
+- **Deleted `evaluations/` folder**: Evaluations are now done via Claude Code directly. `load_movie_input_data()` was the only reusable function — moved to `inputs.py` where it lives alongside the `MovieInputData` dataclass it produces.
+- **Deleted `state.py`**: Docstring-only stub describing a normalized table design that was never implemented, now superseded by the wide-table design.
+- **Removed `batch1_custom_id`/`batch2_custom_id`** from `movie_progress` — replaced by `metadata_batch_ids` table.
+- **`metadata_batch_ids` table**: Per-movie table with `tmdb_id` as PK and 8 batch_id columns (one per metadata type). Tracks which OpenAI batch each movie's request belongs to. No auto-seeded rows — populated when batch requests are submitted.
+- **`generated_metadata` table**: One row per movie. 8 JSON columns for generated results + 8 `eligible_for_<type>` integer columns (NULL = not evaluated, 1 = eligible, 0 = ineligible).
+- **Migrations** added: DROP COLUMN for batch columns, DROP TABLE for wave1_results.
+- **Notebook cell 5** imports `MODEL_PRICING` from deleted `analyze_results.py` — will break but is analysis code to fix separately.
+- **`unit_tests/test_wave1_runner.py`** exists but not touched per test-boundaries rule.
+
+## Build plot_events batch generation pipeline
+Files: `movie_ingestion/metadata_generation/run.py`, `movie_ingestion/metadata_generation/request_builder.py`, `movie_ingestion/metadata_generation/openai_batch_manager.py`, `movie_ingestion/metadata_generation/result_processor.py`, `movie_ingestion/metadata_generation/inputs.py`, `movie_ingestion/tracker.py`, `movie_ingestion/metadata_generation/__init__.py`
+
+### Intent
+Implement the full CLI pipeline for generating plot_events metadata at scale via OpenAI's Batch API (50% cost savings). Four commands: eligibility → submit → status → process.
+
+### Key Decisions
+- **Renamed `batch_manager.py` → `openai_batch_manager.py`**: Other metadata types may use non-OpenAI providers later, so the OpenAI-specific wrapper gets a provider-prefixed name.
+- **Deleted old `batch_manager.py`** stub (wave-based design, never implemented).
+- **`generation_failures` table** added to tracker schema: tracks individual request failures with tmdb_id, metadata_type, error_message. Separate from generated_metadata — a movie with eligible=1, result=NULL, and a failure row clearly failed; without a failure row it hasn't been attempted.
+- **`build_custom_id()` / `parse_custom_id()`** added to `inputs.py`: deterministic format `{metadata_type}_{tmdb_id}` (e.g. `plot_events_12345`). `rsplit('_', 1)` parsing is safe because tmdb_id is always a pure integer. `MovieInputData.batch_id()` updated to delegate.
+- **In-memory JSONL upload**: request_builder returns `list[dict]`, openai_batch_manager serializes to `io.BytesIO`. No temp files. ~20MB per 10K-request batch.
+- **In-memory result download**: `download_results()` returns parsed dicts. ~5MB for 10K results.
+- **Sync OpenAI client**: Batch API calls are infrequent (per-batch, not per-movie). Async adds no benefit.
+- **10K batch size**: Balances completion speed vs expiration risk. Remaining movies below 10K go in a final smaller batch.
+- **Eligibility as separate step**: `cmd_eligibility()` evaluates all `imdb_quality_passed` movies in chunks of 5000, stores `eligible_for_plot_events` = 1/0 in `generated_metadata`. Separates population inspection from batch submission.
+- **Batch_id clearing after processing**: `plot_events_batch_id` set to NULL after results are stored. Failed movies retain `plot_events IS NULL` with `eligible=1` so re-running `submit` picks them up.
+- **Plot_events only**: No wave concept. Each metadata type handled individually. Generalization comes later.
+- **Replaced all four stub files** (`run.py`, `request_builder.py`, `batch_manager.py`, `result_processor.py`) — old docstrings described a wave-based design that was never implemented.
+
+## Replace hard-coded GENERATION_TYPE strings with MetadataType enum
+Files: all 7 generators in `movie_ingestion/metadata_generation/generators/` (viewer_experience, watch_context, narrative_techniques, plot_analysis, production_keywords, reception, source_of_inspiration) | Added `MetadataType` import and replaced `GENERATION_TYPE = "..."` with `MetadataType.<VARIANT>`. `plot_events.py` already used the enum. No behavioral change since `MetadataType` is a `StrEnum`.
+
+## Code review fixes for batch pipeline
+Files: `request_builder.py`, `run.py`, `result_processor.py`, `inputs.py`
+
+- **Chunked loading in request_builder**: `build_plot_events_requests()` now loads MovieInputData in chunks of 5K instead of all ~109K at once (would OOM — each movie holds full synopses/reviews).
+- **Deduplicated custom_id parsing**: `_record_batch_ids()` in run.py now uses `parse_custom_id()` instead of inline `rsplit`. Removed unused `build_custom_id` import from run.py.
+- **Guarded batch_id clearing**: `cmd_process()` now skips clearing batch_ids if `output_file_id` is None (prevents losing track of unprocessed movies).
+- **Accurate error count**: `process_error_file()` now tracks actual successfully-parsed errors instead of returning `len(errors)`.
+- **Removed unused import**: `GENERATION_TYPE` import removed from result_processor.py.
+- **Typed custom_id functions**: `build_custom_id()` now takes `MetadataType` (not str), `parse_custom_id()` returns `MetadataType` (raises ValueError if invalid). `MovieInputData.batch_id()` signature updated to match.

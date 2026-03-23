@@ -1,15 +1,12 @@
 """
 LLM metadata generation pipeline using OpenAI's Batch API.
 
-Generates 7 types of LLM metadata across 8 vector spaces for ~112K movies.
-Uses a two-wave batch architecture: Wave 1 (plot_events + reception) produces
-intermediate outputs that feed Wave 2 (plot_analysis, viewer_experience,
-watch_context, narrative_techniques, production).
+Generates 8 types of LLM metadata for ~109K movies. Each metadata type
+is handled individually via the CLI — no wave grouping.
 
-Workflow:
-    python -m movie_ingestion.metadata_generation.run submit --wave 1
-    python -m movie_ingestion.metadata_generation.run status
-    python -m movie_ingestion.metadata_generation.run process
+Workflow (per metadata type, currently plot_events):
+    python -m movie_ingestion.metadata_generation.run eligibility
+    python -m movie_ingestion.metadata_generation.run submit
     python -m movie_ingestion.metadata_generation.run status
     python -m movie_ingestion.metadata_generation.run process
 

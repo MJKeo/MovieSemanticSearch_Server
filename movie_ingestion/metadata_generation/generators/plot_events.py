@@ -40,6 +40,7 @@ import re
 from typing import Tuple
 
 from movie_ingestion.metadata_generation.inputs import (
+    MetadataType,
     MovieInputData,
     MultiLineList,
     build_user_prompt,
@@ -56,7 +57,7 @@ from movie_ingestion.metadata_generation.errors import (
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
-GENERATION_TYPE = "plot_events"
+GENERATION_TYPE = MetadataType.PLOT_EVENTS
 
 # Fixed provider/model for production generation. Evaluation across 6
 # candidates showed gpt-5-mini is the most reliable for this task.

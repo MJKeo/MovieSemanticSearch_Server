@@ -37,6 +37,7 @@ See docs/llm_metadata_generation_new_flow.md Section 5.3.
 from typing import Tuple
 
 from movie_ingestion.metadata_generation.inputs import (
+    MetadataType,
     MovieInputData,
     build_user_prompt,
 )
@@ -52,7 +53,7 @@ from movie_ingestion.metadata_generation.errors import (
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
-GENERATION_TYPE = "watch_context"
+GENERATION_TYPE = MetadataType.WATCH_CONTEXT
 
 # Production defaults — matching current system (gpt-5-mini with medium reasoning).
 # Will be re-evaluated via the evaluation pipeline and updated to the winner.

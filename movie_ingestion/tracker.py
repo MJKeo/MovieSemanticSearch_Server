@@ -97,8 +97,6 @@ CREATE TABLE IF NOT EXISTS movie_progress (
     --   filtered_out        (all filtering — reason details in filter_log.reason)
     stage_3_quality_score REAL,
     stage_5_quality_score REAL,
-    batch1_custom_id TEXT,
-    batch2_custom_id TEXT,
     updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -186,6 +184,59 @@ CREATE TABLE IF NOT EXISTS imdb_data (
     parental_guide_items TEXT,    -- JSON array of {category, severity}
     featured_reviews     TEXT     -- JSON array of {summary, text}
 );
+
+-- Batch IDs per movie per metadata generation type.
+-- Each column holds the OpenAI Batch API batch_id for that generation type,
+-- or NULL if no batch request has been submitted for that movie/type.
+CREATE TABLE IF NOT EXISTS metadata_batch_ids (
+    tmdb_id                        INTEGER PRIMARY KEY,
+    plot_events_batch_id           TEXT,
+    reception_batch_id             TEXT,
+    plot_analysis_batch_id         TEXT,
+    viewer_experience_batch_id     TEXT,
+    watch_context_batch_id         TEXT,
+    narrative_techniques_batch_id  TEXT,
+    production_keywords_batch_id   TEXT,
+    source_of_inspiration_batch_id TEXT
+);
+
+-- Individual request failures within a batch, for tracking and retry.
+-- A movie with eligible_for_X = 1 and X IS NULL in generated_metadata
+-- plus a row here clearly failed; without a row here it hasn't been attempted.
+CREATE TABLE IF NOT EXISTS generation_failures (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    tmdb_id        INTEGER NOT NULL,
+    metadata_type  TEXT NOT NULL,
+    error_message  TEXT NOT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_gen_failures_type ON generation_failures(metadata_type);
+
+-- Generated metadata results and eligibility flags, one row per movie.
+-- JSON columns store the full LLM output (parsed on read). Eligibility
+-- flags are NULL until evaluated, then set to 1 (eligible) or 0 (ineligible)
+-- based on input data quality checks in pre_consolidation.py.
+CREATE TABLE IF NOT EXISTS generated_metadata (
+    tmdb_id                              INTEGER PRIMARY KEY,
+    -- Generated results (JSON text, NULL until generated)
+    plot_events                          TEXT,
+    reception                            TEXT,
+    plot_analysis                        TEXT,
+    viewer_experience                    TEXT,
+    watch_context                        TEXT,
+    narrative_techniques                 TEXT,
+    production_keywords                  TEXT,
+    source_of_inspiration                TEXT,
+    -- Eligibility flags (NULL = not evaluated, 1 = eligible, 0 = ineligible)
+    eligible_for_plot_events             INTEGER,
+    eligible_for_reception               INTEGER,
+    eligible_for_plot_analysis           INTEGER,
+    eligible_for_viewer_experience       INTEGER,
+    eligible_for_watch_context           INTEGER,
+    eligible_for_narrative_techniques    INTEGER,
+    eligible_for_production_keywords     INTEGER,
+    eligible_for_source_of_inspiration   INTEGER
+);
 """
 
 
@@ -232,6 +283,11 @@ def init_db() -> sqlite3.Connection:
         "UPDATE movie_progress SET status = 'imdb_scraped', stage_5_quality_score = NULL WHERE status = 'essential_data_passed'",
         # Add imdb_title_type column for existing databases.
         "ALTER TABLE imdb_data ADD COLUMN imdb_title_type TEXT",
+        # Remove batch custom ID columns — replaced by metadata_batch_ids table.
+        "ALTER TABLE movie_progress DROP COLUMN batch1_custom_id",
+        "ALTER TABLE movie_progress DROP COLUMN batch2_custom_id",
+        # Remove wave1_results table — replaced by generated_metadata table.
+        "DROP TABLE IF EXISTS wave1_results",
     ]
     for stmt in _MIGRATIONS:
         try:

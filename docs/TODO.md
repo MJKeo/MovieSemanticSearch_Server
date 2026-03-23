@@ -158,6 +158,16 @@ movie_ingestion/metadata_generation/schemas.py (all __str__ methods),
 implementation/misc/helpers.py (normalize_string)
 
 
+## Update unit tests for batch_id() and custom_id format change
+**Context:** `unit_tests/test_metadata_inputs.py` tests `MovieInputData.batch_id()` with
+plain strings (e.g., `batch_id("plot_events")`) and asserts the old format `"12345-plot_events"`.
+The signature now requires `MetadataType` enum values, and the format changed to
+`"plot_events_12345"` (metadata_type first). Tests will fail at call time.
+**When:** Next time inputs tests are being worked on.
+**See:** unit_tests/test_metadata_inputs.py (lines 39, 43-44, 325, 330),
+movie_ingestion/metadata_generation/inputs.py (build_custom_id, batch_id)
+
+
 ## Update unit tests for ADR-033 signature changes
 **Context:** The ADR-033 implementation changed signatures in plot_events and
 source_of_inspiration generators. `build_plot_events_user_prompt` now returns
