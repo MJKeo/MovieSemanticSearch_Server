@@ -11,10 +11,16 @@ import pytest
 
 from movie_ingestion.metadata_generation.inputs import (
     MovieInputData,
+    MetadataType,
     MultiLineList,
     SkipAssessment,
     ConsolidatedInputs,
     build_user_prompt,
+    build_custom_id,
+    parse_custom_id,
+    WAVE1_TYPES,
+    WAVE2_TYPES,
+    ALL_GENERATION_TYPES,
 )
 
 
@@ -35,16 +41,23 @@ def _make_movie(**overrides) -> MovieInputData:
 
 class TestBatchId:
     def test_batch_id_format(self):
+        """batch_id() produces '{metadata_type}_{tmdb_id}' format."""
         movie = _make_movie()
-        assert movie.batch_id("plot_events") == "12345-plot_events"
+        assert movie.batch_id(MetadataType.PLOT_EVENTS) == "plot_events_12345"
 
     def test_batch_id_different_types(self):
+        """Different metadata types produce different batch_ids."""
         movie = _make_movie()
-        id_a = movie.batch_id("plot_events")
-        id_b = movie.batch_id("reception")
+        id_a = movie.batch_id(MetadataType.PLOT_EVENTS)
+        id_b = movie.batch_id(MetadataType.RECEPTION)
         assert id_a != id_b
-        assert id_a == "12345-plot_events"
-        assert id_b == "12345-reception"
+        assert id_a == "plot_events_12345"
+        assert id_b == "reception_12345"
+
+    def test_batch_id_delegates_to_build_custom_id(self):
+        """MovieInputData.batch_id() produces same result as build_custom_id()."""
+        movie = _make_movie()
+        assert movie.batch_id(MetadataType.PLOT_EVENTS) == build_custom_id(12345, MetadataType.PLOT_EVENTS)
 
 
 # ---------------------------------------------------------------------------
@@ -322,12 +335,12 @@ class TestBatchIdEdgeCases:
     def test_batch_id_large_tmdb_id(self):
         """Large tmdb_id values are formatted correctly."""
         movie = _make_movie(tmdb_id=999999999)
-        assert movie.batch_id("plot_events") == "999999999-plot_events"
+        assert movie.batch_id(MetadataType.PLOT_EVENTS) == "plot_events_999999999"
 
     def test_batch_id_zero_tmdb_id(self):
         """tmdb_id=0 is handled correctly."""
         movie = _make_movie(tmdb_id=0)
-        assert movie.batch_id("reception") == "0-reception"
+        assert movie.batch_id(MetadataType.RECEPTION) == "reception_0"
 
 
 # ---------------------------------------------------------------------------
@@ -339,3 +352,104 @@ class TestMultiLineList:
         """MultiLineList inherits from list — isinstance check passes."""
         ml = MultiLineList(["a", "b"])
         assert isinstance(ml, list)
+
+
+# ---------------------------------------------------------------------------
+# build_custom_id / parse_custom_id
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCustomId:
+    def test_build_custom_id_format(self):
+        """build_custom_id produces '{metadata_type}_{tmdb_id}' format."""
+        assert build_custom_id(12345, MetadataType.PLOT_EVENTS) == "plot_events_12345"
+
+    def test_build_custom_id_underscore_in_type_name(self):
+        """Multi-underscore type names are preserved in custom_id."""
+        result = build_custom_id(42, MetadataType.SOURCE_OF_INSPIRATION)
+        assert result == "source_of_inspiration_42"
+
+    def test_build_custom_id_all_types(self):
+        """All 8 MetadataType values produce valid custom_ids."""
+        for mt in MetadataType:
+            result = build_custom_id(1, mt)
+            assert result == f"{mt.value}_1"
+
+
+class TestParseCustomId:
+    def test_parse_custom_id_round_trip(self):
+        """parse_custom_id(build_custom_id(...)) round-trips correctly."""
+        for mt in MetadataType:
+            custom_id = build_custom_id(42, mt)
+            parsed_type, parsed_id = parse_custom_id(custom_id)
+            assert parsed_type == mt
+            assert parsed_id == 42
+
+    def test_parse_custom_id_plot_events(self):
+        """Parse a plot_events custom_id."""
+        mt, tid = parse_custom_id("plot_events_12345")
+        assert mt == MetadataType.PLOT_EVENTS
+        assert tid == 12345
+
+    def test_parse_custom_id_source_of_inspiration(self):
+        """Multi-underscore type name parses correctly via rsplit."""
+        mt, tid = parse_custom_id("source_of_inspiration_42")
+        assert mt == MetadataType.SOURCE_OF_INSPIRATION
+        assert tid == 42
+
+    def test_parse_custom_id_narrative_techniques(self):
+        """Another multi-underscore type name parses correctly."""
+        mt, tid = parse_custom_id("narrative_techniques_99")
+        assert mt == MetadataType.NARRATIVE_TECHNIQUES
+        assert tid == 99
+
+    def test_parse_custom_id_invalid_type_raises_valueerror(self):
+        """Invalid metadata type in custom_id raises ValueError."""
+        with pytest.raises(ValueError):
+            parse_custom_id("bogus_type_999")
+
+    def test_parse_custom_id_non_integer_tmdb_id_raises(self):
+        """Non-integer tmdb_id portion raises ValueError."""
+        with pytest.raises(ValueError):
+            parse_custom_id("plot_events_abc")
+
+    def test_parse_custom_id_returns_metadata_type_not_str(self):
+        """Returned type is MetadataType instance, not plain str."""
+        mt, _ = parse_custom_id("reception_1")
+        assert isinstance(mt, MetadataType)
+
+
+# ---------------------------------------------------------------------------
+# MetadataType enum
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataTypeEnum:
+    def test_metadata_type_enum_has_8_members(self):
+        """MetadataType has exactly 8 members."""
+        assert len(MetadataType) == 8
+
+    def test_metadata_type_is_strenum(self):
+        """All MetadataType members are strings."""
+        for mt in MetadataType:
+            assert isinstance(mt, str)
+
+    def test_wave1_types_contains_plot_events_and_reception(self):
+        """WAVE1_TYPES contains plot_events and reception."""
+        assert MetadataType.PLOT_EVENTS in WAVE1_TYPES
+        assert MetadataType.RECEPTION in WAVE1_TYPES
+        assert len(WAVE1_TYPES) == 2
+
+    def test_wave2_types_contains_6_types(self):
+        """WAVE2_TYPES contains exactly 6 types."""
+        assert len(WAVE2_TYPES) == 6
+        assert MetadataType.PLOT_ANALYSIS in WAVE2_TYPES
+        assert MetadataType.VIEWER_EXPERIENCE in WAVE2_TYPES
+        assert MetadataType.WATCH_CONTEXT in WAVE2_TYPES
+        assert MetadataType.NARRATIVE_TECHNIQUES in WAVE2_TYPES
+        assert MetadataType.PRODUCTION_KEYWORDS in WAVE2_TYPES
+        assert MetadataType.SOURCE_OF_INSPIRATION in WAVE2_TYPES
+
+    def test_all_generation_types_is_union(self):
+        """ALL_GENERATION_TYPES is the union of WAVE1_TYPES and WAVE2_TYPES."""
+        assert ALL_GENERATION_TYPES == WAVE1_TYPES | WAVE2_TYPES

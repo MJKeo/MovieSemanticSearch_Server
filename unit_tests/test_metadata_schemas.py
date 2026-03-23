@@ -13,7 +13,6 @@ import pytest
 from pydantic import ValidationError
 
 from movie_ingestion.metadata_generation.schemas import (
-    MajorCharacter,
     PlotEventsOutput,
     ReceptionOutput,
     CharacterArc,
@@ -526,74 +525,28 @@ class TestSourceOfInspirationWithJustificationsStrParity:
 # ---------------------------------------------------------------------------
 
 class TestPlotEventsOutputStr:
-    def test_plot_events_str_lowercases_and_joins(self):
-        """PlotEventsOutput.__str__() lowercases all parts and newline-joins."""
+    def test_plot_events_str_returns_lowercased_summary(self):
+        """PlotEventsOutput.__str__() returns lowercased plot_summary."""
         output = PlotEventsOutput(
             plot_summary="Neo DISCOVERS the Matrix.",
-            setting="Near-Future Dystopia",
-            major_characters=[],
         )
         result = str(output)
-        assert "neo discovers the matrix." in result
-        assert "near-future dystopia" in result
-        # Parts are newline-separated
-        assert "\n" in result
+        assert result == "neo discovers the matrix."
 
-    def test_plot_events_str_includes_major_characters(self):
-        """Major characters are included via MajorCharacter.__str__()."""
-        output = PlotEventsOutput(
-            plot_summary="A plot.",
-            setting="A setting.",
-            major_characters=[
-                MajorCharacter(
-                    name="Neo",
-                    description="a hacker",
-                    role="protagonist",
-                    primary_motivations="Find the truth.",
-                ),
-            ],
-        )
-        result = str(output)
-        assert "neo: a hacker motivations: find the truth." in result
+    def test_plot_events_output_only_has_plot_summary_field(self):
+        """PlotEventsOutput has exactly one user-facing field: plot_summary."""
+        fields = set(PlotEventsOutput.model_fields.keys())
+        assert fields == {"plot_summary"}
 
-    def test_plot_events_str_empty_major_characters(self):
-        """Empty major_characters list produces no character lines."""
-        output = PlotEventsOutput(
-            plot_summary="A plot.",
-            setting="A setting.",
-            major_characters=[],
-        )
-        result = str(output)
-        lines = result.split("\n")
-        # Only plot_summary and setting — no character lines
-        assert len(lines) == 2
+    def test_plot_events_output_rejects_setting_field(self):
+        """PlotEventsOutput(plot_summary=..., setting=...) raises ValidationError."""
+        with pytest.raises(ValidationError):
+            PlotEventsOutput(plot_summary="A plot.", setting="New York")
 
-
-# ---------------------------------------------------------------------------
-# MajorCharacter
-# ---------------------------------------------------------------------------
-
-class TestMajorCharacter:
-    def test_major_character_str_format(self):
-        """MajorCharacter.__str__() produces 'name: description Motivations: motivations'."""
-        mc = MajorCharacter(
-            name="Trinity",
-            description="a skilled rebel fighter",
-            role="love interest",
-            primary_motivations="Protect Neo at all costs.",
-        )
-        assert str(mc) == "Trinity: a skilled rebel fighter Motivations: Protect Neo at all costs."
-
-    def test_major_character_accepts_extra_fields(self):
-        """MajorCharacter allows extra fields (no extra='forbid')."""
-        mc = MajorCharacter(
-            name="Neo",
-            description="a hacker",
-            role="protagonist",
-            primary_motivations="Find the truth.",
-            extra_field="allowed",
-        )
-        assert mc.name == "Neo"
+    def test_plot_events_output_rejects_major_characters_field(self):
+        """PlotEventsOutput(plot_summary=..., major_characters=[]) raises ValidationError."""
+        with pytest.raises(ValidationError):
+            PlotEventsOutput(plot_summary="A plot.", major_characters=[])
 
 
 # ---------------------------------------------------------------------------

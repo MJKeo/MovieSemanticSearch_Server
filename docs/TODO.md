@@ -54,12 +54,8 @@ calibration may still need adjustment based on observed judge behavior.
 **See:** movie_ingestion/metadata_generation/evaluations/plot_events.py (JUDGE_SYSTEM_PROMPT)
 
 
-## Implement request_builder.py for Batch API integration
-**Context:** `movie_ingestion/metadata_generation/request_builder.py`
-is currently a stub containing only a docstring. It will be needed for
-Batch API request assembly during production-scale LLM generation.
-**When:** When building the Batch API integration for Stage 6 production runs.
-**See:** movie_ingestion/metadata_generation/request_builder.py
+## ~~Implement request_builder.py for Batch API integration~~ DONE
+Implemented as part of the batch generation pipeline build.
 
 
 ## Align search-side PlotAnalysis __str__() with generation-side schema

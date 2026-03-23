@@ -110,10 +110,10 @@ class TestInitDb:
         col_names = {row[1] for row in cols}
         db.close()
 
+        # batch1_custom_id and batch2_custom_id were removed by migration
         expected = {
             "tmdb_id", "imdb_id", "status", "stage_3_quality_score",
-            "stage_5_quality_score", "batch1_custom_id", "batch2_custom_id",
-            "updated_at",
+            "stage_5_quality_score", "updated_at",
         }
         assert col_names == expected
 
@@ -279,6 +279,138 @@ class TestInitDb:
 
         assert "title" not in col_names
         assert "year" not in col_names
+
+    def test_creates_metadata_batch_ids_table(self, mocker, tmp_path) -> None:
+        """init_db creates the metadata_batch_ids table with expected columns."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(metadata_batch_ids)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        expected = {
+            "tmdb_id",
+            "plot_events_batch_id", "reception_batch_id",
+            "plot_analysis_batch_id", "viewer_experience_batch_id",
+            "watch_context_batch_id", "narrative_techniques_batch_id",
+            "production_keywords_batch_id", "source_of_inspiration_batch_id",
+        }
+        assert col_names == expected
+
+    def test_creates_generated_metadata_table(self, mocker, tmp_path) -> None:
+        """init_db creates generated_metadata with 8 JSON cols + 8 eligible_for_ cols."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(generated_metadata)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        # 1 PK + 8 JSON result cols + 8 eligible_for_ cols = 17
+        assert "tmdb_id" in col_names
+        for mt in [
+            "plot_events", "reception", "plot_analysis", "viewer_experience",
+            "watch_context", "narrative_techniques", "production_keywords",
+            "source_of_inspiration",
+        ]:
+            assert mt in col_names, f"Missing JSON column: {mt}"
+            assert f"eligible_for_{mt}" in col_names, f"Missing eligible column: eligible_for_{mt}"
+
+    def test_creates_generation_failures_table(self, mocker, tmp_path) -> None:
+        """init_db creates generation_failures table with expected columns."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(generation_failures)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        expected = {"id", "tmdb_id", "metadata_type", "error_message", "created_at"}
+        assert col_names == expected
+
+    def test_creates_generation_failures_index(self, mocker, tmp_path) -> None:
+        """init_db creates idx_gen_failures_type index."""
+        data_dir = tmp_path / "ingestion_data"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
+
+        db = init_db()
+        rows = db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_gen_failures_type'"
+        ).fetchall()
+        db.close()
+
+        assert len(rows) == 1
+
+    def test_migration_drops_batch_custom_id_columns(self, mocker, tmp_path) -> None:
+        """init_db migrates old schema by dropping batch1/batch2_custom_id columns."""
+        data_dir = tmp_path / "ingestion_data"
+        db_path = data_dir / "tracker.db"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", db_path)
+
+        # Create old schema with batch columns
+        data_dir.mkdir(parents=True, exist_ok=True)
+        old_db = sqlite3.connect(str(db_path))
+        old_db.execute("""
+            CREATE TABLE IF NOT EXISTS movie_progress (
+                tmdb_id          INTEGER PRIMARY KEY,
+                imdb_id          TEXT,
+                status           TEXT NOT NULL DEFAULT 'pending',
+                stage_3_quality_score REAL,
+                stage_5_quality_score REAL,
+                batch1_custom_id TEXT,
+                batch2_custom_id TEXT,
+                updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        old_db.commit()
+        old_db.close()
+
+        # Run init_db which should drop batch columns via migrations
+        db = init_db()
+        cols = db.execute("PRAGMA table_info(movie_progress)").fetchall()
+        col_names = {row[1] for row in cols}
+        db.close()
+
+        assert "batch1_custom_id" not in col_names
+        assert "batch2_custom_id" not in col_names
+
+    def test_migration_drops_wave1_results_table(self, mocker, tmp_path) -> None:
+        """init_db migrates old schema by dropping wave1_results table."""
+        data_dir = tmp_path / "ingestion_data"
+        db_path = data_dir / "tracker.db"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", db_path)
+
+        # Create old wave1_results table
+        data_dir.mkdir(parents=True, exist_ok=True)
+        old_db = sqlite3.connect(str(db_path))
+        old_db.execute("""
+            CREATE TABLE IF NOT EXISTS wave1_results (
+                tmdb_id INTEGER PRIMARY KEY,
+                plot_events TEXT,
+                reception TEXT
+            )
+        """)
+        old_db.commit()
+        old_db.close()
+
+        # Run init_db which should drop wave1_results
+        db = init_db()
+        tables = db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wave1_results'"
+        ).fetchall()
+        db.close()
+
+        assert len(tables) == 0
 
 
 # ---------------------------------------------------------------------------

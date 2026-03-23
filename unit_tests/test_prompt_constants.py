@@ -53,6 +53,48 @@ class TestPlotEventsPromptConstants:
         lower = SYSTEM_PROMPT_SYNTHESIS.lower()
         assert "no knowledge of any film" in lower
 
+    def test_synopsis_prompt_contains_json_output_instruction(self) -> None:
+        """SYSTEM_PROMPT_SYNOPSIS contains JSON output format instruction."""
+        assert "JSON with a single field: plot_summary" in SYSTEM_PROMPT_SYNOPSIS
+
+    def test_synthesis_prompt_contains_json_output_instruction(self) -> None:
+        """SYSTEM_PROMPT_SYNTHESIS contains JSON output format instruction."""
+        assert "JSON with a single field: plot_summary" in SYSTEM_PROMPT_SYNTHESIS
+
+    def test_synopsis_prompt_does_not_mention_setting(self) -> None:
+        """SYSTEM_PROMPT_SYNOPSIS does not reference a 'setting' output field."""
+        # Check the OUTPUT section specifically
+        lower = SYSTEM_PROMPT_SYNOPSIS.lower()
+        output_idx = lower.find("output")
+        if output_idx >= 0:
+            output_section = lower[output_idx:]
+            assert "setting:" not in output_section
+            assert "setting (" not in output_section
+
+    def test_synopsis_prompt_does_not_mention_major_characters(self) -> None:
+        """SYSTEM_PROMPT_SYNOPSIS does not reference 'major_characters' output field."""
+        lower = SYSTEM_PROMPT_SYNOPSIS.lower()
+        assert "major_characters" not in lower
+
+    def test_synthesis_prompt_does_not_mention_setting(self) -> None:
+        """SYSTEM_PROMPT_SYNTHESIS does not reference a 'setting' output field."""
+        lower = SYSTEM_PROMPT_SYNTHESIS.lower()
+        output_idx = lower.find("output")
+        if output_idx >= 0:
+            output_section = lower[output_idx:]
+            assert "setting:" not in output_section
+            assert "setting (" not in output_section
+
+    def test_synthesis_prompt_does_not_mention_major_characters(self) -> None:
+        """SYSTEM_PROMPT_SYNTHESIS does not reference 'major_characters' output field."""
+        lower = SYSTEM_PROMPT_SYNTHESIS.lower()
+        assert "major_characters" not in lower
+
+    def test_legacy_prompt_still_mentions_plot_summary(self) -> None:
+        """SYSTEM_PROMPT (legacy) still references plot_summary."""
+        from movie_ingestion.metadata_generation.prompts.plot_events import SYSTEM_PROMPT
+        assert "plot_summary" in SYSTEM_PROMPT.lower()
+
 
 # ---------------------------------------------------------------------------
 # Source of inspiration prompt constants
