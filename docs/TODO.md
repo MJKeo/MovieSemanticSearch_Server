@@ -58,21 +58,20 @@ calibration may still need adjustment based on observed judge behavior.
 Implemented as part of the batch generation pipeline build.
 
 
-## Align search-side PlotAnalysis __str__() with generation-side schema
-**Context:** The search-side `CoreConcept.__str__()` in
-`implementation/classes/schemas.py` returns
-`"{core_concept_label}: {explanation_and_justification}"`, leaking
-justification text into the embedding string. The generation-side
-`PlotAnalysisOutput.__str__()` correctly returns only the label. When
-deploying new generation results to the production search index, the
-search-side `CoreConcept.__str__()` must be updated to return only the
-label, and existing Qdrant embeddings should be verified or regenerated
-to use consistent embedding text.
-**When:** When deploying generation pipeline results to the production
-search index.
-**See:** implementation/classes/schemas.py (CoreConcept, lines 98-109),
-movie_ingestion/metadata_generation/schemas.py (PlotAnalysisOutput,
-PlotAnalysisWithJustificationsOutput)
+## Align search-side PlotAnalysis schema with generation-side redesign
+**Context:** The generation-side PlotAnalysisOutput was redesigned (2026-03-24):
+themes_primary + lessons_learned → thematic_concepts, conflict_scale → conflict_type,
+field order changed for autoregressive scaffolding. The search-side schema in
+`implementation/classes/schemas.py` still uses the old field names and structure.
+Additionally, `implementation/vectorize.py` references old fields:
+`plot_analysis_metadata.core_concept.core_concept_label`,
+`plot_analysis_metadata.themes_primary`, `plot_analysis_metadata.lessons_learned`.
+Both need updating to match the new generation output. The CoreConcept.__str__()
+justification leak issue (from original TODO) still applies.
+**When:** When deploying generation pipeline results to the production search index.
+**See:** implementation/classes/schemas.py (PlotAnalysisMetadata, CoreConcept),
+implementation/vectorize.py (create_plot_analysis_vector_text, dense anchor themes section),
+movie_ingestion/metadata_generation/schemas.py (PlotAnalysisOutput)
 
 
 ## Align search-side WatchContextMetadata.__str__() to lowercase terms
@@ -164,18 +163,19 @@ The signature now requires `MetadataType` enum values, and the format changed to
 movie_ingestion/metadata_generation/inputs.py (build_custom_id, batch_id)
 
 
-## Update downstream consumers for new ReceptionOutput structure
-**Context:** The reception generator now produces structured observation fields
+## Update remaining Wave 2 generators for individual reception observation fields
+**Context:** The reception generator produces structured observation fields
 (thematic_observations, emotional_observations, craft_observations, source_material_hint)
-instead of a monolithic review_insights_brief. A backward-compat @property bridges the
-gap, but Wave 2 generators should be updated to consume individual fields for targeted
-signal: plot_analysis + source_of_inspiration get thematic_observations (+source_material_hint),
-viewer_experience + watch_context get emotional_observations, narrative_techniques gets
-craft_observations. This reduces downstream input tokens by ~50-60% per generator.
-**When:** After verifying reception generation quality with new schema.
-**See:** movie_ingestion/metadata_generation/schemas.py (ReceptionOutput),
-movie_ingestion/metadata_generation/generators/ (all Wave 2 generators),
-movie_ingestion/metadata_generation/pre_consolidation.py (skip conditions)
+instead of a monolithic review_insights_brief. **plot_analysis is now updated** (2026-03-24)
+to consume thematic_observations + emotional_observations directly. The remaining 5 Wave 2
+generators still receive a backward-compatible concatenated review_insights_brief constructed
+in pre_consolidation.py. Each should be migrated to consume targeted fields:
+source_of_inspiration → thematic_observations + source_material_hint,
+viewer_experience + watch_context → emotional_observations,
+narrative_techniques → craft_observations.
+**When:** When working on each Wave 2 generator's prompt/input redesign.
+**See:** movie_ingestion/metadata_generation/pre_consolidation.py (concatenated review_insights_brief),
+movie_ingestion/metadata_generation/generators/ (remaining Wave 2 generators)
 
 
 ## Update search-side ReceptionMetadata and embedding for new field names
@@ -267,5 +267,40 @@ vectors (after ADR-033 implementation is complete).
 **See:** docs/decisions/ADR-033-plot-events-cost-optimization.md,
 implementation/vectorize.py, movie_ingestion/metadata_generation/schemas.py (PlotEventsOutput),
 movie_ingestion/metadata_generation/generators/plot_events.py (MIN_SYNOPSIS_CHARS)
+
+
+## Experiment: emotional_observations impact on plot_analysis quality
+**Context:** emotional_observations is included as an input to plot_analysis experimentally.
+The hypothesis is that thematic_observations alone is sufficient (emotional tone/mood is
+more relevant to viewer_experience than thematic analysis), but emotional_observations may
+help with genre_signature classification and character arc tone. Run A/B evaluation: same
+movies with and without emotional_observations, compare output quality on a representative
+sample including thin-input movies.
+**When:** During plot_analysis evaluation pipeline runs.
+**See:** movie_ingestion/metadata_generation/generators/plot_analysis.py,
+movie_ingestion/metadata_generation/prompts/plot_analysis.py
+
+## Experiment: plot_analysis quality thresholds for thin-input movies
+**Context:** ~36K movies have only a short overview (~170 chars median) as their plot source
+when plot_events doesn't run. Another ~28K have sub-600-char synopses/summaries. These thin
+inputs may produce low-quality character_arcs and generalized_plot_overview. Need empirical
+evaluation to determine if there's a minimum plot text length below which plot_analysis
+should be skipped or outputs should be flagged as low-confidence. The skip condition
+currently only requires one of plot_synopsis/thematic_observations/emotional_observations.
+**When:** During plot_analysis evaluation pipeline runs.
+**See:** movie_ingestion/metadata_generation/generators/plot_analysis.py (_best_plot_fallback),
+movie_ingestion/metadata_generation/pre_consolidation.py (_check_plot_analysis)
+
+## Update unit tests for plot_analysis schema and generator redesign
+**Context:** unit_tests/test_plot_analysis_generator.py references old field names
+(themes_primary, lessons_learned, conflict_scale, review_insights_brief) and old
+function signatures. unit_tests/test_pre_consolidation.py references
+review_insights_brief as a direct field on ReceptionOutput and old _check_plot_analysis
+signature. Both will fail at collection/call time.
+**When:** Next time plot_analysis or pre_consolidation tests are being worked on.
+**See:** unit_tests/test_plot_analysis_generator.py,
+unit_tests/test_pre_consolidation.py,
+movie_ingestion/metadata_generation/schemas.py (PlotAnalysisOutput),
+movie_ingestion/metadata_generation/generators/plot_analysis.py
 
 

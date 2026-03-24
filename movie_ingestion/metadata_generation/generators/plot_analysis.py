@@ -3,20 +3,24 @@ Plot Analysis generator (Wave 2).
 
 Async method that generates plot analysis metadata for a single movie.
 Extracts WHAT TYPE OF STORY this is -- themes, lessons, core concepts,
-genre signatures, character arcs, and a generalized plot overview.
+genre signatures, character arcs, conflict type, and a generalized
+plot overview.
 
 Inputs:
-    - movie (MovieInputData): raw fields for title, genres, plot_keywords
+    - movie (MovieInputData): raw fields for title, genres, plot_keywords,
+      plus raw plot sources used as fallback
     - plot_synopsis: from Wave 1 plot_events output (may be None)
-    - review_insights_brief: from Wave 1 reception output (may be None)
+    - thematic_observations: from Wave 1 reception extraction zone (may be None)
+    - emotional_observations: from Wave 1 reception extraction zone (may be None)
 
-Removed inputs (vs current system):
-    - overview: superseded by plot_synopsis
-    - reception_summary: subsumed by review_insights_brief
-    - featured_reviews: subsumed by review_insights_brief
+When plot_synopsis is unavailable, the prompt builder automatically
+selects the best available raw plot text (longest of first synopsis,
+longest plot_summary, or overview) and passes it with a distinct
+'plot_text' label so the LLM knows the quality tier.
 
-Skip condition: requires plot_synopsis OR review_insights_brief
-    (at least one must be present; enforced by pre_consolidation).
+Skip condition: requires plot_synopsis OR at least one of
+    thematic_observations / emotional_observations
+    (enforced by pre_consolidation).
 
 Response schema: PlotAnalysisOutput (no justifications) by default.
     PlotAnalysisWithJustificationsOutput available for evaluation.
@@ -51,32 +55,75 @@ _DEFAULT_PROVIDER = LLMProvider.OPENAI
 _DEFAULT_MODEL = "gpt-5-mini"
 
 
+def _best_plot_fallback(movie: MovieInputData) -> str | None:
+    """Find the longest available plot text from raw movie sources.
+
+    Used when Wave 1 plot_events did not produce a plot_synopsis.
+    Returns the longest of:
+        - First synopsis entry (plot_synopses[0])
+        - Longest plot_summary entry
+        - Overview text
+
+    Returns None if no plot text is available at all.
+    """
+    candidates: list[str] = []
+    if movie.plot_synopses:
+        candidates.append(movie.plot_synopses[0])
+    if movie.plot_summaries:
+        candidates.append(max(movie.plot_summaries, key=len))
+    if movie.overview:
+        candidates.append(movie.overview)
+    if not candidates:
+        return None
+    return max(candidates, key=len)
+
+
 def build_plot_analysis_user_prompt(
     movie: MovieInputData,
     plot_synopsis: str | None,
-    review_insights_brief: str | None,
+    thematic_observations: str | None,
+    emotional_observations: str | None,
 ) -> str:
     """Build the user prompt for plot_analysis generation from a movie's fields.
 
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
 
+    When plot_synopsis (from Wave 1 plot_events) is available, it's passed
+    with the 'plot_synopsis' label. When unavailable, the best raw plot
+    text is computed from the movie's synopses/summaries/overview and
+    passed with the 'plot_text' label — the distinct label signals to
+    the LLM that this is lower-quality fallback text.
+
     Inputs are labeled for the LLM to match the SYSTEM_PROMPT's INPUTS
     section. None values and empty lists are skipped by build_user_prompt.
     """
+    # Determine plot input: use Wave 1 output if available, else fallback
+    plot_synopsis_label = None
+    plot_text_label = None
+    if plot_synopsis:
+        plot_synopsis_label = plot_synopsis
+    else:
+        fallback = _best_plot_fallback(movie)
+        if fallback:
+            plot_text_label = fallback
+
     return build_user_prompt(
         title=movie.title_with_year(),
         genres=movie.genres or None,
-        plot_synopsis=plot_synopsis,
+        plot_synopsis=plot_synopsis_label,
+        plot_text=plot_text_label,
         merged_keywords=movie.merged_keywords() or None,
-        review_insights_brief=review_insights_brief,
+        thematic_observations=thematic_observations,
+        emotional_observations=emotional_observations,
     )
 
 
 async def generate_plot_analysis(
     movie: MovieInputData,
     plot_synopsis: str | None = None,
-    review_insights_brief: str | None = None,
+    thematic_observations: str | None = None,
+    emotional_observations: str | None = None,
     provider: LLMProvider = _DEFAULT_PROVIDER,
     model: str = _DEFAULT_MODEL,
     system_prompt: str = SYSTEM_PROMPT,
@@ -96,11 +143,20 @@ async def generate_plot_analysis(
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
         plot_synopsis: Plot summary from Wave 1 plot_events. May be None
-            if plot_events failed or was skipped.
-        review_insights_brief: Dense observation paragraph from Wave 1
-            reception. May be None if reception failed or was skipped.
+            if plot_events failed or was skipped. When None, the prompt
+            builder falls back to the best available raw plot text.
+        thematic_observations: Reviewer observations about themes, meaning,
+            and messages from Wave 1 reception extraction zone. May be None
+            if reception failed or was skipped.
+        emotional_observations: Reviewer observations about emotional tone,
+            mood, and atmosphere from Wave 1 reception extraction zone.
+            May be None if reception failed or was skipped. Experimental —
+            included to test impact on output quality.
         provider: Which LLM backend to use. Defaults to OPENAI.
         model: Model identifier. Defaults to "gpt-5-mini".
+        system_prompt: System prompt to use. Defaults to SYSTEM_PROMPT.
+        response_format: Pydantic schema for structured output. Defaults
+            to PlotAnalysisOutput.
         **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
 
     Returns:
@@ -110,7 +166,9 @@ async def generate_plot_analysis(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
-    user_prompt = build_plot_analysis_user_prompt(movie, plot_synopsis, review_insights_brief)
+    user_prompt = build_plot_analysis_user_prompt(
+        movie, plot_synopsis, thematic_observations, emotional_observations,
+    )
     title_with_year = movie.title_with_year()
 
     try:

@@ -213,12 +213,19 @@ def check_reception(movie_input: MovieInputData) -> str | None:
 
 def _check_plot_analysis(
     plot_synopsis: str | None,
-    review_insights_brief: str | None,
+    thematic_observations: str | None,
+    emotional_observations: str | None,
 ) -> str | None:
-    """Plot analysis requires plot_synopsis OR review_insights_brief."""
-    if plot_synopsis or review_insights_brief:
+    """Plot analysis requires plot_synopsis OR thematic/emotional observations.
+
+    At least one substantial input must be present for the LLM to
+    produce meaningful thematic analysis. plot_synopsis is the primary
+    signal; thematic/emotional observations from reviewer data provide
+    strong thematic grounding even without detailed plot.
+    """
+    if plot_synopsis or thematic_observations or emotional_observations:
         return None
-    return "Neither plot synopsis nor review insights brief available"
+    return "Neither plot synopsis nor thematic/emotional observations available"
 
 
 def _check_viewer_experience(
@@ -364,11 +371,36 @@ def assess_skip_conditions(
         if plot_events_output is not None
         else None
     )
-    review_insights_brief = (
-        reception_output.review_insights_brief
+
+    # Individual observation fields from reception extraction zone.
+    # Used directly by plot_analysis; other Wave 2 generators receive
+    # the concatenated review_insights_brief for backward compatibility.
+    thematic_observations = (
+        reception_output.thematic_observations
         if reception_output is not None
         else None
     )
+    emotional_observations = (
+        reception_output.emotional_observations
+        if reception_output is not None
+        else None
+    )
+    craft_observations = (
+        reception_output.craft_observations
+        if reception_output is not None
+        else None
+    )
+
+    # Construct review_insights_brief from extraction zone observations
+    # for backward compatibility with other Wave 2 checks that haven't
+    # been migrated to individual observation fields yet.
+    review_insights_brief = None
+    if reception_output is not None:
+        obs_parts = [
+            o for o in (thematic_observations, emotional_observations, craft_observations)
+            if o
+        ]
+        review_insights_brief = " ".join(obs_parts) if obs_parts else None
 
     # Compute merged keywords if not pre-computed
     if merged_keywords is None:
@@ -377,7 +409,7 @@ def assess_skip_conditions(
         )
 
     _record("plot_analysis", _check_plot_analysis(
-        plot_synopsis, review_insights_brief,
+        plot_synopsis, thematic_observations, emotional_observations,
     ))
     _record("viewer_experience", _check_viewer_experience(
         plot_synopsis, review_insights_brief,

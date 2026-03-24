@@ -13,8 +13,7 @@ Changes from existing schemas:
       * ViewerExperienceSection.justification
       * SourceOfInspirationSection.justification
       * CoreConcept.explanation_and_justification
-      * MajorTheme.explanation_and_justification
-      * MajorLessonLearned.explanation_and_justification
+      * MajorTheme / MajorLessonLearned merged into ThematicConcept
 
     - ReceptionOutput uses a dual-zone structure:
       Extraction zone (4 nullable observation fields consumed by Wave 2
@@ -234,15 +233,19 @@ class CharacterArc(BaseModel):
     """A key character transformation identified in plot analysis."""
     model_config = ConfigDict(extra="forbid")
 
-    character_name: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="The name of the character who undergoes the arc.",
+    character_name: constr(strip_whitespace=True, min_length=1) | None = Field(
+        default=None,
+        description=(
+            "The name of the character who undergoes the arc. "
+            "Include when identifiable from the input text; omit when "
+            "the input doesn't name the character."
+        ),
     )
     arc_transformation_description: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
             "One-sentence description of the character's arc transformation "
-            "and why it's central to the themes and lessons of the movie."
+            "and why it's central to the thematic concepts of the movie."
         ),
     )
     arc_transformation_label: constr(strip_whitespace=True, min_length=1) = Field(
@@ -260,23 +263,30 @@ class CharacterArc(BaseModel):
 class PlotAnalysisOutput(BaseModel):
     """Structured output from the plot_analysis generation (Wave 2).
 
-    Extracts thematic meaning, character arcs, and genre signatures
-    from the plot synopsis. Justification/explanation fields removed
-    per spec Decision 5 (core_concept, themes, lessons are flat
-    strings). arc_transformation_description retained on CharacterArc
-    — it aids label quality and is not a justification.
+    Extracts thematic meaning, character arcs, genre signatures, and
+    conflict type from plot synopsis and/or review observations.
+
+    Field order is optimized for autoregressive generation by small
+    LLMs: genre classification first (easiest, establishes frame),
+    then thematic analysis, core concept distillation, conflict type,
+    character arcs (grounded in established themes), and finally the
+    generalized overview as a synthesis of all prior fields.
+
+    Changes from previous version:
+        - themes_primary + lessons_learned merged into thematic_concepts
+          (eliminates ambiguous theme/lesson distinction for small LLMs)
+        - conflict_scale replaced by conflict_type (captures dramatic
+          tension type, not just scale — fills a retrieval gap)
+        - Field order changed to scaffold autoregressive generation:
+          genre → themes → core concept → conflict → arcs → overview
+
+    arc_transformation_description retained on CharacterArc — it aids
+    label quality and is not a justification.
 
     Model: gpt-5-mini, reasoning_effort: low
     """
     model_config = ConfigDict(extra="forbid")
 
-    core_concept_label: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "The single dominant story concept representing the heart "
-            "of the movie. 6 words or less, simple concrete terms."
-        ),
-    )
     genre_signatures: conlist(
         constr(strip_whitespace=True, min_length=1),
         min_length=2, max_length=6,
@@ -284,33 +294,37 @@ class PlotAnalysisOutput(BaseModel):
         ...,
         description="2-6 search-query-like genre phrases.",
     )
-    conflict_scale: constr(strip_whitespace=True, min_length=1) = Field(
+    thematic_concepts: conlist(
+        constr(strip_whitespace=True, min_length=1),
+        min_length=2, max_length=5,
+    ) = Field(
         ...,
-        description="Scale of consequences in the story's conflict.",
+        description=(
+            "2-5 high-signal labels capturing both the central themes "
+            "the story explores AND any moral messages or lessons it "
+            "conveys. Use simple, generic, human-world-friendly terms."
+        ),
+    )
+    core_concept_label: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "The single dominant story concept representing the heart "
+            "of the movie. 6 words or less, simple concrete terms."
+        ),
+    )
+    conflict_type: conlist(
+        constr(strip_whitespace=True, min_length=1),
+        min_length=1, max_length=2,
+    ) = Field(
+        ...,
+        description=(
+            "1-2 search-query-like phrases describing the fundamental "
+            "dramatic tension in the story."
+        ),
     )
     character_arcs: conlist(CharacterArc, min_length=1, max_length=3) = Field(
         ...,
         description="1-3 key character transformations.",
-    )
-    themes_primary: conlist(
-        constr(strip_whitespace=True, min_length=1),
-        min_length=1, max_length=3,
-    ) = Field(
-        ...,
-        description=(
-            "1-3 core thematic concepts. High-signal labels using "
-            "simple, generic, human-world-friendly terms."
-        ),
-    )
-    lessons_learned: conlist(
-        constr(strip_whitespace=True, min_length=1),
-        max_length=3,
-    ) = Field(
-        default_factory=list,
-        description=(
-            "0-3 key takeaways / lessons. High-signal labels using "
-            "simple, generic, human-world-friendly terms."
-        ),
     )
     generalized_plot_overview: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
@@ -318,6 +332,11 @@ class PlotAnalysisOutput(BaseModel):
     )
 
     def __str__(self) -> str:
+        """Embedding text — order optimized for retrieval, not generation.
+
+        generalized_plot_overview first (largest surface area), then
+        concentrated labels that provide keyword-like anchors.
+        """
         parts = []
         if self.generalized_plot_overview:
             parts.append(self.generalized_plot_overview.lower())
@@ -325,14 +344,12 @@ class PlotAnalysisOutput(BaseModel):
             parts.append(self.core_concept_label.lower())
         if self.genre_signatures:
             parts.append(", ".join(self.genre_signatures).lower())
-        if self.conflict_scale:
-            parts.append(f"{self.conflict_scale.lower()} conflict")
+        if self.conflict_type:
+            parts.append(", ".join(self.conflict_type).lower())
         if self.character_arcs:
             parts.extend(str(arc).lower() for arc in self.character_arcs)
-        if self.themes_primary:
-            parts.extend(t.lower() for t in self.themes_primary)
-        if self.lessons_learned:
-            parts.extend(l.lower() for l in self.lessons_learned)
+        if self.thematic_concepts:
+            parts.extend(t.lower() for t in self.thematic_concepts)
         return "\n".join(parts)
 
 
@@ -368,50 +385,35 @@ class CoreConceptWithJustification(BaseModel):
         return self.core_concept_label
 
 
-class MajorThemeWithJustification(BaseModel):
-    """A primary theme with an explanation field for chain-of-thought quality."""
+class ThematicConceptWithJustification(BaseModel):
+    """A thematic concept (theme or lesson) with a justification field.
+
+    Replaces both MajorThemeWithJustification and
+    MajorLessonLearnedWithJustification — the theme/lesson distinction
+    was ambiguous for small LLMs and irrelevant for vector search.
+    The justification text is NEVER embedded — only the concept_label
+    is used in embedding text.
+    """
     model_config = ConfigDict(extra="forbid")
 
     explanation_and_justification: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "A one-sentence explanation of the theme and why it's one "
-            "of the most important central themes of the movie."
+            "One sentence explaining why this concept captures a key "
+            "theme or lesson of the movie."
         ),
     )
-    theme_label: constr(strip_whitespace=True, min_length=1) = Field(
+    concept_label: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "High-signal label summarizing the theme for vector embedding. "
-            "Use simple, generic, human-world-friendly terms."
+            "High-signal label summarizing the thematic concept for "
+            "vector embedding. Use simple, generic, human-world-friendly terms."
         ),
     )
 
     def __str__(self) -> str:
-        return self.theme_label
-
-
-class MajorLessonLearnedWithJustification(BaseModel):
-    """A lesson learned with an explanation field for chain-of-thought quality."""
-    model_config = ConfigDict(extra="forbid")
-
-    explanation_and_justification: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "A one-sentence explanation of the lesson and why it's one "
-            "of the most important central lessons of the movie."
-        ),
-    )
-    lesson_label: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "High-signal label summarizing the lesson for vector embedding. "
-            "Use simple, generic, human-world-friendly terms."
-        ),
-    )
-
-    def __str__(self) -> str:
-        return self.lesson_label
+        # Only the label is embedded — justification aids generation quality
+        return self.concept_label
 
 
 class PlotAnalysisWithJustificationsOutput(BaseModel):
@@ -424,17 +426,13 @@ class PlotAnalysisWithJustificationsOutput(BaseModel):
     The __str__() method produces IDENTICAL embedding text to
     PlotAnalysisOutput — justification text is never embedded.
 
+    Field order mirrors PlotAnalysisOutput (optimized for autoregressive
+    generation): genre → themes → core concept → conflict → arcs → overview.
+
     Model: gpt-5-mini, reasoning_effort: low
     """
     model_config = ConfigDict(extra="forbid")
 
-    core_concept: CoreConceptWithJustification = Field(
-        ...,
-        description=(
-            "The single dominant story concept representing the heart "
-            "of the movie. 6 words or less, simple concrete terms."
-        ),
-    )
     genre_signatures: conlist(
         constr(strip_whitespace=True, min_length=1),
         min_length=2, max_length=6,
@@ -442,33 +440,37 @@ class PlotAnalysisWithJustificationsOutput(BaseModel):
         ...,
         description="2-6 search-query-like genre phrases.",
     )
-    conflict_scale: constr(strip_whitespace=True, min_length=1) = Field(
+    thematic_concepts: conlist(
+        ThematicConceptWithJustification,
+        min_length=2, max_length=5,
+    ) = Field(
         ...,
-        description="Scale of consequences in the story's conflict.",
+        description=(
+            "2-5 high-signal labels capturing both the central themes "
+            "the story explores AND any moral messages or lessons it "
+            "conveys. Use simple, generic, human-world-friendly terms."
+        ),
+    )
+    core_concept: CoreConceptWithJustification = Field(
+        ...,
+        description=(
+            "The single dominant story concept representing the heart "
+            "of the movie. 6 words or less, simple concrete terms."
+        ),
+    )
+    conflict_type: conlist(
+        constr(strip_whitespace=True, min_length=1),
+        min_length=1, max_length=2,
+    ) = Field(
+        ...,
+        description=(
+            "1-2 search-query-like phrases describing the fundamental "
+            "dramatic tension in the story."
+        ),
     )
     character_arcs: conlist(CharacterArc, min_length=1, max_length=3) = Field(
         ...,
         description="1-3 key character transformations.",
-    )
-    themes_primary: conlist(
-        MajorThemeWithJustification,
-        min_length=1, max_length=3,
-    ) = Field(
-        ...,
-        description=(
-            "1-3 core thematic concepts. High-signal labels using "
-            "simple, generic, human-world-friendly terms."
-        ),
-    )
-    lessons_learned: conlist(
-        MajorLessonLearnedWithJustification,
-        max_length=3,
-    ) = Field(
-        default_factory=list,
-        description=(
-            "0-3 key takeaways / lessons. High-signal labels using "
-            "simple, generic, human-world-friendly terms."
-        ),
     )
     generalized_plot_overview: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
@@ -485,16 +487,13 @@ class PlotAnalysisWithJustificationsOutput(BaseModel):
             parts.append(str(self.core_concept).lower())
         if self.genre_signatures:
             parts.append(", ".join(self.genre_signatures).lower())
-        if self.conflict_scale:
-            parts.append(f"{self.conflict_scale.lower()} conflict")
+        if self.conflict_type:
+            parts.append(", ".join(self.conflict_type).lower())
         if self.character_arcs:
             parts.extend(str(arc).lower() for arc in self.character_arcs)
-        if self.themes_primary:
-            # MajorThemeWithJustification.__str__ returns only theme_label
-            parts.extend(str(t).lower() for t in self.themes_primary)
-        if self.lessons_learned:
-            # MajorLessonLearnedWithJustification.__str__ returns only lesson_label
-            parts.extend(str(lesson).lower() for lesson in self.lessons_learned)
+        if self.thematic_concepts:
+            # ThematicConceptWithJustification.__str__ returns only concept_label
+            parts.extend(str(t).lower() for t in self.thematic_concepts)
         return "\n".join(parts)
 
 
