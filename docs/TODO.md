@@ -218,16 +218,10 @@ movie_ingestion/metadata_generation/generators/plot_events.py,
 movie_ingestion/metadata_generation/generators/source_of_inspiration.py
 
 
-## Re-evaluate reception candidates with revised prompt
-**Context:** The reception system prompt was revised based on evaluation findings from
-the 3-candidate comparison (gpt-5-mini-low, gpt-5-mini-minimal, kimi-k2.5-no-thinking).
-Key changes: evidence-tracing rule, three-tier examples, content-vs-craft tag distinction,
-tag count calibration, source_material_hint evidence types, extraction-vs-synthesis boundary.
-The revised prompt needs to be re-evaluated on the same 36 movies to measure whether the
-GPT-5-mini gap with kimi narrows, particularly on extraction quality and proportionality.
-**When:** Next reception evaluation session.
-**See:** movie_ingestion/metadata_generation/prompts/reception.py,
-movie_ingestion/metadata_generation/evaluation_data/reception_*_evaluation.json
+## ~~Re-evaluate reception candidates with revised prompt~~ DONE
+Completed: gpt-5-mini-minimal with revised prompt + no-overview was evaluated across all
+36 movies. Matched or exceeded old low-reasoning quality. Reception generator finalized
+with fixed config (gpt-5-mini, minimal reasoning, low verbosity).
 
 ## Update plot_events embedding to use synopsis when available, generated plot_summary as fallback
 **Context:** The plot_events vector space embedding process should prefer

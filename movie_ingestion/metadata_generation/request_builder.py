@@ -1,12 +1,12 @@
 """
 Builds Batch API request dicts for metadata generation.
 
-Currently handles plot_events only. Other metadata types will follow
-the same pattern — each gets its own build function that queries for
-eligible movies, constructs prompts, and returns chunked request lists.
+Generic over MetadataType — the caller specifies which type to build
+requests for, and the registry provides the schema, prompt builder,
+and model config.
 
 Usage:
-    batches = build_plot_events_requests()
+    batches = build_requests(MetadataType.RECEPTION)
     # batches is a list of lists — each inner list is up to BATCH_SIZE
     # request dicts ready for upload_and_create_batch().
 """
@@ -20,15 +20,15 @@ from openai.lib._pydantic import to_strict_json_schema
 
 from movie_ingestion.tracker import TRACKER_DB_PATH
 from movie_ingestion.metadata_generation.inputs import (
+    MetadataType,
     build_custom_id,
     load_movie_input_data,
     MovieInputData,
 )
-from movie_ingestion.metadata_generation.generators.plot_events import (
-    GENERATION_TYPE,
-    build_plot_events_prompts,
+from movie_ingestion.metadata_generation.generator_registry import (
+    GeneratorConfig,
+    get_config,
 )
-from movie_ingestion.metadata_generation.schemas import PlotEventsOutput
 
 
 # ---------------------------------------------------------------------------
@@ -42,33 +42,26 @@ DEFAULT_BATCH_SIZE = 10_000
 # 5K × ~5KB ≈ 25MB per chunk, well within limits.
 _LOAD_CHUNK_SIZE = 5_000
 
-# Model config for plot_events — matches generators/plot_events.py constants.
-# Duplicated here rather than importing private vars because these are the
-# values that go into the Batch API request body (not the live API call).
-_MODEL = "gpt-5-mini"
-_MODEL_KWARGS = {"reasoning_effort": "minimal", "verbosity": "low"}
-
-# Compute the JSON schema once — it's identical for every plot_events request.
-_PLOT_EVENTS_SCHEMA = to_strict_json_schema(PlotEventsOutput)
-
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def build_plot_events_requests(
+def build_requests(
+    metadata_type: MetadataType,
     tracker_db_path: Path = TRACKER_DB_PATH,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> list[list[dict]]:
-    """Build Batch API request dicts for all eligible movies needing plot_events.
+    """Build Batch API request dicts for all eligible movies needing generation.
 
-    Queries generated_metadata for movies with eligible_for_plot_events=1
-    and plot_events IS NULL (no result yet). Loads movie data in chunks
-    (each MovieInputData holds full synopses/summaries/reviews, so loading
-    all ~109K at once would use 500MB+). Builds prompts via the existing
-    two-branch logic and wraps each in the Batch API request format.
+    Queries generated_metadata for movies with eligible_for_{type}=1 and
+    {type} IS NULL (no result yet). Loads movie data in chunks (each
+    MovieInputData holds full synopses/summaries/reviews, so loading all
+    ~109K at once would use 500MB+). Builds prompts via the type's
+    registered prompt builder and wraps each in the Batch API request format.
 
     Args:
+        metadata_type: Which metadata type to build requests for.
         tracker_db_path: Path to the tracker SQLite database.
         batch_size: Max requests per batch. Smaller batches help stay
             within OpenAI's enqueued token limits.
@@ -77,12 +70,17 @@ def build_plot_events_requests(
     batch_size request dicts. Returns an empty list if no movies need
     generation.
     """
+    config = get_config(metadata_type)
+
     # Find movies that are eligible but don't have a result yet
-    tmdb_ids = _get_pending_tmdb_ids(tracker_db_path)
+    tmdb_ids = _get_pending_tmdb_ids(metadata_type, tracker_db_path)
     if not tmdb_ids:
         return []
 
-    print(f"  Building requests for {len(tmdb_ids)} movies...")
+    print(f"  [{metadata_type}] Building requests for {len(tmdb_ids)} movies...")
+
+    # Compute the JSON schema once for this type — identical for every request.
+    json_schema = to_strict_json_schema(config.schema_class)
 
     # Build request dicts in chunks to keep memory bounded.
     # MovieInputData holds full plot text, reviews, etc. — several KB each.
@@ -97,10 +95,10 @@ def build_plot_events_requests(
                 # Movie data couldn't be loaded (missing from tmdb_data/imdb_data)
                 continue
 
-            request = _build_single_request(movie)
+            request = _build_single_request(movie, config, json_schema)
             all_requests.append(request)
 
-    print(f"  Built {len(all_requests)} requests.")
+    print(f"  [{metadata_type}] Built {len(all_requests)} requests.")
 
     # Chunk into batches of batch_size
     return _chunk(all_requests, batch_size)
@@ -110,37 +108,52 @@ def build_plot_events_requests(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _get_pending_tmdb_ids(tracker_db_path: Path) -> list[int]:
-    """Query for movies eligible for plot_events that don't have a result yet.
+def _get_pending_tmdb_ids(
+    metadata_type: MetadataType,
+    tracker_db_path: Path,
+) -> list[int]:
+    """Query for movies eligible for a metadata type that don't have a result yet.
 
     Excludes movies that already have an active batch_id in metadata_batch_ids,
     preventing duplicate submissions if submit is run before process completes.
+
+    Column names are interpolated from MetadataType (a StrEnum with fixed
+    values matching DB columns exactly — never from untrusted input).
     """
+    # Column names derived from the MetadataType StrEnum value.
+    eligible_col = f"eligible_for_{metadata_type}"
+    result_col = str(metadata_type)
+    batch_col = f"{metadata_type}_batch_id"
+
     with sqlite3.connect(str(tracker_db_path)) as db:
         rows = db.execute(
-            """
+            f"""
             SELECT gm.tmdb_id FROM generated_metadata gm
             LEFT JOIN metadata_batch_ids mb ON gm.tmdb_id = mb.tmdb_id
-            WHERE gm.eligible_for_plot_events = 1
-              AND gm.plot_events IS NULL
-              AND (mb.plot_events_batch_id IS NULL OR mb.tmdb_id IS NULL)
+            WHERE gm.{eligible_col} = 1
+              AND gm.{result_col} IS NULL
+              AND (mb.{batch_col} IS NULL OR mb.tmdb_id IS NULL)
             """,
         ).fetchall()
 
     return [row[0] for row in rows]
 
 
-def _build_single_request(movie: MovieInputData) -> dict:
-    """Build one Batch API request dict for a single movie's plot_events."""
-    user_prompt, system_prompt = build_plot_events_prompts(movie)
-    custom_id = build_custom_id(movie.tmdb_id, GENERATION_TYPE)
+def _build_single_request(
+    movie: MovieInputData,
+    config: GeneratorConfig,
+    json_schema: dict,
+) -> dict:
+    """Build one Batch API request dict for a single movie."""
+    user_prompt, system_prompt = config.prompt_builder(movie)
+    custom_id = build_custom_id(movie.tmdb_id, config.metadata_type)
 
     return {
         "custom_id": custom_id,
         "method": "POST",
         "url": "/v1/chat/completions",
         "body": {
-            "model": _MODEL,
+            "model": config.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -148,12 +161,12 @@ def _build_single_request(movie: MovieInputData) -> dict:
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "PlotEventsOutput",
+                    "name": config.schema_class.__name__,
                     "strict": True,
-                    "schema": _PLOT_EVENTS_SCHEMA,
+                    "schema": json_schema,
                 },
             },
-            **_MODEL_KWARGS,
+            **config.model_kwargs,
         },
     }
 

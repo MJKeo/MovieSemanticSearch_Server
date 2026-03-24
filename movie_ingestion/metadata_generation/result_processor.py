@@ -1,26 +1,39 @@
 """
 Parses batch result files and stores results to SQLite.
 
-Currently handles plot_events only. Other metadata types will follow
-the same pattern — each gets its own process function that validates
-against the correct Pydantic schema and stores to the right column.
+Generic over MetadataType — determines the type from each result's
+custom_id, validates against the correct Pydantic schema, and stores
+to the corresponding column in generated_metadata.
 
 Usage:
     results = download_results(output_file_id)  # from openai_batch_manager
-    summary = process_plot_events_results(results)
+    summary = process_results(results)
 """
 
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from movie_ingestion.tracker import TRACKER_DB_PATH
-from movie_ingestion.metadata_generation.inputs import parse_custom_id
-from movie_ingestion.metadata_generation.schemas import PlotEventsOutput
+from movie_ingestion.metadata_generation.inputs import MetadataType, parse_custom_id
+from movie_ingestion.metadata_generation.schemas import PlotEventsOutput, ReceptionOutput
+
+
+# ---------------------------------------------------------------------------
+# Schema lookup
+# ---------------------------------------------------------------------------
+# Maps MetadataType to its Pydantic output schema for validation.
+# Kept separate from the full generator registry to avoid pulling in
+# generator modules (prompt builders, LLM callers) that aren't needed here.
+
+SCHEMA_BY_TYPE: dict[MetadataType, type[BaseModel]] = {
+    MetadataType.PLOT_EVENTS: PlotEventsOutput,
+    MetadataType.RECEPTION: ReceptionOutput,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -46,18 +59,18 @@ class ProcessingSummary:
 _COMMIT_INTERVAL = 500
 
 
-def process_plot_events_results(
+def process_results(
     results: list[dict],
     tracker_db_path: Path = TRACKER_DB_PATH,
 ) -> ProcessingSummary:
-    """Parse batch results and store plot_events in generated_metadata.
+    """Parse batch results and store metadata in generated_metadata.
 
     For each result dict from the output JSONL:
-    1. Parse custom_id to get tmdb_id
+    1. Parse custom_id to get (metadata_type, tmdb_id)
     2. Check response status_code == 200
     3. Extract the content string from choices[0].message.content
-    4. Validate with PlotEventsOutput.model_validate_json()
-    5. On success: store raw JSON in generated_metadata.plot_events
+    4. Validate with the type's Pydantic schema
+    5. On success: store raw JSON in the type's column in generated_metadata
     6. On failure: record in generation_failures table
 
     Commits in batches of _COMMIT_INTERVAL for crash safety.
@@ -95,7 +108,7 @@ def process_plot_events_results(
                 pending_since_commit += 1
             else:
                 # Try to extract and validate the content
-                success = _process_single_result(
+                _process_single_result(
                     db, tmdb_id, metadata_type, body, summary,
                 )
                 pending_since_commit += 1
@@ -163,14 +176,14 @@ def process_error_file(
 def _process_single_result(
     db: sqlite3.Connection,
     tmdb_id: int,
-    metadata_type: str,
+    metadata_type: MetadataType,
     body: dict,
     summary: ProcessingSummary,
 ) -> bool:
     """Process a single successful (HTTP 200) result.
 
-    Extracts content, validates against PlotEventsOutput, stores result
-    or records failure. Updates summary in place.
+    Looks up the schema for the metadata_type, validates the content,
+    and stores the result to the correct column. Updates summary in place.
 
     Returns True if the result was successfully stored.
     """
@@ -192,9 +205,19 @@ def _process_single_result(
         summary.failed += 1
         return False
 
+    # Look up the correct schema for this metadata type
+    schema_class = SCHEMA_BY_TYPE.get(metadata_type)
+    if schema_class is None:
+        _record_failure(
+            db, tmdb_id, metadata_type,
+            f"No schema registered for metadata type '{metadata_type}'",
+        )
+        summary.failed += 1
+        return False
+
     # Validate the content against the Pydantic schema
     try:
-        PlotEventsOutput.model_validate_json(content)
+        schema_class.model_validate_json(content)
     except ValidationError as e:
         _record_failure(
             db, tmdb_id, metadata_type,
@@ -203,9 +226,11 @@ def _process_single_result(
         summary.failed += 1
         return False
 
-    # Store the raw JSON content string (already valid, no need to re-serialize)
+    # Store the raw JSON content string to the type's column.
+    # Column name from MetadataType StrEnum — fixed values, not user input.
+    result_col = str(metadata_type)
     db.execute(
-        "UPDATE generated_metadata SET plot_events = ? WHERE tmdb_id = ?",
+        f"UPDATE generated_metadata SET {result_col} = ? WHERE tmdb_id = ?",
         (content, tmdb_id),
     )
     summary.succeeded += 1
