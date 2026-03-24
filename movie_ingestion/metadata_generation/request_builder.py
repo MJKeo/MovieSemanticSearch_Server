@@ -51,8 +51,9 @@ def build_requests(
     metadata_type: MetadataType,
     tracker_db_path: Path = TRACKER_DB_PATH,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    max_batches: int | None = None,
 ) -> list[list[dict]]:
-    """Build Batch API request dicts for all eligible movies needing generation.
+    """Build Batch API request dicts for eligible movies needing generation.
 
     Queries generated_metadata for movies with eligible_for_{type}=1 and
     {type} IS NULL (no result yet). Loads movie data in chunks (each
@@ -65,6 +66,9 @@ def build_requests(
         tracker_db_path: Path to the tracker SQLite database.
         batch_size: Max requests per batch. Smaller batches help stay
             within OpenAI's enqueued token limits.
+        max_batches: If set, only build requests for enough movies to
+            fill this many batches. Avoids loading data and building
+            prompts for movies that would be discarded by the caller.
 
     Returns a list of batches, where each batch is a list of up to
     batch_size request dicts. Returns an empty list if no movies need
@@ -76,6 +80,13 @@ def build_requests(
     tmdb_ids = _get_pending_tmdb_ids(metadata_type, tracker_db_path)
     if not tmdb_ids:
         return []
+
+    # Truncate early to avoid loading data for movies we won't submit.
+    if max_batches is not None:
+        max_movies = max_batches * batch_size
+        if len(tmdb_ids) > max_movies:
+            print(f"  [{metadata_type}] {len(tmdb_ids)} eligible movies, limiting to {max_movies}.")
+            tmdb_ids = tmdb_ids[:max_movies]
 
     print(f"  [{metadata_type}] Building requests for {len(tmdb_ids)} movies...")
 

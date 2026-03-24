@@ -189,16 +189,13 @@ def cmd_submit(
     # Ensure DB is initialized
     init_db().close()
 
-    batches = build_requests(metadata_type, tracker_db_path, batch_size=batch_size)
+    batches = build_requests(
+        metadata_type, tracker_db_path,
+        batch_size=batch_size, max_batches=max_batches,
+    )
     if not batches:
         print(f"[{metadata_type}] Nothing to submit — no eligible movies without results.")
         return
-
-    # Limit to max_batches if specified — remaining movies stay eligible
-    # for the next submit run since they won't have a batch_id yet.
-    if max_batches is not None and len(batches) > max_batches:
-        print(f"  [{metadata_type}] {len(batches)} batch(es) available, limiting to {max_batches}.")
-        batches = batches[:max_batches]
 
     print(f"[{metadata_type}] Submitting {len(batches)} batch(es)...")
 
@@ -763,7 +760,6 @@ def main() -> None:
         default=5,
         help="Parallel live API calls (default: 5).",
     )
-
     args = parser.parse_args()
 
     if args.command == "eligibility":
