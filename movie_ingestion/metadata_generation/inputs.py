@@ -193,6 +193,28 @@ class MovieInputData:
             for kw in self.plot_keywords + self.overall_keywords
         ))
 
+    def best_plot_fallback(self) -> str | None:
+        """Find the longest available raw plot text from this movie's sources.
+
+        Used when Wave 1 plot_events did not produce a plot_synopsis.
+        Selects the longest of:
+            - First synopsis entry (plot_synopses[0])
+            - Longest plot_summary entry
+            - Overview text
+
+        Returns None if no plot text is available at all.
+        """
+        candidates: list[str] = []
+        if self.plot_synopses:
+            candidates.append(self.plot_synopses[0])
+        if self.plot_summaries:
+            candidates.append(max(self.plot_summaries, key=len))
+        if self.overview:
+            candidates.append(self.overview)
+        if not candidates:
+            return None
+        return max(candidates, key=len)
+
     def maturity_summary(self) -> str | None:
         """Consolidated maturity string from available maturity data.
 

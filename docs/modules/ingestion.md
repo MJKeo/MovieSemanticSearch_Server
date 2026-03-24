@@ -45,7 +45,7 @@ this module.
 | `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, and `batch_id()`. `build_custom_id(MetadataType, tmdb_id)` / `parse_custom_id(str) -> MetadataType` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads from tracker.db (moved from deleted `evaluations/shared.py`). |
 | `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` uses dual-zone structure: extraction zone (4 observation fields for Wave 2, not embedded) + synthesis zone (summary + quality tags, embedded). Backward-compat `review_insights_brief` @property bridges old consumers. See ADR-025. |
 | `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. `source_of_inspiration` skip check uses only `merged_keywords` and `review_insights_brief` (no `plot_synopsis`). |
-| `metadata_generation/evaluation_data/analyze_evaluations.py` | Diagnostic: reads evaluation JSON files and `reception_*.json` outputs to produce summary tables of avg scores per axis per candidate, plus total cost across eval movies. Used to compare candidates during model selection. |
+| `metadata_generation/evaluation_data/analyze_evaluations.py` | Diagnostic: generic metadata-evaluation report generator. Reads prompt/schema/bucket/result/evaluation files for a metadata type, then produces a Markdown report with aggregate scores, per-bucket patterns, failures, divergences, and cost totals. |
 | `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. `plot_events.py`: two-branch generation locked to OpenAI gpt-5-mini with `reasoning_effort=minimal, verbosity=low` — provider/model are module-level constants, not caller params. All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant; Wave 2 generators also export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
@@ -617,10 +617,10 @@ eliminates any uncertainty about concurrent DB access.
 - The `ingestion_data/imdb/` JSON file directory is now obsolete as
   the primary data store. `migrate_json_to_sqlite.py` was used for
   the one-time migration of 425,345 rows.
-- `analyze_evaluations.py` reads per-movie evaluation JSONs and
-  produces summary tables for candidate comparison during model
-  selection. Located in `evaluation_data/`, not the main generator
-  package.
+- `analyze_evaluations.py` lives in `evaluation_data/`, not the main
+  generator package. It now reads the prompt/schema/bucket/result/
+  evaluation files for a metadata type and emits a full Markdown
+  report, not just a small score table.
 - The generation-side schemas in `metadata_generation/schemas.py`
   intentionally diverge from the search-side schemas in
   `implementation/classes/schemas.py`. When deploying, align the

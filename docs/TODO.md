@@ -59,12 +59,13 @@ Implemented as part of the batch generation pipeline build.
 
 
 ## Align search-side PlotAnalysis schema with generation-side redesign
-**Context:** The generation-side PlotAnalysisOutput was redesigned (2026-03-24):
-themes_primary + lessons_learned → thematic_concepts, conflict_scale → conflict_type,
-field order changed for autoregressive scaffolding. The search-side schema in
-`implementation/classes/schemas.py` still uses the old field names and structure.
-Additionally, `implementation/vectorize.py` references old fields:
-`plot_analysis_metadata.core_concept.core_concept_label`,
+**Context:** The generation-side PlotAnalysisOutput was redesigned (2026-03-24) and
+further hardened (2026-03-24): themes_primary + lessons_learned → thematic_concepts,
+conflict_scale → conflict_type, core_concept_label → elevator_pitch, CharacterArc
+simplified to arc_transformation_label only, min_length → 0 on sparse-prone fields.
+The search-side schema in `implementation/classes/schemas.py` still uses the old
+field names and structure. Additionally, `implementation/vectorize.py` references
+old fields: `plot_analysis_metadata.core_concept.core_concept_label`,
 `plot_analysis_metadata.themes_primary`, `plot_analysis_metadata.lessons_learned`.
 Both need updating to match the new generation output. The CoreConcept.__str__()
 justification leak issue (from original TODO) still applies.
@@ -269,27 +270,31 @@ implementation/vectorize.py, movie_ingestion/metadata_generation/schemas.py (Plo
 movie_ingestion/metadata_generation/generators/plot_events.py (MIN_SYNOPSIS_CHARS)
 
 
-## Experiment: emotional_observations impact on plot_analysis quality
-**Context:** emotional_observations is included as an input to plot_analysis experimentally.
-The hypothesis is that thematic_observations alone is sufficient (emotional tone/mood is
-more relevant to viewer_experience than thematic analysis), but emotional_observations may
-help with genre_signature classification and character arc tone. Run A/B evaluation: same
-movies with and without emotional_observations, compare output quality on a representative
-sample including thin-input movies.
-**When:** During plot_analysis evaluation pipeline runs.
-**See:** movie_ingestion/metadata_generation/generators/plot_analysis.py,
-movie_ingestion/metadata_generation/prompts/plot_analysis.py
+## ~~Experiment: emotional_observations impact on plot_analysis quality~~ EVALUATED
+Evaluation complete (80 movies × 4 candidates). Results: emotional_observations helps with
+low reasoning (+0.14 thematic, +0.19 arc) but slightly hurts with minimal reasoning (-0.14
+thematic, -0.14 overview). Recommended candidate: gpt-5-mini-low with emotional. Prompt now
+scopes emotional_observations to tone/mood evidence only (not arcs/conflict/plot).
 
-## Experiment: plot_analysis quality thresholds for thin-input movies
-**Context:** ~36K movies have only a short overview (~170 chars median) as their plot source
-when plot_events doesn't run. Another ~28K have sub-600-char synopses/summaries. These thin
-inputs may produce low-quality character_arcs and generalized_plot_overview. Need empirical
-evaluation to determine if there's a minimum plot text length below which plot_analysis
-should be skipped or outputs should be flagged as low-confidence. The skip condition
-currently only requires one of plot_synopsis/thematic_observations/emotional_observations.
-**When:** During plot_analysis evaluation pipeline runs.
-**See:** movie_ingestion/metadata_generation/generators/plot_analysis.py (_best_plot_fallback),
-movie_ingestion/metadata_generation/pre_consolidation.py (_check_plot_analysis)
+## ~~Experiment: plot_analysis quality thresholds for thin-input movies~~ IMPLEMENTED
+Tiered skip condition implemented based on 80-movie evaluation. Tier 1: plot_synopsis → always
+eligible. Tier 2: plot fallback >= 400 chars → eligible. Tier 3: plot fallback 250-399 chars +
+thematic_observations >= 300 chars → eligible. Otherwise skip. emotional_observations removed
+from eligibility entirely.
+**See:** movie_ingestion/metadata_generation/pre_consolidation.py (_check_plot_analysis)
+
+## ~~Re-evaluate plot_analysis with hardened prompt on 70-movie set~~ EVALUATED
+Evaluation complete (70 movies × 8 candidates, 7 buckets). Key findings: arc_quality improved
+dramatically (4.61 best vs 3.6–3.8 pre-hardening). Only 3 low scores (all score=2, all from
+`with_emotional` on Queen concert film). Recommended production candidate changed from
+`gpt-5-mini-low with emotional` to `minimal-justifications` (4.723 avg, $0.118/70 movies).
+Emotional observations confirmed as net negative — exclude from production.
+**See:** `/evaluate-metadata-results plot_analysis` report output (2026-03-24)
+
+## ~~Finalize plot_analysis production config based on 70-movie evaluation~~ DONE
+Implemented (2026-03-24): gpt-5-mini, minimal reasoning, low verbosity,
+PlotAnalysisWithJustificationsOutput schema, emotional_observations removed.
+Generator no longer accepts model params from callers.
 
 ## Update unit tests for plot_analysis schema and generator redesign
 **Context:** unit_tests/test_plot_analysis_generator.py references old field names

@@ -75,6 +75,14 @@ _MIN_PLOT_TEXT_CHARS = 600
 
 _MIN_REVIEWS_CHARS = 400
 
+# Plot analysis skip condition thresholds (tiered eligibility).
+# Tier 2: plot fallback alone is enough if it's >= 400 chars.
+_MIN_PLOT_FALLBACK_CHARS = 400
+# Tier 3: shorter plot fallback (250-399) is eligible only when paired
+# with rich thematic observations (>= 300 chars) that compensate.
+_MIN_PLOT_FALLBACK_WITH_OBSERVATIONS_CHARS = 250
+_MIN_THEMATIC_OBSERVATIONS_CHARS = 300
+
 
 # ---------------------------------------------------------------------------
 # 1. Keyword routing
@@ -214,18 +222,44 @@ def check_reception(movie_input: MovieInputData) -> str | None:
 def _check_plot_analysis(
     plot_synopsis: str | None,
     thematic_observations: str | None,
-    emotional_observations: str | None,
+    movie_input: MovieInputData,
 ) -> str | None:
-    """Plot analysis requires plot_synopsis OR thematic/emotional observations.
+    """Plot analysis eligibility based on tiered input quality.
 
-    At least one substantial input must be present for the LLM to
-    produce meaningful thematic analysis. plot_synopsis is the primary
-    signal; thematic/emotional observations from reviewer data provide
-    strong thematic grounding even without detailed plot.
+    Tier 1: plot_synopsis from Wave 1 plot_events → always eligible.
+    Tier 2: plot fallback (raw synopsis/summary/overview) >= 400 chars
+            → always eligible (enough narrative to ground analysis).
+    Tier 3: plot fallback 250-399 chars + thematic_observations >= 300
+            chars → eligible (rich observations compensate for thin plot).
+    Otherwise: skip (insufficient data for meaningful analysis).
+
+    The plot fallback is the longest of the movie's raw plot sources
+    (first synopsis, longest plot_summary, or overview), computed by
+    MovieInputData.best_plot_fallback().
     """
-    if plot_synopsis or thematic_observations or emotional_observations:
+    # Tier 1: Wave 1 plot_events produced a plot_synopsis
+    if plot_synopsis:
         return None
-    return "Neither plot synopsis nor thematic/emotional observations available"
+
+    # Compute best available raw plot text length
+    fallback = movie_input.best_plot_fallback()
+    best_plot_len = len(fallback) if fallback else 0
+
+    thematic_len = len(thematic_observations) if thematic_observations else 0
+
+    # Tier 2: substantial plot fallback text
+    if best_plot_len >= _MIN_PLOT_FALLBACK_CHARS:
+        return None
+
+    # Tier 3: moderate plot fallback + rich thematic observations
+    if (best_plot_len >= _MIN_PLOT_FALLBACK_WITH_OBSERVATIONS_CHARS
+            and thematic_len >= _MIN_THEMATIC_OBSERVATIONS_CHARS):
+        return None
+
+    return (
+        f"Insufficient plot data for analysis: best plot fallback is "
+        f"{best_plot_len} chars, thematic observations is {thematic_len} chars"
+    )
 
 
 def _check_viewer_experience(
@@ -409,7 +443,7 @@ def assess_skip_conditions(
         )
 
     _record("plot_analysis", _check_plot_analysis(
-        plot_synopsis, thematic_observations, emotional_observations,
+        plot_synopsis, thematic_observations, movie_input,
     ))
     _record("viewer_experience", _check_viewer_experience(
         plot_synopsis, review_insights_brief,
