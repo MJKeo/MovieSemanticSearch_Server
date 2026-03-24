@@ -28,7 +28,7 @@ lives in `movie_ingestion/metadata_generation/`. See
 |------|---------|
 | `generic_methods.py` | LLM client initialization, all provider-specific generation functions, `LLMProvider` enum, and `generate_llm_response_async` unified router. Seven providers: OpenAI, Kimi, Gemini, Groq, Alibaba, Anthropic, WHAM. Embeddings via OpenAI `text-embedding-3-small` (1536 dims). |
 | `query_understanding_methods.py` | Search-time DAG: 5 async functions that run in parallel with dependency management. Uses Kimi for all QU calls. Redis caching planned but not yet implemented (key format: `qu:v{N}:{hash}`, TTL 1 day). |
-| `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. Superseded by `movie_ingestion/metadata_generation/generators/`. Not used in the active pipeline. Provides `TokenUsage` NamedTuple (imported by generators). |
+| `vector_metadata_generation_methods.py` | Legacy ingestion-time generation functions. Superseded by `movie_ingestion/metadata_generation/generators/`. Provides `TokenUsage` NamedTuple which is actively imported by all 8 generators — do not delete this module. |
 
 ## Boundaries
 
@@ -129,12 +129,13 @@ partial DAG results.
   retry logic (e.g., sleep 30s and retry indefinitely, as the
   evaluation judge does).
 - **WHAM requires `api_key` (OAuth access_token) and `account_id`** at every
-  call site. Call `get_valid_auth()` from `evaluations/openai_oauth.py` once
-  before constructing concurrent tasks, then pass the result through.
-  WHAM is evaluation-only; it uses `responses.stream()` (Responses API),
-  not `chat.completions`. With any `reasoning_effort` other than `"none"`,
-  GPT-5.4 rejects `temperature`, `top_p`, `max_output_tokens`, and
-  `logprobs`. See ADR-030.
+  call site. OAuth tokens are stored in
+  `evaluation_data/openai_oauth_tokens.json` (the Python module that
+  managed the lifecycle has been removed). WHAM is evaluation-only; it
+  uses `responses.stream()` (Responses API), not `chat.completions`.
+  With any `reasoning_effort` other than `"none"`, GPT-5.4 rejects
+  `temperature`, `top_p`, `max_output_tokens`, and `logprobs`.
+  See ADR-030.
 - Required env vars: `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, `GOOGLE_API_KEY`,
   `GROQ_API_KEY`, `ALIBABA_API_KEY`, `ANTHROPIC_API_KEY`. WHAM uses OAuth
-  tokens managed by `evaluations/openai_oauth.py` (no dedicated env var).
+  tokens from `evaluation_data/openai_oauth_tokens.json` (no dedicated env var).

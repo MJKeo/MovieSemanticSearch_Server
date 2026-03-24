@@ -58,11 +58,11 @@ so existing `eval.db` instances are upgraded in place.
 - Effective judge API spend is 3× per (candidate, movie) pair, partially
   offset by the fact that judge calls are cheap relative to generation calls.
 - Score columns in `plot_events_evaluations` are REAL — SQL queries that
-  previously assumed INTEGER must be updated if used outside `analyze_results.py`.
+  previously assumed INTEGER must be updated if used outside `analyze_evaluations.py`.
 - The `judge_runs` column in each row makes the averaging factor transparent
   and enables future analysis of per-run variance.
 
 ## References
 
 - ADR-028 (evaluation pipeline) — overall evaluation design
-- `movie_ingestion/metadata_generation/evaluations/plot_events.py` — `run_evaluation()`
+- `movie_ingestion/metadata_generation/evaluation_data/` — evaluation outputs and analysis (evaluations/ directory was deleted per ADR-041)

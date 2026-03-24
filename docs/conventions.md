@@ -244,17 +244,18 @@ to [0, 1] unless explicitly noted otherwise:
 ## Evaluation Conventions
 
 - **Storage structure**: Evaluation results are stored in
-  `evaluation_data/eval.db`. Each metadata type gets two tables:
-  candidate_outputs and evaluations. Scoring dimensions are individual
-  typed columns — not a JSON blob — so individual scores are queryable
-  via SQL. Aggregate summaries (mean scores, rankings) are computed at
-  read time, not stored.
-- **Candidate config**: LLM configurations under test are represented
-  as `EvaluationCandidate` instances (defined in `evaluations/shared.py`).
-  Each metadata type defines its own candidate list in its evaluation
-  file (e.g., `PLOT_EVENTS_CANDIDATES`) — not in `shared.py`. Evaluation
-  entry points take a list of these — never loose provider/model/prompt
-  keyword arguments.
+  `evaluation_data/eval.db`. Each metadata type gets three tables:
+  `candidates`, `{type}_candidate_outputs`, and `{type}_evaluations`.
+  Scoring dimensions are individual typed columns — not a JSON blob —
+  so individual scores are queryable via SQL. Aggregate summaries
+  (mean scores, rankings) are computed at read time, not stored.
+  Analysis is done via `movie_ingestion/metadata_generation/evaluation_data/analyze_evaluations.py`.
+- **Candidate config**: LLM configurations under test are defined
+  per metadata type in the evaluation notebook
+  (`metadata_generation_playground.ipynb`). Each candidate specifies
+  provider, model, and kwargs. Evaluation outputs are saved as
+  per-movie JSON files in `evaluation_data/` (e.g.,
+  `reception_{tmdb_id}.json`).
 - **Reference-free pointwise evaluation**: For each (candidate, movie)
   pair, generate output, then score with a rubric-based LLM judge
   (Claude Opus 4.6, thinking disabled). The judge sees raw source data

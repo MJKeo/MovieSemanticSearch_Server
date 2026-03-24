@@ -82,4 +82,4 @@ uses `{"effort": "low"}` rather than a flat kwarg.
 - ADR-026 (multi-provider routing) — `LLMProvider` enum and dispatch table
 - ADR-028 (evaluation pipeline) — why a reference model is needed
 - `implementation/llms/generic_methods.py` — `generate_wham_response_async`
-- `movie_ingestion/metadata_generation/evaluations/openai_oauth.py` — OAuth lifecycle
+- `movie_ingestion/metadata_generation/evaluation_data/openai_oauth_tokens.json` — OAuth token storage (Python lifecycle module removed per ADR-041)

@@ -37,14 +37,15 @@ this module.
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data, split into 3 groups matching the Stage 5 threshold groups (has_providers, recent_no_providers, old_no_providers). Produces `imdb_data_analysis_{group}.json` output files. |
 | `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores across 3 groups (with providers, no providers recent, no providers old). Thin wrapper around `survival_curve_utils`. |
 | `imdb_quality_scoring/sample_threshold_candidates.py` | Diagnostic: samples movies around each candidate threshold per group, writes full TMDB+IMDB data to per-group JSON files in `ingestion_data/` for manual review. |
-| `metadata_generation/run.py` | Stage 6 CLI entry point: `eligibility`, `submit`, `status`, `process`, `autopilot`. Per-type Batch API flow with live generation interleaving. |
-| `metadata_generation/request_builder.py` | Builds per-type Batch API request lists. `build_plot_events_requests()` loads eligible movies in chunks of 5K to avoid OOM. Returns `list[dict]`; serialization to JSONL is done in `openai_batch_manager.py`. |
+| `metadata_generation/run.py` | Stage 6 CLI entry point: `eligibility`, `submit`, `status`, `process`, `autopilot`. `eligibility`/`submit`/`autopilot` require `--metadata` arg; `status`/`process` handle all types. Autopilot generates/submits for specified type but processes all types' batches. |
+| `metadata_generation/generator_registry.py` | Maps each `MetadataType` to its `GeneratorConfig` (schema, eligibility checker, prompt builder, live generator, model config). Thin adapter wrappers normalize different generator prompt interfaces into a common `(user_prompt, system_prompt)` tuple contract. `get_config(metadata_type)` is the lookup entry point. |
+| `metadata_generation/request_builder.py` | Builds per-type Batch API request lists. `build_requests(metadata_type)` loads eligible movies in chunks of 5K to avoid OOM, uses registry config for prompts/schema/model. Returns `list[list[dict]]`; serialization to JSONL is done in `openai_batch_manager.py`. |
 | `metadata_generation/openai_batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status (`BatchStatus` dataclass includes batch-level `errors`), download. In-memory JSONL upload/download (no temp files). No movie/generation knowledge. |
-| `metadata_generation/result_processor.py` | Parses downloaded result JSONL, stores results in `generated_metadata`, records per-request failures to `generation_failures`. Clears `plot_events_batch_id` after processing (skips if `output_file_id` is None). |
+| `metadata_generation/result_processor.py` | Parses downloaded result JSONL, determines metadata type from custom_id, validates against correct schema via `SCHEMA_BY_TYPE`, stores results in the type's column in `generated_metadata`. Records per-request failures to `generation_failures`. |
 | `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, and `batch_id()`. `build_custom_id(MetadataType, tmdb_id)` / `parse_custom_id(str) -> MetadataType` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads from tracker.db (moved from deleted `evaluations/shared.py`). |
 | `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` uses dual-zone structure: extraction zone (4 observation fields for Wave 2, not embedded) + synthesis zone (summary + quality tags, embedded). Backward-compat `review_insights_brief` @property bridges old consumers. See ADR-025. |
 | `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. `source_of_inspiration` skip check uses only `merged_keywords` and `review_insights_brief` (no `plot_synopsis`). |
-| `metadata_generation/analyze_eligibility.py` | Diagnostic: loads all `imdb_quality_passed` movies, runs Wave 1 + Wave 2 skip assessments, estimates token sizes, saves per-group eligibility report to `ingestion_data/eligibility_report.json`. |
+| `metadata_generation/evaluation_data/analyze_evaluations.py` | Diagnostic: reads evaluation JSON files and `reception_*.json` outputs to produce summary tables of avg scores per axis per candidate, plus total cost across eval movies. Used to compare candidates during model selection. |
 | `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. `plot_events.py`: two-branch generation locked to OpenAI gpt-5-mini with `reasoning_effort=minimal, verbosity=low` — provider/model are module-level constants, not caller params. All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant; Wave 2 generators also export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
@@ -320,12 +321,14 @@ dependency is modeled in the CLI — the dependency between generation types
 (plot_events must precede plot_analysis etc.) is managed at the operator
 level by running types in the right order.
 
-**`autopilot` command**: Interleaves live `generate_plot_events()` calls with
-Batch API polling. Each iteration: (1) run 25 live generations at 5
-concurrent, (2) check batch statuses, (3) process completed/failed batches,
-(4) submit new batches. Terminates when no batches remain and no eligible
-movies exist. Live generation (~30-60s for 25 requests) serves as a natural
-poll interval; falls back to 60s sleep when no live-eligible movies remain.
+**`autopilot` command**: Requires `--metadata <type>`. Interleaves live
+generator calls for the specified type with Batch API polling. Each iteration:
+(1) run N live generations at configurable concurrency, (2) check batch
+statuses across all types, (3) process completed/failed batches for all
+types, (4) submit new batches for the specified type. Terminates when no
+batches remain and no eligible movies exist. Live generation (~30-60s for
+25 requests) serves as a natural poll interval; falls back to 60s sleep
+when no live-eligible movies remain.
 
 **State tracking**: Three tables in tracker.db —
 - `metadata_batch_ids` — one row per movie (tmdb_id PK), 8 batch_id columns
@@ -341,10 +344,10 @@ poll interval; falls back to 60s sleep when no live-eligible movies remain.
 **Generator contract**: All 8 generators are fully implemented as async
 real-time callers — each takes `MovieInputData`, calls
 `generate_llm_response_async`, and returns `Tuple[Output, TokenUsage]`.
-`plot_events.py` is locked: provider/model are module-level constants
-(`_PROVIDER`, `_MODEL`, `_MODEL_KWARGS`), not caller params. All other
-generators still accept optional `provider`/`model`/`**kwargs` for
-evaluation use. See ADR-026, ADR-027, ADR-039.
+`plot_events.py` and `reception.py` are locked: provider/model are
+module-level constants (`_PROVIDER`, `_MODEL`, `_MODEL_KWARGS`), not caller
+params. All other generators still accept optional `provider`/`model`/`**kwargs`
+for evaluation use. See ADR-026, ADR-027, ADR-039, ADR-042, ADR-043.
 
 **No provider-specific default kwargs**: Generators must not define
 default kwargs that span providers. The generic LLM router passes kwargs
@@ -430,8 +433,11 @@ Key skip thresholds:
   (`_MIN_PLOT_TEXT_CHARS`). Overview is excluded — too short to anchor
   plot event extraction on its own.
 - `reception`: skips if no `reception_summary`, no
-  `audience_reception_attributes`, AND combined review text < 25 chars
-  (`_MIN_REVIEWS_CHARS`)
+  `audience_reception_attributes`, AND combined review text < 400 chars
+  (`_MIN_REVIEWS_CHARS`). Raised from 25 after evaluation showed movies
+  below 400 chars produce observations that merely paraphrase the overview
+  rather than adding genuine review signal (~779 movies affected, 0.7%
+  of corpus). See ADR-042.
 - Wave 2 checks require `plot_synopsis` or `review_insights_brief`
   as primary fallback paths; many have secondary fallbacks via
   genre/keyword/maturity data
@@ -611,10 +617,10 @@ eliminates any uncertainty about concurrent DB access.
 - The `ingestion_data/imdb/` JSON file directory is now obsolete as
   the primary data store. `migrate_json_to_sqlite.py` was used for
   the one-time migration of 425,345 rows.
-- `analyze_eligibility.py` uses character-length estimation for token
-  counts (~3.7 chars/token) and `orjson.loads` for JSON column
-  deserialization — both chosen for performance over 111K+ movies.
-  System prompt tokens still use exact tiktoken (computed once at import).
+- `analyze_evaluations.py` reads per-movie evaluation JSONs and
+  produces summary tables for candidate comparison during model
+  selection. Located in `evaluation_data/`, not the main generator
+  package.
 - The generation-side schemas in `metadata_generation/schemas.py`
   intentionally diverge from the search-side schemas in
   `implementation/classes/schemas.py`. When deploying, align the

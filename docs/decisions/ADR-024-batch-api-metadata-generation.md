@@ -1,7 +1,7 @@
 # ADR-024 — Batch API Architecture for LLM Metadata Generation (Stage 6)
 
 ## Status
-Active
+Superseded by ADR-041
 
 ## Context
 

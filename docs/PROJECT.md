@@ -39,10 +39,9 @@ increase).
 - Single EC2 t3.large instance running all services via Docker
   Compose (2 vCPU, 8 GB RAM)
 - LLM providers: Moonshot/Kimi API for search-time query
-  understanding (structured output); ingestion-time vector metadata
-  generation model pending selection (evaluation running across
-  Gemini 2.5 Flash Lite, GPT-5-mini, GPT-5.4-nano and variants);
-  OpenAI text-embedding-3-small
+  understanding (structured output); OpenAI gpt-5-mini for
+  ingestion-time metadata generation (finalized after multi-candidate
+  evaluation — see ADR-039, ADR-043); OpenAI text-embedding-3-small
   (1536 dims) for all embeddings
 - ~100K movies after quality filtering from ~1M TMDB daily exports
 - US-focused: watch provider data, IMDB proxy geo-targeting, and
@@ -66,13 +65,12 @@ Processes TMDB daily exports through a multi-stage funnel:
 3. Quality scoring and filtering (~800K → ~100K)
 4. IMDB scraping via GraphQL (~100K enriched)
 5. IMDB quality filtering (combined TMDB+IMDB quality scorer; score is the sole filter)
-6. LLM metadata generation (partially implemented — generator contract established, evaluation pipeline running, batch API integration pending model selection)
-7. Batch embedding (in development)
+6. LLM metadata generation (operational — gpt-5-mini selected after multi-candidate evaluation, multi-type batch pipeline running via generator registry; see ADR-039, ADR-043, ADR-044)
+7. Batch embedding (`implementation/vectorize.py` exists but targets legacy ChromaDB; Qdrant-based batch embedding still needs implementation)
 8. Database ingestion into Postgres, Qdrant, Redis (implemented)
 
-Stages 1-5 and 8 are operational. Stage 6 is partially implemented
-(evaluation pipeline active, production model pending selection).
-Stage 7 still needs implementation. All operational stages are
+Stages 1-6 and 8 are operational. Stage 7 needs implementation
+(Qdrant-targeted batch embedding). All operational stages are
 crash-safe and idempotent.
 
 ## Module Map
@@ -86,7 +84,7 @@ crash-safe and idempotent.
 | implementation/misc/ | String normalization, SQL escaping | — |
 | movie_ingestion/ | Ingestion pipeline (TMDB → IMDB → LLM → embed → ingest) | docs/modules/ingestion.md |
 | api/ | FastAPI application | docs/modules/api.md |
-| unit_tests/ | pytest suite (57 files) | — |
+| unit_tests/ | pytest suite (59 files) | — |
 
 Module docs in docs/modules/ provide concise summaries with
 boundaries, interactions, and gotchas. Decision records in

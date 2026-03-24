@@ -6,11 +6,11 @@ Tests the DB query helpers using real SQLite databases (no API mocking needed).
 Covers:
   - _get_quality_passed_tmdb_ids
   - _ensure_generated_metadata_rows
-  - _record_batch_ids
-  - _get_active_batch_ids
-  - _clear_batch_id
-  - _get_live_eligible_tmdb_ids
-  - _print_eligibility_summary
+  - _record_batch_ids (with metadata_type param)
+  - _get_active_batch_ids (returns tuples of (batch_id, MetadataType))
+  - _clear_batch_id (with metadata_type param)
+  - _get_live_eligible_tmdb_ids (with metadata_type as first arg)
+  - _print_eligibility_summary (with metadata_type param)
 """
 
 import sqlite3
@@ -18,6 +18,7 @@ import sqlite3
 import pytest
 
 from movie_ingestion.tracker import _SCHEMA_SQL, MovieStatus
+from movie_ingestion.metadata_generation.inputs import MetadataType
 from movie_ingestion.metadata_generation.run import (
     _get_quality_passed_tmdb_ids,
     _ensure_generated_metadata_rows,
@@ -135,12 +136,12 @@ class TestRecordBatchIds:
     """Tests for _record_batch_ids."""
 
     def test_creates_and_sets_batch_id(self, in_memory_db) -> None:
-        """metadata_batch_ids rows are created with correct batch_id."""
+        """metadata_batch_ids rows are created with correct batch_id for plot_events."""
         batch_requests = [
             {"custom_id": "plot_events_1"},
             {"custom_id": "plot_events_2"},
         ]
-        _record_batch_ids(in_memory_db, batch_requests, "batch_abc")
+        _record_batch_ids(in_memory_db, batch_requests, "batch_abc", MetadataType.PLOT_EVENTS)
         in_memory_db.commit()
 
         rows = in_memory_db.execute(
@@ -156,7 +157,7 @@ class TestRecordBatchIds:
             {"custom_id": "plot_events_42"},
             {"custom_id": "plot_events_99"},
         ]
-        _record_batch_ids(in_memory_db, batch_requests, "batch_xyz")
+        _record_batch_ids(in_memory_db, batch_requests, "batch_xyz", MetadataType.PLOT_EVENTS)
         in_memory_db.commit()
 
         tmdb_ids = [
@@ -165,6 +166,19 @@ class TestRecordBatchIds:
             ).fetchall()
         ]
         assert tmdb_ids == [42, 99]
+
+    def test_reception_batch_id(self, in_memory_db) -> None:
+        """_record_batch_ids sets reception_batch_id column for reception type."""
+        batch_requests = [
+            {"custom_id": "reception_1"},
+        ]
+        _record_batch_ids(in_memory_db, batch_requests, "batch_rec", MetadataType.RECEPTION)
+        in_memory_db.commit()
+
+        row = in_memory_db.execute(
+            "SELECT reception_batch_id FROM metadata_batch_ids WHERE tmdb_id = 1"
+        ).fetchone()
+        assert row[0] == "batch_rec"
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +189,8 @@ class TestRecordBatchIds:
 class TestGetActiveBatchIds:
     """Tests for _get_active_batch_ids."""
 
-    def test_returns_distinct(self, tracker_db) -> None:
-        """Multiple movies with same batch_id returns one entry."""
+    def test_returns_distinct_tuples(self, tracker_db) -> None:
+        """Multiple movies with same batch_id returns one (batch_id, MetadataType) tuple."""
         db, db_path = tracker_db
         db.execute(
             "INSERT INTO metadata_batch_ids (tmdb_id, plot_events_batch_id) VALUES (1, 'batch_1')"
@@ -188,7 +202,7 @@ class TestGetActiveBatchIds:
         db.close()
 
         result = _get_active_batch_ids(db_path)
-        assert result == ["batch_1"]
+        assert result == [("batch_1", MetadataType.PLOT_EVENTS)]
 
     def test_excludes_null(self, tracker_db) -> None:
         """Movies with NULL batch_id are excluded."""
@@ -203,7 +217,25 @@ class TestGetActiveBatchIds:
         db.close()
 
         result = _get_active_batch_ids(db_path)
-        assert result == ["batch_2"]
+        assert result == [("batch_2", MetadataType.PLOT_EVENTS)]
+
+    def test_returns_both_types_via_union_all(self, tracker_db) -> None:
+        """Active batch_ids from both plot_events and reception columns are returned."""
+        db, db_path = tracker_db
+        db.execute(
+            "INSERT INTO metadata_batch_ids (tmdb_id, plot_events_batch_id, reception_batch_id) "
+            "VALUES (1, 'batch_pe', 'batch_rec')"
+        )
+        db.commit()
+        db.close()
+
+        result = _get_active_batch_ids(db_path)
+        batch_ids = {bid for bid, _ in result}
+        types = {mt for _, mt in result}
+        assert "batch_pe" in batch_ids
+        assert "batch_rec" in batch_ids
+        assert MetadataType.PLOT_EVENTS in types
+        assert MetadataType.RECEPTION in types
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +258,7 @@ class TestClearBatchId:
         db.commit()
         db.close()
 
-        _clear_batch_id(db_path, "batch_1")
+        _clear_batch_id(db_path, "batch_1", MetadataType.PLOT_EVENTS)
 
         with sqlite3.connect(str(db_path)) as check_db:
             rows = check_db.execute(
@@ -246,13 +278,30 @@ class TestClearBatchId:
         db.commit()
         db.close()
 
-        _clear_batch_id(db_path, "batch_1")
+        _clear_batch_id(db_path, "batch_1", MetadataType.PLOT_EVENTS)
 
         with sqlite3.connect(str(db_path)) as check_db:
             bid = check_db.execute(
                 "SELECT plot_events_batch_id FROM metadata_batch_ids WHERE tmdb_id = 2"
             ).fetchone()[0]
         assert bid == "batch_2"
+
+    def test_clear_reception_batch_id(self, tracker_db) -> None:
+        """_clear_batch_id clears reception_batch_id column for reception type."""
+        db, db_path = tracker_db
+        db.execute(
+            "INSERT INTO metadata_batch_ids (tmdb_id, reception_batch_id) VALUES (1, 'batch_rec')"
+        )
+        db.commit()
+        db.close()
+
+        _clear_batch_id(db_path, "batch_rec", MetadataType.RECEPTION)
+
+        with sqlite3.connect(str(db_path)) as check_db:
+            row = check_db.execute(
+                "SELECT reception_batch_id FROM metadata_batch_ids WHERE tmdb_id = 1"
+            ).fetchone()
+        assert row[0] is None
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +313,7 @@ class TestGetLiveEligibleTmdbIds:
     """Tests for _get_live_eligible_tmdb_ids."""
 
     def _setup_eligible_movie(self, db: sqlite3.Connection, tmdb_id: int) -> None:
-        """Insert a movie that is eligible for live generation."""
+        """Insert a movie that is eligible for live generation of plot_events."""
         db.execute(
             "INSERT INTO movie_progress (tmdb_id, status) VALUES (?, 'imdb_quality_passed')",
             (tmdb_id,),
@@ -281,7 +330,7 @@ class TestGetLiveEligibleTmdbIds:
         db.commit()
         db.close()
 
-        result = _get_live_eligible_tmdb_ids(db_path, limit=10)
+        result = _get_live_eligible_tmdb_ids(MetadataType.PLOT_EVENTS, db_path, limit=10)
         assert 1 in result
 
     def test_excludes_batched(self, tracker_db) -> None:
@@ -294,7 +343,7 @@ class TestGetLiveEligibleTmdbIds:
         db.commit()
         db.close()
 
-        result = _get_live_eligible_tmdb_ids(db_path, limit=10)
+        result = _get_live_eligible_tmdb_ids(MetadataType.PLOT_EVENTS, db_path, limit=10)
         assert 1 not in result
 
     def test_excludes_already_generated(self, tracker_db) -> None:
@@ -307,7 +356,7 @@ class TestGetLiveEligibleTmdbIds:
         db.commit()
         db.close()
 
-        result = _get_live_eligible_tmdb_ids(db_path, limit=10)
+        result = _get_live_eligible_tmdb_ids(MetadataType.PLOT_EVENTS, db_path, limit=10)
         assert 1 not in result
 
     def test_excludes_ineligible(self, tracker_db) -> None:
@@ -322,7 +371,7 @@ class TestGetLiveEligibleTmdbIds:
         db.commit()
         db.close()
 
-        result = _get_live_eligible_tmdb_ids(db_path, limit=10)
+        result = _get_live_eligible_tmdb_ids(MetadataType.PLOT_EVENTS, db_path, limit=10)
         assert 1 not in result
 
     def test_respects_limit(self, tracker_db) -> None:
@@ -333,8 +382,23 @@ class TestGetLiveEligibleTmdbIds:
         db.commit()
         db.close()
 
-        result = _get_live_eligible_tmdb_ids(db_path, limit=3)
+        result = _get_live_eligible_tmdb_ids(MetadataType.PLOT_EVENTS, db_path, limit=3)
         assert len(result) == 3
+
+    def test_reception_type(self, tracker_db) -> None:
+        """_get_live_eligible_tmdb_ids works for reception type."""
+        db, db_path = tracker_db
+        db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (1, 'imdb_quality_passed')"
+        )
+        db.execute(
+            "INSERT INTO generated_metadata (tmdb_id, eligible_for_reception) VALUES (1, 1)"
+        )
+        db.commit()
+        db.close()
+
+        result = _get_live_eligible_tmdb_ids(MetadataType.RECEPTION, db_path, limit=10)
+        assert 1 in result
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +412,7 @@ class TestPrintEligibilitySummary:
     def test_no_exception(self, in_memory_db) -> None:
         """Summary query doesn't crash with empty or populated data."""
         # Empty table
-        _print_eligibility_summary(in_memory_db)
+        _print_eligibility_summary(in_memory_db, MetadataType.PLOT_EVENTS)
 
         # With some data
         in_memory_db.execute(
@@ -360,4 +424,8 @@ class TestPrintEligibilitySummary:
         in_memory_db.commit()
 
         # Should not raise
-        _print_eligibility_summary(in_memory_db)
+        _print_eligibility_summary(in_memory_db, MetadataType.PLOT_EVENTS)
+
+    def test_reception_no_exception(self, in_memory_db) -> None:
+        """Summary query works for reception type without crashing."""
+        _print_eligibility_summary(in_memory_db, MetadataType.RECEPTION)

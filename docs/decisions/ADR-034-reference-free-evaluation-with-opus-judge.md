@@ -114,5 +114,5 @@ from ~2K unconstrained.
 - ADR-030 (WHAM backend) — context for why WHAM was used and its complexity
 - ADR-031 (multi-run averaging) — original 3-run decision
 - Yamauchi et al., arXiv:2506.13639 — rubric vs reference importance
-- `movie_ingestion/metadata_generation/evaluations/plot_events.py`
+- `movie_ingestion/metadata_generation/evaluation_data/` — evaluation outputs (evaluations/ directory was deleted per ADR-041)
 - `implementation/llms/generic_methods.py`

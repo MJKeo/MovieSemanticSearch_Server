@@ -205,6 +205,29 @@ movie_ingestion/metadata_generation/schemas.py (ReceptionOutput),
 movie_ingestion/metadata_generation/generators/reception.py (generate_reception)
 
 
+## Update unit tests for multi-type batch pipeline changes
+**Context:** The batch pipeline was generalized from plot_events-only to multi-type.
+`build_plot_events_requests()` and `process_plot_events_results()` were removed. `build_requests()`
+and `process_results()` now take `MetadataType`. `cmd_eligibility`, `cmd_submit`, `cmd_autopilot`
+now require `metadata_type` parameter. `_get_active_batch_ids()` returns `(batch_id, MetadataType)`
+tuples. `_record_batch_ids()` and `_clear_batch_id()` take `metadata_type`. Any tests importing
+old function names or using old signatures will fail.
+**When:** Next time batch pipeline tests are being worked on.
+**See:** movie_ingestion/metadata_generation/run.py, request_builder.py, result_processor.py,
+generator_registry.py (new file)
+
+
+## Keep SCHEMA_BY_TYPE in sync with GENERATOR_REGISTRY
+**Context:** `result_processor.py:SCHEMA_BY_TYPE` duplicates schema info from
+`generator_registry.py:GENERATOR_REGISTRY`. When adding new metadata types to the registry,
+SCHEMA_BY_TYPE must also be updated or result processing will silently record failures
+("No schema registered") instead of crashing loudly. Consider adding a startup assertion
+or deriving SCHEMA_BY_TYPE from the registry.
+**When:** When adding Wave 2 types to the batch pipeline.
+**See:** movie_ingestion/metadata_generation/result_processor.py (SCHEMA_BY_TYPE),
+movie_ingestion/metadata_generation/generator_registry.py (GENERATOR_REGISTRY)
+
+
 ## Update unit tests for ADR-033 signature changes
 **Context:** The ADR-033 implementation changed signatures in plot_events and
 source_of_inspiration generators. `build_plot_events_user_prompt` now returns

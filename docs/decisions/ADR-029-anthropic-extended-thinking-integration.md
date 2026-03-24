@@ -71,4 +71,4 @@ than managing the three-constraint bundle themselves.
 - ADR-026 (multi-provider routing) — `generate_llm_response_async` architecture
 - ADR-028 (evaluation pipeline) — context for why thinking candidates are needed
 - `implementation/llms/generic_methods.py` — `generate_anthropic_response_async`
-- `movie_ingestion/metadata_generation/evaluations/plot_events.py` — `think-med` candidate
+- `movie_ingestion/metadata_generation/evaluation_data/` — evaluation outputs (evaluations/ directory was deleted per ADR-041)

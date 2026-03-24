@@ -102,7 +102,7 @@ Fetch display metadata → return JSON
 | `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
 | `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
 | `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data) |
-| `unit_tests/` | pytest test suite (57 files); `conftest.py` provides `base_movie_factory` fixture |
+| `unit_tests/` | pytest test suite (59 files); `conftest.py` provides `base_movie_factory` fixture |
 | `docs/` | Project context, decision records, module summaries, conventions |
 
 ### Vector Search Design
@@ -117,7 +117,7 @@ Fetch display metadata → return JSON
 - `production_vectors` — budget, locations, technical achievements
 - `reception_vectors` — critical reception, awards, audience reaction
 
-5-stage vector scoring pipeline (`db/vector_scoring.py`): execute → blend (80/20 original/subquery) → normalize (exponential decay) → weight → sum.
+5-stage vector scoring pipeline (`db/vector_scoring.py`): execute → blend (80/20 subquery/original) → normalize (exponential decay) → weight → sum.
 
 Each vector space has LLM-generated metadata covering 7 types: plot events, plot analysis, viewer experience, watch context, narrative techniques, reception, and production/source-of-inspiration style metadata. Generation now lives under `movie_ingestion/metadata_generation/` (generators, prompts, batch orchestration, and evaluations), and the resulting metadata is stored for embedding and ingestion.
 

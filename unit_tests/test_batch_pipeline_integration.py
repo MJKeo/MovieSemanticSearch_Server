@@ -82,7 +82,7 @@ class TestCmdEligibility:
         db.commit()
 
         from movie_ingestion.metadata_generation.run import cmd_eligibility
-        cmd_eligibility(tracker_db_path=db_path)
+        cmd_eligibility(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path)
 
         # Check that eligibility flags were set (either 0 or 1, not NULL)
         rows = db.execute(
@@ -103,7 +103,7 @@ class TestCmdEligibility:
         db.commit()
 
         from movie_ingestion.metadata_generation.run import cmd_eligibility
-        cmd_eligibility(tracker_db_path=db_path)
+        cmd_eligibility(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path)
 
         # Value should still be 1 (not re-evaluated to 0 or anything else)
         row = db.execute(
@@ -118,7 +118,23 @@ class TestCmdEligibility:
 
         from movie_ingestion.metadata_generation.run import cmd_eligibility
         # Should not raise
-        cmd_eligibility(tracker_db_path=db_path)
+        cmd_eligibility(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path)
+
+    def test_reception_eligibility(self, pipeline_db) -> None:
+        """cmd_eligibility for reception type sets eligible_for_reception flags."""
+        db_path, db = pipeline_db
+        _insert_quality_passed_movie(db, 1)
+        db.commit()
+
+        from movie_ingestion.metadata_generation.run import cmd_eligibility
+        cmd_eligibility(metadata_type=MetadataType.RECEPTION, tracker_db_path=db_path)
+
+        row = db.execute(
+            "SELECT eligible_for_reception FROM generated_metadata WHERE tmdb_id = 1"
+        ).fetchone()
+        # Should be evaluated (0 or 1, not NULL)
+        assert row is not None
+        assert row[0] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +158,7 @@ class TestCmdSubmit:
         mock_upload.return_value = "batch_test_123"
 
         from movie_ingestion.metadata_generation.run import cmd_submit
-        cmd_submit(tracker_db_path=db_path, batch_size=100)
+        cmd_submit(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path, batch_size=100)
 
         # Verify batch_id was recorded in metadata_batch_ids
         row = db.execute(
@@ -166,7 +182,12 @@ class TestCmdSubmit:
         mock_upload.return_value = "batch_limited"
 
         from movie_ingestion.metadata_generation.run import cmd_submit
-        cmd_submit(tracker_db_path=db_path, batch_size=3, max_batches=1)
+        cmd_submit(
+            metadata_type=MetadataType.PLOT_EVENTS,
+            tracker_db_path=db_path,
+            batch_size=3,
+            max_batches=1,
+        )
 
         # Only 1 batch should have been submitted (3 movies in it)
         assert mock_upload.call_count == 1

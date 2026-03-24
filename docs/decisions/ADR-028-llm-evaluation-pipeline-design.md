@@ -87,12 +87,12 @@ character minimalism), not generic narrative quality.
   `pre_consolidation.py` so evaluation runners and the wave1_runner
   can call them directly to pre-filter ineligible movies before spend.
 - Model selection for production commits should reference the
-  `analyze_results.py` output (quality score + per-movie cost).
+  `analyze_evaluations.py` output (quality score + per-movie cost).
 
 ## References
 
 - ADR-026 (multi-provider routing) — `generate_llm_response_async`
 - ADR-027 (real-time generator contract) — why generators are real-time callers
 - ADR-012 (LLM generation cost optimization) — model selection rationale
-- movie_ingestion/metadata_generation/evaluations/ — full implementation
+- `movie_ingestion/metadata_generation/evaluation_data/` — evaluation outputs and analysis
 - docs/modules/ingestion.md (Model Evaluation section)

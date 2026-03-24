@@ -2,8 +2,10 @@
 Unit tests for movie_ingestion.metadata_generation.result_processor.
 
 Covers:
-  - process_plot_events_results: success, HTTP error, invalid JSON, empty
-    choices, empty content, token accumulation, mixed results, invalid custom_id
+  - process_results: success, HTTP error, invalid JSON, empty choices,
+    empty content, token accumulation, mixed results, invalid custom_id
+  - process_results with reception type custom_ids
+  - SCHEMA_BY_TYPE registry coverage
   - process_error_file: records failures, extracts error messages, skips
     invalid custom_ids, empty list
   - ProcessingSummary defaults
@@ -15,9 +17,10 @@ import sqlite3
 import pytest
 
 from movie_ingestion.metadata_generation.result_processor import (
-    process_plot_events_results,
+    process_results,
     process_error_file,
     ProcessingSummary,
+    SCHEMA_BY_TYPE,
 )
 from movie_ingestion.metadata_generation.inputs import MetadataType
 from movie_ingestion.tracker import _SCHEMA_SQL
@@ -67,6 +70,34 @@ def _make_success_result(tmdb_id: int, plot_summary: str = "A plot summary.") ->
     }
 
 
+def _make_reception_success_result(tmdb_id: int) -> dict:
+    """Build a valid batch result dict for a successful reception response."""
+    content = json.dumps({
+        "source_material_hint": None,
+        "thematic_observations": "Themes of identity.",
+        "emotional_observations": "Intense and haunting.",
+        "craft_observations": "Strong cinematography.",
+        "reception_summary": "Widely acclaimed.",
+        "praised_qualities": ["visionary"],
+        "criticized_qualities": [],
+    })
+    return {
+        "custom_id": f"reception_{tmdb_id}",
+        "response": {
+            "status_code": 200,
+            "body": {
+                "choices": [
+                    {"message": {"content": content}}
+                ],
+                "usage": {
+                    "prompt_tokens": 200,
+                    "completion_tokens": 80,
+                },
+            },
+        },
+    }
+
+
 def _make_error_result(tmdb_id: int, status_code: int = 500) -> dict:
     """Build a batch result dict for an HTTP error response."""
     return {
@@ -99,12 +130,26 @@ class TestProcessingSummary:
 
 
 # ---------------------------------------------------------------------------
-# Tests: process_plot_events_results
+# Tests: SCHEMA_BY_TYPE
 # ---------------------------------------------------------------------------
 
 
-class TestProcessPlotEventsResults:
-    """Tests for process_plot_events_results."""
+class TestSchemaByType:
+    """Tests for SCHEMA_BY_TYPE registry."""
+
+    def test_includes_both_types(self) -> None:
+        """SCHEMA_BY_TYPE has entries for both PLOT_EVENTS and RECEPTION."""
+        assert MetadataType.PLOT_EVENTS in SCHEMA_BY_TYPE
+        assert MetadataType.RECEPTION in SCHEMA_BY_TYPE
+
+
+# ---------------------------------------------------------------------------
+# Tests: process_results — plot_events
+# ---------------------------------------------------------------------------
+
+
+class TestProcessResults:
+    """Tests for process_results (generic, replaces process_plot_events_results)."""
 
     def test_success_stores_content(self, tracker_db) -> None:
         """Valid result with HTTP 200 stores content in generated_metadata."""
@@ -113,7 +158,7 @@ class TestProcessPlotEventsResults:
         db.close()
 
         results = [_make_success_result(1, "Neo discovers the Matrix.")]
-        summary = process_plot_events_results(results, db_path)
+        summary = process_results(results, db_path)
 
         assert summary.succeeded == 1
         assert summary.failed == 0
@@ -133,7 +178,7 @@ class TestProcessPlotEventsResults:
         db.close()
 
         results = [_make_success_result(42)]
-        summary = process_plot_events_results(results, db_path)
+        summary = process_results(results, db_path)
         assert summary.succeeded == 1
 
     def test_http_error_records_failure(self, tracker_db) -> None:
@@ -143,7 +188,7 @@ class TestProcessPlotEventsResults:
         db.close()
 
         results = [_make_error_result(1, 500)]
-        summary = process_plot_events_results(results, db_path)
+        summary = process_results(results, db_path)
 
         assert summary.failed == 1
         assert summary.succeeded == 0
@@ -174,7 +219,7 @@ class TestProcessPlotEventsResults:
                 },
             },
         }
-        summary = process_plot_events_results([result], db_path)
+        summary = process_results([result], db_path)
         assert summary.failed == 1
 
     def test_empty_choices_records_failure(self, tracker_db) -> None:
@@ -193,7 +238,7 @@ class TestProcessPlotEventsResults:
                 },
             },
         }
-        summary = process_plot_events_results([result], db_path)
+        summary = process_results([result], db_path)
         assert summary.failed == 1
 
     def test_empty_content_records_failure(self, tracker_db) -> None:
@@ -212,7 +257,7 @@ class TestProcessPlotEventsResults:
                 },
             },
         }
-        summary = process_plot_events_results([result], db_path)
+        summary = process_results([result], db_path)
         assert summary.failed == 1
 
     def test_token_accumulation(self, tracker_db) -> None:
@@ -226,7 +271,7 @@ class TestProcessPlotEventsResults:
             _make_success_result(1),
             _make_success_result(2),
         ]
-        summary = process_plot_events_results(results, db_path)
+        summary = process_results(results, db_path)
 
         assert summary.total_input_tokens == 200  # 100 + 100
         assert summary.total_output_tokens == 100  # 50 + 50
@@ -242,7 +287,7 @@ class TestProcessPlotEventsResults:
             _make_success_result(1),
             _make_error_result(2, 429),
         ]
-        summary = process_plot_events_results(results, db_path)
+        summary = process_results(results, db_path)
 
         assert summary.succeeded == 1
         assert summary.failed == 1
@@ -263,16 +308,118 @@ class TestProcessPlotEventsResults:
                 },
             },
         }
-        summary = process_plot_events_results([result], db_path)
+        summary = process_results([result], db_path)
         assert summary.failed == 1
 
     def test_empty_list(self, tracker_db) -> None:
         """Empty results list returns ProcessingSummary with all zeros."""
         _, db_path = tracker_db
-        summary = process_plot_events_results([], db_path)
+        summary = process_results([], db_path)
         assert summary.total == 0
         assert summary.succeeded == 0
         assert summary.failed == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: process_results — reception type
+# ---------------------------------------------------------------------------
+
+
+class TestProcessResultsReception:
+    """Tests for process_results handling reception custom_ids."""
+
+    def test_reception_success_stores_in_reception_column(self, tracker_db) -> None:
+        """Valid reception result is stored in the 'reception' column."""
+        db, db_path = tracker_db
+        db.execute(
+            "INSERT OR IGNORE INTO generated_metadata (tmdb_id, eligible_for_reception) VALUES (1, 1)"
+        )
+        db.commit()
+        db.close()
+
+        results = [_make_reception_success_result(1)]
+        summary = process_results(results, db_path)
+
+        assert summary.succeeded == 1
+
+        with sqlite3.connect(str(db_path)) as check_db:
+            row = check_db.execute(
+                "SELECT reception FROM generated_metadata WHERE tmdb_id = 1"
+            ).fetchone()
+        assert row[0] is not None
+        assert "Widely acclaimed." in row[0]
+
+    def test_reception_validates_against_reception_schema(self, tracker_db) -> None:
+        """Reception custom_id with PlotEventsOutput JSON content fails validation."""
+        db, db_path = tracker_db
+        db.execute(
+            "INSERT OR IGNORE INTO generated_metadata (tmdb_id, eligible_for_reception) VALUES (1, 1)"
+        )
+        db.commit()
+        db.close()
+
+        # PlotEventsOutput content under a reception custom_id
+        content = json.dumps({"plot_summary": "A plot summary."})
+        result = {
+            "custom_id": "reception_1",
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "choices": [{"message": {"content": content}}],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+                },
+            },
+        }
+        summary = process_results([result], db_path)
+        assert summary.failed == 1
+
+    def test_mixed_types_in_single_batch(self, tracker_db) -> None:
+        """Process results containing both plot_events and reception custom_ids."""
+        db, db_path = tracker_db
+        _seed_movie(db, 1)
+        db.execute(
+            "INSERT OR IGNORE INTO generated_metadata (tmdb_id, eligible_for_reception) VALUES (2, 1)"
+        )
+        db.commit()
+        db.close()
+
+        results = [
+            _make_success_result(1),
+            _make_reception_success_result(2),
+        ]
+        summary = process_results(results, db_path)
+
+        assert summary.succeeded == 2
+        assert summary.failed == 0
+
+        with sqlite3.connect(str(db_path)) as check_db:
+            pe_row = check_db.execute(
+                "SELECT plot_events FROM generated_metadata WHERE tmdb_id = 1"
+            ).fetchone()
+            rc_row = check_db.execute(
+                "SELECT reception FROM generated_metadata WHERE tmdb_id = 2"
+            ).fetchone()
+        assert pe_row[0] is not None
+        assert rc_row[0] is not None
+
+    def test_unknown_metadata_type_records_failure(self, tracker_db) -> None:
+        """Result with unregistered type prefix records failure."""
+        db, db_path = tracker_db
+        db.close()
+
+        content = json.dumps({"some_field": "value"})
+        result = {
+            "custom_id": "narrative_techniques_1",
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "choices": [{"message": {"content": content}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                },
+            },
+        }
+        summary = process_results([result], db_path)
+        assert summary.failed == 1
 
 
 # ---------------------------------------------------------------------------

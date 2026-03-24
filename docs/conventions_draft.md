@@ -22,6 +22,11 @@ patterns observed in the session.
 **Proposed convention:** When configuring LLM provider kwargs in playground candidates or generator defaults, verify each parameter against the provider's actual API documentation. Parameters that work for one provider/model often don't exist for another. Include a brief comment on non-obvious constraints (e.g., "temperature only supported when reasoning_effort='none'").
 **Sessions observed:** 1
 
+## Minimize redundant API/DB calls in polling loops
+**Observed:** In the autopilot loop, Claude's initial implementation called `_get_active_batch_ids()` 3 times and `check_batch_status()` redundantly per iteration. The user pushed for reusing snapshots from earlier steps and eliminating unnecessary re-queries, pointing out that stale-by-seconds data is fine for slot counting.
+**Proposed convention:** In polling loops that interleave status checks with state mutations, query external APIs and DB once per logical phase. Reuse the snapshot for subsequent steps in the same iteration. If a step mutates state (e.g., clearing batch IDs), re-query once after the mutation — not per-consumer of the data. Accept that data may be seconds stale; the next iteration corrects it.
+**Sessions observed:** 1
+
 ## Three-tier examples (Good/Shallow/Bad) in structured output prompts
 **Observed:** During reception prompt revision, two-tier examples (Good/Bad) were insufficient to prevent GPT-5-mini from producing "shallow" output that was technically not bad (not evaluative, not vague) but missed the mark (topic-listing instead of argument-capturing). Adding a middle "Shallow" tier that shows exactly what the model currently produces — and labels it as insufficient — gave a much clearer signal of what "good" actually requires.
 **Proposed convention:** When a structured output prompt has quality examples, use three tiers (Good/Shallow/Bad) rather than two (Good/Bad) when the observed failure mode is "acceptable but insufficient" rather than "clearly wrong." The Shallow tier shows the specific pattern to improve upon.

@@ -2,8 +2,9 @@
 Unit tests for movie_ingestion.metadata_generation.schemas.
 
 Covers:
-  - ReceptionOutput.__str__() excludes review_insights_brief
-  - ReceptionOutput field rename (reception_summary -> new_reception_summary)
+  - ReceptionOutput dual-zone structure (extraction + synthesis fields)
+  - ReceptionOutput.__str__() excludes extraction-zone fields
+  - ReceptionOutput field constraints and validation
   - CharacterArc: extra="forbid", required fields, __str__()
   - WithJustifications sub-model __str__() returns label only
   - WithJustifications __str__() parity with base variants (6 pairs)
@@ -45,47 +46,133 @@ from movie_ingestion.metadata_generation.schemas import (
 # ---------------------------------------------------------------------------
 
 class TestReceptionOutputStr:
-    def test_reception_output_str_excludes_review_insights_brief(self):
+    def test_reception_output_str_excludes_extraction_zone_fields(self):
+        """Extraction-zone observation fields must NOT appear in __str__() output."""
         output = ReceptionOutput(
-            new_reception_summary="Widely acclaimed for visual effects.",
-            praise_attributes=["groundbreaking visuals"],
-            complaint_attributes=["thin plot"],
-            review_insights_brief="Critics noted philosophical depth and innovative cinematography.",
+            source_material_hint="based on autobiography",
+            thematic_observations="Critics noted philosophical depth and innovative themes.",
+            emotional_observations="Reviewers described a haunting emotional tone.",
+            craft_observations="Praised for masterful cinematography.",
+            reception_summary="Widely acclaimed for visual effects.",
+            praised_qualities=["groundbreaking visuals"],
+            criticized_qualities=["thin plot"],
         )
         result = str(output)
 
-        # The review_insights_brief text should NOT appear in str() output
+        # Extraction-zone text must NOT appear
         assert "philosophical depth" not in result
-        assert "innovative cinematography" not in result
-        assert "critics noted" not in result.lower()
+        assert "haunting emotional tone" not in result
+        assert "masterful cinematography" not in result
+        assert "autobiography" not in result
 
-        # But the other fields SHOULD appear (lowercased)
+        # Synthesis-zone fields SHOULD appear (lowercased)
         assert "widely acclaimed" in result
         assert "groundbreaking visuals" in result
         assert "thin plot" in result
 
-
-class TestReceptionOutputRenamed:
-    def test_reception_output_uses_new_reception_summary(self):
-        """Field name is new_reception_summary; old name raises ValidationError."""
+    def test_reception_output_str_with_all_observations_none(self):
+        """__str__() works correctly when all nullable extraction fields are None."""
         output = ReceptionOutput(
-            new_reception_summary="Good movie.",
-            review_insights_brief="Critics liked it.",
+            reception_summary="A decent film.",
         )
-        assert output.new_reception_summary == "Good movie."
+        result = str(output)
+        assert "a decent film." in result
+
+    def test_reception_output_str_uses_reception_summary(self):
+        """__str__() includes reception_summary (lowercased)."""
+        output = ReceptionOutput(
+            reception_summary="A Brilliant Film.",
+        )
+        assert "a brilliant film." in str(output)
+
+
+class TestReceptionOutputObservationFields:
+    def test_observation_fields_are_nullable(self):
+        """thematic/emotional/craft_observations and source_material_hint accept None."""
+        output = ReceptionOutput(
+            reception_summary="Good movie.",
+            source_material_hint=None,
+            thematic_observations=None,
+            emotional_observations=None,
+            craft_observations=None,
+        )
+        assert output.source_material_hint is None
+        assert output.thematic_observations is None
+        assert output.emotional_observations is None
+        assert output.craft_observations is None
+
+    def test_observation_fields_accept_strings(self):
+        """Observation fields accept non-None string values."""
+        output = ReceptionOutput(
+            reception_summary="Good movie.",
+            source_material_hint="based on book",
+            thematic_observations="Themes of loss.",
+            emotional_observations="Melancholic tone.",
+            craft_observations="Strong editing.",
+        )
+        assert output.source_material_hint == "based on book"
+        assert output.thematic_observations == "Themes of loss."
+
+
+class TestReceptionOutputExtraForbid:
+    def test_old_field_names_raise_validation_error(self):
+        """Passing removed field names (new_reception_summary, praise_attributes, etc.) raises."""
+        with pytest.raises(ValidationError):
+            ReceptionOutput(
+                new_reception_summary="Good movie.",
+                review_insights_brief="Critics liked it.",
+            )
 
         with pytest.raises(ValidationError):
             ReceptionOutput(
                 reception_summary="Good movie.",
-                review_insights_brief="Critics liked it.",
+                praise_attributes=["good"],
             )
 
-    def test_reception_output_str_uses_new_reception_summary(self):
+        with pytest.raises(ValidationError):
+            ReceptionOutput(
+                reception_summary="Good movie.",
+                complaint_attributes=["bad"],
+            )
+
+
+class TestReceptionOutputConstraints:
+    def test_reception_summary_is_required(self):
+        """Omitting reception_summary raises ValidationError."""
+        with pytest.raises(ValidationError):
+            ReceptionOutput(
+                praised_qualities=["good"],
+            )
+
+    def test_praised_qualities_max_length_6(self):
+        """praised_qualities accepts 6 items but rejects 7."""
+        # 6 items should be fine
         output = ReceptionOutput(
-            new_reception_summary="A Brilliant Film.",
-            review_insights_brief="Insightful.",
+            reception_summary="Good.",
+            praised_qualities=["a", "b", "c", "d", "e", "f"],
         )
-        assert "a brilliant film." in str(output)
+        assert len(output.praised_qualities) == 6
+
+        # 7 items should fail
+        with pytest.raises(ValidationError):
+            ReceptionOutput(
+                reception_summary="Good.",
+                praised_qualities=["a", "b", "c", "d", "e", "f", "g"],
+            )
+
+    def test_criticized_qualities_max_length_6(self):
+        """criticized_qualities accepts 6 items but rejects 7."""
+        output = ReceptionOutput(
+            reception_summary="Good.",
+            criticized_qualities=["a", "b", "c", "d", "e", "f"],
+        )
+        assert len(output.criticized_qualities) == 6
+
+        with pytest.raises(ValidationError):
+            ReceptionOutput(
+                reception_summary="Good.",
+                criticized_qualities=["a", "b", "c", "d", "e", "f", "g"],
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -755,13 +842,12 @@ class TestOptionalSectionDataRequired:
 # ---------------------------------------------------------------------------
 
 class TestReceptionOutputStrEmptyAttributes:
-    def test_reception_str_empty_praise_and_complaint(self):
-        """ReceptionOutput.__str__() handles empty attribute lists gracefully."""
+    def test_reception_str_empty_praised_and_criticized(self):
+        """ReceptionOutput.__str__() handles empty quality lists gracefully."""
         output = ReceptionOutput(
-            new_reception_summary="A Fine Film.",
-            praise_attributes=[],
-            complaint_attributes=[],
-            review_insights_brief="Some insights.",
+            reception_summary="A Fine Film.",
+            praised_qualities=[],
+            criticized_qualities=[],
         )
         result = str(output)
         # Only the summary should appear

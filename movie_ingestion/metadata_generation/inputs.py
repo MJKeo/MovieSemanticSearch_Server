@@ -40,7 +40,7 @@ build_user_prompt(**labeled_fields) -> str:
 
 Data loading:
 
-load_movie_input_data(tmdb_ids, tracker_db_path, imdb_dir) -> dict[int, MovieInputData]:
+load_movie_input_data(tmdb_ids, tracker_db_path) -> dict[int, MovieInputData]:
     Load MovieInputData for a set of movies from the ingestion tracker DB.
     Joins tmdb_data + imdb_data tables, parses JSON columns, returns a dict
     mapping tmdb_id -> MovieInputData. Movies missing from either table are
