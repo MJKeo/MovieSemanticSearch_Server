@@ -20,7 +20,11 @@ from pydantic import BaseModel, ValidationError
 
 from movie_ingestion.tracker import TRACKER_DB_PATH
 from movie_ingestion.metadata_generation.inputs import MetadataType, parse_custom_id
-from movie_ingestion.metadata_generation.schemas import PlotEventsOutput, ReceptionOutput
+from movie_ingestion.metadata_generation.schemas import (
+    PlotEventsOutput,
+    ReceptionOutput,
+    PlotAnalysisWithJustificationsOutput,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +37,7 @@ from movie_ingestion.metadata_generation.schemas import PlotEventsOutput, Recept
 SCHEMA_BY_TYPE: dict[MetadataType, type[BaseModel]] = {
     MetadataType.PLOT_EVENTS: PlotEventsOutput,
     MetadataType.RECEPTION: ReceptionOutput,
+    MetadataType.PLOT_ANALYSIS: PlotAnalysisWithJustificationsOutput,
 }
 
 

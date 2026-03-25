@@ -130,3 +130,50 @@ Lock in the evaluated winner for plot_analysis generation: gpt-5-mini with minim
 ### Testing Notes
 - Unit tests for plot_analysis generator will need updates (removed params, changed return type annotation)
 - Notebooks using `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` or `emotional_observations` not updated per user request
+
+## Registered plot_analysis in the batch generation pipeline
+Files: `movie_ingestion/metadata_generation/generator_registry.py`, `movie_ingestion/metadata_generation/result_processor.py`, `movie_ingestion/metadata_generation/inputs.py`
+Why: plot_analysis generator was finalized but not wired into the batch CLI (eligibility/submit/status/process/autopilot).
+Approach: Added plot_analysis to `GENERATOR_REGISTRY` and `SCHEMA_BY_TYPE`. Because plot_analysis is a Wave 2 type that depends on Wave 1 outputs (plot_synopsis from plot_events, thematic_observations from reception), the adapters load those via `load_wave1_outputs_for_movie()` in inputs.py, which queries the `generated_metadata` table at call time. This keeps the generic pipeline interface (`MovieInputData → result`) intact. The loader lives in inputs.py (the data-loading module) rather than the registry, since it's a reusable data-loading function that future Wave 2 types will also need.
+Testing notes: Verified via import that registry and schema lookup both include plot_analysis, and CLI shows it as a valid `--metadata` choice.
+
+## Viewer experience eligibility and input contract redesign
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/viewer_experience.py`, `movie_ingestion/metadata_generation/prompts/viewer_experience.py`
+
+### Intent
+Align viewer_experience with the finalized conservative eligibility rules and the new upstream input ladder built around finalized plot_events, reception, and plot_analysis outputs.
+
+### Key Decisions
+- **Narrative input ladder:** Added strict winner-takes-all narrative resolution in both eligibility and prompt building: `plot_summary` if present, else `best_plot_fallback()` if at least 500 chars, else `generalized_plot_overview` if at least 200 chars.
+- **Eligibility thresholds:** Viewer experience now passes only when narrative or observation inputs are strong enough on their own, or when usable narrative and observation inputs combine to enough signal. Support-only inputs like genre context, keywords, and maturity no longer rescue eligibility.
+- **Observation inputs split:** Replaced the old `review_insights_brief` concept with explicit `emotional_observations`, `craft_observations`, and `thematic_observations`, each with its own inclusion threshold. This preserves which review-derived signal is doing the work instead of flattening everything into one blob.
+- **Plot-analysis support inputs:** Added `genre_signatures` as preferred genre context and `character_arcs` as a supportive input for ending-aftertaste and emotional-volatility judgments. Raw genres remain the fallback when genre signatures are absent.
+- **Prompt contract update:** The viewer_experience prompt now teaches the model about `narrative_input_source`, direct observation priority (`emotional > craft > thematic`), and the fact that genre context, keywords, and character arcs are supportive rather than primary evidence.
+
+### Testing Notes
+- Ran `python -m py_compile movie_ingestion/metadata_generation/pre_consolidation.py movie_ingestion/metadata_generation/generators/viewer_experience.py movie_ingestion/metadata_generation/prompts/viewer_experience.py`
+- Did not run unit tests per repo instructions.
+
+## Viewer experience eligibility tightening and narrative resolution unification
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/viewer_experience.py`
+
+### Intent
+Tighten viewer_experience eligibility based on analysis of threshold quality, and unify the duplicated narrative resolution logic between eligibility and prompt building.
+
+### Key Decisions
+- **Unified narrative resolution:** Replaced `_resolve_viewer_experience_narrative_input` (pre_consolidation) and `_resolve_narrative_input` (generator) with a single public `resolve_viewer_experience_narrative()` in pre_consolidation. Both eligibility checking and prompt building now call the same function, eliminating divergence risk.
+- **plot_summary inclusion floor:** Added 400-char minimum for plot_summary to be accepted as narrative input. Previously any-length plot_summary was included. Short plot_summaries (from sparse movies that barely cleared the 600-char plot_events input gate) now fall through to raw plot fallback.
+- **generalized_plot_overview standalone raised:** 300 → 350 chars. A 300-char thematic abstract (2 layers of LLM abstraction from source) was too thin to anchor 8 sections of felt-experience generation alone.
+- **Source-weighted combined path:** Replaced flat 650-char combined threshold with source-specific thresholds: plot_summary 550, best_plot_fallback 700, generalized_plot_overview 750. Higher-quality narrative sources need less observation supplementation; abstract sources need more.
+- **Observation standalone unchanged:** Kept current thresholds (emotional >= 160 standalone, combined >= 280 with emotional or craft). Will verify via test buckets whether tightening is needed.
+- **Generalized overview standalone kept:** Not dropped pending test verification on a bucket of movies that fall back to this source.
+
+### Testing Notes
+- Both files compile cleanly via py_compile
+- Did not run unit tests per repo instructions
+- Test buckets needed: (1) generalized_plot_overview-only movies, (2) observation-standalone movies
+
+## Unified observation filtering between eligibility and generator
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/viewer_experience.py`
+Why: The generator had its own `_filter_observations()` with duplicated threshold constants (`_MIN_EMOTIONAL_OBSERVATIONS_CHARS`, etc.) mirroring pre_consolidation's `_viewer_experience_observation_lengths()`. Same inclusion logic, different return types (strings vs lengths), independently maintained thresholds that could silently diverge.
+Approach: Replaced both with a single public `filter_viewer_experience_observations()` in pre_consolidation that returns filtered strings. The eligibility check derives lengths from the non-None results. Generator imports and calls the shared function directly — no local threshold constants remain.

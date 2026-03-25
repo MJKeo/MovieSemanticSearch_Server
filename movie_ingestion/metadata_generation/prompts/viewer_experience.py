@@ -5,22 +5,30 @@ Instructs the LLM to extract emotional, sensory, and cognitive experience
 attributes. Each section produces terms (what the movie IS like) and
 negations (what it is NOT like).
 
-Receives merged_keywords (deduplicated union of plot + overall) and
-maturity_summary (consolidated content advisory string).
-
-Can run without plot_synopsis if review_insights_brief exists -- reviews
-carry strong emotional/tonal signal independently.
+Receives one resolved narrative input plus finalized upstream
+observation/context fields:
+    - narrative_input: winner-takes-all fallback from plot_summary,
+      raw plot fallback, or generalized_plot_overview
+    - emotional_observations / craft_observations / thematic_observations:
+      finalized reception extraction fields
+    - genre_context: finalized genre_signatures when available, else raw genres
+    - character_arcs: finalized plot_analysis arc labels
+    - merged_keywords: deduplicated union of plot + overall keywords
+    - maturity_summary: consolidated content advisory string
 
 Based on existing prompt at:
 implementation/prompts/vector_metadata_generation_prompts.py (VIEWER_EXPERIENCE section)
 
 Key modifications:
     - Title input described as "Title (Year)" format
+    - narrative_input replaces direct plot_synopsis-only assumption and
+      carries an explicit source label
+    - finalized reception extraction fields replace review_insights_brief
+    - genre_context prefers plot_analysis genre_signatures over raw genres
+    - character_arcs added as supportive input for ending/volatility cues
     - maturity_summary replaces maturity_rating + maturity_reasoning +
       parental_guide_items as three separate inputs
     - merged_keywords replaces separate plot/overall keyword inputs
-    - review_insights_brief replaces reception_summary +
-      audience_reception_attributes + featured_reviews
 
 Two prompt variants exported:
     - SYSTEM_PROMPT: for ViewerExperienceOutput (no justification fields)
@@ -49,11 +57,15 @@ _INPUTS_AND_RULES = """
 
 INPUTS YOU MAY RECEIVE (some may be empty or noisy)
 - title: title of the movie, formatted as "Title (Year)" for temporal context
-- genres: all genres the movie belongs to
-- plot_synopsis: the entire plot of the movie, detailed, spoiler-filled
+- genre_context: finalized genre signatures when available, otherwise raw genres
+- narrative_input_source: one of plot_summary, best_plot_fallback, or generalized_plot_overview
+- narrative_input: the single resolved narrative input chosen by fallback order
 - merged_keywords: deduplicated keywords representing plot elements and high-level movie attributes
 - maturity_summary: consolidated content advisory string (rating + reasoning or severity details)
-- review_insights_brief: a dense synthesis of audience observations -- thematic, emotional, structural, and source-material observations extracted from reviews. Captures what reviewers noticed, not how much they liked it. Strong candidate for emotional analysis.
+- emotional_observations: finalized reception observations about emotional tone, mood, atmosphere, and viewing experience. Strongest review-derived source for this task.
+- craft_observations: finalized reception observations about pacing, structure, and performance style. Especially useful for tension and cognitive load.
+- thematic_observations: finalized reception observations about themes and meaning. Supportive, but less direct than emotional_observations.
+- character_arcs: finalized plot_analysis arc labels describing key transformations. Supportive signal for emotional volatility and ending aftertaste.
 
 CRITICAL phrasing rules (must follow)
 1) Write phrases like **search queries**, not sentences.
@@ -70,7 +82,16 @@ CRITICAL phrasing rules (must follow)
 6) Focus only on the **felt experience** from the perspective of the viewer while watching this movie.
 7) Spoilers are allowed, but still keep phrasing as viewer feelings/search terms,
    not plot summaries. Do not name specific plot events, characters, or other proper nouns.
-8) Repetition is encouraged, so long as the phrasing changes slightly."""
+8) Repetition is encouraged, so long as the phrasing changes slightly.
+9) Prefer the strongest direct evidence for felt experience:
+   - emotional_observations > craft_observations > thematic_observations
+   - narrative_input is grounding/context, not the main output style
+10) Treat narrative_input_source as a confidence hint:
+   - plot_summary: most concrete and trustworthy for pacing/tension/ending feel
+   - best_plot_fallback: useful but noisier; infer conservatively
+   - generalized_plot_overview: most abstract; use only as supporting context for felt experience
+11) genre_context and merged_keywords are support signals only. They can refine wording, but they should not override stronger narrative or observation evidence.
+12) character_arcs are support signals only. Use them mainly for ending_aftertaste and emotional_volatility, not as a substitute for narrative evidence."""
 
 _SECTIONS = """
 

@@ -51,7 +51,11 @@ from .inputs import (
     ConsolidatedInputs,
     SkipAssessment,
 )
-from .schemas import PlotEventsOutput, ReceptionOutput
+from .schemas import (
+    PlotAnalysisWithJustificationsOutput,
+    PlotEventsOutput,
+    ReceptionOutput,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +86,30 @@ _MIN_PLOT_FALLBACK_CHARS = 400
 # with rich thematic observations (>= 300 chars) that compensate.
 _MIN_PLOT_FALLBACK_WITH_OBSERVATIONS_CHARS = 250
 _MIN_THEMATIC_OBSERVATIONS_CHARS = 300
+
+# Viewer experience narrative resolution thresholds.
+# Inclusion: minimum length to be considered as the narrative input at all.
+# Standalone: minimum length to pass eligibility without any observations.
+_MIN_VIEWER_PLOT_SUMMARY_CHARS = 400
+_MIN_VIEWER_PLOT_SUMMARY_STANDALONE_CHARS = 600
+_MIN_VIEWER_RAW_PLOT_FALLBACK_CHARS = 500
+_MIN_VIEWER_RAW_PLOT_FALLBACK_STANDALONE_CHARS = 700
+_MIN_VIEWER_GENERALIZED_OVERVIEW_CHARS = 200
+_MIN_VIEWER_GENERALIZED_OVERVIEW_STANDALONE_CHARS = 350
+
+# Viewer experience observation thresholds.
+# Inclusion: minimum per-field length to count as "usable."
+_MIN_VIEWER_EMOTIONAL_OBSERVATIONS_CHARS = 120
+_MIN_VIEWER_EMOTIONAL_OBSERVATIONS_STANDALONE_CHARS = 160
+_MIN_VIEWER_CRAFT_OBSERVATIONS_CHARS = 120
+_MIN_VIEWER_THEMATIC_OBSERVATIONS_CHARS = 140
+_MIN_VIEWER_COMBINED_OBSERVATIONS_STANDALONE_CHARS = 280
+
+# Viewer experience combined path thresholds (narrative + observations).
+# Source-weighted: higher-quality narrative sources need less supplementation.
+_MIN_VIEWER_COMBINED_PLOT_SUMMARY_CHARS = 550
+_MIN_VIEWER_COMBINED_RAW_PLOT_FALLBACK_CHARS = 700
+_MIN_VIEWER_COMBINED_GENERALIZED_OVERVIEW_CHARS = 750
 
 
 # ---------------------------------------------------------------------------
@@ -262,29 +290,154 @@ def _check_plot_analysis(
     )
 
 
-def _check_viewer_experience(
+def resolve_viewer_experience_narrative(
+    movie_input: MovieInputData,
     plot_synopsis: str | None,
-    review_insights_brief: str | None,
-    genres: list[str],
-    merged_keywords: list[str],
-    maturity_summary: str | None,
+    generalized_plot_overview: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve the single narrative input for viewer_experience.
+
+    Shared by both eligibility checking and prompt building so the
+    resolution logic lives in one place. Winner-takes-all: the first
+    source to clear its inclusion threshold wins.
+
+    Fallback order (strict, quality-based):
+    1. plot_synopsis (plot_events output) if >= 400 chars
+    2. best_plot_fallback() if >= 500 chars
+    3. generalized_plot_overview if >= 200 chars
+
+    Returns (narrative_text, source_label), or (None, None) when no
+    narrative source clears its inclusion threshold.
+    """
+    if plot_synopsis and len(plot_synopsis) >= _MIN_VIEWER_PLOT_SUMMARY_CHARS:
+        return plot_synopsis, "plot_summary"
+
+    raw_plot_fallback = movie_input.best_plot_fallback()
+    if raw_plot_fallback and len(raw_plot_fallback) >= _MIN_VIEWER_RAW_PLOT_FALLBACK_CHARS:
+        return raw_plot_fallback, "best_plot_fallback"
+
+    if (
+        generalized_plot_overview
+        and len(generalized_plot_overview) >= _MIN_VIEWER_GENERALIZED_OVERVIEW_CHARS
+    ):
+        return generalized_plot_overview, "generalized_plot_overview"
+
+    return None, None
+
+
+def filter_viewer_experience_observations(
+    emotional_observations: str | None,
+    craft_observations: str | None,
+    thematic_observations: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Filter observation inputs by their per-field inclusion thresholds.
+
+    Observations below their threshold are returned as None. Used by
+    both eligibility checking (derives lengths from non-None results)
+    and prompt building (passes filtered strings directly to the LLM).
+    """
+    filtered_emotional = (
+        emotional_observations
+        if emotional_observations
+        and len(emotional_observations) >= _MIN_VIEWER_EMOTIONAL_OBSERVATIONS_CHARS
+        else None
+    )
+    filtered_craft = (
+        craft_observations
+        if craft_observations
+        and len(craft_observations) >= _MIN_VIEWER_CRAFT_OBSERVATIONS_CHARS
+        else None
+    )
+    filtered_thematic = (
+        thematic_observations
+        if thematic_observations
+        and len(thematic_observations) >= _MIN_VIEWER_THEMATIC_OBSERVATIONS_CHARS
+        else None
+    )
+    return filtered_emotional, filtered_craft, filtered_thematic
+
+
+def _check_viewer_experience(
+    movie_input: MovieInputData,
+    plot_synopsis: str | None,
+    generalized_plot_overview: str | None,
+    emotional_observations: str | None,
+    craft_observations: str | None,
+    thematic_observations: str | None,
 ) -> str | None:
-    """Viewer experience: review_insights_brief OR plot_synopsis
-    OR all of (genres, keywords, maturity_summary)."""
-    if review_insights_brief or plot_synopsis:
+    """Viewer experience eligibility using narrative/observation ladders.
+
+    Pass when:
+    - narrative input is strong enough on its own, OR
+    - observation input is strong enough on its own, OR
+    - usable narrative + usable observations combine to enough signal
+      (threshold varies by narrative source quality).
+
+    Genre/keyword/maturity inputs are support-only and never rescue
+    eligibility by themselves.
+    """
+    narrative_input, narrative_source = resolve_viewer_experience_narrative(
+        movie_input,
+        plot_synopsis,
+        generalized_plot_overview,
+    )
+    narrative_len = len(narrative_input) if narrative_input else 0
+
+    filtered_emotional, filtered_craft, filtered_thematic = (
+        filter_viewer_experience_observations(
+            emotional_observations,
+            craft_observations,
+            thematic_observations,
+        )
+    )
+    emotional_len = len(filtered_emotional) if filtered_emotional else 0
+    craft_len = len(filtered_craft) if filtered_craft else 0
+    thematic_len = len(filtered_thematic) if filtered_thematic else 0
+    combined_observation_len = emotional_len + craft_len + thematic_len
+    has_usable_observation = any((emotional_len, craft_len, thematic_len))
+
+    # Path 1: Strong standalone narrative.
+    if narrative_source == "plot_summary" and narrative_len >= _MIN_VIEWER_PLOT_SUMMARY_STANDALONE_CHARS:
+        return None
+    if (
+        narrative_source == "best_plot_fallback"
+        and narrative_len >= _MIN_VIEWER_RAW_PLOT_FALLBACK_STANDALONE_CHARS
+    ):
+        return None
+    if (
+        narrative_source == "generalized_plot_overview"
+        and narrative_len >= _MIN_VIEWER_GENERALIZED_OVERVIEW_STANDALONE_CHARS
+    ):
         return None
 
-    has_all_contextual = (
-        len(genres) >= 1
-        and len(merged_keywords) >= 1
-        and maturity_summary is not None
-    )
-    if has_all_contextual:
+    # Path 2: Strong standalone observations.
+    if emotional_len >= _MIN_VIEWER_EMOTIONAL_OBSERVATIONS_STANDALONE_CHARS:
+        return None
+    if (
+        combined_observation_len >= _MIN_VIEWER_COMBINED_OBSERVATIONS_STANDALONE_CHARS
+        and (emotional_len > 0 or craft_len > 0)
+    ):
+        return None
+
+    # Path 3: Combined narrative + observations, weighted by source quality.
+    # Higher-quality narrative sources need less observation supplementation.
+    _COMBINED_THRESHOLDS = {
+        "plot_summary": _MIN_VIEWER_COMBINED_PLOT_SUMMARY_CHARS,
+        "best_plot_fallback": _MIN_VIEWER_COMBINED_RAW_PLOT_FALLBACK_CHARS,
+        "generalized_plot_overview": _MIN_VIEWER_COMBINED_GENERALIZED_OVERVIEW_CHARS,
+    }
+    if (
+        narrative_source is not None
+        and has_usable_observation
+        and narrative_len + combined_observation_len
+            >= _COMBINED_THRESHOLDS[narrative_source]
+    ):
         return None
 
     return (
-        "Insufficient data: no plot synopsis, no review insights, "
-        "and incomplete genre/keyword/maturity data"
+        "Insufficient viewer_experience signal: narrative input did not meet "
+        "standalone or combined thresholds, and observations were not strong "
+        "enough to compensate"
     )
 
 
@@ -354,6 +507,7 @@ def assess_skip_conditions(
     *,
     plot_events_output: PlotEventsOutput | None = None,
     reception_output: ReceptionOutput | None = None,
+    plot_analysis_output: PlotAnalysisWithJustificationsOutput | None = None,
     merged_keywords: list[str] | None = None,
     maturity_summary: str | None = None,
 ) -> SkipAssessment:
@@ -436,6 +590,12 @@ def assess_skip_conditions(
         ]
         review_insights_brief = " ".join(obs_parts) if obs_parts else None
 
+    generalized_plot_overview = (
+        plot_analysis_output.generalized_plot_overview
+        if plot_analysis_output is not None
+        else None
+    )
+
     # Compute merged keywords if not pre-computed
     if merged_keywords is None:
         merged_keywords = list(
@@ -446,8 +606,12 @@ def assess_skip_conditions(
         plot_synopsis, thematic_observations, movie_input,
     ))
     _record("viewer_experience", _check_viewer_experience(
-        plot_synopsis, review_insights_brief,
-        movie_input.genres, merged_keywords, maturity_summary,
+        movie_input,
+        plot_synopsis,
+        generalized_plot_overview,
+        emotional_observations,
+        craft_observations,
+        thematic_observations,
     ))
     _record("watch_context", _check_watch_context(
         review_insights_brief,

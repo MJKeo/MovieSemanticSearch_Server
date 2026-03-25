@@ -11,6 +11,11 @@ the user prompt with the system prompt as a separate constant. The registry
 normalizes these into a common (user_prompt, system_prompt) tuple contract
 via thin adapter wrappers, avoiding changes to the generator modules.
 
+Wave 2 types (plot_analysis, etc.) depend on Wave 1 outputs stored in the
+generated_metadata table. Their adapters load those outputs at call time
+via load_wave1_outputs_for_movie() (from inputs.py), keeping the generic pipeline interface
+(MovieInputData → result) intact.
+
 To add a new metadata type:
     1. Write its generator in generators/{type}.py
     2. Write its eligibility check in pre_consolidation.py
@@ -27,6 +32,7 @@ from pydantic import BaseModel
 from movie_ingestion.metadata_generation.inputs import (
     MetadataType,
     MovieInputData,
+    load_wave1_outputs_for_movie,
 )
 
 
@@ -80,6 +86,43 @@ def _reception_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Wave 2 prompt builder and eligibility adapters
+# ---------------------------------------------------------------------------
+# Wave 2 generators depend on Wave 1 outputs. These adapters load Wave 1
+# data from the DB so the generic pipeline can call them with just
+# MovieInputData, matching the same interface as Wave 1 types.
+
+def _plot_analysis_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for plot_analysis — loads Wave 1 outputs from DB.
+
+    Delegates to _check_plot_analysis which implements tiered eligibility:
+    movies with Wave 1 plot_synopsis are Tier 1 (always eligible), those
+    with sufficient raw plot text are Tier 2/3.
+    """
+    from .pre_consolidation import _check_plot_analysis
+
+    plot_synopsis, thematic_observations = load_wave1_outputs_for_movie(movie.tmdb_id)
+    return _check_plot_analysis(plot_synopsis, thematic_observations, movie)
+
+
+def _plot_analysis_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for plot_analysis — loads Wave 1 outputs and builds prompts."""
+    from .generators.plot_analysis import build_plot_analysis_user_prompt
+    from .prompts.plot_analysis import SYSTEM_PROMPT
+
+    plot_synopsis, thematic_observations = load_wave1_outputs_for_movie(movie.tmdb_id)
+    return build_plot_analysis_user_prompt(movie, plot_synopsis, thematic_observations), SYSTEM_PROMPT
+
+
+async def _plot_analysis_live_generator(movie: MovieInputData):
+    """Async adapter for plot_analysis — loads Wave 1 outputs and generates."""
+    from .generators.plot_analysis import generate_plot_analysis
+
+    plot_synopsis, thematic_observations = load_wave1_outputs_for_movie(movie.tmdb_id)
+    return await generate_plot_analysis(movie, plot_synopsis, thematic_observations)
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -92,7 +135,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
     from .pre_consolidation import check_plot_events, check_reception
     from .generators.plot_events import generate_plot_events
     from .generators.reception import generate_reception
-    from .schemas import PlotEventsOutput, ReceptionOutput
+    from .schemas import PlotEventsOutput, ReceptionOutput, PlotAnalysisWithJustificationsOutput
 
     return {
         MetadataType.PLOT_EVENTS: GeneratorConfig(
@@ -110,6 +153,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             eligibility_checker=check_reception,
             prompt_builder=_reception_prompt_builder,
             live_generator=generate_reception,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+        ),
+        MetadataType.PLOT_ANALYSIS: GeneratorConfig(
+            metadata_type=MetadataType.PLOT_ANALYSIS,
+            schema_class=PlotAnalysisWithJustificationsOutput,
+            eligibility_checker=_plot_analysis_eligibility_checker,
+            prompt_builder=_plot_analysis_prompt_builder,
+            live_generator=_plot_analysis_live_generator,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
         ),

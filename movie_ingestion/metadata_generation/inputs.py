@@ -404,3 +404,55 @@ def load_movie_input_data(
 
     print(f"  Loaded {len(result)}/{len(tmdb_ids)} movies from tracker.")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Wave 1 output loading for Wave 2 consumers
+# ---------------------------------------------------------------------------
+
+def load_wave1_outputs_for_movie(
+    tmdb_id: int,
+    tracker_db_path: Path = _DEFAULT_TRACKER_DB,
+) -> tuple[str | None, str | None]:
+    """Load plot_synopsis and thematic_observations from Wave 1 results.
+
+    Queries generated_metadata for any existing plot_events and reception
+    JSON, parses them, and extracts the fields that Wave 2 generators
+    (plot_analysis, etc.) need as inputs.
+
+    Returns (plot_synopsis, thematic_observations) — either may be None
+    if the Wave 1 type wasn't generated or doesn't contain that field.
+    """
+    # Import here to avoid circular imports — schemas imports from this
+    # module's sibling, not from inputs itself.
+    from .schemas import PlotEventsOutput, ReceptionOutput
+
+    plot_synopsis = None
+    thematic_observations = None
+
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        row = db.execute(
+            "SELECT plot_events, reception FROM generated_metadata WHERE tmdb_id = ?",
+            (tmdb_id,),
+        ).fetchone()
+
+    if row is None:
+        return None, None
+
+    # Extract plot_synopsis from plot_events output
+    if row[0]:
+        try:
+            pe = PlotEventsOutput.model_validate_json(row[0])
+            plot_synopsis = pe.plot_summary
+        except Exception:
+            pass
+
+    # Extract thematic_observations from reception output
+    if row[1]:
+        try:
+            rec = ReceptionOutput.model_validate_json(row[1])
+            thematic_observations = rec.thematic_observations
+        except Exception:
+            pass
+
+    return plot_synopsis, thematic_observations
