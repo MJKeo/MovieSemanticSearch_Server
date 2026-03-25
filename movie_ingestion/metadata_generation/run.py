@@ -50,6 +50,7 @@ from movie_ingestion.metadata_generation.request_builder import (
     DEFAULT_BATCH_SIZE,
 )
 from movie_ingestion.metadata_generation.openai_batch_manager import (
+    BatchStatus,
     upload_and_create_batch,
     check_batch_status,
     download_results,
@@ -234,12 +235,14 @@ def cmd_status(tracker_db_path: Path = TRACKER_DB_PATH) -> None:
 
 
 def cmd_process(tracker_db_path: Path = TRACKER_DB_PATH) -> None:
-    """Download and process results from completed batches (all metadata types).
+    """Download and process results from finished batches (all metadata types).
 
-    For each active batch:
-    - If not completed, print its current status and skip.
-    - If completed, download results, process them, handle errors,
-      and clear the batch_id from metadata_batch_ids.
+    Checks every active batch and routes on its OpenAI status:
+      completed  — download output (+ error file if any), store results, clear IDs
+      expired    — same as completed but partial; warns and clears IDs for resubmission
+      failed     — log batch-level errors, clear IDs for resubmission
+      cancelled  — clear IDs for resubmission
+      other      — still running (validating/in_progress/finalizing), skip
     """
     active = _get_active_batch_ids(tracker_db_path)
 
@@ -249,50 +252,51 @@ def cmd_process(tracker_db_path: Path = TRACKER_DB_PATH) -> None:
 
     for bid, metadata_type in active:
         status = check_batch_status(bid)
-        print(f"\n[{metadata_type}] Batch {bid}: {status.status}")
+        label = f"[{metadata_type}]"
+        print(f"\n{label} Batch {bid}: {status.status}")
 
-        if status.status == "failed":
-            print(f"  [{metadata_type}] FAILED — {status.completed}/{status.total} completed, {status.failed} failed")
-            if status.errors:
-                for err in status.errors:
-                    print(f"  [{metadata_type}] Error [{err.get('code', 'unknown')}]: {err.get('message', 'no message')}")
-            else:
-                print(f"  [{metadata_type}] No batch-level error details available.")
-            # Clear batch_ids so these movies are eligible for resubmission
-            _clear_batch_id(tracker_db_path, bid, metadata_type)
-            print(f"  [{metadata_type}] Cleared batch_id — movies are available for resubmission.")
-            continue
+        match status.status:
 
-        if status.status != "completed":
-            print(f"  [{metadata_type}] Skipping — {status.completed}/{status.total} completed, {status.failed} failed")
-            continue
+            # ── Fully completed ────────────────────────────────────
+            case "completed":
+                _download_and_process_output(status, metadata_type, label, tracker_db_path)
+                _download_and_process_errors(status, metadata_type, label, tracker_db_path)
+                _clear_batch_id(tracker_db_path, bid, metadata_type)
+                print(f"  {label} Cleared batch_id for processed movies.")
 
-        # Download and process the output file
-        if status.output_file_id:
-            print(f"  [{metadata_type}] Downloading results ({status.completed} completed)...")
-            results = download_results(status.output_file_id)
-            summary = process_results(results, tracker_db_path)
-            print(
-                f"  [{metadata_type}] Results: {summary.succeeded} succeeded, {summary.failed} failed"
-                f" | Tokens: {summary.total_input_tokens:,} in, {summary.total_output_tokens:,} out"
-            )
-        # Download and process the error file if present
-        elif status.error_file_id:
-            print(f"  [{metadata_type}] Downloading error file ({status.failed} failed)...")
-            errors = download_results(status.error_file_id)
-            error_count = process_error_file(errors, metadata_type, tracker_db_path)
-            print(f"  [{metadata_type}] Recorded {error_count} error(s) in generation_failures.")
-        else:
-            # Completed batch with no output file — unusual. Don't clear
-            # batch_ids since we can't confirm results were processed.
-            print(f"  [{metadata_type}] Warning: completed batch has no output file. Skipping.")
-            continue
+            # ── Expired (partial results available) ────────────────
+            case "expired":
+                print(
+                    f"  {label} EXPIRED — {status.completed}/{status.total} completed "
+                    f"before the 24h window closed"
+                )
+                _download_and_process_output(status, metadata_type, label, tracker_db_path)
+                _download_and_process_errors(status, metadata_type, label, tracker_db_path)
+                # Clear IDs so unfinished movies become eligible for resubmission
+                _clear_batch_id(tracker_db_path, bid, metadata_type)
+                print(f"  {label} Cleared batch_id — unfinished movies available for resubmission.")
 
-        # Clear batch_ids for processed movies so they don't show up in
-        # future status/process calls. Failed movies keep {type} IS NULL
-        # and can be retried via a new submit.
-        _clear_batch_id(tracker_db_path, bid, metadata_type)
-        print(f"  [{metadata_type}] Cleared batch_id for processed movies.")
+            # ── Failed (batch-level error, no output file) ────────
+            case "failed":
+                print(
+                    f"  {label} FAILED — {status.completed}/{status.total} completed, "
+                    f"{status.failed} failed"
+                )
+                _log_batch_errors(status, label)
+                _clear_batch_id(tracker_db_path, bid, metadata_type)
+                print(f"  {label} Cleared batch_id — movies available for resubmission.")
+
+            # ── Cancelled ──────────────────────────────────────────
+            case "cancelled":
+                _clear_batch_id(tracker_db_path, bid, metadata_type)
+                print(f"  {label} Cleared batch_id — movies available for resubmission.")
+
+            # ── Still running (validating, in_progress, finalizing)
+            case _:
+                print(
+                    f"  {label} Skipping — {status.completed}/{status.total} completed, "
+                    f"{status.failed} failed"
+                )
 
 
 def cmd_autopilot(
@@ -404,7 +408,68 @@ def cmd_autopilot(
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal helpers — batch result processing
+# ---------------------------------------------------------------------------
+
+def _download_and_process_output(
+    status: BatchStatus,
+    metadata_type: MetadataType,
+    label: str,
+    tracker_db_path: Path,
+) -> None:
+    """Download the output file from a batch and store results.
+
+    No-ops if the batch has no output_file_id (e.g. a failed batch
+    that never produced results).
+    """
+    if not status.output_file_id:
+        return
+
+    print(f"  {label} Downloading output ({status.completed} completed)...")
+    results = download_results(status.output_file_id)
+    summary = process_results(results, tracker_db_path)
+    print(
+        f"  {label} Results: {summary.succeeded} succeeded, {summary.failed} failed"
+        f" | Tokens: {summary.total_input_tokens:,} in, {summary.total_output_tokens:,} out"
+    )
+
+
+def _download_and_process_errors(
+    status: BatchStatus,
+    metadata_type: MetadataType,
+    label: str,
+    tracker_db_path: Path,
+) -> None:
+    """Download the error file from a batch and record failures.
+
+    No-ops if the batch has no error_file_id. The error file contains
+    per-request failures (distinct from batch-level errors on the
+    BatchStatus.errors field).
+    """
+    if not status.error_file_id:
+        return
+
+    print(f"  {label} Downloading error file ({status.failed} per-request failures)...")
+    errors = download_results(status.error_file_id)
+    error_count = process_error_file(errors, metadata_type, tracker_db_path)
+    print(f"  {label} Recorded {error_count} error(s) in generation_failures.")
+
+
+def _log_batch_errors(status: BatchStatus, label: str) -> None:
+    """Print batch-level errors (why the entire batch failed).
+
+    These are structural errors (bad JSONL, schema issues) stored on
+    the batch object itself, not per-request failures.
+    """
+    if status.errors:
+        for err in status.errors:
+            print(f"  {label} Error [{err.get('code', 'unknown')}]: {err.get('message', 'no message')}")
+    else:
+        print(f"  {label} No batch-level error details available.")
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — live generation and DB queries
 # ---------------------------------------------------------------------------
 
 def _get_live_eligible_tmdb_ids(

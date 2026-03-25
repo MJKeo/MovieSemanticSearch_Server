@@ -162,11 +162,13 @@ def process_error_file(
             except (ValueError, IndexError):
                 continue
 
-            # Extract error message from the response
-            response = error_line.get("response", {})
-            body = response.get("body", {})
-            error_obj = body.get("error", {})
-            error_msg = error_obj.get("message", str(error_line))
+            # Extract error message from the response. Expired batch
+            # entries have "response": null (key present, value None),
+            # so we fall back to {} when the value is falsy.
+            response = error_line.get("response") or {}
+            body = response.get("body") or {}
+            error_obj = body.get("error") or {}
+            error_msg = error_obj.get("message", "Expired or missing response")
 
             _record_failure(db, tmdb_id, metadata_type, error_msg)
             recorded += 1
