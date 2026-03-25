@@ -12,16 +12,22 @@ leaf-node classification that doesn't cascade to other generations.
 
 Inputs:
     - movie (MovieInputData): raw fields for title, merged_keywords
-    - review_insights_brief: from Wave 1 reception output (may be None)
+    - source_material_hint: from Wave 1 reception extraction zone
+      (may be None). Short classifying phrase like "based on autobiography",
+      "remake", "based on book, sequel". Highest-confidence grounding
+      signal when present — reviewer-extracted evidence.
 
 Removed inputs (vs current system):
     - plot_synopsis: removed per ADR-033 (barely used, saves ~83.6M tokens)
-    - featured_reviews: subsumed by review_insights_brief
+    - featured_reviews: replaced first by review_insights_brief, then by
+      the more targeted source_material_hint
+    - review_insights_brief: replaced by source_material_hint (the source
+      signal was in this dedicated field, not in the observation blobs)
     - plot_keywords / overall_keywords as separate inputs: merged via
       movie.merged_keywords()
 
-Skip condition: NEVER skips. Title + year always available, and parametric
-    knowledge is explicitly allowed.
+Skip condition: eligible when merged_keywords >= 1 OR source_material_hint
+    is present. Near-zero skip rate (~21 movies lack all keywords).
 
 Response schema: SourceOfInspirationOutput (no justifications) by default.
     SourceOfInspirationWithJustificationsOutput available for evaluation.
@@ -58,7 +64,7 @@ _DEFAULT_MODEL = "gpt-5-mini"
 
 def build_source_of_inspiration_user_prompt(
     movie: MovieInputData,
-    review_insights_brief: str | None,
+    source_material_hint: str | None,
 ) -> str:
     """Build the user prompt for source_of_inspiration generation.
 
@@ -67,8 +73,10 @@ def build_source_of_inspiration_user_prompt(
 
     Inputs are labeled for the LLM to match the SYSTEM_PROMPT's INPUTS
     section. None values and empty lists are skipped by build_user_prompt.
-    Reviews frequently mention source material, so review_insights_brief
-    is particularly valuable here.
+
+    source_material_hint is the highest-confidence grounding signal when
+    present — a short reviewer-extracted classification phrase from the
+    Wave 1 reception generator (e.g., "based on autobiography", "remake").
 
     plot_synopsis was removed per ADR-033 — this generator barely uses
     plot data, and removing it saves ~83.6M input tokens across the corpus.
@@ -76,13 +84,13 @@ def build_source_of_inspiration_user_prompt(
     return build_user_prompt(
         title=movie.title_with_year(),
         merged_keywords=movie.merged_keywords() or None,
-        review_insights_brief=review_insights_brief,
+        source_material_hint=source_material_hint,
     )
 
 
 async def generate_source_of_inspiration(
     movie: MovieInputData,
-    review_insights_brief: str | None = None,
+    source_material_hint: str | None = None,
     provider: LLMProvider = _DEFAULT_PROVIDER,
     model: str = _DEFAULT_MODEL,
     system_prompt: str = SYSTEM_PROMPT,
@@ -105,8 +113,10 @@ async def generate_source_of_inspiration(
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        review_insights_brief: Dense observation paragraph from Wave 1
-            reception. May be None if reception failed or was skipped.
+        source_material_hint: Short classifying phrase from Wave 1
+            reception extraction zone (e.g., "based on autobiography",
+            "remake"). May be None if reception failed, was skipped, or
+            reviewers didn't mention source material.
         provider: Which LLM backend to use. Defaults to OPENAI.
         model: Model identifier. Defaults to "gpt-5-mini".
         **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
@@ -119,7 +129,7 @@ async def generate_source_of_inspiration(
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
     user_prompt = build_source_of_inspiration_user_prompt(
-        movie, review_insights_brief,
+        movie, source_material_hint,
     )
     title_with_year = movie.title_with_year()
 

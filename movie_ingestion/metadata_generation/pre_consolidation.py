@@ -573,12 +573,19 @@ def _check_production_keywords(merged_keywords: list[str]) -> str | None:
 
 def _check_source_of_inspiration(
     merged_keywords: list[str],
-    review_insights_brief: str | None,
+    source_material_hint: str | None,
 ) -> str | None:
-    """Source of inspiration: any of keywords or review insights."""
-    if merged_keywords or review_insights_brief:
+    """Source of inspiration: any keywords or source material hint.
+
+    Eligible when the generator has at least some grounding data beyond
+    just the title. Keywords provide structured source tags
+    ("based-on-novel", "remake") and production medium signals.
+    source_material_hint provides reviewer-extracted adaptation evidence.
+    Either alone is sufficient.
+    """
+    if merged_keywords or source_material_hint:
         return None
-    return "No keywords or review insights available"
+    return "No keywords or source material hint available"
 
 
 
@@ -644,9 +651,8 @@ def assess_skip_conditions(
         else None
     )
 
-    # Individual observation fields from reception extraction zone.
-    # Used directly by plot_analysis; other Wave 2 generators receive
-    # the concatenated review_insights_brief for backward compatibility.
+    # Individual fields from the reception extraction zone.
+    # Used directly by Wave 2 eligibility checks and generators.
     thematic_observations = (
         reception_output.thematic_observations
         if reception_output is not None
@@ -659,6 +665,11 @@ def assess_skip_conditions(
     )
     craft_observations = (
         reception_output.craft_observations
+        if reception_output is not None
+        else None
+    )
+    source_material_hint = (
+        reception_output.source_material_hint
         if reception_output is not None
         else None
     )
@@ -706,7 +717,7 @@ def assess_skip_conditions(
     ))
     _record("production_keywords", _check_production_keywords(merged_keywords))
     _record("source_of_inspiration", _check_source_of_inspiration(
-        merged_keywords, review_insights_brief,
+        merged_keywords, source_material_hint,
     ))
 
     return SkipAssessment(

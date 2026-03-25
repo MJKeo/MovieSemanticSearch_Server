@@ -393,7 +393,10 @@ Locked at module level — not a caller param. Selected after 21-movie 6-candida
 evaluation (4.93/5.0 overall, 4.86 groundedness). See ADR-039.
 
 **`source_of_inspiration` no longer receives `plot_synopsis`**: Saves
-~83.6M input tokens. Keywords + reviews + title are sufficient.
+~83.6M input tokens. Keywords + `source_material_hint` + title are sufficient.
+`source_material_hint` (from reception extraction zone) replaced the blunt
+`review_insights_brief` concatenation — it's a targeted classifying phrase
+for adaptation/remake/source status, not a blob of thematic/emotional observations.
 
 ### Pre-consolidation (pre_consolidation.py)
 
@@ -442,7 +445,7 @@ Key skip thresholds:
   as primary fallback paths; many have secondary fallbacks via
   genre/keyword/maturity data
 - `source_of_inspiration` check requires only `merged_keywords` or
-  `review_insights_brief` (no `plot_synopsis` dependency)
+  `source_material_hint` (no `plot_synopsis` dependency)
 
 ### Output schemas (schemas.py)
 

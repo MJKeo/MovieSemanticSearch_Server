@@ -221,3 +221,21 @@ Redesign narrative_techniques eligibility and input contract from scratch based 
 - Unit tests for narrative_techniques generator and pre_consolidation will fail (changed signatures, new thresholds, removed inputs)
 - Prompt INPUTS section updated to document quality-tiered narrative inputs and craft_observations
 - Evaluation guide saved to ingestion_data/narrative_techniques_eval_guide.md with 8 open questions for bucket evaluation
+
+## Source of inspiration input contract and eligibility redesign
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/source_of_inspiration.py`, `movie_ingestion/metadata_generation/prompts/source_of_inspiration.py`, `docs/modules/ingestion.md`, `ingestion_data/source_of_inspiration_eval_guide.md`
+
+### Intent
+Replace the blunt `review_insights_brief` input (concatenated observation blobs) with the targeted `source_material_hint` field from reception's extraction zone, and add an abstention gate to the prompt for small-model reliability.
+
+### Key Decisions
+- **`review_insights_brief` → `source_material_hint`:** The source material signal was never in the thematic/emotional/craft observations — it was in the dedicated `source_material_hint` field. Swapping eliminates ~100-200 tokens of irrelevant observation text and replaces it with a ~10-20 token targeted classifying phrase.
+- **Eligibility unchanged in practice:** `_check_source_of_inspiration` now checks `merged_keywords OR source_material_hint` instead of `merged_keywords OR review_insights_brief`. Near-zero skip rate (~21 movies lack all keywords).
+- **Abstention gate added:** `sources_of_inspiration` section now leads with a "FIRST: determine whether..." gate instructing the model to check inputs for evidence before attempting classification. Addresses parametric knowledge hallucination risk on small models.
+- **Evidence priority in prompt:** Explicit ordering: (1) input evidence (hint + keywords), (2) parametric knowledge for well-known films, (3) omit when uncertain. Replaces the flat "parametric knowledge allowed" guidance.
+- **No plot data added:** Analysis confirmed plot_synopsis doesn't solve the parametric knowledge problem — it triggers the same inference through a different mechanism at ~200-500 token cost. `source_material_hint` + keywords + title cover the signal gap.
+
+### Testing Notes
+- All modified files compile cleanly via py_compile
+- Unit tests for source_of_inspiration generator and pre_consolidation will fail (changed param names)
+- Evaluation guide saved to ingestion_data/source_of_inspiration_eval_guide.md with 6 hypotheses and 6 bucket designs
