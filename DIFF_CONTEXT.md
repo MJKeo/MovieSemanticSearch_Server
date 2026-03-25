@@ -1,6 +1,12 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Registered production_keywords in the batch generation pipeline
+Files: `movie_ingestion/metadata_generation/generator_registry.py`, `movie_ingestion/metadata_generation/result_processor.py`, `ingestion_data/production_keywords_eval_guide.md`
+Why: production_keywords generator existed but wasn't wired into the batch CLI. Input contract analysis confirmed current implementation (title + merged_keywords, eligibility >= 1) is already optimal — no changes to generator, prompt, schema, or pre_consolidation needed.
+Approach: Added eligibility adapter (delegates to `_check_production_keywords` with computed `merged_keywords()`), prompt builder adapter, and registry entry with `reasoning_effort: low, verbosity: low`. Added `ProductionKeywordsOutput` to `SCHEMA_BY_TYPE` in result_processor. Wrote eval guide documenting 4 testable hypotheses (justification impact, hallucination rate, small-list behavior, structured data overlap).
+Testing notes: Verified via import that registry and schema lookup both include production_keywords.
+
 ## Early truncation in build_requests to avoid wasted work
 Files: `movie_ingestion/metadata_generation/request_builder.py`, `movie_ingestion/metadata_generation/run.py` | Added `max_batches` param to `build_requests` so it truncates the eligible movie list before loading data and building prompts, instead of building everything then discarding excess batches in the caller.
 

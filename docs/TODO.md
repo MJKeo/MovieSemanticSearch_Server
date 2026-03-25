@@ -170,12 +170,12 @@ movie_ingestion/metadata_generation/inputs.py (build_custom_id, batch_id)
 instead of a monolithic review_insights_brief. **plot_analysis is now updated** (2026-03-24)
 to consume thematic_observations + emotional_observations directly. **viewer_experience is
 now updated** (2026-03-24) to consume all three observation fields individually with
-per-field inclusion thresholds. The remaining 4 Wave 2 generators still receive a
+per-field inclusion thresholds. **narrative_techniques is now updated** (2026-03-25) to
+consume craft_observations directly. The remaining 3 Wave 2 generators still receive a
 backward-compatible concatenated review_insights_brief constructed in pre_consolidation.py.
 Each should be migrated to consume targeted fields:
 source_of_inspiration → thematic_observations + source_material_hint,
-watch_context → emotional_observations,
-narrative_techniques → craft_observations.
+watch_context → emotional_observations.
 **When:** When working on each Wave 2 generator's prompt/input redesign.
 **See:** movie_ingestion/metadata_generation/pre_consolidation.py (concatenated review_insights_brief),
 movie_ingestion/metadata_generation/generators/ (remaining Wave 2 generators)
@@ -347,4 +347,19 @@ standalone-observations, removing the combined path entirely.
 thresholds are correct.
 **See:** movie_ingestion/metadata_generation/pre_consolidation.py (_check_viewer_experience,
 Path 3), ingestion_data/viewer_experience_eval_guide.md
+
+## Update unit tests for narrative_techniques input contract redesign
+**Context:** The narrative_techniques generator and pre_consolidation eligibility check
+changed signatures. `_check_narrative_techniques` now takes `(plot_summary, craft_observations,
+movie_input)` instead of `(plot_synopsis, review_insights_brief, genres, merged_keywords)`.
+`build_narrative_techniques_user_prompt` and `generate_narrative_techniques` now take
+`(movie, plot_summary, craft_observations)` instead of `(movie, plot_synopsis,
+review_insights_brief)`. `load_wave1_outputs_for_movie()` was replaced by `load_wave1_outputs()`
+returning a `Wave1Outputs` dataclass. Tests importing old function names or using old
+signatures will fail.
+**When:** Next time narrative_techniques or pre_consolidation tests are being worked on.
+**See:** unit_tests/ (narrative_techniques and pre_consolidation test files),
+movie_ingestion/metadata_generation/generators/narrative_techniques.py,
+movie_ingestion/metadata_generation/pre_consolidation.py,
+movie_ingestion/metadata_generation/inputs.py (Wave1Outputs, load_wave1_outputs)
 

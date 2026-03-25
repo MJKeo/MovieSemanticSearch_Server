@@ -92,6 +92,22 @@ def _reception_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
 # data from the DB so the generic pipeline can call them with just
 # MovieInputData, matching the same interface as Wave 1 types.
 
+def _production_keywords_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for production_keywords — requires >= 1 merged keyword.
+
+    No Wave 1 dependency — uses only raw keyword data from MovieInputData.
+    """
+    from .pre_consolidation import _check_production_keywords
+    return _check_production_keywords(movie.merged_keywords())
+
+
+def _production_keywords_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for production_keywords — builds user prompt + system prompt tuple."""
+    from .generators.production_keywords import build_production_keywords_user_prompt
+    from .prompts.production_keywords import SYSTEM_PROMPT
+    return build_production_keywords_user_prompt(movie), SYSTEM_PROMPT
+
+
 def _plot_analysis_eligibility_checker(movie: MovieInputData) -> str | None:
     """Eligibility checker for plot_analysis — loads Wave 1 outputs from DB.
 
@@ -135,7 +151,13 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
     from .pre_consolidation import check_plot_events, check_reception
     from .generators.plot_events import generate_plot_events
     from .generators.reception import generate_reception
-    from .schemas import PlotEventsOutput, ReceptionOutput, PlotAnalysisWithJustificationsOutput
+    from .generators.production_keywords import generate_production_keywords
+    from .schemas import (
+        PlotEventsOutput,
+        ReceptionOutput,
+        PlotAnalysisWithJustificationsOutput,
+        ProductionKeywordsOutput,
+    )
 
     return {
         MetadataType.PLOT_EVENTS: GeneratorConfig(
@@ -164,6 +186,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             live_generator=_plot_analysis_live_generator,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+        ),
+        MetadataType.PRODUCTION_KEYWORDS: GeneratorConfig(
+            metadata_type=MetadataType.PRODUCTION_KEYWORDS,
+            schema_class=ProductionKeywordsOutput,
+            eligibility_checker=_production_keywords_eligibility_checker,
+            prompt_builder=_production_keywords_prompt_builder,
+            live_generator=generate_production_keywords,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
         ),
     }
 
