@@ -13,7 +13,7 @@ via thin adapter wrappers, avoiding changes to the generator modules.
 
 Wave 2 types (plot_analysis, etc.) depend on Wave 1 outputs stored in the
 generated_metadata table. Their adapters load those outputs at call time
-via load_wave1_outputs_for_movie() (from inputs.py), keeping the generic pipeline interface
+via load_wave1_outputs() (from inputs.py), keeping the generic pipeline interface
 (MovieInputData → result) intact.
 
 To add a new metadata type:
@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from movie_ingestion.metadata_generation.inputs import (
     MetadataType,
     MovieInputData,
-    load_wave1_outputs_for_movie,
+    load_wave1_outputs,
 )
 
 
@@ -101,8 +101,8 @@ def _plot_analysis_eligibility_checker(movie: MovieInputData) -> str | None:
     """
     from .pre_consolidation import _check_plot_analysis
 
-    plot_synopsis, thematic_observations = load_wave1_outputs_for_movie(movie.tmdb_id)
-    return _check_plot_analysis(plot_synopsis, thematic_observations, movie)
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return _check_plot_analysis(w1.plot_summary, w1.thematic_observations, movie)
 
 
 def _plot_analysis_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
@@ -110,16 +110,16 @@ def _plot_analysis_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     from .generators.plot_analysis import build_plot_analysis_user_prompt
     from .prompts.plot_analysis import SYSTEM_PROMPT
 
-    plot_synopsis, thematic_observations = load_wave1_outputs_for_movie(movie.tmdb_id)
-    return build_plot_analysis_user_prompt(movie, plot_synopsis, thematic_observations), SYSTEM_PROMPT
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return build_plot_analysis_user_prompt(movie, w1.plot_summary, w1.thematic_observations), SYSTEM_PROMPT
 
 
 async def _plot_analysis_live_generator(movie: MovieInputData):
     """Async adapter for plot_analysis — loads Wave 1 outputs and generates."""
     from .generators.plot_analysis import generate_plot_analysis
 
-    plot_synopsis, thematic_observations = load_wave1_outputs_for_movie(movie.tmdb_id)
-    return await generate_plot_analysis(movie, plot_synopsis, thematic_observations)
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return await generate_plot_analysis(movie, w1.plot_summary, w1.thematic_observations)
 
 
 # ---------------------------------------------------------------------------

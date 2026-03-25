@@ -111,6 +111,19 @@ _MIN_VIEWER_COMBINED_PLOT_SUMMARY_CHARS = 550
 _MIN_VIEWER_COMBINED_RAW_PLOT_FALLBACK_CHARS = 700
 _MIN_VIEWER_COMBINED_GENERALIZED_OVERVIEW_CHARS = 750
 
+# Narrative techniques eligibility thresholds (tiered).
+# Tier 2: raw plot fallback standalone — needs enough detail to reveal
+# temporal structure, POV, information control, and arcs.
+_MIN_NT_PLOT_FALLBACK_STANDALONE_CHARS = 500
+# Tier 3: craft_observations standalone — reviewers directly describe
+# structural craft. At 450+ chars, content is consistently technique-focused
+# rather than production-quality commentary.
+_MIN_NT_CRAFT_OBSERVATIONS_STANDALONE_CHARS = 450
+# Tier 4: combined moderate plot + moderate craft. Neither alone is sufficient
+# but together they provide enough for the LLM to triangulate technique labels.
+_MIN_NT_PLOT_FALLBACK_COMBINED_CHARS = 300
+_MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS = 300
+
 
 # ---------------------------------------------------------------------------
 # 1. Keyword routing
@@ -465,19 +478,90 @@ def _check_watch_context(
     return "No review insights and incomplete genre/keyword/maturity data"
 
 
+def resolve_narrative_techniques_narrative(
+    movie_input: MovieInputData,
+    plot_summary: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve the single narrative input for narrative_techniques.
+
+    Shared by both eligibility checking and prompt building so the
+    resolution logic lives in one place. Winner-takes-all: the first
+    source to clear its inclusion threshold wins.
+
+    Fallback order:
+    1. plot_summary (Wave 1 plot_events output) — any length, since
+       plot_events already required 600+ chars of source text.
+    2. best_plot_fallback() if >= 500 chars standalone or >= 300 chars
+       combined (combined path checked separately by the caller).
+
+    Returns (narrative_text, source_label), or (None, None) when no
+    narrative source clears its threshold. The source_label distinguishes
+    quality tiers: "plot_synopsis" (LLM-condensed) vs "plot_text"
+    (raw human-written) so the prompt can signal the quality tier.
+    Labels match the field names in the system prompt's INPUTS section.
+    """
+    # Tier 1: LLM-condensed plot summary from Wave 1
+    if plot_summary:
+        return plot_summary, "plot_synopsis"
+
+    # Tier 2+: raw plot fallback — threshold depends on whether craft
+    # observations are also present (standalone vs combined). Return
+    # the raw text and let the caller decide via threshold comparison.
+    raw_fallback = movie_input.best_plot_fallback()
+    if raw_fallback and len(raw_fallback) >= _MIN_NT_PLOT_FALLBACK_COMBINED_CHARS:
+        return raw_fallback, "plot_text"
+
+    return None, None
+
+
 def _check_narrative_techniques(
-    plot_synopsis: str | None,
-    review_insights_brief: str | None,
-    genres: list[str],
-    merged_keywords: list[str],
+    plot_summary: str | None,
+    craft_observations: str | None,
+    movie_input: MovieInputData,
 ) -> str | None:
-    """Narrative techniques: plot_synopsis OR review_insights_brief
-    OR all of (genres, keywords)."""
-    if plot_synopsis or review_insights_brief:
+    """Narrative techniques eligibility based on tiered input quality.
+
+    Tier 1: plot_summary from Wave 1 plot_events -> always eligible.
+    Tier 2: best_plot_fallback >= 500 chars -> eligible (substantial raw
+            plot carries enough structural detail for technique analysis).
+    Tier 3: craft_observations >= 450 chars -> eligible standalone
+            (reviewers directly describe narrative craft).
+    Tier 4: best_plot_fallback >= 300 + craft_observations >= 300 ->
+            eligible (combined moderate sources compensate each other).
+    Otherwise: skip.
+
+    Genres + keywords alone are not sufficient — without plot detail or
+    reviewer structural commentary, the LLM would produce genre-based
+    speculation rather than grounded technique analysis.
+    """
+    # Tier 1: Wave 1 plot_events produced a plot_summary
+    if plot_summary:
         return None
-    if len(genres) >= 1 and len(merged_keywords) >= 1:
+
+    # Compute input lengths for tiered checks
+    raw_fallback = movie_input.best_plot_fallback()
+    fallback_len = len(raw_fallback) if raw_fallback else 0
+    craft_len = len(craft_observations) if craft_observations else 0
+
+    # Tier 2: substantial raw plot fallback
+    if fallback_len >= _MIN_NT_PLOT_FALLBACK_STANDALONE_CHARS:
         return None
-    return "Insufficient data for structural analysis"
+
+    # Tier 3: craft observations standalone
+    if craft_len >= _MIN_NT_CRAFT_OBSERVATIONS_STANDALONE_CHARS:
+        return None
+
+    # Tier 4: combined moderate plot + moderate craft
+    if (
+        fallback_len >= _MIN_NT_PLOT_FALLBACK_COMBINED_CHARS
+        and craft_len >= _MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS
+    ):
+        return None
+
+    return (
+        f"Insufficient data for structural analysis: best plot fallback is "
+        f"{fallback_len} chars, craft observations is {craft_len} chars"
+    )
 
 
 def _check_production_keywords(merged_keywords: list[str]) -> str | None:
@@ -618,8 +702,7 @@ def assess_skip_conditions(
         movie_input.genres, merged_keywords, maturity_summary,
     ))
     _record("narrative_techniques", _check_narrative_techniques(
-        plot_synopsis, review_insights_brief,
-        movie_input.genres, merged_keywords,
+        plot_synopsis, craft_observations, movie_input,
     ))
     _record("production_keywords", _check_production_keywords(merged_keywords))
     _record("source_of_inspiration", _check_source_of_inspiration(

@@ -410,25 +410,43 @@ def load_movie_input_data(
 # Wave 1 output loading for Wave 2 consumers
 # ---------------------------------------------------------------------------
 
-def load_wave1_outputs_for_movie(
+@dataclass(slots=True)
+class Wave1Outputs:
+    """Parsed fields from Wave 1 generation outputs (plot_events + reception).
+
+    All fields default to None — callers pick whichever subset they need.
+    A single DB query populates all fields, so there's no cost to loading
+    fields that a particular Wave 2 generator doesn't use.
+    """
+    # From plot_events
+    plot_summary: str | None = None
+
+    # From reception extraction zone
+    thematic_observations: str | None = None
+    emotional_observations: str | None = None
+    craft_observations: str | None = None
+    source_material_hint: str | None = None
+
+
+def load_wave1_outputs(
     tmdb_id: int,
     tracker_db_path: Path = _DEFAULT_TRACKER_DB,
-) -> tuple[str | None, str | None]:
-    """Load plot_synopsis and thematic_observations from Wave 1 results.
+) -> Wave1Outputs:
+    """Load all Wave 1 output fields needed by Wave 2 generators.
 
-    Queries generated_metadata for any existing plot_events and reception
-    JSON, parses them, and extracts the fields that Wave 2 generators
-    (plot_analysis, etc.) need as inputs.
+    Single DB query for plot_events and reception JSON, parses both,
+    and extracts all fields into a Wave1Outputs object. Callers access
+    whichever fields they need by name — no positional tuple ordering
+    to remember.
 
-    Returns (plot_synopsis, thematic_observations) — either may be None
-    if the Wave 1 type wasn't generated or doesn't contain that field.
+    Returns a Wave1Outputs with all fields defaulting to None when the
+    Wave 1 type wasn't generated or doesn't contain that field.
     """
     # Import here to avoid circular imports — schemas imports from this
     # module's sibling, not from inputs itself.
     from .schemas import PlotEventsOutput, ReceptionOutput
 
-    plot_synopsis = None
-    thematic_observations = None
+    result = Wave1Outputs()
 
     with sqlite3.connect(str(tracker_db_path)) as db:
         row = db.execute(
@@ -437,22 +455,25 @@ def load_wave1_outputs_for_movie(
         ).fetchone()
 
     if row is None:
-        return None, None
+        return result
 
-    # Extract plot_synopsis from plot_events output
+    # Extract plot_summary from plot_events output
     if row[0]:
         try:
             pe = PlotEventsOutput.model_validate_json(row[0])
-            plot_synopsis = pe.plot_summary
+            result.plot_summary = pe.plot_summary
         except Exception:
             pass
 
-    # Extract thematic_observations from reception output
+    # Extract all reception extraction-zone fields
     if row[1]:
         try:
             rec = ReceptionOutput.model_validate_json(row[1])
-            thematic_observations = rec.thematic_observations
+            result.thematic_observations = rec.thematic_observations
+            result.emotional_observations = rec.emotional_observations
+            result.craft_observations = rec.craft_observations
+            result.source_material_hint = rec.source_material_hint
         except Exception:
             pass
 
-    return plot_synopsis, thematic_observations
+    return result

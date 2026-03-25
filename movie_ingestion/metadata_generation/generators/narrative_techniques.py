@@ -7,16 +7,21 @@ storytelling mechanics. Powers queries like "movie with an unreliable narrator"
 or "non-linear timeline."
 
 Inputs:
-    - movie (MovieInputData): raw fields for title, genres, overall_keywords
-    - plot_synopsis: from Wave 1 plot_events output (may be None)
-    - review_insights_brief: from Wave 1 reception output (may be None)
+    - movie (MovieInputData): raw fields for title, genres, merged_keywords
+    - plot_summary: from Wave 1 plot_events output (may be None)
+    - craft_observations: from Wave 1 reception extraction zone (may be None)
 
-Removed inputs (vs current system):
-    - plot_keywords: rarely carry structural narrative signal
-    - reception_summary / featured_reviews: subsumed by review_insights_brief
+Narrative fallback order (shared with pre_consolidation eligibility):
+    1. plot_summary (Wave 1 output) -- always preferred
+    2. best_plot_fallback() if >= 500 chars standalone or >= 300 combined
 
-Skip condition: requires plot_synopsis OR review_insights_brief OR
-    (genres AND keywords). Enforced by pre_consolidation.
+Uses merged_keywords (plot + overall deduplicated) rather than
+overall_keywords only. Structural technique tags can appear in either
+keyword list, and the prompt handles noise by instructing the LLM to
+use keywords only when consistent with primary evidence.
+
+Skip condition: enforced by pre_consolidation using tiered eligibility
+    (plot_summary OR fallback >= 500 OR craft >= 450 OR combined).
 
 Response schema: NarrativeTechniquesOutput (no justifications) by default.
     NarrativeTechniquesWithJustificationsOutput available for evaluation.
@@ -34,10 +39,14 @@ from movie_ingestion.metadata_generation.inputs import (
     MovieInputData,
     build_user_prompt,
 )
+from movie_ingestion.metadata_generation.pre_consolidation import (
+    resolve_narrative_techniques_narrative,
+    _MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS,
+)
 from movie_ingestion.metadata_generation.schemas import NarrativeTechniquesOutput
 from movie_ingestion.metadata_generation.prompts.narrative_techniques import (
     SYSTEM_PROMPT,
-    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,  # noqa: F401 — exported for evaluation pipeline
+    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,  # noqa: F401 -- exported for evaluation pipeline
 )
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
@@ -48,42 +57,78 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
 GENERATION_TYPE = MetadataType.NARRATIVE_TECHNIQUES
 
-# Production defaults — matching current system (gpt-5-mini with medium reasoning).
+# Production defaults -- matching current system (gpt-5-mini with medium reasoning).
 # Will be re-evaluated via the evaluation pipeline and updated to the winner.
 _DEFAULT_PROVIDER = LLMProvider.OPENAI
 _DEFAULT_MODEL = "gpt-5-mini"
 
 
+def _filter_craft_observations(craft_observations: str | None) -> str | None:
+    """Filter craft_observations by the combined-path inclusion threshold.
+
+    Returns the observations if they meet the minimum length for inclusion,
+    or None if below threshold. The standalone threshold (450 chars) is
+    checked during eligibility; here we use the lower combined threshold
+    (300 chars) since eligible movies may have craft_observations in the
+    300-449 range when combined with plot fallback.
+    """
+    if craft_observations and len(craft_observations) >= _MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS:
+        return craft_observations
+    return None
+
+
 def build_narrative_techniques_user_prompt(
     movie: MovieInputData,
-    plot_synopsis: str | None,
-    review_insights_brief: str | None,
+    plot_summary: str | None,
+    craft_observations: str | None,
 ) -> str:
-    """Build the user prompt for narrative_techniques generation from a movie's fields.
+    """Build the user prompt for narrative_techniques generation.
 
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
 
-    Uses overall_keywords only (not merged_keywords) — structural tags like
-    "nonlinear timeline" and "unreliable narrator" live in overall keywords.
-    Plot keywords add noise without structural signal.
+    Resolves narrative input via the shared fallback ladder in
+    pre_consolidation, and filters craft_observations by minimum length.
+    The prompt labels distinguish data quality tiers so the LLM can
+    calibrate confidence: "plot_synopsis" (LLM-condensed) vs "plot_text"
+    (raw human-written).
 
-    Inputs are labeled for the LLM to match the SYSTEM_PROMPT's INPUTS
-    section. None values and empty lists are skipped by build_user_prompt.
+    Uses merged_keywords (plot + overall deduplicated) -- structural tags
+    like "nonlinear timeline" and "unreliable narrator" can appear in
+    either keyword list. The prompt handles noise by instructing the LLM
+    to use keywords only when consistent with primary evidence.
     """
-    return build_user_prompt(
-        title=movie.title_with_year(),
-        genres=movie.genres or None,
-        plot_synopsis=plot_synopsis,
-        overall_keywords=movie.overall_keywords or None,
-        review_insights_brief=review_insights_brief,
+    # Resolve narrative input via shared fallback ladder
+    narrative_text, narrative_label = resolve_narrative_techniques_narrative(
+        movie, plot_summary,
     )
+
+    # Filter craft observations by inclusion threshold
+    filtered_craft = _filter_craft_observations(craft_observations)
+
+    # Build prompt with labeled fields. The narrative label becomes the
+    # field name (plot_synopsis or plot_text) so the LLM knows the
+    # quality tier. None values and empty lists are skipped by
+    # build_user_prompt.
+    prompt_fields: dict[str, str | list | None] = {
+        "title": movie.title_with_year(),
+        "genres": movie.genres or None,
+    }
+
+    # Narrative input uses the resolved label as the field key
+    if narrative_text and narrative_label:
+        prompt_fields[narrative_label] = narrative_text
+
+    prompt_fields["craft_observations"] = filtered_craft
+    prompt_fields["keywords"] = movie.merged_keywords() or None
+
+    return build_user_prompt(**prompt_fields)
 
 
 async def generate_narrative_techniques(
     movie: MovieInputData,
-    plot_synopsis: str | None = None,
-    review_insights_brief: str | None = None,
+    plot_summary: str | None = None,
+    craft_observations: str | None = None,
     provider: LLMProvider = _DEFAULT_PROVIDER,
     model: str = _DEFAULT_MODEL,
     system_prompt: str = SYSTEM_PROMPT,
@@ -102,14 +147,17 @@ async def generate_narrative_techniques(
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        plot_synopsis: Plot summary from Wave 1 plot_events. May be None
+        plot_summary: Plot summary from Wave 1 plot_events. May be None
             if plot_events failed or was skipped.
-        review_insights_brief: Dense observation paragraph from Wave 1
-            reception. May be None if reception failed or was skipped.
+        craft_observations: Craft/structural observations from Wave 1
+            reception extraction zone. May be None if reception failed
+            or had no craft observations.
         provider: Which LLM backend to use. Defaults to OPENAI.
         model: Model identifier. Defaults to "gpt-5-mini".
-        **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
-            (reasoning_effort="medium").
+        system_prompt: System prompt to use. Defaults to SYSTEM_PROMPT.
+        response_format: Pydantic schema for structured output. Defaults
+            to NarrativeTechniquesOutput.
+        **kwargs: Provider-specific params (e.g. reasoning_effort).
 
     Returns:
         Tuple of (NarrativeTechniquesOutput, TokenUsage).
@@ -118,7 +166,9 @@ async def generate_narrative_techniques(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
-    user_prompt = build_narrative_techniques_user_prompt(movie, plot_synopsis, review_insights_brief)
+    user_prompt = build_narrative_techniques_user_prompt(
+        movie, plot_summary, craft_observations,
+    )
     title_with_year = movie.title_with_year()
 
     try:

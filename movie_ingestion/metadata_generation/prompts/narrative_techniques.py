@@ -4,23 +4,17 @@ System prompt for Narrative Techniques generation.
 Instructs the LLM to extract storytelling craft attributes: POV, narrative
 delivery, archetype, information control, characterization, and more.
 
-Receives genres as a NEW input (not in current system). Genres help ground
-structural analysis -- "mystery" implies information control techniques,
-"documentary" implies specific POV structures.
+Inputs (see generator for fallback logic):
+    - title: "Title (Year)" format
+    - genres: grounds structural expectations
+    - plot_synopsis OR plot_text: narrative detail (quality-tiered labels)
+    - craft_observations: reviewer structural commentary from reception
+    - keywords: merged plot + overall keywords (structural tags live here)
 
-Receives overall_keywords only (not plot_keywords). Structural tags
-like "nonlinear timeline" and "unreliable narrator" tend to live in
-overall keywords; plot keywords add noise without structural signal.
-
-Based on existing prompt at:
-implementation/prompts/vector_metadata_generation_prompts.py (NARRATIVE_TECHNIQUES section)
-
-Key modifications:
-    - Title input described as "Title (Year)" format
-    - genres added as input with structural analysis guidance
-    - overall_keywords only (not plot_keywords)
-    - review_insights_brief replaces reception_summary + featured_reviews
-    - HOW TO USE updated for new input set
+The prompt teaches the LLM about the two narrative source tiers
+(plot_synopsis vs plot_text) and the craft_observations signal. When
+only craft_observations is available (no plot), the model is instructed
+to be more conservative.
 
 Two prompt variants exported:
     - SYSTEM_PROMPT: for NarrativeTechniquesOutput (no justification fields)
@@ -63,17 +57,20 @@ ADDITIONAL CONSTRAINTS (very important)
 """
 
 _INPUTS_AND_USAGE = """\
-INPUTS YOU MAY RECEIVE (some may be empty or noisy)
-- title: title of the movie, formatted as "Title (Year)" for temporal context
-- genres: all genres the movie belongs to (helps ground structural analysis -- "mystery" implies information control, "documentary" implies specific POV structures)
-- plot_synopsis: the entire plot of the movie, detailed, spoiler-filled
-- overall_keywords: a list of phrases representing this movie at a high level (structural tags like "nonlinear timeline" and "unreliable narrator" tend to live here)
-- review_insights_brief: a dense synthesis of audience observations -- thematic, emotional, structural, and source-material observations extracted from reviews. Captures what reviewers noticed, not how much they liked it. Strong candidate for structural analysis.
+INPUTS YOU MAY RECEIVE (some may be absent)
+- title: title of the movie, formatted as "Title (Year)" for temporal context.
+- genres: all genres the movie belongs to. Helps ground structural analysis -- "mystery" implies information control techniques, "documentary" implies specific POV structures.
+- plot_synopsis: the entire plot of the movie, detailed, spoiler-filled. LLM-condensed chronological summary. The richest and most reliable source for structural analysis.
+- plot_text: raw plot synopsis or summary text. Lower quality than plot_synopsis -- human-written, variable structure, may omit structural details. Only present when plot_synopsis is unavailable.
+- craft_observations: what reviewers observed about narrative structure, pacing, storytelling mechanics, and performances as craft. Descriptive, not evaluative. Often reveals techniques the plot text does not explicitly describe (e.g., "the twist was predictable", "nonlinear storytelling was confusing", "presented as one continuous take").
+- keywords: a list of phrases representing this movie at a high level. Structural tags like "nonlinear timeline" and "unreliable narrator" may appear here, mixed with non-structural tags.
 
 HOW TO USE THE INPUTS
-- Primary evidence: plot_synopsis (most reliable for structure/mechanics) + review_insights_brief (often reveals POV trust, theme delivery, twist structure).
-- Secondary: genres (helps ground structural expectations) + overall_keywords (noisy; use only when consistent with synopsis/reviews).
+- Primary evidence: plot_synopsis or plot_text (most reliable for structure/mechanics) + craft_observations (often reveals POV trust, theme delivery, twist structure, pacing devices).
+- Secondary: genres (grounds structural expectations) + keywords (noisy; use only when consistent with primary evidence).
 - Tertiary: title context (period context, remake indicators).
+- When both plot text and craft_observations are present, use them together -- plot reveals structure you can name, reviews reveal techniques the plot doesn't make explicit.
+- When only craft_observations is available (no plot text), base your analysis on what reviewers describe. Be more conservative with the CONFIDENCE RULE -- fewer, higher-confidence tags.
 - Do not supplement with your own knowledge of this film. Only describe what is evident from the provided data.
 
 """

@@ -276,18 +276,17 @@ def cmd_process(tracker_db_path: Path = TRACKER_DB_PATH) -> None:
                 f"  [{metadata_type}] Results: {summary.succeeded} succeeded, {summary.failed} failed"
                 f" | Tokens: {summary.total_input_tokens:,} in, {summary.total_output_tokens:,} out"
             )
+        # Download and process the error file if present
+        elif status.error_file_id:
+            print(f"  [{metadata_type}] Downloading error file ({status.failed} failed)...")
+            errors = download_results(status.error_file_id)
+            error_count = process_error_file(errors, metadata_type, tracker_db_path)
+            print(f"  [{metadata_type}] Recorded {error_count} error(s) in generation_failures.")
         else:
             # Completed batch with no output file — unusual. Don't clear
             # batch_ids since we can't confirm results were processed.
             print(f"  [{metadata_type}] Warning: completed batch has no output file. Skipping.")
             continue
-
-        # Download and process the error file if present
-        if status.error_file_id:
-            print(f"  [{metadata_type}] Downloading error file ({status.failed} failed)...")
-            errors = download_results(status.error_file_id)
-            error_count = process_error_file(errors, metadata_type, tracker_db_path)
-            print(f"  [{metadata_type}] Recorded {error_count} error(s) in generation_failures.")
 
         # Clear batch_ids for processed movies so they don't show up in
         # future status/process calls. Failed movies keep {type} IS NULL

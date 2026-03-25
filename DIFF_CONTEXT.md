@@ -193,3 +193,25 @@ Design evaluation buckets to answer threshold leniency, observation contribution
 
 ### Planning Context
 Original plan had 7 buckets including combined-edge. Data exploration revealed the combined path barely exists in practice, leading to redesign. The observation-standalone dominance was the biggest finding — nearly half the eligible population has no usable narrative input.
+
+## Narrative techniques eligibility and input contract redesign
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/narrative_techniques.py`, `movie_ingestion/metadata_generation/prompts/narrative_techniques.py`, `movie_ingestion/metadata_generation/inputs.py`, `docs/modules/ingestion.md`, `ingestion_data/narrative_techniques_eval_guide.md`
+
+### Intent
+Redesign narrative_techniques eligibility and input contract from scratch based on systematic analysis of upstream data, downstream usage, and per-input signal quality.
+
+### Key Decisions
+- **Tiered eligibility replaces boolean OR check:** Old check was `plot_synopsis OR review_insights_brief OR (genres AND keywords)`. New tiered logic: Tier 1 (plot_summary → always eligible), Tier 2 (best_plot_fallback >= 500 chars), Tier 3 (craft_observations >= 450 chars standalone), Tier 4 (fallback >= 300 + craft >= 300 combined). Drops genres+keywords-only path (would produce genre-speculative output).
+- **Split review_insights_brief into craft_observations:** The concatenated blob mixed three observation types. craft_observations carries direct structural technique signal; emotional_observations is irrelevant (wrong domain); thematic_observations is uncertain (needs testing, ~50% noise). Generator now receives craft_observations only.
+- **merged_keywords replaces overall_keywords:** Structural technique tags can appear in either keyword list. Prompt handles noise via "use only when consistent with primary evidence."
+- **Plot fallback with quality-tiered labels:** When plot_summary is absent, best_plot_fallback() provides raw plot text. The prompt label distinguishes `plot_synopsis` (LLM-condensed) from `plot_text` (raw human-written) so the LLM can calibrate confidence.
+- **Shared narrative resolution function:** `resolve_narrative_techniques_narrative()` in pre_consolidation serves both eligibility and prompt building. Follows the viewer_experience pattern (`resolve_viewer_experience_narrative`).
+- **craft_observations filtering in generator:** `_filter_craft_observations()` uses the combined-path threshold (300 chars) as the inclusion floor, since eligible movies may have craft in the 300-449 range via Tier 4.
+- **Unified Wave 1 loader:** Replaced both `load_wave1_outputs_for_movie()` (tuple) and the new `load_wave1_outputs_for_narrative_techniques()` (tuple) with a single `load_wave1_outputs()` returning a `Wave1Outputs` dataclass. All Wave 1 fields (plot_summary, thematic/emotional/craft observations, source_material_hint) are loaded in one query; callers access by attribute name instead of positional tuple.
+- **No plot_analysis dependency:** Despite plot_analysis outputs mapping closely to several NT sections (character_arcs, conflict_type, genre_signatures), adding it would require Wave 2 ordering + create echo risk. NT derives its own technique labels from primary evidence.
+- **Population: 90,168 eligible (82.5%)** vs ~105K+ under old rules. The ~19K excluded movies have thin plot data AND moderate-but-not-great craft observations.
+
+### Testing Notes
+- Unit tests for narrative_techniques generator and pre_consolidation will fail (changed signatures, new thresholds, removed inputs)
+- Prompt INPUTS section updated to document quality-tiered narrative inputs and craft_observations
+- Evaluation guide saved to ingestion_data/narrative_techniques_eval_guide.md with 8 open questions for bucket evaluation
