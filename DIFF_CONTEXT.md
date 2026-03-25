@@ -177,3 +177,19 @@ Tighten viewer_experience eligibility based on analysis of threshold quality, an
 Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/viewer_experience.py`
 Why: The generator had its own `_filter_observations()` with duplicated threshold constants (`_MIN_EMOTIONAL_OBSERVATIONS_CHARS`, etc.) mirroring pre_consolidation's `_viewer_experience_observation_lengths()`. Same inclusion logic, different return types (strings vs lengths), independently maintained thresholds that could silently diverge.
 Approach: Replaced both with a single public `filter_viewer_experience_observations()` in pre_consolidation that returns filtered strings. The eligibility check derives lengths from the non-None results. Generator imports and calls the shared function directly — no local threshold constants remain.
+
+## Viewer experience evaluation bucket design and movie selection
+Files: `ingestion_data/viewer_experience_eval_buckets.json`, `ingestion_data/viewer_experience_eval_guide.md`
+
+### Intent
+Design evaluation buckets to answer threshold leniency, observation contribution, narrative source quality, and observation-standalone viability questions before running production viewer_experience generation.
+
+### Key Decisions
+- **6 buckets, 42 movies total:** gold_standard (8), floor_plot_summary (8), raw_fallback_standalone (8), raw_fallback_with_observations (6), obs_standalone_with_context (6), obs_standalone_minimal_context (6). Bucket 5 (generalized_plot_overview) deferred — plot_analysis has 0 generated rows.
+- **Combined-edge bucket dropped:** Only 1 movie in the 95K dataset qualifies solely through the combined path. Observation-standalone (280 combined chars) is permissive enough that the combined path is nearly always redundant.
+- **Observation-standalone split:** The 45,552-movie obs-standalone population (48% of movies with reception) was split by supporting context level: 200-499 char fallback (Bucket 6) vs <200 char fallback (Bucket 7). This tests whether narrative context below inclusion thresholds still helps.
+- **Ablation candidates on Buckets 1 and 3 only:** `no_observations` and `no_thematic_no_arcs` variants. These have strong standalone narrative, so quality delta is attributable to observations, not confounded by weak narrative.
+- **Diversity selection:** Movies chosen for genre, era, rating, and vote-count diversity within each bucket pool.
+
+### Planning Context
+Original plan had 7 buckets including combined-edge. Data exploration revealed the combined path barely exists in practice, leading to redesign. The observation-standalone dominance was the biggest finding — nearly half the eligible population has no usable narrative input.
