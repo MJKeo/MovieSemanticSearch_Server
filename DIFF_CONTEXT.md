@@ -1,11 +1,41 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Narrative techniques prompt hardening and schema reordering
+Files: `movie_ingestion/metadata_generation/prompts/narrative_techniques.py`, `movie_ingestion/metadata_generation/schemas.py`, `movie_ingestion/metadata_generation/generators/narrative_techniques.py`, `ingestion_data/narrative_techniques_eval_guide.md`
+
+### Intent
+Harden the narrative_techniques prompt for gpt-5-mini reliability across the full input quality spectrum (4 tiers), following the patterns that worked for plot_analysis prompt hardening.
+
+### Key Decisions
+- **Schema field reordering for cognitive scaffolding:** Reordered all 11 sections in both `NarrativeTechniquesOutput` and `NarrativeTechniquesWithJustificationsOutput` from taxonomic order to cognitive scaffolding order: easiest/most-concrete first (archetype, delivery, devices) → moderate (pov, characterization, arcs, perception) → hardest/most-abstract (information control, stakes, thematic delivery) → rare (meta). Follows the convention established in plot_analysis.
+- **Empty lists as explicit default:** All section phrase counts changed from mandatory minimums (e.g., "1-2 phrases") to zero-based ranges (e.g., "0-2 phrases") with explicit "Empty when..." guidance per section. Added global rules: empty is correct default, thin inputs should produce 3-5 total tags, non-traditional content gets mostly empty sections.
+- **Craft-only mode subsection:** Replaced the single vague "be more conservative" sentence with a dedicated "WHEN PLOT DATA IS ABSENT" subsection naming which sections should almost always be empty without plot data, and setting a 3-6 tag budget for craft-only movies.
+- **Explicit "not available" signals:** Generator now includes `plot_synopsis: not available` and `craft_observations: not available` when those inputs are absent, rather than silently omitting the fields. Proven pattern from plot_analysis hardening.
+- **`audience_character_perception` reframed:** Resolved the contradiction between "only include with clearly defined audience reception" and "do not use parametric knowledge." Reframed as a deliberate craft choice by writers/directors/performers — the model tags the intended audience response visible in input evidence, not real-world reception data.
+- **Parametric knowledge eval note:** Added guidance to eval guide about monitoring for systematic under-filling on famous Tier 3 films, with a potential rule softening if observed.
+
+### Testing Notes
+- All modified files compile cleanly via py_compile
+- Unit tests for narrative_techniques generator will fail (schema field order changed)
+- `__str__()` methods still produce identical embedding text between variants
+
 ## Registered production_keywords in the batch generation pipeline
 Files: `movie_ingestion/metadata_generation/generator_registry.py`, `movie_ingestion/metadata_generation/result_processor.py`, `ingestion_data/production_keywords_eval_guide.md`
 Why: production_keywords generator existed but wasn't wired into the batch CLI. Input contract analysis confirmed current implementation (title + merged_keywords, eligibility >= 1) is already optimal — no changes to generator, prompt, schema, or pre_consolidation needed.
 Approach: Added eligibility adapter (delegates to `_check_production_keywords` with computed `merged_keywords()`), prompt builder adapter, and registry entry with `reasoning_effort: low, verbosity: low`. Added `ProductionKeywordsOutput` to `SCHEMA_BY_TYPE` in result_processor. Wrote eval guide documenting 4 testable hypotheses (justification impact, hallucination rate, small-list behavior, structured data overlap).
 Testing notes: Verified via import that registry and schema lookup both include production_keywords.
+
+## Production keywords evaluation bucket design and movie selection
+Files: `ingestion_data/production_keywords_eval_buckets.json`, `ingestion_data/production_keywords_eval_guide.md`
+Why: Need evaluation buckets to test the 4 hypotheses before production generation: justification impact, hallucination rate, small-list behavior, and structured data overlap.
+Approach: Designed 6 buckets × 8 movies = 48 total, crossing keyword count (rich/typical/small), keyword composition (both sources/overall-only), and expected production-keyword density (dense/none/mixed). Both candidates (with/without justification) run on all buckets for 96 total runs. Movies selected for genre, era, country, and data quality diversity within each bucket.
+- **gold_standard:** 14-22 merged kw, both sources, well-known films — quality ceiling
+- **typical:** 11-18 merged kw, moderate popularity — bread-and-butter workload
+- **small_keyword_lists:** 1-5 merged kw — tests edge case behavior (Hypothesis 3)
+- **production_dense:** adaptations, animations, documentaries with production terms — tests recall and overlap (Hypothesis 4)
+- **no_production_expected:** pure fiction/thematic keywords — tests false positive rate
+- **overall_keywords_only:** no plot_keywords, genre-like labels only — tests low-signal input handling
 
 ## Early truncation in build_requests to avoid wasted work
 Files: `movie_ingestion/metadata_generation/request_builder.py`, `movie_ingestion/metadata_generation/run.py` | Added `max_batches` param to `build_requests` so it truncates the eligible movie list before loading data and building prompts, instead of building everything then discarding excess batches in the caller.
@@ -221,6 +251,16 @@ Redesign narrative_techniques eligibility and input contract from scratch based 
 - Unit tests for narrative_techniques generator and pre_consolidation will fail (changed signatures, new thresholds, removed inputs)
 - Prompt INPUTS section updated to document quality-tiered narrative inputs and craft_observations
 - Evaluation guide saved to ingestion_data/narrative_techniques_eval_guide.md with 8 open questions for bucket evaluation
+
+## New command: /improve-metadata-prompt
+Files: `.claude/commands/improve-metadata-prompt.md`
+Why: Need a structured process to evaluate and improve system prompts for each metadata generation type before running first production generations. Existing commands cover input contract design (`/analyze-metadata-inputs`) and post-generation evaluation (`/evaluate-metadata-results`), but nothing for pre-generation prompt quality review.
+Approach: 4-phase conversational command parameterized by `$ARGUMENTS` (metadata type). Phase 1 silently reads pipeline context, prompt, generator, schema, eval guide, and 3-5 real movies from tracker DB. Phase 2 presents understanding for confirmation. Phase 3 evaluates current prompt across 5 dimensions (clarity, ordering, input spectrum coverage, token efficiency, output alignment) from the perspective of gpt-5-mini with minimal reasoning in single-shot batch mode. Phase 4 proposes improvements with reasoning and open questions. Pauses after phases 2 and 3 for discussion.
+
+## Refactored cmd_process for clarity and expired batch support
+Files: `movie_ingestion/metadata_generation/run.py`, `movie_ingestion/metadata_generation/result_processor.py`
+Why: Expired OpenAI batches have partial results available but cmd_process skipped them. Control flow was also hard to follow (nested if/elif/continue chains).
+Approach: Restructured around a `match` statement on batch status. Extracted `_download_and_process_output`, `_download_and_process_errors`, and `_log_batch_errors` helpers to eliminate duplication. Added `expired` handling (downloads partial output + error file, clears batch IDs for resubmission) and explicit `cancelled` branch. Each status branch is self-contained with no fallthrough. Also fixed `process_error_file` to handle `"response": null` entries from expired batches — `.get("response", {})` doesn't use the default when the key exists with a None value; changed to `or {}` pattern.
 
 ## Source of inspiration input contract and eligibility redesign
 Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/source_of_inspiration.py`, `movie_ingestion/metadata_generation/prompts/source_of_inspiration.py`, `docs/modules/ingestion.md`, `ingestion_data/source_of_inspiration_eval_guide.md`

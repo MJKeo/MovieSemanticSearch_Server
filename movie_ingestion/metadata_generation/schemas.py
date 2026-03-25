@@ -665,38 +665,44 @@ class NarrativeTechniquesOutput(BaseModel):
     """Structured output from the narrative_techniques generation (Wave 2).
 
     11 sections capturing storytelling structure, POV, delivery
-    mechanism, and narrative devices.
+    mechanism, and narrative devices. Field order is optimized for
+    autoregressive generation: easiest/most-concrete sections first,
+    building toward harder/more-abstract ones.
 
     Model: gpt-5-mini, reasoning_effort: medium
     """
     model_config = ConfigDict(extra="forbid")
 
-    pov_perspective: TermsSection
-    narrative_delivery: TermsSection
+    # Easiest to identify from any input type
     narrative_archetype: TermsSection
-    information_control: TermsSection
+    narrative_delivery: TermsSection
+    additional_plot_devices: TermsSection
+    # Moderate — often evidenced in craft observations
+    pov_perspective: TermsSection
     characterization_methods: TermsSection
     character_arcs: TermsSection
     audience_character_perception: TermsSection
+    # Hardest — require plot knowledge or synthesis
+    information_control: TermsSection
     conflict_stakes_design: TermsSection
     thematic_delivery: TermsSection
+    # Rare — already allows 0 entries
     meta_techniques: TermsSection
-    additional_plot_devices: TermsSection
 
     def __str__(self) -> str:
         combined_terms: list[str] = []
         for section in (
-            self.pov_perspective,
-            self.narrative_delivery,
             self.narrative_archetype,
-            self.information_control,
+            self.narrative_delivery,
+            self.additional_plot_devices,
+            self.pov_perspective,
             self.characterization_methods,
             self.character_arcs,
             self.audience_character_perception,
+            self.information_control,
             self.conflict_stakes_design,
             self.thematic_delivery,
             self.meta_techniques,
-            self.additional_plot_devices,
         ):
             combined_terms.extend(section.terms)
         return ", ".join(t.lower() for t in combined_terms)
@@ -723,33 +729,34 @@ class NarrativeTechniquesWithJustificationsOutput(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    pov_perspective: TermsWithJustificationSection
-    narrative_delivery: TermsWithJustificationSection
+    # Field order matches NarrativeTechniquesOutput (cognitive scaffolding)
     narrative_archetype: TermsWithJustificationSection
-    information_control: TermsWithJustificationSection
+    narrative_delivery: TermsWithJustificationSection
+    additional_plot_devices: TermsWithJustificationSection
+    pov_perspective: TermsWithJustificationSection
     characterization_methods: TermsWithJustificationSection
     character_arcs: TermsWithJustificationSection
     audience_character_perception: TermsWithJustificationSection
+    information_control: TermsWithJustificationSection
     conflict_stakes_design: TermsWithJustificationSection
     thematic_delivery: TermsWithJustificationSection
     meta_techniques: TermsWithJustificationSection
-    additional_plot_devices: TermsWithJustificationSection
 
     def __str__(self) -> str:
         # Must produce identical embedding text to NarrativeTechniquesOutput.__str__()
         combined_terms: list[str] = []
         for section in (
-            self.pov_perspective,
-            self.narrative_delivery,
             self.narrative_archetype,
-            self.information_control,
+            self.narrative_delivery,
+            self.additional_plot_devices,
+            self.pov_perspective,
             self.characterization_methods,
             self.character_arcs,
             self.audience_character_perception,
+            self.information_control,
             self.conflict_stakes_design,
             self.thematic_delivery,
             self.meta_techniques,
-            self.additional_plot_devices,
         ):
             combined_terms.extend(section.terms)
         return ", ".join(t.lower() for t in combined_terms)

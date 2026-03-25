@@ -93,6 +93,11 @@ def build_narrative_techniques_user_prompt(
     calibrate confidence: "plot_synopsis" (LLM-condensed) vs "plot_text"
     (raw human-written).
 
+    Absent primary inputs (plot data, craft observations) are explicitly
+    included as "not available" rather than silently omitted. This helps
+    the LLM calibrate confidence — seeing "plot_synopsis: not available"
+    is a stronger signal than a missing field.
+
     Uses merged_keywords (plot + overall deduplicated) -- structural tags
     like "nonlinear timeline" and "unreliable narrator" can appear in
     either keyword list. The prompt handles noise by instructing the LLM
@@ -108,18 +113,23 @@ def build_narrative_techniques_user_prompt(
 
     # Build prompt with labeled fields. The narrative label becomes the
     # field name (plot_synopsis or plot_text) so the LLM knows the
-    # quality tier. None values and empty lists are skipped by
-    # build_user_prompt.
+    # quality tier. Absent primary inputs are explicitly signaled as
+    # "not available" so the LLM can calibrate confidence rather than
+    # having to infer absence from a missing field.
     prompt_fields: dict[str, str | list | None] = {
         "title": movie.title_with_year(),
         "genres": movie.genres or None,
     }
 
-    # Narrative input uses the resolved label as the field key
+    # Narrative input uses the resolved label as the field key.
+    # When absent, explicitly signal so the LLM knows plot data is missing.
     if narrative_text and narrative_label:
         prompt_fields[narrative_label] = narrative_text
+    else:
+        prompt_fields["plot_synopsis"] = "not available"
 
-    prompt_fields["craft_observations"] = filtered_craft
+    # Craft observations: explicit absence signal when filtered out
+    prompt_fields["craft_observations"] = filtered_craft or "not available"
     prompt_fields["keywords"] = movie.merged_keywords() or None
 
     return build_user_prompt(**prompt_fields)
