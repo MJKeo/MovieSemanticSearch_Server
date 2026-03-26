@@ -421,7 +421,11 @@ class ViewerExperienceOutput(BaseModel):
     apply to a movie (e.g. disturbance_profile for a children's film)
     produce empty lists — no should_skip wrapper needed.
 
-    Model: gpt-5-mini, reasoning_effort: low
+    Non-production variant (no justifications). Kept for backward
+    compatibility and evaluation comparison. Production uses
+    ViewerExperienceWithJustificationsOutput.
+
+    Model: gpt-5-mini, reasoning_effort: minimal
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -472,7 +476,8 @@ class TermsWithNegationsAndJustificationSection(BaseModel):
         ...,
         description=(
             "1 sentence. Why you chose these terms and negations "
-            "for this section. Not used for embeddings."
+            "for this section, or why the section is empty. "
+            "Not used for embeddings."
         ),
     )
     terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
@@ -510,16 +515,18 @@ class OptionalTermsWithNegationsAndJustificationSection(BaseModel):
 
 
 class ViewerExperienceWithJustificationsOutput(BaseModel):
-    """Viewer experience variant WITH justification fields.
+    """Production output schema for viewer_experience generation (Wave 2).
 
     Identical output structure to ViewerExperienceOutput but uses section
-    models that include a justification field. Used during evaluation to
-    compare output quality with vs. without justifications.
+    models that include a justification field. Justifications provide
+    chain-of-thought that improves specificity (+0.44) and term diversity
+    (+0.38) per Round 2 evaluation. Justifications are discarded before
+    embedding — no retrieval impact.
 
     The __str__() method produces IDENTICAL embedding text to
     ViewerExperienceOutput — justification text is never embedded.
 
-    Model: gpt-5-mini, reasoning_effort: low
+    Model: gpt-5-mini, reasoning_effort: minimal, verbosity: low
     """
     model_config = ConfigDict(extra="forbid")
 

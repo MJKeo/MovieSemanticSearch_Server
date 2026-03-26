@@ -88,14 +88,12 @@ _MIN_PLOT_FALLBACK_WITH_OBSERVATIONS_CHARS = 250
 _MIN_THEMATIC_OBSERVATIONS_CHARS = 300
 
 # Viewer experience narrative resolution thresholds.
-# Inclusion: minimum length to be considered as the narrative input at all.
+# GPO-only narrative path (validated by Round 3 evaluation: GPO-only matched
+# or slightly exceeded the full fallback chain across all buckets).
+# Inclusion: minimum length to pass GPO to the LLM as narrative context.
 # Standalone: minimum length to pass eligibility without any observations.
-_MIN_VIEWER_PLOT_SUMMARY_CHARS = 400
-_MIN_VIEWER_PLOT_SUMMARY_STANDALONE_CHARS = 600
-_MIN_VIEWER_RAW_PLOT_FALLBACK_CHARS = 500
-_MIN_VIEWER_RAW_PLOT_FALLBACK_STANDALONE_CHARS = 700
-_MIN_VIEWER_GENERALIZED_OVERVIEW_CHARS = 200
-_MIN_VIEWER_GENERALIZED_OVERVIEW_STANDALONE_CHARS = 350
+_MIN_VIEWER_GPO_INCLUSION_CHARS = 200
+_MIN_VIEWER_GPO_STANDALONE_CHARS = 350
 
 # Viewer experience observation thresholds.
 # Inclusion: minimum per-field length to count as "usable."
@@ -104,12 +102,6 @@ _MIN_VIEWER_EMOTIONAL_OBSERVATIONS_STANDALONE_CHARS = 160
 _MIN_VIEWER_CRAFT_OBSERVATIONS_CHARS = 120
 _MIN_VIEWER_THEMATIC_OBSERVATIONS_CHARS = 140
 _MIN_VIEWER_COMBINED_OBSERVATIONS_STANDALONE_CHARS = 280
-
-# Viewer experience combined path thresholds (narrative + observations).
-# Source-weighted: higher-quality narrative sources need less supplementation.
-_MIN_VIEWER_COMBINED_PLOT_SUMMARY_CHARS = 550
-_MIN_VIEWER_COMBINED_RAW_PLOT_FALLBACK_CHARS = 700
-_MIN_VIEWER_COMBINED_GENERALIZED_OVERVIEW_CHARS = 750
 
 # Narrative techniques eligibility thresholds (tiered).
 # Tier 2: raw plot fallback standalone — needs enough detail to reveal
@@ -304,34 +296,27 @@ def _check_plot_analysis(
 
 
 def resolve_viewer_experience_narrative(
-    movie_input: MovieInputData,
-    plot_summary: str | None,
     generalized_plot_overview: str | None,
 ) -> tuple[str | None, str | None]:
     """Resolve the single narrative input for viewer_experience.
 
     Shared by both eligibility checking and prompt building so the
-    resolution logic lives in one place. Winner-takes-all: the first
-    source to clear its inclusion threshold wins.
+    resolution logic lives in one place.
 
-    Fallback order (strict, quality-based):
-    1. plot_summary (plot_events output) if >= 400 chars
-    2. best_plot_fallback() if >= 500 chars
-    3. generalized_plot_overview if >= 200 chars
+    GPO-only narrative path — Round 3 evaluation validated that
+    generalized_plot_overview (a cleaned LLM summary from plot_analysis)
+    matches or slightly exceeds the full fallback chain (plot_summary,
+    raw synopses, overview) across all input quality buckets. GPO strips
+    noise while preserving the thematic/emotional core that viewer_experience
+    needs. This also simplifies upstream dependencies by removing the
+    plot_summary requirement from the viewer_experience pipeline.
 
-    Returns (narrative_text, source_label), or (None, None) when no
-    narrative source clears its inclusion threshold.
+    Returns (narrative_text, source_label), or (None, None) when GPO
+    is absent or below the inclusion threshold.
     """
-    if plot_summary and len(plot_summary) >= _MIN_VIEWER_PLOT_SUMMARY_CHARS:
-        return plot_summary, "plot_summary"
-
-    raw_plot_fallback = movie_input.best_plot_fallback()
-    if raw_plot_fallback and len(raw_plot_fallback) >= _MIN_VIEWER_RAW_PLOT_FALLBACK_CHARS:
-        return raw_plot_fallback, "best_plot_fallback"
-
     if (
         generalized_plot_overview
-        and len(generalized_plot_overview) >= _MIN_VIEWER_GENERALIZED_OVERVIEW_CHARS
+        and len(generalized_plot_overview) >= _MIN_VIEWER_GPO_INCLUSION_CHARS
     ):
         return generalized_plot_overview, "generalized_plot_overview"
 
@@ -371,27 +356,26 @@ def filter_viewer_experience_observations(
 
 
 def _check_viewer_experience(
-    movie_input: MovieInputData,
-    plot_summary: str | None,
     generalized_plot_overview: str | None,
     emotional_observations: str | None,
     craft_observations: str | None,
     thematic_observations: str | None,
 ) -> str | None:
-    """Viewer experience eligibility using narrative/observation ladders.
+    """Viewer experience eligibility — GPO narrative + observation paths.
+
+    Simplified after Round 3 evaluation validated that:
+    - GPO-only narrative matches/exceeds the full fallback chain
+    - Observation-standalone produces excellent output with justifications
+    - All input quality buckets produce acceptable results (4.0+ avg)
 
     Pass when:
-    - narrative input is strong enough on its own, OR
+    - GPO is strong enough on its own (>= 350 chars), OR
     - observation input is strong enough on its own, OR
-    - usable narrative + usable observations combine to enough signal
-      (threshold varies by narrative source quality).
+    - GPO above inclusion threshold (>= 200 chars) + any usable observation
 
-    Genre/keyword/maturity inputs are support-only and never rescue
-    eligibility by themselves.
+    Genre/maturity inputs are support-only and never rescue eligibility.
     """
-    narrative_input, narrative_source = resolve_viewer_experience_narrative(
-        movie_input,
-        plot_summary,
+    narrative_input, _ = resolve_viewer_experience_narrative(
         generalized_plot_overview,
     )
     narrative_len = len(narrative_input) if narrative_input else 0
@@ -409,18 +393,8 @@ def _check_viewer_experience(
     combined_observation_len = emotional_len + craft_len + thematic_len
     has_usable_observation = any((emotional_len, craft_len, thematic_len))
 
-    # Path 1: Strong standalone narrative.
-    if narrative_source == "plot_summary" and narrative_len >= _MIN_VIEWER_PLOT_SUMMARY_STANDALONE_CHARS:
-        return None
-    if (
-        narrative_source == "best_plot_fallback"
-        and narrative_len >= _MIN_VIEWER_RAW_PLOT_FALLBACK_STANDALONE_CHARS
-    ):
-        return None
-    if (
-        narrative_source == "generalized_plot_overview"
-        and narrative_len >= _MIN_VIEWER_GENERALIZED_OVERVIEW_STANDALONE_CHARS
-    ):
+    # Path 1: Strong standalone GPO narrative.
+    if narrative_len >= _MIN_VIEWER_GPO_STANDALONE_CHARS:
         return None
 
     # Path 2: Strong standalone observations.
@@ -432,25 +406,17 @@ def _check_viewer_experience(
     ):
         return None
 
-    # Path 3: Combined narrative + observations, weighted by source quality.
-    # Higher-quality narrative sources need less observation supplementation.
-    _COMBINED_THRESHOLDS = {
-        "plot_summary": _MIN_VIEWER_COMBINED_PLOT_SUMMARY_CHARS,
-        "best_plot_fallback": _MIN_VIEWER_COMBINED_RAW_PLOT_FALLBACK_CHARS,
-        "generalized_plot_overview": _MIN_VIEWER_COMBINED_GENERALIZED_OVERVIEW_CHARS,
-    }
-    if (
-        narrative_source is not None
-        and has_usable_observation
-        and narrative_len + combined_observation_len
-            >= _COMBINED_THRESHOLDS[narrative_source]
-    ):
+    # Path 3: GPO above inclusion threshold + any usable observation.
+    # Looser than the old source-weighted combined thresholds — justified
+    # by Round 2/3 results showing justifications handle sparse inputs well.
+    if narrative_input and has_usable_observation:
         return None
 
     return (
-        "Insufficient viewer_experience signal: narrative input did not meet "
-        "standalone or combined thresholds, and observations were not strong "
-        "enough to compensate"
+        "Insufficient viewer_experience signal: GPO did not meet standalone "
+        f"threshold ({narrative_len} chars, need >={_MIN_VIEWER_GPO_STANDALONE_CHARS}), "
+        f"and observations were not strong enough to compensate "
+        f"(combined {combined_observation_len} chars)"
     )
 
 
@@ -701,8 +667,6 @@ def assess_skip_conditions(
         plot_summary, thematic_observations, movie_input,
     ))
     _record("viewer_experience", _check_viewer_experience(
-        movie_input,
-        plot_summary,
         generalized_plot_overview,
         emotional_observations,
         craft_observations,

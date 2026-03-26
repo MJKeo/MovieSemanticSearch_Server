@@ -33,6 +33,7 @@ from movie_ingestion.metadata_generation.inputs import (
     MetadataType,
     MovieInputData,
     load_wave1_outputs,
+    load_plot_analysis_output,
 )
 
 
@@ -138,6 +139,65 @@ async def _plot_analysis_live_generator(movie: MovieInputData):
     return await generate_plot_analysis(movie, w1.plot_summary, w1.thematic_observations)
 
 
+def _viewer_experience_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for viewer_experience — loads reception + plot_analysis outputs.
+
+    Delegates to _check_viewer_experience which implements GPO-only narrative
+    and observation standalone/combined thresholds. No longer depends on
+    plot_events (plot_summary removed from viewer_experience inputs).
+    """
+    from .pre_consolidation import _check_viewer_experience
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return _check_viewer_experience(
+        pa.generalized_plot_overview if pa else None,
+        w1.emotional_observations,
+        w1.craft_observations,
+        w1.thematic_observations,
+    )
+
+
+def _viewer_experience_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for viewer_experience — loads reception + plot_analysis outputs and builds prompts.
+
+    Uses GPO-only narrative path and justification prompt (production config).
+    """
+    from .generators.viewer_experience import build_viewer_experience_user_prompt
+    from .prompts.viewer_experience import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return build_viewer_experience_user_prompt(
+        movie,
+        generalized_plot_overview=pa.generalized_plot_overview if pa else None,
+        emotional_observations=w1.emotional_observations,
+        craft_observations=w1.craft_observations,
+        thematic_observations=w1.thematic_observations,
+        genre_signatures=pa.genre_signatures if pa else None,
+    ), SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+
+
+async def _viewer_experience_live_generator(movie: MovieInputData):
+    """Async adapter for viewer_experience — loads reception + plot_analysis outputs and generates.
+
+    Uses GPO-only narrative path and production defaults (justification schema,
+    minimal reasoning).
+    """
+    from .generators.viewer_experience import generate_viewer_experience
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return await generate_viewer_experience(
+        movie,
+        generalized_plot_overview=pa.generalized_plot_overview if pa else None,
+        emotional_observations=w1.emotional_observations,
+        craft_observations=w1.craft_observations,
+        thematic_observations=w1.thematic_observations,
+        genre_signatures=pa.genre_signatures if pa else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -157,6 +217,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         ReceptionOutput,
         PlotAnalysisWithJustificationsOutput,
         ProductionKeywordsOutput,
+        ViewerExperienceWithJustificationsOutput,
     )
 
     return {
@@ -195,6 +256,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             live_generator=generate_production_keywords,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
+        ),
+        MetadataType.VIEWER_EXPERIENCE: GeneratorConfig(
+            metadata_type=MetadataType.VIEWER_EXPERIENCE,
+            schema_class=ViewerExperienceWithJustificationsOutput,
+            eligibility_checker=_viewer_experience_eligibility_checker,
+            prompt_builder=_viewer_experience_prompt_builder,
+            live_generator=_viewer_experience_live_generator,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
         ),
     }
 

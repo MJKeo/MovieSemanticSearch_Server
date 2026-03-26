@@ -79,8 +79,8 @@ def _filter_craft_observations(craft_observations: str | None) -> str | None:
 
 def build_narrative_techniques_user_prompt(
     movie: MovieInputData,
-    plot_summary: str | None,
-    craft_observations: str | None,
+    plot_summary: str | None = None,
+    craft_observations: str | None = None,
 ) -> str:
     """Build the user prompt for narrative_techniques generation.
 

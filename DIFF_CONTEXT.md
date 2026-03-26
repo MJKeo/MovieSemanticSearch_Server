@@ -1,6 +1,11 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Viewer experience Round 3: consolidated eval guide with all candidates
+Files: `ingestion_data/viewer_experience_eval_guide.md`, `movie_ingestion/metadata_generation/metadata_generation_playground.ipynb`, `movie_ingestion/metadata_generation/schemas.py`, `movie_ingestion/metadata_generation/prompts/viewer_experience.py`
+Why: Round 3 tests four independent axes against the Round 2 production winner baseline.
+Approach: Consolidated all four candidates (tier1-pruned, tier1-tier2-pruned, caveman-justifications, gpo-only) under a single "Round 3 Design" section in the eval guide with per-candidate hypotheses, unified comparison methodology, and decision criteria. Notebook cell 8 currently set up for gpo-only (strips plot_summary + raw plot fields, only GPO passes through). Schema/prompt use standard justification wording with empty-section language fix.
+
 ## Viewer experience prompt hardening and schema simplification
 Files: `movie_ingestion/metadata_generation/prompts/viewer_experience.py`, `movie_ingestion/metadata_generation/schemas.py`, `movie_ingestion/metadata_generation/generators/viewer_experience.py`, `ingestion_data/viewer_experience_eval_guide.md`
 
@@ -342,3 +347,105 @@ Approach: Scoped context reads to exactly 5 files (prompt, schema, eval guide, o
 Files: `.claude/commands/evaluate-metadata-results.md`
 Why: Reusable command for running per-movie evaluations against a rubric, producing structured JSON evaluation files.
 Approach: Reads eval guide (for rubric), schema (for __str__ to know what's graded), prompt (for input awareness), and all result files. Key design principles: (1) grade only fields in __str__() — ignore justifications, (2) grade for retrieval quality not prompt compliance, (3) groundedness judged against LLM's inputs only unless schema explicitly allows parametric knowledge, (4) single-pass per movie with all candidates evaluated but scored independently, (5) outputs to {type}_{tmdb_id}_evaluation.json alongside result files.
+
+## Viewer experience evaluation outputs for all 50 movies
+Files: `movie_ingestion/metadata_generation/evaluation_data/viewer_experience_*_evaluation.json`
+Why: The viewer_experience result set needed per-movie rubric scoring for every candidate so downstream comparison can focus on structured evaluation outputs rather than ad hoc review.
+Approach: Read the scoped evaluation workflow, viewer_experience rubric, schema `__str__()` contract, and prompt constraints, then generated one evaluation JSON per input movie. Started with one-movie subagent assignments, then switched to a more efficient batched-worker queue once the per-movie overhead proved too expensive; this preserved the same rubric and output format while cutting orchestration cost. Verified completion with a filesystem + JSON pass: 50 input files, 50 evaluation files, zero missing outputs, zero malformed files, and zero missing required scoring keys.
+Design context: Follows `.claude/commands/evaluate-metadata-results.md`; grades only the embedded viewer_experience terms/negations defined by `ViewerExperienceOutput.__str__()` and uses each movie's `user_prompt` as the groundedness evidence base.
+Testing notes: Validation script confirmed every `viewer_experience_*_evaluation.json` file parses, contains non-empty `candidate_evaluations`, and includes all required axis/holistic score + reasoning fields.
+
+## Batched-worker guidance for /evaluate-metadata-results
+Files: `.claude/commands/evaluate-metadata-results.md`
+Why: The original command text did not push strongly enough toward a token-efficient execution strategy, which made it easy to over-orchestrate large eval sets with one subagent per movie.
+Approach: Added a Step 4 instruction to use a small fixed worker pool with batched movie assignments and worker reuse, and to avoid one-subagent-per-movie delegation except for tiny eval sets. This keeps the command behavior aligned with the same scoring workflow while reducing startup overhead and token burn.
+
+## Viewer experience Round 1 evaluation learnings and Round 2 prep
+Files: `ingestion_data/viewer_experience_eval_guide.md`, `movie_ingestion/metadata_generation/prompts/viewer_experience.py`, `movie_ingestion/metadata_generation/metadata_generation_playground.ipynb`
+
+### Intent
+Incorporate Round 1 evaluation findings into the prompt and prepare the playground for Round 2 multi-model comparison with justifications schema.
+
+### Key Decisions
+- **Prompt: evidence discipline principle** — new section placed before primary goal, reframes default from "fill all sections" to "start empty, earn every term." Addresses the dominant failure mode (21/27 score-2s were section_discipline).
+- **Prompt: evidence strength hierarchy** — 3-tier ranking (direct > concrete inference > genre inference) with rule that genre alone cannot populate a section. Generalizable principle, not section-specific rules.
+- **Prompt: sensory_load threshold tightened** — explicit ">90% should be empty" quantifier and exclusion of standard genre sensory experiences.
+- **Prompt: negation coherence rule** — added rule 9 to output style preventing contradictions within a section.
+- **Prompt: sparse input guidance refactored** — now reinforces evidence discipline rather than introducing it for the first time.
+- **Justifications variant** — updated output expectations to turn justification into an evidence gate ("cite specific input evidence or write 'No direct evidence'").
+- **Eligibility criteria** — no changes. All buckets produce acceptable output (holistic ≥3 for all 150 evaluations).
+- **Notebook: Round 2 uses justifications prompt/schema** to test whether chain-of-thought evidence gate improves section discipline.
+- **Notebook: 7 candidates** across 4 providers (OpenAI, Kimi, Gemini, Alibaba).
+- **Notebook: 2 movies per batch** instead of all-at-once, for more controlled rate limiting across multiple providers.
+
+### Planning Context
+Two explorations queued for Round 2: (1) GPO-first narrative fallback chain, (2) justifications prompt for quality improvement. Round 2 eval will test both via the updated prompt and schema.
+
+## Narrative techniques per-result scoring rubric
+Files: `ingestion_data/narrative_techniques_eval_guide.md` | Added 6-axis rubric (Groundedness 0.25, Technique Coverage 0.20, Technique Abstraction 0.15, Section Discipline 0.15, Retrieval Alignment 0.15, Term Quality 0.10) plus unweighted holistic score. Modeled on viewer_experience rubric structure but adapted: no negation axis (NT has no negations), added Technique Abstraction axis (craft-vs-content framing is the core NT challenge), replaced Specificity Layering with Technique Coverage (NT tags are established cinema vocabulary by definition — the question is recall of evidenced techniques, not broad-vs-specific layering).
+
+## Narrative techniques evaluation outputs for all 56 movies
+Files: `movie_ingestion/metadata_generation/evaluation_data/narrative_techniques_*_evaluation.json`
+Why: The narrative_techniques result set needed per-movie rubric scoring so downstream comparison can use structured candidate evaluations instead of ad hoc review.
+Approach: Re-read the updated narrative_techniques eval guide, then scored every candidate against the 6-axis rubric plus holistic score using only the allowed context: the eval guide, `NarrativeTechniquesOutput.__str__()` contract in `schemas.py`, the narrative_techniques prompt, and each movie's `user_prompt` / candidate outputs. Wrote one `{type}_{tmdb_id}_evaluation.json` per source result file and verified completion with a filesystem pass.
+Design context: Follows `.claude/commands/evaluate-metadata-results.md`; grades only embedded section terms from `NarrativeTechniquesOutput` / `NarrativeTechniquesWithJustificationsOutput`, ignores justification text, and treats each movie's `user_prompt` as the full groundedness evidence base.
+Testing notes: Verified 56 source result files, 56 corresponding evaluation files, and zero missing outputs.
+
+## Register viewer_experience in batch run.py pipeline
+Files: `movie_ingestion/metadata_generation/generator_registry.py`, `movie_ingestion/metadata_generation/inputs.py`
+Why: viewer_experience generator existed but wasn't wired into the batch pipeline (eligibility/submit/autopilot commands).
+Approach: Added `load_plot_analysis_output()` to inputs.py — returns the existing `PlotAnalysisWithJustificationsOutput` model directly (no wrapper dataclass). Viewer experience depends on both Wave 1 and plot_analysis outputs. Added eligibility, prompt builder, and live generator adapter functions in generator_registry.py that load Wave 1 + plot_analysis outputs before delegating to the existing generator. Registered as `MetadataType.VIEWER_EXPERIENCE` with gpt-5-mini, reasoning_effort: low.
+
+## Cost estimation script for metadata generation
+Files: `movie_ingestion/metadata_generation/estimate_generation_cost.py`
+Why: Manual cost projections were tedious to reproduce — needed a reusable script to project per-candidate generation costs across the full corpus.
+Approach: Reads evaluation data JSONs for token usage, bucket definitions for movie-to-bucket mapping, evaluation JSONs for quality scores, and tracker DB for eligible movie count. Computes weighted average cost/movie per candidate, projects to full corpus at both standard and batch (50% discount) pricing. Uses `MODEL_PRICING` lookup as fallback when `cost_usd` is missing from eval data. Summary table sorted by quality descending. `--detailed` flag shows per-bucket breakdown.
+
+## Viewer experience Round 2 results analysis and production decision
+Files: `ingestion_data/viewer_experience_eval_guide.md`
+
+### Intent
+Analyze Round 2 evaluation data (10 candidates × 50 movies × 7 axes) to answer outstanding questions from the eval guide and select a production candidate.
+
+### Key Decisions
+- **Production candidate selected: `gpt-5-mini-minimal-justifications`** — 4.369 overall, $0.00246/movie, zero section_discipline failures. Justification schema is the dominant quality lever.
+- **Justification uplift quantified:** +0.31 to +0.47 overall across 3 base models. Section discipline +0.72 to +0.98. Retrieval alignment flat (±0.04). Effect consistent across ALL buckets.
+- **Obs-standalone conclusively validated:** Buckets 6/7 score 4.60-4.62 with production candidate — higher than gold_standard (4.29). Justifications produce more calibrated output on sparse inputs.
+- **No model routing needed:** Round 1 suggested nano for obs-standalone; with justifications, one model handles all buckets uniformly.
+- **Q2 (ablation) deprioritized:** Marginal observation token cost (~$50-100 for 100K movies) too small to justify eval cost.
+- **GPO-first (Exploration 1) deprioritized:** Cross-bucket variance (0.37 pts) smaller than justification uplift (0.33 pts).
+- **Q6 finding reversed:** Mid-range raw fallback may introduce noise — B4 (4.21) < obs-only B6/B7 (4.60-4.62).
+- **Q7 no longer matters:** With justifications, B7 ≈ B6. Justifications do the grounding work context compensated for.
+
+## Viewer experience Round 3 input pruning experiment design
+Files: `ingestion_data/viewer_experience_eval_guide.md`, `movie_ingestion/metadata_generation/metadata_generation_playground.ipynb` (Cell 8)
+
+### Intent
+Test whether removing low-signal input fields hurts output quality, based on model justification citation analysis.
+
+### Key Decisions
+- **Input citation analysis:** Analyzed 400 section-level justifications from gpt-5-mini-minimal-justifications. Ranked inputs by citation rate: narrative_input (23.2%), emotional_obs (10.5%), craft_obs (6.5%), maturity (6.0%), thematic_obs (4.2%), merged_keywords (1.8%), character_arcs (1.5%), genre_context (1.2%).
+- **Tier 1 (remove):** merged_keywords (~57 tokens, 1.8% cited) + character_arcs (~14 tokens, 1.5% cited). Both redundant with stronger inputs.
+- **Tier 2 (test):** thematic_observations (~106 tokens, 4.2% cited) + genre_context (~21 tokens, 1.2% cited). Riskier — thematic contributes to tone, genre provides implicit calibration.
+- **Two candidates:** `tier1-pruned` (tier 1 only) and `tier1-tier2-pruned` (tier 1 + tier 2). Both use production config (gpt-5-mini, minimal, low verbosity, justifications).
+- **Pruning mechanism:** `_prune_movie()` uses `dataclasses.replace()` to zero keyword/genre lists; `_prune_wave1()` pops fields from wave1 dict.
+- **Full parallelism:** All 100 tasks (50 movies × 2 candidates) fire at once with semaphore=50. User confirmed high OpenAI rate limits.
+
+## Viewer experience production configuration (Round 3 results)
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generators/viewer_experience.py`, `movie_ingestion/metadata_generation/prompts/viewer_experience.py`, `movie_ingestion/metadata_generation/generator_registry.py`, `movie_ingestion/metadata_generation/schemas.py`
+
+### Intent
+Apply final production configuration for viewer_experience based on Round 3 evaluation results across 50 movies and 6 candidates. Simplifies inputs, eligibility, and narrative path.
+
+### Key Decisions
+- **GPO-only narrative:** Replaced the full fallback chain (plot_summary → raw synopsis → overview → GPO) with generalized_plot_overview only. Round 3 showed GPO-only scored +0.046 over baseline across all buckets — GPO strips noise while preserving the thematic/emotional core viewer_experience needs. Simplifies upstream dependencies by removing plot_summary from the viewer_experience pipeline.
+- **Tier 1 input pruning (merged_keywords + character_arcs removed):** tier1-pruned scored +0.031 over baseline with the tightest consistency (stdev 0.160). Both inputs had <2% citation rate in justification analysis — pure noise that slightly distracted the model.
+- **Tier 2 inputs kept (thematic_observations + genre_context):** tier1-tier2-pruned dropped -0.069 overall, concentrated in floor_plot_summary bucket (-0.268). Thematic observations compensate for thin narrative in that population.
+- **Caveman justifications rejected:** Terse justifications caused -0.44 specificity and -0.38 term diversity drops. Full-sentence justifications do real work generating richer vocabulary during reasoning.
+- **Production config:** gpt-5-mini, reasoning_effort: minimal, ViewerExperienceWithJustificationsOutput schema, SYSTEM_PROMPT_WITH_JUSTIFICATIONS. ~$0.00246/movie.
+- **Simplified eligibility:** Three paths: (1) GPO >= 350 standalone, (2) obs-standalone unchanged, (3) GPO >= 200 + any usable observation. Removed old source-weighted combined thresholds and plot_summary/raw_fallback narrative paths from eligibility.
+
+### Testing Notes
+- Pre_consolidation eligibility function signature changed (removed movie_input and plot_summary params) — unit tests for _check_viewer_experience will need updating.
+- Generator function signature changed (removed plot_summary, character_arcs params) — callers and tests need updating.
+- Prompt no longer references merged_keywords or character_arcs — existing evaluation data was generated with the old prompt but production uses the new one.

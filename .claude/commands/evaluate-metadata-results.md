@@ -150,6 +150,10 @@ The axis keys should use the snake_case axis names from the rubric
 - Evaluate ALL movies. Do not skip any result files.
 - Process one movie at a time. Read its result file, evaluate all
   candidates, write the evaluation file, then move to the next.
+- If you delegate, do it with a SMALL FIXED POOL of workers and give
+  each worker a BATCH of movies (for example 3-8 movies each). Reuse
+  the same workers for follow-on batches. Do NOT spawn one subagent
+  per movie unless the eval set is tiny.
 - Each candidate is evaluated independently — do not reference other
   candidates' outputs when scoring. The fact that all candidates are
   in view is for efficiency, not comparison.

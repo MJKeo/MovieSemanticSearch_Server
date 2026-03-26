@@ -311,42 +311,25 @@ movie_ingestion/metadata_generation/schemas.py (PlotAnalysisOutput),
 movie_ingestion/metadata_generation/generators/plot_analysis.py
 
 
-## Test bucket: generalized_plot_overview-only movies for viewer_experience
-**Status:** DEFERRED — plot_analysis has 0 generated rows, so generalized_plot_overview
-is unavailable. Bucket 5 in viewer_experience_eval_buckets.json is a placeholder.
-**Context:** The viewer_experience standalone path allows generalized_plot_overview
-at >= 350 chars as the sole narrative input. This source is 2 layers of LLM abstraction
-from raw data (raw plot → plot_events → plot_analysis overview). Need to verify that
-output quality justifies keeping this standalone path vs dropping it entirely or folding
-it into the combined-only path.
-**When:** After plot_analysis batch generation completes.
-**See:** ingestion_data/viewer_experience_eval_buckets.json (Bucket 5 placeholder),
-ingestion_data/viewer_experience_eval_guide.md ("When plot_analysis generates" section)
+## ~~Test bucket: generalized_plot_overview-only movies for viewer_experience~~ EVALUATED
+Bucket 5 tested in Round 1 (8 movies, 3 candidates). GPO performed surprisingly well
+(3.66 avg, matching gold standard). The 2-layer abstraction concern was overblown —
+GPO is a viable narrative source. Round 2 will further explore GPO-first fallback chain.
+**See:** ingestion_data/viewer_experience_eval_guide.md (Round 1 Results)
 
-## Test bucket: observation-standalone movies for viewer_experience
-**Status:** BUCKET SELECTED — 45,552 movies qualify through obs-standalone (48% of
-reception-generated movies). Split into two evaluation buckets: Bucket 6 (obs + 200-499
-char context, 6 movies) and Bucket 7 (obs + minimal <200 char context, 6 movies).
-**Context:** The viewer_experience observation-standalone path allows generation with
-no narrative input when observations are rich enough (emotional >= 160 alone, or
-combined >= 280 with emotional/craft present). Population is huge (not a near-empty
-set as originally feared). Quality needs verification.
-**When:** During viewer_experience evaluation run.
-**See:** ingestion_data/viewer_experience_eval_buckets.json (obs_standalone_with_context,
-obs_standalone_minimal_context), ingestion_data/viewer_experience_eval_guide.md
+## ~~Test bucket: observation-standalone movies for viewer_experience~~ EVALUATED
+Buckets 6 and 7 tested in Round 1 (12 movies, 3 candidates). Obs-standalone is viable:
+Bucket 6 averaged 3.53, Bucket 7 averaged 3.44 (all holistic scores ≥3). The issue is
+section discipline (model fills ending_aftertaste/sensory_load without evidence), not
+overall quality. gpt-5.4-nano handles sparse inputs significantly better in Bucket 7
+(3.64 vs 3.33/3.36 for mini). No eligibility changes needed. Prompt improvements applied.
+**See:** ingestion_data/viewer_experience_eval_guide.md (Round 1 Results)
 
-## Re-evaluate viewer_experience combined path necessity
-**Context:** Data exploration during bucket selection found that only 1 movie in the
-entire 95K dataset qualifies solely through the combined path (narrative + observations
->= source-weighted threshold, but neither standalone). The observation-standalone
-threshold (280 combined chars) is permissive enough that nearly any movie with reception
-also qualifies standalone. The combined path code works correctly but is practically
-redundant. Consider simplifying eligibility to just standalone-narrative OR
-standalone-observations, removing the combined path entirely.
-**When:** After viewer_experience evaluation results confirm whether the current
-thresholds are correct.
-**See:** movie_ingestion/metadata_generation/pre_consolidation.py (_check_viewer_experience,
-Path 3), ingestion_data/viewer_experience_eval_guide.md
+## ~~Re-evaluate viewer_experience combined path necessity~~ DONE
+Eligibility simplified in production config (2026-03-26). Old source-weighted combined
+thresholds removed. New combined path is simply: GPO >= 200 + any usable observation.
+The standalone-narrative and standalone-observation paths remain unchanged.
+**See:** movie_ingestion/metadata_generation/pre_consolidation.py (_check_viewer_experience)
 
 ## Update unit tests for narrative_techniques input contract redesign
 **Context:** The narrative_techniques generator and pre_consolidation eligibility check
@@ -363,21 +346,24 @@ movie_ingestion/metadata_generation/generators/narrative_techniques.py,
 movie_ingestion/metadata_generation/pre_consolidation.py,
 movie_ingestion/metadata_generation/inputs.py (Wave1Outputs, load_wave1_outputs)
 
-## Update unit tests for viewer_experience schema flattening and plot_synopsis rename
-**Context:** ViewerExperienceOutput and ViewerExperienceWithJustificationsOutput changed from
-using OptionalTermsWithNegationsSection (with should_skip wrapper) to flat TermsWithNegationsSection
-for disturbance_profile, sensory_load, and emotional_volatility. Tests in test_metadata_schemas.py
-and test_viewer_experience_generator.py import and construct OptionalTermsWithNegationsSection
-objects. Generator tests may also need updating for the new "not available" signal behavior
-(absent observations now appear as "not available" instead of being omitted).
-Additionally, `build_viewer_experience_user_prompt` renamed `plot_synopsis` parameter to
-`plot_summary` (with `= None` default). Tests passing `plot_synopsis` as a keyword arg will
-need updating. Same rename applies to `build_plot_analysis_user_prompt` and pre_consolidation
-functions (`_check_plot_analysis`, `resolve_viewer_experience_narrative`, `_check_viewer_experience`).
-**When:** Next time viewer_experience or schema tests are being worked on.
+## Update unit tests for viewer_experience production config changes
+**Context:** Multiple rounds of signature changes to viewer_experience:
+(1) Schema flattening: OptionalTermsWithNegationsSection → flat TermsWithNegationsSection.
+(2) plot_synopsis → plot_summary rename across build functions and pre_consolidation.
+(3) Production config (2026-03-26): `resolve_viewer_experience_narrative()` now takes only
+`generalized_plot_overview` (removed `movie_input` and `plot_summary` params).
+`_check_viewer_experience()` removed `movie_input` and `plot_summary` params — now takes
+`(generalized_plot_overview, emotional_observations, craft_observations, thematic_observations)`.
+`build_viewer_experience_user_prompt()` and `generate_viewer_experience()` removed `plot_summary`
+and `character_arcs` params, no longer pass `merged_keywords` to prompt. Default schema is now
+`ViewerExperienceWithJustificationsOutput`, default system prompt is `SYSTEM_PROMPT_WITH_JUSTIFICATIONS`,
+default reasoning_effort is `"minimal"`. Registry config updated accordingly.
+**When:** Next time viewer_experience or pre_consolidation tests are being worked on.
 **See:** unit_tests/test_metadata_schemas.py, unit_tests/test_viewer_experience_generator.py,
-unit_tests/test_plot_analysis_generator.py, unit_tests/test_pre_consolidation.py,
-movie_ingestion/metadata_generation/schemas.py (ViewerExperienceOutput)
+unit_tests/test_pre_consolidation.py,
+movie_ingestion/metadata_generation/generators/viewer_experience.py,
+movie_ingestion/metadata_generation/pre_consolidation.py,
+movie_ingestion/metadata_generation/generator_registry.py
 
 ## Remove unused Optional wrapper schema classes
 **Context:** OptionalTermsWithNegationsSection and OptionalTermsWithNegationsAndJustificationSection
@@ -400,4 +386,17 @@ Decision deferred pending cost analysis of running both generators at scale.
 **See:** movie_ingestion/metadata_generation/generators/production_keywords.py,
 movie_ingestion/metadata_generation/generators/source_of_inspiration.py,
 implementation/vectorize.py (create_production_vector_text)
+
+## ~~Run viewer_experience ablation candidates to answer Q2~~ SUPERSEDED
+Round 3 answered the input pruning question directly: tier1-pruned (remove keywords+arcs)
+scored +0.031 over baseline, tier1-tier2-pruned (also remove thematic+genre) scored -0.069.
+Production config removes keywords+arcs, keeps thematic+genre. Full ablation (remove all
+observations) remains deprioritized — marginal cost too small to justify.
+**See:** ingestion_data/viewer_experience_eval_guide.md (Round 3 Design)
+
+## ~~Consider routing obs_standalone_minimal_context movies to nano model~~ SUPERSEDED
+Round 2 showed gpt-5-mini-minimal-justifications scores 4.62 on obs_standalone_minimal
+(Bucket 7) — higher than gold_standard. The justification schema eliminated the section
+discipline gap that motivated nano routing. No model routing needed.
+**See:** ingestion_data/viewer_experience_eval_guide.md (Round 2 Results)
 
