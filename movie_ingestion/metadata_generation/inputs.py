@@ -196,7 +196,7 @@ class MovieInputData:
     def best_plot_fallback(self) -> str | None:
         """Find the longest available raw plot text from this movie's sources.
 
-        Used when Wave 1 plot_events did not produce a plot_synopsis.
+        Used when Wave 1 plot_events did not produce a plot_summary.
         Selects the longest of:
             - First synopsis entry (plot_synopses[0])
             - Longest plot_summary entry

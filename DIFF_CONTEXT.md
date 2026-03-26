@@ -1,6 +1,28 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Viewer experience prompt hardening and schema simplification
+Files: `movie_ingestion/metadata_generation/prompts/viewer_experience.py`, `movie_ingestion/metadata_generation/schemas.py`, `movie_ingestion/metadata_generation/generators/viewer_experience.py`, `ingestion_data/viewer_experience_eval_guide.md`
+
+### Intent
+Harden the viewer_experience prompt for gpt-5-mini reliability across the full input quality spectrum, following the patterns proven in plot_analysis and narrative_techniques hardening. Also simplify the output schema to remove unnecessary complexity.
+
+### Key Decisions
+- **Schema flattening:** Removed `OptionalTermsWithNegationsSection` wrapper from disturbance_profile, sensory_load, and emotional_volatility. All 8 sections now use the same flat `TermsWithNegationsSection` with min_length=0 on both terms and negations. `should_skip` boolean eliminated — empty lists serve the same purpose with less schema complexity. Applied to both `ViewerExperienceOutput` and `ViewerExperienceWithJustificationsOutput`. `__str__()` methods simplified to iterate all 8 sections uniformly.
+- **Rules restructured into two subsections:** Split the 12 "CRITICAL phrasing rules" (which mixed output style with input interpretation) into "Input interpretation" (evidence hierarchy, confidence hints, support-only signals, not-available handling) and "Output style rules" (search-query phrasing, synonyms, negations format, no proper nouns). Evidence hierarchy is now prominently positioned in the input interpretation section rather than buried at rule 9.
+- **Input field listing trimmed:** Removed the redundant 10-line input field catalog (model can see labeled fields in the user prompt). Replaced with interpretation-only guidance focused on what the model needs to *know about* each input (which is strongest, which is support-only, what narrative_input_source means).
+- **Sparse-input guidance added:** New "WHEN INPUTS ARE THIN" subsection at the end of the prompt. Names which sections to leave empty without narrative evidence (ending_aftertaste, emotional_volatility, cognitive_complexity, sensory_load). Sets per-section cap of 0-3 terms/negations for thin inputs. Reinforces that genre + keywords alone produce generic output.
+- **Explicit "not available" signals:** Generator now includes `emotional_observations: not available` (etc.) when observations, narrative_input, or character_arcs are absent, rather than silently omitting. Helps the model calibrate confidence vs treating missing fields as forgotten. Proven pattern from plot_analysis hardening.
+- **Per-section "Empty when..." guidance:** Section descriptions for disturbance_profile, sensory_load, emotional_volatility, and ending_aftertaste now include explicit guidance on when to produce empty lists (replacing the old "Skip if..." / should_skip instructions).
+- **Output expectations updated:** Changed "3-10 phrases" to "0-10 phrases" with "Empty when the section has no grounded evidence."
+- **Eval guide updated:** Added two post-evaluation broader trend checks (negation under-production with min_length=0; separated terms/negations quality) and one key signal to watch (synonym runaway).
+
+### Testing Notes
+- All modified files compile cleanly via py_compile
+- Unit tests for viewer_experience generator and metadata schemas will fail (schema changes, should_skip removal)
+- `__str__()` methods still produce identical embedding text between variants
+- `OptionalTermsWithNegationsSection` and `OptionalTermsWithNegationsAndJustificationSection` classes left in schemas.py but are now unused by ViewerExperience schemas
+
 ## Production keywords prompt improvements
 Files: `movie_ingestion/metadata_generation/prompts/production_keywords.py`, `ingestion_data/production_keywords_eval_guide.md`
 Why: Prompt review identified significant false-negative risk from blanket "not genres" exclusion that suppresses valid production keywords (animation, korean, tamil) and vague classification criteria.
@@ -295,3 +317,8 @@ Testing notes: Prompt-only change; compiles cleanly via py_compile. Did not run 
 Files: `ingestion_data/viewer_experience_eval_buckets.json`, `ingestion_data/viewer_experience_eval_guide.md`
 Why: Bucket 5 was deferred pending plot_analysis generation (78,262 movies now generated). Needed movies where generalized_plot_overview is the sole narrative source to test the 2-layer abstraction path.
 Approach: Queried tracker.db for movies with no plot_summary >= 400 and no raw_fallback >= 500 but generalized_plot_overview >= 200 chars (22,120 candidates). Selected 8 movies with diversity across genre (animation, fantasy/sci-fi, action/crime, biography/history, horror/comedy, documentary, film-noir/sport, romance), era (1947-2025), vote count (4.8K-138K), GPO length (320-537), observation quality (941-1550), and narrative path (5 standalone gpo >= 350, 3 combined gpo 200-349). Also updated deferred_candidates, data_availability_notes, eval guide movie counts, generation totals, and data availability section to reflect plot_analysis completion.
+
+## Renamed plot_synopsis → plot_summary in Wave 2 generator parameters
+Files: `movie_ingestion/metadata_generation/generators/viewer_experience.py`, `movie_ingestion/metadata_generation/generators/plot_analysis.py`, `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generator_registry.py`, `movie_ingestion/metadata_generation/inputs.py`, `movie_ingestion/metadata_generation/schemas.py`
+Why: The `plot_synopsis` parameter name in Wave 2 generators was misleading — it held the LLM-generated `plot_summary` from PlotEventsOutput, not the raw IMDB plot synopsis. Also added `= None` default to `build_viewer_experience_user_prompt()` to match `generate_viewer_experience()` signature (was causing TypeError when called via `**kwargs` unpacking in the notebook).
+Approach: Renamed the Python parameter/variable to `plot_summary` everywhere it represents the Wave 1 output. Left `plot_synopsis` intact in LLM prompt labels (kwargs to `build_user_prompt()`) and system prompt strings, since those are the labels the LLM expects. Also left `plot_events.py` unchanged since it correctly uses raw IMDB `plot_synopses[0]`.

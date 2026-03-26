@@ -16,20 +16,6 @@ observation/context fields:
     - merged_keywords: deduplicated union of plot + overall keywords
     - maturity_summary: consolidated content advisory string
 
-Based on existing prompt at:
-implementation/prompts/vector_metadata_generation_prompts.py (VIEWER_EXPERIENCE section)
-
-Key modifications:
-    - Title input described as "Title (Year)" format
-    - narrative_input replaces direct plot_synopsis-only assumption and
-      carries an explicit source label
-    - finalized reception extraction fields replace review_insights_brief
-    - genre_context prefers plot_analysis genre_signatures over raw genres
-    - character_arcs added as supportive input for ending/volatility cues
-    - maturity_summary replaces maturity_rating + maturity_reasoning +
-      parental_guide_items as three separate inputs
-    - merged_keywords replaces separate plot/overall keyword inputs
-
 Two prompt variants exported:
     - SYSTEM_PROMPT: for ViewerExperienceOutput (no justification fields)
     - SYSTEM_PROMPT_WITH_JUSTIFICATIONS: for ViewerExperienceWithJustificationsOutput
@@ -53,21 +39,23 @@ Context
 - The output is **not user-facing** and **spoilers are allowed**.
 - The goal is to produce **search-query-like phrases** that match how real users actually type queries."""
 
-_INPUTS_AND_RULES = """
+_INPUT_INTERPRETATION = """
 
-INPUTS YOU MAY RECEIVE (some may be empty or noisy)
-- title: title of the movie, formatted as "Title (Year)" for temporal context
-- genre_context: finalized genre signatures when available, otherwise raw genres
-- narrative_input_source: one of plot_summary, best_plot_fallback, or generalized_plot_overview
-- narrative_input: the single resolved narrative input chosen by fallback order
-- merged_keywords: deduplicated keywords representing plot elements and high-level movie attributes
-- maturity_summary: consolidated content advisory string (rating + reasoning or severity details)
-- emotional_observations: finalized reception observations about emotional tone, mood, atmosphere, and viewing experience. Strongest review-derived source for this task.
-- craft_observations: finalized reception observations about pacing, structure, and performance style. Especially useful for tension and cognitive load.
-- thematic_observations: finalized reception observations about themes and meaning. Supportive, but less direct than emotional_observations.
-- character_arcs: finalized plot_analysis arc labels describing key transformations. Supportive signal for emotional volatility and ending aftertaste.
+How to use inputs
+- emotional_observations is the strongest source for this task — direct reviewer evidence of felt experience.
+- craft_observations is second strongest — pacing, structure, and performance style inform tension and cognitive load.
+- thematic_observations is supportive but less direct than the above two.
+- narrative_input provides grounding/context for deductions, but is not the main output style. Treat narrative_input_source as a confidence hint:
+  - plot_summary: most concrete and trustworthy for pacing/tension/ending feel
+  - best_plot_fallback: useful but noisier; infer conservatively
+  - generalized_plot_overview: most abstract; use only as supporting context
+- genre_context and merged_keywords are support signals only. They can refine wording but should not override stronger narrative or observation evidence.
+- character_arcs are support signals only. Use them mainly for ending_aftertaste and emotional_volatility, not as a substitute for narrative evidence.
+- When an input is marked "not available", do not infer content for that dimension. Produce fewer or empty terms in sections that depend on that input."""
 
-CRITICAL phrasing rules (must follow)
+_OUTPUT_STYLE = """
+
+Output style rules
 1) Write phrases like **search queries**, not sentences.
    - Good: "edge of your seat", "digestible", "campy cheesy fun"
    - Bad: "This movie will keep you on the edge of your seat."
@@ -82,16 +70,7 @@ CRITICAL phrasing rules (must follow)
 6) Focus only on the **felt experience** from the perspective of the viewer while watching this movie.
 7) Spoilers are allowed, but still keep phrasing as viewer feelings/search terms,
    not plot summaries. Do not name specific plot events, characters, or other proper nouns.
-8) Repetition is encouraged, so long as the phrasing changes slightly.
-9) Prefer the strongest direct evidence for felt experience:
-   - emotional_observations > craft_observations > thematic_observations
-   - narrative_input is grounding/context, not the main output style
-10) Treat narrative_input_source as a confidence hint:
-   - plot_summary: most concrete and trustworthy for pacing/tension/ending feel
-   - best_plot_fallback: useful but noisier; infer conservatively
-   - generalized_plot_overview: most abstract; use only as supporting context for felt experience
-11) genre_context and merged_keywords are support signals only. They can refine wording, but they should not override stronger narrative or observation evidence.
-12) character_arcs are support signals only. Use them mainly for ending_aftertaste and emotional_volatility, not as a substitute for narrative evidence."""
+8) Repetition is encouraged, so long as the phrasing changes slightly."""
 
 _SECTIONS = """
 
@@ -150,7 +129,7 @@ Examples of negations:
 What to capture:
 - Unsettling elements: fear flavor (dread vs jump scares), nightmares,
   psychological disturbance, gore/ick/nausea, body horror, moral queasiness.
-- Skip if movie does not have significant, prominent disturbing elements.
+- Empty when the movie has no significant disturbing elements.
 Examples of terms:
 - "creepy and unsettling", "psychological horror", "existential dread",
   "paranoia vibes", "will give me nightmares", "jump scares", "horrifying",
@@ -164,8 +143,7 @@ What to capture:
 - How demanding is this movie on the viewer's senses? Are there loud noises or intense visuals that may be overwhelming for some viewers?
 - Is this overstimulating or calming?
 - This is not about what TYPE of visuals or sounds the movie has, but flagging if this is excessively intense or exceptionally calming.
-- Set should_skip=False ONLY if watching this movie risks visual or auditory overload or is exceptionally calming, almost meditative.
-- Otherwise default to should_skip=True.
+- Most movies should have empty lists for this section. Only produce terms when the movie has notably extreme sensory properties — either overwhelming (overstimulating, eye-straining, ear-splitting) or exceptionally calming (meditative, soothing, quiet).
 Examples of terms:
 - "eye-straining", "overstimulating", "ear-popping"
 - "soothing", "quiet"
@@ -176,7 +154,7 @@ Examples of negations:
 What to capture:
 - How the emotional tone of the movie changes over time.
 - The nature of the changes (whiplash, slow descent, etc), the intensity of the changes, and what the change is from / to.
-- Skip if the emotional tone is consistent or if there are no emotional changes.
+- Empty when the emotional tone is consistent or when there is no evidence of emotional changes.
 Examples of terms:
 - "tonal whiplash", "laugh then cry", "weird mix of funny and dark",
   "gets dark fast", "light to brutal", "mood swings", "abrupt tone shifts", "emotional rollercoaster", "genre mash"
@@ -186,6 +164,7 @@ Examples of negations:
 8) ending_aftertaste
 What to capture:
 - The emotional residue tied to the ending: the final emotion you're left with as you leave the theater.
+- Empty when there is no narrative evidence about how the movie ends.
 Examples of terms:
 - "satisfying ending", "earned payoff", "cliffhanger", "happy ending", "sad ending",
   "bittersweet ending", "bleak ending", "devastating ending", "wrecked me",
@@ -195,6 +174,15 @@ Examples of terms:
 Examples of negations:
 - "not a downer ending", "not bleak", "not unsatisfying"\
 """
+
+_SPARSE_INPUT_GUIDANCE = """
+
+WHEN INPUTS ARE THIN
+When narrative_input is absent or short and observations are the primary signal:
+- Focus output on sections with direct evidence: emotional_palette (from emotional_observations), tone_self_seriousness (from craft_observations or genre_context).
+- Sections without grounding evidence should produce empty terms and negations. Genre + keywords alone are not enough to fill a section — that produces generic output indistinguishable from any movie in the same genre.
+- Sections that almost always need narrative evidence to be accurate: ending_aftertaste, emotional_volatility, cognitive_complexity, sensory_load. Produce empty lists for these unless observations or maturity_summary provide concrete evidence.
+- Per-section target: 0-3 terms and 0-3 negations when inputs are thin. Do not force phrases to fill a section — empty is correct when evidence is absent."""
 
 
 # ---------------------------------------------------------------------------
@@ -213,11 +201,9 @@ Generate JSON containing multiple sections. Each section contains lists of query
 _OUTPUT_EXPECTATIONS_NO_JUSTIFICATIONS = """
 
 Output expectations
-- Sections may include:
-  - terms: 3-10 phrases. Search-query-like phrases representing prominent characteristics of the movie that are relevant to this section.
-  - negations: 3-10 phrases. Search-query-like "avoidance" phrases for what the movie does NOT have or is NOT like. Always has "not" or "no" in it.
-- Use should_skip=True only when the trait truly does not apply to a given section.
-  Example: a movie with no horror elements may skip "disturbance_profile"."""
+- Sections contain:
+  - terms: 0-10 phrases. Search-query-like phrases representing prominent characteristics of the movie that are relevant to this section. Empty when the section has no grounded evidence.
+  - negations: 0-10 phrases. Search-query-like "avoidance" phrases for what the movie does NOT have or is NOT like. Always has "not" or "no" in it. Empty when the section has no grounded evidence."""
 
 # With-justifications variant: sections also contain a justification field
 # written before terms/negations to serve as chain-of-thought
@@ -233,12 +219,10 @@ Generate JSON containing multiple sections. Each section contains:
 _OUTPUT_EXPECTATIONS_WITH_JUSTIFICATIONS = """
 
 Output expectations
-- Sections may include:
+- Sections contain:
   - justification: 1 sentence. Why you chose these terms and negations for this section. Written BEFORE terms and negations to guide your thinking.
-  - terms: 3-10 phrases. Search-query-like phrases representing prominent characteristics of the movie that are relevant to this section.
-  - negations: 3-10 phrases. Search-query-like "avoidance" phrases for what the movie does NOT have or is NOT like. Always has "not" or "no" in it.
-- Use should_skip=True only when the trait truly does not apply to a given section.
-  Example: a movie with no horror elements may skip "disturbance_profile"."""
+  - terms: 0-10 phrases. Search-query-like phrases representing prominent characteristics of the movie that are relevant to this section. Empty when the section has no grounded evidence.
+  - negations: 0-10 phrases. Search-query-like "avoidance" phrases for what the movie does NOT have or is NOT like. Always has "not" or "no" in it. Empty when the section has no grounded evidence."""
 
 
 # ---------------------------------------------------------------------------
@@ -248,15 +232,19 @@ Output expectations
 SYSTEM_PROMPT = (
     _OPENING_AND_CONTEXT
     + _PRIMARY_GOAL_NO_JUSTIFICATIONS
-    + _INPUTS_AND_RULES
+    + _INPUT_INTERPRETATION
+    + _OUTPUT_STYLE
     + _OUTPUT_EXPECTATIONS_NO_JUSTIFICATIONS
     + _SECTIONS
+    + _SPARSE_INPUT_GUIDANCE
 )
 
 SYSTEM_PROMPT_WITH_JUSTIFICATIONS = (
     _OPENING_AND_CONTEXT
     + _PRIMARY_GOAL_WITH_JUSTIFICATIONS
-    + _INPUTS_AND_RULES
+    + _INPUT_INTERPRETATION
+    + _OUTPUT_STYLE
     + _OUTPUT_EXPECTATIONS_WITH_JUSTIFICATIONS
     + _SECTIONS
+    + _SPARSE_INPUT_GUIDANCE
 )

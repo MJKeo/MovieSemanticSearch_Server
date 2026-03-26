@@ -112,7 +112,7 @@ class PlotEventsOutput(BaseModel):
     """Structured output from the plot_events generation (Wave 1).
 
     Produces a single chronological plot summary. The plot_summary
-    field becomes plot_synopsis for all downstream Wave 2 consumers.
+    field is passed directly to all downstream Wave 2 consumers.
 
     Setting and major_characters fields were removed after evaluation
     showed setting is redundant (already in the summary) and structured
@@ -416,8 +416,10 @@ class ViewerExperienceOutput(BaseModel):
     """Structured output from the viewer_experience generation (Wave 2).
 
     8 sections capturing the emotional/sensory viewing experience.
-    3 sections (disturbance, sensory, volatility) are optional — the
-    LLM sets should_skip=True when not applicable.
+    All sections use the same flat TermsWithNegationsSection with
+    min_length=0 on both terms and negations. Sections that don't
+    apply to a movie (e.g. disturbance_profile for a children's film)
+    produce empty lists — no should_skip wrapper needed.
 
     Model: gpt-5-mini, reasoning_effort: low
     """
@@ -427,35 +429,25 @@ class ViewerExperienceOutput(BaseModel):
     tension_adrenaline: TermsWithNegationsSection
     tone_self_seriousness: TermsWithNegationsSection
     cognitive_complexity: TermsWithNegationsSection
-    disturbance_profile: OptionalTermsWithNegationsSection
-    sensory_load: OptionalTermsWithNegationsSection
-    emotional_volatility: OptionalTermsWithNegationsSection
+    disturbance_profile: TermsWithNegationsSection
+    sensory_load: TermsWithNegationsSection
+    emotional_volatility: TermsWithNegationsSection
     ending_aftertaste: TermsWithNegationsSection
 
     def __str__(self) -> str:
         combined_terms: list[str] = []
-
-        # Required sections — always included
         for section in (
             self.emotional_palette,
             self.tension_adrenaline,
             self.tone_self_seriousness,
             self.cognitive_complexity,
+            self.disturbance_profile,
+            self.sensory_load,
+            self.emotional_volatility,
             self.ending_aftertaste,
         ):
             combined_terms.extend(section.terms)
             combined_terms.extend(section.negations)
-
-        # Optional sections — included only when not skipped
-        for optional in (
-            self.disturbance_profile,
-            self.sensory_load,
-            self.emotional_volatility,
-        ):
-            if not optional.should_skip:
-                combined_terms.extend(optional.section_data.terms)
-                combined_terms.extend(optional.section_data.negations)
-
         return ", ".join(t.lower() for t in combined_terms)
 
 
@@ -535,36 +527,26 @@ class ViewerExperienceWithJustificationsOutput(BaseModel):
     tension_adrenaline: TermsWithNegationsAndJustificationSection
     tone_self_seriousness: TermsWithNegationsAndJustificationSection
     cognitive_complexity: TermsWithNegationsAndJustificationSection
-    disturbance_profile: OptionalTermsWithNegationsAndJustificationSection
-    sensory_load: OptionalTermsWithNegationsAndJustificationSection
-    emotional_volatility: OptionalTermsWithNegationsAndJustificationSection
+    disturbance_profile: TermsWithNegationsAndJustificationSection
+    sensory_load: TermsWithNegationsAndJustificationSection
+    emotional_volatility: TermsWithNegationsAndJustificationSection
     ending_aftertaste: TermsWithNegationsAndJustificationSection
 
     def __str__(self) -> str:
         # Must produce identical embedding text to ViewerExperienceOutput.__str__()
         combined_terms: list[str] = []
-
-        # Required sections — always included
         for section in (
             self.emotional_palette,
             self.tension_adrenaline,
             self.tone_self_seriousness,
             self.cognitive_complexity,
+            self.disturbance_profile,
+            self.sensory_load,
+            self.emotional_volatility,
             self.ending_aftertaste,
         ):
             combined_terms.extend(section.terms)
             combined_terms.extend(section.negations)
-
-        # Optional sections — included only when not skipped
-        for optional in (
-            self.disturbance_profile,
-            self.sensory_load,
-            self.emotional_volatility,
-        ):
-            if not optional.should_skip:
-                combined_terms.extend(optional.section_data.terms)
-                combined_terms.extend(optional.section_data.negations)
-
         return ", ".join(t.lower() for t in combined_terms)
 
 

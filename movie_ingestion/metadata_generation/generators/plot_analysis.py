@@ -9,21 +9,21 @@ plot overview.
 Inputs:
     - movie (MovieInputData): raw fields for title, genres, plot_keywords,
       plus raw plot sources used as fallback
-    - plot_synopsis: from Wave 1 plot_events output (may be None)
+    - plot_summary: from Wave 1 plot_events output (may be None)
     - thematic_observations: from Wave 1 reception extraction zone (may be None)
 
-When plot_synopsis is unavailable, the prompt builder automatically
+When plot_summary is unavailable, the prompt builder automatically
 selects the best available raw plot text (longest of first synopsis,
 longest plot_summary, or overview) and passes it with a distinct
 'plot_text' label so the LLM knows the quality tier.
 
-When key inputs (plot_synopsis/plot_text, thematic_observations) are
+When key inputs (plot_summary/plot_text, thematic_observations) are
 absent, they are explicitly passed as "not available" in the user
 message so the LLM can calibrate confidence and output empty lists
 for fields it cannot confidently populate.
 
 Skip condition (enforced by pre_consolidation):
-    Tier 1: plot_synopsis (from Wave 1) → always eligible
+    Tier 1: plot_summary (from Wave 1) → always eligible
     Tier 2: plot fallback >= 400 chars → always eligible
     Tier 3: plot fallback 250-399 chars + thematic_observations >= 300 chars → eligible
     Otherwise: skipped
@@ -65,7 +65,7 @@ _RESPONSE_FORMAT = PlotAnalysisWithJustificationsOutput
 
 def build_plot_analysis_user_prompt(
     movie: MovieInputData,
-    plot_synopsis: str | None,
+    plot_summary: str | None,
     thematic_observations: str | None,
 ) -> str:
     """Build the user prompt for plot_analysis generation from a movie's fields.
@@ -73,8 +73,8 @@ def build_plot_analysis_user_prompt(
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
 
-    When plot_synopsis (from Wave 1 plot_events) is available, it's passed
-    with the 'plot_synopsis' label. When unavailable, the best raw plot
+    When plot_summary (from Wave 1 plot_events) is available, it's passed
+    with the 'plot_summary' label. When unavailable, the best raw plot
     text is computed from the movie's synopses/summaries/overview and
     passed with the 'plot_text' label — the distinct label signals to
     the LLM that this is lower-quality fallback text.
@@ -87,8 +87,8 @@ def build_plot_analysis_user_prompt(
     # LLM knows the data is absent (not just missing from the message).
     plot_synopsis_label = None
     plot_text_label = None
-    if plot_synopsis:
-        plot_synopsis_label = plot_synopsis
+    if plot_summary:
+        plot_synopsis_label = plot_summary
     else:
         fallback = movie.best_plot_fallback()
         if fallback:
@@ -113,7 +113,7 @@ def build_plot_analysis_user_prompt(
 
 async def generate_plot_analysis(
     movie: MovieInputData,
-    plot_synopsis: str | None = None,
+    plot_summary: str | None = None,
     thematic_observations: str | None = None,
 ) -> Tuple[PlotAnalysisWithJustificationsOutput, TokenUsage]:
     """Generate plot analysis metadata for a single movie.
@@ -127,7 +127,7 @@ async def generate_plot_analysis(
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        plot_synopsis: Plot summary from Wave 1 plot_events. May be None
+        plot_summary: Plot summary from Wave 1 plot_events. May be None
             if plot_events failed or was skipped. When None, the prompt
             builder falls back to the best available raw plot text.
         thematic_observations: Reviewer observations about themes, meaning,
@@ -142,7 +142,7 @@ async def generate_plot_analysis(
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
     user_prompt = build_plot_analysis_user_prompt(
-        movie, plot_synopsis, thematic_observations,
+        movie, plot_summary, thematic_observations,
     )
     title_with_year = movie.title_with_year()
 

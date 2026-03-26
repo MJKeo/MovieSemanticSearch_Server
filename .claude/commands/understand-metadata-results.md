@@ -1,11 +1,11 @@
-# /evaluate-metadata-results
+# /understand-metadata-results
 
 Analyze evaluation data for a metadata generation type and produce a
 structured report.
 
-**Usage:** `/evaluate-metadata-results <generation_type>`
+**Usage:** `/understand-metadata-results <generation_type>`
 
-Example: `/evaluate-metadata-results reception`
+Example: `/understand-metadata-results reception`
 
 ---
 

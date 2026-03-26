@@ -112,7 +112,7 @@ def _plot_analysis_eligibility_checker(movie: MovieInputData) -> str | None:
     """Eligibility checker for plot_analysis — loads Wave 1 outputs from DB.
 
     Delegates to _check_plot_analysis which implements tiered eligibility:
-    movies with Wave 1 plot_synopsis are Tier 1 (always eligible), those
+    movies with Wave 1 plot_summary are Tier 1 (always eligible), those
     with sufficient raw plot text are Tier 2/3.
     """
     from .pre_consolidation import _check_plot_analysis

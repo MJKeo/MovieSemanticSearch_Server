@@ -363,6 +363,30 @@ movie_ingestion/metadata_generation/generators/narrative_techniques.py,
 movie_ingestion/metadata_generation/pre_consolidation.py,
 movie_ingestion/metadata_generation/inputs.py (Wave1Outputs, load_wave1_outputs)
 
+## Update unit tests for viewer_experience schema flattening and plot_synopsis rename
+**Context:** ViewerExperienceOutput and ViewerExperienceWithJustificationsOutput changed from
+using OptionalTermsWithNegationsSection (with should_skip wrapper) to flat TermsWithNegationsSection
+for disturbance_profile, sensory_load, and emotional_volatility. Tests in test_metadata_schemas.py
+and test_viewer_experience_generator.py import and construct OptionalTermsWithNegationsSection
+objects. Generator tests may also need updating for the new "not available" signal behavior
+(absent observations now appear as "not available" instead of being omitted).
+Additionally, `build_viewer_experience_user_prompt` renamed `plot_synopsis` parameter to
+`plot_summary` (with `= None` default). Tests passing `plot_synopsis` as a keyword arg will
+need updating. Same rename applies to `build_plot_analysis_user_prompt` and pre_consolidation
+functions (`_check_plot_analysis`, `resolve_viewer_experience_narrative`, `_check_viewer_experience`).
+**When:** Next time viewer_experience or schema tests are being worked on.
+**See:** unit_tests/test_metadata_schemas.py, unit_tests/test_viewer_experience_generator.py,
+unit_tests/test_plot_analysis_generator.py, unit_tests/test_pre_consolidation.py,
+movie_ingestion/metadata_generation/schemas.py (ViewerExperienceOutput)
+
+## Remove unused Optional wrapper schema classes
+**Context:** OptionalTermsWithNegationsSection and OptionalTermsWithNegationsAndJustificationSection
+in schemas.py are no longer referenced by any production schema after the viewer_experience
+flattening. They are only imported by test files. The classes can be removed entirely once
+the corresponding tests are updated.
+**When:** When updating viewer_experience/schema tests (see above TODO).
+**See:** movie_ingestion/metadata_generation/schemas.py (lines 89-104, 494-509)
+
 ## Evaluate merging production_keywords and source_of_inspiration into one generation
 **Context:** Significant output overlap between these two generators — both produce source
 material and production medium terms for the same production vector space. production_keywords

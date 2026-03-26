@@ -9,7 +9,7 @@ or "cozy feel-good movie."
 Inputs:
     - movie (MovieInputData): raw fields for title, keywords, maturity, and
       raw plot fallback text
-    - plot_synopsis: from finalized plot_events metadata (may be None)
+    - plot_summary: from finalized plot_events metadata (may be None)
     - generalized_plot_overview: from finalized plot_analysis metadata
       (backup only; may be None)
     - emotional_observations: from finalized reception metadata (may be None)
@@ -24,7 +24,7 @@ Removed inputs (vs current system):
     - raw genres when genre_signatures are available
 
 Narrative fallback order (shared with pre_consolidation eligibility):
-    1. plot_synopsis if >= 400 chars
+    1. plot_summary if >= 400 chars
     2. movie.best_plot_fallback() if >= 500 chars
     3. generalized_plot_overview if >= 200 chars
 
@@ -83,7 +83,7 @@ def _resolve_genre_context(
 
 def build_viewer_experience_user_prompt(
     movie: MovieInputData,
-    plot_synopsis: str | None,
+    plot_summary: str | None = None,
     generalized_plot_overview: str | None = None,
     emotional_observations: str | None = None,
     craft_observations: str | None = None,
@@ -96,14 +96,18 @@ def build_viewer_experience_user_prompt(
     Shared by the production generator and the evaluation pipeline so the
     prompt construction logic stays in one place.
 
-    Inputs are labeled for the LLM to match the SYSTEM_PROMPT's INPUTS
-    section. None values and empty lists are skipped by build_user_prompt.
-    Only one narrative input is passed, selected by the finalized
-    fallback order. Genre signatures win over raw genres when available.
+    Inputs are labeled for the LLM to match the SYSTEM_PROMPT's input
+    interpretation section. Only one narrative input is passed, selected
+    by the finalized fallback order. Genre signatures win over raw genres
+    when available.
+
+    When key inputs are absent, they are explicitly included as
+    "not available" so the LLM can calibrate confidence and produce
+    empty sections rather than hallucinating from genre stereotypes.
     """
     narrative_input, narrative_input_source = resolve_viewer_experience_narrative(
         movie,
-        plot_synopsis,
+        plot_summary,
         generalized_plot_overview,
     )
     filtered_emotional, filtered_craft, filtered_thematic = (
@@ -114,15 +118,25 @@ def build_viewer_experience_user_prompt(
         )
     )
 
+    # Explicitly signal absent inputs so the LLM knows data is missing
+    # (not just omitted from the message). This helps the model calibrate
+    # confidence and produce empty sections rather than hallucinating.
+    effective_narrative = narrative_input if narrative_input else "not available"
+    effective_narrative_source = narrative_input_source if narrative_input_source else "not available"
+    effective_emotional = filtered_emotional if filtered_emotional else "not available"
+    effective_craft = filtered_craft if filtered_craft else "not available"
+    effective_thematic = filtered_thematic if filtered_thematic else "not available"
+    effective_arcs = character_arcs if character_arcs else "not available"
+
     return build_user_prompt(
         title=movie.title_with_year(),
         genre_context=_resolve_genre_context(movie, genre_signatures),
-        narrative_input_source=narrative_input_source,
-        narrative_input=narrative_input,
-        emotional_observations=filtered_emotional,
-        craft_observations=filtered_craft,
-        thematic_observations=filtered_thematic,
-        character_arcs=character_arcs or None,
+        narrative_input_source=effective_narrative_source,
+        narrative_input=effective_narrative,
+        emotional_observations=effective_emotional,
+        craft_observations=effective_craft,
+        thematic_observations=effective_thematic,
+        character_arcs=effective_arcs,
         merged_keywords=movie.merged_keywords() or None,
         maturity_summary=movie.maturity_summary(),
     )
@@ -130,7 +144,7 @@ def build_viewer_experience_user_prompt(
 
 async def generate_viewer_experience(
     movie: MovieInputData,
-    plot_synopsis: str | None = None,
+    plot_summary: str | None = None,
     generalized_plot_overview: str | None = None,
     emotional_observations: str | None = None,
     craft_observations: str | None = None,
@@ -155,7 +169,7 @@ async def generate_viewer_experience(
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        plot_synopsis: Finalized plot_events plot summary. Primary
+        plot_summary: Finalized plot_events plot summary. Primary
             narrative source when available.
         generalized_plot_overview: Finalized plot_analysis generalized
             overview. Only used when stronger narrative inputs are absent.
@@ -177,7 +191,7 @@ async def generate_viewer_experience(
     """
     user_prompt = build_viewer_experience_user_prompt(
         movie,
-        plot_synopsis,
+        plot_summary,
         generalized_plot_overview=generalized_plot_overview,
         emotional_observations=emotional_observations,
         craft_observations=craft_observations,

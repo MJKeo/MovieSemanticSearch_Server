@@ -261,13 +261,13 @@ def check_reception(movie_input: MovieInputData) -> str | None:
 
 
 def _check_plot_analysis(
-    plot_synopsis: str | None,
+    plot_summary: str | None,
     thematic_observations: str | None,
     movie_input: MovieInputData,
 ) -> str | None:
     """Plot analysis eligibility based on tiered input quality.
 
-    Tier 1: plot_synopsis from Wave 1 plot_events → always eligible.
+    Tier 1: plot_summary from Wave 1 plot_events → always eligible.
     Tier 2: plot fallback (raw synopsis/summary/overview) >= 400 chars
             → always eligible (enough narrative to ground analysis).
     Tier 3: plot fallback 250-399 chars + thematic_observations >= 300
@@ -278,8 +278,8 @@ def _check_plot_analysis(
     (first synopsis, longest plot_summary, or overview), computed by
     MovieInputData.best_plot_fallback().
     """
-    # Tier 1: Wave 1 plot_events produced a plot_synopsis
-    if plot_synopsis:
+    # Tier 1: Wave 1 plot_events produced a plot_summary
+    if plot_summary:
         return None
 
     # Compute best available raw plot text length
@@ -305,7 +305,7 @@ def _check_plot_analysis(
 
 def resolve_viewer_experience_narrative(
     movie_input: MovieInputData,
-    plot_synopsis: str | None,
+    plot_summary: str | None,
     generalized_plot_overview: str | None,
 ) -> tuple[str | None, str | None]:
     """Resolve the single narrative input for viewer_experience.
@@ -315,15 +315,15 @@ def resolve_viewer_experience_narrative(
     source to clear its inclusion threshold wins.
 
     Fallback order (strict, quality-based):
-    1. plot_synopsis (plot_events output) if >= 400 chars
+    1. plot_summary (plot_events output) if >= 400 chars
     2. best_plot_fallback() if >= 500 chars
     3. generalized_plot_overview if >= 200 chars
 
     Returns (narrative_text, source_label), or (None, None) when no
     narrative source clears its inclusion threshold.
     """
-    if plot_synopsis and len(plot_synopsis) >= _MIN_VIEWER_PLOT_SUMMARY_CHARS:
-        return plot_synopsis, "plot_summary"
+    if plot_summary and len(plot_summary) >= _MIN_VIEWER_PLOT_SUMMARY_CHARS:
+        return plot_summary, "plot_summary"
 
     raw_plot_fallback = movie_input.best_plot_fallback()
     if raw_plot_fallback and len(raw_plot_fallback) >= _MIN_VIEWER_RAW_PLOT_FALLBACK_CHARS:
@@ -372,7 +372,7 @@ def filter_viewer_experience_observations(
 
 def _check_viewer_experience(
     movie_input: MovieInputData,
-    plot_synopsis: str | None,
+    plot_summary: str | None,
     generalized_plot_overview: str | None,
     emotional_observations: str | None,
     craft_observations: str | None,
@@ -391,7 +391,7 @@ def _check_viewer_experience(
     """
     narrative_input, narrative_source = resolve_viewer_experience_narrative(
         movie_input,
-        plot_synopsis,
+        plot_summary,
         generalized_plot_overview,
     )
     narrative_len = len(narrative_input) if narrative_input else 0
@@ -645,7 +645,7 @@ def assess_skip_conditions(
         )
 
     # Wave 2: extract intermediates from typed Wave 1 outputs
-    plot_synopsis = (
+    plot_summary = (
         plot_events_output.plot_summary
         if plot_events_output is not None
         else None
@@ -698,11 +698,11 @@ def assess_skip_conditions(
         )
 
     _record("plot_analysis", _check_plot_analysis(
-        plot_synopsis, thematic_observations, movie_input,
+        plot_summary, thematic_observations, movie_input,
     ))
     _record("viewer_experience", _check_viewer_experience(
         movie_input,
-        plot_synopsis,
+        plot_summary,
         generalized_plot_overview,
         emotional_observations,
         craft_observations,
@@ -713,7 +713,7 @@ def assess_skip_conditions(
         movie_input.genres, merged_keywords, maturity_summary,
     ))
     _record("narrative_techniques", _check_narrative_techniques(
-        plot_synopsis, craft_observations, movie_input,
+        plot_summary, craft_observations, movie_input,
     ))
     _record("production_keywords", _check_production_keywords(merged_keywords))
     _record("source_of_inspiration", _check_source_of_inspiration(
