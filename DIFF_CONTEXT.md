@@ -322,3 +322,23 @@ Approach: Queried tracker.db for movies with no plot_summary >= 400 and no raw_f
 Files: `movie_ingestion/metadata_generation/generators/viewer_experience.py`, `movie_ingestion/metadata_generation/generators/plot_analysis.py`, `movie_ingestion/metadata_generation/pre_consolidation.py`, `movie_ingestion/metadata_generation/generator_registry.py`, `movie_ingestion/metadata_generation/inputs.py`, `movie_ingestion/metadata_generation/schemas.py`
 Why: The `plot_synopsis` parameter name in Wave 2 generators was misleading — it held the LLM-generated `plot_summary` from PlotEventsOutput, not the raw IMDB plot synopsis. Also added `= None` default to `build_viewer_experience_user_prompt()` to match `generate_viewer_experience()` signature (was causing TypeError when called via `**kwargs` unpacking in the notebook).
 Approach: Renamed the Python parameter/variable to `plot_summary` everywhere it represents the Wave 1 output. Left `plot_synopsis` intact in LLM prompt labels (kwargs to `build_user_prompt()`) and system prompt strings, since those are the labels the LLM expects. Also left `plot_events.py` unchanged since it correctly uses raw IMDB `plot_synopses[0]`.
+
+## Parallelized viewer_experience playground generation across all movies
+Files: `movie_ingestion/metadata_generation/metadata_generation_playground.ipynb` (Cell 8)
+Why: The generation loop ran movies sequentially (only parallelizing 3 candidates per movie). With high rate limits, all (movie × candidate) pairs can fire at once.
+Approach: Replaced the nested `for bucket... for movie... await gather(candidates)` loop with a flat list of all (movie, candidate) coroutines launched via a single `asyncio.gather()`. Results are grouped back per-movie after completion for saving. The existing semaphore (40 concurrent) and token-bucket rate limiter (120/sec) still control concurrency. Added timing output and total cost/error summary.
+
+## Viewer experience per-result scoring rubric
+Files: `ingestion_data/viewer_experience_eval_guide.md`
+Why: Needed a structured rubric for evaluating individual viewer_experience metadata results before running evaluations across the 50-movie eval set.
+Approach: Designed 6 weighted axes (groundedness 0.25, specificity layering 0.20, retrieval alignment 0.20, section discipline 0.15, negation quality 0.10, term quality & diversity 0.10) plus an unweighted holistic score. Each axis has 1-5 descriptors. Key design choice: specificity axis rewards BOTH broad genre-level terms AND movie-specific differentiators (user explicitly corrected initial framing that penalized generic terms). Inserted before "After This Evaluation" section.
+
+## /create-eval-rubric command
+Files: `.claude/commands/create-eval-rubric.md`
+Why: Reusable command for creating per-result scoring rubrics for any metadata type's evaluation, following the same process used for viewer_experience.
+Approach: Scoped context reads to exactly 5 files (prompt, schema, eval guide, one sample result, viewer_experience rubric as template). 4-step workflow: read context → think through axes → present for user feedback → write after approval. Explicitly encodes the "generic terms are good" principle.
+
+## /evaluate-metadata-results command
+Files: `.claude/commands/evaluate-metadata-results.md`
+Why: Reusable command for running per-movie evaluations against a rubric, producing structured JSON evaluation files.
+Approach: Reads eval guide (for rubric), schema (for __str__ to know what's graded), prompt (for input awareness), and all result files. Key design principles: (1) grade only fields in __str__() — ignore justifications, (2) grade for retrieval quality not prompt compliance, (3) groundedness judged against LLM's inputs only unless schema explicitly allows parametric knowledge, (4) single-pass per movie with all candidates evaluated but scored independently, (5) outputs to {type}_{tmdb_id}_evaluation.json alongside result files.
