@@ -10,13 +10,13 @@ full merged list gives the classifier more material -- some plot_keywords
 may have production relevance (e.g., "shot on location"). Extra keywords
 just mean more to filter, not more noise in output.
 
-Based on existing prompt at:
-implementation/prompts/vector_metadata_generation_prompts.py (PRODUCTION section)
-
-Key modifications:
-    - Title input described as "Title (Year)" format
-    - merged_keywords replaces overall_keywords only
-    - Justification removed from base variant output spec
+Production relevancy is defined via four concrete categories aligned
+with the search-side production vector space: production medium,
+origin/language, source material, and production process. Keywords
+that describe how/where/in-what-form a movie was made are included,
+even if they also function as genre-like labels (e.g., "animation",
+"korean"). Keywords that only describe what happens in the movie or
+how it feels to watch are excluded.
 
 Two prompt variants exported:
     - SYSTEM_PROMPT: for ProductionKeywordsOutput (no justification field)
@@ -37,18 +37,20 @@ INPUTS
 - merged_keywords: a deduplicated list of keywords representing plot elements and high-level movie attributes. Not all are production-relevant -- your job is to filter.
 
 PRODUCTION RELEVANCY
-- In what way was the movie produced? (ex. "live action", "animation")
-- When/where was the movie created?
-- Who created the movie and why did they create it?
-- What was the production process like?
-- Was there a source of inspiration for the movie?
-- Any keyword that doesn't relate to one of the above questions must not be included.
+A keyword is production-relevant if it describes:
+- Production medium: how the movie was made (animation, live action, CGI, stop-motion, hand-drawn, 3d)
+- Origin and language: where or in what language it was made (korean, tamil, french film, bollywood)
+- Source material: what it was adapted from or inspired by (based on comic book, based on novel, remake, sequel, based on true story)
+- Production process: how it was filmed or funded (found footage, shot on location, crowd-funded, independent film, directorial debut)
+
+A keyword is NOT production-relevant if it only describes what happens in the movie or how it feels to watch (plot events, character traits, emotions, themes).
+
+Keywords that describe how, where, or in what form the movie was made ARE production-relevant, even if they also function as genre labels.
 
 GUIDELINES
 - ONLY include keywords from the provided list. Adding new keywords is a catastrophic failure.
-- It is NOT related to plot events, thematic analysis, genres, or any other contents of the final movie product. ONLY how it was produced in the first place.
-- DO NOT use any information other than what's present in the input.
-- You may leave terms as an empty list if no production keywords are present."""
+- You may use your knowledge of what keywords mean to decide relevance, but the keyword itself must appear in the input list.
+- Many movies have no production-relevant keywords. An empty terms list is a correct and expected output when no keywords pass the relevancy test."""
 
 # ---------------------------------------------------------------------------
 # Variant-specific output sections

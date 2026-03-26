@@ -48,7 +48,7 @@ of inspiration the movie is based on and how the film was produced visually. Onl
 
 INPUTS YOU MAY RECEIVE (some may be empty or not provided)
 - title: the title of the movie, formatted as "Title (Year)" for temporal context and disambiguation. Particularly valuable for identifying known adaptations and disambiguating remakes.
-- merged_keywords: a deduplicated list of keywords representing plot elements and high-level movie attributes. Source-related keywords (e.g., "based-on-novel", "remake", "true-story") are direct evidence.
+- merged_keywords: a deduplicated list of keywords representing plot elements, genres, and high-level movie attributes. Source-related keywords (e.g., "based-on-novel", "remake", "true-story") are direct evidence for sources_of_inspiration. Genre and format keywords (e.g., "Animation", "Biography", "Documentary") are relevant evidence for production_mediums and may indirectly signal source material.
 - source_material_hint: a short classifying phrase extracted from audience reviews indicating adaptation, remake, or source material status (e.g., "based on autobiography", "remake", "based on book, sequel"). When present, this is your highest-confidence evidence — it reflects what reviewers explicitly stated about the source.
 
 EVIDENCE PRIORITY
@@ -61,21 +61,22 @@ _SECTION_GUIDANCE = """
 SECTION GUIDANCE
 
 1) sources_of_inspiration
-- FIRST: determine whether your inputs contain ANY evidence of source material. Check source_material_hint, \
+- FIRST: determine whether your inputs contain evidence of source material. Check source_material_hint, \
 look for source-related keywords ("based-on-novel", "remake", "true-story", "sequel", etc.), and consider \
 whether you are highly confident about the source from the title alone. If none of these yield evidence, \
 output an empty list — do not guess or speculate.
 - 0-3 phrases. Empty list is correct for original screenplays and when evidence is insufficient.
-- Use generic query-like phrases that are movie-agnostic. Do not state specifically what the source is.
+- Use generic query-like phrases that are movie-agnostic — no titles, authors, or proper nouns. "based on a graphic novel" not "based on a Frank Miller graphic novel".
+- Be as specific as the evidence supports: "based on a graphic novel" is better than "based on a book" when keywords say "based-on-graphic-novel".
 - Examples: "based on a true story", "based on a novel", "based on a video game", "based on a real person"
 - Only include sources this film directly adapts (not a loose inspiration or theorized source)
 
 2) production_mediums
 - 1-3 phrases
 - How the movie was produced visually?
+- Check merged_keywords for medium and format signals (e.g., "animation", "computer animation", "stop motion", "hand-drawn"). Genre-like keywords such as "Animation" are relevant evidence here.
 - Use generic query-like phrases that are movie-agnostic.
-- ONLY include the absolutely most relevant production mediums. They must be highly significant.
-- If the movie uses multiple mediums, list all of them.
+- Only include mediums that are highly significant to the film's visual production. A brief animated sequence in a live-action film does not warrant listing animation.
 - Examples: "live action", "hand-drawn animation", "claymation", "computer animation", "stop motion\""""
 
 # ---------------------------------------------------------------------------

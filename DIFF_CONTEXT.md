@@ -1,6 +1,11 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Production keywords prompt improvements
+Files: `movie_ingestion/metadata_generation/prompts/production_keywords.py`, `ingestion_data/production_keywords_eval_guide.md`
+Why: Prompt review identified significant false-negative risk from blanket "not genres" exclusion that suppresses valid production keywords (animation, korean, tamil) and vague classification criteria.
+Approach: (1) Replaced five abstract relevancy questions with four concrete keyword categories aligned with the search-side production vector space (medium, origin/language, source material, process). (2) Replaced genre exclusion with a positive principle: keywords describing how/where/in-what-form are production-relevant even if they also function as genre labels. (3) Softened parametric knowledge restriction to allow world-knowledge for classification decisions while preserving the no-invention guardrail. (4) Strengthened empty-output guidance — framed as expected rather than permitted. (5) Updated Bucket 6 eval guide description to correctly note that overall-keywords can carry real production signal.
+
 ## Narrative techniques prompt hardening and schema reordering
 Files: `movie_ingestion/metadata_generation/prompts/narrative_techniques.py`, `movie_ingestion/metadata_generation/schemas.py`, `movie_ingestion/metadata_generation/generators/narrative_techniques.py`, `ingestion_data/narrative_techniques_eval_guide.md`
 
@@ -279,3 +284,14 @@ Replace the blunt `review_insights_brief` input (concatenated observation blobs)
 - All modified files compile cleanly via py_compile
 - Unit tests for source_of_inspiration generator and pre_consolidation will fail (changed param names)
 - Evaluation guide saved to ingestion_data/source_of_inspiration_eval_guide.md with 6 hypotheses and 6 bucket designs
+
+## Source of inspiration prompt hardening for small-LLM reliability
+Files: `movie_ingestion/metadata_generation/prompts/source_of_inspiration.py`
+Why: Pre-generation prompt review identified gaps in evidence-gathering guidance for production_mediums, keyword description underselling available signals, and vague "movie-agnostic" instruction.
+Approach: Four targeted changes (~50 tokens total): (1) Broadened `merged_keywords` description to note genre/format keywords are relevant for production_mediums and indirect source signals. (2) Added evidence-gathering guidance to production_mediums section — tells model where to find medium signals in keywords. (3) Replaced vague "Do not state specifically what the source is" with concrete "no titles, authors, or proper nouns" rule with example. (4) Added precision instruction: "be as specific as the evidence supports" so model prefers "based on a graphic novel" over "based on a book" when keywords warrant it. (5) Tightened abstention gate wording for consistency with evidence priority section. (6) Replaced mixed-media rule with clearer significance threshold guidance.
+Testing notes: Prompt-only change; compiles cleanly via py_compile. Did not run tests per repo instructions.
+
+## Populated Bucket 5 (generalized_plot_overview) in viewer_experience evaluation
+Files: `ingestion_data/viewer_experience_eval_buckets.json`, `ingestion_data/viewer_experience_eval_guide.md`
+Why: Bucket 5 was deferred pending plot_analysis generation (78,262 movies now generated). Needed movies where generalized_plot_overview is the sole narrative source to test the 2-layer abstraction path.
+Approach: Queried tracker.db for movies with no plot_summary >= 400 and no raw_fallback >= 500 but generalized_plot_overview >= 200 chars (22,120 candidates). Selected 8 movies with diversity across genre (animation, fantasy/sci-fi, action/crime, biography/history, horror/comedy, documentary, film-noir/sport, romance), era (1947-2025), vote count (4.8K-138K), GPO length (320-537), observation quality (941-1550), and narrative path (5 standalone gpo >= 350, 3 combined gpo 200-349). Also updated deferred_candidates, data_availability_notes, eval guide movie counts, generation totals, and data availability section to reflect plot_analysis completion.

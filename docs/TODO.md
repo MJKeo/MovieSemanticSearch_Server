@@ -171,14 +171,14 @@ instead of a monolithic review_insights_brief. **plot_analysis is now updated** 
 to consume thematic_observations + emotional_observations directly. **viewer_experience is
 now updated** (2026-03-24) to consume all three observation fields individually with
 per-field inclusion thresholds. **narrative_techniques is now updated** (2026-03-25) to
-consume craft_observations directly. The remaining 3 Wave 2 generators still receive a
-backward-compatible concatenated review_insights_brief constructed in pre_consolidation.py.
-Each should be migrated to consume targeted fields:
-source_of_inspiration → thematic_observations + source_material_hint,
+consume craft_observations directly. **source_of_inspiration is now updated** (2026-03-25) to
+consume source_material_hint directly. The remaining generator still receiving the
+backward-compatible concatenated review_insights_brief:
 watch_context → emotional_observations.
-**When:** When working on each Wave 2 generator's prompt/input redesign.
+production_keywords does not use any reception fields (input is title + merged_keywords only).
+**When:** When working on watch_context generator's prompt/input redesign.
 **See:** movie_ingestion/metadata_generation/pre_consolidation.py (concatenated review_insights_brief),
-movie_ingestion/metadata_generation/generators/ (remaining Wave 2 generators)
+movie_ingestion/metadata_generation/generators/watch_context.py
 
 
 ## Update search-side ReceptionMetadata and embedding for new field names
@@ -362,4 +362,18 @@ signatures will fail.
 movie_ingestion/metadata_generation/generators/narrative_techniques.py,
 movie_ingestion/metadata_generation/pre_consolidation.py,
 movie_ingestion/metadata_generation/inputs.py (Wave1Outputs, load_wave1_outputs)
+
+## Evaluate merging production_keywords and source_of_inspiration into one generation
+**Context:** Significant output overlap between these two generators — both produce source
+material and production medium terms for the same production vector space. production_keywords
+is closed-set classification (filter from keyword list), source_of_inspiration is open-set
+generation (parametric knowledge allowed). The contradictory parametric knowledge requirements
+make a full merge tricky, but a simpler option is viable: drop source_of_inspiration entirely
+and embed source_material_hint (from reception) directly alongside production_keywords output.
+Main gap: production medium labels ("live-action") for movies without medium keywords.
+Decision deferred pending cost analysis of running both generators at scale.
+**When:** After first production generation cost numbers are available.
+**See:** movie_ingestion/metadata_generation/generators/production_keywords.py,
+movie_ingestion/metadata_generation/generators/source_of_inspiration.py,
+implementation/vectorize.py (create_production_vector_text)
 
