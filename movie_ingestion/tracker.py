@@ -208,9 +208,11 @@ CREATE TABLE IF NOT EXISTS generation_failures (
     tmdb_id        INTEGER NOT NULL,
     metadata_type  TEXT NOT NULL,
     error_message  TEXT NOT NULL,
+    batch_id       TEXT,
     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_gen_failures_type ON generation_failures(metadata_type);
+CREATE INDEX IF NOT EXISTS idx_gen_failures_batch ON generation_failures(batch_id);
 
 -- Generated metadata results and eligibility flags, one row per movie.
 -- JSON columns store the full LLM output (parsed on read). Eligibility
@@ -288,6 +290,8 @@ def init_db() -> sqlite3.Connection:
         "ALTER TABLE movie_progress DROP COLUMN batch2_custom_id",
         # Remove wave1_results table — replaced by generated_metadata table.
         "DROP TABLE IF EXISTS wave1_results",
+        # Add batch_id column to generation_failures for tracing failures back to batches.
+        "ALTER TABLE generation_failures ADD COLUMN batch_id TEXT",
     ]
     for stmt in _MIGRATIONS:
         try:

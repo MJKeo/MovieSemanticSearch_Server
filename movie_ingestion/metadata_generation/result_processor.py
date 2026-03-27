@@ -71,6 +71,7 @@ _COMMIT_INTERVAL = 500
 def process_results(
     results: list[dict],
     tracker_db_path: Path = TRACKER_DB_PATH,
+    batch_id: str | None = None,
 ) -> ProcessingSummary:
     """Parse batch results and store metadata in generated_metadata.
 
@@ -112,13 +113,13 @@ def process_results(
             if status_code != 200:
                 # HTTP-level failure from OpenAI
                 error_msg = f"HTTP {status_code}: {body.get('error', {}).get('message', 'unknown error')}"
-                _record_failure(db, tmdb_id, metadata_type, error_msg)
+                _record_failure(db, tmdb_id, metadata_type, error_msg, batch_id)
                 summary.failed += 1
                 pending_since_commit += 1
             else:
                 # Try to extract and validate the content
                 _process_single_result(
-                    db, tmdb_id, metadata_type, body, summary,
+                    db, tmdb_id, metadata_type, body, summary, batch_id,
                 )
                 pending_since_commit += 1
 
@@ -138,6 +139,7 @@ def process_error_file(
     errors: list[dict],
     metadata_type: str,
     tracker_db_path: Path = TRACKER_DB_PATH,
+    batch_id: str | None = None,
 ) -> int:
     """Process the error file from a batch, recording failures.
 
@@ -172,7 +174,7 @@ def process_error_file(
             error_obj = body.get("error") or {}
             error_msg = error_obj.get("message", "Expired or missing response")
 
-            _record_failure(db, tmdb_id, metadata_type, error_msg)
+            _record_failure(db, tmdb_id, metadata_type, error_msg, batch_id)
             recorded += 1
 
         db.commit()
@@ -190,6 +192,7 @@ def _process_single_result(
     metadata_type: MetadataType,
     body: dict,
     summary: ProcessingSummary,
+    batch_id: str | None = None,
 ) -> bool:
     """Process a single successful (HTTP 200) result.
 
@@ -206,13 +209,13 @@ def _process_single_result(
     # Extract the content string from the response
     choices = body.get("choices", [])
     if not choices:
-        _record_failure(db, tmdb_id, metadata_type, "No choices in response")
+        _record_failure(db, tmdb_id, metadata_type, "No choices in response", batch_id)
         summary.failed += 1
         return False
 
     content = choices[0].get("message", {}).get("content")
     if not content:
-        _record_failure(db, tmdb_id, metadata_type, "Empty content in response")
+        _record_failure(db, tmdb_id, metadata_type, "Empty content in response", batch_id)
         summary.failed += 1
         return False
 
@@ -222,6 +225,7 @@ def _process_single_result(
         _record_failure(
             db, tmdb_id, metadata_type,
             f"No schema registered for metadata type '{metadata_type}'",
+            batch_id,
         )
         summary.failed += 1
         return False
@@ -233,6 +237,7 @@ def _process_single_result(
         _record_failure(
             db, tmdb_id, metadata_type,
             f"Validation failed: {e.error_count()} error(s) — {str(e)[:500]}",
+            batch_id,
         )
         summary.failed += 1
         return False
@@ -253,10 +258,11 @@ def _record_failure(
     tmdb_id: int,
     metadata_type: str,
     error_message: str,
+    batch_id: str | None = None,
 ) -> None:
     """Insert a row into generation_failures."""
     db.execute(
-        """INSERT INTO generation_failures (tmdb_id, metadata_type, error_message)
-           VALUES (?, ?, ?)""",
-        (tmdb_id, metadata_type, error_message),
+        """INSERT INTO generation_failures (tmdb_id, metadata_type, error_message, batch_id)
+           VALUES (?, ?, ?, ?)""",
+        (tmdb_id, metadata_type, error_message, batch_id),
     )

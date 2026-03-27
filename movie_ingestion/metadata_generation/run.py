@@ -427,7 +427,7 @@ def _download_and_process_output(
 
     print(f"  {label} Downloading output ({status.completed} completed)...")
     results = download_results(status.output_file_id)
-    summary = process_results(results, tracker_db_path)
+    summary = process_results(results, tracker_db_path, batch_id=status.batch_id)
     print(
         f"  {label} Results: {summary.succeeded} succeeded, {summary.failed} failed"
         f" | Tokens: {summary.total_input_tokens:,} in, {summary.total_output_tokens:,} out"
@@ -451,7 +451,7 @@ def _download_and_process_errors(
 
     print(f"  {label} Downloading error file ({status.failed} per-request failures)...")
     errors = download_results(status.error_file_id)
-    error_count = process_error_file(errors, metadata_type, tracker_db_path)
+    error_count = process_error_file(errors, metadata_type, tracker_db_path, batch_id=status.batch_id)
     print(f"  {label} Recorded {error_count} error(s) in generation_failures.")
 
 
