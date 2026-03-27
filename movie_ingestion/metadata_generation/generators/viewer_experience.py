@@ -146,11 +146,6 @@ async def generate_viewer_experience(
     craft_observations: str | None = None,
     thematic_observations: str | None = None,
     genre_signatures: list[str] | None = None,
-    provider: LLMProvider = _DEFAULT_PROVIDER,
-    model: str = _DEFAULT_MODEL,
-    system_prompt: str = SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
-    response_format: type = ViewerExperienceWithJustificationsOutput,
-    **kwargs,
 ) -> Tuple[ViewerExperienceWithJustificationsOutput, TokenUsage]:
     """Generate viewer experience metadata for a single movie.
 
@@ -171,10 +166,6 @@ async def generate_viewer_experience(
         craft_observations: Finalized reception craft observations.
         thematic_observations: Finalized reception thematic observations.
         genre_signatures: Finalized plot_analysis genre signatures.
-        provider: Which LLM backend to use. Defaults to OPENAI.
-        model: Model identifier. Defaults to "gpt-5-mini".
-        system_prompt: System prompt variant. Defaults to WITH_JUSTIFICATIONS.
-        response_format: Pydantic schema. Defaults to WithJustifications variant.
         **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
 
     Returns:
@@ -196,12 +187,13 @@ async def generate_viewer_experience(
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=provider,
+            provider=_DEFAULT_PROVIDER,
             user_prompt=user_prompt,
-            system_prompt=system_prompt,
-            response_format=response_format,
-            model=model,
-            **kwargs,
+            system_prompt=SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
+            response_format=ViewerExperienceWithJustificationsOutput,
+            model=_DEFAULT_MODEL,
+            reasoning_effort="minimal",
+            verbosity="low",
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
@@ -211,4 +203,4 @@ async def generate_viewer_experience(
         print(f"{GENERATION_TYPE} generation returned None for '{title_with_year}'")
         raise MetadataGenerationEmptyResponseError(GENERATION_TYPE, title_with_year)
 
-    return parsed, TokenUsage(input_tokens, output_tokens, model)
+    return parsed, TokenUsage(input_tokens, output_tokens, _DEFAULT_MODEL)

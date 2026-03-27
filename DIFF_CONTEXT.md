@@ -218,6 +218,19 @@ Align viewer_experience with the finalized conservative eligibility rules and th
 - **Plot-analysis support inputs:** Added `genre_signatures` as preferred genre context and `character_arcs` as a supportive input for ending-aftertaste and emotional-volatility judgments. Raw genres remain the fallback when genre signatures are absent.
 - **Prompt contract update:** The viewer_experience prompt now teaches the model about `narrative_input_source`, direct observation priority (`emotional > craft > thematic`), and the fact that genre context, keywords, and character arcs are supportive rather than primary evidence.
 
+## Added per-bucket candidate-axis performance report
+Files: `movie_ingestion/metadata_generation/report_bucket_axis_performance.py`
+Why: A new diagnostic was needed alongside `estimate_generation_cost.py` to show average evaluation performance per candidate per scoring axis, with a separate table for each evaluation bucket.
+Approach: Added a standalone CLI script that reads `*_evaluation.json` files, extracts numeric `*_score` axes per candidate, maps movies into buckets using the generation type's eval-bucket JSON, supports both current bucket file shapes in the repo (`{"buckets": ...}` and direct bucket dictionaries with `samples`), and prints one formatted table per bucket.
+Design context: Mirrors the lightweight, dependency-free style of nearby metadata-generation diagnostics and preserves queryable per-axis visibility instead of collapsing scores into a single aggregate.
+Testing notes: Verified with `python -m movie_ingestion.metadata_generation.report_bucket_axis_performance narrative_techniques` and `python -m py_compile movie_ingestion/metadata_generation/report_bucket_axis_performance.py`.
+
+## Simplified bucket-axis report table headers
+Files: `movie_ingestion/metadata_generation/report_bucket_axis_performance.py`
+Why: The first version of the new report included a redundant `Movies` column and displayed raw axis field names with the `_score` suffix.
+Approach: Removed the `Movies` column from the per-bucket tables and changed displayed axis headers to strip the `_score` suffix while keeping the underlying score-field lookup unchanged.
+Testing notes: Re-verified with `python -m movie_ingestion.metadata_generation.report_bucket_axis_performance narrative_techniques` and `python -m py_compile movie_ingestion/metadata_generation/report_bucket_axis_performance.py`.
+
 ### Testing Notes
 - Ran `python -m py_compile movie_ingestion/metadata_generation/pre_consolidation.py movie_ingestion/metadata_generation/generators/viewer_experience.py movie_ingestion/metadata_generation/prompts/viewer_experience.py`
 - Did not run unit tests per repo instructions.
@@ -238,6 +251,13 @@ Tighten viewer_experience eligibility based on analysis of threshold quality, an
 
 ### Testing Notes
 - Both files compile cleanly via py_compile
+
+## Narrative techniques evaluation pass
+Files: `movie_ingestion/metadata_generation/evaluation_data/narrative_techniques_*_evaluation.json`, `DIFF_CONTEXT.md`
+Why: The user requested the `/evaluate-metadata-results` pass for `narrative_techniques`, using the repo's evaluation command plus the narrative-techniques guide and bucket context.
+Approach: Read the scoped evaluation instructions, narrative-techniques eval guide, schema `__str__()` contract, prompt, and all 56 result files. Wrote one `_evaluation.json` per movie under `movie_ingestion/metadata_generation/evaluation_data/`, with rubric-axis scores and reasoning for every candidate.
+Design context: The evaluations grade only the flattened embedded term output from `NarrativeTechniquesOutput.__str__()`, not justification text, and use the `user_prompt` payload in each result file as the groundedness evidence base per `.claude/commands/evaluate-metadata-results.md`.
+Testing notes: Spot-checked generated evaluation files for `narrative_techniques_278_evaluation.json` and `narrative_techniques_106378_evaluation.json`; confirmed 56 evaluation files were written.
 - Did not run unit tests per repo instructions
 - Test buckets needed: (1) generalized_plot_overview-only movies, (2) observation-standalone movies
 
