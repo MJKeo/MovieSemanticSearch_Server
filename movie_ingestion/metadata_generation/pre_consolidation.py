@@ -422,27 +422,24 @@ def _check_viewer_experience(
 
 
 def _check_watch_context(
-    review_insights_brief: str | None,
+    genre_signatures: list[str] | None,
     genres: list[str],
-    merged_keywords: list[str],
-    maturity_summary: str | None,
 ) -> str | None:
-    """Watch context: review_insights_brief OR all of (genres, keywords, maturity).
+    """Watch context: genre_signatures OR raw genres >= 1.
 
     Watch context deliberately receives NO plot info (Decision 2).
+    Genres enable grounded categorical inference for viewing occasions
+    (horror → halloween, romance → date night). All other inputs
+    (observations, keywords, maturity) are enrichments that improve
+    quality but never gate eligibility.
+
+    See evaluation_data/watch_context_eval_guide.md for rationale.
     """
-    if review_insights_brief:
+    if genre_signatures:
         return None
-
-    has_all_contextual = (
-        len(genres) >= 1
-        and len(merged_keywords) >= 1
-        and maturity_summary is not None
-    )
-    if has_all_contextual:
+    if len(genres) >= 1:
         return None
-
-    return "No review insights and incomplete genre/keyword/maturity data"
+    return "No genre_signatures and no raw genres available"
 
 
 def resolve_narrative_techniques_narrative(
@@ -641,19 +638,14 @@ def assess_skip_conditions(
         else None
     )
 
-    # Construct review_insights_brief from extraction zone observations
-    # for backward compatibility with other Wave 2 checks that haven't
-    # been migrated to individual observation fields yet.
-    review_insights_brief = None
-    if reception_output is not None:
-        obs_parts = [
-            o for o in (thematic_observations, emotional_observations, craft_observations)
-            if o
-        ]
-        review_insights_brief = " ".join(obs_parts) if obs_parts else None
-
     generalized_plot_overview = (
         plot_analysis_output.generalized_plot_overview
+        if plot_analysis_output is not None
+        else None
+    )
+
+    genre_signatures = (
+        plot_analysis_output.genre_signatures
         if plot_analysis_output is not None
         else None
     )
@@ -674,8 +666,8 @@ def assess_skip_conditions(
         thematic_observations,
     ))
     _record("watch_context", _check_watch_context(
-        review_insights_brief,
-        movie_input.genres, merged_keywords, maturity_summary,
+        genre_signatures,
+        movie_input.genres,
     ))
     _record("narrative_techniques", _check_narrative_techniques(
         plot_summary, craft_observations, movie_input,

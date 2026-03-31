@@ -164,21 +164,12 @@ The signature now requires `MetadataType` enum values, and the format changed to
 movie_ingestion/metadata_generation/inputs.py (build_custom_id, batch_id)
 
 
-## Update remaining Wave 2 generators for individual reception observation fields
-**Context:** The reception generator produces structured observation fields
-(thematic_observations, emotional_observations, craft_observations, source_material_hint)
-instead of a monolithic review_insights_brief. **plot_analysis is now updated** (2026-03-24)
-to consume thematic_observations + emotional_observations directly. **viewer_experience is
-now updated** (2026-03-24) to consume all three observation fields individually with
-per-field inclusion thresholds. **narrative_techniques is now updated** (2026-03-25) to
-consume craft_observations directly. **source_of_inspiration is now updated** (2026-03-25) to
-consume source_material_hint directly. The remaining generator still receiving the
-backward-compatible concatenated review_insights_brief:
-watch_context → emotional_observations.
-production_keywords does not use any reception fields (input is title + merged_keywords only).
-**When:** When working on watch_context generator's prompt/input redesign.
-**See:** movie_ingestion/metadata_generation/pre_consolidation.py (concatenated review_insights_brief),
-movie_ingestion/metadata_generation/generators/watch_context.py
+## ~~Update remaining Wave 2 generators for individual reception observation fields~~ DONE
+All Wave 2 generators now consume individual observation fields directly:
+plot_analysis (2026-03-24), viewer_experience (2026-03-24), narrative_techniques (2026-03-25),
+source_of_inspiration (2026-03-25), watch_context (2026-03-31). The backward-compatible
+concatenated review_insights_brief was removed from pre_consolidation.py — no consumers remain.
+production_keywords does not use any reception fields.
 
 
 ## Update search-side ReceptionMetadata and embedding for new field names
@@ -298,17 +289,8 @@ Implemented (2026-03-24): gpt-5-mini, minimal reasoning, low verbosity,
 PlotAnalysisWithJustificationsOutput schema, emotional_observations removed.
 Generator no longer accepts model params from callers.
 
-## Update unit tests for plot_analysis schema and generator redesign
-**Context:** unit_tests/test_plot_analysis_generator.py references old field names
-(themes_primary, lessons_learned, conflict_scale, review_insights_brief) and old
-function signatures. unit_tests/test_pre_consolidation.py references
-review_insights_brief as a direct field on ReceptionOutput and old _check_plot_analysis
-signature. Both will fail at collection/call time.
-**When:** Next time plot_analysis or pre_consolidation tests are being worked on.
-**See:** unit_tests/test_plot_analysis_generator.py,
-unit_tests/test_pre_consolidation.py,
-movie_ingestion/metadata_generation/schemas.py (PlotAnalysisOutput),
-movie_ingestion/metadata_generation/generators/plot_analysis.py
+## ~~Update unit tests for plot_analysis schema and generator redesign~~ DONE
+Completed (2026-03-31): All 8 test files updated in a single session. 239 tests pass.
 
 
 ## ~~Test bucket: generalized_plot_overview-only movies for viewer_experience~~ EVALUATED
@@ -331,39 +313,11 @@ thresholds removed. New combined path is simply: GPO >= 200 + any usable observa
 The standalone-narrative and standalone-observation paths remain unchanged.
 **See:** movie_ingestion/metadata_generation/pre_consolidation.py (_check_viewer_experience)
 
-## Update unit tests for narrative_techniques input contract redesign
-**Context:** The narrative_techniques generator and pre_consolidation eligibility check
-changed signatures. `_check_narrative_techniques` now takes `(plot_summary, craft_observations,
-movie_input)` instead of `(plot_synopsis, review_insights_brief, genres, merged_keywords)`.
-`build_narrative_techniques_user_prompt` and `generate_narrative_techniques` now take
-`(movie, plot_summary, craft_observations)` instead of `(movie, plot_synopsis,
-review_insights_brief)`. `load_wave1_outputs_for_movie()` was replaced by `load_wave1_outputs()`
-returning a `Wave1Outputs` dataclass. Tests importing old function names or using old
-signatures will fail.
-**When:** Next time narrative_techniques or pre_consolidation tests are being worked on.
-**See:** unit_tests/ (narrative_techniques and pre_consolidation test files),
-movie_ingestion/metadata_generation/generators/narrative_techniques.py,
-movie_ingestion/metadata_generation/pre_consolidation.py,
-movie_ingestion/metadata_generation/inputs.py (Wave1Outputs, load_wave1_outputs)
+## ~~Update unit tests for narrative_techniques input contract redesign~~ DONE
+Completed (2026-03-31): All 8 test files updated in a single session. 239 tests pass.
 
-## Update unit tests for viewer_experience production config changes
-**Context:** Multiple rounds of signature changes to viewer_experience:
-(1) Schema flattening: OptionalTermsWithNegationsSection → flat TermsWithNegationsSection.
-(2) plot_synopsis → plot_summary rename across build functions and pre_consolidation.
-(3) Production config (2026-03-26): `resolve_viewer_experience_narrative()` now takes only
-`generalized_plot_overview` (removed `movie_input` and `plot_summary` params).
-`_check_viewer_experience()` removed `movie_input` and `plot_summary` params — now takes
-`(generalized_plot_overview, emotional_observations, craft_observations, thematic_observations)`.
-`build_viewer_experience_user_prompt()` and `generate_viewer_experience()` removed `plot_summary`
-and `character_arcs` params, no longer pass `merged_keywords` to prompt. Default schema is now
-`ViewerExperienceWithJustificationsOutput`, default system prompt is `SYSTEM_PROMPT_WITH_JUSTIFICATIONS`,
-default reasoning_effort is `"minimal"`. Registry config updated accordingly.
-**When:** Next time viewer_experience or pre_consolidation tests are being worked on.
-**See:** unit_tests/test_metadata_schemas.py, unit_tests/test_viewer_experience_generator.py,
-unit_tests/test_pre_consolidation.py,
-movie_ingestion/metadata_generation/generators/viewer_experience.py,
-movie_ingestion/metadata_generation/pre_consolidation.py,
-movie_ingestion/metadata_generation/generator_registry.py
+## ~~Update unit tests for viewer_experience production config changes~~ DONE
+Completed (2026-03-31): All 8 test files updated in a single session. 239 tests pass.
 
 ## Remove unused Optional wrapper schema classes
 **Context:** OptionalTermsWithNegationsSection and OptionalTermsWithNegationsAndJustificationSection
@@ -413,4 +367,17 @@ Round 2 showed gpt-5-mini-minimal-justifications scores 4.62 on obs_standalone_m
 (Bucket 7) — higher than gold_standard. The justification schema eliminated the section
 discipline gap that motivated nano routing. No model routing needed.
 **See:** ingestion_data/viewer_experience_eval_guide.md (Round 2 Results)
+
+## Update unit tests for watch_context input contract redesign
+**Context:** The watch_context generator and pre_consolidation eligibility check both changed
+signatures. `build_watch_context_user_prompt` and `generate_watch_context` now take
+`genre_signatures`, `emotional_observations`, `craft_observations`, `thematic_observations`
+instead of `review_insights_brief`. `_check_watch_context` now takes `(genre_signatures, genres)`
+instead of `(review_insights_brief, genres, merged_keywords, maturity_summary)`. Tests
+importing old signatures will fail at call time.
+**When:** Next time watch_context or pre_consolidation tests are being worked on.
+**See:** unit_tests/test_watch_context_generator.py (if it exists),
+unit_tests/test_pre_consolidation.py,
+movie_ingestion/metadata_generation/generators/watch_context.py,
+movie_ingestion/metadata_generation/pre_consolidation.py
 

@@ -5,9 +5,11 @@ Covers:
   - ReceptionOutput dual-zone structure (extraction + synthesis fields)
   - ReceptionOutput.__str__() excludes extraction-zone fields
   - ReceptionOutput field constraints and validation
-  - CharacterArc: extra="forbid", required fields, __str__()
+  - CharacterArcWithReasoning: extra="forbid", required fields, __str__()
   - WithJustifications sub-model __str__() returns label only
   - WithJustifications __str__() parity with base variants (6 pairs)
+  - PlotAnalysisWithJustificationsOutput field constraints and __str__()
+  - ViewerExperienceOutput simplified schema (flat sections, no skip wrappers)
 """
 
 import pytest
@@ -16,18 +18,14 @@ from pydantic import ValidationError
 from movie_ingestion.metadata_generation.schemas import (
     PlotEventsOutput,
     ReceptionOutput,
-    CharacterArc,
-    CoreConceptWithJustification,
-    MajorThemeWithJustification,
-    MajorLessonLearnedWithJustification,
-    PlotAnalysisOutput,
+    CharacterArcWithReasoning,
+    ElevatorPitchWithJustification,
+    ThematicConceptWithJustification,
     PlotAnalysisWithJustificationsOutput,
     TermsSection,
     TermsWithNegationsSection,
-    OptionalTermsWithNegationsSection,
     TermsWithJustificationSection,
     TermsWithNegationsAndJustificationSection,
-    OptionalTermsWithNegationsAndJustificationSection,
     ViewerExperienceOutput,
     ViewerExperienceWithJustificationsOutput,
     WatchContextOutput,
@@ -176,171 +174,260 @@ class TestReceptionOutputConstraints:
 
 
 # ---------------------------------------------------------------------------
-# CharacterArc updates
+# CharacterArcWithReasoning
 # ---------------------------------------------------------------------------
 
-class TestCharacterArcUpdated:
-    def test_character_arc_requires_description(self):
+class TestCharacterArcWithReasoning:
+    def test_requires_reasoning_and_label(self):
+        """Both reasoning and arc_transformation_label are required."""
         with pytest.raises(ValidationError):
-            CharacterArc(
-                character_name="Neo",
+            CharacterArcWithReasoning(
                 arc_transformation_label="hero's awakening",
             )
-
-    def test_character_arc_extra_forbid(self):
         with pytest.raises(ValidationError):
-            CharacterArc(
-                character_name="Neo",
-                arc_transformation_description="Discovers his true power.",
+            CharacterArcWithReasoning(
+                reasoning="Discovers true power.",
+            )
+
+    def test_extra_forbid(self):
+        with pytest.raises(ValidationError):
+            CharacterArcWithReasoning(
+                reasoning="Discovers true power.",
                 arc_transformation_label="hero's awakening",
                 extra_field="not allowed",
             )
 
-    def test_character_arc_str_returns_label(self):
-        arc = CharacterArc(
-            character_name="Neo",
-            arc_transformation_description="Discovers his true power and becomes The One.",
+    def test_str_returns_label_only(self):
+        arc = CharacterArcWithReasoning(
+            reasoning="Discovers his true power and becomes The One.",
             arc_transformation_label="hero's awakening",
         )
         assert str(arc) == "hero's awakening"
-        # Description should NOT appear in str()
+        # Reasoning should NOT appear in str()
         assert "discovers" not in str(arc).lower()
+
+    def test_old_character_arc_fields_rejected(self):
+        """Old CharacterArc fields (character_name, arc_transformation_description) are rejected."""
+        with pytest.raises(ValidationError):
+            CharacterArcWithReasoning(
+                character_name="Neo",
+                reasoning="Discovers true power.",
+                arc_transformation_label="hero's awakening",
+            )
 
 
 # ---------------------------------------------------------------------------
 # WithJustifications sub-model __str__() tests
 # ---------------------------------------------------------------------------
 
-class TestCoreConceptWithJustificationStr:
-    def test_str_returns_label_only(self):
-        obj = CoreConceptWithJustification(
+class TestElevatorPitchWithJustificationStr:
+    def test_str_returns_pitch_only(self):
+        obj = ElevatorPitchWithJustification(
             explanation_and_justification="This concept captures the essence.",
-            core_concept_label="forbidden knowledge",
+            elevator_pitch="forbidden knowledge",
         )
         assert str(obj) == "forbidden knowledge"
         assert "essence" not in str(obj)
 
 
-class TestMajorThemeWithJustificationStr:
+class TestThematicConceptWithJustificationStr:
     def test_str_returns_label_only(self):
-        obj = MajorThemeWithJustification(
+        obj = ThematicConceptWithJustification(
             explanation_and_justification="This theme runs through every scene.",
-            theme_label="identity and transformation",
+            concept_label="identity and transformation",
         )
         assert str(obj) == "identity and transformation"
         assert "runs through" not in str(obj)
 
 
-class TestMajorLessonLearnedWithJustificationStr:
-    def test_str_returns_label_only(self):
-        obj = MajorLessonLearnedWithJustification(
-            explanation_and_justification="The film teaches us to question reality.",
-            lesson_label="question everything",
-        )
-        assert str(obj) == "question everything"
-        assert "teaches" not in str(obj)
-
-
 # ---------------------------------------------------------------------------
-# PlotAnalysis __str__() parity
+# PlotAnalysisWithJustificationsOutput __str__() and constraints
 # ---------------------------------------------------------------------------
 
-# Shared test data for plot analysis parity tests
-_PLOT_ANALYSIS_DATA = dict(
-    generalized_plot_overview="A hacker discovers the truth about simulated reality.",
-    genre_signatures=["cyberpunk thriller", "philosophical sci-fi"],
-    conflict_scale="global",
-    character_arcs=[
-        CharacterArc(
-            character_name="Neo",
-            arc_transformation_description="Transforms from a lost programmer into a messianic figure.",
-            arc_transformation_label="hero's awakening",
-        ),
-    ],
-)
-
-
-class TestPlotAnalysisWithJustificationsStrParity:
-    def test_str_parity_with_plot_analysis(self):
-        """WithJustifications variant must produce identical str() to base."""
-        base = PlotAnalysisOutput(
-            core_concept_label="forbidden knowledge",
-            themes_primary=["identity", "free will"],
-            lessons_learned=["question everything"],
-            **_PLOT_ANALYSIS_DATA,
-        )
-        with_j = PlotAnalysisWithJustificationsOutput(
-            core_concept=CoreConceptWithJustification(
-                explanation_and_justification="This is the heart of the movie.",
-                core_concept_label="forbidden knowledge",
+def _make_plot_analysis_output(**overrides):
+    """Build a minimal valid PlotAnalysisWithJustificationsOutput."""
+    defaults = dict(
+        generalized_plot_overview="A hacker discovers the truth about simulated reality.",
+        genre_signatures=["cyberpunk thriller", "philosophical sci-fi"],
+        conflict_type=["man vs system"],
+        character_arcs=[
+            CharacterArcWithReasoning(
+                reasoning="Transforms from a lost programmer into a messianic figure.",
+                arc_transformation_label="hero's awakening",
             ),
-            themes_primary=[
-                MajorThemeWithJustification(
-                    explanation_and_justification="Central to the narrative.",
-                    theme_label="identity",
-                ),
-                MajorThemeWithJustification(
-                    explanation_and_justification="Runs through every choice.",
-                    theme_label="free will",
-                ),
-            ],
-            lessons_learned=[
-                MajorLessonLearnedWithJustification(
-                    explanation_and_justification="The film teaches skepticism.",
-                    lesson_label="question everything",
-                ),
-            ],
-            **_PLOT_ANALYSIS_DATA,
-        )
-        assert str(base) == str(with_j)
+        ],
+        elevator_pitch_with_justification=ElevatorPitchWithJustification(
+            explanation_and_justification="This is the heart of the movie.",
+            elevator_pitch="forbidden knowledge",
+        ),
+        thematic_concepts=[
+            ThematicConceptWithJustification(
+                explanation_and_justification="Central to the narrative.",
+                concept_label="identity",
+            ),
+            ThematicConceptWithJustification(
+                explanation_and_justification="Runs through every choice.",
+                concept_label="free will",
+            ),
+        ],
+    )
+    defaults.update(overrides)
+    return PlotAnalysisWithJustificationsOutput(**defaults)
+
+
+class TestPlotAnalysisWithJustificationsStr:
+    def test_str_includes_all_embedded_fields(self):
+        """__str__() includes all label fields, lowercased."""
+        output = _make_plot_analysis_output()
+        result = str(output)
+        assert "forbidden knowledge" in result
+        assert "cyberpunk thriller" in result
+        assert "man vs system" in result
+        assert "hero's awakening" in result
+        assert "identity" in result
+        assert "free will" in result
+        assert "a hacker discovers" in result
 
     def test_str_excludes_justification_text(self):
-        with_j = PlotAnalysisWithJustificationsOutput(
-            core_concept=CoreConceptWithJustification(
-                explanation_and_justification="JUSTIFICATION_MARKER_CORE",
-                core_concept_label="forbidden knowledge",
+        output = _make_plot_analysis_output(
+            elevator_pitch_with_justification=ElevatorPitchWithJustification(
+                explanation_and_justification="JUSTIFICATION_MARKER_PITCH",
+                elevator_pitch="forbidden knowledge",
             ),
-            themes_primary=[
-                MajorThemeWithJustification(
+            thematic_concepts=[
+                ThematicConceptWithJustification(
                     explanation_and_justification="JUSTIFICATION_MARKER_THEME",
-                    theme_label="identity",
+                    concept_label="identity",
                 ),
             ],
-            lessons_learned=[
-                MajorLessonLearnedWithJustification(
-                    explanation_and_justification="JUSTIFICATION_MARKER_LESSON",
-                    lesson_label="question everything",
+            character_arcs=[
+                CharacterArcWithReasoning(
+                    reasoning="JUSTIFICATION_MARKER_ARC",
+                    arc_transformation_label="hero's awakening",
                 ),
             ],
-            **_PLOT_ANALYSIS_DATA,
         )
-        result = str(with_j)
-        assert "JUSTIFICATION_MARKER_CORE" not in result
+        result = str(output)
+        assert "JUSTIFICATION_MARKER_PITCH" not in result
         assert "JUSTIFICATION_MARKER_THEME" not in result
-        assert "JUSTIFICATION_MARKER_LESSON" not in result
+        assert "JUSTIFICATION_MARKER_ARC" not in result
 
-    def test_str_parity_empty_lessons(self):
-        base = PlotAnalysisOutput(
-            core_concept_label="forbidden knowledge",
-            themes_primary=["identity"],
-            lessons_learned=[],
-            **_PLOT_ANALYSIS_DATA,
+    def test_str_with_empty_optional_lists(self):
+        """__str__() handles empty conflict_type, character_arcs, thematic_concepts."""
+        output = _make_plot_analysis_output(
+            conflict_type=[],
+            character_arcs=[],
+            thematic_concepts=[],
         )
-        with_j = PlotAnalysisWithJustificationsOutput(
-            core_concept=CoreConceptWithJustification(
-                explanation_and_justification="Justification.",
-                core_concept_label="forbidden knowledge",
+        result = str(output)
+        # Should still contain overview, pitch, genre_signatures
+        assert "a hacker discovers" in result
+        assert "forbidden knowledge" in result
+        assert "cyberpunk thriller" in result
+        # Empty lists should not produce empty entries
+        assert "man vs system" not in result
+        assert "hero's awakening" not in result
+
+    def test_conflict_type_joined_lowercased(self):
+        """conflict_type entries are comma-joined and lowercased."""
+        output = _make_plot_analysis_output(
+            conflict_type=["Man vs Nature", "Man vs Self"],
+        )
+        result = str(output)
+        assert "man vs nature, man vs self" in result
+
+    def test_conflict_type_empty_produces_no_entry(self):
+        """Empty conflict_type list produces no conflict entry in __str__()."""
+        output = _make_plot_analysis_output(conflict_type=[])
+        result = str(output)
+        assert "conflict" not in result.lower() or "man vs" not in result
+
+
+class TestPlotAnalysisConstraints:
+    def test_genre_signatures_min_length_2(self):
+        """genre_signatures requires min_length=2."""
+        with pytest.raises(ValidationError):
+            _make_plot_analysis_output(genre_signatures=["only one"])
+
+    def test_genre_signatures_max_length_6(self):
+        """genre_signatures accepts up to 6."""
+        output = _make_plot_analysis_output(
+            genre_signatures=["a", "b", "c", "d", "e", "f"],
+        )
+        assert len(output.genre_signatures) == 6
+
+        with pytest.raises(ValidationError):
+            _make_plot_analysis_output(
+                genre_signatures=["a", "b", "c", "d", "e", "f", "g"],
+            )
+
+    def test_conflict_type_max_length_2(self):
+        """conflict_type accepts 0-2 entries."""
+        # 0 is fine
+        output = _make_plot_analysis_output(conflict_type=[])
+        assert len(output.conflict_type) == 0
+        # 2 is fine
+        output = _make_plot_analysis_output(conflict_type=["a", "b"])
+        assert len(output.conflict_type) == 2
+        # 3 is rejected
+        with pytest.raises(ValidationError):
+            _make_plot_analysis_output(conflict_type=["a", "b", "c"])
+
+    def test_character_arcs_min_0_max_3(self):
+        """character_arcs accepts 0-3 entries."""
+        # 0 is fine (min_length=0)
+        output = _make_plot_analysis_output(character_arcs=[])
+        assert len(output.character_arcs) == 0
+        # 3 is fine
+        arcs = [
+            CharacterArcWithReasoning(reasoning=f"Reason {i}.", arc_transformation_label=f"arc{i}")
+            for i in range(3)
+        ]
+        output = _make_plot_analysis_output(character_arcs=arcs)
+        assert len(output.character_arcs) == 3
+        # 4 is rejected
+        arcs_4 = arcs + [CharacterArcWithReasoning(reasoning="Extra.", arc_transformation_label="extra")]
+        with pytest.raises(ValidationError):
+            _make_plot_analysis_output(character_arcs=arcs_4)
+
+    def test_thematic_concepts_min_0_max_5(self):
+        """thematic_concepts accepts 0-5 entries."""
+        output = _make_plot_analysis_output(thematic_concepts=[])
+        assert len(output.thematic_concepts) == 0
+
+        concepts = [
+            ThematicConceptWithJustification(
+                explanation_and_justification=f"Reason {i}.",
+                concept_label=f"concept{i}",
+            )
+            for i in range(5)
+        ]
+        output = _make_plot_analysis_output(thematic_concepts=concepts)
+        assert len(output.thematic_concepts) == 5
+
+        concepts_6 = concepts + [
+            ThematicConceptWithJustification(
+                explanation_and_justification="Extra.",
+                concept_label="extra",
             ),
-            themes_primary=[
-                MajorThemeWithJustification(
-                    explanation_and_justification="Justification.",
-                    theme_label="identity",
+        ]
+        with pytest.raises(ValidationError):
+            _make_plot_analysis_output(thematic_concepts=concepts_6)
+
+    def test_extra_forbid_rejects_old_fields(self):
+        """Old field names (core_concept_label, conflict_scale, themes_primary, etc.) are rejected."""
+        with pytest.raises(ValidationError):
+            PlotAnalysisWithJustificationsOutput(
+                core_concept_label="test",
+                genre_signatures=["a", "b"],
+                conflict_type=[],
+                character_arcs=[],
+                thematic_concepts=[],
+                elevator_pitch_with_justification=ElevatorPitchWithJustification(
+                    explanation_and_justification="j", elevator_pitch="p",
                 ),
-            ],
-            lessons_learned=[],
-            **_PLOT_ANALYSIS_DATA,
-        )
-        assert str(base) == str(with_j)
+                generalized_plot_overview="Overview.",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -370,23 +457,15 @@ _VE_NEGATIONS = ["not boring"]
 
 class TestViewerExperienceWithJustificationsStrParity:
     def test_str_parity_with_viewer_experience(self):
+        """All 8 sections use flat TermsWithNegationsSection; str() matches between variants."""
         base = ViewerExperienceOutput(
             emotional_palette=_make_terms_section(_VE_TERMS, _VE_NEGATIONS),
             tension_adrenaline=_make_terms_section(["high stakes"]),
             tone_self_seriousness=_make_terms_section(["dead serious"]),
             cognitive_complexity=_make_terms_section(["mind-bending"]),
-            disturbance_profile=OptionalTermsWithNegationsSection(
-                should_skip=False,
-                section_data=_make_terms_section(["disturbing imagery"]),
-            ),
-            sensory_load=OptionalTermsWithNegationsSection(
-                should_skip=False,
-                section_data=_make_terms_section(["loud"]),
-            ),
-            emotional_volatility=OptionalTermsWithNegationsSection(
-                should_skip=False,
-                section_data=_make_terms_section(["whiplash"]),
-            ),
+            disturbance_profile=_make_terms_section(["disturbing imagery"]),
+            sensory_load=_make_terms_section(["loud"]),
+            emotional_volatility=_make_terms_section(["whiplash"]),
             ending_aftertaste=_make_terms_section(["lingering dread"]),
         )
         with_j = ViewerExperienceWithJustificationsOutput(
@@ -394,18 +473,9 @@ class TestViewerExperienceWithJustificationsStrParity:
             tension_adrenaline=_make_terms_j_section(["high stakes"]),
             tone_self_seriousness=_make_terms_j_section(["dead serious"]),
             cognitive_complexity=_make_terms_j_section(["mind-bending"]),
-            disturbance_profile=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=False,
-                section_data=_make_terms_j_section(["disturbing imagery"]),
-            ),
-            sensory_load=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=False,
-                section_data=_make_terms_j_section(["loud"]),
-            ),
-            emotional_volatility=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=False,
-                section_data=_make_terms_j_section(["whiplash"]),
-            ),
+            disturbance_profile=_make_terms_j_section(["disturbing imagery"]),
+            sensory_load=_make_terms_j_section(["loud"]),
+            emotional_volatility=_make_terms_j_section(["whiplash"]),
             ending_aftertaste=_make_terms_j_section(["lingering dread"]),
         )
         assert str(base) == str(with_j)
@@ -418,40 +488,23 @@ class TestViewerExperienceWithJustificationsStrParity:
             tension_adrenaline=_make_terms_j_section(),
             tone_self_seriousness=_make_terms_j_section(),
             cognitive_complexity=_make_terms_j_section(),
-            disturbance_profile=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=True,
-                section_data=_make_terms_j_section(),
-            ),
-            sensory_load=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=True,
-                section_data=_make_terms_j_section(),
-            ),
-            emotional_volatility=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=True,
-                section_data=_make_terms_j_section(),
-            ),
+            disturbance_profile=_make_terms_j_section(),
+            sensory_load=_make_terms_j_section(),
+            emotional_volatility=_make_terms_j_section(),
             ending_aftertaste=_make_terms_j_section(),
         )
         assert "VE_MARKER" not in str(with_j)
 
-    def test_str_parity_with_optional_sections_skipped(self):
+    def test_str_parity_with_empty_sections(self):
+        """Empty sections produce identical str() between base and justifications variants."""
         base = ViewerExperienceOutput(
             emotional_palette=_make_terms_section(["warm"]),
             tension_adrenaline=_make_terms_section(),
             tone_self_seriousness=_make_terms_section(),
             cognitive_complexity=_make_terms_section(),
-            disturbance_profile=OptionalTermsWithNegationsSection(
-                should_skip=True,
-                section_data=_make_terms_section(["should be ignored"]),
-            ),
-            sensory_load=OptionalTermsWithNegationsSection(
-                should_skip=True,
-                section_data=_make_terms_section(),
-            ),
-            emotional_volatility=OptionalTermsWithNegationsSection(
-                should_skip=True,
-                section_data=_make_terms_section(),
-            ),
+            disturbance_profile=_make_terms_section(),
+            sensory_load=_make_terms_section(),
+            emotional_volatility=_make_terms_section(),
             ending_aftertaste=_make_terms_section(),
         )
         with_j = ViewerExperienceWithJustificationsOutput(
@@ -459,23 +512,12 @@ class TestViewerExperienceWithJustificationsStrParity:
             tension_adrenaline=_make_terms_j_section(),
             tone_self_seriousness=_make_terms_j_section(),
             cognitive_complexity=_make_terms_j_section(),
-            disturbance_profile=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=True,
-                section_data=_make_terms_j_section(["should be ignored"]),
-            ),
-            sensory_load=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=True,
-                section_data=_make_terms_j_section(),
-            ),
-            emotional_volatility=OptionalTermsWithNegationsAndJustificationSection(
-                should_skip=True,
-                section_data=_make_terms_j_section(),
-            ),
+            disturbance_profile=_make_terms_j_section(),
+            sensory_load=_make_terms_j_section(),
+            emotional_volatility=_make_terms_j_section(),
             ending_aftertaste=_make_terms_j_section(),
         )
         assert str(base) == str(with_j)
-        # Skipped section data should NOT appear
-        assert "should be ignored" not in str(base)
 
 
 # ---------------------------------------------------------------------------
@@ -525,20 +567,26 @@ class TestWatchContextWithJustificationsStrParity:
 # NarrativeTechniques __str__() parity
 # ---------------------------------------------------------------------------
 
+# Current field order (cognitive scaffolding): archetype, delivery,
+# devices, pov, characterization, arcs, perception, info control,
+# stakes, thematic, meta
+_NT_SECTION_NAMES = [
+    "narrative_archetype", "narrative_delivery", "additional_plot_devices",
+    "pov_perspective", "characterization_methods", "character_arcs",
+    "audience_character_perception", "information_control",
+    "conflict_stakes_design", "thematic_delivery", "meta_techniques",
+]
+
+
 class TestNarrativeTechniquesWithJustificationsStrParity:
     def test_str_parity_with_narrative_techniques(self):
         sections_base = {
             name: _make_terms_only_section(["term1"])
-            for name in [
-                "pov_perspective", "narrative_delivery", "narrative_archetype",
-                "information_control", "characterization_methods", "character_arcs",
-                "audience_character_perception", "conflict_stakes_design",
-                "thematic_delivery", "meta_techniques", "additional_plot_devices",
-            ]
+            for name in _NT_SECTION_NAMES
         }
         sections_j = {
             name: _make_terms_only_j_section(["term1"])
-            for name in sections_base
+            for name in _NT_SECTION_NAMES
         }
         base = NarrativeTechniquesOutput(**sections_base)
         with_j = NarrativeTechniquesWithJustificationsOutput(**sections_j)
@@ -549,12 +597,7 @@ class TestNarrativeTechniquesWithJustificationsStrParity:
             name: _make_terms_only_j_section(
                 ["term1"], justification="NT_MARKER"
             )
-            for name in [
-                "pov_perspective", "narrative_delivery", "narrative_archetype",
-                "information_control", "characterization_methods", "character_arcs",
-                "audience_character_perception", "conflict_stakes_design",
-                "thematic_delivery", "meta_techniques", "additional_plot_devices",
-            ]
+            for name in _NT_SECTION_NAMES
         }
         with_j = NarrativeTechniquesWithJustificationsOutput(**sections)
         assert "NT_MARKER" not in str(with_j)
@@ -637,80 +680,6 @@ class TestPlotEventsOutputStr:
 
 
 # ---------------------------------------------------------------------------
-# PlotAnalysisOutput.__str__() independent content correctness
-# ---------------------------------------------------------------------------
-
-class TestPlotAnalysisOutputStrContent:
-    def test_conflict_scale_appends_conflict_suffix(self):
-        """PlotAnalysisOutput.__str__() appends ' conflict' to conflict_scale."""
-        output = PlotAnalysisOutput(
-            core_concept_label="forbidden knowledge",
-            genre_signatures=["cyberpunk thriller", "sci-fi"],
-            conflict_scale="global",
-            character_arcs=[
-                CharacterArc(
-                    character_name="Neo",
-                    arc_transformation_description="Awakens.",
-                    arc_transformation_label="hero's awakening",
-                ),
-            ],
-            themes_primary=["identity"],
-            lessons_learned=[],
-            generalized_plot_overview="A hacker discovers reality.",
-        )
-        result = str(output)
-        assert "global conflict" in result
-
-    def test_conlist_genre_signatures_min_length(self):
-        """genre_signatures requires min_length=2."""
-        with pytest.raises(ValidationError):
-            PlotAnalysisOutput(
-                core_concept_label="test",
-                genre_signatures=["only one"],
-                conflict_scale="personal",
-                character_arcs=[
-                    CharacterArc(
-                        character_name="A",
-                        arc_transformation_description="B.",
-                        arc_transformation_label="C",
-                    ),
-                ],
-                themes_primary=["theme"],
-                generalized_plot_overview="Overview.",
-            )
-
-    def test_conlist_character_arcs_min_length(self):
-        """character_arcs requires min_length=1."""
-        with pytest.raises(ValidationError):
-            PlotAnalysisOutput(
-                core_concept_label="test",
-                genre_signatures=["a", "b"],
-                conflict_scale="personal",
-                character_arcs=[],
-                themes_primary=["theme"],
-                generalized_plot_overview="Overview.",
-            )
-
-    def test_conlist_themes_primary_min_length(self):
-        """themes_primary requires min_length=1."""
-        with pytest.raises(ValidationError):
-            PlotAnalysisOutput(
-                core_concept_label="test",
-                genre_signatures=["a", "b"],
-                conflict_scale="personal",
-                character_arcs=[
-                    CharacterArc(
-                        character_name="A",
-                        arc_transformation_description="B.",
-                        arc_transformation_label="C",
-                    ),
-                ],
-                themes_primary=[],
-                generalized_plot_overview="Overview.",
-            )
-
-
-# ---------------------------------------------------------------------------
 # ViewerExperienceOutput.__str__() independent content correctness
 # ---------------------------------------------------------------------------
 
@@ -722,18 +691,9 @@ class TestViewerExperienceOutputStrContent:
             tension_adrenaline=_make_terms_section(["Low Stakes"]),
             tone_self_seriousness=_make_terms_section(),
             cognitive_complexity=_make_terms_section(),
-            disturbance_profile=OptionalTermsWithNegationsSection(
-                should_skip=True,
-                section_data=_make_terms_section(),
-            ),
-            sensory_load=OptionalTermsWithNegationsSection(
-                should_skip=True,
-                section_data=_make_terms_section(),
-            ),
-            emotional_volatility=OptionalTermsWithNegationsSection(
-                should_skip=True,
-                section_data=_make_terms_section(),
-            ),
+            disturbance_profile=_make_terms_section(),
+            sensory_load=_make_terms_section(),
+            emotional_volatility=_make_terms_section(),
             ending_aftertaste=_make_terms_section(),
         )
         result = str(output)
@@ -743,6 +703,40 @@ class TestViewerExperienceOutputStrContent:
         # Comma-separated, not newline-separated
         assert "\n" not in result
         assert ", " in result
+
+    def test_viewer_experience_all_sections_flat(self):
+        """All 8 sections are flat TermsWithNegationsSection (no OptionalTermsWithNegationsSection)."""
+        # This should work without any wrapper — all sections take flat sections
+        output = ViewerExperienceOutput(
+            emotional_palette=_make_terms_section(["tense"]),
+            tension_adrenaline=_make_terms_section(),
+            tone_self_seriousness=_make_terms_section(),
+            cognitive_complexity=_make_terms_section(),
+            disturbance_profile=_make_terms_section(),
+            sensory_load=_make_terms_section(),
+            emotional_volatility=_make_terms_section(),
+            ending_aftertaste=_make_terms_section(),
+        )
+        assert "tense" in str(output)
+
+    def test_viewer_experience_rejects_optional_wrapper(self):
+        """ViewerExperienceOutput rejects OptionalTermsWithNegationsSection for its fields."""
+        from movie_ingestion.metadata_generation.schemas import OptionalTermsWithNegationsSection
+        optional_section = OptionalTermsWithNegationsSection(
+            should_skip=False,
+            section_data=_make_terms_section(["term"]),
+        )
+        with pytest.raises(ValidationError):
+            ViewerExperienceOutput(
+                emotional_palette=_make_terms_section(),
+                tension_adrenaline=_make_terms_section(),
+                tone_self_seriousness=_make_terms_section(),
+                cognitive_complexity=_make_terms_section(),
+                disturbance_profile=optional_section,
+                sensory_load=_make_terms_section(),
+                emotional_volatility=_make_terms_section(),
+                ending_aftertaste=_make_terms_section(),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -769,20 +763,22 @@ class TestWatchContextOutputStrContent:
 class TestNarrativeTechniquesOutputStrContent:
     def test_narrative_techniques_str_all_11_sections_contribute(self):
         """NarrativeTechniquesOutput.__str__() includes terms from all 11 sections."""
-        section_names = [
-            "pov_perspective", "narrative_delivery", "narrative_archetype",
-            "information_control", "characterization_methods", "character_arcs",
-            "audience_character_perception", "conflict_stakes_design",
-            "thematic_delivery", "meta_techniques", "additional_plot_devices",
-        ]
         sections = {
             name: _make_terms_only_section([f"{name}_term"])
-            for name in section_names
+            for name in _NT_SECTION_NAMES
         }
         output = NarrativeTechniquesOutput(**sections)
         result = str(output)
-        for name in section_names:
+        for name in _NT_SECTION_NAMES:
             assert f"{name}_term" in result
+
+    def test_narrative_techniques_field_order_is_cognitive_scaffolding(self):
+        """Fields are ordered: archetype, delivery, devices, pov, ..., meta."""
+        field_names = list(NarrativeTechniquesOutput.model_fields.keys())
+        assert field_names[0] == "narrative_archetype"
+        assert field_names[1] == "narrative_delivery"
+        assert field_names[2] == "additional_plot_devices"
+        assert field_names[-1] == "meta_techniques"
 
 
 # ---------------------------------------------------------------------------
@@ -824,17 +820,6 @@ class TestSectionExtraForbid:
             TermsWithNegationsSection(
                 terms=["a"], negations=[], extra_field="not allowed",
             )
-
-
-# ---------------------------------------------------------------------------
-# OptionalTermsWithNegationsSection: section_data required even when skipped
-# ---------------------------------------------------------------------------
-
-class TestOptionalSectionDataRequired:
-    def test_section_data_required_when_skipped(self):
-        """section_data is required by schema even when should_skip=True."""
-        with pytest.raises(ValidationError):
-            OptionalTermsWithNegationsSection(should_skip=True)
 
 
 # ---------------------------------------------------------------------------

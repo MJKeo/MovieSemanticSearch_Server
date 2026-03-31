@@ -73,9 +73,9 @@ patterns observed in the session.
 **Sessions observed:** 3
 
 ## Eval guide candidate context is append-only within a round
-**Observed:** User corrected "don't replace the old context in the eval guide, just add the new context" when a new candidate (gpo-only) was added by replacing the previous candidates (tier1-pruned, tier1-tier2-pruned). All candidates within a round should be documented together, and new ones are added alongside existing ones — never replacing them.
-**Proposed convention:** When adding a new candidate to an evaluation guide round, append its documentation to the existing candidates section. Never remove or replace previous candidate documentation when adding a new experiment to the same round. Each round accumulates all candidates it tests, with shared comparison methodology and decision criteria at the bottom.
-**Sessions observed:** 1
+**Observed:** (1) User corrected "don't replace the old context in the eval guide, just add the new context" when a new candidate (gpo-only) was added by replacing the previous candidates (tier1-pruned, tier1-tier2-pruned). (2) User corrected removal of thematic candidates from the eval guide after their code changes were reverted: "Their results were generated and will be evaluated even if their original code changes were undone." Generated evaluation results are permanent artifacts — code changes may be temporary/experimental, but once results exist they must remain documented.
+**Proposed convention:** When adding a new candidate to an evaluation guide round, append its documentation to the existing candidates section. Never remove or replace previous candidate documentation when adding a new experiment to the same round, even if the code changes that produced those candidates were later reverted. Generated results are permanent artifacts independent of the current codebase state.
+**Sessions observed:** 2
 
 ## Evidence discipline hierarchy in generation prompts
 **Observed:** viewer_experience prompt introduced a 3-tier evidence hierarchy (direct evidence → concrete inference → genre-level inference) that calibrates model confidence without mode-specific rules. narrative_techniques adopted the same pattern in this session to replace a "WHEN PLOT DATA IS ABSENT" block. The hierarchy naturally produces sparse output on thin inputs and rich output on rich inputs — eliminating the need for separate craft-only or plot-only instructions. User explicitly preferred this general-principle approach over mode-specific rules.

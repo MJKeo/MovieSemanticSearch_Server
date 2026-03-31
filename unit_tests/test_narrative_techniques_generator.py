@@ -4,6 +4,10 @@ Unit tests for movie_ingestion.metadata_generation.generators.narrative_techniqu
 Tests prompt building, LLM call delegation, return value shape, and
 error handling for the generate_narrative_techniques function.
 
+The generator now uses merged_keywords (not overall_keywords), takes
+craft_observations (not review_insights_brief), and resolves narrative
+input via a shared fallback ladder in pre_consolidation.
+
 All LLM calls are mocked — no real API traffic.
 """
 
@@ -52,17 +56,17 @@ def _make_movie(**overrides) -> MovieInputData:
 def _make_nt_output() -> NarrativeTechniquesOutput:
     section = TermsSection(terms=["unreliable narrator"])
     return NarrativeTechniquesOutput(
-        pov_perspective=section,
-        narrative_delivery=section,
         narrative_archetype=section,
-        information_control=section,
+        narrative_delivery=section,
+        additional_plot_devices=section,
+        pov_perspective=section,
         characterization_methods=section,
         character_arcs=section,
         audience_character_perception=section,
+        information_control=section,
         conflict_stakes_design=section,
         thematic_delivery=section,
         meta_techniques=section,
-        additional_plot_devices=section,
     )
 
 
@@ -81,41 +85,60 @@ class TestBuildNarrativeTechniquesUserPrompt:
         result = build_narrative_techniques_user_prompt(movie, None, None)
         assert "genres: Action, Sci-Fi" in result
 
-    def test_includes_plot_synopsis(self):
+    def test_includes_plot_summary_as_plot_synopsis(self):
+        """When plot_summary is provided, it's labeled as 'plot_synopsis'."""
         movie = _make_movie()
         result = build_narrative_techniques_user_prompt(movie, "A synopsis.", None)
         assert "plot_synopsis: A synopsis." in result
 
-    def test_includes_overall_keywords(self):
-        """Uses movie.overall_keywords (NOT merged_keywords)."""
-        movie = _make_movie(overall_keywords=["nonlinear timeline"])
+    def test_includes_merged_keywords(self):
+        """Now uses merged_keywords (plot + overall), not just overall_keywords."""
+        movie = _make_movie(
+            plot_keywords=["suspense"],
+            overall_keywords=["nonlinear timeline"],
+        )
         result = build_narrative_techniques_user_prompt(movie, None, None)
-        assert "overall_keywords: nonlinear timeline" in result
+        assert "keywords:" in result
+        assert "suspense" in result
+        assert "nonlinear timeline" in result
 
-    def test_includes_review_insights_brief(self):
+    def test_includes_craft_observations(self):
+        """Second parameter is craft_observations (renamed from review_insights_brief).
+        Must meet minimum length threshold."""
         movie = _make_movie()
-        result = build_narrative_techniques_user_prompt(movie, None, "Critics noted structure.")
-        assert "review_insights_brief: Critics noted structure." in result
+        # Craft observations must be >= 300 chars (combined threshold)
+        craft = "C" * 350
+        result = build_narrative_techniques_user_prompt(movie, None, craft)
+        assert craft in result
 
-    def test_does_not_include_plot_keywords(self):
-        """plot_keywords should NOT appear in narrative techniques prompt."""
-        movie = _make_movie(plot_keywords=["suspense", "mystery"])
-        result = build_narrative_techniques_user_prompt(movie, None, None)
-        assert "plot_keywords" not in result
-
-    def test_does_not_include_merged_keywords(self):
-        """merged_keywords should NOT appear in narrative techniques prompt."""
+    def test_short_craft_observations_filtered_out(self):
+        """Craft observations below threshold are filtered and shown as 'not available'."""
         movie = _make_movie()
+        result = build_narrative_techniques_user_prompt(movie, None, "Short craft.")
+        assert "craft_observations: not available" in result
+
+    def test_absent_plot_signals_not_available(self):
+        """When no plot data, prompt includes 'plot_synopsis: not available'."""
+        movie = _make_movie(plot_synopses=[], plot_summaries=[], overview="")
         result = build_narrative_techniques_user_prompt(movie, None, None)
-        assert "merged_keywords" not in result
+        assert "plot_synopsis: not available" in result
 
     def test_omits_none_fields(self):
-        movie = _make_movie(genres=[], overall_keywords=[])
+        movie = _make_movie(genres=[], plot_keywords=[], overall_keywords=[])
         result = build_narrative_techniques_user_prompt(movie, None, None)
         assert "genres" not in result
-        assert "overall_keywords" not in result
-        assert "plot_synopsis" not in result
+
+    def test_does_not_include_review_insights_brief(self):
+        """review_insights_brief label should not appear in the prompt."""
+        movie = _make_movie()
+        result = build_narrative_techniques_user_prompt(movie, None, None)
         assert "review_insights_brief" not in result
+
+    def test_does_not_include_overall_keywords_label(self):
+        """overall_keywords label should not appear — it's now 'keywords'."""
+        movie = _make_movie()
+        result = build_narrative_techniques_user_prompt(movie, None, None)
+        assert "overall_keywords:" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -189,20 +212,6 @@ class TestGenerateNarrativeTechniquesErrors:
                 )
 
         assert exc_info.value.__cause__ is original
-
-
-# ---------------------------------------------------------------------------
-# Tests: prompt uses overall_keywords (not merged_keywords or plot_keywords)
-# ---------------------------------------------------------------------------
-
-class TestNarrativeTechniquesPromptKeywords:
-    def test_prompt_uses_overall_keywords(self):
-        """Prompt uses overall_keywords label, not merged_keywords or plot_keywords."""
-        movie = _make_movie(overall_keywords=["nonlinear timeline", "unreliable narrator"])
-        result = build_narrative_techniques_user_prompt(movie, None, None)
-        assert "overall_keywords:" in result
-        assert "nonlinear timeline" in result
-        assert "unreliable narrator" in result
 
 
 # ---------------------------------------------------------------------------

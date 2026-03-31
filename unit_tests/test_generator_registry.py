@@ -25,6 +25,9 @@ from movie_ingestion.metadata_generation.generator_registry import (
 from movie_ingestion.metadata_generation.schemas import (
     PlotEventsOutput,
     ReceptionOutput,
+    PlotAnalysisWithJustificationsOutput,
+    ProductionKeywordsOutput,
+    ViewerExperienceWithJustificationsOutput,
 )
 
 
@@ -60,10 +63,13 @@ class TestGeneratorRegistry:
     """Tests for the module-level GENERATOR_REGISTRY."""
 
     def test_has_exactly_registered_types(self) -> None:
-        """GENERATOR_REGISTRY has entries for PLOT_EVENTS and RECEPTION."""
+        """GENERATOR_REGISTRY has entries for all 5 registered types."""
         assert set(GENERATOR_REGISTRY.keys()) == {
             MetadataType.PLOT_EVENTS,
             MetadataType.RECEPTION,
+            MetadataType.PLOT_ANALYSIS,
+            MetadataType.PRODUCTION_KEYWORDS,
+            MetadataType.VIEWER_EXPERIENCE,
         }
 
 
@@ -91,11 +97,32 @@ class TestGetConfig:
         assert config.model == "gpt-5-mini"
         assert config.metadata_type == MetadataType.RECEPTION
 
+    def test_returns_plot_analysis_config(self) -> None:
+        """get_config(PLOT_ANALYSIS) returns correct schema and model."""
+        config = get_config(MetadataType.PLOT_ANALYSIS)
+        assert isinstance(config, GeneratorConfig)
+        assert config.schema_class is PlotAnalysisWithJustificationsOutput
+        assert config.model == "gpt-5-mini"
+
+    def test_returns_production_keywords_config(self) -> None:
+        """get_config(PRODUCTION_KEYWORDS) returns correct schema and model."""
+        config = get_config(MetadataType.PRODUCTION_KEYWORDS)
+        assert isinstance(config, GeneratorConfig)
+        assert config.schema_class is ProductionKeywordsOutput
+        assert config.model == "gpt-5-mini"
+
+    def test_returns_viewer_experience_config(self) -> None:
+        """get_config(VIEWER_EXPERIENCE) returns correct schema and model."""
+        config = get_config(MetadataType.VIEWER_EXPERIENCE)
+        assert isinstance(config, GeneratorConfig)
+        assert config.schema_class is ViewerExperienceWithJustificationsOutput
+        assert config.model == "gpt-5-mini"
+
     def test_raises_key_error_for_unregistered_type(self) -> None:
         """get_config raises descriptive KeyError for unregistered MetadataType."""
-        # Use a type that's not yet registered (Wave 2 types)
+        # Use a type that's not yet registered
         with pytest.raises(KeyError, match="No generator registered"):
-            get_config(MetadataType.PLOT_ANALYSIS)
+            get_config(MetadataType.NARRATIVE_TECHNIQUES)
 
 
 # ---------------------------------------------------------------------------

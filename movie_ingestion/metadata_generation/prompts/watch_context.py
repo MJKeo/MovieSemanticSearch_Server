@@ -12,13 +12,15 @@ the model on narrative events rather than experiential attributes.
 Based on existing prompt at:
 implementation/prompts/vector_metadata_generation_prompts.py (WATCH_CONTEXT section)
 
-Key modifications:
+Key modifications (vs original system):
     - Title input described as "Title (Year)" format
-    - overview input removed entirely
-    - plot_keywords removed; merged_keywords replaces both keyword inputs
+    - overview input removed entirely (no plot info)
+    - genre_signatures (LLM-refined) preferred over raw genres
+    - overall_keywords only (not merged/plot keywords)
     - maturity_summary added as input
-    - review_insights_brief replaces reception_summary +
-      audience_reception_attributes + featured_reviews
+    - Individual observation fields (emotional, craft, thematic) from
+      reception extraction zone replace the merged review_insights_brief
+    - Explicit language actively encouraged (not just permitted)
 
 Two prompt variants exported:
     - SYSTEM_PROMPT: for WatchContextOutput (no justification fields)
@@ -43,12 +45,14 @@ CONTEXT
 - The goal is to produce **search-query-like phrases** that match how real users actually type queries,
   and to intentionally include **redundant near-duplicates** to boost semantic recall in vector search.
 
-INPUTS YOU MAY RECEIVE (some may be empty or noisy)
+INPUTS YOU MAY RECEIVE (some may be absent — marked "not available")
 - title: title of the movie, formatted as "Title (Year)" for temporal context
-- genres: all genres the movie belongs to
-- merged_keywords: deduplicated keywords representing plot elements and high-level movie attributes
+- genre_signatures: LLM-refined genre phrases capturing subgenre nuance and tone (e.g., "quirky indie romance", "gritty crime thriller"). May fall back to raw genre labels when refined signatures are unavailable.
+- overall_keywords: high-level categorical tags for movie attributes (e.g., "cult classic", "family-friendly", "dark comedy"). These are NOT plot-specific.
 - maturity_summary: consolidated content advisory string (rating + reasoning or severity details)
-- review_insights_brief: a dense synthesis of audience observations -- thematic, emotional, structural, and source-material observations extracted from reviews. Captures what reviewers noticed, not how much they liked it.
+- emotional_observations: what reviewers observed about emotional tone, mood, atmosphere, and viewing experience. Use to infer self-experience motivations and watch scenarios.
+- craft_observations: what reviewers observed about performances, cinematography, soundtrack, pacing, and technical craft. Use to identify key movie feature draws.
+- thematic_observations: what reviewers observed about themes, meaning, and messages. Use to infer experiential motivations — reframe themes as viewer motivations (e.g., "explores grief" → "cathartic watch", "makes you reflect").
 
 GLOBAL PHRASING RULES (must follow)
 1) Write phrases like **search queries**, not sentences.
@@ -60,7 +64,10 @@ GLOBAL PHRASING RULES (must follow)
    - synonyms, paraphrases, and slang (ONLY if you understand the slang).
 5) Prefer redundant strong signal terms over distinct, weaker terms.
 6) Do not include plot details, character names, or other proper nouns. Keep it generalized.
-7) Slang/paraphrases may be blunt (e.g., "high as balls", "gorefest") since this is not user-facing.
+7) This output is NEVER shown to users. Crude, explicit, or vulgar phrasing is encouraged when it \
+matches how real people search for movies (e.g., "fucked up movie", "cry your eyes out", \
+"scared shitless", "high as balls", "gorefest"). Do NOT sanitize language — clean phrasing \
+reduces recall against real user queries.
 
 """
 
@@ -80,7 +87,7 @@ _OUTPUT_WITH_JUSTIFICATIONS = """\
 OUTPUT EXPECTATIONS (conceptual)
 - Generate JSON.
 - Each section includes:
-  - a concise **justification** (1 sentence) referencing the evidence used (genres, keywords, review insights, maturity, etc.)
+  - a concise **justification** (1 sentence) referencing the evidence used (genre signatures, keywords, observations, maturity, etc.)
   - **terms**: core phrases a user would type into a search engine
 
 """
@@ -126,7 +133,7 @@ Examples of terms:
 - 1-4 phrases
 What to capture:
 - What key aspects of this movie stand out as "watch this movie if you want to watch a movie that has this" draws?
-- Pull heavily from review_insights_brief, what traits stand out as defining features of this movie?
+- Pull heavily from craft_observations and emotional_observations — what traits stand out as defining features?
 - These are interpretations and evaluations of movie attributes (ex. "amazing soundtrack" or "cheesy dialogue")
 - Include only highly relevant terms supported by the provided input.
 - Keep phrases short and query-like; redundancy encouraged; no plot specifics/proper nouns.

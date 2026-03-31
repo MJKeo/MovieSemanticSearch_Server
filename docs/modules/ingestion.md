@@ -26,7 +26,7 @@ this module.
 | `tmdb_quality_scoring/plot_tmdb_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 3 scores. Plots both all-movies and no-provider-only populations using `survival_curve_utils`. |
 | `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch. HTTP fetching and DB writes are separated — async tasks return result NamedTuples, all DB writes happen via `executemany` after each batch. |
 | `imdb_scraping/scraper.py` | Per-movie: fetch GraphQL → transform → return result dict (does not write to DB). `MovieResult.data` is `dict | None` (not a JSON string). |
-| `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, random UA rotation. Fetches `titleType { id }` as part of the standard query. |
+| `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, random UA rotation. Fetches `titleType { id }` as part of the standard query. Artificial limits on credits, companies, composers, and plots fields were removed — `plots` was previously `first: 10`, which silently dropped synopses (often entry 11+); now set to 100,000 so synopses are always reached. |
 | `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer. Extracts `imdb_title_type`, `plot_summaries` (always extracted independently from synopses), and `plot_keywords` (floor 10, cap 15). |
 | `imdb_scraping/models.py` | Pydantic models for IMDB scraped data. `IMDBScrapedMovie` includes `imdb_title_type: str | None`. |
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies. Bulk-queries `imdb_data` table. |
@@ -41,13 +41,15 @@ this module.
 | `metadata_generation/generator_registry.py` | Maps each `MetadataType` to its `GeneratorConfig` (schema, eligibility checker, prompt builder, live generator, model config). Thin adapter wrappers normalize different generator prompt interfaces into a common `(user_prompt, system_prompt)` tuple contract. `get_config(metadata_type)` is the lookup entry point. |
 | `metadata_generation/request_builder.py` | Builds per-type Batch API request lists. `build_requests(metadata_type)` loads eligible movies in chunks of 5K to avoid OOM, uses registry config for prompts/schema/model. Returns `list[list[dict]]`; serialization to JSONL is done in `openai_batch_manager.py`. |
 | `metadata_generation/openai_batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status (`BatchStatus` dataclass includes batch-level `errors`), download. In-memory JSONL upload/download (no temp files). No movie/generation knowledge. |
-| `metadata_generation/result_processor.py` | Parses downloaded result JSONL, determines metadata type from custom_id, validates against correct schema via `SCHEMA_BY_TYPE`, stores results in the type's column in `generated_metadata`. Records per-request failures to `generation_failures`. |
+| `metadata_generation/result_processor.py` | Parses downloaded result JSONL, determines metadata type from custom_id, validates against correct schema via `SCHEMA_BY_TYPE`, stores results in the type's column in `generated_metadata`. Records per-request failures to `generation_failures`. Handles `"response": null` entries from expired batches via `or {}` pattern (not `.get()` default). |
 | `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment`, `Wave1Outputs` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, `best_plot_fallback()`, and `batch_id()`. `build_custom_id(MetadataType, tmdb_id)` / `parse_custom_id(str) -> MetadataType` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads raw data from tracker.db. `load_wave1_outputs(tmdb_id)` returns a `Wave1Outputs` with all Wave 1 fields (plot_summary, thematic/emotional/craft observations, source_material_hint) — callers pick whichever subset they need. |
 | `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` uses dual-zone structure: extraction zone (4 observation fields for Wave 2, not embedded) + synthesis zone (summary + quality tags, embedded). Backward-compat `review_insights_brief` @property bridges old consumers. See ADR-025. |
-| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. Public shared functions: `resolve_viewer_experience_narrative()`, `filter_viewer_experience_observations()`, `resolve_narrative_techniques_narrative()` — each used by both eligibility and prompt building. `narrative_techniques` uses tiered eligibility (plot_summary / fallback >= 500 / craft >= 450 / combined). |
+| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. Public shared functions: `resolve_viewer_experience_narrative()`, `filter_viewer_experience_observations()`, `resolve_narrative_techniques_narrative()` — each used by both eligibility and prompt building. `narrative_techniques` uses tiered eligibility (plot_summary / fallback >= 500 / craft >= 400 standalone / fallback >= 300 + craft >= 300 combined). |
 | `metadata_generation/evaluation_data/analyze_evaluations.py` | Diagnostic: generic metadata-evaluation report generator. Reads prompt/schema/bucket/result/evaluation files for a metadata type, then produces a Markdown report with aggregate scores, per-bucket patterns, failures, divergences, and cost totals. |
-| `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. `plot_events.py`: two-branch generation locked to OpenAI gpt-5-mini with `reasoning_effort=minimal, verbosity=low` — provider/model are module-level constants, not caller params. All other generators default to OpenAI gpt-5-mini; Wave 2 generators accept `system_prompt`/`response_format` overrides for evaluation. See ADR-026, ADR-027. |
-| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant; Wave 2 generators also export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
+| `metadata_generation/report_bucket_axis_performance.py` | Diagnostic CLI: reads `*_evaluation.json` files and prints per-bucket tables of average candidate performance per scoring axis. Supports both bucket file shapes. |
+| `metadata_generation/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
+| `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. Locked generators (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative). Remaining Wave 2 generators accept `provider`/`model`/`**kwargs` for evaluation. See ADR-026, ADR-027. |
+| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant. Wave 2 generators that are not yet locked export `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation. Locked generators export only `SYSTEM_PROMPT` (the justifications variant is the production variant). `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
@@ -344,10 +346,11 @@ when no live-eligible movies remain.
 **Generator contract**: All 8 generators are fully implemented as async
 real-time callers — each takes `MovieInputData`, calls
 `generate_llm_response_async`, and returns `Tuple[Output, TokenUsage]`.
-`plot_events.py` and `reception.py` are locked: provider/model are
-module-level constants (`_PROVIDER`, `_MODEL`, `_MODEL_KWARGS`), not caller
-params. All other generators still accept optional `provider`/`model`/`**kwargs`
-for evaluation use. See ADR-026, ADR-027, ADR-039, ADR-042, ADR-043.
+`plot_events.py`, `reception.py`, `plot_analysis.py`, and
+`viewer_experience.py` are locked: provider/model are module-level constants
+(`_PROVIDER`, `_MODEL`, `_MODEL_KWARGS`), not caller params. Remaining Wave 2
+generators still accept optional `provider`/`model`/`**kwargs` for evaluation
+use. See ADR-026, ADR-027, ADR-039, ADR-042, ADR-043.
 
 **No provider-specific default kwargs**: Generators must not define
 default kwargs that span providers. The generic LLM router passes kwargs
@@ -408,13 +411,15 @@ via `run_pre_consolidation()`.
 Produces three routed lists:
 - `plot_keywords` → (no longer passed to plot_events; kept for other Wave 2 generators)
 - `overall_keywords` → narrative_techniques only
-- `merged_keywords` (union, plot first) → plot_analysis, viewer_experience,
-  watch_context, production_keywords, source_of_inspiration
+- `merged_keywords` (union, plot first) → plot_analysis, watch_context,
+  production_keywords, source_of_inspiration
 
 Note: `plot_analysis` was changed from `plot_keywords` to `merged_keywords`
 because overall keywords provide additional thematic signal. `narrative_techniques`
 uses `overall_keywords` only — structural tags like "nonlinear timeline" live
 there and plot keywords add noise without structural signal.
+`viewer_experience` does not receive merged_keywords — Round 3 evaluation
+showed <2% citation rate; removed to reduce noise (Tier 1 pruning).
 
 **Maturity consolidation** (`consolidate_maturity()`): 4-step priority
 chain: reasoning list → parental guide items → MPAA rating definition
@@ -441,11 +446,16 @@ Key skip thresholds:
   below 400 chars produce observations that merely paraphrase the overview
   rather than adding genuine review signal (~779 movies affected, 0.7%
   of corpus). See ADR-042.
-- Wave 2 checks require `plot_synopsis` or `review_insights_brief`
-  as primary fallback paths; many have secondary fallbacks via
-  genre/keyword/maturity data
-- `source_of_inspiration` check requires only `merged_keywords` or
-  `source_material_hint` (no `plot_synopsis` dependency)
+- Wave 2 checks use per-type tiered logic based on the quality of available
+  inputs; eligibility is not shared across types. Key thresholds:
+  - `plot_analysis`: plot_summary → plot_fallback >= 400 → (fallback >= 250 + thematic >= 300)
+  - `viewer_experience`: GPO >= 350 standalone → obs standalone → GPO >= 200 + obs
+  - `narrative_techniques`: plot_summary → fallback >= 500 → craft >= 400 → (fallback >= 300 + craft >= 300)
+  - `source_of_inspiration`: requires only `merged_keywords` or `source_material_hint`
+  - `production_keywords`: requires >= 1 keyword in merged_keywords
+  - `watch_context`: requires >= 1 genre_signature or genre
+  - `source_of_inspiration`, `production_keywords`, and `watch_context` do not depend
+    on plot data or review observations
 
 ### Output schemas (schemas.py)
 

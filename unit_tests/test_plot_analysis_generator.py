@@ -4,6 +4,10 @@ Unit tests for movie_ingestion.metadata_generation.generators.plot_analysis.
 Tests prompt building, LLM call delegation, return value shape, and
 error handling for the generate_plot_analysis function.
 
+The generator now has hardcoded production config (gpt-5-mini, minimal
+reasoning, justification schema) — provider/model/system_prompt/response_format
+are no longer caller-configurable.
+
 All LLM calls are mocked — no real API traffic.
 """
 
@@ -11,12 +15,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from implementation.llms.generic_methods import LLMProvider
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
 from movie_ingestion.metadata_generation.schemas import (
-    PlotAnalysisOutput,
-    CharacterArc,
+    PlotAnalysisWithJustificationsOutput,
+    CharacterArcWithReasoning,
+    ElevatorPitchWithJustification,
+    ThematicConceptWithJustification,
 )
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
@@ -48,20 +53,26 @@ def _make_movie(**overrides) -> MovieInputData:
     return MovieInputData(**defaults)
 
 
-def _make_plot_analysis_output() -> PlotAnalysisOutput:
-    return PlotAnalysisOutput(
-        core_concept_label="forbidden knowledge",
+def _make_plot_analysis_output() -> PlotAnalysisWithJustificationsOutput:
+    return PlotAnalysisWithJustificationsOutput(
         genre_signatures=["cyberpunk thriller", "philosophical sci-fi"],
-        conflict_scale="global",
+        thematic_concepts=[
+            ThematicConceptWithJustification(
+                explanation_and_justification="Central to the narrative.",
+                concept_label="identity",
+            ),
+        ],
+        elevator_pitch_with_justification=ElevatorPitchWithJustification(
+            explanation_and_justification="Heart of the movie.",
+            elevator_pitch="forbidden knowledge",
+        ),
+        conflict_type=["man vs system"],
         character_arcs=[
-            CharacterArc(
-                character_name="Neo",
-                arc_transformation_description="Discovers his true power.",
+            CharacterArcWithReasoning(
+                reasoning="Transforms from lost programmer to messianic figure.",
                 arc_transformation_label="hero's awakening",
             ),
         ],
-        themes_primary=["identity"],
-        lessons_learned=[],
         generalized_plot_overview="A hacker discovers the truth.",
     )
 
@@ -81,7 +92,8 @@ class TestBuildPlotAnalysisUserPrompt:
         result = build_plot_analysis_user_prompt(movie, None, None)
         assert "genres: Action, Sci-Fi" in result
 
-    def test_includes_plot_synopsis(self):
+    def test_includes_plot_summary_as_plot_synopsis(self):
+        """When plot_summary is provided, it's labeled as 'plot_synopsis'."""
         movie = _make_movie()
         result = build_plot_analysis_user_prompt(movie, "A detailed synopsis.", None)
         assert "plot_synopsis: A detailed synopsis." in result
@@ -91,20 +103,33 @@ class TestBuildPlotAnalysisUserPrompt:
         result = build_plot_analysis_user_prompt(movie, None, None)
         assert "merged_keywords: hacker, simulation" in result
 
-    def test_includes_review_insights_brief(self):
+    def test_includes_thematic_observations(self):
+        """Third parameter is thematic_observations (renamed from review_insights_brief)."""
         movie = _make_movie()
         result = build_plot_analysis_user_prompt(movie, None, "Critics praised depth.")
-        assert "review_insights_brief: Critics praised depth." in result
+        assert "thematic_observations:" in result
+        assert "Critics praised depth." in result
 
-    def test_omits_none_plot_synopsis(self):
-        movie = _make_movie()
+    def test_absent_plot_signals_not_available(self):
+        """When no plot data at all, prompt includes 'plot_synopsis: not available'."""
+        movie = _make_movie(plot_synopses=[], plot_summaries=[], overview="")
         result = build_plot_analysis_user_prompt(movie, None, None)
-        assert "plot_synopsis" not in result
+        assert "plot_synopsis: not available" in result
 
-    def test_omits_none_review_insights(self):
+    def test_absent_thematic_observations_signals_not_available(self):
+        """When thematic_observations is None, prompt includes 'not available'."""
         movie = _make_movie()
         result = build_plot_analysis_user_prompt(movie, "synopsis", None)
-        assert "review_insights_brief" not in result
+        assert "thematic_observations: not available" in result
+
+    def test_uses_plot_fallback_when_no_plot_summary(self):
+        """When plot_summary is None, uses best_plot_fallback with 'plot_text' label."""
+        movie = _make_movie(
+            plot_synopses=["A long synopsis that is definitely more than a few words for fallback."],
+        )
+        result = build_plot_analysis_user_prompt(movie, None, None)
+        assert "plot_text:" in result
+        assert "A long synopsis" in result
 
     def test_omits_empty_genres(self):
         movie = _make_movie(genres=[])
@@ -118,11 +143,9 @@ class TestBuildPlotAnalysisUserPrompt:
 
     def test_minimal_inputs(self):
         """Only title present; all other fields None/empty."""
-        movie = _make_movie(genres=[], plot_keywords=[])
+        movie = _make_movie(genres=[], plot_keywords=[], plot_synopses=[], plot_summaries=[], overview="")
         result = build_plot_analysis_user_prompt(movie, None, None)
         assert "title:" in result
-        lines = [l for l in result.split("\n") if l.strip()]
-        assert len(lines) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -136,65 +159,51 @@ class TestGeneratePlotAnalysis:
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            parsed, token_usage = await generate_plot_analysis(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            parsed, token_usage = await generate_plot_analysis(movie)
 
         assert parsed is expected
         assert isinstance(token_usage, TokenUsage)
         assert token_usage.input_tokens == 100
         assert token_usage.output_tokens == 50
 
-    async def test_passes_provider_and_model_to_router(self):
+    async def test_uses_hardcoded_production_config(self):
+        """Generator uses hardcoded gpt-5-mini with PlotAnalysisWithJustificationsOutput."""
+        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_plot_analysis(movie)
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["model"] == "gpt-5-mini"
+        assert call_kwargs["response_format"] is PlotAnalysisWithJustificationsOutput
+        assert call_kwargs["reasoning_effort"] == "minimal"
+
+    async def test_token_usage_records_model(self):
+        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            _, token_usage = await generate_plot_analysis(movie)
+
+        assert token_usage.model == "gpt-5-mini"
+
+    async def test_passes_plot_summary_and_thematic_observations(self):
+        """Optional params are forwarded to the prompt builder."""
         mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
             await generate_plot_analysis(
-                movie, provider=LLMProvider.GEMINI, model="gemini-2.5-flash",
+                movie,
+                plot_summary="A plot summary.",
+                thematic_observations="Themes of identity.",
             )
 
+        # The prompt should contain these values
         call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["provider"] == LLMProvider.GEMINI
-        assert call_kwargs["model"] == "gemini-2.5-flash"
-        assert call_kwargs["response_format"] is PlotAnalysisOutput
-
-    async def test_no_default_reasoning_effort_injected(self):
-        """No default reasoning_effort is injected when caller doesn't provide one."""
-        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
-        movie = _make_movie()
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_analysis(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
-
-        call_kwargs = mock_fn.call_args[1]
-        assert "reasoning_effort" not in call_kwargs
-
-    async def test_override_replaces_default_kwarg(self):
-        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
-        movie = _make_movie()
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_analysis(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                reasoning_effort="medium",
-            )
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["reasoning_effort"] == "medium"
-
-    async def test_token_usage_records_caller_model_string(self):
-        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
-        movie = _make_movie()
-
-        with patch(_LLM_PATCH, mock_fn):
-            _, token_usage = await generate_plot_analysis(
-                movie, provider=LLMProvider.GEMINI, model="gemini-2.5-flash",
-            )
-
-        assert token_usage.model == "gemini-2.5-flash"
+        assert "A plot summary." in call_kwargs["user_prompt"]
+        assert "Themes of identity." in call_kwargs["user_prompt"]
 
 
 # ---------------------------------------------------------------------------
@@ -208,9 +217,7 @@ class TestGeneratePlotAnalysisErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_plot_analysis(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_plot_analysis(movie)
 
         assert exc_info.value.generation_type == GENERATION_TYPE
         assert exc_info.value.title == "Test Movie (2020)"
@@ -221,9 +228,7 @@ class TestGeneratePlotAnalysisErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationEmptyResponseError) as exc_info:
-                await generate_plot_analysis(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_plot_analysis(movie)
 
         assert exc_info.value.generation_type == GENERATION_TYPE
 
@@ -234,9 +239,7 @@ class TestGeneratePlotAnalysisErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_plot_analysis(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_plot_analysis(movie)
 
         assert exc_info.value.__cause__ is original
 
@@ -247,50 +250,18 @@ class TestGeneratePlotAnalysisErrors:
 
 class TestPlotAnalysisPromptUsesCorrectKeywordLabel:
     def test_prompt_uses_merged_keywords_label(self):
-        """The prompt label for keywords is 'merged_keywords', not 'plot_keywords'.
-
-        build_plot_analysis_user_prompt passes `merged_keywords=movie.merged_keywords()`
-        to build_user_prompt, so the label in the output is 'merged_keywords'.
-        """
+        """The prompt label for keywords is 'merged_keywords', not 'plot_keywords'."""
         movie = _make_movie(plot_keywords=["hacker", "simulation"])
         result = build_plot_analysis_user_prompt(movie, None, None)
         assert "merged_keywords:" in result
         assert "hacker" in result
         assert "simulation" in result
 
-
-# ---------------------------------------------------------------------------
-# Tests: system_prompt and response_format override
-# ---------------------------------------------------------------------------
-
-class TestPlotAnalysisOverrides:
-    async def test_custom_system_prompt_forwarded(self):
-        """A custom system_prompt is forwarded to the LLM call."""
-        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
-        movie = _make_movie()
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_analysis(
-                movie, system_prompt="CUSTOM_PROMPT",
-                provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
-
-    async def test_custom_response_format_forwarded(self):
-        """A custom response_format is forwarded to the LLM call."""
-        from movie_ingestion.metadata_generation.schemas import PlotAnalysisWithJustificationsOutput
-
-        mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
-        movie = _make_movie()
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_plot_analysis(
-                movie,
-                response_format=PlotAnalysisWithJustificationsOutput,
-                provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["response_format"] is PlotAnalysisWithJustificationsOutput
+    def test_no_provider_model_params(self):
+        """generate_plot_analysis does not accept provider or model parameters."""
+        import inspect
+        sig = inspect.signature(generate_plot_analysis)
+        assert "provider" not in sig.parameters
+        assert "model" not in sig.parameters
+        assert "system_prompt" not in sig.parameters
+        assert "response_format" not in sig.parameters

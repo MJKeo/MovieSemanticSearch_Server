@@ -137,10 +137,13 @@ class TestProcessingSummary:
 class TestSchemaByType:
     """Tests for SCHEMA_BY_TYPE registry."""
 
-    def test_includes_both_types(self) -> None:
-        """SCHEMA_BY_TYPE has entries for both PLOT_EVENTS and RECEPTION."""
+    def test_includes_all_registered_types(self) -> None:
+        """SCHEMA_BY_TYPE has entries for all 5 registered types."""
         assert MetadataType.PLOT_EVENTS in SCHEMA_BY_TYPE
         assert MetadataType.RECEPTION in SCHEMA_BY_TYPE
+        assert MetadataType.PLOT_ANALYSIS in SCHEMA_BY_TYPE
+        assert MetadataType.PRODUCTION_KEYWORDS in SCHEMA_BY_TYPE
+        assert MetadataType.VIEWER_EXPERIENCE in SCHEMA_BY_TYPE
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +412,7 @@ class TestProcessResultsReception:
 
         content = json.dumps({"some_field": "value"})
         result = {
-            "custom_id": "narrative_techniques_1",
+            "custom_id": "watch_context_1",
             "response": {
                 "status_code": 200,
                 "body": {

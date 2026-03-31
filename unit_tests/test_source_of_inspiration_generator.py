@@ -69,16 +69,16 @@ class TestBuildSourceOfInspirationUserPrompt:
         assert "hacker" in result
         assert "cyberpunk" in result
 
-    def test_includes_review_insights_brief(self):
+    def test_includes_source_material_hint(self):
         movie = _make_movie()
         result = build_source_of_inspiration_user_prompt(movie, "Critics noted source material.")
-        assert "review_insights_brief: Critics noted source material." in result
+        assert "source_material_hint: Critics noted source material." in result
 
     def test_omits_none_fields(self):
         movie = _make_movie(plot_keywords=[], overall_keywords=[])
         result = build_source_of_inspiration_user_prompt(movie, None)
         assert "merged_keywords" not in result
-        assert "review_insights_brief" not in result
+        assert "source_material_hint" not in result
 
     def test_does_not_accept_plot_synopsis_argument(self):
         """plot_synopsis was removed per ADR-033 — passing it should raise TypeError."""

@@ -12,18 +12,23 @@ Plot detail anchors the model on narrative events rather than
 experiential attributes.
 
 Inputs:
-    - movie (MovieInputData): raw fields for title, genres, keywords, maturity
-    - review_insights_brief: from Wave 1 reception output (may be None)
+    - movie (MovieInputData): raw fields for title, overall_keywords, maturity
+    - genre_signatures: LLM-refined genre phrases from plot_analysis (Wave 2).
+      Falls back to raw movie.genres when unavailable.
+    - emotional_observations: from Wave 1 reception extraction zone (may be None)
+    - craft_observations: from Wave 1 reception extraction zone (may be None)
+    - thematic_observations: from Wave 1 reception extraction zone (may be None)
 
 Removed inputs (vs current system):
     - overview: no plot info in watch context
-    - plot_keywords / overall_keywords as separate inputs: merged via
-      movie.merged_keywords()
+    - plot_keywords: not relevant to viewing occasions
+    - merged_keywords: replaced by overall_keywords only
+    - review_insights_brief: replaced by individual observation fields
     - reception_summary / audience_reception_attributes / featured_reviews:
-      subsumed by review_insights_brief
+      subsumed by individual observation fields
 
-Skip condition: requires review_insights_brief OR all of (genres,
-    merged_keywords, maturity_summary). Enforced by pre_consolidation.
+Skip condition: genre_signatures OR genres >= 1. Enforced by
+    pre_consolidation. All other inputs are enrichments.
 
 Response schema: WatchContextOutput (no justifications) by default.
     WatchContextWithJustificationsOutput available for evaluation.
@@ -32,6 +37,7 @@ Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: medium
     (matching current system; will be re-evaluated).
 
 See docs/llm_metadata_generation_new_flow.md Section 5.3.
+See evaluation_data/watch_context_eval_guide.md for input contract rationale.
 """
 
 from typing import Tuple
@@ -63,7 +69,10 @@ _DEFAULT_MODEL = "gpt-5-mini"
 
 def build_watch_context_user_prompt(
     movie: MovieInputData,
-    review_insights_brief: str | None,
+    genre_signatures: list[str] | None = None,
+    emotional_observations: str | None = None,
+    craft_observations: str | None = None,
+    thematic_observations: str | None = None,
 ) -> str:
     """Build the user prompt for watch_context generation from a movie's fields.
 
@@ -71,23 +80,36 @@ def build_watch_context_user_prompt(
     prompt construction logic stays in one place.
 
     CRITICAL: No plot information is included. Watch context operates on
-    experiential signals only (review insights, genres, keywords, maturity).
+    experiential signals only (observations, genres, keywords, maturity).
+
+    Genre input uses genre_signatures (LLM-refined from plot_analysis) when
+    available, falling back to raw genres. Primary observation fields use
+    "not available" when absent so the model sees explicit absence signals.
 
     Inputs are labeled for the LLM to match the SYSTEM_PROMPT's INPUTS
-    section. None values and empty lists are skipped by build_user_prompt.
+    section. Secondary inputs (overall_keywords, maturity_summary) are
+    omitted when empty.
     """
+    # Genre input: prefer genre_signatures, fall back to raw genres
+    genre_input = genre_signatures if genre_signatures else (movie.genres or None)
+
     return build_user_prompt(
         title=movie.title_with_year(),
-        genres=movie.genres or None,
-        merged_keywords=movie.merged_keywords() or None,
+        genre_signatures=genre_input,
+        overall_keywords=movie.overall_keywords or None,
         maturity_summary=movie.maturity_summary(),
-        review_insights_brief=review_insights_brief,
+        emotional_observations=emotional_observations or "not available",
+        craft_observations=craft_observations or "not available",
+        thematic_observations=thematic_observations or "not available",
     )
 
 
 async def generate_watch_context(
     movie: MovieInputData,
-    review_insights_brief: str | None = None,
+    genre_signatures: list[str] | None = None,
+    emotional_observations: str | None = None,
+    craft_observations: str | None = None,
+    thematic_observations: str | None = None,
     provider: LLMProvider = _DEFAULT_PROVIDER,
     model: str = _DEFAULT_MODEL,
     system_prompt: str = SYSTEM_PROMPT,
@@ -96,9 +118,10 @@ async def generate_watch_context(
 ) -> Tuple[WatchContextOutput, TokenUsage]:
     """Generate watch context metadata for a single movie.
 
-    Builds the user prompt from the movie's experiential fields plus the
-    Wave 1 review_insights_brief, calls the specified LLM provider with
-    structured output, and returns the parsed result alongside token usage.
+    Builds the user prompt from the movie's experiential fields plus
+    Wave 1 observation fields and Wave 2 genre_signatures, calls the
+    specified LLM provider with structured output, and returns the
+    parsed result alongside token usage.
 
     No plot_synopsis parameter — watch context deliberately receives zero
     plot information (Decision 2 in the redesigned flow spec).
@@ -109,12 +132,17 @@ async def generate_watch_context(
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        review_insights_brief: Dense observation paragraph from Wave 1
-            reception. May be None if reception failed or was skipped.
+        genre_signatures: LLM-refined genre phrases from plot_analysis.
+            Falls back to raw movie.genres when None.
+        emotional_observations: Emotional tone/mood observations from
+            Wave 1 reception extraction zone. May be None.
+        craft_observations: Performance/cinematography/craft observations
+            from Wave 1 reception extraction zone. May be None.
+        thematic_observations: Theme/meaning observations from Wave 1
+            reception extraction zone. May be None.
         provider: Which LLM backend to use. Defaults to OPENAI.
         model: Model identifier. Defaults to "gpt-5-mini".
         **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
-            (reasoning_effort="medium").
 
     Returns:
         Tuple of (WatchContextOutput, TokenUsage).
@@ -123,7 +151,10 @@ async def generate_watch_context(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
-    user_prompt = build_watch_context_user_prompt(movie, review_insights_brief)
+    user_prompt = build_watch_context_user_prompt(
+        movie, genre_signatures, emotional_observations,
+        craft_observations, thematic_observations,
+    )
     title_with_year = movie.title_with_year()
 
     try:
