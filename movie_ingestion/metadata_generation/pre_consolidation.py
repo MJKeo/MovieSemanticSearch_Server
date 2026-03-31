@@ -108,9 +108,10 @@ _MIN_VIEWER_COMBINED_OBSERVATIONS_STANDALONE_CHARS = 280
 # temporal structure, POV, information control, and arcs.
 _MIN_NT_PLOT_FALLBACK_STANDALONE_CHARS = 500
 # Tier 3: craft_observations standalone — reviewers directly describe
-# structural craft. At 450+ chars, content is consistently technique-focused
-# rather than production-quality commentary.
-_MIN_NT_CRAFT_OBSERVATIONS_STANDALONE_CHARS = 450
+# structural craft. At 400+ chars, evaluation showed quality holds vs the
+# 450-549 range (craft_threshold_edge bucket scored 3.96-4.21 across
+# candidates). Lowered from 450 to gain ~6,600 additional movies.
+_MIN_NT_CRAFT_OBSERVATIONS_STANDALONE_CHARS = 400
 # Tier 4: combined moderate plot + moderate craft. Neither alone is sufficient
 # but together they provide enough for the LLM to triangulate technique labels.
 _MIN_NT_PLOT_FALLBACK_COMBINED_CHARS = 300

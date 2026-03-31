@@ -1,6 +1,12 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Align narrative_techniques bucket metadata with the actual evaluation rubric
+Files: `ingestion_data/narrative_techniques_eval_buckets.json`
+Why: The bucket definition still listed the older narrative-techniques evaluation axes, while the real per-movie `_evaluation.json` files use the newer 7-axis rubric.
+Approach: Replaced the stale `evaluation_axes` array with the actual axis names present in the current evaluation artifacts (`groundedness`, `technique_coverage`, `technique_abstraction`, `section_discipline`, `retrieval_alignment`, `term_quality`, `holistic`) so the bucket spec and evaluation outputs now describe the same rubric.
+Design context: Keeps the evaluation setup self-consistent with the artifacts analyzed in `movie_ingestion/metadata_generation/evaluation_data/`.
+
 ## Viewer experience Round 3: consolidated eval guide with all candidates
 Files: `ingestion_data/viewer_experience_eval_guide.md`, `movie_ingestion/metadata_generation/metadata_generation_playground.ipynb`, `movie_ingestion/metadata_generation/schemas.py`, `movie_ingestion/metadata_generation/prompts/viewer_experience.py`
 Why: Round 3 tests four independent axes against the Round 2 production winner baseline.
@@ -474,3 +480,28 @@ Apply final production configuration for viewer_experience based on Round 3 eval
 Files: `movie_ingestion/imdb_scraping/http_client.py`, `movie_ingestion/imdb_scraping/parsers.py`
 Why: `plots(first: 10)` was truncating synopses — IMDB returns outlines/summaries before synopses, so the synopsis (often the 11th+ entry) was silently dropped. Same risk applied to credits and other fields.
 Approach: Removed artificial limits on fields used for lexical search (credits, company, composers — all set to 100,000). `plots` set to 100,000 so synopses are always reached; parser still extracts first synopsis and first 3 summaries. `interests` raised to 100 (IMDB curates these). `keywords(50)` and `reviews(10)` unchanged — keywords are vote-ordered, reviews are engagement-ordered. Parser `[:8]` cap on interests removed. Also generated `ingestion_data/movies_no_synopsis.json` — 86,622 of 109,277 movies lack a synopsis (expected, since IMDB synopses are user-contributed).
+
+## Lower narrative_techniques craft-standalone threshold from 450 to 400
+Files: `movie_ingestion/metadata_generation/pre_consolidation.py`
+Why: Evaluation data from the `craft_threshold_edge` bucket (craft 400-449 chars) showed quality comparable to `craft_standalone_floor` (450-549). Best candidate scored 4.21, worst 3.95 — all above the 3.5 viability floor.
+Approach: Changed `_MIN_NT_CRAFT_OBSERVATIONS_STANDALONE_CHARS` from 450 to 400. Gains ~6,600 additional movies (~89% coverage vs ~82.5%).
+
+## Narrative techniques prompt revision based on Round 1 evaluation
+Files: `movie_ingestion/metadata_generation/prompts/narrative_techniques.py`
+
+### Intent
+Fix four prompt-level failure patterns identified in Round 1 evaluation, using general evidence principles that scale across data richness levels.
+
+### Key Decisions
+- **Evidence discipline hierarchy** (direct → concrete inference → genre-level) replaces mode-specific "WHEN PLOT DATA IS ABSENT" block and cross-section tag counting ("3-6 total tags"). Modeled on viewer_experience.py pattern. Naturally produces sparse output on thin inputs without separate craft-only rules.
+- **Reusability test with examples** added to STYLE RULES. Uses 4 good/bad pairs drawn from actual Round 1 nano failures (e.g., "save-the-world final battle" ✗ vs "ticking clock deadline" ✓). Addresses content-like labels problem.
+- **FIRST: gates** added to audience_character_perception (requires reviewer/craft evidence — plot alone insufficient), information_control (requires specific twist/reveal described in inputs), and thematic_delivery (requires delivery mechanism, not just theme topic). Modeled on plot_analysis.py's character_arcs gate pattern.
+- **Removed "WHEN PLOT DATA IS ABSENT" block entirely.** Its function is now served by the general evidence hierarchy and per-section gates.
+
+### Planning Context
+Changes designed per user guidance: general principles over mode-specific rules, concrete examples over abstract instructions, per-section evidence gates over cross-section counting. Round 2 evaluation (Q-R2-1, Q-R2-2) will validate whether these changes fix the overfill/groundedness problems without regressing on rich inputs.
+
+## Narrative techniques eval guide updated with Round 1 results and Round 2 questions
+Files: `ingestion_data/narrative_techniques_eval_guide.md`
+Why: Preserve Round 1 learnings and decisions, define Round 2 evaluation questions.
+Approach: Added three sections — Round 1 Learnings (key findings, failure patterns, canary movies), Decided From Round 1 (Q2/Q3/Q5/Q8/model/parametric knowledge — all settled), Round 2 Questions (7 questions: prompt fix validation, no regression, tier-split model, thematic_observations, keywords, plot_analysis overlap, craft-standalone viability).

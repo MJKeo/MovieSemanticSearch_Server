@@ -12,10 +12,10 @@ Inputs (see generator for fallback logic):
     - keywords: merged plot + overall keywords (structural tags live here)
 
 The prompt teaches the LLM about the two narrative source tiers
-(plot_synopsis vs plot_text) and the craft_observations signal. When
-only craft_observations is available (no plot), the model is instructed
-to be more conservative — leaving most sections empty and only tagging
-techniques directly described by reviewers.
+(plot_synopsis vs plot_text) and the craft_observations signal. An
+evidence discipline hierarchy ensures that every term is earned by
+input evidence, naturally producing sparse output on thin inputs
+and richer output on rich inputs without mode-specific rules.
 
 Two prompt variants exported:
     - SYSTEM_PROMPT: for NarrativeTechniquesOutput (no justification fields)
@@ -40,8 +40,27 @@ CORE GOAL
 
 GENERAL RULES
 - Every section allows an EMPTY list. Empty is the correct default when the input does not clearly evidence techniques for that section. Guessing or producing generic filler is worse than leaving a section empty.
-- When input data is sparse (short plot text, no craft observations, or both absent), most sections should be empty. Only tag techniques that are directly and clearly evidenced. A movie with thin inputs producing 3-5 total tags across all sections is typical and correct.
+- When input data is sparse, most sections should be empty. Only tag techniques with clear evidence. An empty section is always better than a section filled with guesses.
 - For non-traditional narrative content (documentaries, concert films, experimental films, anthology films, shorts), many sections will not apply. Leave them empty.
+
+EVIDENCE DISCIPLINE
+Your starting point for every section is an EMPTY list. Every term must be EARNED by input evidence. \
+If you cannot point to the specific input line that justifies a term, do not include it.
+
+Evidence strength hierarchy (apply to every term in every section):
+1. **Direct evidence** — the input explicitly names or describes a technique \
+(e.g., craft_observations says "nonlinear storytelling", or plot_synopsis shows a framed story). \
+High confidence. Use freely.
+2. **Concrete inference** — a specific plot event or craft detail logically implies a technique \
+(e.g., plot describes events out of chronological order → "non-linear timeline"). \
+Moderate confidence. Use when the inference is unambiguous.
+3. **Genre-level inference** — what is typically true of movies in this genre. LOW confidence. \
+Only use to REFINE a term already supported by level 1-2 evidence. \
+Never populate a section using genre alone.
+
+A section with 0 terms is correct when the inputs contain no level 1-2 evidence for it. \
+A section with hallucinated terms pollutes search results across 100K+ movies. \
+Accuracy over completeness, always.
 
 CONFIDENCE RULE (strict)
 - Include only techniques you are **strongly confident** are present based on the provided input.
@@ -53,6 +72,16 @@ STYLE RULES
 - Tags must be **query-friendly**: short (usually 1-6 words), plain language, no full sentences, no punctuation-heavy phrasing.
 - Use conventional technique terms when they are real technique labels (e.g., "Chekhov's gun", "dramatic irony", "unreliable narrator"). Do **not** "generalize away" established technique names.
 - Convert plot-event specifics into technique abstractions (e.g., "ticking clock", "reveal-driven mystery", "midpoint reversal").
+- **Reusability test**: a good technique tag could apply to ANY movie that uses the same storytelling device. \
+If the tag only makes sense for this specific movie's plot, it is content, not technique. Examples:
+  - "ticking clock deadline" → reusable technique ✓
+  - "save-the-world final battle" → plot content specific to one movie ✗
+  - "flashback-driven structure" → reusable technique ✓
+  - "chosen-one fantasy rescue" → plot content ✗
+  - "epistolary format" → reusable technique ✓
+  - "single-conceit annuity scheme" → plot content ✗
+  - "montage passage of time" → reusable technique ✓
+  - "holiday travel episodic comedy" → content/genre description ✗
 
 ADDITIONAL CONSTRAINTS
 - Do **not** order items by prominence; list them in any sensible order.
@@ -77,12 +106,6 @@ HOW TO USE THE INPUTS
 - Tertiary: title context (period context, remake indicators).
 - When both plot text and craft_observations are present, use them together -- plot reveals structure you can name, reviews reveal techniques the plot doesn't make explicit.
 - Do not supplement with your own knowledge of this film. Only describe what is evident from the provided data.
-
-WHEN PLOT DATA IS ABSENT (craft_observations only)
-- Base your analysis entirely on what reviewers describe. Do not infer plot structure you cannot see.
-- Most sections will be empty. Only populate sections where craft_observations directly names or describes a technique (e.g., reviewer says "nonlinear storytelling" → narrative_delivery; reviewer says "the twist was obvious" → information_control).
-- Sections that require plot knowledge to ground (information_control, conflict_stakes_design, thematic_delivery, character_arcs) should almost always be empty unless the reviewer explicitly describes the relevant technique.
-- 3-6 total tags is a good target for craft-only movies; do not pad sections to fill them.
 
 """
 
@@ -159,17 +182,28 @@ CATEGORY GUIDANCE (what belongs where — every section allows an empty list)
 
 7) audience_character_perception
 - 0-3 phrases
-- The deliberate character positioning that shapes how the audience reads, judges, and feels about key characters. This is a craft choice by writers, directors, and performers — they design characters to provoke specific audience reactions (sympathy, hatred, moral ambivalence, frustration).
+- FIRST: determine whether the inputs contain direct evidence of how the audience is positioned to perceive characters. \
+This requires reviewer commentary describing character design choices, audience reactions, or performance-as-craft \
+(e.g., craft_observations saying "the villain steals every scene", "the audience roots for the antihero"). \
+Plot events and genre conventions alone are NOT sufficient — they describe what a character does, not how the audience is \
+positioned to perceive them. If no reviewer/craft evidence exists for character positioning, output an empty list.
+- The deliberate character positioning that shapes how the audience reads, judges, and feels about key characters. \
+This is a craft choice by writers, directors, and performers.
 - Tag the intended audience response to the character type, not what other characters think.
-- Examples: "lovable rogue", "love-to-hate antagonist", "despicable villain", "frustrating decision-making protagonist", "misunderstood outsider", "morally gray lead", "sympathetic monster".
+- Examples: "lovable rogue", "love-to-hate antagonist", "despicable villain", "frustrating decision-making protagonist", \
+"misunderstood outsider", "morally gray lead", "sympathetic monster".
 - Must be movie-agnostic; avoid role specifics unless part of the label.
-- Only include when the input (plot text or craft observations) clearly conveys how a character is positioned for audience reception. Empty when character positioning is not visible.
 
 8) information_control
 - 0-2 phrases
+- FIRST: determine whether the inputs describe a SPECIFIC twist, reveal, misdirection, or information asymmetry. \
+The technique must be concretely described — e.g., plot_synopsis reveals a late twist, or craft_observations says \
+"the twist was predictable" or "the audience knows more than the character". \
+Genre conventions (e.g., "mystery" implies twists) are NOT sufficient to populate this section. \
+If no specific information control technique is described, output an empty list.
 - How the story controls what the audience knows and when to create surprise, suspense, or misdirection.
-- Examples: "plot twist / reversal", "the reveal", "dramatic irony", "red herrings", "Chekhov's gun", "slow-burn reveal", "misdirection editing".
-- Only include if strongly evidenced (e.g., a twist is explicit in synopsis/reviews). Empty when information control techniques are not clearly described.
+- Examples: "plot twist / reversal", "the reveal", "dramatic irony", "red herrings", "Chekhov's gun", \
+"slow-burn reveal", "misdirection editing".
 
 9) conflict_stakes_design
 - 0-2 phrases
@@ -179,12 +213,17 @@ CATEGORY GUIDANCE (what belongs where — every section allows an empty list)
 
 10) thematic_delivery
 - 0-2 phrases
-- How the story communicates its deeper meaning through choices, consequences, and subtext (without directly preaching it).
-- Examples: "moral argument embedded in choices" (theme shown through decisions), "contrast pairs" (two characters represent \
-opposing values), "repeated dilemma" (same ethical question in new forms), "symbolic consequences" (theme reflected by \
-outcomes), "subtextual scenes" (characters avoid saying the real thing).
+- FIRST: determine whether the inputs describe HOW a theme is communicated, not just WHAT the theme is. \
+A reviewer saying "explores faith versus skepticism" describes a theme topic (NOT this section). \
+A reviewer saying "uses parallel storylines to contrast faith and skepticism" describes a delivery mechanism (this section). \
+If the inputs only mention theme topics without describing the storytelling mechanism used to deliver them, \
+output an empty list.
+- How the story communicates its deeper meaning through choices, consequences, and subtext \
+(without directly preaching it).
+- Examples: "moral argument embedded in choices" (theme shown through decisions), "contrast pairs" (two characters \
+represent opposing values), "repeated dilemma" (same ethical question in new forms), "symbolic consequences" \
+(theme reflected by outcomes), "subtextual scenes" (characters avoid saying the real thing).
 - Keep it about delivery mechanics, not the theme statement itself.
-- Empty when thematic delivery mechanisms are not evidenced (requires plot knowledge to ground).
 
 11) meta_techniques (self awareness)
 - 0-2 phrases
