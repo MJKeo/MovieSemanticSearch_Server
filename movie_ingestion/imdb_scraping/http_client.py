@@ -77,7 +77,7 @@ query MovieData($id: ID!) {
     ratingsSummary { aggregateRating voteCount }
     metacritic { metascore { score } }
     titleGenres { genres { genre { text } } }
-    interests(first: 8) { edges { node { primaryText { text } } } }
+    interests(first: 100) { edges { node { primaryText { text } } } }
     countriesOfOrigin { countries { text } }
     filmingLocations(first: 10) { edges { node { text } } }
     spokenLanguages { spokenLanguages { text } }
@@ -86,10 +86,10 @@ query MovieData($id: ID!) {
       overall { medium { value { plaidHtml } } }
       themes { label { value } sentiment }
     }
-    companyCredits(first: 10, filter: { categories: ["production"] }) {
+    companyCredits(first: 100000, filter: { categories: ["production"] }) {
       edges { node { company { companyText { text } } } }
     }
-    plots(first: 10) {
+    plots(first: 100000) {
       edges { node { plotText { plainText } plotType } }
     }
     keywords(first: 50) {
@@ -101,13 +101,13 @@ query MovieData($id: ID!) {
       }
     }
     parentsGuide { categories { category { text } severity { text } } }
-    directors: credits(first: 10, filter: { categories: ["director"] }) {
+    directors: credits(first: 100000, filter: { categories: ["director"] }) {
       edges { node { name { nameText { text } } } }
     }
-    writers: credits(first: 10, filter: { categories: ["writer"] }) {
+    writers: credits(first: 100000, filter: { categories: ["writer"] }) {
       edges { node { name { nameText { text } } } }
     }
-    cast: credits(first: 50, filter: { categories: ["actor", "actress"] }) {
+    cast: credits(first: 100000, filter: { categories: ["actor", "actress"] }) {
       edges {
         node {
           name { nameText { text } }
@@ -115,10 +115,10 @@ query MovieData($id: ID!) {
         }
       }
     }
-    producers: credits(first: 10, filter: { categories: ["producer"] }) {
+    producers: credits(first: 100000, filter: { categories: ["producer"] }) {
       edges { node { name { nameText { text } } } }
     }
-    composers: credits(first: 5, filter: { categories: ["composer"] }) {
+    composers: credits(first: 100000, filter: { categories: ["composer"] }) {
       edges { node { name { nameText { text } } } }
     }
     reviews(first: 10) {

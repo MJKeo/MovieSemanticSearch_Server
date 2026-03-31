@@ -373,6 +373,20 @@ the corresponding tests are updated.
 **When:** When updating viewer_experience/schema tests (see above TODO).
 **See:** movie_ingestion/metadata_generation/schemas.py (lines 89-104, 494-509)
 
+## Re-scrape movies to pick up data truncated by old GraphQL limits
+**Context:** The IMDB GraphQL query previously used `plots(first: 10)` which
+silently dropped synopses (typically the 11th+ entry). Credits were capped at
+10-50, potentially losing cast/producers/writers for large productions. The
+query limits have been fixed but all ~109K existing scraped JSONs were fetched
+with the old limits. `ingestion_data/movies_no_synopsis.json` lists 86,622
+movies without synopses — some subset of these may now have synopses available.
+A targeted re-scrape of at least the synopsis-missing movies would recover
+any synopses that were truncated. Full re-scrape would also recover truncated
+credits for lexical search completeness.
+**When:** Before generating production embeddings (synopses feed plot_events).
+**See:** movie_ingestion/imdb_scraping/http_client.py (updated limits),
+ingestion_data/movies_no_synopsis.json (86,622 movies without synopses)
+
 ## Evaluate merging production_keywords and source_of_inspiration into one generation
 **Context:** Significant output overlap between these two generators — both produce source
 material and production medium terms for the same production vector space. production_keywords

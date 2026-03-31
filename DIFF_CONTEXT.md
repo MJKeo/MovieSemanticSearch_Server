@@ -469,3 +469,8 @@ Apply final production configuration for viewer_experience based on Round 3 eval
 - Pre_consolidation eligibility function signature changed (removed movie_input and plot_summary params) — unit tests for _check_viewer_experience will need updating.
 - Generator function signature changed (removed plot_summary, character_arcs params) — callers and tests need updating.
 - Prompt no longer references merged_keywords or character_arcs — existing evaluation data was generated with the old prompt but production uses the new one.
+
+## IMDB GraphQL query limit increases to prevent data truncation
+Files: `movie_ingestion/imdb_scraping/http_client.py`, `movie_ingestion/imdb_scraping/parsers.py`
+Why: `plots(first: 10)` was truncating synopses — IMDB returns outlines/summaries before synopses, so the synopsis (often the 11th+ entry) was silently dropped. Same risk applied to credits and other fields.
+Approach: Removed artificial limits on fields used for lexical search (credits, company, composers — all set to 100,000). `plots` set to 100,000 so synopses are always reached; parser still extracts first synopsis and first 3 summaries. `interests` raised to 100 (IMDB curates these). `keywords(50)` and `reviews(10)` unchanged — keywords are vote-ordered, reviews are engagement-ordered. Parser `[:8]` cap on interests removed. Also generated `ingestion_data/movies_no_synopsis.json` — 86,622 of 109,277 movies lack a synopsis (expected, since IMDB synopses are user-contributed).

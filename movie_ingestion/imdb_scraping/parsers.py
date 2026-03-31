@@ -125,7 +125,7 @@ def _extract_synopses_and_summaries(
     result_synopses = [synopses[0]] if synopses else []
 
     # Summaries: always extracted independently. Skip first entry
-    # (duplicates the overview from the main page), take next 3.
+    # (duplicates the overview from the main page), take next 10.
     summaries_excluding_overview = summaries[1:] if summaries else []
     result_summaries = summaries_excluding_overview[:3]
 
@@ -279,9 +279,9 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
 
     # -- Simple list extractions ---------------------------------------------
 
-    # Overall keywords (interest-based, from ATF — capped at 8)
+    # Overall keywords (interest-based, from ATF — IMDB curates these)
     interest_edges = _safe_get(title_data, ["interests", "edges"]) or []
-    overall_keywords = _extract_edge_texts(interest_edges, ["primaryText", "text"])[:8]
+    overall_keywords = _extract_edge_texts(interest_edges, ["primaryText", "text"])
 
     # Genres
     genre_items = _safe_get(title_data, ["titleGenres", "genres"]) or []
