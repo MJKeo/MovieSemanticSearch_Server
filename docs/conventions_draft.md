@@ -80,7 +80,17 @@ patterns observed in the session.
 ## Evidence discipline hierarchy in generation prompts
 **Observed:** viewer_experience prompt introduced a 3-tier evidence hierarchy (direct evidence → concrete inference → genre-level inference) that calibrates model confidence without mode-specific rules. narrative_techniques adopted the same pattern in this session to replace a "WHEN PLOT DATA IS ABSENT" block. The hierarchy naturally produces sparse output on thin inputs and rich output on rich inputs — eliminating the need for separate craft-only or plot-only instructions. User explicitly preferred this general-principle approach over mode-specific rules.
 **Proposed convention:** Generation prompts should include a 3-tier evidence discipline hierarchy (direct evidence, concrete inference, genre-level inference) rather than mode-specific sparsity rules (e.g., "when craft-only, produce 3-6 tags"). The hierarchy is a general principle that scales across input richness levels. Genre-level inference should only refine terms already supported by higher tiers, never populate a section alone.
-**Sessions observed:** 2
+**Sessions observed:** 3
+
+## Zero-floor term ranges in generation schema field descriptions
+**Observed:** Watch context prompt had nonzero term floors (4-8, 1-4, 1-4, 3-6) that forced the model to fabricate terms on sparse inputs. User explicitly stated all term array ranges must be 0-N. Schema Field descriptions updated to say "0-8", "0-4", etc. with "Empty when inputs are too sparse for confident generation."
+**Proposed convention:** All `terms` list fields in generation schemas must allow 0 entries (0-N range). Field descriptions should explicitly state the max and that empty is valid. Never set nonzero minimums — sparse inputs should produce fewer terms or empty sections, not hallucinated filler. This applies to all generation types, not just watch_context.
+**Sessions observed:** 1
+
+## Cross-section term overlap is acceptable in generation schemas — only within-section uniqueness matters
+**Observed:** During narrative_techniques R2 evaluation analysis, the user explicitly said "I don't care too much about duplication across sections. It helps semantic retrieval." The evaluation rubric and system prompt were both updated: term_quality axis now only penalizes within-section near-duplicates, and the prompt anti-duplication rule was narrowed to within-section scope. A term like "redemption arc" in both narrative_archetype and character_arcs reinforces the embedding signal.
+**Proposed convention:** In generation prompts and evaluation rubrics, only enforce uniqueness within each section (no near-synonyms as section neighbors). Cross-section overlap is acceptable and beneficial for embedding quality — the same concept may appear in different sections when it serves different analytical purposes. This applies to all metadata types with multi-section output schemas.
+**Sessions observed:** 1
 
 ## Align generation prompt categories with search-side vector space definitions
 **Observed:** During production_keywords prompt review, the generation prompt defined "production relevancy" via five abstract questions while the search-side subquery prompt (PRODUCTION_SYSTEM_PROMPT) had a concrete, well-tested list of what the production vector space contains (decades, countries, languages, mediums, source material, process). The mismatch caused the generation prompt to exclude valid production keywords (e.g., "animation", "korean") via a blanket "not genres" rule that contradicted the search pipeline's expectations. Replacing the abstract questions with four concrete categories aligned to the search-side definitions fixed the issue.

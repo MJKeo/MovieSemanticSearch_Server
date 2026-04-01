@@ -86,8 +86,8 @@ def cmd_eligibility(
 
     1. Query movie_progress for all tmdb_ids at imdb_quality_passed status.
     2. Ensure each has a row in generated_metadata (INSERT OR IGNORE).
-    3. For movies where eligible_for_{type} IS NULL, load data in
-       chunks and run the type's eligibility checker.
+    3. Load data in chunks and run the type's eligibility checker for every
+       imdb_quality_passed movie, even if the flag was previously set.
     4. Store results as 1 (eligible) or 0 (ineligible) in generated_metadata.
     """
     config = get_config(metadata_type)
@@ -108,33 +108,16 @@ def cmd_eligibility(
     # Step 2: Ensure every movie has a generated_metadata row
     _ensure_generated_metadata_rows(db, all_tmdb_ids)
 
-    # Step 3: Find movies that haven't been evaluated yet for this type
-    unevaluated = db.execute(
-        f"""
-        SELECT tmdb_id FROM generated_metadata
-        WHERE {eligible_col} IS NULL
-          AND tmdb_id IN (
-              SELECT tmdb_id FROM movie_progress
-              WHERE status = 'imdb_quality_passed'
-          )
-        """,
-    ).fetchall()
-    unevaluated_ids = [row[0] for row in unevaluated]
-
-    if not unevaluated_ids:
-        # Print current counts even if nothing new to evaluate
-        _print_eligibility_summary(db, metadata_type)
-        db.close()
-        return
-
-    print(f"[{metadata_type}] Evaluating eligibility for {len(unevaluated_ids)} movies...")
+    # Step 3: Re-evaluate all quality-passed movies so reruns refresh the flag.
+    tmdb_ids_to_evaluate = all_tmdb_ids
+    print(f"[{metadata_type}] Evaluating eligibility for {len(tmdb_ids_to_evaluate)} movies...")
 
     # Step 4: Process in chunks to manage memory
     eligible_count = 0
     ineligible_count = 0
 
-    for chunk_start in range(0, len(unevaluated_ids), _ELIGIBILITY_CHUNK_SIZE):
-        chunk_ids = unevaluated_ids[chunk_start : chunk_start + _ELIGIBILITY_CHUNK_SIZE]
+    for chunk_start in range(0, len(tmdb_ids_to_evaluate), _ELIGIBILITY_CHUNK_SIZE):
+        chunk_ids = tmdb_ids_to_evaluate[chunk_start : chunk_start + _ELIGIBILITY_CHUNK_SIZE]
 
         # Load movie data for this chunk
         movies = load_movie_input_data(chunk_ids, tracker_db_path)
@@ -164,10 +147,10 @@ def cmd_eligibility(
         )
         db.commit()
 
-        processed = min(chunk_start + _ELIGIBILITY_CHUNK_SIZE, len(unevaluated_ids))
-        print(f"  [{metadata_type}] Processed {processed}/{len(unevaluated_ids)}...")
+        processed = min(chunk_start + _ELIGIBILITY_CHUNK_SIZE, len(tmdb_ids_to_evaluate))
+        print(f"  [{metadata_type}] Processed {processed}/{len(tmdb_ids_to_evaluate)}...")
 
-    print(f"\n[{metadata_type}] Newly evaluated: {eligible_count} eligible, {ineligible_count} ineligible.")
+    print(f"\n[{metadata_type}] Re-evaluated: {eligible_count} eligible, {ineligible_count} ineligible.")
     _print_eligibility_summary(db, metadata_type)
     db.close()
 

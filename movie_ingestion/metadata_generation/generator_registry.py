@@ -198,6 +198,54 @@ async def _viewer_experience_live_generator(movie: MovieInputData):
     )
 
 
+def _narrative_techniques_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for narrative_techniques — loads Wave 1 outputs from DB.
+
+    Delegates to _check_narrative_techniques which implements the tiered
+    narrative/craft thresholds for structural-technique extraction.
+    """
+    from .pre_consolidation import _check_narrative_techniques
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return _check_narrative_techniques(
+        w1.plot_summary,
+        w1.craft_observations,
+        movie,
+    )
+
+
+def _narrative_techniques_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for narrative_techniques — loads Wave 1 outputs and builds prompts.
+
+    Uses the production prompt path with justifications enabled.
+    """
+    from .generators.narrative_techniques import build_narrative_techniques_user_prompt
+    from .prompts.narrative_techniques import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return build_narrative_techniques_user_prompt(
+        movie,
+        w1.plot_summary,
+        w1.craft_observations,
+    ), SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+
+
+async def _narrative_techniques_live_generator(movie: MovieInputData):
+    """Async adapter for narrative_techniques — loads Wave 1 outputs and generates.
+
+    Uses the locked production config (justifications, minimal reasoning,
+    low verbosity).
+    """
+    from .generators.narrative_techniques import generate_narrative_techniques
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return await generate_narrative_techniques(
+        movie,
+        w1.plot_summary,
+        w1.craft_observations,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -216,6 +264,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         PlotEventsOutput,
         ReceptionOutput,
         PlotAnalysisWithJustificationsOutput,
+        NarrativeTechniquesWithJustificationsOutput,
         ProductionKeywordsOutput,
         ViewerExperienceWithJustificationsOutput,
     )
@@ -263,6 +312,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             eligibility_checker=_viewer_experience_eligibility_checker,
             prompt_builder=_viewer_experience_prompt_builder,
             live_generator=_viewer_experience_live_generator,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+        ),
+        MetadataType.NARRATIVE_TECHNIQUES: GeneratorConfig(
+            metadata_type=MetadataType.NARRATIVE_TECHNIQUES,
+            schema_class=NarrativeTechniquesWithJustificationsOutput,
+            eligibility_checker=_narrative_techniques_eligibility_checker,
+            prompt_builder=_narrative_techniques_prompt_builder,
+            live_generator=_narrative_techniques_live_generator,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
         ),

@@ -23,11 +23,12 @@ use keywords only when consistent with primary evidence.
 Skip condition: enforced by pre_consolidation using tiered eligibility
     (plot_summary OR fallback >= 500 OR craft >= 450 OR combined).
 
-Response schema: NarrativeTechniquesOutput (no justifications) by default.
-    NarrativeTechniquesWithJustificationsOutput available for evaluation.
+Response schema: NarrativeTechniquesWithJustificationsOutput (production).
+    Justifications improve section grounding and are discarded before
+    embedding.
 
-Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: medium
-    (matching current system; will be re-evaluated).
+Provider/model: OpenAI gpt-5-mini, reasoning_effort: minimal,
+    verbosity: low. Finalized via evaluation pipeline.
 
 See docs/llm_metadata_generation_new_flow.md Section 5.4.
 """
@@ -43,10 +44,11 @@ from movie_ingestion.metadata_generation.pre_consolidation import (
     resolve_narrative_techniques_narrative,
     _MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS,
 )
-from movie_ingestion.metadata_generation.schemas import NarrativeTechniquesOutput
+from movie_ingestion.metadata_generation.schemas import (
+    NarrativeTechniquesWithJustificationsOutput,
+)
 from movie_ingestion.metadata_generation.prompts.narrative_techniques import (
-    SYSTEM_PROMPT,
-    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,  # noqa: F401 -- exported for evaluation pipeline
+    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
 )
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
@@ -57,10 +59,11 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
 GENERATION_TYPE = MetadataType.NARRATIVE_TECHNIQUES
 
-# Production defaults -- matching current system (gpt-5-mini with medium reasoning).
-# Will be re-evaluated via the evaluation pipeline and updated to the winner.
-_DEFAULT_PROVIDER = LLMProvider.OPENAI
-_DEFAULT_MODEL = "gpt-5-mini"
+# Finalized production config — gpt-5-mini with minimal reasoning, low
+# verbosity, and justification schema. Determined via evaluation pipeline.
+_PROVIDER = LLMProvider.OPENAI
+_MODEL = "gpt-5-mini"
+_RESPONSE_FORMAT = NarrativeTechniquesWithJustificationsOutput
 
 
 def _filter_craft_observations(craft_observations: str | None) -> str | None:
@@ -139,21 +142,15 @@ async def generate_narrative_techniques(
     movie: MovieInputData,
     plot_summary: str | None = None,
     craft_observations: str | None = None,
-    provider: LLMProvider = _DEFAULT_PROVIDER,
-    model: str = _DEFAULT_MODEL,
-    system_prompt: str = SYSTEM_PROMPT,
-    response_format: type = NarrativeTechniquesOutput,
-    **kwargs,
-) -> Tuple[NarrativeTechniquesOutput, TokenUsage]:
+) -> Tuple[NarrativeTechniquesWithJustificationsOutput, TokenUsage]:
     """Generate narrative techniques metadata for a single movie.
 
     Builds the user prompt from the movie's fields plus Wave 1 outputs,
-    calls the specified LLM provider with structured output, and returns
-    the parsed result alongside token usage.
+    calls OpenAI gpt-5-mini with justification schema, and returns the
+    parsed result alongside token usage.
 
-    Defaults to OpenAI gpt-5-mini with reasoning_effort: medium (matching
-    the current system). Callers can override provider/model/kwargs to
-    test different configurations during evaluation.
+    Model configuration is finalized (gpt-5-mini, minimal reasoning,
+    low verbosity, justification schema) and not caller-configurable.
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
@@ -162,15 +159,9 @@ async def generate_narrative_techniques(
         craft_observations: Craft/structural observations from Wave 1
             reception extraction zone. May be None if reception failed
             or had no craft observations.
-        provider: Which LLM backend to use. Defaults to OPENAI.
-        model: Model identifier. Defaults to "gpt-5-mini".
-        system_prompt: System prompt to use. Defaults to SYSTEM_PROMPT.
-        response_format: Pydantic schema for structured output. Defaults
-            to NarrativeTechniquesOutput.
-        **kwargs: Provider-specific params (e.g. reasoning_effort).
 
     Returns:
-        Tuple of (NarrativeTechniquesOutput, TokenUsage).
+        Tuple of (NarrativeTechniquesWithJustificationsOutput, TokenUsage).
 
     Raises:
         MetadataGenerationError: If the LLM call raises an exception.
@@ -183,12 +174,13 @@ async def generate_narrative_techniques(
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=provider,
+            provider=_PROVIDER,
             user_prompt=user_prompt,
-            system_prompt=system_prompt,
-            response_format=response_format,
-            model=model,
-            **kwargs,
+            system_prompt=SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
+            response_format=_RESPONSE_FORMAT,
+            model=_MODEL,
+            reasoning_effort="minimal",
+            verbosity="low",
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
@@ -198,4 +190,4 @@ async def generate_narrative_techniques(
         print(f"{GENERATION_TYPE} generation returned None for '{title_with_year}'")
         raise MetadataGenerationEmptyResponseError(GENERATION_TYPE, title_with_year)
 
-    return parsed, TokenUsage(input_tokens, output_tokens, model)
+    return parsed, TokenUsage(input_tokens, output_tokens, _MODEL)

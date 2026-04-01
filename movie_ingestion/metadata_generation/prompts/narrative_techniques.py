@@ -3,6 +3,9 @@ System prompt for Narrative Techniques generation.
 
 Instructs the LLM to extract storytelling craft attributes: POV, narrative
 delivery, archetype, information control, characterization, and more.
+9 sections (down from 11): thematic_delivery removed (top hallucination
+source), meta_techniques merged into additional_narrative_devices (catchall,
+placed last so specific sections are filled first).
 
 Inputs (see generator for fallback logic):
     - title: "Title (Year)" format
@@ -36,7 +39,7 @@ describe the **cinematic narrative techniques** used in a movie.
 
 CORE GOAL
 - Produce short, tag-like phrases that help a search system retrieve movies with similar **narrative craft**.
-- Focus on *how* the story is told (POV/structure/info control/theme delivery/etc.), not what happens in plot beats.
+- Focus on *how* the story is told (POV/structure/info control/characterization/etc.), not what happens in plot beats.
 
 GENERAL RULES
 - Every section allows an EMPTY list. Empty is the correct default when the input does not clearly evidence techniques for that section. Guessing or producing generic filler is worse than leaving a section empty.
@@ -77,15 +80,11 @@ If the tag only makes sense for this specific movie's plot, it is content, not t
   - "ticking clock deadline" → reusable technique ✓
   - "save-the-world final battle" → plot content specific to one movie ✗
   - "flashback-driven structure" → reusable technique ✓
-  - "chosen-one fantasy rescue" → plot content ✗
-  - "epistolary format" → reusable technique ✓
   - "single-conceit annuity scheme" → plot content ✗
-  - "montage passage of time" → reusable technique ✓
-  - "holiday travel episodic comedy" → content/genre description ✗
 
 ADDITIONAL CONSTRAINTS
 - Do **not** order items by prominence; list them in any sensible order.
-- Avoid near-duplicates (e.g., do not include both "nonlinear timeline" and "non-linear timeline"; pick one canonical phrasing).
+- Within each section, avoid near-duplicates (e.g., do not include both "nonlinear timeline" and "non-linear timeline" in the same section; pick one canonical phrasing). A technique may appear in multiple sections when it serves different analytical purposes (e.g., "redemption arc" in both narrative_archetype and character_arcs).
 - Avoid overly generic filler (e.g., "good pacing", "interesting characters", "plot-driven").
 - Avoid evaluations (e.g., "clever symbolism", "compelling characters").
 
@@ -133,9 +132,9 @@ OUTPUT EXPECTATIONS (conceptual)
 # ---------------------------------------------------------------------------
 # Shared section descriptions (identical between variants)
 #
-# Ordered for cognitive scaffolding: easiest/most-concrete first,
-# building toward harder/more-abstract sections. This lets earlier
-# sections establish context that helps the model with later ones.
+# Ordered for cognitive scaffolding: specific/concrete sections first,
+# catchall last. This lets the model fill targeted sections before
+# depositing remaining devices into the catchall.
 # ---------------------------------------------------------------------------
 
 _SECTIONS = """\
@@ -154,33 +153,27 @@ CATEGORY GUIDANCE (what belongs where — every section allows an empty list)
 - Examples: "linear chronology", "non-linear timeline", "flashback-driven structure", "parallel timelines", "time loop structure", "reverse chronology", "time jumps montage".
 - Empty when temporal structure is not clearly evidenced in the input.
 
-3) additional_plot_devices
-- 0-3 phrases
-- Extra high-impact narrative mechanisms not covered by other sections (structure tricks, wrappers, pacing tools, mechanical hooks).
-- Examples: "cold open", "cliffhanger ending", "framed story", "story-within-a-story", "found-footage presentation", "epistolary format", "chaptered structure", "anthology segments".
-- Empty when no distinctive plot devices are evidenced.
-
-4) pov_perspective
+3) pov_perspective
 - 0-2 phrases
 - Who the audience experiences the story through, mental "closeness", and lens reliability.
 - Examples: "first-person pov", "third-person limited pov", "omniscient pov", "multiple pov switching", "unreliable narrator".
 - Never add plot content ("through a detective") — keep it role-agnostic unless the technique term requires a role (almost never does).
 - Empty when POV is not clearly evidenced (common when only craft observations are available).
 
-5) characterization_methods
+4) characterization_methods
 - 0-3 phrases
 - How the film conveys character: behavior, contrast, selective insight, context.
 - Examples: "show don't tell actions", "backstory drip-feed", "character foil contrast", "revealing habits/tells", "indirect characterization through dialogue", "mask slips moments".
 - Keep technique-level, not "tragic backstory".
 - Empty when characterization methods are not visible from the input.
 
-6) character_arcs
+5) character_arcs
 - 0-3 phrases
 - How characters change (or don't) across the story. Use movie-agnostic technique labels, avoid plot-specific terms.
 - Examples: "redemption arc", "corruption arc", "coming-of-age arc", "disillusionment arc", "flat arc", "healing arc", "tragic flaw spiral".
 - Only include if the arc is clear from synopsis/reviews. Empty when character development is not visible in the input.
 
-7) audience_character_perception
+6) audience_character_perception
 - 0-3 phrases
 - FIRST: determine whether the inputs contain direct evidence of how the audience is positioned to perceive characters. \
 This requires reviewer commentary describing character design choices, audience reactions, or performance-as-craft \
@@ -194,7 +187,7 @@ This is a craft choice by writers, directors, and performers.
 "misunderstood outsider", "morally gray lead", "sympathetic monster".
 - Must be movie-agnostic; avoid role specifics unless part of the label.
 
-8) information_control
+7) information_control
 - 0-2 phrases
 - FIRST: determine whether the inputs describe a SPECIFIC twist, reveal, misdirection, or information asymmetry. \
 The technique must be concretely described — e.g., plot_synopsis reveals a late twist, or craft_observations says \
@@ -205,31 +198,20 @@ If no specific information control technique is described, output an empty list.
 - Examples: "plot twist / reversal", "the reveal", "dramatic irony", "red herrings", "Chekhov's gun", \
 "slow-burn reveal", "misdirection editing".
 
-9) conflict_stakes_design
+8) conflict_stakes_design
 - 0-2 phrases
 - How the story creates pressure via obstacles, escalation, deadlines, and consequences.
 - Examples: "ticking clock deadline", "escalation ladder", "no-win dilemma", "forced sacrifice choice", "Pyrrhic victory".
 - Empty when conflict mechanics are not visible from the input.
 
-10) thematic_delivery
-- 0-2 phrases
-- FIRST: determine whether the inputs describe HOW a theme is communicated, not just WHAT the theme is. \
-A reviewer saying "explores faith versus skepticism" describes a theme topic (NOT this section). \
-A reviewer saying "uses parallel storylines to contrast faith and skepticism" describes a delivery mechanism (this section). \
-If the inputs only mention theme topics without describing the storytelling mechanism used to deliver them, \
-output an empty list.
-- How the story communicates its deeper meaning through choices, consequences, and subtext \
-(without directly preaching it).
-- Examples: "moral argument embedded in choices" (theme shown through decisions), "contrast pairs" (two characters \
-represent opposing values), "repeated dilemma" (same ethical question in new forms), "symbolic consequences" \
-(theme reflected by outcomes), "subtextual scenes" (characters avoid saying the real thing).
-- Keep it about delivery mechanics, not the theme statement itself.
-
-11) meta_techniques (self awareness)
-- 0-2 phrases
-- When the story deliberately acknowledges itself as a constructed story and plays with that awareness.
-- Examples: "fourth-wall breaks", "narrator commentary contradicts scene", "story about storytelling", "parody/pastiche", "genre deconstruction", "self-referential humor".
-- Only include if clearly supported by provided input. Empty for most movies."""
+9) additional_narrative_devices (catchall — fill specific sections above first)
+- 0-4 phrases
+- High-impact narrative mechanisms not already captured by sections 1-8. Includes: structure tricks, wrappers, \
+pacing tools, mechanical hooks, AND self-aware/meta-narrative elements.
+- Examples: "cold open", "cliffhanger ending", "framed story", "story-within-a-story", "found-footage presentation", \
+"epistolary format", "chaptered structure", "anthology segments", "fourth-wall breaks", "genre deconstruction", \
+"self-referential humor", "parody/pastiche".
+- Only include if clearly supported by provided input. Empty when no distinctive additional devices are evidenced."""
 
 
 # ---------------------------------------------------------------------------

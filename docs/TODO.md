@@ -341,6 +341,15 @@ credits for lexical search completeness.
 **See:** movie_ingestion/imdb_scraping/http_client.py (updated limits),
 ingestion_data/movies_no_synopsis.json (86,622 movies without synopses)
 
+## Clean up scratch files left by explore agent in project root
+**Context:** During narrative_techniques R2 evaluation analysis, an explore subagent
+created 6 scratch files in the project root: `narrative_techniques_complete.json` (1.4MB),
+`narrative_techniques_detailed.txt` (1.1MB), `EXTRACTION_SUMMARY.md`, `SAMPLE_DATA_EXAMPLES.md`,
+`README_EXTRACTION.md`, `FINAL_VERIFICATION.txt`. These are data extraction artifacts with
+no ongoing value.
+**When:** Next time — just delete them.
+**See:** project root directory
+
 ## Evaluate merging production_keywords and source_of_inspiration into one generation
 **Context:** Significant output overlap between these two generators — both produce source
 material and production medium terms for the same production vector space. production_keywords

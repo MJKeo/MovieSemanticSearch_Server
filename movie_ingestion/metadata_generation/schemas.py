@@ -566,16 +566,45 @@ class WatchContextOutput(BaseModel):
 
     4 sections capturing when/why/how to watch the movie. Deliberately
     receives NO plot information (Decision 2) — focuses on experiential
-    attributes.
+    attributes. All sections allow 0 terms — sparse inputs should produce
+    fewer terms, not fabricated ones.
 
     Model: gpt-5-mini, reasoning_effort: medium
     """
     model_config = ConfigDict(extra="forbid")
 
-    self_experience_motivations: TermsSection
-    external_motivations: TermsSection
-    key_movie_feature_draws: TermsSection
-    watch_scenarios: TermsSection
+    self_experience_motivations: TermsSection = Field(
+        ...,
+        description=(
+            "0-8 search-query-like phrases capturing the self-focused "
+            "experiential reason someone would seek out this movie. "
+            "Empty when inputs are too sparse for confident generation."
+        ),
+    )
+    external_motivations: TermsSection = Field(
+        ...,
+        description=(
+            "0-4 search-query-like phrases capturing value beyond the "
+            "viewing experience: cultural significance, social currency, "
+            "conversation starters. Empty when not supported by inputs."
+        ),
+    )
+    key_movie_feature_draws: TermsSection = Field(
+        ...,
+        description=(
+            "0-4 search-query-like phrases for standout movie attributes "
+            "that function as draws (positive or negative). "
+            "Empty when not supported by inputs."
+        ),
+    )
+    watch_scenarios: TermsSection = Field(
+        ...,
+        description=(
+            "0-6 search-query-like phrases for real-world occasions, "
+            "contexts, and social settings for watching this movie. "
+            "Empty when not supported by inputs."
+        ),
+    )
 
     def __str__(self) -> str:
         combined_terms = (
@@ -620,20 +649,52 @@ class WatchContextWithJustificationsOutput(BaseModel):
     """Watch context variant WITH justification fields.
 
     Identical output structure to WatchContextOutput but uses section
-    models that include a justification field. Used during evaluation to
-    compare output quality with vs. without justifications.
+    models that include a justification field. Justifications provide
+    chain-of-thought that may improve term quality and specificity.
+    They are discarded before embedding — no retrieval impact.
 
     The __str__() method produces IDENTICAL embedding text to
     WatchContextOutput — justification text is never embedded.
+
+    All sections allow 0 terms — sparse inputs should produce fewer
+    terms, not fabricated ones.
 
     Model: gpt-5-mini, reasoning_effort: medium
     """
     model_config = ConfigDict(extra="forbid")
 
-    self_experience_motivations: TermsWithJustificationSection
-    external_motivations: TermsWithJustificationSection
-    key_movie_feature_draws: TermsWithJustificationSection
-    watch_scenarios: TermsWithJustificationSection
+    self_experience_motivations: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-8 search-query-like phrases capturing the self-focused "
+            "experiential reason someone would seek out this movie. "
+            "Empty when inputs are too sparse for confident generation."
+        ),
+    )
+    external_motivations: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-4 search-query-like phrases capturing value beyond the "
+            "viewing experience: cultural significance, social currency, "
+            "conversation starters. Empty when not supported by inputs."
+        ),
+    )
+    key_movie_feature_draws: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-4 search-query-like phrases for standout movie attributes "
+            "that function as draws (positive or negative). "
+            "Empty when not supported by inputs."
+        ),
+    )
+    watch_scenarios: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-6 search-query-like phrases for real-world occasions, "
+            "contexts, and social settings for watching this movie. "
+            "Empty when not supported by inputs."
+        ),
+    )
 
     def __str__(self) -> str:
         # Must produce identical embedding text to WatchContextOutput.__str__()
@@ -653,19 +714,22 @@ class WatchContextWithJustificationsOutput(BaseModel):
 class NarrativeTechniquesOutput(BaseModel):
     """Structured output from the narrative_techniques generation (Wave 2).
 
-    11 sections capturing storytelling structure, POV, delivery
-    mechanism, and narrative devices. Field order is optimized for
-    autoregressive generation: easiest/most-concrete sections first,
-    building toward harder/more-abstract ones.
+    9 sections capturing storytelling structure, POV, delivery mechanism,
+    and narrative devices. Field order is optimized for autoregressive
+    generation: specific sections first, catchall last.
 
-    Model: gpt-5-mini, reasoning_effort: medium
+    Removed from prior 11-section version:
+    - thematic_delivery (top hallucination source; models over-inferred
+      delivery mechanisms from theme topics)
+    - meta_techniques (merged into additional_narrative_devices catchall)
+
+    Model: gpt-5-mini, reasoning_effort: minimal
     """
     model_config = ConfigDict(extra="forbid")
 
     # Easiest to identify from any input type
     narrative_archetype: TermsSection
     narrative_delivery: TermsSection
-    additional_plot_devices: TermsSection
     # Moderate — often evidenced in craft observations
     pov_perspective: TermsSection
     characterization_methods: TermsSection
@@ -674,24 +738,21 @@ class NarrativeTechniquesOutput(BaseModel):
     # Hardest — require plot knowledge or synthesis
     information_control: TermsSection
     conflict_stakes_design: TermsSection
-    thematic_delivery: TermsSection
-    # Rare — already allows 0 entries
-    meta_techniques: TermsSection
+    # Catchall — placed last so specific sections are filled first
+    additional_narrative_devices: TermsSection
 
     def __str__(self) -> str:
         combined_terms: list[str] = []
         for section in (
             self.narrative_archetype,
             self.narrative_delivery,
-            self.additional_plot_devices,
             self.pov_perspective,
             self.characterization_methods,
             self.character_arcs,
             self.audience_character_perception,
             self.information_control,
             self.conflict_stakes_design,
-            self.thematic_delivery,
-            self.meta_techniques,
+            self.additional_narrative_devices,
         ):
             combined_terms.extend(section.terms)
         return ", ".join(t.lower() for t in combined_terms)
@@ -714,22 +775,20 @@ class NarrativeTechniquesWithJustificationsOutput(BaseModel):
     The __str__() method produces IDENTICAL embedding text to
     NarrativeTechniquesOutput — justification text is never embedded.
 
-    Model: gpt-5-mini, reasoning_effort: medium
+    Model: gpt-5-mini, reasoning_effort: minimal
     """
     model_config = ConfigDict(extra="forbid")
 
-    # Field order matches NarrativeTechniquesOutput (cognitive scaffolding)
+    # Field order matches NarrativeTechniquesOutput (specific first, catchall last)
     narrative_archetype: TermsWithJustificationSection
     narrative_delivery: TermsWithJustificationSection
-    additional_plot_devices: TermsWithJustificationSection
     pov_perspective: TermsWithJustificationSection
     characterization_methods: TermsWithJustificationSection
     character_arcs: TermsWithJustificationSection
     audience_character_perception: TermsWithJustificationSection
     information_control: TermsWithJustificationSection
     conflict_stakes_design: TermsWithJustificationSection
-    thematic_delivery: TermsWithJustificationSection
-    meta_techniques: TermsWithJustificationSection
+    additional_narrative_devices: TermsWithJustificationSection
 
     def __str__(self) -> str:
         # Must produce identical embedding text to NarrativeTechniquesOutput.__str__()
@@ -737,15 +796,13 @@ class NarrativeTechniquesWithJustificationsOutput(BaseModel):
         for section in (
             self.narrative_archetype,
             self.narrative_delivery,
-            self.additional_plot_devices,
             self.pov_perspective,
             self.characterization_methods,
             self.character_arcs,
             self.audience_character_perception,
             self.information_control,
             self.conflict_stakes_design,
-            self.thematic_delivery,
-            self.meta_techniques,
+            self.additional_narrative_devices,
         ):
             combined_terms.extend(section.terms)
         return ", ".join(t.lower() for t in combined_terms)

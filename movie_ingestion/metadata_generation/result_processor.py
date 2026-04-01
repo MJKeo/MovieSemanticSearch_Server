@@ -24,6 +24,7 @@ from movie_ingestion.metadata_generation.schemas import (
     PlotEventsOutput,
     ReceptionOutput,
     PlotAnalysisWithJustificationsOutput,
+    NarrativeTechniquesWithJustificationsOutput,
     ProductionKeywordsOutput,
     ViewerExperienceWithJustificationsOutput,
 )
@@ -40,6 +41,7 @@ SCHEMA_BY_TYPE: dict[MetadataType, type[BaseModel]] = {
     MetadataType.PLOT_EVENTS: PlotEventsOutput,
     MetadataType.RECEPTION: ReceptionOutput,
     MetadataType.PLOT_ANALYSIS: PlotAnalysisWithJustificationsOutput,
+    MetadataType.NARRATIVE_TECHNIQUES: NarrativeTechniquesWithJustificationsOutput,
     MetadataType.PRODUCTION_KEYWORDS: ProductionKeywordsOutput,
     MetadataType.VIEWER_EXPERIENCE: ViewerExperienceWithJustificationsOutput,
 }
