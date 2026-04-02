@@ -401,18 +401,37 @@ class TestCheckViewerExperience:
 # ---------------------------------------------------------------------------
 
 class TestCheckWatchContext:
-    def test_check_watch_context_eligible_insights(self):
-        assert _check_watch_context("insights", [], [], None) is None
+    def test_eligible_genres_plus_observation(self):
+        """genre_signatures + emotional observation → eligible."""
+        assert _check_watch_context(
+            ["cyberpunk thriller"], ["Action"], "emotional text", None, None,
+        ) is None
 
-    def test_check_watch_context_eligible_all_contextual(self):
-        assert _check_watch_context(None, ["Action"], ["keyword"], "R — Restricted") is None
+    def test_eligible_raw_genres_plus_observation(self):
+        """No genre_signatures but raw genres + craft observation → eligible."""
+        assert _check_watch_context(
+            None, ["Action"], None, "craft text", None,
+        ) is None
 
-    def test_check_watch_context_skip_partial(self):
-        reason = _check_watch_context(None, ["Action"], ["keyword"], None)
+    def test_eligible_genres_plus_thematic_observation(self):
+        """Genres + thematic observation → eligible."""
+        assert _check_watch_context(
+            None, ["Drama"], None, None, "thematic text",
+        ) is None
+
+    def test_skip_no_genres(self):
+        """No genre_signatures and no raw genres → skip."""
+        reason = _check_watch_context(None, [], "emotional text", None, None)
         assert reason is not None
 
-    def test_check_watch_context_skip_nothing(self):
-        reason = _check_watch_context(None, [], [], None)
+    def test_skip_no_observations(self):
+        """Genres present but no observations → skip."""
+        reason = _check_watch_context(None, ["Action"], None, None, None)
+        assert reason is not None
+
+    def test_skip_nothing(self):
+        """No genres and no observations → skip."""
+        reason = _check_watch_context(None, [], None, None, None)
         assert reason is not None
 
 

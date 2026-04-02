@@ -333,7 +333,16 @@ class WatchContextMetadata(BaseModel):
 
 class NarrativeTechniquesMetadata(BaseModel):
     """
-    Structured output for the Viewer Experience vector.
+    Structured output for the Narrative Techniques vector.
+
+    9 sections capturing storytelling structure, POV, delivery mechanism,
+    and narrative devices. Field order matches the generation-side schema
+    (specific sections first, catchall last).
+
+    Removed from prior 11-section version (ADR-048):
+    - thematic_delivery (top hallucination source)
+    - meta_techniques (merged into additional_narrative_devices catchall)
+    - additional_plot_devices renamed to additional_narrative_devices
 
     Embedding text should be derived only from:
       - section.terms
@@ -342,31 +351,31 @@ class NarrativeTechniquesMetadata(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    pov_perspective: GenericTermsSection
-    narrative_delivery: GenericTermsSection
+    # Easiest to identify from any input type
     narrative_archetype: GenericTermsSection
-    information_control: GenericTermsSection
+    narrative_delivery: GenericTermsSection
+    # Moderate — often evidenced in craft observations
+    pov_perspective: GenericTermsSection
     characterization_methods: GenericTermsSection
     character_arcs: GenericTermsSection
     audience_character_perception: GenericTermsSection
+    # Hardest — require plot knowledge or synthesis
+    information_control: GenericTermsSection
     conflict_stakes_design: GenericTermsSection
-    thematic_delivery: GenericTermsSection
-    meta_techniques: GenericTermsSection
-    additional_plot_devices: GenericTermsSection
+    # Catchall — placed last so specific sections are filled first
+    additional_narrative_devices: GenericTermsSection
 
     def __str__(self) -> str:
         combined_terms = (
-            self.pov_perspective.terms
+            self.narrative_archetype.terms
             + self.narrative_delivery.terms
-            + self.narrative_archetype.terms
-            + self.information_control.terms
+            + self.pov_perspective.terms
             + self.characterization_methods.terms
             + self.character_arcs.terms
             + self.audience_character_perception.terms
+            + self.information_control.terms
             + self.conflict_stakes_design.terms
-            + self.thematic_delivery.terms
-            + self.meta_techniques.terms
-            + self.additional_plot_devices.terms
+            + self.additional_narrative_devices.terms
         )
         return ", ".join(combined_terms)
 

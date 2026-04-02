@@ -2,20 +2,27 @@
 Source of Inspiration generator (Wave 2).
 
 Async method that generates source of inspiration metadata for a single
-movie. Determines source material (novel, true story, etc.) and production
-medium (live-action, animation, etc.).
+movie. Makes two parallel classification decisions:
+1. source_material — does this film adapt a specific source? (novel,
+   true story, manga, remake of a film, etc.)
+2. franchise_lineage — is this film part of a franchise? (sequel,
+   prequel, reboot, spinoff, etc.)
 
 This is the ONLY generation that allows parametric knowledge -- the LLM
-may use its training data for source material facts. This is safe because
-source material facts are categorical and verifiable, and this is a
-leaf-node classification that doesn't cascade to other generations.
+may use its training data for both classifications when at least 95%
+confident. This is safe because source material and franchise facts are
+categorical and verifiable, and these are leaf-node classifications that
+don't cascade to other generations.
+
+production_mediums was removed — now derived deterministically from
+genres + keywords at embedding time.
 
 Inputs:
     - movie (MovieInputData): raw fields for title, merged_keywords
     - source_material_hint: from Wave 1 reception extraction zone
       (may be None). Short classifying phrase like "based on autobiography",
       "remake", "based on book, sequel". Highest-confidence grounding
-      signal when present — reviewer-extracted evidence.
+      signal when present — may contain evidence for either field.
 
 Removed inputs (vs current system):
     - plot_synopsis: removed per ADR-033 (barely used, saves ~83.6M tokens)
@@ -29,8 +36,9 @@ Removed inputs (vs current system):
 Skip condition: eligible when merged_keywords >= 1 OR source_material_hint
     is present. Near-zero skip rate (~21 movies lack all keywords).
 
-Response schema: SourceOfInspirationOutput (no justifications) by default.
-    SourceOfInspirationWithJustificationsOutput available for evaluation.
+Response schema: SourceOfInspirationOutput (no reasoning fields) by default.
+    SourceOfInspirationWithReasoningOutput available for evaluation and
+    reasoning-enabled comparisons.
 
 Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: low,
     verbosity: low.
@@ -72,19 +80,23 @@ def build_source_of_inspiration_user_prompt(
     prompt construction logic stays in one place.
 
     Inputs are labeled for the LLM to match the SYSTEM_PROMPT's INPUTS
-    section. None values and empty lists are skipped by build_user_prompt.
+    section. Primary inputs are always included; missing values are
+    rendered as "not available" so the model sees explicit absence.
 
     source_material_hint is the highest-confidence grounding signal when
     present — a short reviewer-extracted classification phrase from the
-    Wave 1 reception generator (e.g., "based on autobiography", "remake").
+    Wave 1 reception generator (e.g., "based on autobiography", "remake",
+    "based on book, sequel"). It may contain evidence for EITHER
+    source_material or franchise_lineage — the prompt instructs the model
+    to parse it for both.
 
     plot_synopsis was removed per ADR-033 — this generator barely uses
     plot data, and removing it saves ~83.6M input tokens across the corpus.
     """
     return build_user_prompt(
         title=movie.title_with_year(),
-        merged_keywords=movie.merged_keywords() or None,
-        source_material_hint=source_material_hint,
+        merged_keywords=movie.merged_keywords() or "not available",
+        source_material_hint=source_material_hint or "not available",
     )
 
 
@@ -104,8 +116,8 @@ async def generate_source_of_inspiration(
     the parsed result alongside token usage.
 
     This is the ONLY generation where parametric knowledge is allowed --
-    the LLM may contribute source material facts from its training data
-    for well-known films.
+    the LLM may contribute source material and franchise facts from its
+    training data when at least 95% confident.
 
     Defaults to OpenAI gpt-5-mini with reasoning_effort: low (matching
     the legacy system). Callers can override provider/model/kwargs to
@@ -115,8 +127,10 @@ async def generate_source_of_inspiration(
         movie: Raw movie input data loaded from the ingestion pipeline.
         source_material_hint: Short classifying phrase from Wave 1
             reception extraction zone (e.g., "based on autobiography",
-            "remake"). May be None if reception failed, was skipped, or
-            reviewers didn't mention source material.
+            "remake", "sequel"). May be None if reception failed, was
+            skipped, or reviewers didn't mention source material.
+            May contain evidence for either source_material or
+            franchise_lineage.
         provider: Which LLM backend to use. Defaults to OPENAI.
         model: Model identifier. Defaults to "gpt-5-mini".
         **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).

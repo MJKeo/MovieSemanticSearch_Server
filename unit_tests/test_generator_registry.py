@@ -28,6 +28,8 @@ from movie_ingestion.metadata_generation.schemas import (
     PlotAnalysisWithJustificationsOutput,
     ProductionKeywordsOutput,
     ViewerExperienceWithJustificationsOutput,
+    WatchContextWithIdentityNoteOutput,
+    NarrativeTechniquesWithJustificationsOutput,
 )
 
 
@@ -63,13 +65,15 @@ class TestGeneratorRegistry:
     """Tests for the module-level GENERATOR_REGISTRY."""
 
     def test_has_exactly_registered_types(self) -> None:
-        """GENERATOR_REGISTRY has entries for all 5 registered types."""
+        """GENERATOR_REGISTRY has entries for all 7 registered types."""
         assert set(GENERATOR_REGISTRY.keys()) == {
             MetadataType.PLOT_EVENTS,
             MetadataType.RECEPTION,
             MetadataType.PLOT_ANALYSIS,
             MetadataType.PRODUCTION_KEYWORDS,
             MetadataType.VIEWER_EXPERIENCE,
+            MetadataType.WATCH_CONTEXT,
+            MetadataType.NARRATIVE_TECHNIQUES,
         }
 
 
@@ -118,11 +122,25 @@ class TestGetConfig:
         assert config.schema_class is ViewerExperienceWithJustificationsOutput
         assert config.model == "gpt-5-mini"
 
+    def test_returns_watch_context_config(self) -> None:
+        """get_config(WATCH_CONTEXT) returns correct schema and model."""
+        config = get_config(MetadataType.WATCH_CONTEXT)
+        assert isinstance(config, GeneratorConfig)
+        assert config.schema_class is WatchContextWithIdentityNoteOutput
+        assert config.model == "gpt-5-mini"
+
+    def test_returns_narrative_techniques_config(self) -> None:
+        """get_config(NARRATIVE_TECHNIQUES) returns correct schema and model."""
+        config = get_config(MetadataType.NARRATIVE_TECHNIQUES)
+        assert isinstance(config, GeneratorConfig)
+        assert config.schema_class is NarrativeTechniquesWithJustificationsOutput
+        assert config.model == "gpt-5-mini"
+
     def test_raises_key_error_for_unregistered_type(self) -> None:
         """get_config raises descriptive KeyError for unregistered MetadataType."""
-        # Use a type that's not yet registered
+        # SOURCE_OF_INSPIRATION is the only MetadataType not in the registry
         with pytest.raises(KeyError, match="No generator registered"):
-            get_config(MetadataType.NARRATIVE_TECHNIQUES)
+            get_config(MetadataType.SOURCE_OF_INSPIRATION)
 
 
 # ---------------------------------------------------------------------------

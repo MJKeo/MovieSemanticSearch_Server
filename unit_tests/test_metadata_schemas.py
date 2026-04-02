@@ -528,9 +528,9 @@ def _make_terms_only_section(terms=None):
     return TermsSection(terms=terms or [])
 
 
-def _make_terms_only_j_section(terms=None, justification="Because."):
+def _make_terms_only_j_section(terms=None, evidence_basis="Because."):
     return TermsWithJustificationSection(
-        justification=justification,
+        evidence_basis=evidence_basis,
         terms=terms or [],
     )
 
@@ -554,7 +554,7 @@ class TestWatchContextWithJustificationsStrParity:
     def test_str_excludes_justification_text(self):
         with_j = WatchContextWithJustificationsOutput(
             self_experience_motivations=_make_terms_only_j_section(
-                ["escape"], justification="WC_MARKER"
+                ["escape"], evidence_basis="WC_MARKER"
             ),
             external_motivations=_make_terms_only_j_section(),
             key_movie_feature_draws=_make_terms_only_j_section(),
@@ -568,13 +568,13 @@ class TestWatchContextWithJustificationsStrParity:
 # ---------------------------------------------------------------------------
 
 # Current field order (cognitive scaffolding): archetype, delivery,
-# devices, pov, characterization, arcs, perception, info control,
-# stakes, thematic, meta
+# pov, characterization, arcs, perception, info control,
+# stakes, additional devices (catchall last)
 _NT_SECTION_NAMES = [
-    "narrative_archetype", "narrative_delivery", "additional_plot_devices",
+    "narrative_archetype", "narrative_delivery",
     "pov_perspective", "characterization_methods", "character_arcs",
     "audience_character_perception", "information_control",
-    "conflict_stakes_design", "thematic_delivery", "meta_techniques",
+    "conflict_stakes_design", "additional_narrative_devices",
 ]
 
 
@@ -595,7 +595,7 @@ class TestNarrativeTechniquesWithJustificationsStrParity:
     def test_str_excludes_justification_text(self):
         sections = {
             name: _make_terms_only_j_section(
-                ["term1"], justification="NT_MARKER"
+                ["term1"], evidence_basis="NT_MARKER"
             )
             for name in _NT_SECTION_NAMES
         }
@@ -635,19 +635,22 @@ class TestSourceOfInspirationWithJustificationsStrParity:
             production_mediums=["live-action", "CGI"],
         )
         with_j = SourceOfInspirationWithJustificationsOutput(
-            justification="Based on original work.",
+            source_reasoning="Evidence for source.",
             sources_of_inspiration=["original screenplay"],
+            production_medium_reasoning="Evidence for medium.",
             production_mediums=["live-action", "CGI"],
         )
         assert str(base) == str(with_j)
 
     def test_str_excludes_justification_text(self):
         with_j = SourceOfInspirationWithJustificationsOutput(
-            justification="SOI_MARKER",
+            source_reasoning="SOI_SOURCE_MARKER",
             sources_of_inspiration=["novel"],
+            production_medium_reasoning="SOI_MEDIUM_MARKER",
             production_mediums=["animation"],
         )
-        assert "SOI_MARKER" not in str(with_j)
+        assert "SOI_SOURCE_MARKER" not in str(with_j)
+        assert "SOI_MEDIUM_MARKER" not in str(with_j)
 
 
 # ---------------------------------------------------------------------------
@@ -761,8 +764,8 @@ class TestWatchContextOutputStrContent:
 # ---------------------------------------------------------------------------
 
 class TestNarrativeTechniquesOutputStrContent:
-    def test_narrative_techniques_str_all_11_sections_contribute(self):
-        """NarrativeTechniquesOutput.__str__() includes terms from all 11 sections."""
+    def test_narrative_techniques_str_all_9_sections_contribute(self):
+        """NarrativeTechniquesOutput.__str__() includes terms from all 9 sections."""
         sections = {
             name: _make_terms_only_section([f"{name}_term"])
             for name in _NT_SECTION_NAMES
@@ -773,12 +776,12 @@ class TestNarrativeTechniquesOutputStrContent:
             assert f"{name}_term" in result
 
     def test_narrative_techniques_field_order_is_cognitive_scaffolding(self):
-        """Fields are ordered: archetype, delivery, devices, pov, ..., meta."""
+        """Fields are ordered: archetype, delivery, pov, ..., additional_narrative_devices (catchall last)."""
         field_names = list(NarrativeTechniquesOutput.model_fields.keys())
         assert field_names[0] == "narrative_archetype"
         assert field_names[1] == "narrative_delivery"
-        assert field_names[2] == "additional_plot_devices"
-        assert field_names[-1] == "meta_techniques"
+        assert field_names[2] == "pov_perspective"
+        assert field_names[-1] == "additional_narrative_devices"
 
 
 # ---------------------------------------------------------------------------

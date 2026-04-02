@@ -69,8 +69,8 @@ GENERATION_TYPE = MetadataType.VIEWER_EXPERIENCE
 # Production defaults — gpt-5-mini with minimal reasoning and justification
 # schema (Round 2/3 evaluation winner: 4.37 overall, zero section_discipline
 # failures, uniform quality across all input profiles).
-_DEFAULT_PROVIDER = LLMProvider.OPENAI
-_DEFAULT_MODEL = "gpt-5-mini"
+_PROVIDER = LLMProvider.OPENAI
+_MODEL = "gpt-5-mini"
 
 def _resolve_genre_context(
     movie: MovieInputData,
@@ -153,10 +153,8 @@ async def generate_viewer_experience(
     calls the specified LLM provider with structured output, and returns
     the parsed result alongside token usage.
 
-    Production defaults: gpt-5-mini, reasoning_effort: minimal, with
+    Locked production config: gpt-5-mini, reasoning_effort: minimal, with
     justification schema. Justifications are discarded before embedding.
-    Callers can override provider/model/kwargs to test different
-    configurations during evaluation.
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
@@ -166,7 +164,6 @@ async def generate_viewer_experience(
         craft_observations: Finalized reception craft observations.
         thematic_observations: Finalized reception thematic observations.
         genre_signatures: Finalized plot_analysis genre signatures.
-        **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
 
     Returns:
         Tuple of (ViewerExperienceWithJustificationsOutput, TokenUsage).
@@ -187,11 +184,11 @@ async def generate_viewer_experience(
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=_DEFAULT_PROVIDER,
+            provider=_PROVIDER,
             user_prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
             response_format=ViewerExperienceWithJustificationsOutput,
-            model=_DEFAULT_MODEL,
+            model=_MODEL,
             reasoning_effort="minimal",
             verbosity="low",
         )
@@ -203,4 +200,4 @@ async def generate_viewer_experience(
         print(f"{GENERATION_TYPE} generation returned None for '{title_with_year}'")
         raise MetadataGenerationEmptyResponseError(GENERATION_TYPE, title_with_year)
 
-    return parsed, TokenUsage(input_tokens, output_tokens, _DEFAULT_MODEL)
+    return parsed, TokenUsage(input_tokens, output_tokens, _MODEL)

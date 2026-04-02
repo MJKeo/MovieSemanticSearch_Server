@@ -238,6 +238,19 @@ movie_ingestion/metadata_generation/generators/source_of_inspiration.py
 ## ~~Re-evaluate reception candidates with revised prompt~~ DONE
 Completed: gpt-5-mini-minimal with revised prompt + no-overview was evaluated across all
 36 movies. Matched or exceeded old low-reasoning quality. Reception generator finalized
+
+
+## Write empty source_of_inspiration outputs as "original screenplay" during embedding
+**Context:** For source_of_inspiration generation, the model should return an empty
+`sources_of_inspiration` list when a film has no direct source material. That includes
+original screenplays. However, downstream embedding may still benefit from explicitly
+encoding that absence as `"original screenplay"` at embedding time rather than at
+generation time, so original films remain queryable without encouraging the generator
+to emit non-empty source labels.
+**When:** When refining the source_of_inspiration embedding/text-construction path.
+**See:** movie_ingestion/metadata_generation/schemas.py (`SourceOfInspirationOutput.__str__()`),
+implementation/classes/schemas.py, implementation/vectorize.py,
+movie_ingestion/metadata_generation/prompts/source_of_inspiration.py
 with fixed config (gpt-5-mini, minimal reasoning, low verbosity).
 
 ## Update plot_events embedding to use synopsis when available, generated plot_summary as fallback
@@ -350,19 +363,12 @@ no ongoing value.
 **When:** Next time — just delete them.
 **See:** project root directory
 
-## Evaluate merging production_keywords and source_of_inspiration into one generation
-**Context:** Significant output overlap between these two generators — both produce source
-material and production medium terms for the same production vector space. production_keywords
-is closed-set classification (filter from keyword list), source_of_inspiration is open-set
-generation (parametric knowledge allowed). The contradictory parametric knowledge requirements
-make a full merge tricky, but a simpler option is viable: drop source_of_inspiration entirely
-and embed source_material_hint (from reception) directly alongside production_keywords output.
-Main gap: production medium labels ("live-action") for movies without medium keywords.
-Decision deferred pending cost analysis of running both generators at scale.
-**When:** After first production generation cost numbers are available.
-**See:** movie_ingestion/metadata_generation/generators/production_keywords.py,
-movie_ingestion/metadata_generation/generators/source_of_inspiration.py,
-implementation/vectorize.py (create_production_vector_text)
+## ~~Evaluate merging production_keywords and source_of_inspiration into one generation~~ SUPERSEDED
+Overlap reduced by source_of_inspiration redesign (2026-04-02): production_mediums moved
+to deterministic derivation from genres+keywords, franchise lineage split into its own
+field. source_of_inspiration is now narrowly scoped to source material identification
+with parametric knowledge. production_keywords remains a pure keyword filter. The two
+generators now have cleanly separated responsibilities with no output overlap.
 
 ## ~~Run viewer_experience ablation candidates to answer Q2~~ SUPERSEDED
 Round 3 answered the input pruning question directly: tier1-pruned (remove keywords+arcs)
@@ -415,6 +421,50 @@ Populated with 10 movies (2026-04-01): 9388, 10802, 619778, 23629, 798286, 2662,
 755, 8424, 924. Spans tone-genre mismatch, quality-as-identity, mixed-valence, polarizing,
 and non-obvious appeal categories. All verified watch_context eligible.
 
+## Derive production medium deterministically at embedding time (no LLM)
+**Context:** Production medium (live-action, animation type, stop-motion, etc.) can
+be derived from existing structured data without an LLM call. Analysis of 109K movies
+confirmed: 100% of Animation-genre movies have medium keywords (hand-drawn, stop
+motion, computer animation, etc.), and 1,069 non-Animation-genre movies have medium
+keywords describing partial techniques (CGI, puppet, animated sequences). The
+deterministic rule:
+1. Has Animation genre → use medium keywords to pick specific type (hand-drawn,
+   stop motion, computer animation), default to "animation" if none more specific.
+2. Has medium keywords but no Animation genre → embed those keywords as-is (they
+   describe production techniques like CGI, puppet work within live-action films).
+3. Neither → "live action".
+This replaces the `production_mediums` field that was previously in source_of_inspiration
+LLM generation, which suffered from empty-list abstention bugs (gpt54nano-medium-just
+returned empty 25% of the time).
+**When:** When building the production embedding pipeline for production vectors.
+**See:** movie_ingestion/metadata_generation/schemas.py (remove production_mediums from
+SourceOfInspirationOutput), implementation/vectorize.py (create_production_vector_text)
+
+## Redesign source_of_inspiration: narrow scope + add franchise_lineage
+**Context:** Evaluation of source_of_inspiration (55 movies, 6 candidates) revealed
+three design issues addressed here:
+1. **Remove production_mediums** — now handled deterministically (see TODO above).
+2. **Narrow sources_of_inspiration** — remove sequel/prequel/reboot/spinoff (franchise
+   lineage, not source material) and tighten to a specific set of valid source types:
+   novel, book, short story, graphic novel, manga, comic, play, true story, real person,
+   true events, memoir, autobiography, video game, cartoon, theme park ride, TV series,
+   remake of a film. The model should NOT infer loose inspiration from inputs (e.g.,
+   "roman inspiration" for Gladiator). Inputs are gospel; parametric knowledge only at
+   95%+ confidence for well-known categorical facts.
+3. **Add franchise_lineage field** — new field capturing sequel, prequel, reboot, spinoff,
+   reimagining, series entry. Draws from source_material_hint (~2,888 franchise-only
+   hints), franchise keywords (~2,060 movies), and parametric knowledge (especially from
+   title, e.g., "Part 2", "Returns"). Both signals are fragmented (847 movies have
+   keywords but no hint, ~2,040 have hint but no keyword), so the LLM serves as a
+   consolidation + gap-filling layer.
+The generator prompt should frame this as: "given these inputs and your knowledge,
+determine two things: (a) does this film adapt a specific source, and (b) is it part
+of a franchise lineage? Abstain on either if unsure."
+**When:** Before re-running source_of_inspiration batch generation.
+**See:** movie_ingestion/metadata_generation/prompts/source_of_inspiration.py,
+movie_ingestion/metadata_generation/schemas.py (SourceOfInspirationOutput),
+movie_ingestion/metadata_generation/generators/source_of_inspiration.py
+
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts
 with `tmdb_ids`, `movies`, or `samples` keys. The watch_context bucket file uses a flat format
@@ -423,4 +473,3 @@ all movies to map to "unknown" bucket. The `build_id_to_bucket_map()` function f
 `isinstance(bucket_payload, dict)` which skips list payloads entirely.
 **When:** Next time the reporting script is used (low priority — manual Python works around it).
 **See:** movie_ingestion/metadata_generation/report_bucket_axis_performance.py (lines 47-86)
-

@@ -15,12 +15,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from implementation.llms.generic_methods import LLMProvider
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
 from movie_ingestion.metadata_generation.schemas import (
-    NarrativeTechniquesOutput,
-    TermsSection,
+    NarrativeTechniquesWithJustificationsOutput,
+    TermsWithJustificationSection,
 )
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
@@ -53,20 +52,21 @@ def _make_movie(**overrides) -> MovieInputData:
     return MovieInputData(**defaults)
 
 
-def _make_nt_output() -> NarrativeTechniquesOutput:
-    section = TermsSection(terms=["unreliable narrator"])
-    return NarrativeTechniquesOutput(
+def _make_nt_output() -> NarrativeTechniquesWithJustificationsOutput:
+    section = TermsWithJustificationSection(
+        evidence_basis="Based on evidence.",
+        terms=["unreliable narrator"],
+    )
+    return NarrativeTechniquesWithJustificationsOutput(
         narrative_archetype=section,
         narrative_delivery=section,
-        additional_plot_devices=section,
         pov_perspective=section,
         characterization_methods=section,
         character_arcs=section,
         audience_character_perception=section,
         information_control=section,
         conflict_stakes_design=section,
-        thematic_delivery=section,
-        meta_techniques=section,
+        additional_narrative_devices=section,
     )
 
 
@@ -152,25 +152,23 @@ class TestGenerateNarrativeTechniques:
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            parsed, token_usage = await generate_narrative_techniques(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            parsed, token_usage = await generate_narrative_techniques(movie)
 
         assert parsed is expected
         assert isinstance(token_usage, TokenUsage)
 
-    async def test_no_default_reasoning_effort_injected(self):
-        """No default reasoning_effort is injected when caller doesn't provide one."""
+    async def test_uses_hardcoded_production_config(self):
+        """Generator uses hardcoded gpt-5-mini with NarrativeTechniquesWithJustificationsOutput."""
         mock_fn = AsyncMock(return_value=(_make_nt_output(), 100, 50))
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            await generate_narrative_techniques(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            await generate_narrative_techniques(movie)
 
         call_kwargs = mock_fn.call_args[1]
-        assert "reasoning_effort" not in call_kwargs
+        assert call_kwargs["model"] == "gpt-5-mini"
+        assert call_kwargs["response_format"] is NarrativeTechniquesWithJustificationsOutput
+        assert call_kwargs["reasoning_effort"] == "minimal"
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +182,7 @@ class TestGenerateNarrativeTechniquesErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_narrative_techniques(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_narrative_techniques(movie)
 
         assert exc_info.value.generation_type == GENERATION_TYPE
 
@@ -196,9 +192,7 @@ class TestGenerateNarrativeTechniquesErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationEmptyResponseError):
-                await generate_narrative_techniques(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_narrative_techniques(movie)
 
     async def test_error_chains_original_cause(self):
         original = ValueError("original")
@@ -207,45 +201,21 @@ class TestGenerateNarrativeTechniquesErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_narrative_techniques(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_narrative_techniques(movie)
 
         assert exc_info.value.__cause__ is original
 
 
 # ---------------------------------------------------------------------------
-# Tests: system_prompt and response_format override
+# Tests: no provider/model params (hardcoded production config)
 # ---------------------------------------------------------------------------
 
-class TestNarrativeTechniquesOverrides:
-    async def test_custom_system_prompt_forwarded(self):
-        """A custom system_prompt is forwarded to the LLM call."""
-        mock_fn = AsyncMock(return_value=(_make_nt_output(), 100, 50))
-        movie = _make_movie()
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_narrative_techniques(
-                movie, system_prompt="CUSTOM_PROMPT",
-                provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
-
-    async def test_custom_response_format_forwarded(self):
-        """A custom response_format is forwarded to the LLM call."""
-        from movie_ingestion.metadata_generation.schemas import NarrativeTechniquesWithJustificationsOutput
-
-        mock_fn = AsyncMock(return_value=(_make_nt_output(), 100, 50))
-        movie = _make_movie()
-
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_narrative_techniques(
-                movie,
-                response_format=NarrativeTechniquesWithJustificationsOutput,
-                provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["response_format"] is NarrativeTechniquesWithJustificationsOutput
+class TestNarrativeTechniquesSignature:
+    def test_no_provider_model_params(self):
+        """generate_narrative_techniques does not accept provider or model parameters."""
+        import inspect
+        sig = inspect.signature(generate_narrative_techniques)
+        assert "provider" not in sig.parameters
+        assert "model" not in sig.parameters
+        assert "system_prompt" not in sig.parameters
+        assert "response_format" not in sig.parameters

@@ -138,12 +138,14 @@ class TestSchemaByType:
     """Tests for SCHEMA_BY_TYPE registry."""
 
     def test_includes_all_registered_types(self) -> None:
-        """SCHEMA_BY_TYPE has entries for all 5 registered types."""
+        """SCHEMA_BY_TYPE has entries for all 7 registered types."""
         assert MetadataType.PLOT_EVENTS in SCHEMA_BY_TYPE
         assert MetadataType.RECEPTION in SCHEMA_BY_TYPE
         assert MetadataType.PLOT_ANALYSIS in SCHEMA_BY_TYPE
         assert MetadataType.PRODUCTION_KEYWORDS in SCHEMA_BY_TYPE
         assert MetadataType.VIEWER_EXPERIENCE in SCHEMA_BY_TYPE
+        assert MetadataType.WATCH_CONTEXT in SCHEMA_BY_TYPE
+        assert MetadataType.NARRATIVE_TECHNIQUES in SCHEMA_BY_TYPE
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +414,7 @@ class TestProcessResultsReception:
 
         content = json.dumps({"some_field": "value"})
         result = {
-            "custom_id": "watch_context_1",
+            "custom_id": "unknown_type_1",
             "response": {
                 "status_code": 200,
                 "body": {

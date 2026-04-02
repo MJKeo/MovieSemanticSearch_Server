@@ -969,77 +969,119 @@ class ProductionKeywordsWithJustificationsOutput(BaseModel):
 class SourceOfInspirationOutput(BaseModel):
     """Structured output from the source_of_inspiration generation (Wave 2).
 
-    Identifies source material and production medium. ONLY generation
-    where parametric knowledge is explicitly allowed — the LLM may use
-    its training data for source material facts.
+    Two parallel classifications from the same inputs:
+    1. source_material — what specific source the film adapts (if any)
+    2. franchise_lineage — whether the film is part of a franchise (if any)
+
+    ONLY generation where parametric knowledge is explicitly allowed —
+    the LLM may use its training data when at least 95% confident.
+    Both fields are leaf-node classifications that don't cascade to
+    other generations.
+
+    production_mediums was removed — now derived deterministically from
+    genres + keywords at embedding time (100% of Animation-genre movies
+    have medium keywords; all others default to "live action").
 
     Model: gpt-5-mini, reasoning_effort: low
     """
     model_config = ConfigDict(extra="forbid")
 
-    sources_of_inspiration: list[str] = Field(
+    source_material: list[str] = Field(
         default_factory=list,
         description=(
-            "Source material: novel, true story, original screenplay, "
-            "remake of [film], etc."
+            "Specific source material this film directly adapts. "
+            "Valid types: novel, book, short story, graphic novel, manga, "
+            "comic, play, true story, real person, true events, memoir, "
+            "autobiography, video game, cartoon, theme park ride, TV series, "
+            "remake of a film. Empty list when no specific source exists "
+            "or evidence is insufficient."
         ),
     )
-    production_mediums: list[str] = Field(
+    franchise_lineage: list[str] = Field(
         default_factory=list,
         description=(
-            "Production medium: live-action, animation, CGI, "
-            "practical effects, stop-motion, etc."
+            "Franchise position if this film is part of a series. "
+            "Valid types: sequel, prequel, reboot, spinoff, reimagining, "
+            "series entry. Empty list when the film is standalone or "
+            "evidence is insufficient."
         ),
     )
 
     def __str__(self) -> str:
-        all_terms = self.sources_of_inspiration + self.production_mediums
+        all_terms = self.source_material + self.franchise_lineage
         return ", ".join(t.lower() for t in all_terms)
 
 
-# -- With-justifications variant for evaluation comparison --
-# Adds a single justification field covering both sources_of_inspiration
-# and production_mediums. Mirrors the search-side SourceOfInspirationSection
-# which has a justification field. The justification text is NEVER embedded.
+# -- With-reasoning variant for evaluation / reasoning-enabled generation --
+# Adds per-field reasoning placed BEFORE the list it constrains.
+# The reasoning text is NEVER embedded — __str__() produces identical
+# output to SourceOfInspirationOutput.
+#
+# IMPORTANT: reasoning fields should inventory evidence, not conclude.
+# "No direct evidence" is valid — but the model must still decide the
+# list independently. The reasoning must NOT anchor the model toward
+# abstention; it is a record of what was considered, not a gate.
 
 
-class SourceOfInspirationWithJustificationsOutput(BaseModel):
-    """Source of inspiration variant WITH justification field.
+class SourceOfInspirationWithReasoningOutput(BaseModel):
+    """Source of inspiration variant WITH upstream reasoning fields.
 
-    Identical output structure to SourceOfInspirationOutput but adds a
-    single justification field covering both lists. Used during evaluation
-    to compare output quality with vs. without justifications.
+    Identical embedding output to SourceOfInspirationOutput but adds
+    source_evidence before source_material and lineage_evidence before
+    franchise_lineage.
 
-    The __str__() method produces IDENTICAL embedding text to
-    SourceOfInspirationOutput — justification text is never embedded.
+    These reasoning fields are evidence inventories: they force the model
+    to identify concrete support BEFORE deciding each list. The model
+    should still make its best judgment call after the inventory —
+    writing "no direct evidence" does not mandate an empty list if
+    parametric knowledge provides high confidence.
 
     Model: gpt-5-mini, reasoning_effort: low
     """
     model_config = ConfigDict(extra="forbid")
 
-    justification: constr(strip_whitespace=True, min_length=1) = Field(
+    source_evidence: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "1-2 sentences. Why you chose these sources and production "
-            "mediums, citing concrete evidence. Not used for embeddings."
+            "1 concise sentence. Inventory the specific input evidence "
+            "and/or parametric knowledge supporting source_material "
+            "BEFORE deciding that list. Not used for embeddings."
         ),
     )
-    sources_of_inspiration: list[str] = Field(
+    source_material: list[str] = Field(
         default_factory=list,
         description=(
-            "Source material: novel, true story, original screenplay, "
-            "remake of [film], etc."
+            "Specific source material this film directly adapts. "
+            "Valid types: novel, book, short story, graphic novel, manga, "
+            "comic, play, true story, real person, true events, memoir, "
+            "autobiography, video game, cartoon, theme park ride, TV series, "
+            "remake of a film. Empty list when no specific source exists "
+            "or evidence is insufficient."
         ),
     )
-    production_mediums: list[str] = Field(
+    lineage_evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "1 concise sentence. Inventory the specific input evidence "
+            "and/or parametric knowledge supporting franchise_lineage "
+            "BEFORE deciding that list. Not used for embeddings."
+        ),
+    )
+    franchise_lineage: list[str] = Field(
         default_factory=list,
         description=(
-            "Production medium: live-action, animation, CGI, "
-            "practical effects, stop-motion, etc."
+            "Franchise position if this film is part of a series. "
+            "Valid types: sequel, prequel, reboot, spinoff, reimagining, "
+            "series entry. Empty list when the film is standalone or "
+            "evidence is insufficient."
         ),
     )
 
     def __str__(self) -> str:
         # Must produce identical embedding text to SourceOfInspirationOutput.__str__()
-        all_terms = self.sources_of_inspiration + self.production_mediums
+        all_terms = self.source_material + self.franchise_lineage
         return ", ".join(t.lower() for t in all_terms)
+
+
+# Backward-compatible alias while some callers still use the old name.
+SourceOfInspirationWithJustificationsOutput = SourceOfInspirationWithReasoningOutput

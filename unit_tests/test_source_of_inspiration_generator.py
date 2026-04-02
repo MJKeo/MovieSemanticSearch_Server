@@ -74,11 +74,12 @@ class TestBuildSourceOfInspirationUserPrompt:
         result = build_source_of_inspiration_user_prompt(movie, "Critics noted source material.")
         assert "source_material_hint: Critics noted source material." in result
 
-    def test_omits_none_fields(self):
+    def test_absent_fields_signal_not_available(self):
+        """Empty keywords and absent hint are signaled as 'not available'."""
         movie = _make_movie(plot_keywords=[], overall_keywords=[])
         result = build_source_of_inspiration_user_prompt(movie, None)
-        assert "merged_keywords" not in result
-        assert "source_material_hint" not in result
+        assert "merged_keywords: not available" in result
+        assert "source_material_hint: not available" in result
 
     def test_does_not_accept_plot_synopsis_argument(self):
         """plot_synopsis was removed per ADR-033 — passing it should raise TypeError."""
