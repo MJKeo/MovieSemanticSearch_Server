@@ -198,6 +198,64 @@ async def _viewer_experience_live_generator(movie: MovieInputData):
     )
 
 
+def _watch_context_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for watch_context — loads plot_analysis + Wave 1 outputs.
+
+    Delegates to _check_watch_context which requires genre grounding from
+    plot_analysis genre_signatures (or raw genres fallback) plus at least one
+    observation field from reception.
+    """
+    from .pre_consolidation import _check_watch_context
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return _check_watch_context(
+        pa.genre_signatures if pa else None,
+        movie.genres,
+        w1.emotional_observations,
+        w1.craft_observations,
+        w1.thematic_observations,
+    )
+
+
+def _watch_context_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for watch_context — loads plot_analysis + Wave 1 outputs and builds prompts.
+
+    Uses the finalized production prompt path with identity_note enabled.
+    """
+    from .generators.watch_context import build_watch_context_user_prompt
+    from .prompts.watch_context import SYSTEM_PROMPT_WITH_IDENTITY_NOTE
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return build_watch_context_user_prompt(
+        movie,
+        genre_signatures=pa.genre_signatures if pa else None,
+        emotional_observations=w1.emotional_observations,
+        craft_observations=w1.craft_observations,
+        thematic_observations=w1.thematic_observations,
+    ), SYSTEM_PROMPT_WITH_IDENTITY_NOTE
+
+
+async def _watch_context_live_generator(movie: MovieInputData):
+    """Async adapter for watch_context — loads plot_analysis + Wave 1 outputs and generates.
+
+    Uses the locked production config (identity_note schema, minimal reasoning,
+    low verbosity).
+    """
+    from .generators.watch_context import generate_watch_context
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return await generate_watch_context(
+        movie,
+        genre_signatures=pa.genre_signatures if pa else None,
+        emotional_observations=w1.emotional_observations,
+        craft_observations=w1.craft_observations,
+        thematic_observations=w1.thematic_observations,
+    )
+
+
 def _narrative_techniques_eligibility_checker(movie: MovieInputData) -> str | None:
     """Eligibility checker for narrative_techniques — loads Wave 1 outputs from DB.
 
@@ -266,6 +324,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         PlotAnalysisWithJustificationsOutput,
         NarrativeTechniquesWithJustificationsOutput,
         ProductionKeywordsOutput,
+        WatchContextWithIdentityNoteOutput,
         ViewerExperienceWithJustificationsOutput,
     )
 
@@ -312,6 +371,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             eligibility_checker=_viewer_experience_eligibility_checker,
             prompt_builder=_viewer_experience_prompt_builder,
             live_generator=_viewer_experience_live_generator,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+        ),
+        MetadataType.WATCH_CONTEXT: GeneratorConfig(
+            metadata_type=MetadataType.WATCH_CONTEXT,
+            schema_class=WatchContextWithIdentityNoteOutput,
+            eligibility_checker=_watch_context_eligibility_checker,
+            prompt_builder=_watch_context_prompt_builder,
+            live_generator=_watch_context_live_generator,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
         ),

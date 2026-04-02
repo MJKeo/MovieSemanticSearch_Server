@@ -9,21 +9,31 @@ references. Watch context is purely experiential -- it receives no
 overview, no plot_synopsis, no plot_keywords. Plot detail anchors
 the model on narrative events rather than experiential attributes.
 
-Two prompt variants exported:
-    - SYSTEM_PROMPT: for WatchContextOutput (no justification fields)
+Three prompt variants exported:
+    - SYSTEM_PROMPT: for WatchContextOutput (no evidence_basis fields)
     - SYSTEM_PROMPT_WITH_JUSTIFICATIONS: for WatchContextWithJustificationsOutput
-      (adds justification per section)
+      (adds upstream evidence_basis per section)
+    - SYSTEM_PROMPT_WITH_IDENTITY_NOTE: for WatchContextWithIdentityNoteOutput
+      (adds brief identity_note pre-classification + evidence_basis)
 
-The prompts are identical except for the justification-related
+The prompts are identical except for the evidence_basis-related
 instructions in the output guidance and section template.
+
+The evidence_basis field is an upstream constraint: the model must
+inventory specific input phrases that support each section BEFORE
+generating terms. This prevents the rationalization pattern where
+the model plans terms first and then constructs a post-hoc
+justification to explain them.
 
 Rebuilt from scratch after Phase 3 evaluation. Key changes from v1:
     - All section term ranges are 0-N (no nonzero floors)
     - Explicit sparse-input principle (produce less when you have less)
-    - Consistent per-section structure (captures / signal sources / examples)
+    - Consistent per-section structure (captures / examples)
     - Trimmed example lists (3-5 per section, not 6-15+)
     - Non-narrative content acknowledged (documentaries, shorts, etc.)
-    - Input signal sources are suggestive, not prescriptive routing
+    - Per-section "Signal sources" routing removed (Round 3 H3: model
+      routes inputs to sections equally well without prescriptive
+      guidance; removing improved documentary/mid-observation quality)
     - Removed "ranked order" instruction from watch_scenarios
 """
 
@@ -86,6 +96,15 @@ empty — that is the correct output, not a failure. Forced speculation from \
 thin data produces low-signal terms that hurt retrieval quality. A section \
 with 0 terms is better than a section with fabricated terms.
 
+However, when inputs DO provide specific experiential signals, capture them. \
+Leaving a strong, clearly-supported signal on the table is also a failure. \
+The goal is calibrated output — not maximum caution.
+
+Every input field can carry distinguishing context. If overall_keywords or \
+genre_signatures surface a distinctive identity — a national cinema, a \
+cultural movement, a specific audience community — let that inform your \
+terms. Viewers search by these dimensions.
+
 This applies to all content types: narrative features, documentaries, shorts, \
 concert films, stand-up specials, etc. Focus on what motivates someone to \
 watch this specific type of content and the scenarios that fit it.
@@ -107,11 +126,23 @@ support confident term generation.
 _OUTPUT_WITH_JUSTIFICATIONS = """\
 OUTPUT FORMAT
 Generate JSON with 4 sections, each containing:
-- "justification": 1 sentence citing which inputs informed your terms (or why \
-the section is empty)
-- "terms": 0 or more search-query-like phrases
+- "evidence_basis": 1 concise sentence quoting or closely paraphrasing the \
+specific input phrases that support this section. This is an EVIDENCE \
+INVENTORY — identify what you have before deciding what to generate. If you \
+cannot cite specific phrases from the inputs, write "No direct evidence" and \
+leave terms empty. Do NOT rationalize or bridge from vague signals — cite \
+concrete phrases.
+- "terms": 0 or more search-query-like phrases grounded in the cited evidence
 
-Empty sections are valid — justify why with reference to the input data.
+Before generating terms from cited evidence, verify your terms reflect how a \
+viewer would RESPOND TO the cited quality — not just the topic it mentions. \
+Evidence about poor quality signals ironic or hate-watch appeal, not sincere \
+genre experience. Quote evidence faithfully, then ask whether a viewer would \
+seek this movie BECAUSE OF or DESPITE the cited attributes.
+
+Empty sections are valid and expected when the evidence_basis cites no direct \
+evidence. The evidence_basis CONSTRAINS the terms — never generate terms that \
+go beyond what the cited evidence supports.
 
 """
 
@@ -127,8 +158,6 @@ What this captures: the self-focused experiential reason someone would seek \
 out this movie. What emotional or psychological need does it fulfill? Frame \
 from the viewer's perspective — capture the *purpose* of the emotion, not the \
 emotion label itself ("cathartic watch" over "sad").
-Signal sources: emotional_observations and thematic_observations are strongest; \
-genre_signatures provide baseline inference.
 Examples: "need a laugh", "cathartic watch", "escape from reality", "test my \
 nerves", "turn my brain off", "will blow my mind"
 
@@ -136,8 +165,6 @@ nerves", "turn my brain off", "will blow my mind"
 What this captures: value this movie provides beyond the viewing experience \
 itself — cultural significance, social currency, conversation starters, \
 relationship bonding.
-Signal sources: overall_keywords (e.g., "cult classic"), thematic_observations, \
-genre_signatures for cultural positioning.
 Examples: "sparks conversation", "culturally iconic", "impress film snobs", \
 "learn something new"
 
@@ -145,8 +172,6 @@ Examples: "sparks conversation", "culturally iconic", "impress film snobs", \
 What this captures: standout attributes that function as "watch this movie if \
 you want a movie that has this" draws. These are interpretations and evaluations \
 of movie features, positive or negative.
-Signal sources: craft_observations is strongest; emotional_observations for \
-atmosphere and mood features.
 Examples: "incredible soundtrack", "visually stunning", "compelling characters", \
 "hilariously bad dialogue", "over the top violence"
 
@@ -155,8 +180,6 @@ What this captures: the best real-world occasions, contexts, and social settings
 for watching this movie. Who to watch with, what time of year, what setting. \
 "Would being high or drunk improve this?" — maintain a high bar. Avoid \
 contradicting terms.
-Signal sources: genre_signatures and maturity_summary are strongest; all \
-observation fields contribute.
 Examples: "date night movie", "solo movie night", "cozy night in", "halloween \
 movie", "stoned movie", "background at a party"\
 """
@@ -181,5 +204,49 @@ SYSTEM_PROMPT_WITH_JUSTIFICATIONS = (
     + _PHRASING_RULES
     + _COVERAGE_PRINCIPLE
     + _OUTPUT_WITH_JUSTIFICATIONS
+    + _SECTIONS
+)
+
+# ---------------------------------------------------------------------------
+# Identity note variant (production default — evolved from H12 A/B test)
+# ---------------------------------------------------------------------------
+
+_OUTPUT_WITH_IDENTITY_NOTE = """\
+OUTPUT FORMAT
+Generate JSON starting with an identity_note, then 4 sections.
+
+First, write "identity_note": 2-8 words classifying this movie's viewing \
+appeal based on the inputs. Is the appeal sincere, ironic, camp, comfort, \
+visceral, intellectual, mixed? Examples: "sincere emotional drama", "ironic \
+camp classic", "visceral action thrill ride", "so-bad-it's-good guilty \
+pleasure", "nostalgic comfort watch".
+
+Then generate 4 sections, each containing:
+- "evidence_basis": 1 concise sentence quoting or closely paraphrasing the \
+specific input phrases that support this section. This is an EVIDENCE \
+INVENTORY — identify what you have before deciding what to generate. If you \
+cannot cite specific phrases from the inputs, write "No direct evidence" and \
+leave terms empty. Do NOT rationalize or bridge from vague signals — cite \
+concrete phrases.
+- "terms": 0 or more search-query-like phrases grounded in the cited evidence
+
+Before generating terms from cited evidence, verify your terms reflect how a \
+viewer would RESPOND TO the cited quality — not just the topic it mentions. \
+Evidence about poor quality signals ironic or hate-watch appeal, not sincere \
+genre experience. Quote evidence faithfully, then ask whether a viewer would \
+seek this movie BECAUSE OF or DESPITE the cited attributes.
+
+Empty sections are valid and expected when the evidence_basis cites no direct \
+evidence. The evidence_basis CONSTRAINS the terms — never generate terms that \
+go beyond what the cited evidence supports.
+
+"""
+
+SYSTEM_PROMPT_WITH_IDENTITY_NOTE = (
+    _ROLE_AND_TASK
+    + _INPUTS
+    + _PHRASING_RULES
+    + _COVERAGE_PRINCIPLE
+    + _OUTPUT_WITH_IDENTITY_NOTE
     + _SECTIONS
 )

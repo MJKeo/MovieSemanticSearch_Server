@@ -424,22 +424,42 @@ def _check_viewer_experience(
 def _check_watch_context(
     genre_signatures: list[str] | None,
     genres: list[str],
+    emotional_observations: str | None = None,
+    craft_observations: str | None = None,
+    thematic_observations: str | None = None,
 ) -> str | None:
-    """Watch context: genre_signatures OR raw genres >= 1.
+    """Watch context: (genre_signatures OR genres >= 1) AND >= 1 observation.
 
     Watch context deliberately receives NO plot info (Decision 2).
-    Genres enable grounded categorical inference for viewing occasions
-    (horror → halloween, romance → date night). All other inputs
-    (observations, keywords, maturity) are enrichments that improve
-    quality but never gate eligibility.
+    Genres provide categorical grounding (horror → halloween), but
+    genre-only inputs without observation data produce generic,
+    undifferentiated terms that pollute the vector space without
+    adding retrieval value.
+
+    Evaluation Phase 1 showed that all candidates score 1.6-2.5 on
+    genre-only movies — terms like "cozy night in" and "need a laugh"
+    are interchangeable across hundreds of comedies. Requiring at
+    least one observation field ensures the model has experiential
+    evidence to ground specific, differentiated terms.
+
+    This affects ~0.7% of the pipeline (776 of 109K movies).
 
     See evaluation_data/watch_context_eval_guide.md for rationale.
     """
-    if genre_signatures:
-        return None
-    if len(genres) >= 1:
-        return None
-    return "No genre_signatures and no raw genres available"
+    # Gate 1: genre data required for categorical grounding
+    has_genres = bool(genre_signatures) or len(genres) >= 1
+    if not has_genres:
+        return "No genre_signatures and no raw genres available"
+
+    # Gate 2: at least one observation field required for experiential grounding
+    has_observation = bool(emotional_observations) or bool(craft_observations) or bool(thematic_observations)
+    if not has_observation:
+        return (
+            "No observation fields available (emotional, craft, or thematic). "
+            "Genre-only inputs produce generic terms without retrieval value."
+        )
+
+    return None
 
 
 def resolve_narrative_techniques_narrative(
@@ -668,6 +688,9 @@ def assess_skip_conditions(
     _record("watch_context", _check_watch_context(
         genre_signatures,
         movie_input.genres,
+        emotional_observations,
+        craft_observations,
+        thematic_observations,
     ))
     _record("narrative_techniques", _check_narrative_techniques(
         plot_summary, craft_observations, movie_input,

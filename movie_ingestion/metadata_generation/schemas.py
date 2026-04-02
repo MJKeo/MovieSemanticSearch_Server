@@ -624,19 +624,28 @@ class WatchContextOutput(BaseModel):
 
 
 class TermsWithJustificationSection(BaseModel):
-    """TermsSection + justification for evaluation comparison.
+    """TermsSection with upstream evidence assessment.
 
-    The justification field provides chain-of-thought that may improve
-    output quality. It is NEVER embedded — only terms are used in
+    The evidence_basis field forces the model to inventory which specific
+    input phrases support this section BEFORE generating terms. This is
+    an upstream constraint — the model must identify concrete evidence
+    first, then generate only terms that follow from that evidence.
+
+    If no specific input phrases can be cited, terms should be empty.
+
+    The evidence_basis text is NEVER embedded — only terms are used in
     embedding text. Mirrors the search-side GenericTermsSection structure.
     """
     model_config = ConfigDict(extra="forbid")
 
-    justification: constr(strip_whitespace=True, min_length=1) = Field(
+    evidence_basis: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "1 sentence. Why you chose these terms for this section. "
-            "Not used for embeddings."
+            "1 concise sentence. Quote or closely paraphrase the specific "
+            "input phrases that support terms in this section. Verify "
+            "cited evidence supports the experiential conclusion, not "
+            "just the topic. If no specific phrases can be cited, write "
+            "'No direct evidence' and leave terms empty. Not embedded."
         ),
     )
     terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
@@ -646,15 +655,17 @@ class TermsWithJustificationSection(BaseModel):
 
 
 class WatchContextWithJustificationsOutput(BaseModel):
-    """Watch context variant WITH justification fields.
+    """Watch context variant WITH upstream evidence assessment fields.
 
     Identical output structure to WatchContextOutput but uses section
-    models that include a justification field. Justifications provide
-    chain-of-thought that may improve term quality and specificity.
-    They are discarded before embedding — no retrieval impact.
+    models that include an evidence_basis field. The evidence_basis
+    forces the model to inventory specific input phrases that support
+    each section BEFORE generating terms — an upstream constraint that
+    prevents rationalization of already-planned output.
 
-    The __str__() method produces IDENTICAL embedding text to
-    WatchContextOutput — justification text is never embedded.
+    Evidence_basis text is discarded before embedding — no retrieval
+    impact. The __str__() method produces IDENTICAL embedding text to
+    WatchContextOutput.
 
     All sections allow 0 terms — sparse inputs should produce fewer
     terms, not fabricated ones.
@@ -698,6 +709,88 @@ class WatchContextWithJustificationsOutput(BaseModel):
 
     def __str__(self) -> str:
         # Must produce identical embedding text to WatchContextOutput.__str__()
+        combined_terms = (
+            self.self_experience_motivations.terms
+            + self.external_motivations.terms
+            + self.key_movie_feature_draws.terms
+            + self.watch_scenarios.terms
+        )
+        return ", ".join(t.lower() for t in combined_terms)
+
+
+class WatchContextWithIdentityNoteOutput(BaseModel):
+    """Watch context variant with a brief identity_note pre-classification.
+
+    Adds a 2-8 word identity classification field BEFORE sections.
+    The model classifies the movie's viewing appeal register (sincere,
+    ironic, camp, comfort, visceral, intellectual, etc.) before
+    generating section terms. This primes correct tone calibration
+    without over-constraining output — the field is too brief to
+    act as a template the model faithfully expands.
+
+    Evolved from WatchContextWithViewingAppealOutput (H12 A/B test).
+    Round 3 evaluation showed a full-sentence viewing_appeal_summary
+    improved identity accuracy on challenging movies (+0.32 composite
+    on challenging_identity bucket) but over-constrained output on
+    rich-input movies (-0.49 on gold_standard). The brief identity_note
+    preserves the identity-priming benefit while leaving room for
+    the model to explore secondary signals from rich inputs.
+
+    The identity_note is NOT embedded — only section terms are used
+    in embedding text. The __str__() method produces IDENTICAL
+    embedding text to WatchContextOutput.
+
+    Uses evidence_basis sections (same as WatchContextWithJustificationsOutput).
+
+    Model: gpt-5-mini, reasoning_effort: low
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    identity_note: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "2-8 words classifying this movie's viewing appeal type. "
+            "E.g., 'sincere emotional drama', 'ironic camp classic', "
+            "'visceral fun horror', 'intellectually challenging arthouse', "
+            "'so-bad-it's-good guilty pleasure'. Not embedded."
+        ),
+    )
+    self_experience_motivations: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-8 search-query-like phrases capturing the self-focused "
+            "experiential reason someone would seek out this movie. "
+            "Empty when inputs are too sparse for confident generation."
+        ),
+    )
+    external_motivations: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-4 search-query-like phrases capturing value beyond the "
+            "viewing experience: cultural significance, social currency, "
+            "conversation starters. Empty when not supported by inputs."
+        ),
+    )
+    key_movie_feature_draws: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-4 search-query-like phrases for standout movie attributes "
+            "that function as draws (positive or negative). "
+            "Empty when not supported by inputs."
+        ),
+    )
+    watch_scenarios: TermsWithJustificationSection = Field(
+        ...,
+        description=(
+            "0-6 search-query-like phrases for real-world occasions, "
+            "contexts, and social settings for watching this movie. "
+            "Empty when not supported by inputs."
+        ),
+    )
+
+    def __str__(self) -> str:
+        # Must produce identical embedding text to WatchContextOutput.__str__()
+        # identity_note intentionally excluded from embedding text
         combined_terms = (
             self.self_experience_motivations.terms
             + self.external_motivations.terms

@@ -381,12 +381,46 @@ discipline gap that motivated nano routing. No model routing needed.
 **Context:** The watch_context generator and pre_consolidation eligibility check both changed
 signatures. `build_watch_context_user_prompt` and `generate_watch_context` now take
 `genre_signatures`, `emotional_observations`, `craft_observations`, `thematic_observations`
-instead of `review_insights_brief`. `_check_watch_context` now takes `(genre_signatures, genres)`
-instead of `(review_insights_brief, genres, merged_keywords, maturity_summary)`. Tests
-importing old signatures will fail at call time.
+instead of `review_insights_brief`. `_check_watch_context` now takes
+`(genre_signatures, genres, emotional_observations, craft_observations, thematic_observations)`
+instead of `(review_insights_brief, genres, merged_keywords, maturity_summary)`. The Phase 1
+eligibility tightening (2026-04-01) added the 3 observation params and a second gate requiring
+at least one observation field. Tests importing old signatures will fail at call time.
+Additionally, `TermsWithJustificationSection.justification` was renamed to `evidence_basis` —
+any test referencing the old field name will break.
+Round 3 changes (2026-04-01): `WatchContextWithViewingAppealOutput` renamed to
+`WatchContextWithIdentityNoteOutput` (`viewing_appeal_summary` → `identity_note`).
+`SYSTEM_PROMPT_WITH_VIEWING_APPEAL` renamed to `SYSTEM_PROMPT_WITH_IDENTITY_NOTE`.
+Any test imports of the old names will break.
+Round 4 finalization (2026-04-01): `generate_watch_context()` no longer accepts
+provider, model, system_prompt, response_format, or **kwargs. Tests passing those
+params will fail. Return type changed from `WatchContextOutput` to
+`WatchContextWithIdentityNoteOutput`.
 **When:** Next time watch_context or pre_consolidation tests are being worked on.
 **See:** unit_tests/test_watch_context_generator.py (if it exists),
 unit_tests/test_pre_consolidation.py,
 movie_ingestion/metadata_generation/generators/watch_context.py,
 movie_ingestion/metadata_generation/pre_consolidation.py
+
+## ~~Evaluate identity_note variant on gold_standard + challenging_identity buckets~~ DONE
+Evaluated (2026-04-01): R4 candidates (r4-identity-note-low, r4-identity-note-minimal) run across
+all 50 movies. Qualitative review confirmed identity_note preserves challenging_identity priming
+(correct ironic/visceral/camp classifications) without gold_standard regression (no template
+over-constraining). Winner: r4-identity-note-minimal (gpt-5-mini, minimal reasoning, low verbosity,
+SYSTEM_PROMPT_WITH_JUSTIFICATIONS + WatchContextWithIdentityNoteOutput). Generator finalized
+to this config — no longer accepts configurable provider/model/kwargs params.
+
+## ~~Populate challenging_identity eval bucket with 8-10 movies~~ DONE
+Populated with 10 movies (2026-04-01): 9388, 10802, 619778, 23629, 798286, 2662, 792307,
+755, 8424, 924. Spans tone-genre mismatch, quality-as-identity, mixed-valence, polarizing,
+and non-obvious appeal categories. All verified watch_context eligible.
+
+## Fix report_bucket_axis_performance.py for flat-list bucket formats
+**Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts
+with `tmdb_ids`, `movies`, or `samples` keys. The watch_context bucket file uses a flat format
+(`bucket_name -> [list of int IDs]`), which causes `_extract_tmdb_ids()` to return empty and
+all movies to map to "unknown" bucket. The `build_id_to_bucket_map()` function filters on
+`isinstance(bucket_payload, dict)` which skips list payloads entirely.
+**When:** Next time the reporting script is used (low priority — manual Python works around it).
+**See:** movie_ingestion/metadata_generation/report_bucket_axis_performance.py (lines 47-86)
 
