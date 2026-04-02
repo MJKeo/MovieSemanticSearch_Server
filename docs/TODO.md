@@ -240,9 +240,9 @@ Completed: gpt-5-mini-minimal with revised prompt + no-overview was evaluated ac
 36 movies. Matched or exceeded old low-reasoning quality. Reception generator finalized
 
 
-## Write empty source_of_inspiration outputs as "original screenplay" during embedding
+## Write empty source_material outputs as "original screenplay" during embedding
 **Context:** For source_of_inspiration generation, the model should return an empty
-`sources_of_inspiration` list when a film has no direct source material. That includes
+`source_material` list when a film has no direct source material. That includes
 original screenplays. However, downstream embedding may still benefit from explicitly
 encoding that absence as `"original screenplay"` at embedding time rather than at
 generation time, so original films remain queryable without encouraging the generator
@@ -251,7 +251,6 @@ to emit non-empty source labels.
 **See:** movie_ingestion/metadata_generation/schemas.py (`SourceOfInspirationOutput.__str__()`),
 implementation/classes/schemas.py, implementation/vectorize.py,
 movie_ingestion/metadata_generation/prompts/source_of_inspiration.py
-with fixed config (gpt-5-mini, minimal reasoning, low verbosity).
 
 ## Update plot_events embedding to use synopsis when available, generated plot_summary as fallback
 **Context:** The plot_events vector space embedding process should prefer
@@ -440,30 +439,16 @@ returned empty 25% of the time).
 **See:** movie_ingestion/metadata_generation/schemas.py (remove production_mediums from
 SourceOfInspirationOutput), implementation/vectorize.py (create_production_vector_text)
 
-## Redesign source_of_inspiration: narrow scope + add franchise_lineage
-**Context:** Evaluation of source_of_inspiration (55 movies, 6 candidates) revealed
-three design issues addressed here:
-1. **Remove production_mediums** — now handled deterministically (see TODO above).
-2. **Narrow sources_of_inspiration** — remove sequel/prequel/reboot/spinoff (franchise
-   lineage, not source material) and tighten to a specific set of valid source types:
-   novel, book, short story, graphic novel, manga, comic, play, true story, real person,
-   true events, memoir, autobiography, video game, cartoon, theme park ride, TV series,
-   remake of a film. The model should NOT infer loose inspiration from inputs (e.g.,
-   "roman inspiration" for Gladiator). Inputs are gospel; parametric knowledge only at
-   95%+ confidence for well-known categorical facts.
-3. **Add franchise_lineage field** — new field capturing sequel, prequel, reboot, spinoff,
-   reimagining, series entry. Draws from source_material_hint (~2,888 franchise-only
-   hints), franchise keywords (~2,060 movies), and parametric knowledge (especially from
-   title, e.g., "Part 2", "Returns"). Both signals are fragmented (847 movies have
-   keywords but no hint, ~2,040 have hint but no keyword), so the LLM serves as a
-   consolidation + gap-filling layer.
-The generator prompt should frame this as: "given these inputs and your knowledge,
-determine two things: (a) does this film adapt a specific source, and (b) is it part
-of a franchise lineage? Abstain on either if unsure."
-**When:** Before re-running source_of_inspiration batch generation.
+## ~~Redesign source_of_inspiration: narrow scope + add franchise_lineage~~ DONE
+Completed (2026-04-02): Full prompt and schema rewrite. source_material now covers
+adaptations + retellings/branches (remakes, reboots, reimaginings, spinoffs).
+franchise_lineage is strictly linear story continuation with expanded vocabulary
+(franchise starter, first in franchise, trilogy positions, series positions).
+Open vocabulary (guidance not closed enum). Two new eval buckets added
+(franchise_position, source_lineage_boundary). Prompt rewritten from scratch
+optimized for gpt-5-mini with concrete movie examples at the classification boundary.
 **See:** movie_ingestion/metadata_generation/prompts/source_of_inspiration.py,
-movie_ingestion/metadata_generation/schemas.py (SourceOfInspirationOutput),
-movie_ingestion/metadata_generation/generators/source_of_inspiration.py
+ingestion_data/source_of_inspiration_eval_guide.md
 
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts

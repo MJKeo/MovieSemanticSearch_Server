@@ -631,26 +631,26 @@ class TestProductionKeywordsWithJustificationsStrParity:
 class TestSourceOfInspirationWithJustificationsStrParity:
     def test_str_parity_with_source_of_inspiration(self):
         base = SourceOfInspirationOutput(
-            sources_of_inspiration=["original screenplay"],
-            production_mediums=["live-action", "CGI"],
+            source_material=["based on a novel"],
+            franchise_lineage=["sequel", "second in trilogy"],
         )
         with_j = SourceOfInspirationWithJustificationsOutput(
-            source_reasoning="Evidence for source.",
-            sources_of_inspiration=["original screenplay"],
-            production_medium_reasoning="Evidence for medium.",
-            production_mediums=["live-action", "CGI"],
+            source_evidence="Keywords indicate novel adaptation.",
+            source_material=["based on a novel"],
+            lineage_evidence="Title contains 'Part 2'.",
+            franchise_lineage=["sequel", "second in trilogy"],
         )
         assert str(base) == str(with_j)
 
     def test_str_excludes_justification_text(self):
         with_j = SourceOfInspirationWithJustificationsOutput(
-            source_reasoning="SOI_SOURCE_MARKER",
-            sources_of_inspiration=["novel"],
-            production_medium_reasoning="SOI_MEDIUM_MARKER",
-            production_mediums=["animation"],
+            source_evidence="SOI_SOURCE_MARKER",
+            source_material=["based on a novel"],
+            lineage_evidence="SOI_LINEAGE_MARKER",
+            franchise_lineage=["sequel"],
         )
         assert "SOI_SOURCE_MARKER" not in str(with_j)
-        assert "SOI_MEDIUM_MARKER" not in str(with_j)
+        assert "SOI_LINEAGE_MARKER" not in str(with_j)
 
 
 # ---------------------------------------------------------------------------
@@ -799,12 +799,82 @@ class TestProductionKeywordsOutputStrEmpty:
 # SourceOfInspirationOutput.__str__() with empty lists
 # ---------------------------------------------------------------------------
 
+class TestSourceOfInspirationOldFieldNamesRejected:
+    def test_source_of_inspiration_rejects_old_field_names(self):
+        """Old field names (sources_of_inspiration, production_mediums) are rejected by extra='forbid'."""
+        with pytest.raises(ValidationError):
+            SourceOfInspirationOutput(
+                sources_of_inspiration=["original screenplay"],
+                production_mediums=["live-action"],
+            )
+
+    def test_source_of_inspiration_with_reasoning_rejects_old_field_names(self):
+        """Old reasoning field names (source_reasoning, production_medium_reasoning) are rejected."""
+        from movie_ingestion.metadata_generation.schemas import SourceOfInspirationWithReasoningOutput
+        with pytest.raises(ValidationError):
+            SourceOfInspirationWithReasoningOutput(
+                source_reasoning="Evidence.",
+                sources_of_inspiration=["novel"],
+                production_medium_reasoning="Evidence.",
+                production_mediums=["animation"],
+            )
+
+
+class TestSourceOfInspirationOutputStrContent:
+    def test_source_of_inspiration_str_combines_both_lists(self):
+        """__str__() concatenates source_material + franchise_lineage, comma-separated."""
+        output = SourceOfInspirationOutput(
+            source_material=["based on a novel"],
+            franchise_lineage=["sequel"],
+        )
+        assert str(output) == "based on a novel, sequel"
+
+    def test_source_of_inspiration_str_source_material_only(self):
+        """__str__() with only source_material returns just source terms, no trailing comma."""
+        output = SourceOfInspirationOutput(
+            source_material=["based on a novel", "remake of a film"],
+            franchise_lineage=[],
+        )
+        assert str(output) == "based on a novel, remake of a film"
+
+    def test_source_of_inspiration_str_franchise_lineage_only(self):
+        """__str__() with only franchise_lineage returns just lineage terms."""
+        output = SourceOfInspirationOutput(
+            source_material=[],
+            franchise_lineage=["franchise starter", "first in trilogy"],
+        )
+        assert str(output) == "franchise starter, first in trilogy"
+
+
+class TestSourceOfInspirationPromptAliasRemoval:
+    def test_system_prompt_with_justifications_not_in_prompts_module(self):
+        """SYSTEM_PROMPT_WITH_JUSTIFICATIONS was removed from the prompts module."""
+        import importlib
+        mod = importlib.import_module(
+            "movie_ingestion.metadata_generation.prompts.source_of_inspiration"
+        )
+        assert not hasattr(mod, "SYSTEM_PROMPT_WITH_JUSTIFICATIONS")
+
+
+class TestSourceOfInspirationWithReasoningEvidenceConstraints:
+    def test_whitespace_only_evidence_rejected(self):
+        """Whitespace-only evidence strings should fail min_length=1 after strip_whitespace."""
+        from movie_ingestion.metadata_generation.schemas import SourceOfInspirationWithReasoningOutput
+        with pytest.raises(ValidationError):
+            SourceOfInspirationWithReasoningOutput(
+                source_evidence="   ",
+                source_material=[],
+                lineage_evidence="   ",
+                franchise_lineage=[],
+            )
+
+
 class TestSourceOfInspirationOutputStrEmpty:
     def test_source_of_inspiration_str_empty_lists(self):
         """SourceOfInspirationOutput.__str__() returns '' when both lists empty."""
         output = SourceOfInspirationOutput(
-            sources_of_inspiration=[],
-            production_mediums=[],
+            source_material=[],
+            franchise_lineage=[],
         )
         assert str(output) == ""
 

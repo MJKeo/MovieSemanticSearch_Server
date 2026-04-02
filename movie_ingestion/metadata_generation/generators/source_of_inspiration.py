@@ -1,49 +1,22 @@
 """
-Source of Inspiration generator (Wave 2).
+Source of Inspiration generator.
 
-Async method that generates source of inspiration metadata for a single
-movie. Makes two parallel classification decisions:
-1. source_material — does this film adapt a specific source? (novel,
-   true story, manga, remake of a film, etc.)
-2. franchise_lineage — is this film part of a franchise? (sequel,
-   prequel, reboot, spinoff, etc.)
+Two classification decisions per movie:
+1. source_material — what existing media does the film draw from?
+   (adaptations, remakes, reboots, reimaginings, spinoffs)
+2. franchise_lineage — where does the film sit in a franchise timeline?
+   (sequel, prequel, trilogy position, franchise starter)
 
-This is the ONLY generation that allows parametric knowledge -- the LLM
-may use its training data for both classifications when at least 95%
-confident. This is safe because source material and franchise facts are
-categorical and verifiable, and these are leaf-node classifications that
-don't cascade to other generations.
+Parametric knowledge allowed at 95%+ confidence. Leaf-node classification.
 
-production_mediums was removed — now derived deterministically from
-genres + keywords at embedding time.
+Inputs: title (with year), merged_keywords, source_material_hint (from
+Wave 1 reception). The hint is the highest-confidence signal when present
+and may contain evidence for either field.
 
-Inputs:
-    - movie (MovieInputData): raw fields for title, merged_keywords
-    - source_material_hint: from Wave 1 reception extraction zone
-      (may be None). Short classifying phrase like "based on autobiography",
-      "remake", "based on book, sequel". Highest-confidence grounding
-      signal when present — may contain evidence for either field.
+Eligible when merged_keywords >= 1 OR source_material_hint is present.
+Near-zero skip rate (~21 movies lack all inputs).
 
-Removed inputs (vs current system):
-    - plot_synopsis: removed per ADR-033 (barely used, saves ~83.6M tokens)
-    - featured_reviews: replaced first by review_insights_brief, then by
-      the more targeted source_material_hint
-    - review_insights_brief: replaced by source_material_hint (the source
-      signal was in this dedicated field, not in the observation blobs)
-    - plot_keywords / overall_keywords as separate inputs: merged via
-      movie.merged_keywords()
-
-Skip condition: eligible when merged_keywords >= 1 OR source_material_hint
-    is present. Near-zero skip rate (~21 movies lack all keywords).
-
-Response schema: SourceOfInspirationOutput (no reasoning fields) by default.
-    SourceOfInspirationWithReasoningOutput available for evaluation and
-    reasoning-enabled comparisons.
-
-Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: low,
-    verbosity: low.
-
-See docs/llm_metadata_generation_new_flow.md Section 5.5.
+Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: low.
 """
 
 from typing import Tuple
@@ -103,25 +76,17 @@ def build_source_of_inspiration_user_prompt(
 async def generate_source_of_inspiration(
     movie: MovieInputData,
     source_material_hint: str | None = None,
-    provider: LLMProvider = _DEFAULT_PROVIDER,
-    model: str = _DEFAULT_MODEL,
-    system_prompt: str = SYSTEM_PROMPT,
-    response_format: type = SourceOfInspirationOutput,
-    **kwargs,
 ) -> Tuple[SourceOfInspirationOutput, TokenUsage]:
     """Generate source of inspiration metadata for a single movie.
 
     Builds the user prompt from the movie's fields plus Wave 1 outputs,
-    calls the specified LLM provider with structured output, and returns
-    the parsed result alongside token usage.
+    calls gpt-5-mini (low reasoning, low verbosity) with the base
+    non-justification prompt, and returns the parsed result alongside
+    token usage.
 
     This is the ONLY generation where parametric knowledge is allowed --
     the LLM may contribute source material and franchise facts from its
     training data when at least 95% confident.
-
-    Defaults to OpenAI gpt-5-mini with reasoning_effort: low (matching
-    the legacy system). Callers can override provider/model/kwargs to
-    test different configurations during evaluation.
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
@@ -131,9 +96,6 @@ async def generate_source_of_inspiration(
             skipped, or reviewers didn't mention source material.
             May contain evidence for either source_material or
             franchise_lineage.
-        provider: Which LLM backend to use. Defaults to OPENAI.
-        model: Model identifier. Defaults to "gpt-5-mini".
-        **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
 
     Returns:
         Tuple of (SourceOfInspirationOutput, TokenUsage).
@@ -149,12 +111,13 @@ async def generate_source_of_inspiration(
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=provider,
+            provider=_DEFAULT_PROVIDER,
             user_prompt=user_prompt,
-            system_prompt=system_prompt,
-            response_format=response_format,
-            model=model,
-            **kwargs,
+            system_prompt=SYSTEM_PROMPT,
+            response_format=SourceOfInspirationOutput,
+            model=_DEFAULT_MODEL,
+            reasoning_effort="low",
+            verbosity="low",
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
@@ -164,4 +127,4 @@ async def generate_source_of_inspiration(
         print(f"{GENERATION_TYPE} generation returned None for '{title_with_year}'")
         raise MetadataGenerationEmptyResponseError(GENERATION_TYPE, title_with_year)
 
-    return parsed, TokenUsage(input_tokens, output_tokens, model)
+    return parsed, TokenUsage(input_tokens, output_tokens, _DEFAULT_MODEL)

@@ -47,8 +47,8 @@ def _make_movie(**overrides) -> MovieInputData:
 
 def _make_soi_output() -> SourceOfInspirationOutput:
     return SourceOfInspirationOutput(
-        sources_of_inspiration=["original screenplay"],
-        production_mediums=["live-action"],
+        source_material=["based on a novel"],
+        franchise_lineage=["sequel"],
     )
 
 
@@ -105,25 +105,22 @@ class TestGenerateSourceOfInspiration:
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            parsed, token_usage = await generate_source_of_inspiration(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            parsed, token_usage = await generate_source_of_inspiration(movie)
 
         assert parsed is expected
         assert isinstance(token_usage, TokenUsage)
 
-    async def test_no_default_reasoning_effort_injected(self):
-        """No default reasoning_effort is injected when caller doesn't provide one."""
+    async def test_hardcoded_reasoning_effort(self):
+        """Generator always passes reasoning_effort='low' and verbosity='low'."""
         mock_fn = AsyncMock(return_value=(_make_soi_output(), 100, 50))
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            await generate_source_of_inspiration(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            await generate_source_of_inspiration(movie)
 
         call_kwargs = mock_fn.call_args[1]
-        assert "reasoning_effort" not in call_kwargs
+        assert call_kwargs["reasoning_effort"] == "low"
+        assert call_kwargs["verbosity"] == "low"
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +134,7 @@ class TestGenerateSourceOfInspirationErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_source_of_inspiration(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_source_of_inspiration(movie)
 
         assert exc_info.value.generation_type == GENERATION_TYPE
 
@@ -149,9 +144,7 @@ class TestGenerateSourceOfInspirationErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationEmptyResponseError):
-                await generate_source_of_inspiration(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_source_of_inspiration(movie)
 
     async def test_error_chains_original_cause(self):
         original = ValueError("original")
@@ -160,48 +153,45 @@ class TestGenerateSourceOfInspirationErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_source_of_inspiration(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_source_of_inspiration(movie)
 
         assert exc_info.value.__cause__ is original
 
 
 # ---------------------------------------------------------------------------
-# Tests: system_prompt and response_format override
+# Tests: signature lockdown — removed parameters
 # ---------------------------------------------------------------------------
 
-class TestSourceOfInspirationOverrides:
-    async def test_custom_system_prompt_forwarded(self):
-        """A custom system_prompt is forwarded to the LLM call."""
-        mock_fn = AsyncMock(return_value=(_make_soi_output(), 100, 50))
-        movie = _make_movie()
+class TestSourceOfInspirationSignatureLockdown:
+    def test_generate_does_not_accept_provider_kwarg(self):
+        """provider parameter was removed — passing it should raise TypeError."""
+        import inspect
+        sig = inspect.signature(generate_source_of_inspiration)
+        assert "provider" not in sig.parameters
 
-        with patch(_LLM_PATCH, mock_fn):
-            await generate_source_of_inspiration(
-                movie, system_prompt="CUSTOM_PROMPT",
-                provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+    def test_generate_does_not_accept_model_kwarg(self):
+        """model parameter was removed — passing it should raise TypeError."""
+        import inspect
+        sig = inspect.signature(generate_source_of_inspiration)
+        assert "model" not in sig.parameters
 
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["system_prompt"] == "CUSTOM_PROMPT"
-
-    async def test_custom_response_format_forwarded(self):
-        """A custom response_format is forwarded to the LLM call."""
-        from movie_ingestion.metadata_generation.schemas import SourceOfInspirationWithJustificationsOutput
+    async def test_hardcoded_llm_params(self):
+        """All 6 hardcoded params are passed to the LLM call."""
+        from movie_ingestion.metadata_generation.prompts.source_of_inspiration import SYSTEM_PROMPT
 
         mock_fn = AsyncMock(return_value=(_make_soi_output(), 100, 50))
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            await generate_source_of_inspiration(
-                movie,
-                response_format=SourceOfInspirationWithJustificationsOutput,
-                provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            await generate_source_of_inspiration(movie)
 
         call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["response_format"] is SourceOfInspirationWithJustificationsOutput
+        assert call_kwargs["provider"] == LLMProvider.OPENAI
+        assert call_kwargs["model"] == "gpt-5-mini"
+        assert call_kwargs["system_prompt"] == SYSTEM_PROMPT
+        assert call_kwargs["response_format"] is SourceOfInspirationOutput
+        assert call_kwargs["reasoning_effort"] == "low"
+        assert call_kwargs["verbosity"] == "low"
 
 
 # ---------------------------------------------------------------------------
