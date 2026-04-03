@@ -126,7 +126,7 @@ class PlotEventsOutput(EmbeddableOutput):
         return self.plot_summary.lower()
 
     def embedding_text(self) -> str:
-        return normalize_string(self.plot_summary)
+        return self.plot_summary.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -224,13 +224,14 @@ class ReceptionOutput(EmbeddableOutput):
     def embedding_text(self) -> str:
         # Synthesis zone only — extraction-zone fields excluded
         parts = []
-        if self.reception_summary:
-            parts.append(self.reception_summary)
+        parts.append(self.reception_summary.lower())
         if self.praised_qualities:
-            parts.append(", ".join(self.praised_qualities))
+            praised = ", ".join(normalize_string(q) for q in self.praised_qualities)
+            parts.append(f"praised: {praised}")
         if self.criticized_qualities:
-            parts.append(", ".join(self.criticized_qualities))
-        return normalize_string("\n".join(parts))
+            criticized = ", ".join(normalize_string(q) for q in self.criticized_qualities)
+            parts.append(f"criticized: {criticized}")
+        return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -413,20 +414,39 @@ class PlotAnalysisOutput(EmbeddableOutput):
         return "\n".join(parts)
 
     def embedding_text(self) -> str:
+        """Build labeled embedding text for the plot_analysis vector space.
+
+        Prose fields (overview, elevator pitch) are self-contextualizing and
+        included without labels. Short categorical fields get semantic labels
+        to disambiguate their role for the embedding model.
+        """
         parts = []
-        if self.generalized_plot_overview:
-            parts.append(self.generalized_plot_overview)
+
+        # Prose fields — lowercased, no label needed
         if self.elevator_pitch_with_justification:
-            parts.append(self.elevator_pitch_with_justification.elevator_pitch)
+            parts.append(self.elevator_pitch_with_justification.elevator_pitch.lower())
+        if self.generalized_plot_overview:
+            parts.append(self.generalized_plot_overview.lower())
+
+        # Short label fields — each term normalized individually, then labeled
         if self.genre_signatures:
-            parts.append(", ".join(self.genre_signatures))
+            parts.append("genre signatures: " + ", ".join(
+                normalize_string(g) for g in self.genre_signatures
+            ))
         if self.conflict_type:
-            parts.append(", ".join(self.conflict_type))
+            parts.append("conflict: " + ", ".join(
+                normalize_string(c) for c in self.conflict_type
+            ))
         if self.character_arcs:
-            parts.extend(arc.arc_transformation_label for arc in self.character_arcs)
+            parts.append("character arcs: " + ", ".join(
+                normalize_string(arc.arc_transformation_label) for arc in self.character_arcs
+            ))
         if self.thematic_concepts:
-            parts.extend(t.concept_label for t in self.thematic_concepts)
-        return normalize_string("\n".join(parts))
+            parts.append("themes: " + ", ".join(
+                normalize_string(t.concept_label) for t in self.thematic_concepts
+            ))
+
+        return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +537,9 @@ class ViewerExperienceOutput(EmbeddableOutput):
         ):
             combined_terms.extend(section.terms)
             combined_terms.extend(section.negations)
-        return normalize_string(", ".join(combined_terms))
+
+        normalized_combined_terms = [normalize_string(term) for term in combined_terms]
+        return ", ".join(normalized_combined_terms)
 
 
 # ---------------------------------------------------------------------------
@@ -634,7 +656,8 @@ class WatchContextOutput(EmbeddableOutput):
             + self.key_movie_feature_draws.terms
             + self.watch_scenarios.terms
         )
-        return normalize_string(", ".join(combined_terms))
+        normalized_combined_terms = [normalize_string(term) for term in combined_terms]
+        return ", ".join(normalized_combined_terms)
 
 
 # ---------------------------------------------------------------------------
@@ -699,7 +722,8 @@ class NarrativeTechniquesOutput(EmbeddableOutput):
             self.additional_narrative_devices,
         ):
             combined_terms.extend(section.terms)
-        return normalize_string(", ".join(combined_terms))
+        normalized_combined_terms = [normalize_string(term) for term in combined_terms]
+        return ", ".join(normalized_combined_terms)
 
 
 # ---------------------------------------------------------------------------
@@ -725,7 +749,8 @@ class ProductionKeywordsOutput(EmbeddableOutput):
         return ", ".join(t.lower() for t in self.terms)
 
     def embedding_text(self) -> str:
-        return normalize_string(", ".join(self.terms))
+        normalized_terms = [normalize_string(term) for term in self.terms]
+        return ", ".join(normalized_terms)
 
 
 # ---------------------------------------------------------------------------
@@ -771,5 +796,32 @@ class SourceOfInspirationOutput(EmbeddableOutput):
         return ", ".join(t.lower() for t in all_terms)
 
     def embedding_text(self) -> str:
-        all_terms = self.source_material + self.franchise_lineage
-        return normalize_string(", ".join(all_terms))
+        parts: list[str] = []
+
+        if self.source_material:
+            normalized = [normalize_string(t) for t in self.source_material]
+            parts.append(f"source material: {', '.join(normalized)}")
+        elif self._is_likely_original():
+            # No source material and not a continuation → likely original work
+            parts.append("source material: original screenplay")
+
+        if self.franchise_lineage:
+            normalized = [normalize_string(t) for t in self.franchise_lineage]
+            parts.append(f"franchise position: {', '.join(normalized)}")
+
+        return "\n".join(parts)
+
+    def _is_likely_original(self) -> bool:
+        """True when franchise_lineage is empty or only has first/starter terms.
+
+        Movies that are franchise starters (e.g. "first in franchise") are still
+        original screenplays — they just also launched a franchise. Movies that
+        are sequels, prequels, or continuations are NOT original even if
+        source_material is empty (they derive from the prior film).
+        """
+        if not self.franchise_lineage:
+            return True
+        return all(
+            "first" in t.lower() or "start" in t.lower()
+            for t in self.franchise_lineage
+        )

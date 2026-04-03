@@ -59,9 +59,9 @@ Files: schemas/metadata.py
 Why: Replace the __str__()-based convention for generating embedding text with an explicit embedding_text() method on a shared base class. Makes the embedding contract explicit and applies normalize_string() consistently.
 Approach: Created EmbeddableOutput(BaseModel) with abstract embedding_text(). All 8 *Output classes now inherit from it and implement embedding_text(), which assembles the same fields as __str__() but returns normalize_string()-processed text instead of manual .lower(). Existing __str__() methods retained for backward compatibility.
 
-## Update simple vector text functions to use *Output schemas
+## Update vector text functions to accept Movie object
 Files: movie_ingestion/final_ingestion/vector_text.py
-Why: Decouple from BaseMovie; accept the typed *Output directly and use embedding_text(). Updated: create_plot_events_vector_text, create_narrative_techniques_vector_text, create_viewer_experience_vector_text, create_watch_context_vector_text.
+Why: Standardize all vector text functions to accept a Movie object and access metadata internally. Updated create_narrative_techniques_vector_text, create_viewer_experience_vector_text, and create_watch_context_vector_text to accept Movie, access the corresponding metadata attribute, and return None when metadata is missing. Removed now-unused NarrativeTechniquesOutput, ViewerExperienceOutput, and WatchContextOutput imports.
 
 ## Switch source_of_inspiration prompt-constants test to production prompt
 Files: unit_tests/test_prompt_constants.py
@@ -98,6 +98,43 @@ Testing notes: Re-validated notebook JSON and verified the same path-bootstrap l
 Files: movie_ingestion/final_ingestion/vector_text.py
 Why: Both `create_plot_events_vector_text` and `create_plot_events_vector_text_fallback` called `normalize_string()` at multiple return sites, risking fallthrough bugs if a new branch was added without normalization.
 Approach: Restructured both functions to accumulate text into a single variable using if/elif/else chains, then call `normalize_string()` once at the end. This also means `embedding_text()` results are now normalized, which they previously were not. Both functions now return `str | None` instead of `str` — returning `None` when no text source is available so callers can distinguish "no data" from empty string.
+
+## Redesign plot_analysis vector text: labeled embedding, genre merging, remove plot_keywords
+Files: schemas/metadata.py (PlotAnalysisOutput.embedding_text), movie_ingestion/final_ingestion/vector_text.py (create_plot_analysis_vector_text), schemas/testing.ipynb
+
+### Intent
+Improve plot_analysis vector embedding quality by: (1) adding semantic labels to short categorical fields for embedding disambiguation, (2) merging TMDB genres into LLM-generated genre_signatures, (3) removing noisy plot_keywords, (4) moving formatting logic into PlotAnalysisOutput.embedding_text().
+
+### Key Decisions
+- **Removed plot_keywords:** Community-voted IMDB keywords are noisy for thematic analysis (mix of incidental scenes, meta-cultural tags, and thematic terms). The LLM-generated metadata already distills thematic signal from these as an input. Raw keywords dilute the refined output.
+- **Labeled short fields:** Research (Anthropic contextual retrieval study, Google Gemini docs, LlamaIndex defaults) supports adding "field: value" labels to disambiguate short values for embedding models. Prose fields (elevator_pitch, generalized_plot_overview) left unlabeled as self-contextualizing.
+- **Formatting in embedding_text(), not vector_text:** User directed moving field formatting into PlotAnalysisOutput.embedding_text() so the metadata class owns its own embedding representation. vector_text function is now a thin wrapper that merges genres and delegates.
+- **Genre merging:** TMDB genres appended to genre_signatures (case-insensitive dedup) so they embed as one labeled field rather than a separate unlabeled line.
+- **Normalization strategy:** Prose fields lowercased directly. Label fields have each term individually normalize_string()'d. No normalize_string() on the final assembled string.
+- **Return type:** Changed to `str | None` (returns None when metadata missing), matching other vector text functions.
+- **Parameter type:** Changed from BaseMovie to Movie to access PlotAnalysisOutput directly.
+
+### Testing Notes
+Updated schemas/testing.ipynb to print raw metadata fields, raw TMDB genres, and final vector text output for manual verification across 10 test movies.
+
+## Migrate create_reception_vector_text to Movie with formatting improvements
+Files: schemas/movie.py, schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py, schemas/testing.ipynb
+
+### Intent
+Migrate create_reception_vector_text from BaseMovie to Movie. Improve embedding text formatting with labels and per-term normalization. Move formatting logic into ReceptionOutput.embedding_text().
+
+### Key Decisions
+- **Added reception_score() and reception_tier() to Movie:** Logic identical to BaseMovie but reads from self.imdb_data.imdb_rating/metacritic_rating.
+- **Excluded IMDB review_themes:** Substantially redundant with LLM praised/criticized_qualities (the LLM already consumed review_themes as input and synthesized them).
+- **Excluded IMDB reception_summary:** Contains mixed non-reception content (themes, influences, production facts) that would dilute the vector space. LLM summary is more focused on the evaluative dimension.
+- **No numeric scores in embedding:** User directive — no IMDB/Metacritic numbers in vector text.
+- **Labeled fields:** Added lowercase "reception:", "praised:", "criticized:" labels for embedding disambiguation. Consistent with labeled embedding convention from plot_analysis work.
+- **Per-term normalization:** Each praised/criticized quality individually normalize_string()'d before joining.
+- **Formatting in embedding_text():** Moved praised/criticized formatting into ReceptionOutput.embedding_text(), vector_text function is a thin wrapper that adds tier and delegates.
+- **Returns None when no reception_metadata:** Early return None instead of assembling text from tier alone.
+
+### Testing Notes
+Updated schemas/testing.ipynb to print raw reception fields and final vector text for manual inspection across 10 test movies.
 
 ## Make Movie tracker DB default path absolute
 Files: schemas/movie.py

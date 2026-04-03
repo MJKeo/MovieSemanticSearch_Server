@@ -179,18 +179,13 @@ concatenated review_insights_brief was removed from pre_consolidation.py — no 
 production_keywords does not use any reception fields.
 
 
-## Update search-side ReceptionMetadata and embedding for new field names
-**Context:** The generation-side ReceptionOutput renamed fields: new_reception_summary →
-reception_summary, praise_attributes → praised_qualities, complaint_attributes →
-criticized_qualities, and raised tag cap from 4→6. The search-side ReceptionMetadata in
-implementation/classes/schemas.py and create_reception_vector_text() in
-movie_ingestion/final_ingestion/vector_text.py still use the old names. These need
-updating together, plus the empty-list guard fix in vector_text.py (currently emits
-"Praises: " with nothing after it when list is empty).
-**When:** When deploying new reception generation results to the search index.
+## ~~Update search-side ReceptionMetadata and embedding for new field names~~ PARTIALLY DONE
+create_reception_vector_text() in vector_text.py updated to use Movie with new field names
+(reception_summary, praised_qualities, criticized_qualities). The search-side
+ReceptionMetadata in implementation/classes/schemas.py still uses old names — needs
+updating when deploying to the production search index.
 **See:** implementation/classes/schemas.py (ReceptionMetadata),
-movie_ingestion/final_ingestion/vector_text.py (create_reception_vector_text),
-schemas/metadata.py (ReceptionOutput)
+movie_ingestion/final_ingestion/vector_text.py (create_reception_vector_text)
 
 
 ## Update test_reception_generator.py for revamped schema and signature
@@ -417,24 +412,12 @@ Populated with 10 movies (2026-04-01): 9388, 10802, 619778, 23629, 798286, 2662,
 755, 8424, 924. Spans tone-genre mismatch, quality-as-identity, mixed-valence, polarizing,
 and non-obvious appeal categories. All verified watch_context eligible.
 
-## Derive production medium deterministically at embedding time (no LLM)
-**Context:** Production medium (live-action, animation type, stop-motion, etc.) can
-be derived from existing structured data without an LLM call. Analysis of 109K movies
-confirmed: 100% of Animation-genre movies have medium keywords (hand-drawn, stop
-motion, computer animation, etc.), and 1,069 non-Animation-genre movies have medium
-keywords describing partial techniques (CGI, puppet, animated sequences). The
-deterministic rule:
-1. Has Animation genre → use medium keywords to pick specific type (hand-drawn,
-   stop motion, computer animation), default to "animation" if none more specific.
-2. Has medium keywords but no Animation genre → embed those keywords as-is (they
-   describe production techniques like CGI, puppet work within live-action films).
-3. Neither → "live action".
-This replaces the `production_mediums` field that was previously in source_of_inspiration
-LLM generation, which suffered from empty-list abstention bugs (gpt54nano-medium-just
-returned empty 25% of the time).
-**When:** When building the production embedding pipeline for production vectors.
-**See:** schemas/metadata.py (remove production_mediums from
-SourceOfInspirationOutput), movie_ingestion/final_ingestion/vector_text.py (create_production_vector_text)
+## ~~Derive production medium deterministically at embedding time (no LLM)~~ DONE
+Completed (2026-04-03): Implemented as `Movie.production_medium_text()` in schemas/movie.py.
+Simplified to binary classification: Animation genre → "animation", otherwise → "live action".
+Finer-grained medium details (computer animation, stop motion, CGI, etc.) are already
+captured by production_keywords — this field only provides the top-level signal.
+**See:** schemas/movie.py, movie_ingestion/final_ingestion/vector_text.py
 
 ## ~~Redesign source_of_inspiration: narrow scope + add franchise_lineage~~ DONE
 Completed (2026-04-02): Full prompt and schema rewrite. source_material now covers

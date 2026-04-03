@@ -18,6 +18,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from implementation.classes.enums import BudgetSize
+
 from movie_ingestion.imdb_scraping.models import (
     FeaturedReview,
     ParentalGuideItem,
@@ -173,6 +175,21 @@ class Movie(BaseModel):
     production_keywords_metadata: ProductionKeywordsOutput | None = None
     source_of_inspiration_metadata: SourceOfInspirationOutput | None = None
 
+    # Era-adjusted budget thresholds: decade → (small_ceiling, large_floor)
+    _DECADE_THRESHOLDS: ClassVar[dict[int, tuple[int, int]]] = {
+        1920: (    100_000,   1_000_000),
+        1930: (    150_000,   2_000_000),
+        1940: (    250_000,   3_000_000),
+        1950: (    750_000,  12_000_000),
+        1960: (  1_000_000,  20_000_000),
+        1970: (  2_000_000,  25_000_000),
+        1980: (  5_000_000,  45_000_000),
+        1990: (  9_000_000,  80_000_000),
+        2000: ( 12_000_000, 110_000_000),
+        2010: ( 15_000_000, 150_000_000),
+        2020: ( 18_000_000, 185_000_000),
+    }
+
     _QUERY: ClassVar[str] = f"""
         SELECT
             {", ".join(f"t.{col} AS tmdb__{col}" for col in _TMDB_DATA_COLUMNS)},
@@ -216,16 +233,205 @@ class Movie(BaseModel):
         )
 
     def resolved_budget(self) -> int | None:
-        """Prefer IMDB budget when present; fall back to TMDB."""
-        if self.imdb_data.budget is not None:
+        """Prefer IMDB budget when present; fall back to TMDB.
+
+        Returns None when budget is missing or zero (zero typically
+        means 'unknown' in TMDB/IMDB data, not actually free).
+        """
+        if self.imdb_data.budget:
             return self.imdb_data.budget
-        return self.tmdb_data.budget
+        if self.tmdb_data.budget:
+            return self.tmdb_data.budget
+        return None
 
     def resolved_maturity_rating(self) -> str | None:
         """Prefer IMDB maturity rating when present; fall back to TMDB."""
         if self.imdb_data.maturity_rating:
             return self.imdb_data.maturity_rating
         return self.tmdb_data.maturity_rating
+
+    def reception_score(self) -> float | None:
+        """Compute a 0-100 reception score from IMDB and Metacritic ratings.
+
+        When both ratings are available, returns a weighted blend
+        (40% IMDB scaled to 100, 60% Metacritic). Falls back to
+        whichever single source is present, or None if neither exists.
+        """
+        imdb = self.imdb_data.imdb_rating
+        meta = self.imdb_data.metacritic_rating
+        if imdb and meta:
+            return (0.4 * 10 * imdb) + (0.6 * meta)
+        elif imdb:
+            return 10 * imdb
+        elif meta:
+            return meta
+        return None
+
+    def production_text(self, include_filming_locations: bool = True) -> str:
+        """Format production info as labeled lines for vector embedding.
+
+        Uses concise labels so the embedding captures geographic and
+        company signals without filler words diluting the vector.
+
+        Args:
+            include_filming_locations: When False, filming locations are
+                omitted entirely (e.g. for animation where locations are
+                irrelevant to the production).
+        """
+        lines: list[str] = []
+
+        if self.imdb_data.countries_of_origin:
+            countries = ", ".join(self.imdb_data.countries_of_origin)
+            lines.append(f"countries of origin: {countries}")
+
+        if self.imdb_data.production_companies:
+            companies = ", ".join(self.imdb_data.production_companies)
+            lines.append(f"production companies: {companies}")
+
+        # Limit to first 3 locations to keep vector text focused
+        if include_filming_locations and self.imdb_data.filming_locations:
+            locations = ", ".join(self.imdb_data.filming_locations[:3])
+            lines.append(f"filming locations: {locations}")
+
+        return "\n".join(lines)
+
+    def languages_text(self) -> str:
+        """Format language info as labeled lines for vector embedding."""
+        if not self.imdb_data.languages:
+            return ""
+
+        lines: list[str] = [f"primary language: {self.imdb_data.languages[0]}"]
+
+        additional = self.imdb_data.languages[1:]
+        if additional:
+            lines.append(f"additional languages: {', '.join(additional)}")
+
+        return "\n".join(lines)
+
+    def release_decade_bucket(self) -> str:
+        """Convert release_date into a semantic decade label for vector search.
+
+        Examples:
+            1925 → "Release date: 1920s, silent era & early cinema"
+            1942 → "Release date: 1940s, golden age of hollywood"
+            1985 → "Release date: 1980s, 80s"
+        """
+        release_date = self.tmdb_data.release_date
+        if not release_date:
+            return ""
+
+        try:
+            year = int(release_date[:4])
+            decade = (year // 10) * 10
+            date_string = f"{decade}s"
+
+            if year < 1930:
+                date_string += ", silent era & early cinema"
+            elif 1930 <= year < 1950:
+                date_string += ", golden age of hollywood"
+            else:
+                date_string += f", {str(decade)[-2:]}s"
+
+            if date_string:
+                return f"Release date: {date_string}"
+            else:
+                raise ValueError(f"Unknown release date: {release_date}")
+        except (ValueError, IndexError):
+            print(f"Error occurred getting release decade bucket: {release_date}")
+            return ""
+
+    def budget_bucket_for_era(self) -> BudgetSize | None:
+        """Classify budget as small/large relative to era thresholds.
+
+        Linearly interpolates between adjacent decade anchor points
+        so that boundary years don't experience threshold cliffs.
+
+        Returns:
+            BudgetSize.SMALL when notably low for the era,
+            BudgetSize.LARGE when notably high for the era,
+            or None when budget is unknown, typical, or unparseable.
+        """
+        budget = self.resolved_budget()
+        release_date = self.tmdb_data.release_date
+        if budget is None or not release_date:
+            return None
+
+        try:
+            year = int(release_date[:4])
+            clamped_year = max(1920, min(year, 2029))
+            small_threshold, large_threshold = self._interpolated_thresholds(clamped_year)
+
+            if budget < small_threshold:
+                return BudgetSize.SMALL
+            elif budget > large_threshold:
+                return BudgetSize.LARGE
+            else:
+                return None
+        except (ValueError, IndexError, KeyError):
+            print(f"Error occurred getting budget bucket: {budget}")
+            return None
+
+    def _interpolated_thresholds(self, year: int) -> tuple[float, float]:
+        """Linearly interpolate small/large thresholds for an exact year.
+
+        Finds the two bounding decade anchors and blends their
+        thresholds proportionally so mid-decade years get smooth values.
+        """
+        thresholds = self._DECADE_THRESHOLDS
+        decades = sorted(thresholds.keys())
+
+        if year <= decades[0]:
+            return thresholds[decades[0]]
+        if year >= decades[-1]:
+            return thresholds[decades[-1]]
+
+        # Find the two bounding decades
+        lo_decade = decades[0]
+        for d in decades:
+            if d <= year:
+                lo_decade = d
+            else:
+                break
+        hi_decade = lo_decade + 10
+
+        lo_small, lo_large = thresholds[lo_decade]
+        hi_small, hi_large = thresholds[hi_decade]
+
+        # Fractional position within the decade (0.0 at lo, 1.0 at hi)
+        t = (year - lo_decade) / 10.0
+
+        small_threshold = lo_small + t * (hi_small - lo_small)
+        large_threshold = lo_large + t * (hi_large - lo_large)
+
+        return small_threshold, large_threshold
+
+    def is_animation(self) -> bool:
+        """True when the movie has the Animation genre."""
+        return any(g.lower() == "animation" for g in self.imdb_data.genres)
+
+    def reception_tier(self) -> str | None:
+        """Map reception score to a human-readable tier label.
+
+        Tier thresholds (Metacritic-style boundaries):
+            >= 81 → "Universally acclaimed"
+            >= 61 → "Generally favorable reviews"
+            >= 41 → "Mixed or average reviews"
+            >= 21 → "Generally unfavorable reviews"
+             < 21 → "Overwhelming dislike"
+        """
+        score = self.reception_score()
+        if score is None:
+            return None
+        if score >= 81:
+            return "Universally acclaimed"
+        elif score >= 61:
+            return "Generally favorable reviews"
+        elif score >= 41:
+            return "Mixed or average reviews"
+        elif score >= 21:
+            return "Generally unfavorable reviews"
+        else:
+            return "Overwhelming dislike"
 
 
 def _build_tmdb_data(row: dict[str, object]) -> TMDBData:

@@ -20,11 +20,6 @@ Vector spaces:
 from implementation.classes.movie import BaseMovie
 from implementation.classes.enums import BudgetSize
 from implementation.misc.helpers import normalize_string
-from schemas.metadata import (
-    NarrativeTechniquesOutput,
-    ViewerExperienceOutput,
-    WatchContextOutput,
-)
 from schemas.movie import Movie
 
 
@@ -188,7 +183,7 @@ def create_plot_events_vector_text(movie: Movie) -> str | None:
         # 4. Overview as last resort
         text = movie.imdb_data.overview
 
-    return normalize_string(text) if text else None
+    return text.lower() if text else None
 
 
 def create_plot_events_vector_text_fallback(movie: Movie) -> str | None:
@@ -220,94 +215,111 @@ def create_plot_events_vector_text_fallback(movie: Movie) -> str | None:
     elif movie.imdb_data.overview:
         text = movie.imdb_data.overview
 
-    return normalize_string(text) if text else None
+    return text.lower() if text else None
 
 
-def create_plot_analysis_vector_text(movie: BaseMovie) -> str:
+def create_plot_analysis_vector_text(movie: Movie) -> str | None:
+    """
+    Creates the text representation for the plot_analysis vector embedding.
+
+    Merges TMDB genres into the metadata's genre_signatures so they are
+    embedded as a single labeled field, then delegates to embedding_text().
+    """
+    if not movie.plot_analysis_metadata:
+        return None
+
+    # Append TMDB genres to the LLM-generated genre signatures for grounding
+    meta = movie.plot_analysis_metadata
+    if movie.imdb_data.genres:
+        existing = set(g.lower() for g in meta.genre_signatures)
+        for genre in movie.imdb_data.genres:
+            if genre.lower() not in existing:
+                meta.genre_signatures.append(genre)
+
+    return meta.embedding_text()
+
+
+def create_narrative_techniques_vector_text(movie: Movie) -> str | None:
+    if not movie.narrative_techniques_metadata:
+        return None
+    return movie.narrative_techniques_metadata.embedding_text()
+
+
+def create_viewer_experience_vector_text(movie: Movie) -> str | None:
+    if not movie.viewer_experience_metadata:
+        return None
+    return movie.viewer_experience_metadata.embedding_text()
+
+
+def create_watch_context_vector_text(movie: Movie) -> str | None:
+    if not movie.watch_context_metadata:
+        return None
+    return movie.watch_context_metadata.embedding_text()
+
+
+def create_production_vector_text(movie: Movie) -> str:
+    """Build production vector text focused on how/where the film was made.
+
+    Excludes cast, characters, and maturity rating — those are handled
+    by lexical search (names) or other vector spaces (content classification).
+    """
     parts = []
 
-    if movie.plot_analysis_metadata:
-        parts.append(str(movie.plot_analysis_metadata))
-    if movie.genres_subset():
-        parts.append(", ".join(movie.genres_subset()))
-    if movie.plot_keywords:
-        parts.append(", ".join(movie.plot_keywords))
-
-
-    return "\n".join(parts)
-
-
-def create_narrative_techniques_vector_text(narrative_techniques: NarrativeTechniquesOutput) -> str:
-    return narrative_techniques.embedding_text()
-
-
-def create_viewer_experience_vector_text(viewer_experience: ViewerExperienceOutput) -> str:
-    return viewer_experience.embedding_text()
-
-
-def create_watch_context_vector_text(watch_context: WatchContextOutput) -> str:
-    return watch_context.embedding_text()
-
-
-def create_production_vector_text(movie: BaseMovie) -> str:
-    parts = []
-
-    parts.append("\n# Production:")
-
-    # Production information
-    production_text = movie.production_text()
+    # Origin, companies, filming locations (labeled format).
+    # Filming locations excluded for animation — they're irrelevant
+    # (voice actors record in studios, not on location).
+    production_text = movie.production_text(include_filming_locations=not movie.is_animation())
     if production_text:
         parts.append(production_text.lower())
 
-    # Languages information
+    # Primary and additional languages
     languages_text = movie.languages_text()
     if languages_text:
         parts.append(languages_text.lower())
 
-    # Release decade bucket
+    # Semantic era label (e.g. "Release date: 1940s, golden age of hollywood")
     decade_bucket = movie.release_decade_bucket()
     if decade_bucket:
         parts.append(decade_bucket.lower())
 
-    # Budget scale for era
+    # Budget scale relative to era
     budget_bucket = budget_size_to_vector_text(movie.budget_bucket_for_era())
     if budget_bucket:
-        parts.append(budget_bucket.lower())
+        parts.append(f"budget: {budget_bucket.lower()}")
 
-    if movie.production_metadata:
-        if movie.production_metadata.production_keywords.terms:
-            parts.append(", ".join(movie.production_metadata.production_keywords.terms))
-        if movie.production_metadata.sources_of_inspiration.production_mediums:
-            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.production_mediums))
-        if movie.production_metadata.sources_of_inspiration.sources_of_inspiration:
-            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.sources_of_inspiration))
+    # Production medium — binary: "animation" or "live action"
+    medium = "animation" if movie.is_animation() else "live action"
+    parts.append(f"production medium: {medium}")
 
-    parts.append("\n# Cast and Characters:")
+    # Source material and franchise lineage (labeled via embedding_text).
+    # When metadata is None (not generated), default to "original screenplay"
+    # since most movies are original works.
+    if movie.source_of_inspiration_metadata:
+        source_text = movie.source_of_inspiration_metadata.embedding_text()
+        if source_text:
+            parts.append(source_text)
+    else:
+        parts.append("source material: original screenplay")
 
-    cast_text = movie.cast_text()
-    if cast_text:
-        parts.append(cast_text)
-
-    # Characters information
-    characters_text = movie.characters_text()
-    if characters_text:
-        parts.append(characters_text)
-
-    # Maturity rating
-    parts.append(f"{movie.maturity_rating.lower()} maturity rating")
+    # LLM-generated production keywords (unlabeled — intentionally broad grab-bag)
+    if movie.production_keywords_metadata:
+        keywords_text = movie.production_keywords_metadata.embedding_text()
+        if keywords_text:
+            parts.append(keywords_text)
 
     return "\n".join(parts)
 
 
-def create_reception_vector_text(movie: BaseMovie) -> str:
+def create_reception_vector_text(movie: Movie) -> str | None:
+    if not movie.reception_metadata:
+        return None
+
     parts = []
 
-    if movie.reception_tier():
-        parts.append(movie.reception_tier().lower())
+    tier = movie.reception_tier()
+    if tier:
+        parts.append(f"reception: {tier.lower()}")
 
-    if movie.reception_metadata:
-        parts.append(f"{movie.reception_metadata.new_reception_summary.lower()}")
-        parts.append(f"Praises: {", ".join(movie.reception_metadata.praise_attributes)}")
-        parts.append(f"Complaints: {", ".join(movie.reception_metadata.complaint_attributes)}")
+    parts.append(movie.reception_metadata.embedding_text())
 
     return "\n".join(parts)
