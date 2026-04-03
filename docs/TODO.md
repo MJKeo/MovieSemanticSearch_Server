@@ -139,19 +139,22 @@ truncated version).
 **When:** Before generating production embeddings for synopsis movies.
 **See:** docs/decisions/ADR-033-plot-events-cost-optimization.md (Section 1)
 
+## Use create_plot_events_vector_text_fallback on token-limit embedding errors
+**Context:** `create_plot_events_vector_text()` may return text that exceeds the
+8,191 token limit of text-embedding-3-small (the model throws an error, it does
+not truncate). When this happens, the embedding pipeline should catch the
+token-limit error specifically and retry using `create_plot_events_vector_text_fallback()`,
+which picks the longer of the longest scraped plot_summary vs the generated
+plot_events metadata plot_summary, then falls back to overview. This keeps the
+happy path simple (use the richest text) while gracefully handling oversize inputs.
+**When:** When wiring up the plot_events embedding pipeline in ingest_movie.py.
+**See:** movie_ingestion/final_ingestion/vector_text.py (create_plot_events_vector_text_fallback),
+movie_ingestion/final_ingestion/ingest_movie.py (ingest_movie_to_qdrant, ingest_movies_to_qdrant_batched)
 
-## Replace .lower() with normalize_string() in all generation-side __str__() methods
-**Context:** docs/conventions.md states that `__str__()` methods on Pydantic
-schema classes feeding the embedding pipeline must use `normalize_string()`
-from `implementation/misc/helpers.py` (NFC normalization, lowercase, diacritic
-removal). All generation-side schemas in `schemas/metadata.py`
-currently use `.lower()` instead. This includes PlotEventsOutput, ReceptionOutput,
-PlotAnalysisOutput, ViewerExperienceOutput, WatchContextOutput, and all their
-with-justifications variants. Should be a single cross-cutting change.
-**When:** Before generating production embeddings from the new pipeline.
-**See:** docs/conventions.md (lines 19-23),
-schemas/metadata.py (all __str__ methods),
-implementation/misc/helpers.py (normalize_string)
+
+## ~~Replace .lower() with normalize_string() in all generation-side __str__() methods~~ DONE
+Completed: all `__str__()` methods in `schemas/metadata.py` now use
+`normalize_string()` from `implementation/misc/helpers.py` instead of `.lower()`.
 
 
 ## Update unit tests for batch_id() removal and schemas package split
@@ -344,19 +347,8 @@ the corresponding tests are updated.
 **When:** When updating viewer_experience/schema tests (see above TODO).
 **See:** schemas/metadata.py (lines 89-104, 494-509)
 
-## Re-scrape movies to pick up data truncated by old GraphQL limits
-**Context:** The IMDB GraphQL query previously used `plots(first: 10)` which
-silently dropped synopses (typically the 11th+ entry). Credits were capped at
-10-50, potentially losing cast/producers/writers for large productions. The
-query limits have been fixed but all ~109K existing scraped JSONs were fetched
-with the old limits. `ingestion_data/movies_no_synopsis.json` lists 86,622
-movies without synopses — some subset of these may now have synopses available.
-A targeted re-scrape of at least the synopsis-missing movies would recover
-any synopses that were truncated. Full re-scrape would also recover truncated
-credits for lexical search completeness.
-**When:** Before generating production embeddings (synopses feed plot_events).
-**See:** movie_ingestion/imdb_scraping/http_client.py (updated limits),
-ingestion_data/movies_no_synopsis.json (86,622 movies without synopses)
+## ~~Re-scrape movies to pick up data truncated by old GraphQL limits~~ DONE
+Re-scrape completed with updated GraphQL limits to recover truncated synopses and credits.
 
 ## Clean up scratch files left by explore agent in project root
 **Context:** During narrative_techniques R2 evaluation analysis, an explore subagent

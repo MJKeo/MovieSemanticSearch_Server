@@ -68,3 +68,39 @@ Files: unit_tests/test_prompt_constants.py
 Why: The test still imported `SYSTEM_PROMPT_WITH_REASONING`, but the current source_of_inspiration prompt module only exports the production `SYSTEM_PROMPT`.
 Approach: Updated the test to import `SYSTEM_PROMPT` only and rewrote the source_of_inspiration assertions to validate the production prompt text instead of the removed reasoning variant.
 Testing notes: A follow-up collect-only run exposed a separate production_keywords prompt issue in the same file: `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` is also no longer importable from `movie_ingestion.metadata_generation.prompts.production_keywords`.
+
+## Add tracker-backed Movie schema loader
+Files: schemas/movie.py
+Why: Need a single object that can load full per-movie tracker data from `tmdb_data`, `imdb_data`, and `generated_metadata` while preserving source column names and exposing parsed metadata outputs.
+Approach: Added `TMDBData`, `IMDBData`, and `Movie` Pydantic models plus `Movie.from_tmdb_id()`, which performs one joined SQLite query with aliased columns and then parses IMDB JSON TEXT columns, TMDB review JSON, and TMDB provider-key blobs into typed Python values. Metadata columns are parsed into the current `schemas.metadata` output models, with a narrow compatibility normalization for known legacy key drift (`justification` → `evidence_basis`, and obsolete source-of-inspiration evidence fields) so existing tracker rows still validate against the latest schema classes.
+Design context: Follows the new top-level `schemas/` package split and the tracker-backed ingestion architecture documented in `docs/modules/ingestion.md`.
+Testing notes: Verified syntax with `uv run python -m py_compile schemas/movie.py` and loaded a real tracker row via `Movie.from_tmdb_id(2)` to confirm source parsing, fallback helpers, and metadata validation.
+
+## Add notebook cell for manual Movie schema inspection
+Files: schemas/testing.ipynb
+Why: Need a quick interactive way to manually load one tracker-backed `Movie` by `tmdb_id` and inspect its source rows and metadata in grouped sections while iterating on the new schema loader.
+Approach: Replaced the empty placeholder notebook with a valid one-cell notebook that imports `Movie`, lets the user set `tmdb_id` manually, calls `Movie.from_tmdb_id()`, and pretty-prints TMDB data, IMDB data, resolved fallback fields, and each metadata object as distinct high-level groups.
+Testing notes: Validated the notebook JSON with `python -m json.tool schemas/testing.ipynb`.
+
+## Rewrite create_plot_events_vector_text with synopsis-first fallback hierarchy
+Files: movie_ingestion/final_ingestion/vector_text.py, docs/TODO.md
+Why: The plot_events vector should embed the richest available plot text. IMDB synopses are human-written and more detailed than LLM-generated summaries, so they should be preferred when available.
+Approach: Changed `create_plot_events_vector_text` to accept `Movie` (from `schemas.movie`) instead of `PlotEventsOutput`. Fallback hierarchy: longest scraped synopsis → generated plot_summary via `plot_events_metadata.embedding_text()` → longest plot_summary entry → overview. Added `create_plot_events_vector_text_fallback` as a separate method for when the primary text exceeds the 8,191 token embedding limit — it picks the longer of longest plot_summary vs generated plot_summary, then falls back to overview. Added TODO for wiring the fallback into the embedding pipeline's error handling.
+Design context: Aligns with ADR-033 two-branch strategy. The embedding model (text-embedding-3-small) errors on oversize input rather than truncating, so the fallback handles that case explicitly.
+
+## Fix notebook Movie import path
+Files: schemas/testing.ipynb
+Why: The manual inspection notebook used a relative import (`from .movie import Movie`), which fails in notebook cells because they are not executed as package modules.
+Approach: Replaced the relative import with `from schemas.movie import Movie` and swapped the fragile cwd-based path insertion for a `find_project_root()` helper that walks upward to `pyproject.toml` before adding the repo root to `sys.path`.
+Testing notes: Re-validated notebook JSON and verified the same path-bootstrap logic successfully imports `Movie` in a `uv run python` shell.
+
+## Restructure plot_events vector text functions: single normalize_string call
+Files: movie_ingestion/final_ingestion/vector_text.py
+Why: Both `create_plot_events_vector_text` and `create_plot_events_vector_text_fallback` called `normalize_string()` at multiple return sites, risking fallthrough bugs if a new branch was added without normalization.
+Approach: Restructured both functions to accumulate text into a single variable using if/elif/else chains, then call `normalize_string()` once at the end. This also means `embedding_text()` results are now normalized, which they previously were not. Both functions now return `str | None` instead of `str` — returning `None` when no text source is available so callers can distinguish "no data" from empty string.
+
+## Make Movie tracker DB default path absolute
+Files: schemas/movie.py
+Why: `Movie.from_tmdb_id()` defaulted to `Path("ingestion_data/tracker.db")`, which resolves from the process working directory and broke notebook usage when the kernel cwd differed from the repo root.
+Approach: Changed `_DEFAULT_TRACKER_DB` to resolve from the file location (`schemas/movie.py` → repo root → `ingestion_data/tracker.db`) so the default tracker path is stable across notebooks, shells, and other entry points.
+Testing notes: Verified `schemas/movie.py` compiles and that `_DEFAULT_TRACKER_DB` resolves to the real tracker DB path; `Movie.from_tmdb_id(2)` now succeeds without passing `tracker_db_path`.

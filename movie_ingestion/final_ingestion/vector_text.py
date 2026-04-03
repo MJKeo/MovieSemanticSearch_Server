@@ -19,12 +19,13 @@ Vector spaces:
 
 from implementation.classes.movie import BaseMovie
 from implementation.classes.enums import BudgetSize
+from implementation.misc.helpers import normalize_string
 from schemas.metadata import (
-    PlotEventsOutput,
     NarrativeTechniquesOutput,
     ViewerExperienceOutput,
     WatchContextOutput,
 )
+from schemas.movie import Movie
 
 
 # ===============================
@@ -162,8 +163,64 @@ def create_anchor_vector_text(movie: BaseMovie) -> str:
     return "\n".join(parts)
 
 
-def create_plot_events_vector_text(plot_events: PlotEventsOutput) -> str:
-    return plot_events.embedding_text()
+def create_plot_events_vector_text(movie: Movie) -> str | None:
+    """
+    Creates the text representation for the plot_events vector embedding.
+
+    Uses a fallback hierarchy to select the richest available plot text:
+      1. Full original scraped synopsis (longest from IMDB synopses)
+      2. Generated plot_summary via plot_events metadata
+      3. Longest scraped plot_summary entry
+      4. IMDB overview
+    """
+    text = ""
+
+    if movie.imdb_data.synopses and max(movie.imdb_data.synopses, key=len):
+        # 1. Full original scraped synopsis — richest source of plot detail
+        text = max(movie.imdb_data.synopses, key=len)
+    elif movie.plot_events_metadata:
+        # 2. LLM-generated plot summary from plot_events metadata
+        text = movie.plot_events_metadata.embedding_text()
+    elif movie.imdb_data.plot_summaries and max(movie.imdb_data.plot_summaries, key=len):
+        # 3. Longest scraped plot_summary entry
+        text = max(movie.imdb_data.plot_summaries, key=len)
+    elif movie.imdb_data.overview:
+        # 4. Overview as last resort
+        text = movie.imdb_data.overview
+
+    return normalize_string(text) if text else None
+
+
+def create_plot_events_vector_text_fallback(movie: Movie) -> str | None:
+    """
+    Fallback text for plot_events when the primary text exceeds the
+    embedding model's token limit (8,191 tokens for text-embedding-3-small).
+
+    Uses the longer of:
+      1. Longest scraped plot_summary entry
+      2. Generated plot_summary from plot_events metadata
+    Then falls back to overview if neither is available.
+    """
+    text = ""
+
+    # Collect the two candidates and pick the longer one
+    longest_plot_summary = ""
+    if movie.imdb_data.plot_summaries:
+        longest_plot_summary = max(movie.imdb_data.plot_summaries, key=len)
+
+    generated_plot_summary = ""
+    if movie.plot_events_metadata:
+        generated_plot_summary = movie.plot_events_metadata.embedding_text()
+
+    # Pick whichever candidate is longer
+    best = max(longest_plot_summary, generated_plot_summary, key=len)
+
+    if best:
+        text = best
+    elif movie.imdb_data.overview:
+        text = movie.imdb_data.overview
+
+    return normalize_string(text) if text else None
 
 
 def create_plot_analysis_vector_text(movie: BaseMovie) -> str:
