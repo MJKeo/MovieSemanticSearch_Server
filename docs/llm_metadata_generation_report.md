@@ -384,7 +384,7 @@ Note: This function runs in Wave 1 (no dependency on plot_events), so it does NO
 
 After LLM metadata generation, each movie's 7 metadata objects are transformed into 8 text strings (one per vector space) that will be embedded. The 8th vector space ("anchor") aggregates data across all metadata types plus base movie fields.
 
-Text generation functions are in `implementation/vectorize.py`.
+Text generation functions are in `movie_ingestion/final_ingestion/vector_text.py`.
 
 ### The 8 Vector Spaces
 
@@ -544,6 +544,6 @@ The payload is kept minimal — only fields needed for hard filtering during sea
 | `implementation/llms/generic_methods.py` | `generate_openai_response()` — the base LLM call wrapper using `chat.completions.parse()` |
 | `implementation/classes/schemas.py` | All Pydantic output schemas (PlotEventsMetadata, PlotAnalysisMetadata, etc.) |
 | `implementation/classes/movie.py` | `BaseMovie` model with computed methods (release_decade_bucket, reception_tier, etc.) |
-| `implementation/vectorize.py` | 8 text generation functions (one per vector space) |
+| `movie_ingestion/final_ingestion/vector_text.py` | 8 text generation functions (one per vector space) |
 | `db/ingest_movie.py` | PostgreSQL + Qdrant ingestion functions |
 | `implementation/classes/enums.py` | `VectorName` enum defining the 8 named vector spaces |

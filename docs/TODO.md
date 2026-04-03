@@ -14,7 +14,7 @@ results, so this signal can help break ties and boost well-established
 films in the final ranking.
 **When:** When building or refining the reranking/quality-boost stage of
 the search pipeline.
-**See:** db/vector_scoring.py, db/ingest_movie.py, movie_ingestion/imdb_scraping/models.py
+**See:** db/vector_scoring.py, movie_ingestion/final_ingestion/ingest_movie.py, movie_ingestion/imdb_scraping/models.py
 
 
 ## Verify model IDs for playground notebook providers
@@ -64,14 +64,14 @@ further hardened (2026-03-24): themes_primary + lessons_learned → thematic_con
 conflict_scale → conflict_type, core_concept_label → elevator_pitch, CharacterArc
 simplified to arc_transformation_label only, min_length → 0 on sparse-prone fields.
 The search-side schema in `implementation/classes/schemas.py` still uses the old
-field names and structure. Additionally, `implementation/vectorize.py` references
+field names and structure. Additionally, `movie_ingestion/final_ingestion/vector_text.py` references
 old fields: `plot_analysis_metadata.core_concept.core_concept_label`,
 `plot_analysis_metadata.themes_primary`, `plot_analysis_metadata.lessons_learned`.
 Both need updating to match the new generation output. The CoreConcept.__str__()
 justification leak issue (from original TODO) still applies.
 **When:** When deploying generation pipeline results to the production search index.
 **See:** implementation/classes/schemas.py (PlotAnalysisMetadata, CoreConcept),
-implementation/vectorize.py (create_plot_analysis_vector_text, dense anchor themes section),
+movie_ingestion/final_ingestion/vector_text.py (create_plot_analysis_vector_text, dense anchor themes section),
 movie_ingestion/metadata_generation/schemas.py (PlotAnalysisOutput)
 
 
@@ -176,12 +176,13 @@ production_keywords does not use any reception fields.
 **Context:** The generation-side ReceptionOutput renamed fields: new_reception_summary →
 reception_summary, praise_attributes → praised_qualities, complaint_attributes →
 criticized_qualities, and raised tag cap from 4→6. The search-side ReceptionMetadata in
-implementation/classes/schemas.py and create_reception_vector_text() in vectorize.py still
-use the old names. These need updating together, plus the empty-list guard fix in
-vectorize.py (currently emits "Praises: " with nothing after it when list is empty).
+implementation/classes/schemas.py and create_reception_vector_text() in
+movie_ingestion/final_ingestion/vector_text.py still use the old names. These need
+updating together, plus the empty-list guard fix in vector_text.py (currently emits
+"Praises: " with nothing after it when list is empty).
 **When:** When deploying new reception generation results to the search index.
 **See:** implementation/classes/schemas.py (ReceptionMetadata),
-implementation/vectorize.py (create_reception_vector_text),
+movie_ingestion/final_ingestion/vector_text.py (create_reception_vector_text),
 movie_ingestion/metadata_generation/schemas.py (ReceptionOutput)
 
 
@@ -249,7 +250,7 @@ generation time, so original films remain queryable without encouraging the gene
 to emit non-empty source labels.
 **When:** When refining the source_of_inspiration embedding/text-construction path.
 **See:** movie_ingestion/metadata_generation/schemas.py (`SourceOfInspirationOutput.__str__()`),
-implementation/classes/schemas.py, implementation/vectorize.py,
+implementation/classes/schemas.py, movie_ingestion/final_ingestion/vector_text.py,
 movie_ingestion/metadata_generation/prompts/source_of_inspiration.py
 
 ## Update plot_events embedding to use synopsis when available, generated plot_summary as fallback
@@ -271,7 +272,7 @@ threshold constant and rationale.
 **When:** When building the production embedding pipeline for plot_events
 vectors (after ADR-033 implementation is complete).
 **See:** docs/decisions/ADR-033-plot-events-cost-optimization.md,
-implementation/vectorize.py, movie_ingestion/metadata_generation/schemas.py (PlotEventsOutput),
+movie_ingestion/final_ingestion/vector_text.py, movie_ingestion/metadata_generation/schemas.py (PlotEventsOutput),
 movie_ingestion/metadata_generation/generators/plot_events.py (MIN_SYNOPSIS_CHARS)
 
 
@@ -437,7 +438,7 @@ LLM generation, which suffered from empty-list abstention bugs (gpt54nano-medium
 returned empty 25% of the time).
 **When:** When building the production embedding pipeline for production vectors.
 **See:** movie_ingestion/metadata_generation/schemas.py (remove production_mediums from
-SourceOfInspirationOutput), implementation/vectorize.py (create_production_vector_text)
+SourceOfInspirationOutput), movie_ingestion/final_ingestion/vector_text.py (create_production_vector_text)
 
 ## ~~Redesign source_of_inspiration: narrow scope + add franchise_lineage~~ DONE
 Completed (2026-04-02): Full prompt and schema rewrite. source_material now covers

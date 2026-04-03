@@ -17,7 +17,7 @@ from implementation.classes.movie import BaseMovie
 from implementation.classes.languages import Language, LANGUAGE_BY_NORMALIZED_NAME
 from implementation.llms.generic_methods import generate_vector_embedding
 from implementation.classes.enums import BudgetSize, MaturityRating, VectorName
-from implementation.vectorize import (
+from .vector_text import (
     create_anchor_vector_text,
     create_plot_events_vector_text,
     create_plot_analysis_vector_text,

@@ -56,7 +56,8 @@ except ModuleNotFoundError:
     vectorize_module.create_reception_vector_text = _stub_vectorize_text
     sys.modules["implementation.vectorize"] = vectorize_module
 
-from db import ingest_movie, postgres
+from movie_ingestion.final_ingestion import ingest_movie
+from db import postgres
 
 
 @pytest.mark.asyncio

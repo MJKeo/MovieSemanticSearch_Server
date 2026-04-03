@@ -50,6 +50,7 @@ this module.
 | `metadata_generation/helper_scripts/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
 | `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All 8 generators are now locked (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative), `narrative_techniques.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, 9-section schema), `watch_context.py` (gpt-5-mini, reasoning_effort=minimal, WatchContextWithIdentityNoteOutput), `source_of_inspiration.py` (gpt-5-mini, reasoning_effort=low, base SourceOfInspirationOutput schema, see ADR-053), `production_keywords.py` (gpt-5-mini, reasoning_effort=low, base ProductionKeywordsOutput schema — only Wave 2 generator using base schema in production, see ADR-054). See ADR-026, ADR-027, ADR-045, ADR-048, ADR-049, ADR-053, ADR-054. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant. All generators are now locked; no unlocked generators remain. `production_keywords.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` (retained for evaluation notebook backward compatibility). `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. Locked generators use the base (non-reasoning) prompt as production. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
+| `final_ingestion/ingest_movie.py` | Stage 8: Upserts final movie data into Postgres (movie_card + lexical postings) and Qdrant (8 named vectors + hard-filter payload). Supports single and batched ingestion. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
@@ -58,8 +59,10 @@ this module.
 - **In scope**: TMDB export, TMDB detail fetching, quality scoring,
   IMDB scraping, pipeline state tracking, LLM metadata generation
   (Stage 6, `metadata_generation/` subpackage).
-- **Out of scope**: Embedding (Stage 7, `implementation/vectorize.py`),
-  database ingestion (Stage 8, `db/ingest_movie.py`).
+- **Out of scope**: Embedding (Stage 7, `implementation/vectorize.py`).
+  Vector text generation (the text that gets embedded) now lives at
+  `final_ingestion/vector_text.py`. Database ingestion (Stage 8) now
+  lives in-module at `final_ingestion/ingest_movie.py`.
 
 ## Pipeline Stages
 

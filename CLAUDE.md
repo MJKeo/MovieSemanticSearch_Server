@@ -101,7 +101,7 @@ Fetch display metadata → return JSON
 | `implementation/prompts/` | System prompts for each LLM task |
 | `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
 | `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
-| `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data) |
+| `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data), `final_ingestion/` (Postgres + Qdrant upserts) |
 | `unit_tests/` | pytest test suite (59 files); `conftest.py` provides `base_movie_factory` fixture |
 | `docs/` | Project context, decision records, module summaries, conventions |
 
@@ -192,8 +192,9 @@ Stage 6+: LLM Generation → Embedding → Ingestion
      └─ generators/ — per-type generation functions and prompt builders
      └─ batch_generation/ — run.py (CLI entry point), request_builder.py, openai_batch_manager.py, result_processor.py, generator_registry.py, pre_consolidation.py
      └─ helper_scripts/ — estimate_generation_cost.py, report_bucket_axis_performance.py
+  └─ movie_ingestion/final_ingestion/vector_text.py — generates text for each of 8 vector spaces
   └─ implementation/vectorize.py — embeds metadata into 8 vector spaces via OpenAI
-  └─ db/ingest_movie.py — upserts final data into Postgres, Qdrant, and Redis
+  └─ movie_ingestion/final_ingestion/ingest_movie.py — upserts final data into Postgres and Qdrant
 ```
 
 **`movie_ingestion/` subpackage structure:**

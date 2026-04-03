@@ -9,8 +9,8 @@ request flows through it.
 Orchestrates the full search pipeline: receives a parsed query,
 fans out to lexical (Postgres), vector (Qdrant), and metadata
 scoring channels in parallel, merges candidates, applies quality
-reranking, and returns ranked results. Also handles movie ingestion
-into all three data stores.
+reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now lives in
+`movie_ingestion/final_ingestion/`.
 
 ## Key Files
 
@@ -27,7 +27,7 @@ into all three data stores.
 | `redis.py` | Async Redis pool for all four cache namespaces. |
 | `tmdb.py` | TMDB API client with adaptive token-bucket rate limiting. |
 | `trending_movies.py` | Compute trending scores (concave decay: `1 - (rank/500)^0.5`), update Redis atomically via staging key + RENAME. |
-| `ingest_movie.py` | Upsert final movie data into Postgres + Qdrant + Redis. |
+| ~~`ingest_movie.py`~~ | Moved to `movie_ingestion/final_ingestion/ingest_movie.py`. |
 
 ## Boundaries
 
