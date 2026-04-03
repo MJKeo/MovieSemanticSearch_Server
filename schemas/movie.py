@@ -232,6 +232,47 @@ class Movie(BaseModel):
             **_build_metadata_fields(row_dict),
         )
 
+    # Maturity rating to semantic description mapping (no numbers).
+    # Used by maturity_text_short() when maturity_reasoning is unavailable.
+    _MATURITY_DESCRIPTIONS: ClassVar[dict[str, str]] = {
+        "G": "general audiences, family friendly, safe for kids and all ages",
+        "PG": "parental guidance suggested, good for families and most children",
+        "PG-13": "parents strongly cautioned, best for teens and young adults",
+        "R": "restricted, mature audiences only, contains adult themes or violence or strong language",
+        "NC-17": "adults only, explicit content, strictly for mature audiences",
+    }
+
+    def title_with_original(self) -> str:
+        """Format title for vector text, including original title when different."""
+        title = self.tmdb_data.title or ""
+        original = self.imdb_data.original_title
+        if original and original != title:
+            return f"{title} ({original})"
+        return title
+
+    def maturity_text_short(self) -> str:
+        """Compact maturity signal for vector embedding.
+
+        Prefers IMDB maturity_reasoning (joined prose) when available,
+        otherwise maps the resolved MPA rating to a semantic description.
+        Returns empty string when no maturity info exists at all.
+        """
+        # Prose reasoning is the richest signal when available
+        if self.imdb_data.maturity_reasoning:
+            return ". ".join(self.imdb_data.maturity_reasoning)
+
+        # Fall back to MPA rating → semantic description
+        rating = self.resolved_maturity_rating()
+        if not rating:
+            return ""
+        description = self._MATURITY_DESCRIPTIONS.get(rating.upper())
+        if description:
+            return description
+
+        # Non-standard values like "Not Rated" / "Unrated" carry no useful
+        # maturity signal — return empty so anchor text stays clean.
+        return ""
+
     def resolved_budget(self) -> int | None:
         """Prefer IMDB budget when present; fall back to TMDB.
 
@@ -404,6 +445,24 @@ class Movie(BaseModel):
         large_threshold = lo_large + t * (hi_large - lo_large)
 
         return small_threshold, large_threshold
+
+    def deduplicated_genres(self) -> list[str]:
+        """Merge LLM genre_signatures with IMDB genres, exact-match deduped.
+
+        Combines both sources into a set (lowercased) so exact duplicates
+        are removed but near-overlaps like "thriller" and "psychological
+        thriller" are both kept — minor duplication is fine for embedding.
+        """
+        combined: set[str] = set()
+
+        if self.plot_analysis_metadata:
+            for sig in self.plot_analysis_metadata.genre_signatures:
+                combined.add(sig.lower())
+
+        for genre in self.imdb_data.genres:
+            combined.add(genre.lower())
+
+        return sorted(combined)
 
     def is_animation(self) -> bool:
         """True when the movie has the Animation genre."""

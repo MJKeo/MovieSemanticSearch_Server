@@ -243,39 +243,19 @@ Completed: gpt-5-mini-minimal with revised prompt + no-overview was evaluated ac
 36 movies. Matched or exceeded old low-reasoning quality. Reception generator finalized
 
 
-## Write empty source_material outputs as "original screenplay" during embedding
-**Context:** For source_of_inspiration generation, the model should return an empty
-`source_material` list when a film has no direct source material. That includes
-original screenplays. However, downstream embedding may still benefit from explicitly
-encoding that absence as `"original screenplay"` at embedding time rather than at
-generation time, so original films remain queryable without encouraging the generator
-to emit non-empty source labels.
-**When:** When refining the source_of_inspiration embedding/text-construction path.
-**See:** schemas/metadata.py (`SourceOfInspirationOutput.__str__()`),
-implementation/classes/schemas.py, movie_ingestion/final_ingestion/vector_text.py,
-movie_ingestion/metadata_generation/prompts/source_of_inspiration.py
+## ~~Write empty source_material outputs as "original screenplay" during embedding~~ DONE
+Completed (2026-04-03): Implemented in `SourceOfInspirationOutput.embedding_text()` with
+`_is_likely_original()` helper. Defaults to "original screenplay" when source_material is
+empty and franchise_lineage is empty or only contains "first"/"start" terms.
+`create_production_vector_text()` also falls back to "source material: original screenplay"
+when metadata is None entirely.
+**See:** schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py
 
-## Update plot_events embedding to use synopsis when available, generated plot_summary as fallback
-**Context:** The plot_events vector space embedding process should prefer
-the IMDB synopsis (human-written, detailed) as the embedding input text
-when one exists for a movie. For movies without a synopsis, the
-LLM-generated `plot_summary` from the plot_events metadata should be used
-instead. This aligns with ADR-033's two-branch strategy where synopsis
-movies (Branch A) skip LLM generation for plot_events entirely — their
-synopsis is the higher-quality signal for embedding. The embedding
-pipeline needs to implement this conditional logic: check for synopsis
-presence, use it if available, otherwise fall back to the generated
-plot_summary output. **Important:** the same `MIN_SYNOPSIS_CHARS` threshold
-(2,500 chars) from the plot_events generator must be applied here — synopses
-below this length are too thin for faithful condensation, and the generated
-plot_summary will be higher quality for embedding. See
-`movie_ingestion/metadata_generation/generators/plot_events.py` for the
-threshold constant and rationale.
-**When:** When building the production embedding pipeline for plot_events
-vectors (after ADR-033 implementation is complete).
-**See:** docs/decisions/ADR-033-plot-events-cost-optimization.md,
-movie_ingestion/final_ingestion/vector_text.py, schemas/metadata.py (PlotEventsOutput),
-movie_ingestion/metadata_generation/generators/plot_events.py (MIN_SYNOPSIS_CHARS)
+## ~~Update plot_events embedding to use synopsis when available, generated plot_summary as fallback~~ DONE
+Completed: `create_plot_events_vector_text()` now implements a 4-level fallback hierarchy:
+longest synopsis → generated plot_summary via metadata → longest plot_summary entry → overview.
+Added `create_plot_events_vector_text_fallback()` for token-limit errors.
+**See:** movie_ingestion/final_ingestion/vector_text.py
 
 
 ## ~~Experiment: emotional_observations impact on plot_analysis quality~~ EVALUATED

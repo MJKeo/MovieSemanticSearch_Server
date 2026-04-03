@@ -1,13 +1,13 @@
 """
 Vector text generation functions for each of the 8 named vector spaces.
 
-This module is the single source of truth for converting a BaseMovie into
+This module is the single source of truth for converting a Movie into
 the text representation that will be embedded for each vector space. The
 same functions are used at ingestion time (batch and single-movie) and
 must stay in sync with the vector space definitions in Qdrant.
 
 Vector spaces:
-    1. anchor            — full "movie card" identity
+    1. anchor            — broad-recall identity fingerprint
     2. plot_events       — chronological plot details
     3. plot_analysis     — themes, arcs, concepts
     4. narrative_techniques — storytelling style/tone
@@ -17,7 +17,6 @@ Vector spaces:
     8. reception         — critical reception, awards
 """
 
-from implementation.classes.movie import BaseMovie
 from implementation.classes.enums import BudgetSize
 from implementation.misc.helpers import normalize_string
 from schemas.movie import Movie
@@ -40,121 +39,128 @@ def budget_size_to_vector_text(budget_size: BudgetSize | None) -> str:
 #         Vector Text
 # ===============================
 
-def create_anchor_vector_text(movie: BaseMovie) -> str:
+def create_anchor_vector_text(movie: Movie) -> str:
+    """Create the text representation for the anchor (dense_anchor) vector.
+
+    The anchor is always queried and weighted as a broad-recall safety net
+    (0.8× mean of active non-anchor weights). Its job is to capture the
+    movie's core semantic identity without duplicating signals that
+    specialized spaces or lexical/metadata channels handle better.
+
+    Formatting rules:
+        - Prose fields use .lower() — self-contextualizing, no label needed
+        - Categorical term lists use normalize_string() with a semantic
+          label to disambiguate their role for the embedding model
+
+    Deliberately excluded (handled better elsewhere):
+        - Cast/crew/character names → lexical search
+        - Production companies/filming locations → production vector
+        - Detailed maturity reasoning → metadata filters
+        - Reception praise/complaint lists → reception vector
     """
-    Creates the text representation for DenseAnchor vector embedding.
+    parts: list[str] = []
 
-    DenseAnchor captures the full "movie card" identity to provide good recall
-    for most queries. It includes comprehensive information about the movie's
-    identity, content, production, cast, and reception.
+    # -- Identity: what is this movie? --
 
-    Args:
-        movie: IMDBMovie instance containing all movie metadata
+    # Title with original title for international films
+    title = movie.title_with_original()
+    if title:
+        parts.append(title.lower())
 
-    Returns:
-        Formatted text string ready for embedding as DenseAnchor vector
-    """
-    # Build the text components according to the DenseAnchor template (section 5.1)
-    parts = []
-
-    parts.append("# Overview:")
-
-    # Title string
-    parts.append(movie.title_string())
-
+    # Elevator pitch — single most concise "what is this movie about" (~6 words)
     if movie.plot_analysis_metadata:
-        parts.append(movie.plot_analysis_metadata.generalized_plot_overview)
+        pitch = movie.plot_analysis_metadata.elevator_pitch_with_justification.elevator_pitch
+        parts.append(pitch.lower())
 
-    # Genres as comma-separated values
-    genres_csv = ", ".join(movie.genres_subset()) if movie.genres_subset() else ""
-    if genres_csv:
-        parts.append(f"Genres: {genres_csv}")
-
-    # Keywords as comma-separated values
-    combined_keywords = movie.overall_keywords + movie.plot_keywords
-    keywords_csv = ", ".join(combined_keywords) if combined_keywords else ""
-    if keywords_csv:
-        parts.append(keywords_csv)
-
-
-    parts.append("\n# Production:")
-
-    # Production information
-    production_text = movie.production_text()
-    if production_text:
-        parts.append(production_text)
-
-    # Languages information
-    languages_text = movie.languages_text()
-    if languages_text:
-        parts.append(languages_text)
-
-    # Release decade bucket
-    decade_bucket = movie.release_decade_bucket()
-    if decade_bucket:
-        parts.append(decade_bucket)
-
-    # Duration bucket
-    duration_bucket = movie.duration_bucket()
-    if duration_bucket:
-        parts.append(f"Duration: {duration_bucket}")
-
-    # Budget scale for era
-    budget_bucket = budget_size_to_vector_text(movie.budget_bucket_for_era())
-    if budget_bucket:
-        parts.append(budget_bucket)
-
-    if movie.production_metadata:
-        if movie.production_metadata.production_keywords.terms:
-            parts.append(", ".join(movie.production_metadata.production_keywords.terms))
-        if movie.production_metadata.sources_of_inspiration.production_mediums:
-            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.production_mediums))
-        if movie.production_metadata.sources_of_inspiration.sources_of_inspiration:
-            parts.append(", ".join(movie.production_metadata.sources_of_inspiration.sources_of_inspiration))
-
-    parts.append("\n# Cast and Characters:")
-
-    cast_text = movie.cast_text()
-    if cast_text:
-        parts.append(cast_text)
-
-    # Characters information
-    characters_text = movie.characters_text()
-    if characters_text:
-        parts.append(characters_text)
-
-    parts.append("\n# Themes and Lessons:")
-
+    # Generalized overview gives thematic context in 1-3 sentences.
+    # Fall back to IMDB overview when plot_analysis wasn't generated.
     if movie.plot_analysis_metadata:
-        parts.append(f"Core concept: {movie.plot_analysis_metadata.core_concept.core_concept_label.lower()}")
-        themes = [theme.theme_label.lower() for theme in movie.plot_analysis_metadata.themes_primary]
-        parts.append(f"Themes: {", ".join(themes)}")
-        lessons = [lesson.lesson_label.lower() for lesson in movie.plot_analysis_metadata.lessons_learned]
-        parts.append(f"Lessons: {", ".join(lessons)}")
+        parts.append(movie.plot_analysis_metadata.generalized_plot_overview.lower())
+    elif movie.imdb_data.overview:
+        parts.append(movie.imdb_data.overview.lower())
 
-    parts.append("\n# Audience Reception:")
+    # -- Classification: what type of movie is this? --
 
+    # Deduplicated merge of LLM genre_signatures + IMDB genres
+    genres = movie.deduplicated_genres()
+    if genres:
+        genres = [normalize_string(g) for g in genres]
+        parts.append("genres: " + ", ".join(genres))
+
+    # Overall keywords — broad topical descriptors. Plot keywords excluded
+    # to avoid over-emphasizing minor content details (e.g. "male nudity").
+    if movie.imdb_data.overall_keywords:
+        keywords = [normalize_string(kw) for kw in movie.imdb_data.overall_keywords]
+        parts.append("keywords: " + ", ".join(keywords))
+
+    # Thematic concepts from plot analysis
+    if movie.plot_analysis_metadata and movie.plot_analysis_metadata.thematic_concepts:
+        themes = [
+            normalize_string(t.concept_label)
+            for t in movie.plot_analysis_metadata.thematic_concepts
+        ]
+        parts.append("themes: " + ", ".join(themes))
+
+    # Source material and franchise position — helps match queries like
+    # "book adaptations", "sequels", "remakes"
+    if movie.source_of_inspiration_metadata:
+        src = movie.source_of_inspiration_metadata
+        if src.source_material:
+            normalized = [normalize_string(t) for t in src.source_material]
+            parts.append("source material: " + ", ".join(normalized))
+        if src.franchise_lineage:
+            normalized = [normalize_string(t) for t in src.franchise_lineage]
+            parts.append("franchise position: " + ", ".join(normalized))
+
+    # -- Experience: what does watching it feel like? --
+
+    # Cherry-picked experiential signals give anchor a taste of the
+    # viewer-experience and watch-context dimensions without full duplication
     if movie.viewer_experience_metadata:
-        parts.append(f"Emotional palette: {", ".join(movie.viewer_experience_metadata.emotional_palette.terms)}")
+        palette_terms = movie.viewer_experience_metadata.emotional_palette.terms
+        if palette_terms:
+            normalized = [normalize_string(t) for t in palette_terms]
+            parts.append("emotional palette: " + ", ".join(normalized))
 
     if movie.watch_context_metadata:
-        parts.append(f"Key draws: {", ".join(movie.watch_context_metadata.key_movie_feature_draws.terms)}")
+        draw_terms = movie.watch_context_metadata.key_movie_feature_draws.terms
+        if draw_terms:
+            normalized = [normalize_string(t) for t in draw_terms]
+            parts.append("key draws: " + ", ".join(normalized))
 
-    # Maturity guidance
-    maturity_guidance = movie.maturity_guidance_text()
-    if maturity_guidance:
-        parts.append(maturity_guidance)
+    # -- Context: when, where, how? --
 
-    # Reception information
+    # Release decade with semantic era label
+    decade_bucket = movie.release_decade_bucket()
+    if decade_bucket:
+        parts.append(decade_bucket.lower())
+
+    # All languages together as a flat list
+    if movie.imdb_data.languages:
+        languages = [normalize_string(lang) for lang in movie.imdb_data.languages]
+        parts.append("languages: " + ", ".join(languages))
+
+    # Budget scale relative to era (only when notable)
+    budget_text = budget_size_to_vector_text(movie.budget_bucket_for_era())
+    if budget_text:
+        parts.append(budget_text)
+
+    # Maturity — prose reasoning when available, MPA description as fallback
+    maturity = movie.maturity_text_short()
+    if maturity:
+        parts.append(maturity.lower())
+
+    # -- Reception: how was it received? --
+
+    # Prose reception summary — evaluative "what did people think?"
+    if movie.reception_metadata:
+        parts.append(movie.reception_metadata.reception_summary.lower())
+
+    # Tier label as a compact quality signal
     reception_tier = movie.reception_tier()
     if reception_tier:
-        parts.append(f"Reception: {reception_tier}")
+        parts.append("reception: " + reception_tier.lower())
 
-    if movie.reception_metadata:
-        parts.append(f"Praises: {", ".join(movie.reception_metadata.praise_attributes)}")
-        parts.append(f"Complaints: {", ".join(movie.reception_metadata.complaint_attributes)}")
-
-    # Join all parts with newlines
     return "\n".join(parts)
 
 

@@ -136,8 +136,56 @@ Migrate create_reception_vector_text from BaseMovie to Movie. Improve embedding 
 ### Testing Notes
 Updated schemas/testing.ipynb to print raw reception fields and final vector text for manual inspection across 10 test movies.
 
+## Redesign anchor vector text: switch to Movie, remove dilutive content, add identity signals
+Files: schemas/movie.py, movie_ingestion/final_ingestion/vector_text.py
+
+### Intent
+Redesign create_anchor_vector_text to use Movie instead of BaseMovie, concentrating on semantic identity signals and removing content better handled by specialized vector spaces, lexical search, or metadata filters.
+
+### Key Decisions
+- **Removed cast/crew/character names:** Lexical search handles entity matching; person names don't carry semantic signal in embeddings.
+- **Removed production companies/filming locations:** Duplicates production vector without adding broad-recall value.
+- **Removed reception praise/complaint lists:** Fully duplicated by reception vector; kept reception_summary (prose) and reception_tier (compact label) instead.
+- **Removed detailed maturity text and parental guide items:** Maturity rating is a metadata filter. Replaced with maturity_text_short() — prefers IMDB maturity_reasoning prose, falls back to MPA semantic description.
+- **Removed markdown section headers:** Noise tokens for the embedding model.
+- **Removed plot_keywords from keyword merge:** Plot keywords over-emphasize minor content details; overall_keywords only.
+- **Added elevator_pitch:** Most concise identity signal (~6 words).
+- **Added IMDB overview as fallback:** Only when plot_analysis_metadata is missing.
+- **Added deduplicated_genres():** Merges LLM genre_signatures with IMDB genres via substring dedup.
+- **Added thematic_concepts:** From plot_analysis metadata.
+- **Added source_material / franchise_lineage:** From source_of_inspiration metadata.
+- **Added reception_summary:** Prose evaluative summary from reception metadata.
+- **Formatting:** Prose fields use .lower(), categorical term lists use normalize_string() with semantic labels.
+
+### New Movie methods
+- `title_with_original()` — "Title (Original Title)" or just "Title"
+- `maturity_text_short()` — IMDB reasoning prose or MPA description fallback
+- `deduplicated_genres()` — genre_signatures + IMDB genres, substring-deduped
+
+### Testing Notes
+Needs manual inspection via testing.ipynb across diverse movies to verify output quality and token budget.
+
 ## Make Movie tracker DB default path absolute
 Files: schemas/movie.py
 Why: `Movie.from_tmdb_id()` defaulted to `Path("ingestion_data/tracker.db")`, which resolves from the process working directory and broke notebook usage when the kernel cwd differed from the repo root.
 Approach: Changed `_DEFAULT_TRACKER_DB` to resolve from the file location (`schemas/movie.py` → repo root → `ingestion_data/tracker.db`) so the default tracker path is stable across notebooks, shells, and other entry points.
 Testing notes: Verified `schemas/movie.py` compiles and that `_DEFAULT_TRACKER_DB` resolves to the real tracker DB path; `Movie.from_tmdb_id(2)` now succeeds without passing `tracker_db_path`.
+
+## Rewrite create_production_vector_text to use Movie with new helper methods
+Files: schemas/movie.py, schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py, schemas/testing.ipynb, docs/TODO.md
+
+### Intent
+Port create_production_vector_text from BaseMovie to Movie. Add deterministic helper methods on Movie for production-related data. Implement "original screenplay" default in SourceOfInspirationOutput. Add binary production medium classification.
+
+### Key Decisions
+- **New Movie methods:** `is_animation()` (binary genre check), `production_text(include_filming_locations)` (labeled format, 3-location limit), `languages_text()` (labeled primary + additional), `release_decade_bucket()` (semantic era labels), `budget_bucket_for_era()` + `_interpolated_thresholds()` (era-adjusted budget classification with linear interpolation between decade anchors).
+- **`resolved_budget()` returns None for 0:** TMDB reports 0 when budget is unknown; treated as missing.
+- **Filming locations excluded for animation:** Voice actors record in studios, not on location — locations are irrelevant noise.
+- **Filming locations capped at 3:** Keeps vector text focused; additional locations are typically studio addresses or minor detail.
+- **Binary production medium:** `is_animation()` → "animation" or "live action". Finer details (computer animation, stop motion, CGI) are already captured by production_keywords. This avoids duplicating what production_keywords already provides.
+- **"original screenplay" default:** Added to `SourceOfInspirationOutput.embedding_text()` when source_material is empty AND franchise_lineage is empty or only contains "first"/"start" terms (`_is_likely_original()` helper). Ensures original films are queryable. Fallback in `create_production_vector_text` for when metadata is None entirely.
+- **Production keywords unlabeled:** Intentionally broad grab-bag — a label would be misleading. Placed at end of vector text.
+- **Normalization:** `.lower()` used on production_text/languages_text output (not `normalize_string()`). Source_of_inspiration uses per-term `normalize_string()`. Diacritics inconsistency reviewed and accepted — embedding models handle accented characters well, not a retrieval issue.
+
+### Testing Notes
+Updated schemas/testing.ipynb to print all production-relevant Movie data fields alongside final vector text for 14 test movies (including animation, CGI hybrid, big budget, small budget, sparse data edge cases). Manual review confirmed all fields correct.
