@@ -44,18 +44,18 @@ from movie_ingestion.metadata_generation.inputs import (
     load_movie_input_data,
     parse_custom_id,
 )
-from movie_ingestion.metadata_generation.generator_registry import get_config
-from movie_ingestion.metadata_generation.request_builder import (
+from movie_ingestion.metadata_generation.batch_generation.generator_registry import get_config
+from movie_ingestion.metadata_generation.batch_generation.request_builder import (
     build_requests,
     DEFAULT_BATCH_SIZE,
 )
-from movie_ingestion.metadata_generation.openai_batch_manager import (
+from movie_ingestion.metadata_generation.batch_generation.openai_batch_manager import (
     BatchStatus,
     upload_and_create_batch,
     check_batch_status,
     download_results,
 )
-from movie_ingestion.metadata_generation.result_processor import (
+from movie_ingestion.metadata_generation.batch_generation.result_processor import (
     process_results,
     process_error_file,
 )
@@ -521,6 +521,7 @@ async def _run_live_generation_batch(
                 content = result.model_dump_json()
                 return tmdb_id, content, None
             except (MetadataGenerationError, MetadataGenerationEmptyResponseError) as e:
+                print(f"  [{metadata_type}] FAILED tmdb_id={tmdb_id}: {e}")
                 return tmdb_id, None, str(e)
 
     tasks = [_generate_one(tid) for tid in tmdb_ids]
@@ -536,6 +537,7 @@ async def _run_live_generation_batch(
 
             # Handle unexpected exceptions from gather
             if isinstance(res, Exception):
+                print(f"  [{metadata_type}] UNEXPECTED ERROR tmdb_id={tmdb_id}: {type(res).__name__}: {res}")
                 db.execute(
                     "INSERT INTO generation_failures (tmdb_id, metadata_type, error_message) VALUES (?, ?, ?)",
                     (tmdb_id, str(metadata_type), str(res)),
@@ -659,7 +661,7 @@ def _get_active_batch_ids(
     Only queries columns for types in GENERATOR_REGISTRY — unregistered
     types (Wave 2 types not yet added) are skipped without touching the DB.
     """
-    from movie_ingestion.metadata_generation.generator_registry import GENERATOR_REGISTRY
+    from movie_ingestion.metadata_generation.batch_generation.generator_registry import GENERATOR_REGISTRY
 
     registered_types = list(GENERATOR_REGISTRY.keys())
     if not registered_types:
@@ -708,7 +710,7 @@ def _clear_batch_id(
 # with which types actually have generator configs.
 def _registered_type_choices() -> list[str]:
     """Get the list of metadata type values that have registered generators."""
-    from movie_ingestion.metadata_generation.generator_registry import GENERATOR_REGISTRY
+    from movie_ingestion.metadata_generation.batch_generation.generator_registry import GENERATOR_REGISTRY
     return [str(mt) for mt in GENERATOR_REGISTRY]
 
 

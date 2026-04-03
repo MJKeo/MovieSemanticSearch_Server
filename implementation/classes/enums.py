@@ -72,7 +72,7 @@ class StreamingAccessType(Enum):
 
 
 class VectorCollectionName(Enum):
-    """Enum representing ChromaDB vector collection names."""
+    """Enum representing Qdrant vector collection names."""
     DENSE_ANCHOR_VECTORS = "dense_anchor_vectors"
     PLOT_EVENTS_VECTORS = "plot_events_vectors"
     PLOT_ANALYSIS_VECTORS = "plot_analysis_vectors"

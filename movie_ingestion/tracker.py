@@ -49,9 +49,10 @@ class MovieStatus(StrEnum):
     """Movie processing status in movie_progress.status.
 
     Progression:
-      PENDING → TMDB_FETCHED → TMDB_QUALITY_PASSED → IMDB_SCRAPED →
-      IMDB_QUALITY_CALCULATED → IMDB_QUALITY_PASSED → PHASE1_COMPLETE →
-      PHASE2_COMPLETE → EMBEDDED → INGESTED
+      PENDING → TMDB_FETCHED → TMDB_QUALITY_CALCULATED →
+      TMDB_QUALITY_PASSED → IMDB_SCRAPED → IMDB_QUALITY_CALCULATED →
+      IMDB_QUALITY_PASSED → PHASE1_COMPLETE → PHASE2_COMPLETE →
+      EMBEDDED → INGESTED
 
     Terminal:
       FILTERED_OUT (with variable reason strings in filter_log)
@@ -89,9 +90,10 @@ CREATE TABLE IF NOT EXISTS movie_progress (
     imdb_id          TEXT,
     status           TEXT NOT NULL DEFAULT 'pending',
     -- Statuses (in order) — defined in MovieStatus enum:
-    --   pending → tmdb_fetched → tmdb_quality_passed → imdb_scraped →
-    --   imdb_quality_calculated → imdb_quality_passed → phase1_complete →
-    --   phase2_complete → embedded → ingested
+    --   pending → tmdb_fetched → tmdb_quality_calculated →
+    --   tmdb_quality_passed → imdb_scraped → imdb_quality_calculated →
+    --   imdb_quality_passed → phase1_complete → phase2_complete →
+    --   embedded → ingested
     --
     -- Terminal statuses:
     --   filtered_out        (all filtering — reason details in filter_log.reason)

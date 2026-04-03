@@ -13,9 +13,9 @@ Three analysis documents explored reduction strategies.
 ### Current State
 
 - 8 LLM calls per movie, organized in two parallel waves
-- Wave 1: plot_events, watch_context, reception
+- Wave 1: plot_events, reception
 - Wave 2: plot_analysis, viewer_experience, narrative_techniques,
-  production_keywords, source_of_inspiration
+  watch_context, production_keywords, source_of_inspiration
 - ~28K input tokens + ~8K output tokens per movie
 - ~58% of output tokens are hidden reasoning tokens (billed but
   invisible)

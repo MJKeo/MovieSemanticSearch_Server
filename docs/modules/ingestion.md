@@ -37,19 +37,19 @@ this module.
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data, split into 3 groups matching the Stage 5 threshold groups (has_providers, recent_no_providers, old_no_providers). Produces `imdb_data_analysis_{group}.json` output files. |
 | `imdb_quality_scoring/plot_quality_scores.py` | Diagnostic: survival curve + derivative analysis for Stage 5 scores across 3 groups (with providers, no providers recent, no providers old). Thin wrapper around `survival_curve_utils`. |
 | `imdb_quality_scoring/sample_threshold_candidates.py` | Diagnostic: samples movies around each candidate threshold per group, writes full TMDB+IMDB data to per-group JSON files in `ingestion_data/` for manual review. |
-| `metadata_generation/run.py` | Stage 6 CLI entry point: `eligibility`, `submit`, `status`, `process`, `autopilot`. `eligibility`/`submit`/`autopilot` require `--metadata` arg; `status`/`process` handle all types. Autopilot generates/submits for specified type but processes all types' batches. The `eligibility` command re-evaluates ALL `imdb_quality_passed` rows on every run (not just NULL rows), so reruns pick up changed upstream inputs without manual flag clearing. |
-| `metadata_generation/generator_registry.py` | Maps each `MetadataType` to its `GeneratorConfig` (schema, eligibility checker, prompt builder, live generator, model config). Thin adapter wrappers normalize different generator prompt interfaces into a common `(user_prompt, system_prompt)` tuple contract. `get_config(metadata_type)` is the lookup entry point. |
-| `metadata_generation/request_builder.py` | Builds per-type Batch API request lists. `build_requests(metadata_type)` loads eligible movies in chunks of 5K to avoid OOM, uses registry config for prompts/schema/model. Returns `list[list[dict]]`; serialization to JSONL is done in `openai_batch_manager.py`. |
-| `metadata_generation/openai_batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status (`BatchStatus` dataclass includes batch-level `errors`), download. In-memory JSONL upload/download (no temp files). No movie/generation knowledge. |
-| `metadata_generation/result_processor.py` | Parses downloaded result JSONL, determines metadata type from custom_id, validates against correct schema via `SCHEMA_BY_TYPE`, stores results in the type's column in `generated_metadata`. Records per-request failures to `generation_failures`. Handles `"response": null` entries from expired batches via `or {}` pattern (not `.get()` default). |
-| `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment`, `Wave1Outputs` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, `best_plot_fallback()`, and `batch_id()`. `build_custom_id(MetadataType, tmdb_id)` / `parse_custom_id(str) -> MetadataType` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads raw data from tracker.db. `load_wave1_outputs(tmdb_id)` returns a `Wave1Outputs` with all Wave 1 fields (plot_summary, thematic/emotional/craft observations, source_material_hint) — callers pick whichever subset they need. |
+| `metadata_generation/batch_generation/run.py` | Stage 6 CLI entry point: `eligibility`, `submit`, `status`, `process`, `autopilot`. `eligibility`/`submit`/`autopilot` require `--metadata` arg; `status`/`process` handle all types. Autopilot generates/submits for specified type but processes all types' batches. The `eligibility` command re-evaluates ALL `imdb_quality_passed` rows on every run (not just NULL rows), so reruns pick up changed upstream inputs without manual flag clearing. |
+| `metadata_generation/batch_generation/generator_registry.py` | Maps each `MetadataType` to its `GeneratorConfig` (schema, eligibility checker, prompt builder, live generator, model config). Thin adapter wrappers normalize different generator prompt interfaces into a common `(user_prompt, system_prompt)` tuple contract. `get_config(metadata_type)` is the lookup entry point. |
+| `metadata_generation/batch_generation/request_builder.py` | Builds per-type Batch API request lists. `build_requests(metadata_type)` loads eligible movies in chunks of 5K to avoid OOM, uses registry config for prompts/schema/model. Returns `list[list[dict]]`; serialization to JSONL is done in `openai_batch_manager.py`. |
+| `metadata_generation/batch_generation/openai_batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status (`BatchStatus` dataclass includes batch-level `errors`), download. In-memory JSONL upload/download (no temp files). No movie/generation knowledge. |
+| `metadata_generation/batch_generation/result_processor.py` | Parses downloaded result JSONL, determines metadata type from custom_id, validates against correct schema via `SCHEMA_BY_TYPE`, stores results in the type's column in `generated_metadata`. Records per-request failures to `generation_failures`. Handles `"response": null` entries from expired batches via `or {}` pattern (not `.get()` default). |
+| `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment`, `Wave1Outputs` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, `best_plot_fallback()`, and `batch_id()`. `build_custom_id(tmdb_id, MetadataType)` / `parse_custom_id(str) -> tuple[MetadataType, int]` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads raw data from tracker.db. `load_wave1_outputs(tmdb_id)` returns a `Wave1Outputs` with all Wave 1 fields (plot_summary, thematic/emotional/craft observations, source_material_hint) — callers pick whichever subset they need. |
 | `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` uses dual-zone structure: extraction zone (4 observation fields for Wave 2, not embedded) + synthesis zone (summary + quality tags, embedded). `NarrativeTechniquesOutput` uses 9-section schema (removed `thematic_delivery` and merged `meta_techniques` into `additional_narrative_devices`; see ADR-048). `WatchContextWithIdentityNoteOutput` replaces `viewing_appeal_summary` (20-30 word anchor) with `identity_note` (2-8 word classification). `TermsWithJustificationSection.justification` renamed to `evidence_basis` — framed as evidence inventory, not post-hoc explanation (see ADR-049). `SourceOfInspirationOutput` uses two fields: `source_material` (adaptations, remakes, reboots, reimaginings, spinoffs) and `franchise_lineage` (sequel, prequel, trilogy position); `production_mediums` removed (derived deterministically at embedding time); see ADR-051, ADR-052. `SourceOfInspirationWithReasoningOutput` adds `source_evidence`/`lineage_evidence` inventory fields (non-gating); aliased as `SourceOfInspirationWithJustificationsOutput` for test compatibility. See ADR-025, ADR-050. |
-| `metadata_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. Public shared functions: `resolve_viewer_experience_narrative()`, `filter_viewer_experience_observations()`, `resolve_narrative_techniques_narrative()` — each used by both eligibility and prompt building. `narrative_techniques` uses tiered eligibility (plot_summary / fallback >= 500 / craft >= 400 standalone / fallback >= 300 + craft >= 300 combined). `watch_context` now requires genre data AND ≥1 observation field (emotional/craft/thematic); genre-only movies are ineligible (~0.7% of pipeline). |
-| `metadata_generation/evaluation_data/analyze_evaluations.py` | Diagnostic: generic metadata-evaluation report generator. Reads prompt/schema/bucket/result/evaluation files for a metadata type, then produces a Markdown report with aggregate scores, per-bucket patterns, failures, divergences, and cost totals. |
-| `metadata_generation/report_bucket_axis_performance.py` | Diagnostic CLI: reads `*_evaluation.json` files and prints per-bucket tables of average candidate performance per scoring axis. Supports both bucket file shapes. |
-| `metadata_generation/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
-| `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. Locked generators (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative), `narrative_techniques.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, 9-section schema), `watch_context.py` (gpt-5-mini, reasoning_effort=minimal, WatchContextWithIdentityNoteOutput). `source_of_inspiration.py` (gpt-5-mini, reasoning_effort=low, base SourceOfInspirationOutput schema, see ADR-053), `production_keywords.py` (still accepts `provider`/`model`/`**kwargs` for evaluation). All other 7 generators are locked. See ADR-026, ADR-027, ADR-045, ADR-048, ADR-049, ADR-053. |
-| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant. Unlocked generators (currently only `production_keywords.py`) export `SYSTEM_PROMPT_WITH_REASONING` (formerly `SYSTEM_PROMPT_WITH_JUSTIFICATIONS`). Locked generators export only `SYSTEM_PROMPT`. `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. Locked generators use the base (non-reasoning) prompt as production. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
+| `metadata_generation/batch_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. Public shared functions: `resolve_viewer_experience_narrative()`, `filter_viewer_experience_observations()`, `resolve_narrative_techniques_narrative()` — each used by both eligibility and prompt building. `narrative_techniques` uses tiered eligibility (plot_summary / fallback >= 500 / craft >= 400 standalone / fallback >= 300 + craft >= 300 combined). `watch_context` now requires genre data AND ≥1 observation field (emotional/craft/thematic); genre-only movies are ineligible (~0.7% of pipeline). |
+| `metadata_generation/errors.py` | Custom exception classes (`MetadataGenerationError`, `MetadataGenerationEmptyResponseError`) imported by all generators. |
+| `metadata_generation/helper_scripts/report_bucket_axis_performance.py` | Diagnostic CLI: reads `*_evaluation.json` files and prints per-bucket tables of average candidate performance per scoring axis. Supports both bucket file shapes. |
+| `metadata_generation/helper_scripts/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
+| `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All 8 generators are now locked (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative), `narrative_techniques.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, 9-section schema), `watch_context.py` (gpt-5-mini, reasoning_effort=minimal, WatchContextWithIdentityNoteOutput), `source_of_inspiration.py` (gpt-5-mini, reasoning_effort=low, base SourceOfInspirationOutput schema, see ADR-053), `production_keywords.py` (gpt-5-mini, reasoning_effort=low, base ProductionKeywordsOutput schema — only Wave 2 generator using base schema in production, see ADR-054). See ADR-026, ADR-027, ADR-045, ADR-048, ADR-049, ADR-053, ADR-054. |
+| `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant. All generators are now locked; no unlocked generators remain. `production_keywords.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` (retained for evaluation notebook backward compatibility). `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. Locked generators use the base (non-reasoning) prompt as production. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
@@ -147,8 +147,7 @@ residential-vs-datacenter tuning tradeoffs.
 
 Stage 5 computes a combined TMDB+IMDB quality score for every
 `imdb_scraped` movie. IMDB data is primary; TMDB is fallback for
-overlapping fields. See ADR-019 for the v2 redesign decisions,
-ADR-021 for the v4 notability signal change.
+overlapping fields. See ADR-021 for the v4 notability signal change.
 
 **Two hard gates (early return 0.0 before signal computation)**:
 1. **Title-type gate**: `ALLOWED_TITLE_TYPES = {"movie", "tvMovie", "short", "video"}`. Movies whose `imdb_title_type` is not in this set (including None) score 0.0. Catches tvSeries, tvEpisode, videoGame, etc. that passed TMDB's classification. See ADR-037.
@@ -348,13 +347,16 @@ real-time callers — each takes `MovieInputData`, calls
 `generate_llm_response_async`, and returns `Tuple[Output, TokenUsage]`.
 All 8 are registered in `generator_registry.py` and reachable via the
 batch pipeline CLI (`run.py`).
-`plot_events.py`, `reception.py`, `plot_analysis.py`,
-`viewer_experience.py`, `narrative_techniques.py`, and `watch_context.py`
-are locked: provider/model are module-level constants
+All 8 generators are locked: provider/model are module-level constants
 (`_PROVIDER`, `_MODEL`), not caller params.
-`source_of_inspiration.py` and `production_keywords.py` still accept
-optional `provider`/`model`/`**kwargs` for evaluation use.
-See ADR-026, ADR-027, ADR-039, ADR-042, ADR-043, ADR-048, ADR-049.
+See ADR-026, ADR-039, ADR-042, ADR-043, ADR-048, ADR-049, ADR-053, ADR-054.
+
+**Locking finalized generators**: When a generator's evaluation is
+complete, remove all configurable model parameters from its production
+function signature — take only `movie: MovieInputData`. Hardcode
+provider, model, schema, and kwargs as module-level constants with a
+comment citing the evaluation winner. The playground notebook is the
+only place that needs configurable model params.
 
 **No provider-specific default kwargs**: Generators must not define
 default kwargs that span providers. The generic LLM router passes kwargs
@@ -431,6 +433,12 @@ chain: reasoning list → parental guide items → MPAA rating definition
 viewer_experience and watch_context. `MovieInputData.maturity_summary()`
 delegates to this function via lazy import (avoids circular import).
 
+**Shared logic rule**: When eligibility checking and prompt building
+apply the same logic (threshold filtering, input resolution, fallback
+ladders), that logic must live in exactly one place — a public function
+in `pre_consolidation.py`. Generators import and call it. Never mirror
+threshold constants or filtering logic between the two layers.
+
 **Eligibility checks**: Wave 1 checks (`check_plot_events`, `check_reception`)
 are public functions — called by evaluation runners and the batch pipeline
 to pre-filter ineligible movies before LLM spend. Wave 2 has 6 private `_check_<type>()` methods.
@@ -501,8 +509,7 @@ Pydantic `BaseModel` schemas for each generation. Key design decisions
 
 Before committing to a model/provider for any generation type, the
 evaluation pipeline runs systematic side-by-side comparisons across
-candidates. See ADR-028 for the overall design, ADR-034 for the
-current reference-free approach.
+candidates.
 
 **Reference-free pointwise evaluation (current):** For each (candidate,
 movie) pair, the pipeline generates the candidate's output, then scores
@@ -513,9 +520,6 @@ or the generation prompt itself. Each evaluation runs the judge 2 times
 sequentially — run 1 primes the Anthropic prompt cache, run 2 benefits
 from cached reads at 90% discount. Scores are averaged; reasoning is
 concatenated. Idempotent — rerunning skips rows that already exist.
-See ADR-031 for the multi-run averaging decision, ADR-034 for the
-reference removal and judge switch decision.
-
 **Thinking disabled, caveman-speak reasoning**: Judge runs with
 `thinking: disabled`. Reasoning fields are constrained to one sentence,
 max 30 words, caveman-speak (no articles, filler) to compress output
@@ -524,23 +528,19 @@ tokens.
 **Rate-limit retry**: Judge calls retry indefinitely on 429, sleeping
 30s between attempts.
 
-**`--branch` flag**: `run_evaluations_pipeline.py` accepts
-`--branch synopsis|synthesis` to filter the test corpus by synopsis
-presence, enabling separate evaluation of each generation branch.
-
-**Evaluation DB (`evaluation_data/eval.db`)**: Separate from tracker.db.
-Each metadata type gets its own set of tables
-(e.g., `plot_events_candidate_outputs`, `plot_events_evaluations`).
-Scoring dimensions are individual REAL columns (not JSON blobs) so SQL
-can aggregate per-dimension. `judge_runs` column records how many runs
-contributed to each score. WAL journal mode enabled for crash-safety.
-
 **plot_events evaluation**: Complete. 21-movie 6-candidate evaluation selected
 gpt-5-mini (4.93/5.0 overall, near-zero hallucinations). Subsequently, a
 42-movie evaluation refined the schema (removed `setting`/`major_characters`
 and raised `MIN_SYNOPSIS_CHARS` to 2,500). See ADR-039, ADR-040.
 The `evaluations/` subpackage was removed after evaluation completed;
 `load_movie_input_data()` was moved to `inputs.py`.
+
+**Eval guide append-only rule**: When adding a new candidate to an
+evaluation guide round, append its documentation to the existing
+candidates section. Never remove or replace previous candidate docs
+when adding a new experiment to the same round, even if the code
+changes that produced those candidates were later reverted. Generated
+results are permanent artifacts independent of the current codebase state.
 
 **4-dimension judge rubric for plot_events** (historical, now inactive):
 groundedness, plot_summary, character_quality, setting. Each scored 1–4.
@@ -625,19 +625,15 @@ eliminates any uncertainty about concurrent DB access.
   `DATA_IMPULSE_PASSWORD` in `.env`.
 - IMDB blocks datacenter proxy IPs while accepting residential
   ones. The bulk scrape already uses DataImpulse residential proxies
-  (see ADR-015). For the future daily-update pipeline, ensure
+  For the future daily-update pipeline, ensure
   residential proxies remain configured.
-  See ADR-015 and `memory/imdb-scraping.md` for tuning history.
+  See `memory/imdb-scraping.md` for tuning history.
 - Survival curve plot scripts call `plt.show()` which blocks in
   headless environments. Use the `Agg` backend or redirect output
   to a file when running without a display.
 - The `ingestion_data/imdb/` JSON file directory is now obsolete as
   the primary data store. `migrate_json_to_sqlite.py` was used for
   the one-time migration of 425,345 rows.
-- `analyze_evaluations.py` lives in `evaluation_data/`, not the main
-  generator package. It now reads the prompt/schema/bucket/result/
-  evaluation files for a metadata type and emits a full Markdown
-  report, not just a small score table.
 - The generation-side schemas in `metadata_generation/schemas.py`
   intentionally diverge from the search-side schemas in
   `implementation/classes/schemas.py`. When deploying, align the

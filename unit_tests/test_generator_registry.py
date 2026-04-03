@@ -1,5 +1,5 @@
 """
-Unit tests for movie_ingestion.metadata_generation.generator_registry.
+Unit tests for movie_ingestion.metadata_generation.batch_generation.generator_registry.
 
 Covers:
   - GENERATOR_REGISTRY contains expected types
@@ -15,7 +15,7 @@ from movie_ingestion.metadata_generation.inputs import (
     MetadataType,
     MovieInputData,
 )
-from movie_ingestion.metadata_generation.generator_registry import (
+from movie_ingestion.metadata_generation.batch_generation.generator_registry import (
     GENERATOR_REGISTRY,
     GeneratorConfig,
     get_config,

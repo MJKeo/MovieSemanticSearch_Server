@@ -207,7 +207,7 @@ now require `metadata_type` parameter. `_get_active_batch_ids()` returns `(batch
 tuples. `_record_batch_ids()` and `_clear_batch_id()` take `metadata_type`. Any tests importing
 old function names or using old signatures will fail.
 **When:** Next time batch pipeline tests are being worked on.
-**See:** movie_ingestion/metadata_generation/run.py, request_builder.py, result_processor.py,
+**See:** movie_ingestion/metadata_generation/batch_generation/run.py, request_builder.py, result_processor.py,
 generator_registry.py (new file)
 
 
@@ -218,8 +218,8 @@ SCHEMA_BY_TYPE must also be updated or result processing will silently record fa
 ("No schema registered") instead of crashing loudly. Consider adding a startup assertion
 or deriving SCHEMA_BY_TYPE from the registry.
 **When:** When adding Wave 2 types to the batch pipeline.
-**See:** movie_ingestion/metadata_generation/result_processor.py (SCHEMA_BY_TYPE),
-movie_ingestion/metadata_generation/generator_registry.py (GENERATOR_REGISTRY)
+**See:** movie_ingestion/metadata_generation/batch_generation/result_processor.py (SCHEMA_BY_TYPE),
+movie_ingestion/metadata_generation/batch_generation/generator_registry.py (GENERATOR_REGISTRY)
 
 
 ## Update unit tests for ADR-033 signature changes
@@ -286,7 +286,7 @@ Tiered skip condition implemented based on 80-movie evaluation. Tier 1: plot_syn
 eligible. Tier 2: plot fallback >= 400 chars → eligible. Tier 3: plot fallback 250-399 chars +
 thematic_observations >= 300 chars → eligible. Otherwise skip. emotional_observations removed
 from eligibility entirely.
-**See:** movie_ingestion/metadata_generation/pre_consolidation.py (_check_plot_analysis)
+**See:** movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py (_check_plot_analysis)
 
 ## ~~Re-evaluate plot_analysis with hardened prompt on 70-movie set~~ EVALUATED
 Evaluation complete (70 movies × 8 candidates, 7 buckets). Key findings: arc_quality improved
@@ -323,7 +323,7 @@ overall quality. gpt-5.4-nano handles sparse inputs significantly better in Buck
 Eligibility simplified in production config (2026-03-26). Old source-weighted combined
 thresholds removed. New combined path is simply: GPO >= 200 + any usable observation.
 The standalone-narrative and standalone-observation paths remain unchanged.
-**See:** movie_ingestion/metadata_generation/pre_consolidation.py (_check_viewer_experience)
+**See:** movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py (_check_viewer_experience)
 
 ## ~~Update unit tests for narrative_techniques input contract redesign~~ DONE
 Completed (2026-03-31): All 8 test files updated in a single session. 239 tests pass.
@@ -405,7 +405,7 @@ params will fail. Return type changed from `WatchContextOutput` to
 **See:** unit_tests/test_watch_context_generator.py (if it exists),
 unit_tests/test_pre_consolidation.py,
 movie_ingestion/metadata_generation/generators/watch_context.py,
-movie_ingestion/metadata_generation/pre_consolidation.py
+movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py
 
 ## ~~Evaluate identity_note variant on gold_standard + challenging_identity buckets~~ DONE
 Evaluated (2026-04-01): R4 candidates (r4-identity-note-low, r4-identity-note-minimal) run across
@@ -450,6 +450,15 @@ optimized for gpt-5-mini with concrete movie examples at the classification boun
 **See:** movie_ingestion/metadata_generation/prompts/source_of_inspiration.py,
 ingestion_data/source_of_inspiration_eval_guide.md
 
+## Update unit tests for production_keywords generator signature change
+**Context:** `generate_production_keywords()` no longer accepts provider, model,
+system_prompt, response_format, or **kwargs parameters — it only takes
+`movie: MovieInputData`. Tests in `test_production_keywords_generator.py` that
+pass those params will fail at call time.
+**When:** Next time production_keywords tests are being worked on.
+**See:** unit_tests/test_production_keywords_generator.py,
+movie_ingestion/metadata_generation/generators/production_keywords.py
+
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts
 with `tmdb_ids`, `movies`, or `samples` keys. The watch_context bucket file uses a flat format
@@ -457,4 +466,4 @@ with `tmdb_ids`, `movies`, or `samples` keys. The watch_context bucket file uses
 all movies to map to "unknown" bucket. The `build_id_to_bucket_map()` function filters on
 `isinstance(bucket_payload, dict)` which skips list payloads entirely.
 **When:** Next time the reporting script is used (low priority — manual Python works around it).
-**See:** movie_ingestion/metadata_generation/report_bucket_axis_performance.py (lines 47-86)
+**See:** movie_ingestion/metadata_generation/helper_scripts/report_bucket_axis_performance.py (lines 47-86)

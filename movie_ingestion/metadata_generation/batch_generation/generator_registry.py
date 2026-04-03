@@ -75,14 +75,14 @@ class GeneratorConfig:
 
 def _plot_events_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     """Adapter for plot_events — already returns (user, system) tuple."""
-    from .generators.plot_events import build_plot_events_prompts
+    from ..generators.plot_events import build_plot_events_prompts
     return build_plot_events_prompts(movie)
 
 
 def _reception_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     """Adapter for reception — combines user prompt builder + separate system prompt."""
-    from .generators.reception import build_reception_user_prompt
-    from .prompts.reception import SYSTEM_PROMPT
+    from ..generators.reception import build_reception_user_prompt
+    from ..prompts.reception import SYSTEM_PROMPT
     return build_reception_user_prompt(movie), SYSTEM_PROMPT
 
 
@@ -104,8 +104,8 @@ def _production_keywords_eligibility_checker(movie: MovieInputData) -> str | Non
 
 def _production_keywords_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     """Adapter for production_keywords — builds user prompt + system prompt tuple."""
-    from .generators.production_keywords import build_production_keywords_user_prompt
-    from .prompts.production_keywords import SYSTEM_PROMPT
+    from ..generators.production_keywords import build_production_keywords_user_prompt
+    from ..prompts.production_keywords import SYSTEM_PROMPT
     return build_production_keywords_user_prompt(movie), SYSTEM_PROMPT
 
 
@@ -124,8 +124,8 @@ def _plot_analysis_eligibility_checker(movie: MovieInputData) -> str | None:
 
 def _plot_analysis_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     """Adapter for plot_analysis — loads Wave 1 outputs and builds prompts."""
-    from .generators.plot_analysis import build_plot_analysis_user_prompt
-    from .prompts.plot_analysis import SYSTEM_PROMPT
+    from ..generators.plot_analysis import build_plot_analysis_user_prompt
+    from ..prompts.plot_analysis import SYSTEM_PROMPT
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     return build_plot_analysis_user_prompt(movie, w1.plot_summary, w1.thematic_observations), SYSTEM_PROMPT
@@ -133,7 +133,7 @@ def _plot_analysis_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
 
 async def _plot_analysis_live_generator(movie: MovieInputData):
     """Async adapter for plot_analysis — loads Wave 1 outputs and generates."""
-    from .generators.plot_analysis import generate_plot_analysis
+    from ..generators.plot_analysis import generate_plot_analysis
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     return await generate_plot_analysis(movie, w1.plot_summary, w1.thematic_observations)
@@ -163,8 +163,8 @@ def _viewer_experience_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
 
     Uses GPO-only narrative path and justification prompt (production config).
     """
-    from .generators.viewer_experience import build_viewer_experience_user_prompt
-    from .prompts.viewer_experience import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+    from ..generators.viewer_experience import build_viewer_experience_user_prompt
+    from ..prompts.viewer_experience import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
@@ -184,7 +184,7 @@ async def _viewer_experience_live_generator(movie: MovieInputData):
     Uses GPO-only narrative path and production defaults (justification schema,
     minimal reasoning).
     """
-    from .generators.viewer_experience import generate_viewer_experience
+    from ..generators.viewer_experience import generate_viewer_experience
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
@@ -223,8 +223,8 @@ def _watch_context_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
 
     Uses the finalized production prompt path with identity_note enabled.
     """
-    from .generators.watch_context import build_watch_context_user_prompt
-    from .prompts.watch_context import SYSTEM_PROMPT_WITH_IDENTITY_NOTE
+    from ..generators.watch_context import build_watch_context_user_prompt
+    from ..prompts.watch_context import SYSTEM_PROMPT_WITH_IDENTITY_NOTE
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
@@ -243,7 +243,7 @@ async def _watch_context_live_generator(movie: MovieInputData):
     Uses the locked production config (identity_note schema, minimal reasoning,
     low verbosity).
     """
-    from .generators.watch_context import generate_watch_context
+    from ..generators.watch_context import generate_watch_context
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
@@ -270,8 +270,8 @@ def _source_of_inspiration_eligibility_checker(movie: MovieInputData) -> str | N
 
 def _source_of_inspiration_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     """Adapter for source_of_inspiration — loads Wave 1 outputs and builds prompts."""
-    from .generators.source_of_inspiration import build_source_of_inspiration_user_prompt
-    from .prompts.source_of_inspiration import SYSTEM_PROMPT
+    from ..generators.source_of_inspiration import build_source_of_inspiration_user_prompt
+    from ..prompts.source_of_inspiration import SYSTEM_PROMPT
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     return build_source_of_inspiration_user_prompt(movie, w1.source_material_hint), SYSTEM_PROMPT
@@ -279,7 +279,7 @@ def _source_of_inspiration_prompt_builder(movie: MovieInputData) -> tuple[str, s
 
 async def _source_of_inspiration_live_generator(movie: MovieInputData):
     """Async adapter for source_of_inspiration — loads Wave 1 outputs and generates."""
-    from .generators.source_of_inspiration import generate_source_of_inspiration
+    from ..generators.source_of_inspiration import generate_source_of_inspiration
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     return await generate_source_of_inspiration(movie, w1.source_material_hint)
@@ -306,8 +306,8 @@ def _narrative_techniques_prompt_builder(movie: MovieInputData) -> tuple[str, st
 
     Uses the production prompt path with justifications enabled.
     """
-    from .generators.narrative_techniques import build_narrative_techniques_user_prompt
-    from .prompts.narrative_techniques import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+    from ..generators.narrative_techniques import build_narrative_techniques_user_prompt
+    from ..prompts.narrative_techniques import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     return build_narrative_techniques_user_prompt(
@@ -323,7 +323,7 @@ async def _narrative_techniques_live_generator(movie: MovieInputData):
     Uses the locked production config (justifications, minimal reasoning,
     low verbosity).
     """
-    from .generators.narrative_techniques import generate_narrative_techniques
+    from ..generators.narrative_techniques import generate_narrative_techniques
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     return await generate_narrative_techniques(
@@ -344,10 +344,10 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
     (generators import from inputs, which is also imported here).
     """
     from .pre_consolidation import check_plot_events, check_reception
-    from .generators.plot_events import generate_plot_events
-    from .generators.reception import generate_reception
-    from .generators.production_keywords import generate_production_keywords
-    from .schemas import (
+    from ..generators.plot_events import generate_plot_events
+    from ..generators.reception import generate_reception
+    from ..generators.production_keywords import generate_production_keywords
+    from ..schemas import (
         PlotEventsOutput,
         ReceptionOutput,
         PlotAnalysisWithJustificationsOutput,

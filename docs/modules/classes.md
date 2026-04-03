@@ -42,7 +42,10 @@ generated at ingestion time, each feeding a specific vector space:
 - `ViewerExperienceMetadata` → viewer_experience vector
 - `WatchContextMetadata` → watch_context vector
 - `NarrativeTechniquesMetadata` → narrative_techniques vector
-- `ProductionMetadata` → production vector (via sub-schemas)
+- `ProductionMetadata` → production vector (legacy combined schema;
+  generation-side has split into `ProductionKeywordsOutput` and
+  `SourceOfInspirationOutput` in `movie_ingestion/metadata_generation/schemas.py` —
+  search-side schema needs alignment before deployment)
 - `ReceptionMetadata` → reception vector
 
 **Query Understanding Schemas** (`schemas.py`): Four response types

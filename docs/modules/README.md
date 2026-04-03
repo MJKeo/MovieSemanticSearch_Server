@@ -19,4 +19,5 @@ to work with it — not exhaustive API references.
 - **Autonomously** by the docs-maintainer subagent at commit time
 - **On demand** via the docs-auditor subagent (reports staleness)
 
-Keep each module doc under 60 lines.
+Keep module docs concise. Most should be under 60 lines; complex
+modules (e.g., ingestion) may exceed this when the detail is justified.

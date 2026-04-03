@@ -1,5 +1,5 @@
 """
-Unit tests for movie_ingestion.metadata_generation.result_processor.
+Unit tests for movie_ingestion.metadata_generation.batch_generation.result_processor.
 
 Covers:
   - process_results: success, HTTP error, invalid JSON, empty choices,
@@ -16,7 +16,7 @@ import sqlite3
 
 import pytest
 
-from movie_ingestion.metadata_generation.result_processor import (
+from movie_ingestion.metadata_generation.batch_generation.result_processor import (
     process_results,
     process_error_file,
     ProcessingSummary,

@@ -81,7 +81,7 @@ class TestCmdEligibility:
         _insert_quality_passed_movie(db, 2)
         db.commit()
 
-        from movie_ingestion.metadata_generation.run import cmd_eligibility
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_eligibility
         cmd_eligibility(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path)
 
         # Check that eligibility flags were set (either 0 or 1, not NULL)
@@ -102,7 +102,7 @@ class TestCmdEligibility:
         )
         db.commit()
 
-        from movie_ingestion.metadata_generation.run import cmd_eligibility
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_eligibility
         cmd_eligibility(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path)
 
         # Value should still be 1 (not re-evaluated to 0 or anything else)
@@ -116,7 +116,7 @@ class TestCmdEligibility:
         db_path, db = pipeline_db
         db.commit()
 
-        from movie_ingestion.metadata_generation.run import cmd_eligibility
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_eligibility
         # Should not raise
         cmd_eligibility(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path)
 
@@ -126,7 +126,7 @@ class TestCmdEligibility:
         _insert_quality_passed_movie(db, 1)
         db.commit()
 
-        from movie_ingestion.metadata_generation.run import cmd_eligibility
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_eligibility
         cmd_eligibility(metadata_type=MetadataType.RECEPTION, tracker_db_path=db_path)
 
         row = db.execute(
@@ -157,7 +157,7 @@ class TestCmdSubmit:
 
         mock_upload.return_value = "batch_test_123"
 
-        from movie_ingestion.metadata_generation.run import cmd_submit
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_submit
         cmd_submit(metadata_type=MetadataType.PLOT_EVENTS, tracker_db_path=db_path, batch_size=100)
 
         # Verify batch_id was recorded in metadata_batch_ids
@@ -181,7 +181,7 @@ class TestCmdSubmit:
 
         mock_upload.return_value = "batch_limited"
 
-        from movie_ingestion.metadata_generation.run import cmd_submit
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_submit
         cmd_submit(
             metadata_type=MetadataType.PLOT_EVENTS,
             tracker_db_path=db_path,
@@ -217,7 +217,7 @@ class TestCmdProcess:
         db.commit()
 
         # Mock the batch as completed
-        from movie_ingestion.metadata_generation.openai_batch_manager import BatchStatus
+        from movie_ingestion.metadata_generation.batch_generation.openai_batch_manager import BatchStatus
         mock_status.return_value = BatchStatus(
             batch_id="batch_done",
             status="completed",
@@ -243,7 +243,7 @@ class TestCmdProcess:
             },
         ]
 
-        from movie_ingestion.metadata_generation.run import cmd_process
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_process
         cmd_process(tracker_db_path=db_path)
 
         # Verify result was stored
@@ -263,7 +263,7 @@ class TestCmdProcess:
         )
         db.commit()
 
-        from movie_ingestion.metadata_generation.openai_batch_manager import BatchStatus
+        from movie_ingestion.metadata_generation.batch_generation.openai_batch_manager import BatchStatus
         mock_status.return_value = BatchStatus(
             batch_id="batch_fail",
             status="failed",
@@ -275,7 +275,7 @@ class TestCmdProcess:
             errors=[{"code": "token_limit_exceeded", "message": "Too many tokens"}],
         )
 
-        from movie_ingestion.metadata_generation.run import cmd_process
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_process
         cmd_process(tracker_db_path=db_path)
 
         # Verify batch_id was cleared
@@ -294,7 +294,7 @@ class TestCmdProcess:
         )
         db.commit()
 
-        from movie_ingestion.metadata_generation.openai_batch_manager import BatchStatus
+        from movie_ingestion.metadata_generation.batch_generation.openai_batch_manager import BatchStatus
         mock_status.return_value = BatchStatus(
             batch_id="batch_wip",
             status="in_progress",
@@ -305,7 +305,7 @@ class TestCmdProcess:
             error_file_id=None,
         )
 
-        from movie_ingestion.metadata_generation.run import cmd_process
+        from movie_ingestion.metadata_generation.batch_generation.run import cmd_process
         cmd_process(tracker_db_path=db_path)
 
         # Batch_id should still be present (not cleared)

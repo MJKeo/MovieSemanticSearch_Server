@@ -172,13 +172,12 @@ Stage 4: IMDB Scraping (movie_ingestion/imdb_scraping/)
   └─ Routed through DataImpulse residential proxies with US geo-targeting
   └─ Async with semaphore-controlled concurrency (default 60), random UA rotation, exponential backoff
   └─ Extracts: credits, keywords (with community vote scoring), synopses, parental guide, reviews
-  └─ Output: per-movie JSON at ingestion_data/imdb/{tmdb_id}.json (IMDBScrapedMovie Pydantic model)
+  └─ Output: stored in `imdb_data` table in tracker.db (IMDBScrapedMovie Pydantic model)
   └─ Status: tmdb_quality_passed → imdb_scraped (or filtered_out)
   └─ Run: python -m movie_ingestion.imdb_scraping.run
 
 Stage 5: IMDB Quality Filtering (movie_ingestion/imdb_quality_scoring/)
-  └─ Hard filters on essential data (IMDB rating, directors, actors, keywords, etc.)
-  └─ Combined TMDB+IMDB quality scorer (8 signals, weights sum to 1.0):
+  └─ Two hard gates (title-type, missing-text) then combined TMDB+IMDB quality scorer (8 signals, weights sum to 1.0):
      imdb_notability (0.31), featured_reviews_chars (0.15),
      plot_text_depth (0.12), lexical_completeness (0.10),
      critical_attention (0.08), community_engagement (0.08),
@@ -191,8 +190,8 @@ Stage 5: IMDB Quality Filtering (movie_ingestion/imdb_quality_scoring/)
 Stage 6+: LLM Generation → Embedding → Ingestion
   └─ movie_ingestion/metadata_generation/ — Stage 6 batch metadata generation pipeline
      └─ generators/ — per-type generation functions and prompt builders
-     └─ run.py — submit/status/process CLI for Wave 1 and Wave 2 OpenAI Batch jobs
-     └─ request_builder.py, batch_manager.py, result_processor.py — batch orchestration and result handling
+     └─ batch_generation/ — run.py (CLI entry point), request_builder.py, openai_batch_manager.py, result_processor.py, generator_registry.py, pre_consolidation.py
+     └─ helper_scripts/ — estimate_generation_cost.py, report_bucket_axis_performance.py
   └─ implementation/vectorize.py — embeds metadata into 8 vector spaces via OpenAI
   └─ db/ingest_movie.py — upserts final data into Postgres, Qdrant, and Redis
 ```
@@ -204,8 +203,8 @@ Stage 6+: LLM Generation → Embedding → Ingestion
 | `tracker.py` | SQLite tracker DB init, `MovieStatus`/`PipelineStage` enums, `log_filter()`, atomic JSON I/O |
 | `tmdb_fetching/daily_export.py` | Stage 1: stream-download and filter TMDB daily export |
 | `tmdb_fetching/tmdb_fetcher.py` | Stage 2: async TMDB detail fetch, field extraction, watch provider key encoding |
-| `tmdb_quality_scoring/tmdb_filter.py` | Stage 3: hard filters + quality score threshold |
-| `tmdb_quality_scoring/tmdb_quality_scorer.py` | Quality scoring model (10 weighted signals, age-adjusted multipliers) |
+| `tmdb_quality_scoring/tmdb_filter.py` | Stage 3: quality score threshold (no hard filters) |
+| `tmdb_quality_scoring/tmdb_quality_scorer.py` | Quality scoring model (4 weighted signals) |
 | `tmdb_quality_scoring/tmdb_data_analysis.py` | Diagnostic: per-attribute distributions from tmdb_data (informs funnel design) |
 | `tmdb_quality_scoring/plot_quality_scores.py` | Diagnostic: Gaussian-smoothed survival curve + derivatives (determines threshold) |
 | `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch |
@@ -214,7 +213,7 @@ Stage 6+: LLM Generation → Embedding → Ingestion
 | `imdb_scraping/parsers.py` | GraphQL response → `IMDBScrapedMovie` transformer (keyword scoring, synopsis priority) |
 | `imdb_scraping/models.py` | Pydantic models for IMDB scraped data (`IMDBScrapedMovie` and sub-models) |
 | `imdb_scraping/fix_stale_statuses.py` | One-off reconciliation script for stuck `tmdb_quality_passed` movies |
-| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: hard filters + combined TMDB+IMDB quality scorer (8 signals, ADR-016) |
+| `imdb_quality_scoring/imdb_quality_scorer.py` | Stage 5: two hard gates (title-type, missing-text) + combined TMDB+IMDB quality scorer (8 signals) |
 | `scoring_utils.py` | Shared scoring utilities (vote_count, popularity, provider key unpacking) used by Stage 3 and Stage 5 |
 | `imdb_quality_scoring/analyze_imdb_quality.py` | Diagnostic: per-field coverage and distribution report for scraped IMDB data |
 

@@ -1,5 +1,5 @@
 """
-Unit tests for movie_ingestion.metadata_generation.openai_batch_manager.
+Unit tests for movie_ingestion.metadata_generation.batch_generation.openai_batch_manager.
 
 Since this module creates an OpenAI client at import time (requires
 OPENAI_API_KEY), all tests mock at the module level via monkeypatch.
@@ -43,11 +43,11 @@ def batch_manager(monkeypatch):
 
     # Mock the OpenAI class before importing the module
     mock_client = MagicMock()
-    with patch("movie_ingestion.metadata_generation.openai_batch_manager.OpenAI") as MockOpenAI:
+    with patch("movie_ingestion.metadata_generation.batch_generation.openai_batch_manager.OpenAI") as MockOpenAI:
         MockOpenAI.return_value = mock_client
         # Force re-import with mocked client
         import importlib
-        import movie_ingestion.metadata_generation.openai_batch_manager as mod
+        import movie_ingestion.metadata_generation.batch_generation.openai_batch_manager as mod
         importlib.reload(mod)
         # Replace the module-level _client with our mock
         mod._client = mock_client

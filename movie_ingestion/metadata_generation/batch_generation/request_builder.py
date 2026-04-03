@@ -25,7 +25,7 @@ from movie_ingestion.metadata_generation.inputs import (
     load_movie_input_data,
     MovieInputData,
 )
-from movie_ingestion.metadata_generation.generator_registry import (
+from movie_ingestion.metadata_generation.batch_generation.generator_registry import (
     GeneratorConfig,
     get_config,
 )

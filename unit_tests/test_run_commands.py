@@ -19,7 +19,7 @@ import pytest
 
 from movie_ingestion.tracker import _SCHEMA_SQL, MovieStatus
 from movie_ingestion.metadata_generation.inputs import MetadataType
-from movie_ingestion.metadata_generation.run import (
+from movie_ingestion.metadata_generation.batch_generation.run import (
     _get_quality_passed_tmdb_ids,
     _ensure_generated_metadata_rows,
     _record_batch_ids,

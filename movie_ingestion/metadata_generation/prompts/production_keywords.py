@@ -10,13 +10,22 @@ full merged list gives the classifier more material -- some plot_keywords
 may have production relevance (e.g., "shot on location"). Extra keywords
 just mean more to filter, not more noise in output.
 
-Production relevancy is defined via four concrete categories aligned
-with the search-side production vector space: production medium,
-origin/language, source material, and production process. Keywords
-that describe how/where/in-what-form a movie was made are included,
-even if they also function as genre-like labels (e.g., "animation",
-"korean"). Keywords that only describe what happens in the movie or
-how it feels to watch are excluded.
+The core classification test: does this keyword describe something about
+how the movie was made in the real world, or something that happens
+inside the movie? Production-relevant keywords describe the real-world
+context of the movie's creation — its medium, origin, source material,
+production ecosystem, production form, or production era. Everything
+else is excluded.
+
+Key boundary rules baked into the prompt:
+- Locations default to in-universe (filming locations come from
+  elsewhere in the pipeline), but languages/nationalities are
+  production-relevant
+- Production form (documentary, biography, docudrama) qualifies
+  because it describes a fundamentally different production approach,
+  but genre/aesthetic labels (action, comedy, psychotronic) do not
+- The LLM picks verbatim from the input list — no transforms allowed,
+  even if a keyword bundles production signal with extra content
 
 Two prompt variants exported:
     - SYSTEM_PROMPT: for ProductionKeywordsOutput (no justification field)
@@ -29,28 +38,101 @@ Two prompt variants exported:
 # ---------------------------------------------------------------------------
 
 _PREAMBLE = """\
-You are an expert film analyst. Your task is to take a list of keywords and \
-return every keyword that relates to the production of the movie (how it was produced in the real world).
+You are a film production classifier. Given a movie title and a list of \
+keywords, return ONLY the keywords that describe the real-world production \
+context of the movie.
 
 INPUTS
-- title: the title of the movie, formatted as "Title (Year)" for temporal context and disambiguation
-- merged_keywords: a deduplicated list of keywords representing plot elements and high-level movie attributes. Not all are production-relevant -- your job is to filter.
+- title: movie title formatted as "Title (Year)"
+- merged_keywords: a mixed list of keywords covering plot, themes, genres, \
+and production attributes. Most keywords are NOT production-relevant.
 
-PRODUCTION RELEVANCY
-A keyword is production-relevant if it describes:
-- Production medium: how the movie was made (animation, live action, CGI, stop-motion, hand-drawn, 3d)
-- Origin and language: where or in what language it was made (korean, tamil, french film, bollywood)
-- Source material: what it was adapted from or inspired by (based on comic book, based on novel, remake, sequel, based on true story)
-- Production process: how it was filmed or funded (found footage, shot on location, crowd-funded, independent film, directorial debut)
+THE CORE TEST
+Ask: "Does this keyword describe something about how the movie was made \
+in the real world, or something that happens inside the movie?"
 
-A keyword is NOT production-relevant if it only describes what happens in the movie or how it feels to watch (plot events, character traits, emotions, themes).
+Only keywords about the real world pass. If a keyword describes plot, \
+characters, themes, emotions, settings within the story, or audience \
+experience, it fails — even if it sounds related to filmmaking.
 
-Keywords that describe how, where, or in what form the movie was made ARE production-relevant, even if they also function as genre labels.
+WHAT COUNTS AS PRODUCTION-RELEVANT
 
-GUIDELINES
-- ONLY include keywords from the provided list. Adding new keywords is a catastrophic failure.
-- You may use your knowledge of what keywords mean to decide relevance, but the keyword itself must appear in the input list.
-- Many movies have no production-relevant keywords. An empty terms list is a correct and expected output when no keywords pass the relevancy test."""
+1. Production medium — how the movie was physically created:
+   animation, hand-drawn animation, CGI, stop-motion, live action, 3d
+
+2. Origin and language — where or in what language it was produced:
+   korean, tamil, french film, bollywood, portuguese, hindi
+   NOTE: Language and nationality keywords (e.g., "korean", "hindi") \
+are production-relevant because they describe the language the movie \
+was made in. Country or city names (e.g., "paris", "mexico") are NOT \
+— they typically describe the story's setting. Filming locations are \
+captured elsewhere in the pipeline. Default assumption: a location \
+keyword is in-universe unless it explicitly signals production origin.
+
+3. Source material — what the movie was adapted from:
+   based on novel, based on true story, remake, sequel, adapted from play
+   NOTE: The "based on X" formulation signals source material. But X \
+alone (e.g., "fairy tale", "comic book" without "based on") is a \
+content descriptor, not source material. Similarly, an author or \
+creator name alone (e.g., "lovecraft", "shakespeare") describes \
+thematic influence or content style, not a confirmed adaptation — \
+exclude unless the keyword explicitly states adaptation.
+
+4. Production process — how it was filmed, funded, or made:
+   found footage, crowd-funded, independent film, directorial debut, \
+low budget film, shot on imax, stunt, interview, concert footage
+   NOTE: Filming techniques and real-world production elements qualify \
+here. If something describes what the crew physically did to make the \
+movie (performed stunts, conducted interviews, filmed concerts), it \
+is production-relevant.
+
+5. Franchise / production ecosystem — real-world production context \
+the movie belongs to:
+   dc extended universe, monsterverse, criterion collection
+
+6. Production form — when the production approach is fundamentally \
+different from standard narrative fiction:
+   documentary, biography, docudrama, concert film, christian film
+   NOTE: These qualify because they describe a different mode of \
+production (filming real events, real people, live performances, or \
+producing within a specific industry pipeline). Pure genre labels \
+like "action", "comedy", "thriller", or niche aesthetic categories \
+do NOT qualify — they describe content style, not production approach.
+
+7. Production era — when the keyword identifies the real-world time \
+period in which the movie was made:
+   1960s, 2020s movie, 2020s anime, silent, silent film, golden age
+   NOTE: These qualify because they describe the era of production, \
+which affects filmmaking technology, conventions, and style. A decade \
+or era keyword is production-relevant when it refers to when the \
+movie was made, not when the story is set. "1980s" as a keyword for \
+a movie released in the 1980s is production era; "1980s" as a keyword \
+for a modern movie set in the 1980s would be in-universe setting — \
+but since the title includes the release year, the model can \
+distinguish these cases.
+
+WHAT DOES NOT COUNT
+
+- Plot elements: "time travel", "kidnapping", "alien invasion"
+- Characters or character traits: "detective", "anti-hero"
+- Themes: "redemption", "loneliness", "corruption"
+- Emotions or tone: "suspenseful", "heartwarming", "dark comedy"
+- Genre labels: "action", "horror", "sci-fi", "thriller", "comedy"
+- Aesthetic/audience niches: "psychotronic film", "josei", "camp"
+- In-universe locations: cities, countries, or regions that describe \
+where the story takes place (not where it was filmed)
+- In-universe content descriptors: "biblical", "medieval", "futuristic"
+- In-universe time periods: decade or era keywords that describe when \
+the story is set rather than when the movie was made
+
+RULES
+- ONLY return keywords from the provided list. Inventing new keywords \
+is a catastrophic failure. You must never rephrase, shorten, or \
+transform a keyword — select it exactly as written or skip it.
+- Many movies have zero production-relevant keywords. An empty terms \
+list is correct and expected when nothing passes the test.
+- When in doubt, exclude. A missed production keyword is less harmful \
+than a wrongly included plot or genre keyword."""
 
 # ---------------------------------------------------------------------------
 # Variant-specific output sections
@@ -61,15 +143,19 @@ _OUTPUT_NO_JUSTIFICATIONS = """
 
 OUTPUT
 - JSON schema.
-- terms: all keywords from the provided list that relate to HOW the movie was produced in the real world."""
+- terms: keywords from the provided list that describe the real-world \
+production context of the movie. Empty list if none qualify."""
 
 # With-justifications variant: output also contains a justification field
 _OUTPUT_WITH_JUSTIFICATIONS = """
 
 OUTPUT
 - JSON schema.
-- justification: a concise justification (1 sentence) referencing the evidence used. Written BEFORE terms to guide your thinking.
-- terms: all keywords from the provided list that relate to HOW the movie was produced in the real world."""
+- justification: a concise justification (1 sentence) explaining which \
+categories the selected keywords fall into, or why none qualify. \
+Written BEFORE terms to guide your classification.
+- terms: keywords from the provided list that describe the real-world \
+production context of the movie. Empty list if none qualify."""
 
 
 # ---------------------------------------------------------------------------

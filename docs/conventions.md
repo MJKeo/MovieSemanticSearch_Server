@@ -83,6 +83,13 @@ These rules apply everywhere and are not negotiable:
   output_tokens). The unified router dispatches to provider functions by
   reference; any deviation in return shape is a silent runtime failure
   that only surfaces when a specific provider is exercised.
+- Verify provider-specific API parameter support before setting kwargs.
+  Cross-reference the latest online documentation for the exact model
+  being configured — parameters that work for one provider or model
+  family often don't exist or behave differently for another (e.g.,
+  `reasoning_format` vs `include_reasoning`, temperature unsupported
+  on reasoning models). Include a brief comment on non-obvious
+  constraints.
 - Jupyter notebooks must resolve the project root dynamically using a
   `find_project_root()` helper that walks up from `Path.cwd()` until
   `pyproject.toml` is found, then inserts that path into `sys.path`.
@@ -103,6 +110,24 @@ These rules apply everywhere and are not negotiable:
   current API of installed library versions. Do not rely on deprecated
   access patterns even if they still function. When unsure, verify
   the recommended usage for the installed version.
+- When a set of related string constants appears in more than one
+  module, define them as a `StrEnum` in a shared location. All callers
+  reference the enum member — never hardcode the string value. `StrEnum`
+  preserves string compatibility (SQLite, JSON, logs) while preventing
+  typos and enabling IDE navigation.
+- Function parameters exposed to callers should use the caller's
+  domain vocabulary, not the implementation's internal units. Internal
+  conversions (e.g., `max_movies = max_batches * batch_size`) belong
+  inside the function body. When threading a value through multiple
+  function layers, keep the parameter name consistent with its
+  source — renaming mid-chain obscures what the value actually
+  represents.
+- When a function returns more than two related values, return a
+  dataclass or Pydantic model — not a positional tuple. Named fields
+  eliminate ordering bugs, make call sites self-documenting, and
+  allow adding fields without breaking callers. If an existing
+  Pydantic model already represents the data, return it directly
+  rather than creating a parallel dataclass.
 
 ## Error Handling
 
@@ -160,10 +185,10 @@ These rules apply everywhere and are not negotiable:
   (packed uint32). The `create_watch_provider_offering_key()`
   helper in `implementation/misc/helpers.py` handles encoding.
 - **Ingestion statuses**: Progress through pipeline stages —
-  `pending` → `tmdb_fetched` → `tmdb_quality_passed` →
-  `imdb_scraped` → `imdb_quality_passed` → `phase1_complete` →
-  `phase2_complete` → `embedded` → `ingested`. Terminal:
-  `filtered_out`.
+  `pending` → `tmdb_fetched` → `tmdb_quality_calculated` →
+  `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` →
+  `imdb_quality_passed` → `phase1_complete` → `phase2_complete` →
+  `embedded` → `ingested`. Terminal: `filtered_out`.
 
 ## Scoring Conventions
 
@@ -229,6 +254,14 @@ to [0, 1] unless explicitly noted otherwise:
 - Quality gates must use two distinct statuses: `*_calculated`
   (score written, no filtering) and `*_passed` (survived threshold).
   This keeps scoring and filtering independently re-runnable.
+- Deterministic derivation over LLM classification. Before assigning
+  a classification task to an LLM generator, verify whether existing
+  structured data (genres, keywords, title patterns) provides
+  sufficient coverage to derive the answer deterministically. If
+  coverage is near-100%, implement a rule-based function rather than
+  paying for an LLM call that may introduce abstention bugs or
+  hallucinations. LLM generation should be reserved for tasks where
+  structured data is insufficient or ambiguous.
 
 ## Network & Retry Conventions
 
@@ -243,13 +276,11 @@ to [0, 1] unless explicitly noted otherwise:
 
 ## Evaluation Conventions
 
-- **Storage structure**: Evaluation results are stored in
-  `evaluation_data/eval.db`. Each metadata type gets three tables:
-  `candidates`, `{type}_candidate_outputs`, and `{type}_evaluations`.
-  Scoring dimensions are individual typed columns — not a JSON blob —
-  so individual scores are queryable via SQL. Aggregate summaries
-  (mean scores, rankings) are computed at read time, not stored.
-  Analysis is done via `movie_ingestion/metadata_generation/evaluation_data/analyze_evaluations.py`.
+- **Storage structure**: Evaluation results are stored as per-movie
+  JSON files in `movie_ingestion/metadata_generation/evaluation_data/`
+  (e.g., `reception_{tmdb_id}.json`). Analysis is done via
+  `analyze_evaluations.py` in the same directory when present
+  (removed after evaluation completes for a given type).
 - **Candidate config**: LLM configurations under test are defined
   per metadata type in the evaluation notebook
   (`metadata_generation_playground.ipynb`). Each candidate specifies
@@ -278,6 +309,57 @@ to [0, 1] unless explicitly noted otherwise:
 
 ## Prompt Authoring Conventions
 
+- **Cognitive-scaffolding field ordering.** Order structured output
+  schema fields in cognitive progression: concrete/extractive fields
+  before abstract/synthetic ones. Each field should scaffold the
+  next — the model builds context as it generates. Never lead with
+  synthesis (overview, core concept) that requires cold-start
+  distillation. In schemas with reasoning/justification fields,
+  place them immediately before the label or value they scaffold.
+- **Within-section uniqueness only.** In generation prompts and
+  evaluation rubrics, only enforce uniqueness within each section
+  (no near-synonyms as section neighbors). Cross-section overlap is
+  acceptable and beneficial for embedding quality — the same concept
+  appearing in multiple sections reinforces the signal when it serves
+  different analytical purposes.
+- **Evidence inventory, not rationalization, for reasoning fields.**
+  When adding reasoning/justification fields to structured output
+  schemas, frame them as upstream evidence inventories ("cite specific
+  input phrases") rather than downstream explanations ("why did you
+  generate this"). Include an explicit empty-evidence path. Even
+  though both are generated before the output in token order, only
+  the inventory framing constrains over-inference. If the model may
+  use parametric knowledge, explicitly state that an empty evidence
+  inventory does not mandate empty output.
+- **Explicit absence for primary inputs.** When building LLM prompts,
+  absent primary inputs (those the system prompt teaches the model to
+  rely on) should be included with the value `"not available"` rather
+  than silently omitted. A model with minimal reasoning may not notice
+  a missing field, but seeing an explicit absence signal calibrates
+  confidence downward. Secondary inputs (keywords, genres) can still
+  be omitted when empty.
+- **Empty collections over skip-wrapper schemas.** When a structured
+  output section is optional for some inputs, use the base type with
+  `min_length=0` — not a wrapper with a `should_skip` boolean.
+  Skip-flag wrappers force the model to manage a boolean alongside
+  content fields and still populate dummy data when skipping. Empty
+  lists achieve the same result (no contribution to `__str__()`)
+  with less schema complexity.
+- **Abstention-first for optional fields.** When a structured output
+  field allows empty output and the model rarely produces it, lead
+  the field's instructions with the abstention decision ("FIRST:
+  determine whether...") before any extraction rules. List concrete
+  content categories where emptiness is expected. Models default to
+  "always produce something" — burying the empty-is-valid instruction
+  at the end makes it an afterthought.
+- **Merge ambiguous field boundaries.** When two structured output
+  fields have ambiguous boundaries (the model frequently produces
+  overlapping content) and the downstream consumer treats them
+  identically (e.g., both feed the same embedding), merge into a
+  single field. This eliminates a common failure mode (near-duplicate
+  content across fields) with no downstream impact. Especially
+  important for small models where cognitive budget spent
+  distinguishing similar fields is wasted.
 - **Principle-based constraints, not failure catalogs.** When updating
   LLM prompts based on evaluation findings or observed failures,
   express constraints as general principles the model can apply to
@@ -287,3 +369,25 @@ to [0, 1] unless explicitly noted otherwise:
   kidnap targets, not one-mention characters..."). Reactive lists
   grow long, confuse the model, and only cover previously seen
   failures.
+- **Brief pre-generation fields, no consistency coupling.** When
+  adding a pre-generation reasoning field to a structured output
+  schema for chain-of-thought quality improvement, keep it brief —
+  a classification or label, not a summary or explanation. Never
+  instruct the model to make downstream output "consistent with"
+  the pre-generation field. Full sentences dominate autoregressive
+  attention and act as templates; brief labels prime without
+  constraining.
+- **Programmatic prompt adaptation over self-classification.** When
+  LLM behavior should differ based on input conditions (data quality,
+  sparsity, field presence, content type), swap prompt sections or
+  entire prompts programmatically rather than including all variants
+  and asking the model to self-classify. Classify the condition in
+  deterministic Python code; the model receives only the guidance
+  relevant to its actual inputs. This saves reasoning tokens and
+  eliminates misclassification risk.
+- **Example-eval separation.** When a generation prompt uses concrete
+  domain examples to disambiguate classification boundaries, draw
+  examples from a different pool than the evaluation test data.
+  Overlapping examples make it impossible to distinguish "learned
+  the principle" from "memorized the example." Keep examples to 2-4
+  and ensure the abstract rules stand alone without them.

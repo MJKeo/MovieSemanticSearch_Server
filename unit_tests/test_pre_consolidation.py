@@ -1,5 +1,5 @@
 """
-Unit tests for movie_ingestion.metadata_generation.pre_consolidation.
+Unit tests for movie_ingestion.metadata_generation.batch_generation.pre_consolidation.
 
 Covers:
   - route_keywords: normalization, dedup, merge ordering
@@ -27,7 +27,7 @@ from movie_ingestion.metadata_generation.schemas import (
     ElevatorPitchWithJustification,
     ThematicConceptWithJustification,
 )
-from movie_ingestion.metadata_generation.pre_consolidation import (
+from movie_ingestion.metadata_generation.batch_generation.pre_consolidation import (
     route_keywords,
     consolidate_maturity,
     check_plot_events,

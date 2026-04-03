@@ -293,7 +293,7 @@ class TestMaturitySummary:
 
     def test_maturity_summary_delegates_to_consolidate_maturity(self):
         """Verify output matches pre_consolidation.consolidate_maturity() directly."""
-        from movie_ingestion.metadata_generation.pre_consolidation import consolidate_maturity
+        from movie_ingestion.metadata_generation.batch_generation.pre_consolidation import consolidate_maturity
 
         movie = _make_movie(
             maturity_rating="PG-13",

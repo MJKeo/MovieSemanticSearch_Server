@@ -40,7 +40,7 @@ from movie_ingestion.metadata_generation.inputs import (
     MovieInputData,
     build_user_prompt,
 )
-from movie_ingestion.metadata_generation.pre_consolidation import (
+from movie_ingestion.metadata_generation.batch_generation.pre_consolidation import (
     resolve_narrative_techniques_narrative,
     _MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS,
 )

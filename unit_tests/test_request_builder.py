@@ -1,5 +1,5 @@
 """
-Unit tests for movie_ingestion.metadata_generation.request_builder.
+Unit tests for movie_ingestion.metadata_generation.batch_generation.request_builder.
 
 Covers:
   - _build_single_request structure, model, kwargs, messages, response_format
@@ -18,14 +18,14 @@ from movie_ingestion.metadata_generation.inputs import (
     MetadataType,
     build_custom_id,
 )
-from movie_ingestion.metadata_generation.request_builder import (
+from movie_ingestion.metadata_generation.batch_generation.request_builder import (
     _build_single_request,
     _chunk,
     _get_pending_tmdb_ids,
     build_requests,
     DEFAULT_BATCH_SIZE,
 )
-from movie_ingestion.metadata_generation.generator_registry import get_config
+from movie_ingestion.metadata_generation.batch_generation.generator_registry import get_config
 from movie_ingestion.metadata_generation.prompts.plot_events import (
     SYSTEM_PROMPT_SYNOPSIS,
     SYSTEM_PROMPT_SYNTHESIS,

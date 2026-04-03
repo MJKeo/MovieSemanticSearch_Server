@@ -12,11 +12,12 @@ Inputs (from MovieInputData):
 Skip condition: requires merged_keywords >= 1 entry
     (enforced by pre_consolidation).
 
-Response schema: ProductionKeywordsOutput (no justifications) by default.
-    ProductionKeywordsWithJustificationsOutput available for evaluation.
+Response schema: ProductionKeywordsOutput (no justifications).
 
-Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: low,
-    verbosity: low.
+Provider/model: OpenAI gpt-5-mini with reasoning_effort: low.
+    Selected as the production candidate based on evaluation results
+    (r2-5-mini-low): perfect precision (5.00), near-perfect recall
+    (4.92), zero failures across 48 test movies.
 
 See docs/llm_metadata_generation_new_flow.md Section 5.5.
 """
@@ -39,10 +40,10 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
 GENERATION_TYPE = MetadataType.PRODUCTION_KEYWORDS
 
-# Production defaults — matching legacy system (gpt-5-mini with low reasoning).
-# Will be re-evaluated via the evaluation pipeline and updated to the winner.
-_DEFAULT_PROVIDER = LLMProvider.OPENAI
-_DEFAULT_MODEL = "gpt-5-mini"
+# Finalized production config — r2-5-mini-low evaluation winner.
+_PROVIDER = LLMProvider.OPENAI
+_MODEL = "gpt-5-mini"
+_KWARGS = {"reasoning_effort": "low"}
 
 
 def build_production_keywords_user_prompt(movie: MovieInputData) -> str:
@@ -63,30 +64,23 @@ def build_production_keywords_user_prompt(movie: MovieInputData) -> str:
 
 async def generate_production_keywords(
     movie: MovieInputData,
-    provider: LLMProvider = _DEFAULT_PROVIDER,
-    model: str = _DEFAULT_MODEL,
-    system_prompt: str = SYSTEM_PROMPT,
-    response_format: type = ProductionKeywordsOutput,
-    **kwargs,
 ) -> Tuple[ProductionKeywordsOutput, TokenUsage]:
     """Generate production keywords metadata for a single movie.
 
     Builds the user prompt from the movie's title and merged keywords,
-    calls the specified LLM provider with structured output, and returns
-    the parsed result alongside token usage.
+    calls OpenAI gpt-5-mini with structured output, and returns the
+    parsed result alongside token usage.
 
     This is a classification task — the LLM filters keywords from the
     input list, it does not generate new ones. No Wave 1 outputs needed.
 
-    Defaults to OpenAI gpt-5-mini with reasoning_effort: low (matching
-    the legacy system). Callers can override provider/model/kwargs to
-    test different configurations during evaluation.
+    Uses the finalized r2-5-mini-low configuration: OpenAI gpt-5-mini,
+    ProductionKeywordsOutput schema (no justifications), reasoning_effort
+    low. Selected based on evaluation results across 48 movies: perfect
+    precision, near-perfect recall, zero hard failures.
 
     Args:
         movie: Raw movie input data loaded from the ingestion pipeline.
-        provider: Which LLM backend to use. Defaults to OPENAI.
-        model: Model identifier. Defaults to "gpt-5-mini".
-        **kwargs: Provider-specific params (e.g. reasoning_effort, temperature).
 
     Returns:
         Tuple of (ProductionKeywordsOutput, TokenUsage).
@@ -100,12 +94,12 @@ async def generate_production_keywords(
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=provider,
+            provider=_PROVIDER,
             user_prompt=user_prompt,
-            system_prompt=system_prompt,
-            response_format=response_format,
-            model=model,
-            **kwargs,
+            system_prompt=SYSTEM_PROMPT,
+            response_format=ProductionKeywordsOutput,
+            model=_MODEL,
+            **_KWARGS,
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
@@ -115,4 +109,4 @@ async def generate_production_keywords(
         print(f"{GENERATION_TYPE} generation returned None for '{title_with_year}'")
         raise MetadataGenerationEmptyResponseError(GENERATION_TYPE, title_with_year)
 
-    return parsed, TokenUsage(input_tokens, output_tokens, model)
+    return parsed, TokenUsage(input_tokens, output_tokens, _MODEL)

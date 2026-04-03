@@ -20,7 +20,7 @@ Provides two distinct roles:
 
 The ingestion-time generation pipeline (generators, schemas, prompts)
 lives in `movie_ingestion/metadata_generation/`. See
-`docs/modules/ingestion.md` (Stage 6 section) and ADR-024.
+`docs/modules/ingestion.md` (Stage 6 section).
 
 ## Key Files
 
@@ -113,7 +113,7 @@ partial DAG results.
   via the `budget_tokens` kwarg — when present, `thinking` is enabled
   and `max_tokens` is expanded to `budget_tokens + 4096` to cover both
   thinking and output tokens. Temperature must not be set when thinking
-  is enabled (Anthropic enforces this). See ADR-029.
+  is enabled (Anthropic enforces this).
 - **`budget_tokens` is popped before forwarding** to the Anthropic API —
   it is not a native Anthropic parameter. Passing it through would cause
   an API error.
@@ -135,7 +135,6 @@ partial DAG results.
   uses `responses.stream()` (Responses API), not `chat.completions`.
   With any `reasoning_effort` other than `"none"`, GPT-5.4 rejects
   `temperature`, `top_p`, `max_output_tokens`, and `logprobs`.
-  See ADR-030.
 - Required env vars: `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, `GOOGLE_API_KEY`,
   `GROQ_API_KEY`, `ALIBABA_API_KEY`, `ANTHROPIC_API_KEY`. WHAM uses OAuth
   tokens from `evaluation_data/openai_oauth_tokens.json` (no dedicated env var).

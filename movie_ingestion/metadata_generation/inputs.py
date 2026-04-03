@@ -223,7 +223,7 @@ class MovieInputData:
         """
         # Import here to avoid circular import (pre_consolidation imports
         # MovieInputData from this module).
-        from .pre_consolidation import consolidate_maturity
+        from movie_ingestion.metadata_generation.batch_generation.pre_consolidation import consolidate_maturity
 
         return consolidate_maturity(
             self.maturity_rating,

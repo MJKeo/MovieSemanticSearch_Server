@@ -1,12 +1,13 @@
 """
 Unit tests for movie_ingestion.metadata_generation.generators.production_keywords.
 
-Tests prompt building, LLM call delegation, return value shape, and
-error handling for the generate_production_keywords function.
+Tests prompt building, LLM call delegation, return value shape,
+error handling, and signature lockdown for generate_production_keywords.
 
 All LLM calls are mocked — no real API traffic.
 """
 
+import inspect
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -95,25 +96,21 @@ class TestGenerateProductionKeywords:
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            parsed, token_usage = await generate_production_keywords(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            parsed, token_usage = await generate_production_keywords(movie)
 
         assert parsed is expected
         assert isinstance(token_usage, TokenUsage)
 
-    async def test_no_default_reasoning_effort_injected(self):
-        """No default reasoning_effort is injected when caller doesn't provide one."""
+    async def test_hardcoded_reasoning_effort(self):
+        """Generator always passes reasoning_effort='low'."""
         mock_fn = AsyncMock(return_value=(_make_pk_output(), 100, 50))
         movie = _make_movie()
 
         with patch(_LLM_PATCH, mock_fn):
-            await generate_production_keywords(
-                movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-            )
+            await generate_production_keywords(movie)
 
         call_kwargs = mock_fn.call_args[1]
-        assert "reasoning_effort" not in call_kwargs
+        assert call_kwargs["reasoning_effort"] == "low"
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +124,7 @@ class TestGenerateProductionKeywordsErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_production_keywords(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_production_keywords(movie)
 
         assert exc_info.value.generation_type == GENERATION_TYPE
 
@@ -139,9 +134,7 @@ class TestGenerateProductionKeywordsErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationEmptyResponseError):
-                await generate_production_keywords(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_production_keywords(movie)
 
     async def test_error_chains_original_cause(self):
         original = ValueError("original")
@@ -150,11 +143,58 @@ class TestGenerateProductionKeywordsErrors:
 
         with patch(_LLM_PATCH, mock_fn):
             with pytest.raises(MetadataGenerationError) as exc_info:
-                await generate_production_keywords(
-                    movie, provider=LLMProvider.OPENAI, model="gpt-5-mini",
-                )
+                await generate_production_keywords(movie)
 
         assert exc_info.value.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Tests: signature lockdown — removed parameters
+# ---------------------------------------------------------------------------
+
+class TestProductionKeywordsSignatureLockdown:
+    def test_generate_does_not_accept_provider_kwarg(self):
+        """provider parameter was removed — passing it should raise TypeError."""
+        sig = inspect.signature(generate_production_keywords)
+        assert "provider" not in sig.parameters
+
+    def test_generate_does_not_accept_model_kwarg(self):
+        """model parameter was removed — passing it should raise TypeError."""
+        sig = inspect.signature(generate_production_keywords)
+        assert "model" not in sig.parameters
+
+    def test_generate_does_not_accept_kwargs(self):
+        """No **kwargs in signature — no arbitrary keyword arguments accepted."""
+        sig = inspect.signature(generate_production_keywords)
+        for param in sig.parameters.values():
+            assert param.kind != inspect.Parameter.VAR_KEYWORD
+
+    async def test_hardcoded_llm_params(self):
+        """All 5 hardcoded params are passed to the LLM call."""
+        from movie_ingestion.metadata_generation.prompts.production_keywords import SYSTEM_PROMPT
+
+        mock_fn = AsyncMock(return_value=(_make_pk_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            await generate_production_keywords(movie)
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["provider"] == LLMProvider.OPENAI
+        assert call_kwargs["model"] == "gpt-5-mini"
+        assert call_kwargs["system_prompt"] == SYSTEM_PROMPT
+        assert call_kwargs["response_format"] is ProductionKeywordsOutput
+        assert call_kwargs["reasoning_effort"] == "low"
+
+    async def test_token_usage_uses_hardcoded_model(self):
+        """Returned TokenUsage.model equals the hardcoded _MODEL, not a caller-provided value."""
+        mock_fn = AsyncMock(return_value=(_make_pk_output(), 100, 50))
+        movie = _make_movie()
+
+        with patch(_LLM_PATCH, mock_fn):
+            _, token_usage = await generate_production_keywords(movie)
+
+        assert token_usage.model == "gpt-5-mini"
 
 
 # ---------------------------------------------------------------------------
