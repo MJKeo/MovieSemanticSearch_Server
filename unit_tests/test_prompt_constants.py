@@ -3,7 +3,7 @@ Unit tests for metadata generation prompt constants.
 
 Covers:
   - plot_events: SYSTEM_PROMPT_SYNOPSIS, SYSTEM_PROMPT_SYNTHESIS
-  - source_of_inspiration: SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_REASONING
+  - source_of_inspiration: SYSTEM_PROMPT
   - production_keywords: SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_JUSTIFICATIONS
 """
 
@@ -11,10 +11,7 @@ from movie_ingestion.metadata_generation.prompts.plot_events import (
     SYSTEM_PROMPT_SYNOPSIS,
     SYSTEM_PROMPT_SYNTHESIS,
 )
-from movie_ingestion.metadata_generation.prompts.source_of_inspiration import (
-    SYSTEM_PROMPT,
-    SYSTEM_PROMPT_WITH_REASONING,
-)
+from movie_ingestion.metadata_generation.prompts.source_of_inspiration import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.prompts.production_keywords import (
     SYSTEM_PROMPT as PK_SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_JUSTIFICATIONS as PK_SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
@@ -109,7 +106,7 @@ class TestPlotEventsPromptConstants:
 
 
 class TestSourceOfInspirationPromptConstants:
-    """Tests for the source of inspiration system prompt variants."""
+    """Tests for the source of inspiration system prompt."""
 
     def test_base_prompt_does_not_mention_justification_in_output(self) -> None:
         """SYSTEM_PROMPT does not mention 'justification' in the OUTPUT section."""
@@ -120,16 +117,15 @@ class TestSourceOfInspirationPromptConstants:
             output_section = lower[output_idx:]
             assert "justification" not in output_section
 
-    def test_with_reasoning_prompt_mentions_evidence(self) -> None:
-        """SYSTEM_PROMPT_WITH_REASONING mentions 'evidence'."""
-        lower = SYSTEM_PROMPT_WITH_REASONING.lower()
+    def test_prompt_mentions_evidence(self) -> None:
+        """SYSTEM_PROMPT mentions 'evidence'."""
+        lower = SYSTEM_PROMPT.lower()
         assert "evidence" in lower
 
-    def test_both_prompts_contain_parametric_knowledge_allowance(self) -> None:
-        """Both prompts contain the parametric knowledge allowance text."""
-        for prompt in (SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_REASONING):
-            lower = prompt.lower()
-            assert "parametric knowledge" in lower
+    def test_prompt_contains_parametric_knowledge_allowance(self) -> None:
+        """SYSTEM_PROMPT contains the parametric knowledge allowance text."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "parametric knowledge" in lower
 
 
 # ---------------------------------------------------------------------------

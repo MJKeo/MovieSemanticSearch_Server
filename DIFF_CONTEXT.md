@@ -53,3 +53,9 @@ Files: unit_tests/test_pre_consolidation.py, unit_tests/test_source_of_inspirati
 Why: The generation-side schema models moved from `movie_ingestion.metadata_generation.schemas` to the top-level `schemas.metadata` module, and a set of tests were still importing the deleted module path.
 Approach: Repointed test imports to `schemas.metadata` without changing test intent. Re-ran collection in the `uv` environment to verify the pure import-path drift was fixed; those updated files now collect successfully.
 Testing notes: `unit_tests/test_prompt_constants.py` still fails collection because `SYSTEM_PROMPT_WITH_REASONING` is missing from `movie_ingestion.metadata_generation.prompts.source_of_inspiration`, which appears to be a real API/constant change rather than a path rename.
+
+## Switch source_of_inspiration prompt-constants test to production prompt
+Files: unit_tests/test_prompt_constants.py
+Why: The test still imported `SYSTEM_PROMPT_WITH_REASONING`, but the current source_of_inspiration prompt module only exports the production `SYSTEM_PROMPT`.
+Approach: Updated the test to import `SYSTEM_PROMPT` only and rewrote the source_of_inspiration assertions to validate the production prompt text instead of the removed reasoning variant.
+Testing notes: A follow-up collect-only run exposed a separate production_keywords prompt issue in the same file: `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` is also no longer importable from `movie_ingestion.metadata_generation.prompts.production_keywords`.

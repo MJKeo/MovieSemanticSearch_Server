@@ -72,12 +72,12 @@ justification leak issue (from original TODO) still applies.
 **When:** When deploying generation pipeline results to the production search index.
 **See:** implementation/classes/schemas.py (PlotAnalysisMetadata, CoreConcept),
 movie_ingestion/final_ingestion/vector_text.py (create_plot_analysis_vector_text, dense anchor themes section),
-movie_ingestion/metadata_generation/schemas.py (PlotAnalysisOutput)
+schemas/metadata.py (PlotAnalysisOutput)
 
 
 ## Align search-side WatchContextMetadata.__str__() to lowercase terms
 **Context:** The generation-side `WatchContextOutput.__str__()` in
-`movie_ingestion/metadata_generation/schemas.py` lowercases all terms
+`schemas/metadata.py` lowercases all terms
 before joining (`", ".join(t.lower() for t in combined_terms)`). The
 search-side `WatchContextMetadata.__str__()` in
 `implementation/classes/schemas.py` does NOT lowercase
@@ -87,7 +87,7 @@ The search-side schema should be updated to lowercase for consistency.
 **When:** When deploying generation pipeline results to the production
 search index.
 **See:** implementation/classes/schemas.py (WatchContextMetadata),
-movie_ingestion/metadata_generation/schemas.py (WatchContextOutput)
+schemas/metadata.py (WatchContextOutput)
 
 
 ## ~~Remove _DEFAULT_KWARGS from remaining generators~~ DONE
@@ -144,24 +144,28 @@ truncated version).
 **Context:** docs/conventions.md states that `__str__()` methods on Pydantic
 schema classes feeding the embedding pipeline must use `normalize_string()`
 from `implementation/misc/helpers.py` (NFC normalization, lowercase, diacritic
-removal). All generation-side schemas in `movie_ingestion/metadata_generation/schemas.py`
+removal). All generation-side schemas in `schemas/metadata.py`
 currently use `.lower()` instead. This includes PlotEventsOutput, ReceptionOutput,
 PlotAnalysisOutput, ViewerExperienceOutput, WatchContextOutput, and all their
 with-justifications variants. Should be a single cross-cutting change.
 **When:** Before generating production embeddings from the new pipeline.
 **See:** docs/conventions.md (lines 19-23),
-movie_ingestion/metadata_generation/schemas.py (all __str__ methods),
+schemas/metadata.py (all __str__ methods),
 implementation/misc/helpers.py (normalize_string)
 
 
-## Update unit tests for batch_id() and custom_id format change
-**Context:** `unit_tests/test_metadata_inputs.py` tests `MovieInputData.batch_id()` with
-plain strings (e.g., `batch_id("plot_events")`) and asserts the old format `"12345-plot_events"`.
-The signature now requires `MetadataType` enum values, and the format changed to
-`"plot_events_12345"` (metadata_type first). Tests will fail at call time.
-**When:** Next time inputs tests are being worked on.
-**See:** unit_tests/test_metadata_inputs.py (lines 39, 43-44, 325, 330),
-movie_ingestion/metadata_generation/inputs.py (build_custom_id, batch_id)
+## Update unit tests for batch_id() removal and schemas package split
+**Context:** `MovieInputData.batch_id()` was removed — callers now use
+`build_custom_id(movie_or_id, metadata_type)` directly. `test_metadata_inputs.py`
+tests `batch_id()` extensively (lines 39-60, 331-343) and will fail. Additionally,
+`MetadataType` moved to `schemas.enums`, `MovieInputData` to `schemas.movie_input`,
+`MultiLineList` to `schemas.data_types`, and all Output schemas to `schemas.metadata`.
+Tests importing from `movie_ingestion.metadata_generation.inputs` or
+`movie_ingestion.metadata_generation.schemas` need import path updates.
+**When:** Next time inputs or schema tests are being worked on.
+**See:** unit_tests/test_metadata_inputs.py,
+schemas/enums.py, schemas/movie_input.py, schemas/metadata.py,
+movie_ingestion/metadata_generation/inputs.py (build_custom_id overloaded)
 
 
 ## ~~Update remaining Wave 2 generators for individual reception observation fields~~ DONE
@@ -183,7 +187,7 @@ updating together, plus the empty-list guard fix in vector_text.py (currently em
 **When:** When deploying new reception generation results to the search index.
 **See:** implementation/classes/schemas.py (ReceptionMetadata),
 movie_ingestion/final_ingestion/vector_text.py (create_reception_vector_text),
-movie_ingestion/metadata_generation/schemas.py (ReceptionOutput)
+schemas/metadata.py (ReceptionOutput)
 
 
 ## Update test_reception_generator.py for revamped schema and signature
@@ -196,7 +200,7 @@ will fail at call time. Tests need updating for new field names, new observation
 the property behavior, and the simplified signature.
 **When:** Next time reception tests are being worked on.
 **See:** unit_tests/test_reception_generator.py,
-movie_ingestion/metadata_generation/schemas.py (ReceptionOutput),
+schemas/metadata.py (ReceptionOutput),
 movie_ingestion/metadata_generation/generators/reception.py (generate_reception)
 
 
@@ -249,7 +253,7 @@ encoding that absence as `"original screenplay"` at embedding time rather than a
 generation time, so original films remain queryable without encouraging the generator
 to emit non-empty source labels.
 **When:** When refining the source_of_inspiration embedding/text-construction path.
-**See:** movie_ingestion/metadata_generation/schemas.py (`SourceOfInspirationOutput.__str__()`),
+**See:** schemas/metadata.py (`SourceOfInspirationOutput.__str__()`),
 implementation/classes/schemas.py, movie_ingestion/final_ingestion/vector_text.py,
 movie_ingestion/metadata_generation/prompts/source_of_inspiration.py
 
@@ -272,7 +276,7 @@ threshold constant and rationale.
 **When:** When building the production embedding pipeline for plot_events
 vectors (after ADR-033 implementation is complete).
 **See:** docs/decisions/ADR-033-plot-events-cost-optimization.md,
-movie_ingestion/final_ingestion/vector_text.py, movie_ingestion/metadata_generation/schemas.py (PlotEventsOutput),
+movie_ingestion/final_ingestion/vector_text.py, schemas/metadata.py (PlotEventsOutput),
 movie_ingestion/metadata_generation/generators/plot_events.py (MIN_SYNOPSIS_CHARS)
 
 
@@ -338,7 +342,7 @@ in schemas.py are no longer referenced by any production schema after the viewer
 flattening. They are only imported by test files. The classes can be removed entirely once
 the corresponding tests are updated.
 **When:** When updating viewer_experience/schema tests (see above TODO).
-**See:** movie_ingestion/metadata_generation/schemas.py (lines 89-104, 494-509)
+**See:** schemas/metadata.py (lines 89-104, 494-509)
 
 ## Re-scrape movies to pick up data truncated by old GraphQL limits
 **Context:** The IMDB GraphQL query previously used `plots(first: 10)` which
@@ -437,7 +441,7 @@ This replaces the `production_mediums` field that was previously in source_of_in
 LLM generation, which suffered from empty-list abstention bugs (gpt54nano-medium-just
 returned empty 25% of the time).
 **When:** When building the production embedding pipeline for production vectors.
-**See:** movie_ingestion/metadata_generation/schemas.py (remove production_mediums from
+**See:** schemas/metadata.py (remove production_mediums from
 SourceOfInspirationOutput), movie_ingestion/final_ingestion/vector_text.py (create_production_vector_text)
 
 ## ~~Redesign source_of_inspiration: narrow scope + add franchise_lineage~~ DONE
