@@ -54,6 +54,15 @@ Why: The generation-side schema models moved from `movie_ingestion.metadata_gene
 Approach: Repointed test imports to `schemas.metadata` without changing test intent. Re-ran collection in the `uv` environment to verify the pure import-path drift was fixed; those updated files now collect successfully.
 Testing notes: `unit_tests/test_prompt_constants.py` still fails collection because `SYSTEM_PROMPT_WITH_REASONING` is missing from `movie_ingestion.metadata_generation.prompts.source_of_inspiration`, which appears to be a real API/constant change rather than a path rename.
 
+## Add EmbeddableOutput base class with embedding_text() method
+Files: schemas/metadata.py
+Why: Replace the __str__()-based convention for generating embedding text with an explicit embedding_text() method on a shared base class. Makes the embedding contract explicit and applies normalize_string() consistently.
+Approach: Created EmbeddableOutput(BaseModel) with abstract embedding_text(). All 8 *Output classes now inherit from it and implement embedding_text(), which assembles the same fields as __str__() but returns normalize_string()-processed text instead of manual .lower(). Existing __str__() methods retained for backward compatibility.
+
+## Update simple vector text functions to use *Output schemas
+Files: movie_ingestion/final_ingestion/vector_text.py
+Why: Decouple from BaseMovie; accept the typed *Output directly and use embedding_text(). Updated: create_plot_events_vector_text, create_narrative_techniques_vector_text, create_viewer_experience_vector_text, create_watch_context_vector_text.
+
 ## Switch source_of_inspiration prompt-constants test to production prompt
 Files: unit_tests/test_prompt_constants.py
 Why: The test still imported `SYSTEM_PROMPT_WITH_REASONING`, but the current source_of_inspiration prompt module only exports the production `SYSTEM_PROMPT`.

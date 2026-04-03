@@ -18,15 +18,39 @@ unchanged -- they're consumed by the search pipeline for reading
 metadata from Qdrant. These generation-side schemas can evolve
 independently. When deploying, align the search-side schemas.
 
-Each schema class implements __str__() for vector text generation
-(lowercased, concatenated terms) matching the existing pattern.
+Each schema class subclasses EmbeddableOutput and implements
+embedding_text() which returns normalize_string()-processed text
+for vector embedding. Legacy __str__() methods are retained for
+backward compatibility but embedding_text() is the canonical source.
 
 Pydantic's type_to_response_format_param() is used in generators
 to convert these schemas into the json_schema format required by
 the Batch API's response_format field.
 """
 
+from abc import abstractmethod
+
 from pydantic import BaseModel, Field, ConfigDict, constr, conlist
+
+from implementation.misc.helpers import normalize_string
+
+
+# ---------------------------------------------------------------------------
+# Base class for all embeddable output schemas
+# ---------------------------------------------------------------------------
+
+class EmbeddableOutput(BaseModel):
+    """Base class for metadata output schemas that produce embedding text.
+
+    Every *Output schema must subclass this and implement embedding_text(),
+    which returns the normalized string used for vector embedding.
+    This replaces the previous __str__() convention.
+    """
+
+    @abstractmethod
+    def embedding_text(self) -> str:
+        """Return the normalized text to be embedded for this metadata type."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +102,7 @@ class TermsWithNegationsSection(BaseModel):
 # Wave 1: Plot Events
 # ---------------------------------------------------------------------------
 
-class PlotEventsOutput(BaseModel):
+class PlotEventsOutput(EmbeddableOutput):
     """Structured output from the plot_events generation (Wave 1).
 
     Produces a single chronological plot summary. The plot_summary
@@ -101,12 +125,15 @@ class PlotEventsOutput(BaseModel):
     def __str__(self) -> str:
         return self.plot_summary.lower()
 
+    def embedding_text(self) -> str:
+        return normalize_string(self.plot_summary)
+
 
 # ---------------------------------------------------------------------------
 # Wave 1: Reception
 # ---------------------------------------------------------------------------
 
-class ReceptionOutput(BaseModel):
+class ReceptionOutput(EmbeddableOutput):
     """Structured output from the reception generation (Wave 1).
 
     Dual-zone output structure:
@@ -193,6 +220,17 @@ class ReceptionOutput(BaseModel):
             parts.append(", ".join(self.criticized_qualities).lower())
         # Extraction-zone fields intentionally excluded from embedding text
         return "\n".join(parts)
+
+    def embedding_text(self) -> str:
+        # Synthesis zone only — extraction-zone fields excluded
+        parts = []
+        if self.reception_summary:
+            parts.append(self.reception_summary)
+        if self.praised_qualities:
+            parts.append(", ".join(self.praised_qualities))
+        if self.criticized_qualities:
+            parts.append(", ".join(self.criticized_qualities))
+        return normalize_string("\n".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +328,7 @@ class ThematicConceptWithJustification(BaseModel):
         return self.concept_label
 
 
-class PlotAnalysisOutput(BaseModel):
+class PlotAnalysisOutput(EmbeddableOutput):
     """Output schema for plot_analysis generation (Wave 2).
 
     Uses sub-models with explanation_and_justification / reasoning fields
@@ -374,6 +412,22 @@ class PlotAnalysisOutput(BaseModel):
             parts.extend(str(t).lower() for t in self.thematic_concepts)
         return "\n".join(parts)
 
+    def embedding_text(self) -> str:
+        parts = []
+        if self.generalized_plot_overview:
+            parts.append(self.generalized_plot_overview)
+        if self.elevator_pitch_with_justification:
+            parts.append(self.elevator_pitch_with_justification.elevator_pitch)
+        if self.genre_signatures:
+            parts.append(", ".join(self.genre_signatures))
+        if self.conflict_type:
+            parts.append(", ".join(self.conflict_type))
+        if self.character_arcs:
+            parts.extend(arc.arc_transformation_label for arc in self.character_arcs)
+        if self.thematic_concepts:
+            parts.extend(t.concept_label for t in self.thematic_concepts)
+        return normalize_string("\n".join(parts))
+
 
 # ---------------------------------------------------------------------------
 # Wave 2: Viewer Experience
@@ -412,7 +466,7 @@ class TermsWithNegationsAndJustificationSection(BaseModel):
     )
 
 
-class ViewerExperienceOutput(BaseModel):
+class ViewerExperienceOutput(EmbeddableOutput):
     """Output schema for viewer_experience generation (Wave 2).
 
     8 sections capturing the emotional/sensory viewing experience.
@@ -448,6 +502,22 @@ class ViewerExperienceOutput(BaseModel):
             combined_terms.extend(section.terms)
             combined_terms.extend(section.negations)
         return ", ".join(t.lower() for t in combined_terms)
+
+    def embedding_text(self) -> str:
+        combined_terms: list[str] = []
+        for section in (
+            self.emotional_palette,
+            self.tension_adrenaline,
+            self.tone_self_seriousness,
+            self.cognitive_complexity,
+            self.disturbance_profile,
+            self.sensory_load,
+            self.emotional_volatility,
+            self.ending_aftertaste,
+        ):
+            combined_terms.extend(section.terms)
+            combined_terms.extend(section.negations)
+        return normalize_string(", ".join(combined_terms))
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +555,7 @@ class TermsWithJustificationSection(BaseModel):
     )
 
 
-class WatchContextOutput(BaseModel):
+class WatchContextOutput(EmbeddableOutput):
     """Output schema for watch_context generation (Wave 2).
 
     Includes a brief identity_note pre-classification (2-8 words)
@@ -556,12 +626,22 @@ class WatchContextOutput(BaseModel):
         )
         return ", ".join(t.lower() for t in combined_terms)
 
+    def embedding_text(self) -> str:
+        # identity_note intentionally excluded from embedding text
+        combined_terms = (
+            self.self_experience_motivations.terms
+            + self.external_motivations.terms
+            + self.key_movie_feature_draws.terms
+            + self.watch_scenarios.terms
+        )
+        return normalize_string(", ".join(combined_terms))
+
 
 # ---------------------------------------------------------------------------
 # Wave 2: Narrative Techniques
 # ---------------------------------------------------------------------------
 
-class NarrativeTechniquesOutput(BaseModel):
+class NarrativeTechniquesOutput(EmbeddableOutput):
     """Output schema for narrative_techniques generation (Wave 2).
 
     9 sections capturing storytelling structure, POV, delivery mechanism,
@@ -605,12 +685,28 @@ class NarrativeTechniquesOutput(BaseModel):
             combined_terms.extend(section.terms)
         return ", ".join(t.lower() for t in combined_terms)
 
+    def embedding_text(self) -> str:
+        combined_terms: list[str] = []
+        for section in (
+            self.narrative_archetype,
+            self.narrative_delivery,
+            self.pov_perspective,
+            self.characterization_methods,
+            self.character_arcs,
+            self.audience_character_perception,
+            self.information_control,
+            self.conflict_stakes_design,
+            self.additional_narrative_devices,
+        ):
+            combined_terms.extend(section.terms)
+        return normalize_string(", ".join(combined_terms))
+
 
 # ---------------------------------------------------------------------------
 # Wave 2: Production Keywords (separate LLM call)
 # ---------------------------------------------------------------------------
 
-class ProductionKeywordsOutput(BaseModel):
+class ProductionKeywordsOutput(EmbeddableOutput):
     """Structured output from the production_keywords generation (Wave 2).
 
     Classification task: the LLM filters merged_keywords to keep only
@@ -628,12 +724,15 @@ class ProductionKeywordsOutput(BaseModel):
     def __str__(self) -> str:
         return ", ".join(t.lower() for t in self.terms)
 
+    def embedding_text(self) -> str:
+        return normalize_string(", ".join(self.terms))
+
 
 # ---------------------------------------------------------------------------
 # Wave 2: Source of Inspiration (separate LLM call)
 # ---------------------------------------------------------------------------
 
-class SourceOfInspirationOutput(BaseModel):
+class SourceOfInspirationOutput(EmbeddableOutput):
     """Source of inspiration classification output.
 
     Two independent lists from the same inputs:
@@ -670,3 +769,7 @@ class SourceOfInspirationOutput(BaseModel):
     def __str__(self) -> str:
         all_terms = self.source_material + self.franchise_lineage
         return ", ".join(t.lower() for t in all_terms)
+
+    def embedding_text(self) -> str:
+        all_terms = self.source_material + self.franchise_lineage
+        return normalize_string(", ".join(all_terms))

@@ -19,6 +19,12 @@ Vector spaces:
 
 from implementation.classes.movie import BaseMovie
 from implementation.classes.enums import BudgetSize
+from schemas.metadata import (
+    PlotEventsOutput,
+    NarrativeTechniquesOutput,
+    ViewerExperienceOutput,
+    WatchContextOutput,
+)
 
 
 # ===============================
@@ -156,8 +162,8 @@ def create_anchor_vector_text(movie: BaseMovie) -> str:
     return "\n".join(parts)
 
 
-def create_plot_events_vector_text(movie: BaseMovie) -> str:
-    return str(movie.plot_events_metadata)
+def create_plot_events_vector_text(plot_events: PlotEventsOutput) -> str:
+    return plot_events.embedding_text()
 
 
 def create_plot_analysis_vector_text(movie: BaseMovie) -> str:
@@ -174,16 +180,16 @@ def create_plot_analysis_vector_text(movie: BaseMovie) -> str:
     return "\n".join(parts)
 
 
-def create_narrative_techniques_vector_text(movie: BaseMovie) -> str:
-    return str(movie.narrative_techniques_metadata)
+def create_narrative_techniques_vector_text(narrative_techniques: NarrativeTechniquesOutput) -> str:
+    return narrative_techniques.embedding_text()
 
 
-def create_viewer_experience_vector_text(movie: BaseMovie) -> str:
-    return str(movie.viewer_experience_metadata)
+def create_viewer_experience_vector_text(viewer_experience: ViewerExperienceOutput) -> str:
+    return viewer_experience.embedding_text()
 
 
-def create_watch_context_vector_text(movie: BaseMovie) -> str:
-    return str(movie.watch_context_metadata)
+def create_watch_context_vector_text(watch_context: WatchContextOutput) -> str:
+    return watch_context.embedding_text()
 
 
 def create_production_vector_text(movie: BaseMovie) -> str:
