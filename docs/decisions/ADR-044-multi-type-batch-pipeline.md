@@ -88,7 +88,7 @@ multiple types run concurrently.
 - ADR-041 (per-type batch pipeline architecture) — established the CLI design
 - ADR-039 (plot_events model selection) — locked generator referenced by registry
 - ADR-043 (reception model selection) — second locked generator in registry
-- `movie_ingestion/metadata_generation/generator_registry.py`
-- `movie_ingestion/metadata_generation/run.py`
-- `movie_ingestion/metadata_generation/request_builder.py`
-- `movie_ingestion/metadata_generation/result_processor.py`
+- `movie_ingestion/metadata_generation/batch_generation/generator_registry.py`
+- `movie_ingestion/metadata_generation/batch_generation/run.py`
+- `movie_ingestion/metadata_generation/batch_generation/request_builder.py`
+- `movie_ingestion/metadata_generation/batch_generation/result_processor.py`

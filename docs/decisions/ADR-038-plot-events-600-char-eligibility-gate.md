@@ -64,5 +64,5 @@ The old multi-constant approach (`_MIN_SYNOPSIS_CHARS_FOR_SPARSE`,
 
 - ADR-033 (plot_events two-branch design) — covers `MIN_SYNOPSIS_CHARS`
   branch gate and the overview-exclusion rationale
-- `movie_ingestion/metadata_generation/pre_consolidation.py` —
+- `movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py` —
   `check_plot_events()`, `_MIN_PLOT_TEXT_CHARS`

@@ -102,4 +102,4 @@ and quality tags for Wave 2 fallback.
 - `movie_ingestion/metadata_generation/schemas.py`
 - `movie_ingestion/metadata_generation/generators/reception.py`
 - `movie_ingestion/metadata_generation/prompts/reception.py`
-- `movie_ingestion/metadata_generation/pre_consolidation.py`
+- `movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py`

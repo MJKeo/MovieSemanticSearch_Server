@@ -78,4 +78,4 @@ the production config auditable, and eliminates per-call parameter passing.
 - ADR-043 (reception model selection) — second locked generator
 - `movie_ingestion/metadata_generation/generators/plot_analysis.py`
 - `movie_ingestion/metadata_generation/generators/viewer_experience.py`
-- `movie_ingestion/metadata_generation/pre_consolidation.py`
+- `movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py`

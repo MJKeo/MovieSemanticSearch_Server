@@ -75,5 +75,5 @@ generate richer vocabulary during reasoning.
 
 - ADR-045 (finalization pattern) — general Wave 2 finalization approach
 - `movie_ingestion/metadata_generation/generators/viewer_experience.py`
-- `movie_ingestion/metadata_generation/pre_consolidation.py`
+- `movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py`
 - `ingestion_data/viewer_experience_eval_guide.md`

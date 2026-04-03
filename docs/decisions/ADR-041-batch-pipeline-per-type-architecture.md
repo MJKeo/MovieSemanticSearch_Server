@@ -127,6 +127,6 @@ Custom ID format: `{metadata_type}_{tmdb_id}` (e.g. `plot_events_12345`).
 - ADR-025 (schema design) — `review_insights_brief` as scalar: deferred to Wave 2 impl
 - ADR-027 (real-time generator contract) — live generation reused in autopilot
 - ADR-039 (gpt-5-mini model selection) — enables no-arg live generation in autopilot
-- `movie_ingestion/metadata_generation/run.py`
-- `movie_ingestion/metadata_generation/openai_batch_manager.py`
+- `movie_ingestion/metadata_generation/batch_generation/run.py`
+- `movie_ingestion/metadata_generation/batch_generation/openai_batch_manager.py`
 - `movie_ingestion/tracker.py`

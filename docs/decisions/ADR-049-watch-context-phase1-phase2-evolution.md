@@ -87,5 +87,5 @@ in addition to genre data. Affects ~0.7% of pipeline (776 of 109K movies).
 - `movie_ingestion/metadata_generation/generators/watch_context.py`
 - `movie_ingestion/metadata_generation/prompts/watch_context.py`
 - `movie_ingestion/metadata_generation/schemas.py`
-- `movie_ingestion/metadata_generation/pre_consolidation.py`
+- `movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py`
 - `ingestion_data/watch_context_eval_guide.md`
