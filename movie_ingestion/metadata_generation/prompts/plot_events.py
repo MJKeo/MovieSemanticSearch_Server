@@ -32,63 +32,7 @@ plot events.
 The plot_summary output is the most critical field in the entire pipeline --
 it feeds 4 of 5 Wave 2 generations as plot_synopsis.
 
-Legacy prompts (SYSTEM_PROMPT, SYSTEM_PROMPT_SHORT) are kept for
-backwards compatibility with existing evaluation candidates.
 """
-
-SYSTEM_PROMPT = """\
-You are an expert film analyst whose job is to extract a HIGH-SIGNAL, SPOILER-CONTAINING representation of WHAT HAPPENS in a movie.
-
-CORE GOAL
-- Preserve specificity: keep character NAMES, location names, and concrete plot actions.
-- This section is about EVENTS and FACTS (including internal struggles ONLY when they drive decisions/actions).
-- Prioritize signal: include ONLY essential characters and ONLY the 1-3 core conflicts that define the movie.
-- Avoid generic "theme talk" here.
-
-INPUTS YOU MAY RECEIVE (some may be empty / not provided)
-- title: title of the movie, formatted as "Title (Year)" for temporal context
-- overview: marketing/vague summary of the movie's premise, not the entire plot
-- plot_summaries: shorter, user-written summaries of the events of the movie; often specific and includes more of the plot than "overview"
-- plot_synopsis: the longest/most detailed recount of the entire plot; best source for plot details; a single text block (not a list)
-
-GENERAL RULES
-- Use plot_synopsis and detailed plot_summaries as primary truth when available.
-- Only describe what is evident from the provided data. Do not supplement with your own knowledge of this film. If data is limited, produce a shorter summary rather than inventing details.
-- If sources conflict: prefer the most detailed, internally consistent version.
-- Do not invent facts not supported by the input. If a detail is unclear, omit it.
-- Keep wording concrete and plot-grounded. Avoid abstract moralizing.
-
-OUTPUT
-JSON with a single field: plot_summary.
-
-plot_summary (DETAILED, SPOILER-CONTAINING)
-- Write a chronological summary of the entire film from beginning to end.
-- MUST preserve: character names, location names, key organizations, and important events.
-- Use compact wording over flowery prose. Avoid filler."""
-
-
-# Shorter variant -- same instructions, fewer tokens (~37% reduction).
-# Used by evaluation candidates with "__short-prompt" suffix.
-SYSTEM_PROMPT_SHORT = """\
-Extract a high-signal, spoiler-containing account of WHAT HAPPENS in a movie.
-
-GOAL: Preserve character NAMES, locations, concrete actions. Focus on EVENTS/FACTS, not themes. Only essential characters, 1-3 core conflicts.
-
-INPUTS (some may be empty)
-- title: "Title (Year)"
-- overview: marketing premise
-- plot_summaries: user-written event summaries
-- plot_synopsis: full plot recount (primary source)
-
-RULES
-- Prefer plot_synopsis and detailed plot_summaries as primary truth.
-- Only describe what is evident from the provided data. Do not supplement with your own knowledge of this film. If data is limited, produce a shorter summary rather than inventing details.
-- On conflict: prefer most detailed, internally consistent version.
-- Concrete wording only. No moralizing or theme talk.
-
-OUTPUT
-plot_summary: Chronological start-to-end summary. Keep names, locations, organizations, key events. Compact."""
-
 
 # ---------------------------------------------------------------------------
 # Branch-specific prompts (ADR-033)

@@ -9,15 +9,8 @@ references. Watch context is purely experiential -- it receives no
 overview, no plot_synopsis, no plot_keywords. Plot detail anchors
 the model on narrative events rather than experiential attributes.
 
-Three prompt variants exported:
-    - SYSTEM_PROMPT: for WatchContextOutput (no evidence_basis fields)
-    - SYSTEM_PROMPT_WITH_JUSTIFICATIONS: for WatchContextWithJustificationsOutput
-      (adds upstream evidence_basis per section)
-    - SYSTEM_PROMPT_WITH_IDENTITY_NOTE: for WatchContextWithIdentityNoteOutput
-      (adds brief identity_note pre-classification + evidence_basis)
-
-The prompts are identical except for the evidence_basis-related
-instructions in the output guidance and section template.
+Exports a single SYSTEM_PROMPT for WatchContextOutput, which includes
+a brief identity_note pre-classification and evidence_basis per section.
 
 The evidence_basis field is an upstream constraint: the model must
 inventory specific input phrases that support each section BEFORE
@@ -112,39 +105,8 @@ watch this specific type of content and the scenarios that fit it.
 """
 
 # ---------------------------------------------------------------------------
-# Variant-specific output guidance
+# Output guidance
 # ---------------------------------------------------------------------------
-
-_OUTPUT_NO_JUSTIFICATIONS = """\
-OUTPUT FORMAT
-Generate JSON with 4 sections, each containing a "terms" array of 0 or more \
-search-query-like phrases. Empty sections are valid when the input doesn't \
-support confident term generation.
-
-"""
-
-_OUTPUT_WITH_JUSTIFICATIONS = """\
-OUTPUT FORMAT
-Generate JSON with 4 sections, each containing:
-- "evidence_basis": 1 concise sentence quoting or closely paraphrasing the \
-specific input phrases that support this section. This is an EVIDENCE \
-INVENTORY — identify what you have before deciding what to generate. If you \
-cannot cite specific phrases from the inputs, write "No direct evidence" and \
-leave terms empty. Do NOT rationalize or bridge from vague signals — cite \
-concrete phrases.
-- "terms": 0 or more search-query-like phrases grounded in the cited evidence
-
-Before generating terms from cited evidence, verify your terms reflect how a \
-viewer would RESPOND TO the cited quality — not just the topic it mentions. \
-Evidence about poor quality signals ironic or hate-watch appeal, not sincere \
-genre experience. Quote evidence faithfully, then ask whether a viewer would \
-seek this movie BECAUSE OF or DESPITE the cited attributes.
-
-Empty sections are valid and expected when the evidence_basis cites no direct \
-evidence. The evidence_basis CONSTRAINS the terms — never generate terms that \
-go beyond what the cited evidence supports.
-
-"""
 
 # ---------------------------------------------------------------------------
 # Section descriptions (identical between variants)
@@ -185,32 +147,6 @@ movie", "stoned movie", "background at a party"\
 """
 
 
-# ---------------------------------------------------------------------------
-# Assembled prompts
-# ---------------------------------------------------------------------------
-
-SYSTEM_PROMPT = (
-    _ROLE_AND_TASK
-    + _INPUTS
-    + _PHRASING_RULES
-    + _COVERAGE_PRINCIPLE
-    + _OUTPUT_NO_JUSTIFICATIONS
-    + _SECTIONS
-)
-
-SYSTEM_PROMPT_WITH_JUSTIFICATIONS = (
-    _ROLE_AND_TASK
-    + _INPUTS
-    + _PHRASING_RULES
-    + _COVERAGE_PRINCIPLE
-    + _OUTPUT_WITH_JUSTIFICATIONS
-    + _SECTIONS
-)
-
-# ---------------------------------------------------------------------------
-# Identity note variant (production default — evolved from H12 A/B test)
-# ---------------------------------------------------------------------------
-
 _OUTPUT_WITH_IDENTITY_NOTE = """\
 OUTPUT FORMAT
 Generate JSON starting with an identity_note, then 4 sections.
@@ -242,7 +178,11 @@ go beyond what the cited evidence supports.
 
 """
 
-SYSTEM_PROMPT_WITH_IDENTITY_NOTE = (
+# ---------------------------------------------------------------------------
+# Assembled prompt
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = (
     _ROLE_AND_TASK
     + _INPUTS
     + _PHRASING_RULES

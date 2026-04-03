@@ -10,9 +10,7 @@ These are leaf-node classifications — errors don't cascade.
 
 Inputs: title (with year), merged_keywords, source_material_hint.
 
-Two prompt variants:
-    SYSTEM_PROMPT — base (no reasoning fields)
-    SYSTEM_PROMPT_WITH_REASONING — adds evidence inventory before each list
+Exports a single SYSTEM_PROMPT for SourceOfInspirationOutput.
 """
 
 # ---------------------------------------------------------------------------
@@ -155,10 +153,10 @@ is based on a novel (source_material) AND a sequel (franchise_lineage).\
 """
 
 # ---------------------------------------------------------------------------
-# Output sections (variant-specific)
+# Output section
 # ---------------------------------------------------------------------------
 
-_OUTPUT_BASE = """
+_OUTPUT = """
 
 ---
 
@@ -167,25 +165,8 @@ OUTPUT FORMAT
 - source_material: list of source labels. May be empty.
 - franchise_lineage: list of position labels. May be empty."""
 
-_OUTPUT_WITH_REASONING = """
-
----
-
-OUTPUT FORMAT
-- JSON matching the provided schema.
-- source_evidence: 1 sentence listing the evidence you have for \
-source_material (inputs and/or your knowledge). This is a record, not a \
-gate — you must still make your best call for the list that follows.
-- source_material: list of source labels. May be empty.
-- lineage_evidence: 1 sentence listing the evidence you have for \
-franchise_lineage (inputs and/or your knowledge). Same rule — record, \
-not a gate.
-- franchise_lineage: list of position labels. May be empty."""
-
 # ---------------------------------------------------------------------------
-# Assembled prompts
+# Assembled prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = _CORE + _OUTPUT_BASE
-
-SYSTEM_PROMPT_WITH_REASONING = _CORE + _OUTPUT_WITH_REASONING
+SYSTEM_PROMPT = _CORE + _OUTPUT

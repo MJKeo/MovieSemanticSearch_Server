@@ -7,9 +7,10 @@ Covers:
   - ReceptionOutput field constraints and validation
   - CharacterArcWithReasoning: extra="forbid", required fields, __str__()
   - WithJustifications sub-model __str__() returns label only
-  - WithJustifications __str__() parity with base variants (6 pairs)
-  - PlotAnalysisWithJustificationsOutput field constraints and __str__()
-  - ViewerExperienceOutput simplified schema (flat sections, no skip wrappers)
+  - PlotAnalysisOutput field constraints and __str__()
+  - ViewerExperienceOutput __str__() excludes justification text
+  - WatchContextOutput __str__() excludes identity_note and evidence_basis
+  - NarrativeTechniquesOutput __str__() excludes justification text
 """
 
 import pytest
@@ -21,21 +22,16 @@ from movie_ingestion.metadata_generation.schemas import (
     CharacterArcWithReasoning,
     ElevatorPitchWithJustification,
     ThematicConceptWithJustification,
-    PlotAnalysisWithJustificationsOutput,
+    PlotAnalysisOutput,
     TermsSection,
     TermsWithNegationsSection,
     TermsWithJustificationSection,
     TermsWithNegationsAndJustificationSection,
     ViewerExperienceOutput,
-    ViewerExperienceWithJustificationsOutput,
     WatchContextOutput,
-    WatchContextWithJustificationsOutput,
     NarrativeTechniquesOutput,
-    NarrativeTechniquesWithJustificationsOutput,
     ProductionKeywordsOutput,
-    ProductionKeywordsWithJustificationsOutput,
     SourceOfInspirationOutput,
-    SourceOfInspirationWithJustificationsOutput,
 )
 
 
@@ -241,11 +237,11 @@ class TestThematicConceptWithJustificationStr:
 
 
 # ---------------------------------------------------------------------------
-# PlotAnalysisWithJustificationsOutput __str__() and constraints
+# PlotAnalysisOutput __str__() and constraints
 # ---------------------------------------------------------------------------
 
 def _make_plot_analysis_output(**overrides):
-    """Build a minimal valid PlotAnalysisWithJustificationsOutput."""
+    """Build a minimal valid PlotAnalysisOutput."""
     defaults = dict(
         generalized_plot_overview="A hacker discovers the truth about simulated reality.",
         genre_signatures=["cyberpunk thriller", "philosophical sci-fi"],
@@ -272,7 +268,7 @@ def _make_plot_analysis_output(**overrides):
         ],
     )
     defaults.update(overrides)
-    return PlotAnalysisWithJustificationsOutput(**defaults)
+    return PlotAnalysisOutput(**defaults)
 
 
 class TestPlotAnalysisWithJustificationsStr:
@@ -417,7 +413,7 @@ class TestPlotAnalysisConstraints:
     def test_extra_forbid_rejects_old_fields(self):
         """Old field names (core_concept_label, conflict_scale, themes_primary, etc.) are rejected."""
         with pytest.raises(ValidationError):
-            PlotAnalysisWithJustificationsOutput(
+            PlotAnalysisOutput(
                 core_concept_label="test",
                 genre_signatures=["a", "b"],
                 conflict_type=[],
@@ -431,16 +427,8 @@ class TestPlotAnalysisConstraints:
 
 
 # ---------------------------------------------------------------------------
-# ViewerExperience __str__() parity
+# ViewerExperienceOutput __str__() tests
 # ---------------------------------------------------------------------------
-
-def _make_terms_section(terms=None, negations=None):
-    """Build a TermsWithNegationsSection."""
-    return TermsWithNegationsSection(
-        terms=terms or [],
-        negations=negations or [],
-    )
-
 
 def _make_terms_j_section(terms=None, negations=None, justification="Because."):
     """Build a TermsWithNegationsAndJustificationSection."""
@@ -451,37 +439,9 @@ def _make_terms_j_section(terms=None, negations=None, justification="Because."):
     )
 
 
-_VE_TERMS = ["tense", "thrilling"]
-_VE_NEGATIONS = ["not boring"]
-
-
-class TestViewerExperienceWithJustificationsStrParity:
-    def test_str_parity_with_viewer_experience(self):
-        """All 8 sections use flat TermsWithNegationsSection; str() matches between variants."""
-        base = ViewerExperienceOutput(
-            emotional_palette=_make_terms_section(_VE_TERMS, _VE_NEGATIONS),
-            tension_adrenaline=_make_terms_section(["high stakes"]),
-            tone_self_seriousness=_make_terms_section(["dead serious"]),
-            cognitive_complexity=_make_terms_section(["mind-bending"]),
-            disturbance_profile=_make_terms_section(["disturbing imagery"]),
-            sensory_load=_make_terms_section(["loud"]),
-            emotional_volatility=_make_terms_section(["whiplash"]),
-            ending_aftertaste=_make_terms_section(["lingering dread"]),
-        )
-        with_j = ViewerExperienceWithJustificationsOutput(
-            emotional_palette=_make_terms_j_section(_VE_TERMS, _VE_NEGATIONS),
-            tension_adrenaline=_make_terms_j_section(["high stakes"]),
-            tone_self_seriousness=_make_terms_j_section(["dead serious"]),
-            cognitive_complexity=_make_terms_j_section(["mind-bending"]),
-            disturbance_profile=_make_terms_j_section(["disturbing imagery"]),
-            sensory_load=_make_terms_j_section(["loud"]),
-            emotional_volatility=_make_terms_j_section(["whiplash"]),
-            ending_aftertaste=_make_terms_j_section(["lingering dread"]),
-        )
-        assert str(base) == str(with_j)
-
+class TestViewerExperienceOutputStr:
     def test_str_excludes_justification_text(self):
-        with_j = ViewerExperienceWithJustificationsOutput(
+        output = ViewerExperienceOutput(
             emotional_palette=_make_terms_j_section(
                 ["tense"], justification="VE_MARKER"
             ),
@@ -493,31 +453,7 @@ class TestViewerExperienceWithJustificationsStrParity:
             emotional_volatility=_make_terms_j_section(),
             ending_aftertaste=_make_terms_j_section(),
         )
-        assert "VE_MARKER" not in str(with_j)
-
-    def test_str_parity_with_empty_sections(self):
-        """Empty sections produce identical str() between base and justifications variants."""
-        base = ViewerExperienceOutput(
-            emotional_palette=_make_terms_section(["warm"]),
-            tension_adrenaline=_make_terms_section(),
-            tone_self_seriousness=_make_terms_section(),
-            cognitive_complexity=_make_terms_section(),
-            disturbance_profile=_make_terms_section(),
-            sensory_load=_make_terms_section(),
-            emotional_volatility=_make_terms_section(),
-            ending_aftertaste=_make_terms_section(),
-        )
-        with_j = ViewerExperienceWithJustificationsOutput(
-            emotional_palette=_make_terms_j_section(["warm"]),
-            tension_adrenaline=_make_terms_j_section(),
-            tone_self_seriousness=_make_terms_j_section(),
-            cognitive_complexity=_make_terms_j_section(),
-            disturbance_profile=_make_terms_j_section(),
-            sensory_load=_make_terms_j_section(),
-            emotional_volatility=_make_terms_j_section(),
-            ending_aftertaste=_make_terms_j_section(),
-        )
-        assert str(base) == str(with_j)
+        assert "VE_MARKER" not in str(output)
 
 
 # ---------------------------------------------------------------------------

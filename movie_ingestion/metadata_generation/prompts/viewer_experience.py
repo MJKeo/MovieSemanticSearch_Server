@@ -18,15 +18,8 @@ Removed inputs (Round 3 evaluation, tier 1 pruning):
     - merged_keywords: 1.8% citation rate, pure noise
     - character_arcs: 1.5% citation rate, too compressed to ground terms
 
-Two prompt variants exported:
-    - SYSTEM_PROMPT: for ViewerExperienceOutput (no justification fields)
-    - SYSTEM_PROMPT_WITH_JUSTIFICATIONS: for ViewerExperienceWithJustificationsOutput
-      (adds per-section justification string before terms/negations)
-      This is the production variant (Round 2/3 evaluation winner).
-
-The prompts are identical except for "Primary goal" and "Output expectations"
-sections, where the with-justifications variant describes the justification
-field that each section contains.
+Exports a single SYSTEM_PROMPT using per-section justification fields
+(chain-of-thought before terms/negations) for ViewerExperienceOutput.
 """
 
 # ---------------------------------------------------------------------------
@@ -222,24 +215,6 @@ empty is correct when evidence is absent."""
 # Variant-specific sections
 # ---------------------------------------------------------------------------
 
-# No-justifications variant: sections contain only terms + negations
-_PRIMARY_GOAL_NO_JUSTIFICATIONS = """
-
-Primary goal
-Generate JSON containing multiple sections. Each section contains lists of query-like phrases:
-  - terms: the core phrases a user would type
-  - negations: "avoidance" phrases a user would type (e.g., "not too sad", "no jump scares")
-    - explicitly stating what the movie does NOT have or is NOT like"""
-
-_OUTPUT_EXPECTATIONS_NO_JUSTIFICATIONS = """
-
-Output expectations
-- Sections contain:
-  - terms: 0-10 phrases. Search-query-like phrases representing prominent characteristics of the movie that are relevant to this section. Empty when the section has no grounded evidence.
-  - negations: 0-10 phrases. Search-query-like "avoidance" phrases for what the movie does NOT have or is NOT like. Always has "not" or "no" in it. Empty when the section has no grounded evidence."""
-
-# With-justifications variant: sections also contain a justification field
-# written before terms/negations to serve as chain-of-thought
 _PRIMARY_GOAL_WITH_JUSTIFICATIONS = """
 
 Primary goal
@@ -262,21 +237,10 @@ that supports this section's terms, or explain why the section is empty. If no i
 
 
 # ---------------------------------------------------------------------------
-# Assembled prompts
+# Assembled prompt
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = (
-    _OPENING_AND_CONTEXT
-    + _EVIDENCE_DISCIPLINE
-    + _PRIMARY_GOAL_NO_JUSTIFICATIONS
-    + _INPUT_INTERPRETATION
-    + _OUTPUT_STYLE
-    + _OUTPUT_EXPECTATIONS_NO_JUSTIFICATIONS
-    + _SECTIONS
-    + _SPARSE_INPUT_GUIDANCE
-)
-
-SYSTEM_PROMPT_WITH_JUSTIFICATIONS = (
     _OPENING_AND_CONTEXT
     + _EVIDENCE_DISCIPLINE
     + _PRIMARY_GOAL_WITH_JUSTIFICATIONS

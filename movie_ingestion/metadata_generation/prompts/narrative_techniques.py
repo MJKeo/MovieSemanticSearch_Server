@@ -20,10 +20,8 @@ evidence discipline hierarchy ensures that every term is earned by
 input evidence, naturally producing sparse output on thin inputs
 and richer output on rich inputs without mode-specific rules.
 
-Two prompt variants exported:
-    - SYSTEM_PROMPT: for NarrativeTechniquesOutput (no justification fields)
-    - SYSTEM_PROMPT_WITH_JUSTIFICATIONS: for NarrativeTechniquesWithJustificationsOutput
-      (adds per-section justification string before terms)
+Exports a single SYSTEM_PROMPT using per-section justification fields
+(chain-of-thought before terms) for NarrativeTechniquesOutput.
 
 The prompts are identical except for the OUTPUT EXPECTATIONS paragraph
 where the with-justifications variant describes the justification field.
@@ -111,14 +109,6 @@ HOW TO USE THE INPUTS
 # ---------------------------------------------------------------------------
 # Variant-specific output expectations
 # ---------------------------------------------------------------------------
-
-_OUTPUT_NO_JUSTIFICATIONS = """\
-OUTPUT EXPECTATIONS (conceptual)
-- Generate JSON.
-- Each section includes:
-  - **terms**: high-signal query-like narrative technique phrases. Empty list when the input does not clearly evidence techniques for that section.
-
-"""
 
 _OUTPUT_WITH_JUSTIFICATIONS = """\
 OUTPUT EXPECTATIONS (conceptual)
@@ -215,9 +205,7 @@ pacing tools, mechanical hooks, AND self-aware/meta-narrative elements.
 
 
 # ---------------------------------------------------------------------------
-# Assembled prompts
+# Assembled prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = _PREAMBLE + _INPUTS_AND_USAGE + _OUTPUT_NO_JUSTIFICATIONS + _SECTIONS
-
-SYSTEM_PROMPT_WITH_JUSTIFICATIONS = _PREAMBLE + _INPUTS_AND_USAGE + _OUTPUT_WITH_JUSTIFICATIONS + _SECTIONS
+SYSTEM_PROMPT = _PREAMBLE + _INPUTS_AND_USAGE + _OUTPUT_WITH_JUSTIFICATIONS + _SECTIONS

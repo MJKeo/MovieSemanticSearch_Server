@@ -31,7 +31,7 @@ Skip condition: enforced by pre_consolidation. Eligible when GPO >= 350
     chars standalone, observations meet standalone thresholds, or GPO
     >= 200 chars + any usable observation.
 
-Response schema: ViewerExperienceWithJustificationsOutput (production).
+Response schema: ViewerExperienceOutput.
     Justifications provide chain-of-thought that improves specificity
     and term diversity (+0.33 overall uplift in Round 2). Justifications
     are discarded before embedding — no retrieval impact.
@@ -51,12 +51,8 @@ from movie_ingestion.metadata_generation.batch_generation.pre_consolidation impo
     resolve_viewer_experience_narrative,
     filter_viewer_experience_observations,
 )
-from movie_ingestion.metadata_generation.schemas import (
-    ViewerExperienceWithJustificationsOutput,
-)
-from movie_ingestion.metadata_generation.prompts.viewer_experience import (
-    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
-)
+from movie_ingestion.metadata_generation.schemas import ViewerExperienceOutput
+from movie_ingestion.metadata_generation.prompts.viewer_experience import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
     MetadataGenerationEmptyResponseError,
@@ -146,7 +142,7 @@ async def generate_viewer_experience(
     craft_observations: str | None = None,
     thematic_observations: str | None = None,
     genre_signatures: list[str] | None = None,
-) -> Tuple[ViewerExperienceWithJustificationsOutput, TokenUsage]:
+) -> Tuple[ViewerExperienceOutput, TokenUsage]:
     """Generate viewer experience metadata for a single movie.
 
     Builds the user prompt from the movie's fields plus upstream outputs,
@@ -166,7 +162,7 @@ async def generate_viewer_experience(
         genre_signatures: Finalized plot_analysis genre signatures.
 
     Returns:
-        Tuple of (ViewerExperienceWithJustificationsOutput, TokenUsage).
+        Tuple of (ViewerExperienceOutput, TokenUsage).
 
     Raises:
         MetadataGenerationError: If the LLM call raises an exception.
@@ -186,8 +182,8 @@ async def generate_viewer_experience(
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
             provider=_PROVIDER,
             user_prompt=user_prompt,
-            system_prompt=SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
-            response_format=ViewerExperienceWithJustificationsOutput,
+            system_prompt=SYSTEM_PROMPT,
+            response_format=ViewerExperienceOutput,
             model=_MODEL,
             reasoning_effort="minimal",
             verbosity="low",

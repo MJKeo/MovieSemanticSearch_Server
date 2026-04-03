@@ -486,14 +486,14 @@ def load_wave1_outputs(
 def load_plot_analysis_output(
     tmdb_id: int,
     tracker_db_path: Path = _DEFAULT_TRACKER_DB,
-) -> PlotAnalysisWithJustificationsOutput | None:
+) -> PlotAnalysisOutput | None:
     """Load the parsed plot_analysis output for a movie.
 
     Single DB query for the plot_analysis JSON column, parsed into the
     existing schema model. Returns None when plot_analysis wasn't
     generated or can't be parsed.
     """
-    from .schemas import PlotAnalysisWithJustificationsOutput
+    from .schemas import PlotAnalysisOutput
 
     with sqlite3.connect(str(tracker_db_path)) as db:
         row = db.execute(
@@ -505,6 +505,6 @@ def load_plot_analysis_output(
         return None
 
     try:
-        return PlotAnalysisWithJustificationsOutput.model_validate_json(row[0])
+        return PlotAnalysisOutput.model_validate_json(row[0])
     except Exception:
         return None

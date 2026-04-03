@@ -22,7 +22,7 @@ from movie_ingestion.metadata_generation.inputs import (
 from movie_ingestion.metadata_generation.schemas import (
     PlotEventsOutput,
     ReceptionOutput,
-    PlotAnalysisWithJustificationsOutput,
+    PlotAnalysisOutput,
     CharacterArcWithReasoning,
     ElevatorPitchWithJustification,
     ThematicConceptWithJustification,
@@ -101,8 +101,8 @@ def _make_reception_output(**overrides) -> ReceptionOutput:
     return ReceptionOutput(**defaults)
 
 
-def _make_plot_analysis_output(**overrides) -> PlotAnalysisWithJustificationsOutput:
-    """Build a minimal valid PlotAnalysisWithJustificationsOutput."""
+def _make_plot_analysis_output(**overrides) -> PlotAnalysisOutput:
+    """Build a minimal valid PlotAnalysisOutput."""
     defaults = {
         "genre_signatures": ["cyberpunk thriller", "philosophical sci-fi"],
         "thematic_concepts": [
@@ -125,7 +125,7 @@ def _make_plot_analysis_output(**overrides) -> PlotAnalysisWithJustificationsOut
         "generalized_plot_overview": "A hacker discovers simulated reality and fights for freedom against the machines that control humanity. " * 5,
     }
     defaults.update(overrides)
-    return PlotAnalysisWithJustificationsOutput(**defaults)
+    return PlotAnalysisOutput(**defaults)
 
 
 # ---------------------------------------------------------------------------

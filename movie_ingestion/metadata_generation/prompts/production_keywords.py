@@ -28,9 +28,7 @@ Key boundary rules baked into the prompt:
   even if a keyword bundles production signal with extra content
 
 Two prompt variants exported:
-    - SYSTEM_PROMPT: for ProductionKeywordsOutput (no justification field)
-    - SYSTEM_PROMPT_WITH_JUSTIFICATIONS: for ProductionKeywordsWithJustificationsOutput
-      (adds justification string before terms)
+Exports a single SYSTEM_PROMPT for ProductionKeywordsOutput.
 """
 
 # ---------------------------------------------------------------------------
@@ -135,33 +133,19 @@ list is correct and expected when nothing passes the test.
 than a wrongly included plot or genre keyword."""
 
 # ---------------------------------------------------------------------------
-# Variant-specific output sections
+# Output section
 # ---------------------------------------------------------------------------
 
-# No-justifications variant: output contains only terms
-_OUTPUT_NO_JUSTIFICATIONS = """
+_OUTPUT = """
 
 OUTPUT
 - JSON schema.
 - terms: keywords from the provided list that describe the real-world \
 production context of the movie. Empty list if none qualify."""
 
-# With-justifications variant: output also contains a justification field
-_OUTPUT_WITH_JUSTIFICATIONS = """
-
-OUTPUT
-- JSON schema.
-- justification: a concise justification (1 sentence) explaining which \
-categories the selected keywords fall into, or why none qualify. \
-Written BEFORE terms to guide your classification.
-- terms: keywords from the provided list that describe the real-world \
-production context of the movie. Empty list if none qualify."""
-
 
 # ---------------------------------------------------------------------------
-# Assembled prompts
+# Assembled prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = _PREAMBLE + _OUTPUT_NO_JUSTIFICATIONS
-
-SYSTEM_PROMPT_WITH_JUSTIFICATIONS = _PREAMBLE + _OUTPUT_WITH_JUSTIFICATIONS
+SYSTEM_PROMPT = _PREAMBLE + _OUTPUT

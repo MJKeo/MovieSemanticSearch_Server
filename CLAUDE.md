@@ -95,6 +95,7 @@ Fetch display metadata → return JSON
 
 | Path | Purpose |
 |------|---------|
+| `schemas/` | Shared Pydantic models and data classes used across multiple top-level modules (db, api, movie_ingestion) |
 | `db/` | All database access: search orchestration, vector/lexical/metadata scoring, Postgres/Qdrant/Redis clients |
 | `implementation/classes/` | Pydantic data models (`schemas.py`), `BaseMovie`, enums, watch providers |
 | `implementation/llms/` | Shared LLM clients and routing for query understanding and metadata generation |

@@ -16,7 +16,7 @@ Inputs:
       (from Wave 1 reception extraction zone)
 
 Exports a single SYSTEM_PROMPT using justification/reasoning fields
-(chain-of-thought before labels) for PlotAnalysisWithJustificationsOutput.
+(chain-of-thought before labels) for PlotAnalysisOutput.
 """
 
 SYSTEM_PROMPT = """\

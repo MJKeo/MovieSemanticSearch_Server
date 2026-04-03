@@ -18,7 +18,7 @@ import pytest
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
 from movie_ingestion.metadata_generation.schemas import (
-    PlotAnalysisWithJustificationsOutput,
+    PlotAnalysisOutput,
     CharacterArcWithReasoning,
     ElevatorPitchWithJustification,
     ThematicConceptWithJustification,
@@ -53,8 +53,8 @@ def _make_movie(**overrides) -> MovieInputData:
     return MovieInputData(**defaults)
 
 
-def _make_plot_analysis_output() -> PlotAnalysisWithJustificationsOutput:
-    return PlotAnalysisWithJustificationsOutput(
+def _make_plot_analysis_output() -> PlotAnalysisOutput:
+    return PlotAnalysisOutput(
         genre_signatures=["cyberpunk thriller", "philosophical sci-fi"],
         thematic_concepts=[
             ThematicConceptWithJustification(
@@ -167,7 +167,7 @@ class TestGeneratePlotAnalysis:
         assert token_usage.output_tokens == 50
 
     async def test_uses_hardcoded_production_config(self):
-        """Generator uses hardcoded gpt-5-mini with PlotAnalysisWithJustificationsOutput."""
+        """Generator uses hardcoded gpt-5-mini with PlotAnalysisOutput."""
         mock_fn = AsyncMock(return_value=(_make_plot_analysis_output(), 100, 50))
         movie = _make_movie()
 
@@ -176,7 +176,7 @@ class TestGeneratePlotAnalysis:
 
         call_kwargs = mock_fn.call_args[1]
         assert call_kwargs["model"] == "gpt-5-mini"
-        assert call_kwargs["response_format"] is PlotAnalysisWithJustificationsOutput
+        assert call_kwargs["response_format"] is PlotAnalysisOutput
         assert call_kwargs["reasoning_effort"] == "minimal"
 
     async def test_token_usage_records_model(self):

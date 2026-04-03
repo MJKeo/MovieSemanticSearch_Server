@@ -164,7 +164,7 @@ def _viewer_experience_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     Uses GPO-only narrative path and justification prompt (production config).
     """
     from ..generators.viewer_experience import build_viewer_experience_user_prompt
-    from ..prompts.viewer_experience import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+    from ..prompts.viewer_experience import SYSTEM_PROMPT
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
@@ -175,7 +175,7 @@ def _viewer_experience_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
         craft_observations=w1.craft_observations,
         thematic_observations=w1.thematic_observations,
         genre_signatures=pa.genre_signatures if pa else None,
-    ), SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+    ), SYSTEM_PROMPT
 
 
 async def _viewer_experience_live_generator(movie: MovieInputData):
@@ -224,7 +224,7 @@ def _watch_context_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
     Uses the finalized production prompt path with identity_note enabled.
     """
     from ..generators.watch_context import build_watch_context_user_prompt
-    from ..prompts.watch_context import SYSTEM_PROMPT_WITH_IDENTITY_NOTE
+    from ..prompts.watch_context import SYSTEM_PROMPT
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     pa = load_plot_analysis_output(movie.tmdb_id)
@@ -234,7 +234,7 @@ def _watch_context_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
         emotional_observations=w1.emotional_observations,
         craft_observations=w1.craft_observations,
         thematic_observations=w1.thematic_observations,
-    ), SYSTEM_PROMPT_WITH_IDENTITY_NOTE
+    ), SYSTEM_PROMPT
 
 
 async def _watch_context_live_generator(movie: MovieInputData):
@@ -307,14 +307,14 @@ def _narrative_techniques_prompt_builder(movie: MovieInputData) -> tuple[str, st
     Uses the production prompt path with justifications enabled.
     """
     from ..generators.narrative_techniques import build_narrative_techniques_user_prompt
-    from ..prompts.narrative_techniques import SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+    from ..prompts.narrative_techniques import SYSTEM_PROMPT
 
     w1 = load_wave1_outputs(movie.tmdb_id)
     return build_narrative_techniques_user_prompt(
         movie,
         w1.plot_summary,
         w1.craft_observations,
-    ), SYSTEM_PROMPT_WITH_JUSTIFICATIONS
+    ), SYSTEM_PROMPT
 
 
 async def _narrative_techniques_live_generator(movie: MovieInputData):
@@ -350,11 +350,11 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
     from ..schemas import (
         PlotEventsOutput,
         ReceptionOutput,
-        PlotAnalysisWithJustificationsOutput,
-        NarrativeTechniquesWithJustificationsOutput,
+        PlotAnalysisOutput,
+        NarrativeTechniquesOutput,
         ProductionKeywordsOutput,
-        WatchContextWithIdentityNoteOutput,
-        ViewerExperienceWithJustificationsOutput,
+        WatchContextOutput,
+        ViewerExperienceOutput,
         SourceOfInspirationOutput,
     )
 
@@ -379,7 +379,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         ),
         MetadataType.PLOT_ANALYSIS: GeneratorConfig(
             metadata_type=MetadataType.PLOT_ANALYSIS,
-            schema_class=PlotAnalysisWithJustificationsOutput,
+            schema_class=PlotAnalysisOutput,
             eligibility_checker=_plot_analysis_eligibility_checker,
             prompt_builder=_plot_analysis_prompt_builder,
             live_generator=_plot_analysis_live_generator,
@@ -397,7 +397,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         ),
         MetadataType.VIEWER_EXPERIENCE: GeneratorConfig(
             metadata_type=MetadataType.VIEWER_EXPERIENCE,
-            schema_class=ViewerExperienceWithJustificationsOutput,
+            schema_class=ViewerExperienceOutput,
             eligibility_checker=_viewer_experience_eligibility_checker,
             prompt_builder=_viewer_experience_prompt_builder,
             live_generator=_viewer_experience_live_generator,
@@ -406,7 +406,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         ),
         MetadataType.WATCH_CONTEXT: GeneratorConfig(
             metadata_type=MetadataType.WATCH_CONTEXT,
-            schema_class=WatchContextWithIdentityNoteOutput,
+            schema_class=WatchContextOutput,
             eligibility_checker=_watch_context_eligibility_checker,
             prompt_builder=_watch_context_prompt_builder,
             live_generator=_watch_context_live_generator,
@@ -424,7 +424,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         ),
         MetadataType.NARRATIVE_TECHNIQUES: GeneratorConfig(
             metadata_type=MetadataType.NARRATIVE_TECHNIQUES,
-            schema_class=NarrativeTechniquesWithJustificationsOutput,
+            schema_class=NarrativeTechniquesOutput,
             eligibility_checker=_narrative_techniques_eligibility_checker,
             prompt_builder=_narrative_techniques_prompt_builder,
             live_generator=_narrative_techniques_live_generator,

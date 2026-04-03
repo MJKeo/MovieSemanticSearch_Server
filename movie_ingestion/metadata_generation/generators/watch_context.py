@@ -33,12 +33,8 @@ Skip condition: (genre_signatures OR genres >= 1) AND at least one
     generic, undifferentiated terms — evaluation Phase 1 showed all
     candidates score 1.6-2.5 on observation-absent movies.
 
-Response schema: WatchContextWithIdentityNoteOutput — includes a brief
-    identity_note pre-classification (2-8 words) plus evidence_basis
-    per section. Evolved from evaluation rounds 1-4: identity_note
-    provides priming for ambiguous-identity movies without the
-    over-constraining regression seen with full-sentence
-    viewing_appeal_summary (Round 3 H12).
+Response schema: WatchContextOutput — includes a brief identity_note
+    pre-classification (2-8 words) plus evidence_basis per section.
 
 Provider/model: OpenAI gpt-5-mini, reasoning_effort: minimal.
     Finalized after 4 evaluation rounds (50 movies, 6 buckets).
@@ -54,12 +50,8 @@ from movie_ingestion.metadata_generation.inputs import (
     MovieInputData,
     build_user_prompt,
 )
-from movie_ingestion.metadata_generation.schemas import WatchContextWithIdentityNoteOutput
-from movie_ingestion.metadata_generation.prompts.watch_context import (
-    SYSTEM_PROMPT,  # noqa: F401 — exported for evaluation pipeline
-    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
-    SYSTEM_PROMPT_WITH_IDENTITY_NOTE,
-)
+from movie_ingestion.metadata_generation.schemas import WatchContextOutput
+from movie_ingestion.metadata_generation.prompts.watch_context import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
     MetadataGenerationEmptyResponseError,
@@ -72,8 +64,8 @@ GENERATION_TYPE = MetadataType.WATCH_CONTEXT
 # Production config — finalized after 4 evaluation rounds (r4-identity-note-minimal).
 _PROVIDER = LLMProvider.OPENAI
 _MODEL = "gpt-5-mini"
-_SYSTEM_PROMPT = SYSTEM_PROMPT_WITH_IDENTITY_NOTE
-_RESPONSE_FORMAT = WatchContextWithIdentityNoteOutput
+_SYSTEM_PROMPT = SYSTEM_PROMPT
+_RESPONSE_FORMAT = WatchContextOutput
 _LLM_KWARGS = {"reasoning_effort": "minimal", "verbosity": "low"}
 
 
@@ -173,7 +165,7 @@ async def generate_watch_context(
     emotional_observations: str | None = None,
     craft_observations: str | None = None,
     thematic_observations: str | None = None,
-) -> Tuple[WatchContextWithIdentityNoteOutput, TokenUsage]:
+) -> Tuple[WatchContextOutput, TokenUsage]:
     """Generate watch context metadata for a single movie.
 
     Builds the user prompt from the movie's experiential fields plus
@@ -200,7 +192,7 @@ async def generate_watch_context(
             reception extraction zone. May be None.
 
     Returns:
-        Tuple of (WatchContextWithIdentityNoteOutput, TokenUsage).
+        Tuple of (WatchContextOutput, TokenUsage).
 
     Raises:
         MetadataGenerationError: If the LLM call raises an exception.

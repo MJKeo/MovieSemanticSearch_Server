@@ -23,7 +23,7 @@ use keywords only when consistent with primary evidence.
 Skip condition: enforced by pre_consolidation using tiered eligibility
     (plot_summary OR fallback >= 500 OR craft >= 450 OR combined).
 
-Response schema: NarrativeTechniquesWithJustificationsOutput (production).
+Response schema: NarrativeTechniquesOutput.
     Justifications improve section grounding and are discarded before
     embedding.
 
@@ -44,12 +44,8 @@ from movie_ingestion.metadata_generation.batch_generation.pre_consolidation impo
     resolve_narrative_techniques_narrative,
     _MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS,
 )
-from movie_ingestion.metadata_generation.schemas import (
-    NarrativeTechniquesWithJustificationsOutput,
-)
-from movie_ingestion.metadata_generation.prompts.narrative_techniques import (
-    SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
-)
+from movie_ingestion.metadata_generation.schemas import NarrativeTechniquesOutput
+from movie_ingestion.metadata_generation.prompts.narrative_techniques import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
     MetadataGenerationEmptyResponseError,
@@ -63,7 +59,7 @@ GENERATION_TYPE = MetadataType.NARRATIVE_TECHNIQUES
 # verbosity, and justification schema. Determined via evaluation pipeline.
 _PROVIDER = LLMProvider.OPENAI
 _MODEL = "gpt-5-mini"
-_RESPONSE_FORMAT = NarrativeTechniquesWithJustificationsOutput
+_RESPONSE_FORMAT = NarrativeTechniquesOutput
 
 
 def _filter_craft_observations(craft_observations: str | None) -> str | None:
@@ -142,7 +138,7 @@ async def generate_narrative_techniques(
     movie: MovieInputData,
     plot_summary: str | None = None,
     craft_observations: str | None = None,
-) -> Tuple[NarrativeTechniquesWithJustificationsOutput, TokenUsage]:
+) -> Tuple[NarrativeTechniquesOutput, TokenUsage]:
     """Generate narrative techniques metadata for a single movie.
 
     Builds the user prompt from the movie's fields plus Wave 1 outputs,
@@ -161,7 +157,7 @@ async def generate_narrative_techniques(
             or had no craft observations.
 
     Returns:
-        Tuple of (NarrativeTechniquesWithJustificationsOutput, TokenUsage).
+        Tuple of (NarrativeTechniquesOutput, TokenUsage).
 
     Raises:
         MetadataGenerationError: If the LLM call raises an exception.
@@ -176,7 +172,7 @@ async def generate_narrative_techniques(
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
             provider=_PROVIDER,
             user_prompt=user_prompt,
-            system_prompt=SYSTEM_PROMPT_WITH_JUSTIFICATIONS,
+            system_prompt=SYSTEM_PROMPT,
             response_format=_RESPONSE_FORMAT,
             model=_MODEL,
             reasoning_effort="minimal",

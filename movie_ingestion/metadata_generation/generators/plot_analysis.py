@@ -28,9 +28,8 @@ Skip condition (enforced by pre_consolidation):
     Tier 3: plot fallback 250-399 chars + thematic_observations >= 300 chars → eligible
     Otherwise: skipped
 
-Response schema: PlotAnalysisWithJustificationsOutput (justification
-    fields scaffold better labels via chain-of-thought; only the labels
-    are embedded).
+Response schema: PlotAnalysisOutput (justification fields scaffold
+    better labels via chain-of-thought; only the labels are embedded).
 
 Provider/model: OpenAI gpt-5-mini, reasoning_effort: minimal,
     verbosity: low. Finalized via evaluation pipeline.
@@ -45,7 +44,7 @@ from movie_ingestion.metadata_generation.inputs import (
     MovieInputData,
     build_user_prompt,
 )
-from movie_ingestion.metadata_generation.schemas import PlotAnalysisWithJustificationsOutput
+from movie_ingestion.metadata_generation.schemas import PlotAnalysisOutput
 from movie_ingestion.metadata_generation.prompts.plot_analysis import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
@@ -60,7 +59,7 @@ GENERATION_TYPE = MetadataType.PLOT_ANALYSIS
 # verbosity, and justification schema. Determined via evaluation pipeline.
 _PROVIDER = LLMProvider.OPENAI
 _MODEL = "gpt-5-mini"
-_RESPONSE_FORMAT = PlotAnalysisWithJustificationsOutput
+_RESPONSE_FORMAT = PlotAnalysisOutput
 
 
 def build_plot_analysis_user_prompt(
@@ -115,7 +114,7 @@ async def generate_plot_analysis(
     movie: MovieInputData,
     plot_summary: str | None = None,
     thematic_observations: str | None = None,
-) -> Tuple[PlotAnalysisWithJustificationsOutput, TokenUsage]:
+) -> Tuple[PlotAnalysisOutput, TokenUsage]:
     """Generate plot analysis metadata for a single movie.
 
     Builds the user prompt from the movie's fields plus Wave 1 outputs,
@@ -135,7 +134,7 @@ async def generate_plot_analysis(
             if reception failed or was skipped.
 
     Returns:
-        Tuple of (PlotAnalysisWithJustificationsOutput, TokenUsage).
+        Tuple of (PlotAnalysisOutput, TokenUsage).
 
     Raises:
         MetadataGenerationError: If the LLM call raises an exception.

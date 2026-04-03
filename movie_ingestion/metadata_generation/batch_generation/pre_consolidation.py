@@ -52,7 +52,7 @@ from ..inputs import (
     SkipAssessment,
 )
 from ..schemas import (
-    PlotAnalysisWithJustificationsOutput,
+    PlotAnalysisOutput,
     PlotEventsOutput,
     ReceptionOutput,
 )
@@ -582,7 +582,7 @@ def assess_skip_conditions(
     *,
     plot_events_output: PlotEventsOutput | None = None,
     reception_output: ReceptionOutput | None = None,
-    plot_analysis_output: PlotAnalysisWithJustificationsOutput | None = None,
+    plot_analysis_output: PlotAnalysisOutput | None = None,
     merged_keywords: list[str] | None = None,
     maturity_summary: str | None = None,
 ) -> SkipAssessment:

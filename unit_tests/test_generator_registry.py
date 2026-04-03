@@ -25,11 +25,11 @@ from movie_ingestion.metadata_generation.batch_generation.generator_registry imp
 from movie_ingestion.metadata_generation.schemas import (
     PlotEventsOutput,
     ReceptionOutput,
-    PlotAnalysisWithJustificationsOutput,
+    PlotAnalysisOutput,
     ProductionKeywordsOutput,
-    ViewerExperienceWithJustificationsOutput,
-    WatchContextWithIdentityNoteOutput,
-    NarrativeTechniquesWithJustificationsOutput,
+    ViewerExperienceOutput,
+    WatchContextOutput,
+    NarrativeTechniquesOutput,
 )
 
 
@@ -105,7 +105,7 @@ class TestGetConfig:
         """get_config(PLOT_ANALYSIS) returns correct schema and model."""
         config = get_config(MetadataType.PLOT_ANALYSIS)
         assert isinstance(config, GeneratorConfig)
-        assert config.schema_class is PlotAnalysisWithJustificationsOutput
+        assert config.schema_class is PlotAnalysisOutput
         assert config.model == "gpt-5-mini"
 
     def test_returns_production_keywords_config(self) -> None:
@@ -119,21 +119,21 @@ class TestGetConfig:
         """get_config(VIEWER_EXPERIENCE) returns correct schema and model."""
         config = get_config(MetadataType.VIEWER_EXPERIENCE)
         assert isinstance(config, GeneratorConfig)
-        assert config.schema_class is ViewerExperienceWithJustificationsOutput
+        assert config.schema_class is ViewerExperienceOutput
         assert config.model == "gpt-5-mini"
 
     def test_returns_watch_context_config(self) -> None:
         """get_config(WATCH_CONTEXT) returns correct schema and model."""
         config = get_config(MetadataType.WATCH_CONTEXT)
         assert isinstance(config, GeneratorConfig)
-        assert config.schema_class is WatchContextWithIdentityNoteOutput
+        assert config.schema_class is WatchContextOutput
         assert config.model == "gpt-5-mini"
 
     def test_returns_narrative_techniques_config(self) -> None:
         """get_config(NARRATIVE_TECHNIQUES) returns correct schema and model."""
         config = get_config(MetadataType.NARRATIVE_TECHNIQUES)
         assert isinstance(config, GeneratorConfig)
-        assert config.schema_class is NarrativeTechniquesWithJustificationsOutput
+        assert config.schema_class is NarrativeTechniquesOutput
         assert config.model == "gpt-5-mini"
 
     def test_raises_key_error_for_unregistered_type(self) -> None:

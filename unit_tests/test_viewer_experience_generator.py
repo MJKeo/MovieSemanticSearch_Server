@@ -18,7 +18,7 @@ import pytest
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
 from movie_ingestion.metadata_generation.schemas import (
-    ViewerExperienceWithJustificationsOutput,
+    ViewerExperienceOutput,
     TermsWithNegationsAndJustificationSection,
 )
 from movie_ingestion.metadata_generation.errors import (
@@ -54,13 +54,13 @@ def _make_movie(**overrides) -> MovieInputData:
     return MovieInputData(**defaults)
 
 
-def _make_ve_output() -> ViewerExperienceWithJustificationsOutput:
+def _make_ve_output() -> ViewerExperienceOutput:
     section = TermsWithNegationsAndJustificationSection(
         justification="Based on evidence.",
         terms=["tense"],
         negations=[],
     )
-    return ViewerExperienceWithJustificationsOutput(
+    return ViewerExperienceOutput(
         emotional_palette=section,
         tension_adrenaline=section,
         tone_self_seriousness=section,
@@ -181,7 +181,7 @@ class TestGenerateViewerExperience:
 
         call_kwargs = mock_fn.call_args[1]
         assert call_kwargs["model"] == "gpt-5-mini"
-        assert call_kwargs["response_format"] is ViewerExperienceWithJustificationsOutput
+        assert call_kwargs["response_format"] is ViewerExperienceOutput
         assert call_kwargs["reasoning_effort"] == "minimal"
 
 

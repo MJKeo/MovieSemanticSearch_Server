@@ -2,29 +2,16 @@
 Pydantic response schemas for LLM structured output.
 
 These are the generation-side schemas used as response_format in batch
-requests. They're based on the existing schemas in
-implementation/classes/schemas.py but with key modifications from the
-redesigned flow (docs/llm_metadata_generation_new_flow.md):
+requests. One output schema per generation type:
 
-Changes from existing schemas:
-    - Justification fields REMOVED from all section models (pending
-      empirical validation -- easy to add back). This includes:
-      * GenericTermsSection.justification
-      * ViewerExperienceSection.justification
-      * SourceOfInspirationSection.justification
-      * CoreConcept.explanation_and_justification
-      * MajorTheme / MajorLessonLearned merged into ThematicConcept
-
-    - ReceptionOutput uses a dual-zone structure:
-      Extraction zone (4 nullable observation fields consumed by Wave 2
-      generators, NOT embedded): source_material_hint, thematic_observations,
-      emotional_observations, craft_observations.
-      Synthesis zone (embedded into reception_vectors): reception_summary,
-      praised_qualities, criticized_qualities.
-
-    - ProductionKeywordsOutput and SourceOfInspirationOutput are
-      SEPARATE schemas (they're separate LLM calls). The existing
-      ProductionMetadata merges them awkwardly into one model.
+    - PlotEventsOutput (Wave 1)
+    - ReceptionOutput (Wave 1, dual-zone: extraction + synthesis)
+    - PlotAnalysisOutput (Wave 2, justification sub-models for CoT)
+    - ViewerExperienceOutput (Wave 2, per-section justifications)
+    - WatchContextOutput (Wave 2, identity_note + evidence_basis)
+    - NarrativeTechniquesOutput (Wave 2, per-section justifications)
+    - ProductionKeywordsOutput (Wave 2, classification only)
+    - SourceOfInspirationOutput (Wave 2, parametric knowledge allowed)
 
 The existing schemas in implementation/classes/schemas.py remain
 unchanged -- they're consumed by the search pipeline for reading
@@ -85,23 +72,6 @@ class TermsWithNegationsSection(BaseModel):
         ),
     )
 
-
-class OptionalTermsWithNegationsSection(BaseModel):
-    """Wrapper for viewer experience sections that may not apply.
-
-    The LLM sets should_skip=True when the section is irrelevant
-    for a given movie (e.g. disturbance_profile for a children's film).
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    should_skip: bool = Field(
-        False,
-        description=(
-            "Set to true only if this section is not applicable "
-            "to this movie. All data in section_data will be ignored."
-        ),
-    )
-    section_data: TermsWithNegationsSection
 
 
 # ---------------------------------------------------------------------------
@@ -320,15 +290,12 @@ class ThematicConceptWithJustification(BaseModel):
         return self.concept_label
 
 
-class PlotAnalysisWithJustificationsOutput(BaseModel):
-    """Production output schema for plot_analysis generation (Wave 2).
+class PlotAnalysisOutput(BaseModel):
+    """Output schema for plot_analysis generation (Wave 2).
 
     Uses sub-models with explanation_and_justification / reasoning fields
     that scaffold better labels via chain-of-thought. Only the labels
     are embedded — justification text is never included in embedding text.
-
-    The __str__() method produces IDENTICAL embedding text to
-    PlotAnalysisOutput (labels only, no justifications).
 
     Field order is optimized for autoregressive generation: genre →
     themes → elevator pitch → conflict → arcs → overview.
@@ -412,61 +379,10 @@ class PlotAnalysisWithJustificationsOutput(BaseModel):
 # Wave 2: Viewer Experience
 # ---------------------------------------------------------------------------
 
-class ViewerExperienceOutput(BaseModel):
-    """Structured output from the viewer_experience generation (Wave 2).
-
-    8 sections capturing the emotional/sensory viewing experience.
-    All sections use the same flat TermsWithNegationsSection with
-    min_length=0 on both terms and negations. Sections that don't
-    apply to a movie (e.g. disturbance_profile for a children's film)
-    produce empty lists — no should_skip wrapper needed.
-
-    Non-production variant (no justifications). Kept for backward
-    compatibility and evaluation comparison. Production uses
-    ViewerExperienceWithJustificationsOutput.
-
-    Model: gpt-5-mini, reasoning_effort: minimal
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    emotional_palette: TermsWithNegationsSection
-    tension_adrenaline: TermsWithNegationsSection
-    tone_self_seriousness: TermsWithNegationsSection
-    cognitive_complexity: TermsWithNegationsSection
-    disturbance_profile: TermsWithNegationsSection
-    sensory_load: TermsWithNegationsSection
-    emotional_volatility: TermsWithNegationsSection
-    ending_aftertaste: TermsWithNegationsSection
-
-    def __str__(self) -> str:
-        combined_terms: list[str] = []
-        for section in (
-            self.emotional_palette,
-            self.tension_adrenaline,
-            self.tone_self_seriousness,
-            self.cognitive_complexity,
-            self.disturbance_profile,
-            self.sensory_load,
-            self.emotional_volatility,
-            self.ending_aftertaste,
-        ):
-            combined_terms.extend(section.terms)
-            combined_terms.extend(section.negations)
-        return ", ".join(t.lower() for t in combined_terms)
-
-
-# -- With-justifications variant for evaluation comparison --
-# These section models add a justification field that the LLM fills via
-# structured output. The justification text is NEVER embedded —
-# __str__() produces identical output to ViewerExperienceOutput.
-# This lets us compare output quality with vs. without justifications
-# using the same prompt.
-
-
 class TermsWithNegationsAndJustificationSection(BaseModel):
-    """TermsWithNegationsSection + justification for evaluation comparison.
+    """Section with terms, negations, and a justification for chain-of-thought.
 
-    The justification field provides chain-of-thought that may improve
+    The justification field provides chain-of-thought that improves
     output quality. It is NEVER embedded — only terms and negations
     are used in embedding text.
     """
@@ -496,35 +412,13 @@ class TermsWithNegationsAndJustificationSection(BaseModel):
     )
 
 
-class OptionalTermsWithNegationsAndJustificationSection(BaseModel):
-    """Wrapper for viewer experience sections with justification that may not apply.
+class ViewerExperienceOutput(BaseModel):
+    """Output schema for viewer_experience generation (Wave 2).
 
-    The LLM sets should_skip=True when the section is irrelevant
-    for a given movie (e.g. disturbance_profile for a children's film).
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    should_skip: bool = Field(
-        False,
-        description=(
-            "Set to true only if this section is not applicable "
-            "to this movie. All data in section_data will be ignored."
-        ),
-    )
-    section_data: TermsWithNegationsAndJustificationSection
-
-
-class ViewerExperienceWithJustificationsOutput(BaseModel):
-    """Production output schema for viewer_experience generation (Wave 2).
-
-    Identical output structure to ViewerExperienceOutput but uses section
-    models that include a justification field. Justifications provide
-    chain-of-thought that improves specificity (+0.44) and term diversity
-    (+0.38) per Round 2 evaluation. Justifications are discarded before
-    embedding — no retrieval impact.
-
-    The __str__() method produces IDENTICAL embedding text to
-    ViewerExperienceOutput — justification text is never embedded.
+    8 sections capturing the emotional/sensory viewing experience.
+    Each section includes a justification field that provides
+    chain-of-thought improving specificity and term diversity.
+    Justifications are discarded before embedding — no retrieval impact.
 
     Model: gpt-5-mini, reasoning_effort: minimal, verbosity: low
     """
@@ -540,7 +434,6 @@ class ViewerExperienceWithJustificationsOutput(BaseModel):
     ending_aftertaste: TermsWithNegationsAndJustificationSection
 
     def __str__(self) -> str:
-        # Must produce identical embedding text to ViewerExperienceOutput.__str__()
         combined_terms: list[str] = []
         for section in (
             self.emotional_palette,
@@ -561,68 +454,6 @@ class ViewerExperienceWithJustificationsOutput(BaseModel):
 # Wave 2: Watch Context
 # ---------------------------------------------------------------------------
 
-class WatchContextOutput(BaseModel):
-    """Structured output from the watch_context generation (Wave 2).
-
-    4 sections capturing when/why/how to watch the movie. Deliberately
-    receives NO plot information (Decision 2) — focuses on experiential
-    attributes. All sections allow 0 terms — sparse inputs should produce
-    fewer terms, not fabricated ones.
-
-    Model: gpt-5-mini, reasoning_effort: medium
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    self_experience_motivations: TermsSection = Field(
-        ...,
-        description=(
-            "0-8 search-query-like phrases capturing the self-focused "
-            "experiential reason someone would seek out this movie. "
-            "Empty when inputs are too sparse for confident generation."
-        ),
-    )
-    external_motivations: TermsSection = Field(
-        ...,
-        description=(
-            "0-4 search-query-like phrases capturing value beyond the "
-            "viewing experience: cultural significance, social currency, "
-            "conversation starters. Empty when not supported by inputs."
-        ),
-    )
-    key_movie_feature_draws: TermsSection = Field(
-        ...,
-        description=(
-            "0-4 search-query-like phrases for standout movie attributes "
-            "that function as draws (positive or negative). "
-            "Empty when not supported by inputs."
-        ),
-    )
-    watch_scenarios: TermsSection = Field(
-        ...,
-        description=(
-            "0-6 search-query-like phrases for real-world occasions, "
-            "contexts, and social settings for watching this movie. "
-            "Empty when not supported by inputs."
-        ),
-    )
-
-    def __str__(self) -> str:
-        combined_terms = (
-            self.self_experience_motivations.terms
-            + self.external_motivations.terms
-            + self.key_movie_feature_draws.terms
-            + self.watch_scenarios.terms
-        )
-        return ", ".join(t.lower() for t in combined_terms)
-
-
-# -- With-justifications variant for evaluation comparison --
-# Adds a justification field to TermsSection for chain-of-thought quality.
-# The justification text is NEVER embedded — __str__() produces identical
-# output to WatchContextOutput. This lets us compare output quality with
-# vs. without justifications using the same prompt.
-
-
 class TermsWithJustificationSection(BaseModel):
     """TermsSection with upstream evidence assessment.
 
@@ -634,7 +465,7 @@ class TermsWithJustificationSection(BaseModel):
     If no specific input phrases can be cited, terms should be empty.
 
     The evidence_basis text is NEVER embedded — only terms are used in
-    embedding text. Mirrors the search-side GenericTermsSection structure.
+    embedding text.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -654,93 +485,20 @@ class TermsWithJustificationSection(BaseModel):
     )
 
 
-class WatchContextWithJustificationsOutput(BaseModel):
-    """Watch context variant WITH upstream evidence assessment fields.
+class WatchContextOutput(BaseModel):
+    """Output schema for watch_context generation (Wave 2).
 
-    Identical output structure to WatchContextOutput but uses section
-    models that include an evidence_basis field. The evidence_basis
-    forces the model to inventory specific input phrases that support
-    each section BEFORE generating terms — an upstream constraint that
-    prevents rationalization of already-planned output.
+    Includes a brief identity_note pre-classification (2-8 words)
+    that primes tone calibration before section generation, plus
+    evidence_basis per section as an upstream constraint.
 
-    Evidence_basis text is discarded before embedding — no retrieval
-    impact. The __str__() method produces IDENTICAL embedding text to
-    WatchContextOutput.
-
+    4 sections capturing when/why/how to watch the movie. Deliberately
+    receives NO plot information — focuses on experiential attributes.
     All sections allow 0 terms — sparse inputs should produce fewer
     terms, not fabricated ones.
 
-    Model: gpt-5-mini, reasoning_effort: medium
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    self_experience_motivations: TermsWithJustificationSection = Field(
-        ...,
-        description=(
-            "0-8 search-query-like phrases capturing the self-focused "
-            "experiential reason someone would seek out this movie. "
-            "Empty when inputs are too sparse for confident generation."
-        ),
-    )
-    external_motivations: TermsWithJustificationSection = Field(
-        ...,
-        description=(
-            "0-4 search-query-like phrases capturing value beyond the "
-            "viewing experience: cultural significance, social currency, "
-            "conversation starters. Empty when not supported by inputs."
-        ),
-    )
-    key_movie_feature_draws: TermsWithJustificationSection = Field(
-        ...,
-        description=(
-            "0-4 search-query-like phrases for standout movie attributes "
-            "that function as draws (positive or negative). "
-            "Empty when not supported by inputs."
-        ),
-    )
-    watch_scenarios: TermsWithJustificationSection = Field(
-        ...,
-        description=(
-            "0-6 search-query-like phrases for real-world occasions, "
-            "contexts, and social settings for watching this movie. "
-            "Empty when not supported by inputs."
-        ),
-    )
-
-    def __str__(self) -> str:
-        # Must produce identical embedding text to WatchContextOutput.__str__()
-        combined_terms = (
-            self.self_experience_motivations.terms
-            + self.external_motivations.terms
-            + self.key_movie_feature_draws.terms
-            + self.watch_scenarios.terms
-        )
-        return ", ".join(t.lower() for t in combined_terms)
-
-
-class WatchContextWithIdentityNoteOutput(BaseModel):
-    """Watch context variant with a brief identity_note pre-classification.
-
-    Adds a 2-8 word identity classification field BEFORE sections.
-    The model classifies the movie's viewing appeal register (sincere,
-    ironic, camp, comfort, visceral, intellectual, etc.) before
-    generating section terms. This primes correct tone calibration
-    without over-constraining output — the field is too brief to
-    act as a template the model faithfully expands.
-
-    Evolved from WatchContextWithViewingAppealOutput (H12 A/B test).
-    Round 3 evaluation showed a full-sentence viewing_appeal_summary
-    improved identity accuracy on challenging movies (+0.32 composite
-    on challenging_identity bucket) but over-constrained output on
-    rich-input movies (-0.49 on gold_standard). The brief identity_note
-    preserves the identity-priming benefit while leaving room for
-    the model to explore secondary signals from rich inputs.
-
     The identity_note is NOT embedded — only section terms are used
-    in embedding text. The __str__() method produces IDENTICAL
-    embedding text to WatchContextOutput.
-
-    Uses evidence_basis sections (same as WatchContextWithJustificationsOutput).
+    in embedding text.
 
     Model: gpt-5-mini, reasoning_effort: low
     """
@@ -789,7 +547,6 @@ class WatchContextWithIdentityNoteOutput(BaseModel):
     )
 
     def __str__(self) -> str:
-        # Must produce identical embedding text to WatchContextOutput.__str__()
         # identity_note intentionally excluded from embedding text
         combined_terms = (
             self.self_experience_motivations.terms
@@ -805,86 +562,34 @@ class WatchContextWithIdentityNoteOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 class NarrativeTechniquesOutput(BaseModel):
-    """Structured output from the narrative_techniques generation (Wave 2).
+    """Output schema for narrative_techniques generation (Wave 2).
 
     9 sections capturing storytelling structure, POV, delivery mechanism,
-    and narrative devices. Field order is optimized for autoregressive
-    generation: specific sections first, catchall last.
+    and narrative devices. Each section includes a justification field
+    for chain-of-thought quality. Justification text is NEVER embedded.
 
-    Removed from prior 11-section version:
-    - thematic_delivery (top hallucination source; models over-inferred
-      delivery mechanisms from theme topics)
-    - meta_techniques (merged into additional_narrative_devices catchall)
+    Field order is optimized for autoregressive generation: specific
+    sections first, catchall last.
 
     Model: gpt-5-mini, reasoning_effort: minimal
     """
     model_config = ConfigDict(extra="forbid")
 
     # Easiest to identify from any input type
-    narrative_archetype: TermsSection
-    narrative_delivery: TermsSection
-    # Moderate — often evidenced in craft observations
-    pov_perspective: TermsSection
-    characterization_methods: TermsSection
-    character_arcs: TermsSection
-    audience_character_perception: TermsSection
-    # Hardest — require plot knowledge or synthesis
-    information_control: TermsSection
-    conflict_stakes_design: TermsSection
-    # Catchall — placed last so specific sections are filled first
-    additional_narrative_devices: TermsSection
-
-    def __str__(self) -> str:
-        combined_terms: list[str] = []
-        for section in (
-            self.narrative_archetype,
-            self.narrative_delivery,
-            self.pov_perspective,
-            self.characterization_methods,
-            self.character_arcs,
-            self.audience_character_perception,
-            self.information_control,
-            self.conflict_stakes_design,
-            self.additional_narrative_devices,
-        ):
-            combined_terms.extend(section.terms)
-        return ", ".join(t.lower() for t in combined_terms)
-
-
-# -- With-justifications variant for evaluation comparison --
-# Adds a justification field to TermsSection for chain-of-thought quality.
-# The justification text is NEVER embedded — __str__() produces identical
-# output to NarrativeTechniquesOutput. This lets us compare output quality
-# with vs. without justifications using the same prompt.
-
-
-class NarrativeTechniquesWithJustificationsOutput(BaseModel):
-    """Narrative techniques variant WITH justification fields.
-
-    Identical output structure to NarrativeTechniquesOutput but uses section
-    models that include a justification field. Used during evaluation to
-    compare output quality with vs. without justifications.
-
-    The __str__() method produces IDENTICAL embedding text to
-    NarrativeTechniquesOutput — justification text is never embedded.
-
-    Model: gpt-5-mini, reasoning_effort: minimal
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    # Field order matches NarrativeTechniquesOutput (specific first, catchall last)
     narrative_archetype: TermsWithJustificationSection
     narrative_delivery: TermsWithJustificationSection
+    # Moderate — often evidenced in craft observations
     pov_perspective: TermsWithJustificationSection
     characterization_methods: TermsWithJustificationSection
     character_arcs: TermsWithJustificationSection
     audience_character_perception: TermsWithJustificationSection
+    # Hardest — require plot knowledge or synthesis
     information_control: TermsWithJustificationSection
     conflict_stakes_design: TermsWithJustificationSection
+    # Catchall — placed last so specific sections are filled first
     additional_narrative_devices: TermsWithJustificationSection
 
     def __str__(self) -> str:
-        # Must produce identical embedding text to NarrativeTechniquesOutput.__str__()
         combined_terms: list[str] = []
         for section in (
             self.narrative_archetype,
@@ -921,44 +626,6 @@ class ProductionKeywordsOutput(BaseModel):
     )
 
     def __str__(self) -> str:
-        return ", ".join(t.lower() for t in self.terms)
-
-
-# -- With-justifications variant for evaluation comparison --
-# Adds a justification field for chain-of-thought quality. The justification
-# text is NEVER embedded — __str__() produces identical output to
-# ProductionKeywordsOutput. Mirrors the search-side GenericTermsSection
-# which has a justification field.
-
-
-class ProductionKeywordsWithJustificationsOutput(BaseModel):
-    """Production keywords variant WITH justification field.
-
-    Identical output structure to ProductionKeywordsOutput but adds a
-    justification field. Used during evaluation to compare output quality
-    with vs. without justifications.
-
-    The __str__() method produces IDENTICAL embedding text to
-    ProductionKeywordsOutput — justification text is never embedded.
-
-    Model: gpt-5-mini, reasoning_effort: low
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    justification: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "1 sentence. Why you chose these production-relevant keywords. "
-            "Not used for embeddings."
-        ),
-    )
-    terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
-        default_factory=list,
-        description="Production-relevant keywords filtered from the input list.",
-    )
-
-    def __str__(self) -> str:
-        # Must produce identical embedding text to ProductionKeywordsOutput.__str__()
         return ", ".join(t.lower() for t in self.terms)
 
 
@@ -1005,54 +672,3 @@ class SourceOfInspirationOutput(BaseModel):
         return ", ".join(t.lower() for t in all_terms)
 
 
-class SourceOfInspirationWithReasoningOutput(BaseModel):
-    """Source of inspiration with evidence inventory before each list.
-
-    Identical embedding output to SourceOfInspirationOutput. The
-    reasoning fields record what evidence was considered — they are
-    NOT gates. "No direct evidence" does not mandate an empty list
-    if parametric knowledge provides high confidence.
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    source_evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "1 sentence: what evidence supports source_material? "
-            "Record of what you considered, not a gate."
-        ),
-    )
-    source_material: list[str] = Field(
-        default_factory=list,
-        description=(
-            "What existing media this film draws from. "
-            "Adaptations: based on a novel, comic, true story, etc. "
-            "Retellings/branches: remake, reboot, reimagining, spinoff. "
-            "Empty when original or evidence insufficient."
-        ),
-    )
-    lineage_evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "1 sentence: what evidence supports franchise_lineage? "
-            "Record of what you considered, not a gate."
-        ),
-    )
-    franchise_lineage: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Where this film sits in a franchise timeline. "
-            "E.g. franchise starter, first in franchise, sequel, prequel, "
-            "first in trilogy, trilogy finale, series entry. "
-            "NOT for remakes/reboots/spinoffs (those go in source_material). "
-            "Empty when standalone or evidence insufficient."
-        ),
-    )
-
-    def __str__(self) -> str:
-        all_terms = self.source_material + self.franchise_lineage
-        return ", ".join(t.lower() for t in all_terms)
-
-
-# Alias for callers still using the old name.
-SourceOfInspirationWithJustificationsOutput = SourceOfInspirationWithReasoningOutput

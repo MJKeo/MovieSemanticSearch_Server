@@ -23,12 +23,12 @@ from movie_ingestion.metadata_generation.inputs import MetadataType, parse_custo
 from movie_ingestion.metadata_generation.schemas import (
     PlotEventsOutput,
     ReceptionOutput,
-    PlotAnalysisWithJustificationsOutput,
-    NarrativeTechniquesWithJustificationsOutput,
+    PlotAnalysisOutput,
+    NarrativeTechniquesOutput,
     ProductionKeywordsOutput,
     SourceOfInspirationOutput,
-    WatchContextWithIdentityNoteOutput,
-    ViewerExperienceWithJustificationsOutput,
+    WatchContextOutput,
+    ViewerExperienceOutput,
 )
 
 
@@ -42,12 +42,12 @@ from movie_ingestion.metadata_generation.schemas import (
 SCHEMA_BY_TYPE: dict[MetadataType, type[BaseModel]] = {
     MetadataType.PLOT_EVENTS: PlotEventsOutput,
     MetadataType.RECEPTION: ReceptionOutput,
-    MetadataType.PLOT_ANALYSIS: PlotAnalysisWithJustificationsOutput,
-    MetadataType.NARRATIVE_TECHNIQUES: NarrativeTechniquesWithJustificationsOutput,
+    MetadataType.PLOT_ANALYSIS: PlotAnalysisOutput,
+    MetadataType.NARRATIVE_TECHNIQUES: NarrativeTechniquesOutput,
     MetadataType.PRODUCTION_KEYWORDS: ProductionKeywordsOutput,
     MetadataType.SOURCE_OF_INSPIRATION: SourceOfInspirationOutput,
-    MetadataType.VIEWER_EXPERIENCE: ViewerExperienceWithJustificationsOutput,
-    MetadataType.WATCH_CONTEXT: WatchContextWithIdentityNoteOutput,
+    MetadataType.VIEWER_EXPERIENCE: ViewerExperienceOutput,
+    MetadataType.WATCH_CONTEXT: WatchContextOutput,
 }
 
 

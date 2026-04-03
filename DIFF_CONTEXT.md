@@ -23,6 +23,10 @@ Files: db/ingest_movie.py → movie_ingestion/final_ingestion/ingest_movie.py, 5
 Why: Consolidate all ingestion pipeline logic under movie_ingestion/. The new final_ingestion/ subpackage will house all logic for taking movie data from the SQLite tracker and upserting into Postgres/Qdrant.
 Approach: Moved the file, created __init__.py, updated all import paths (5 notebooks, 1 test file), updated db.md/ingestion.md module docs and CLAUDE.md architecture docs.
 
+## Add top-level schemas/ package for cross-cutting data definitions
+Files: schemas/__init__.py (new), CLAUDE.md
+Why: Need a home for shared Pydantic models/data classes that are imported by db/, api/, and movie_ingestion/. The implementation/ folder is being phased out, so schemas/ replaces implementation/classes/ as the canonical location for cross-module schemas.
+
 ## Extract vector text generation into movie_ingestion/final_ingestion/vector_text.py
 Files: movie_ingestion/final_ingestion/vector_text.py (new), movie_ingestion/final_ingestion/ingest_movie.py, CLAUDE.md, docs/modules/ingestion.md, docs/llm_metadata_generation_report.md
 Why: Vector text generation functions (8 total, one per vector space) were in implementation/vectorize.py alongside legacy ChromaDB code. Extracting them into final_ingestion/ co-locates them with the ingestion pipeline that consumes them.

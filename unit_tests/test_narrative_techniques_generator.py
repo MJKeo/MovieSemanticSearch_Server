@@ -18,7 +18,7 @@ import pytest
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
 from movie_ingestion.metadata_generation.schemas import (
-    NarrativeTechniquesWithJustificationsOutput,
+    NarrativeTechniquesOutput,
     TermsWithJustificationSection,
 )
 from movie_ingestion.metadata_generation.errors import (
@@ -52,12 +52,12 @@ def _make_movie(**overrides) -> MovieInputData:
     return MovieInputData(**defaults)
 
 
-def _make_nt_output() -> NarrativeTechniquesWithJustificationsOutput:
+def _make_nt_output() -> NarrativeTechniquesOutput:
     section = TermsWithJustificationSection(
         evidence_basis="Based on evidence.",
         terms=["unreliable narrator"],
     )
-    return NarrativeTechniquesWithJustificationsOutput(
+    return NarrativeTechniquesOutput(
         narrative_archetype=section,
         narrative_delivery=section,
         pov_perspective=section,
@@ -158,7 +158,7 @@ class TestGenerateNarrativeTechniques:
         assert isinstance(token_usage, TokenUsage)
 
     async def test_uses_hardcoded_production_config(self):
-        """Generator uses hardcoded gpt-5-mini with NarrativeTechniquesWithJustificationsOutput."""
+        """Generator uses hardcoded gpt-5-mini with NarrativeTechniquesOutput."""
         mock_fn = AsyncMock(return_value=(_make_nt_output(), 100, 50))
         movie = _make_movie()
 
@@ -167,7 +167,7 @@ class TestGenerateNarrativeTechniques:
 
         call_kwargs = mock_fn.call_args[1]
         assert call_kwargs["model"] == "gpt-5-mini"
-        assert call_kwargs["response_format"] is NarrativeTechniquesWithJustificationsOutput
+        assert call_kwargs["response_format"] is NarrativeTechniquesOutput
         assert call_kwargs["reasoning_effort"] == "minimal"
 
 
