@@ -42,14 +42,15 @@ this module.
 | `metadata_generation/batch_generation/request_builder.py` | Builds per-type Batch API request lists. `build_requests(metadata_type)` loads eligible movies in chunks of 5K to avoid OOM, uses registry config for prompts/schema/model. Returns `list[list[dict]]`; serialization to JSONL is done in `openai_batch_manager.py`. |
 | `metadata_generation/batch_generation/openai_batch_manager.py` | OpenAI Files API + Batch API wrapper: upload, create, check status (`BatchStatus` dataclass includes batch-level `errors`), download. In-memory JSONL upload/download (no temp files). No movie/generation knowledge. |
 | `metadata_generation/batch_generation/result_processor.py` | Parses downloaded result JSONL, determines metadata type from custom_id, validates against correct schema via `SCHEMA_BY_TYPE`, stores results in the type's column in `generated_metadata`. Records per-request failures to `generation_failures`. Handles `"response": null` entries from expired batches via `or {}` pattern (not `.get()` default). |
-| `metadata_generation/inputs.py` | `MovieInputData`, `ConsolidatedInputs`, `SkipAssessment`, `Wave1Outputs` dataclasses + `build_user_prompt()` + `MultiLineList`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, `best_plot_fallback()`, and `batch_id()`. `build_custom_id(tmdb_id, MetadataType)` / `parse_custom_id(str) -> tuple[MetadataType, int]` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads raw data from tracker.db. `load_wave1_outputs(tmdb_id)` returns a `Wave1Outputs` with all Wave 1 fields (plot_summary, thematic/emotional/craft observations, source_material_hint) — callers pick whichever subset they need. |
-| `metadata_generation/schemas.py` | Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` uses dual-zone structure: extraction zone (4 observation fields for Wave 2, not embedded) + synthesis zone (summary + quality tags, embedded). `NarrativeTechniquesOutput` uses 9-section schema (removed `thematic_delivery` and merged `meta_techniques` into `additional_narrative_devices`; see ADR-048). `WatchContextWithIdentityNoteOutput` replaces `viewing_appeal_summary` (20-30 word anchor) with `identity_note` (2-8 word classification). `TermsWithJustificationSection.justification` renamed to `evidence_basis` — framed as evidence inventory, not post-hoc explanation (see ADR-049). `SourceOfInspirationOutput` uses two fields: `source_material` (adaptations, remakes, reboots, reimaginings, spinoffs) and `franchise_lineage` (sequel, prequel, trilogy position); `production_mediums` removed (derived deterministically at embedding time); see ADR-051, ADR-052. `SourceOfInspirationWithReasoningOutput` adds `source_evidence`/`lineage_evidence` inventory fields (non-gating); aliased as `SourceOfInspirationWithJustificationsOutput` for test compatibility. See ADR-025, ADR-050. |
+| `metadata_generation/inputs.py` | Generation-pipeline-specific types: `ConsolidatedInputs`, `SkipAssessment`, `Wave1Outputs` dataclasses + `build_user_prompt()`. Shared types (`MovieInputData`, `MultiLineList`, `MetadataType`) moved to `schemas/`. `MovieInputData` provides `merged_keywords()`, `maturity_summary()`, `best_plot_fallback()`. `build_custom_id(tmdb_id, MetadataType)` / `parse_custom_id(str) -> tuple[MetadataType, int]` encode/decode Batch API `custom_id` as `{metadata_type}_{tmdb_id}`. `load_movie_input_data()` loads raw data from tracker.db. `load_wave1_outputs(tmdb_id)` returns a `Wave1Outputs` with all Wave 1 fields (plot_summary, thematic/emotional/craft observations, source_material_hint) — callers pick whichever subset they need. |
+| ~~`metadata_generation/schemas.py`~~ | Moved to `schemas/metadata.py`. Pydantic output schemas for each LLM generation type. Base variants have justification fields removed; each Wave 2 type also has a `WithJustificationsOutput` variant for evaluation (identical `__str__()` to the base). `PlotEventsOutput` contains only `plot_summary` (setting and major_characters removed after 42-movie evaluation; see ADR-040). `ReceptionOutput` uses dual-zone structure: extraction zone (4 observation fields for Wave 2, not embedded) + synthesis zone (summary + quality tags, embedded). `NarrativeTechniquesOutput` uses 9-section schema (removed `thematic_delivery` and merged `meta_techniques` into `additional_narrative_devices`; see ADR-048). `WatchContextWithIdentityNoteOutput` replaces `viewing_appeal_summary` (20-30 word anchor) with `identity_note` (2-8 word classification). `TermsWithJustificationSection.justification` renamed to `evidence_basis` — framed as evidence inventory, not post-hoc explanation (see ADR-049). `SourceOfInspirationOutput` uses two fields: `source_material` (adaptations, remakes, reboots, reimaginings, spinoffs) and `franchise_lineage` (sequel, prequel, trilogy position); `production_mediums` removed (derived deterministically at embedding time); see ADR-051, ADR-052. `SourceOfInspirationWithReasoningOutput` adds `source_evidence`/`lineage_evidence` inventory fields (non-gating); aliased as `SourceOfInspirationWithJustificationsOutput` for test compatibility. See ADR-025, ADR-050. |
 | `metadata_generation/batch_generation/pre_consolidation.py` | Pre-consolidation: keyword routing + normalization, maturity consolidation, eligibility checks (Wave 1: `check_plot_events`, `check_reception` — both public; Wave 2: 6 private `_check_*`), `assess_skip_conditions()` orchestrator, `run_pre_consolidation()` entry point. Public shared functions: `resolve_viewer_experience_narrative()`, `filter_viewer_experience_observations()`, `resolve_narrative_techniques_narrative()` — each used by both eligibility and prompt building. `narrative_techniques` uses tiered eligibility (plot_summary / fallback >= 500 / craft >= 400 standalone / fallback >= 300 + craft >= 300 combined). `watch_context` now requires genre data AND ≥1 observation field (emotional/craft/thematic); genre-only movies are ineligible (~0.7% of pipeline). |
 | `metadata_generation/errors.py` | Custom exception classes (`MetadataGenerationError`, `MetadataGenerationEmptyResponseError`) imported by all generators. |
 | `metadata_generation/helper_scripts/report_bucket_axis_performance.py` | Diagnostic CLI: reads `*_evaluation.json` files and prints per-bucket tables of average candidate performance per scoring axis. Supports both bucket file shapes. |
 | `metadata_generation/helper_scripts/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
 | `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All 8 generators are now locked (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative), `narrative_techniques.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, 9-section schema), `watch_context.py` (gpt-5-mini, reasoning_effort=minimal, WatchContextWithIdentityNoteOutput), `source_of_inspiration.py` (gpt-5-mini, reasoning_effort=low, base SourceOfInspirationOutput schema, see ADR-053), `production_keywords.py` (gpt-5-mini, reasoning_effort=low, base ProductionKeywordsOutput schema — only Wave 2 generator using base schema in production, see ADR-054). See ADR-026, ADR-027, ADR-045, ADR-048, ADR-049, ADR-053, ADR-054. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant. All generators are now locked; no unlocked generators remain. `production_keywords.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` (retained for evaluation notebook backward compatibility). `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. Locked generators use the base (non-reasoning) prompt as production. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
+| `final_ingestion/vector_text.py` | Generates the text for each of the 8 vector spaces from a `Movie` object. One function per space (e.g. `create_plot_events_vector_text`, `create_reception_vector_text`). All functions accept `Movie` and return `str | None` (None when required metadata is absent). Synopsis-first fallback hierarchy for plot_events; labeled fields and per-term `normalize_string()` for plot_analysis and reception; thin wrappers over `embedding_text()` for remaining spaces. |
 | `final_ingestion/ingest_movie.py` | Stage 8: Upserts final movie data into Postgres (movie_card + lexical postings) and Qdrant (8 named vectors + hard-filter payload). Supports single and batched ingestion. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
@@ -471,10 +472,11 @@ Key skip thresholds:
   - `watch_context`: requires >= 1 genre_signature or genre AND >= 1 observation field (emotional/craft/thematic). See ADR-049.
   - `source_of_inspiration` and `production_keywords` do not depend on plot data or review observations
 
-### Output schemas (schemas.py)
+### Output schemas (schemas/metadata.py)
 
-Pydantic `BaseModel` schemas for each generation. Key design decisions
-(see ADR-025, ADR-036):
+Pydantic `BaseModel` schemas for each generation. Now lives at the
+top-level `schemas/metadata.py` (moved from `metadata_generation/schemas.py`).
+Key design decisions (see ADR-025, ADR-036):
 
 - **Base variants have justification fields removed** from all section
   models. The existing `implementation/classes/schemas.py` schemas (used
@@ -487,8 +489,8 @@ Pydantic `BaseModel` schemas for each generation. Key design decisions
   `justification` — to `TermsSection`) is the shared sub-model for these variants.
   The field is framed as an evidence inventory (quote input phrases that constrain
   the terms) rather than a post-hoc explanation (see ADR-049). The
-  `__str__()` of each `WithJustificationsOutput` produces identical
-  embedding text to its base variant — this invariant is tested.
+  `embedding_text()` of each `WithJustificationsOutput` produces identical
+  output to its base variant — this invariant is tested.
 - **`PlotEventsOutput` and `MajorCharacter` use minimal neutral field
   descriptions** ("Chronological plot summary.", "Character name.", etc.).
   Behavioral instructions — what the model should do with each field —
@@ -499,14 +501,16 @@ Pydantic `BaseModel` schemas for each generation. Key design decisions
 - **`ReceptionOutput` dual-zone structure**: extraction zone has 4
   nullable observation fields (`source_material_hint`, `thematic_observations`,
   `emotional_observations`, `craft_observations`) consumed by Wave 2
-  generators, excluded from `__str__()` and never embedded. Synthesis zone
+  generators, excluded from `embedding_text()` and never embedded. Synthesis zone
   has `reception_summary`, `praised_qualities` (0-6), `criticized_qualities`
   (0-6) — these ARE embedded.
 - **`ProductionKeywordsOutput` and `SourceOfInspirationOutput` are
   separate schemas** (and separate LLM calls), unlike the existing
   `ProductionMetadata` which merged them.
-- All `__str__()` methods lowercase their output to match the embedding
-  text convention used by the search-side schemas.
+- **`EmbeddableOutput` base class** declares `embedding_text() -> str` as the
+  canonical embedding contract. All 8 `*Output` classes implement it.
+  `normalize_string()` is applied inside each `embedding_text()`.
+  Legacy `__str__()` methods are retained for backward compatibility.
 
 ### Model Evaluation (evaluations/)
 
@@ -637,10 +641,10 @@ eliminates any uncertainty about concurrent DB access.
 - The `ingestion_data/imdb/` JSON file directory is now obsolete as
   the primary data store. `migrate_json_to_sqlite.py` was used for
   the one-time migration of 425,345 rows.
-- The generation-side schemas in `metadata_generation/schemas.py`
-  intentionally diverge from the search-side schemas in
-  `implementation/classes/schemas.py`. When deploying, align the
-  search-side schemas to match generation outputs.
+- The generation-side schemas in `schemas/metadata.py` (moved from
+  `metadata_generation/schemas.py`) intentionally diverge from the
+  search-side schemas in `implementation/classes/schemas.py`. When
+  deploying, align the search-side schemas to match generation outputs.
 - Generator kwargs must be provider-specific. Do not pass a shared
   `_DEFAULT_KWARGS` dict across providers — OpenAI-specific params
   (e.g., `verbosity`, `reasoning_effort`) cause 400 errors on Gemini/Groq.

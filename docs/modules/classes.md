@@ -4,6 +4,11 @@ Pydantic data models, enums, and reference data used across the
 entire codebase. This is a pure data-definition module with no
 business logic.
 
+**Note**: Cross-cutting types that need to be shared between
+`db/`, `api/`, and `movie_ingestion/` are migrating to the new
+top-level `schemas/` package. `implementation/` is being phased out
+as the canonical home for shared types. See `docs/modules/schemas.md`.
+
 ## What This Module Does
 
 Defines the canonical data structures for movies, query
@@ -16,7 +21,7 @@ in scoring and filtering.
 |------|---------|
 | `movie.py` | `BaseMovie` — the core movie data model with all fields from TMDB + IMDB + LLM-generated metadata. Includes era-aware budget classification. |
 | `schemas.py` | All Pydantic models: LLM output schemas (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception), query understanding responses (entities, channel weights, metadata preferences, vector subqueries/weights), and metadata filter types. |
-| `enums.py` | All enums: `MaturityRating` (with maturity_rank), `StreamingAccessType` (with type_id), `VectorName`/`VectorCollectionName` (8 vector spaces), `RelevanceSize` (NOT_RELEVANT/SMALL/MEDIUM/LARGE), `Genre`, `EntityCategory`, `BudgetSize`, match operation enums. |
+| `enums.py` | All enums: `MaturityRating` (with maturity_rank), `StreamingAccessType` (with type_id), `VectorName`/`VectorCollectionName` (8 vector spaces, backed by Qdrant), `RelevanceSize` (NOT_RELEVANT/SMALL/MEDIUM/LARGE), `Genre`, `EntityCategory`, `BudgetSize`, match operation enums. |
 | `languages.py` | Language catalog with IDs for audio language filtering. |
 | `watch_providers.py` | Streaming service catalog with provider IDs. |
 
@@ -36,17 +41,23 @@ LLM-generated metadata objects. Used during ingestion to construct
 vector text and populate databases.
 
 **LLM Metadata Schemas** (`schemas.py`): Seven metadata types
-generated at ingestion time, each feeding a specific vector space:
+generated at ingestion time, each feeding a specific vector space.
+These are the **search-side** schemas consumed by the search pipeline
+when reading metadata from Qdrant:
 - `PlotEventsMetadata` → plot_events vector
 - `PlotAnalysisMetadata` → plot_analysis vector
 - `ViewerExperienceMetadata` → viewer_experience vector
 - `WatchContextMetadata` → watch_context vector
 - `NarrativeTechniquesMetadata` → narrative_techniques vector
-- `ProductionMetadata` → production vector (legacy combined schema;
+- `ProductionMetadata` → production vector (**legacy combined schema**;
   generation-side has split into `ProductionKeywordsOutput` and
-  `SourceOfInspirationOutput` in `movie_ingestion/metadata_generation/schemas.py` —
+  `SourceOfInspirationOutput` in `schemas/metadata.py` —
   search-side schema needs alignment before deployment)
 - `ReceptionMetadata` → reception vector
+
+The generation-side counterparts live in `schemas/metadata.py` and
+diverge intentionally from these search-side schemas. When deploying,
+align the search-side schemas to match generation outputs.
 
 **Query Understanding Schemas** (`schemas.py`): Four response types
 from the search-time LLM DAG:
@@ -67,3 +78,5 @@ from the search-time LLM DAG:
   ordinal comparison (G=1, PG=2, PG-13=3, R=4, NC-17=5).
 - Watch provider keys encode both provider and access method in
   a single uint32: `provider_id << 2 | method_id`.
+- `VectorCollectionName` docstring references Qdrant (not ChromaDB,
+  which was the previous vector store).
