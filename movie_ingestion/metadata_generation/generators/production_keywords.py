@@ -24,12 +24,10 @@ See docs/llm_metadata_generation_new_flow.md Section 5.5.
 
 from typing import Tuple
 
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
-    build_user_prompt,
-)
-from movie_ingestion.metadata_generation.schemas import ProductionKeywordsOutput
+from schemas.enums import MetadataType
+from schemas.movie_input import MovieInputData
+from schemas.metadata import ProductionKeywordsOutput
+from movie_ingestion.metadata_generation.inputs import build_user_prompt
 from movie_ingestion.metadata_generation.prompts.production_keywords import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,

@@ -17,7 +17,7 @@ import pytest
 
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
-from movie_ingestion.metadata_generation.schemas import (
+from schemas.metadata import (
     NarrativeTechniquesOutput,
     TermsWithJustificationSection,
 )

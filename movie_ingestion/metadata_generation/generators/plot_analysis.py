@@ -39,12 +39,10 @@ See docs/llm_metadata_generation_new_flow.md Section 5.1.
 
 from typing import Tuple
 
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
-    build_user_prompt,
-)
-from movie_ingestion.metadata_generation.schemas import PlotAnalysisOutput
+from schemas.enums import MetadataType
+from schemas.movie_input import MovieInputData
+from schemas.metadata import PlotAnalysisOutput
+from movie_ingestion.metadata_generation.inputs import build_user_prompt
 from movie_ingestion.metadata_generation.prompts.plot_analysis import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,

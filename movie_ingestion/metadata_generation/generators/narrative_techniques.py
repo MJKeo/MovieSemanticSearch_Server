@@ -35,16 +35,14 @@ See docs/llm_metadata_generation_new_flow.md Section 5.4.
 
 from typing import Tuple
 
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
-    build_user_prompt,
-)
+from schemas.enums import MetadataType
+from schemas.movie_input import MovieInputData
+from schemas.metadata import NarrativeTechniquesOutput
+from movie_ingestion.metadata_generation.inputs import build_user_prompt
 from movie_ingestion.metadata_generation.batch_generation.pre_consolidation import (
     resolve_narrative_techniques_narrative,
     _MIN_NT_CRAFT_OBSERVATIONS_COMBINED_CHARS,
 )
-from movie_ingestion.metadata_generation.schemas import NarrativeTechniquesOutput
 from movie_ingestion.metadata_generation.prompts.narrative_techniques import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,

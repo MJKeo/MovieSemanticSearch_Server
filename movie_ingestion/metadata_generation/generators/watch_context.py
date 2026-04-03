@@ -45,12 +45,10 @@ See evaluation_data/watch_context_eval_guide.md for input contract rationale.
 
 from typing import Tuple
 
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
-    build_user_prompt,
-)
-from movie_ingestion.metadata_generation.schemas import WatchContextOutput
+from schemas.enums import MetadataType
+from schemas.movie_input import MovieInputData
+from schemas.metadata import WatchContextOutput
+from movie_ingestion.metadata_generation.inputs import build_user_prompt
 from movie_ingestion.metadata_generation.prompts.watch_context import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,

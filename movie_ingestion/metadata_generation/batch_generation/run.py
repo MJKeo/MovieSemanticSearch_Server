@@ -39,11 +39,9 @@ from datetime import datetime
 from pathlib import Path
 
 from movie_ingestion.tracker import TRACKER_DB_PATH, init_db
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    load_movie_input_data,
-    parse_custom_id,
-)
+from schemas.enums import MetadataType
+from schemas.movie_input import load_movie_input_data
+from movie_ingestion.metadata_generation.inputs import parse_custom_id
 from movie_ingestion.metadata_generation.batch_generation.generator_registry import get_config
 from movie_ingestion.metadata_generation.batch_generation.request_builder import (
     build_requests,

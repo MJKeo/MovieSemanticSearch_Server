@@ -19,7 +19,7 @@ from movie_ingestion.metadata_generation.inputs import (
     ConsolidatedInputs,
     SkipAssessment,
 )
-from movie_ingestion.metadata_generation.schemas import (
+from schemas.metadata import (
     PlotEventsOutput,
     ReceptionOutput,
     PlotAnalysisOutput,

@@ -42,16 +42,14 @@ Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: minimal
 
 from typing import Tuple
 
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
-    build_user_prompt,
-)
+from schemas.enums import MetadataType
+from schemas.movie_input import MovieInputData
+from schemas.metadata import ViewerExperienceOutput
+from movie_ingestion.metadata_generation.inputs import build_user_prompt
 from movie_ingestion.metadata_generation.batch_generation.pre_consolidation import (
     resolve_viewer_experience_narrative,
     filter_viewer_experience_observations,
 )
-from movie_ingestion.metadata_generation.schemas import ViewerExperienceOutput
 from movie_ingestion.metadata_generation.prompts.viewer_experience import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,

@@ -19,13 +19,10 @@ from pathlib import Path
 from openai.lib._pydantic import to_strict_json_schema
 
 from movie_ingestion.tracker import TRACKER_DB_PATH
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    build_custom_id,
-    load_movie_input_data,
-    MovieInputData,
-)
-from movie_ingestion.metadata_generation.batch_generation.generator_registry import (
+from schemas.enums import MetadataType
+from schemas.movie_input import MovieInputData, load_movie_input_data
+from ..inputs import build_custom_id
+from ..batch_generation.generator_registry import (
     GeneratorConfig,
     get_config,
 )

@@ -41,13 +41,11 @@ See docs/llm_metadata_generation_new_flow.md Section 4.2.
 import re
 from typing import Tuple
 
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
-    MultiLineList,
-    build_user_prompt,
-)
-from movie_ingestion.metadata_generation.schemas import ReceptionOutput
+from schemas.enums import MetadataType
+from schemas.data_types import MultiLineList
+from schemas.movie_input import MovieInputData
+from schemas.metadata import ReceptionOutput
+from movie_ingestion.metadata_generation.inputs import build_user_prompt
 from movie_ingestion.metadata_generation.prompts.reception import SYSTEM_PROMPT
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,

@@ -46,15 +46,15 @@ and Section 6 (Sparse Movie Skip Conditions) for the full specification.
 
 from __future__ import annotations
 
-from ..inputs import (
-    MovieInputData,
-    ConsolidatedInputs,
-    SkipAssessment,
-)
-from ..schemas import (
+from schemas.movie_input import MovieInputData
+from schemas.metadata import (
     PlotAnalysisOutput,
     PlotEventsOutput,
     ReceptionOutput,
+)
+from ..inputs import (
+    ConsolidatedInputs,
+    SkipAssessment,
 )
 
 

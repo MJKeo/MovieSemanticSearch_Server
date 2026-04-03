@@ -14,7 +14,7 @@ import pytest
 from implementation.llms.generic_methods import LLMProvider
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
-from movie_ingestion.metadata_generation.schemas import (
+from schemas.metadata import (
     WatchContextOutput,
     TermsSection,
 )
@@ -211,7 +211,7 @@ class TestWatchContextOverrides:
 
     async def test_custom_response_format_forwarded(self):
         """A custom response_format is forwarded to the LLM call."""
-        from movie_ingestion.metadata_generation.schemas import WatchContextWithJustificationsOutput
+        from schemas.metadata import WatchContextWithJustificationsOutput
 
         mock_fn = AsyncMock(return_value=(_make_wc_output(), 100, 50))
         movie = _make_movie()

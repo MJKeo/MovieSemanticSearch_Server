@@ -14,7 +14,7 @@ import pytest
 from implementation.llms.generic_methods import LLMProvider
 from implementation.llms.vector_metadata_generation_methods import TokenUsage
 from movie_ingestion.metadata_generation.inputs import MovieInputData
-from movie_ingestion.metadata_generation.schemas import SourceOfInspirationOutput
+from schemas.metadata import SourceOfInspirationOutput
 from movie_ingestion.metadata_generation.errors import (
     MetadataGenerationError,
     MetadataGenerationEmptyResponseError,

@@ -23,11 +23,33 @@ Files: db/ingest_movie.py → movie_ingestion/final_ingestion/ingest_movie.py, 5
 Why: Consolidate all ingestion pipeline logic under movie_ingestion/. The new final_ingestion/ subpackage will house all logic for taking movie data from the SQLite tracker and upserting into Postgres/Qdrant.
 Approach: Moved the file, created __init__.py, updated all import paths (5 notebooks, 1 test file), updated db.md/ingestion.md module docs and CLAUDE.md architecture docs.
 
-## Add top-level schemas/ package for cross-cutting data definitions
-Files: schemas/__init__.py (new), CLAUDE.md
-Why: Need a home for shared Pydantic models/data classes that are imported by db/, api/, and movie_ingestion/. The implementation/ folder is being phased out, so schemas/ replaces implementation/classes/ as the canonical location for cross-module schemas.
+## Add top-level schemas/ package and refactor cross-cutting types out of metadata_generation
+Files: schemas/__init__.py, schemas/metadata.py, schemas/enums.py, schemas/data_types.py, schemas/movie_input.py (all new), movie_ingestion/metadata_generation/schemas.py (deleted), movie_ingestion/metadata_generation/inputs.py (trimmed), all 8 generators, all 4 batch_generation modules, CLAUDE.md
+
+Why: Need a home for shared Pydantic models/data classes importable by db/, api/, and movie_ingestion/. The implementation/ folder is being phased out.
+
+Moved to schemas/:
+- All Output schema classes (PlotEventsOutput, ReceptionOutput, etc.) → schemas/metadata.py
+- MetadataType enum → schemas/enums.py
+- MultiLineList → schemas/data_types.py
+- MovieInputData + load_movie_input_data → schemas/movie_input.py
+
+Kept in inputs.py (generation-pipeline-specific):
+- build_custom_id (now overloaded: accepts int or MovieInputData), parse_custom_id
+- WAVE1_TYPES, WAVE2_TYPES, ALL_GENERATION_TYPES
+- ConsolidatedInputs, SkipAssessment, build_user_prompt
+- Wave1Outputs, load_wave1_outputs, load_plot_analysis_output
+
+Removed: MovieInputData.batch_id() method — callers use build_custom_id() directly.
+All 12 consumer files updated to import from new canonical locations (no re-export shims).
 
 ## Extract vector text generation into movie_ingestion/final_ingestion/vector_text.py
 Files: movie_ingestion/final_ingestion/vector_text.py (new), movie_ingestion/final_ingestion/ingest_movie.py, CLAUDE.md, docs/modules/ingestion.md, docs/llm_metadata_generation_report.md
 Why: Vector text generation functions (8 total, one per vector space) were in implementation/vectorize.py alongside legacy ChromaDB code. Extracting them into final_ingestion/ co-locates them with the ingestion pipeline that consumes them.
 Approach: Copied all 8 create_*_vector_text functions and the budget_size_to_vector_text helper verbatim into the new file. Updated ingest_movie.py import to point to the new location (linter normalized to relative import `from .vector_text import ...`). Updated all docs that referenced the old path: ingestion.md, llm_metadata_generation_report.md, CLAUDE.md, PROJECT.md, and TODO.md (6 references).
+
+## Update test imports for schemas package split
+Files: unit_tests/test_pre_consolidation.py, unit_tests/test_source_of_inspiration_generator.py, unit_tests/test_viewer_experience_generator.py, unit_tests/test_metadata_schemas.py, unit_tests/test_plot_analysis_generator.py, unit_tests/test_plot_events_generator.py, unit_tests/test_production_keywords_generator.py, unit_tests/test_narrative_techniques_generator.py, unit_tests/test_watch_context_generator.py, unit_tests/test_reception_generator.py, unit_tests/test_generator_registry.py
+Why: The generation-side schema models moved from `movie_ingestion.metadata_generation.schemas` to the top-level `schemas.metadata` module, and a set of tests were still importing the deleted module path.
+Approach: Repointed test imports to `schemas.metadata` without changing test intent. Re-ran collection in the `uv` environment to verify the pure import-path drift was fixed; those updated files now collect successfully.
+Testing notes: `unit_tests/test_prompt_constants.py` still fails collection because `SYSTEM_PROMPT_WITH_REASONING` is missing from `movie_ingestion.metadata_generation.prompts.source_of_inspiration`, which appears to be a real API/constant change rather than a path rename.

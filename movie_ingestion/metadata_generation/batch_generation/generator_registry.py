@@ -29,9 +29,9 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel
 
+from schemas.enums import MetadataType
+from schemas.movie_input import MovieInputData
 from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
     load_wave1_outputs,
     load_plot_analysis_output,
 )
@@ -347,7 +347,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
     from ..generators.plot_events import generate_plot_events
     from ..generators.reception import generate_reception
     from ..generators.production_keywords import generate_production_keywords
-    from ..schemas import (
+    from schemas.metadata import (
         PlotEventsOutput,
         ReceptionOutput,
         PlotAnalysisOutput,

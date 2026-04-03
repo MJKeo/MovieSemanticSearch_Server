@@ -19,8 +19,8 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from movie_ingestion.tracker import TRACKER_DB_PATH
-from movie_ingestion.metadata_generation.inputs import MetadataType, parse_custom_id
-from movie_ingestion.metadata_generation.schemas import (
+from schemas.enums import MetadataType
+from schemas.metadata import (
     PlotEventsOutput,
     ReceptionOutput,
     PlotAnalysisOutput,
@@ -30,6 +30,7 @@ from movie_ingestion.metadata_generation.schemas import (
     WatchContextOutput,
     ViewerExperienceOutput,
 )
+from ..inputs import parse_custom_id
 
 
 # ---------------------------------------------------------------------------

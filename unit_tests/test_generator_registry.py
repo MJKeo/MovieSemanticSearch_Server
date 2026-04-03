@@ -22,7 +22,7 @@ from movie_ingestion.metadata_generation.batch_generation.generator_registry imp
     _plot_events_prompt_builder,
     _reception_prompt_builder,
 )
-from movie_ingestion.metadata_generation.schemas import (
+from schemas.metadata import (
     PlotEventsOutput,
     ReceptionOutput,
     PlotAnalysisOutput,

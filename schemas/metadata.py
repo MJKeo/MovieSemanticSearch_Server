@@ -670,5 +670,3 @@ class SourceOfInspirationOutput(BaseModel):
     def __str__(self) -> str:
         all_terms = self.source_material + self.franchise_lineage
         return ", ".join(t.lower() for t in all_terms)
-
-

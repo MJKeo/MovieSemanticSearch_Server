@@ -39,13 +39,11 @@ role (feeds 4/5 Wave 2 generators and plot_events embedding).
 import re
 from typing import Tuple
 
-from movie_ingestion.metadata_generation.inputs import (
-    MetadataType,
-    MovieInputData,
-    MultiLineList,
-    build_user_prompt,
-)
-from movie_ingestion.metadata_generation.schemas import PlotEventsOutput
+from schemas.enums import MetadataType
+from schemas.data_types import MultiLineList
+from schemas.movie_input import MovieInputData
+from schemas.metadata import PlotEventsOutput
+from movie_ingestion.metadata_generation.inputs import build_user_prompt
 from movie_ingestion.metadata_generation.prompts.plot_events import (
     SYSTEM_PROMPT_SYNOPSIS,
     SYSTEM_PROMPT_SYNTHESIS,

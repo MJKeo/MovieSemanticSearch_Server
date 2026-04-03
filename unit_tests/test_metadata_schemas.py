@@ -16,7 +16,7 @@ Covers:
 import pytest
 from pydantic import ValidationError
 
-from movie_ingestion.metadata_generation.schemas import (
+from schemas.metadata import (
     PlotEventsOutput,
     ReceptionOutput,
     CharacterArcWithReasoning,
@@ -660,7 +660,7 @@ class TestViewerExperienceOutputStrContent:
 
     def test_viewer_experience_rejects_optional_wrapper(self):
         """ViewerExperienceOutput rejects OptionalTermsWithNegationsSection for its fields."""
-        from movie_ingestion.metadata_generation.schemas import OptionalTermsWithNegationsSection
+        from schemas.metadata import OptionalTermsWithNegationsSection
         optional_section = OptionalTermsWithNegationsSection(
             should_skip=False,
             section_data=_make_terms_section(["term"]),
@@ -746,7 +746,7 @@ class TestSourceOfInspirationOldFieldNamesRejected:
 
     def test_source_of_inspiration_with_reasoning_rejects_old_field_names(self):
         """Old reasoning field names (source_reasoning, production_medium_reasoning) are rejected."""
-        from movie_ingestion.metadata_generation.schemas import SourceOfInspirationWithReasoningOutput
+        from schemas.metadata import SourceOfInspirationWithReasoningOutput
         with pytest.raises(ValidationError):
             SourceOfInspirationWithReasoningOutput(
                 source_reasoning="Evidence.",
@@ -795,7 +795,7 @@ class TestSourceOfInspirationPromptAliasRemoval:
 class TestSourceOfInspirationWithReasoningEvidenceConstraints:
     def test_whitespace_only_evidence_rejected(self):
         """Whitespace-only evidence strings should fail min_length=1 after strip_whitespace."""
-        from movie_ingestion.metadata_generation.schemas import SourceOfInspirationWithReasoningOutput
+        from schemas.metadata import SourceOfInspirationWithReasoningOutput
         with pytest.raises(ValidationError):
             SourceOfInspirationWithReasoningOutput(
                 source_evidence="   ",
