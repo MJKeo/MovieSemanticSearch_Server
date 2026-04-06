@@ -51,11 +51,14 @@ class MovieStatus(StrEnum):
     Progression:
       PENDING → TMDB_FETCHED → TMDB_QUALITY_CALCULATED →
       TMDB_QUALITY_PASSED → IMDB_SCRAPED → IMDB_QUALITY_CALCULATED →
-      IMDB_QUALITY_PASSED → PHASE1_COMPLETE → PHASE2_COMPLETE →
+      IMDB_QUALITY_PASSED → METADATA_GENERATED →
       EMBEDDED → INGESTED
 
     Terminal:
       FILTERED_OUT (with variable reason strings in filter_log)
+
+    Retryable:
+      INGESTION_FAILED (failure details in ingestion_failures table)
     """
     PENDING = "pending"
     TMDB_FETCHED = "tmdb_fetched"
@@ -64,12 +67,14 @@ class MovieStatus(StrEnum):
     IMDB_SCRAPED = "imdb_scraped"
     IMDB_QUALITY_CALCULATED = "imdb_quality_calculated"
     IMDB_QUALITY_PASSED = "imdb_quality_passed"
-    PHASE1_COMPLETE = "phase1_complete"
-    PHASE2_COMPLETE = "phase2_complete"
+    METADATA_GENERATED = "metadata_generated"
     EMBEDDED = "embedded"
     INGESTED = "ingested"
     # Terminal status — reason details are in filter_log.reason
     FILTERED_OUT = "filtered_out"
+    # Retryable failure — movie failed during ingestion, eligible for retry.
+    # Failure details are in ingestion_failures table.
+    INGESTION_FAILED = "ingestion_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -92,11 +97,13 @@ CREATE TABLE IF NOT EXISTS movie_progress (
     -- Statuses (in order) — defined in MovieStatus enum:
     --   pending → tmdb_fetched → tmdb_quality_calculated →
     --   tmdb_quality_passed → imdb_scraped → imdb_quality_calculated →
-    --   imdb_quality_passed → phase1_complete → phase2_complete →
+    --   imdb_quality_passed → metadata_generated →
     --   embedded → ingested
     --
     -- Terminal statuses:
     --   filtered_out        (all filtering — reason details in filter_log.reason)
+    -- Retryable statuses:
+    --   ingestion_failed    (failure details in ingestion_failures table)
     stage_3_quality_score REAL,
     stage_5_quality_score REAL,
     updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -216,6 +223,18 @@ CREATE TABLE IF NOT EXISTS generation_failures (
 CREATE INDEX IF NOT EXISTS idx_gen_failures_type ON generation_failures(metadata_type);
 CREATE INDEX IF NOT EXISTS idx_gen_failures_batch ON generation_failures(batch_id);
 
+-- Per-movie ingestion failures, for diagnostics and retry tracking.
+-- A single movie may have multiple rows if it failed at more than one step
+-- (e.g. both movie card and lexical ingestion in the same run).
+-- The error_message includes the step prefix (e.g. "Postgres movie card: <error>").
+CREATE TABLE IF NOT EXISTS ingestion_failures (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    tmdb_id        INTEGER NOT NULL,
+    error_message  TEXT NOT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ingest_failures_tmdb ON ingestion_failures(tmdb_id);
+
 -- Generated metadata results and eligibility flags, one row per movie.
 -- JSON columns store the full LLM output (parsed on read). Eligibility
 -- flags are NULL until evaluated, then set to 1 (eligible) or 0 (ineligible)
@@ -294,6 +313,8 @@ def init_db() -> sqlite3.Connection:
         "DROP TABLE IF EXISTS wave1_results",
         # Add batch_id column to generation_failures for tracing failures back to batches.
         "ALTER TABLE generation_failures ADD COLUMN batch_id TEXT",
+        # Collapse phase1_complete / phase2_complete into metadata_generated.
+        "UPDATE movie_progress SET status = 'metadata_generated' WHERE status IN ('phase1_complete', 'phase2_complete')",
     ]
     for stmt in _MIGRATIONS:
         try:
@@ -541,6 +562,45 @@ def batch_log_filter(
     db.executemany(
         "UPDATE movie_progress SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE tmdb_id = ?",
         [(MovieStatus.FILTERED_OUT, e[0]) for e in entries],
+    )
+
+
+# ---------------------------------------------------------------------------
+# log_ingestion_failures — bulk-insert ingestion errors and mark status.
+# ---------------------------------------------------------------------------
+
+
+def log_ingestion_failures(
+    db: sqlite3.Connection,
+    failures: list[tuple[int, str]],
+) -> None:
+    """
+    Bulk-insert ingestion failure rows and mark movies as ingestion_failed.
+
+    Each tuple is (tmdb_id, error_message). The error_message should include
+    a human-readable step prefix (e.g. "Postgres movie card: <error>").
+    A single movie may appear multiple times if it failed at more than one
+    step (e.g. both movie card and lexical ingestion).
+
+    Does NOT commit — the caller is responsible for batching commits.
+
+    Args:
+        db:       Open SQLite connection.
+        failures: List of (tmdb_id, error_message) tuples.
+    """
+    if not failures:
+        return
+
+    db.executemany(
+        "INSERT INTO ingestion_failures (tmdb_id, error_message) VALUES (?, ?)",
+        failures,
+    )
+    # Deduplicate tmdb_ids for the status update — a movie with two failure
+    # rows still gets a single status update.
+    failed_tmdb_ids = list({f[0] for f in failures})
+    db.executemany(
+        "UPDATE movie_progress SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE tmdb_id = ?",
+        [(MovieStatus.INGESTION_FAILED, tid) for tid in failed_tmdb_ids],
     )
 
 

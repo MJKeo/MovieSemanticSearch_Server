@@ -6,6 +6,11 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
 CREATE EXTENSION IF NOT EXISTS intarray;
 
+-- Auto-kill connections that sit idle in an open transaction for more than 2
+-- minutes.  Prevents zombie transactions (e.g. from a crashed ingestion run)
+-- from holding row-level locks indefinitely.
+ALTER DATABASE moviedb SET idle_in_transaction_session_timeout = '2min';
+
 -- Lexical search schema.
 CREATE SCHEMA IF NOT EXISTS lex;
 
@@ -117,27 +122,6 @@ CREATE TABLE IF NOT EXISTS lex.inv_studio_postings (
 
 CREATE INDEX IF NOT EXISTS idx_studio_postings_movie
   ON lex.inv_studio_postings (movie_id);
-
--- Optional lookup tables for introspection and admin tooling.
-CREATE TABLE IF NOT EXISTS lex.genre_dictionary (
-  genre_id  INT PRIMARY KEY,
-  name      TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS lex.language_dictionary (
-  language_id  INT PRIMARY KEY,
-  name         TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS lex.watch_method_dictionary (
-  method_id  INT PRIMARY KEY,
-  name       TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS lex.maturity_dictionary (
-  maturity_rank  SMALLINT PRIMARY KEY,
-  label          TEXT NOT NULL UNIQUE
-);
 
 -- Materialized view used for max_df stop-word filtering in title matching.
 CREATE MATERIALIZED VIEW IF NOT EXISTS lex.title_token_doc_frequency AS

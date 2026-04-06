@@ -17,9 +17,23 @@ Vector spaces:
     8. reception         — critical reception, awards
 """
 
+import tiktoken
+
 from implementation.classes.enums import BudgetSize
 from implementation.misc.helpers import normalize_string
 from schemas.movie import Movie
+
+# Token limit for text-embedding-3-small. Texts exceeding this cause
+# embedding API errors and need to fall back to shorter alternatives.
+_EMBEDDING_TOKEN_LIMIT = 8_191
+
+# Cheap character-length gate to avoid running tiktoken on every movie.
+# Only texts above this threshold get tokenized (~561 of ~109K movies).
+# At ~3.7 chars/token, 15K chars ≈ 4K tokens — well under the limit,
+# so anything below this is guaranteed safe.
+_CHAR_GATE_THRESHOLD = 15_000
+
+_TIKTOKEN_ENC = tiktoken.encoding_for_model("text-embedding-3-small")
 
 
 # ===============================
@@ -164,46 +178,52 @@ def create_anchor_vector_text(movie: Movie) -> str:
     return "\n".join(parts)
 
 
-def create_plot_events_vector_text(movie: Movie) -> str | None:
-    """
-    Creates the text representation for the plot_events vector embedding.
+def _exceeds_token_limit(text: str) -> bool:
+    """Check if text exceeds the embedding model's token limit.
 
-    Uses a fallback hierarchy to select the richest available plot text:
+    Uses a cheap character-length gate first — only texts above
+    _CHAR_GATE_THRESHOLD are tokenized with tiktoken.
+    """
+    if len(text) <= _CHAR_GATE_THRESHOLD:
+        return False
+    print(f"   Character gate threshold tripped: {len(text)}")
+    token_count = len(_TIKTOKEN_ENC.encode(text))
+    print(f"   Token count: {token_count}")
+    return token_count >= _EMBEDDING_TOKEN_LIMIT
+
+
+def _plot_events_primary_text(movie: Movie) -> str:
+    """Select the richest available plot text via fallback hierarchy.
+
+    Priority:
       1. Full original scraped synopsis (longest from IMDB synopses)
       2. Generated plot_summary via plot_events metadata
       3. Longest scraped plot_summary entry
       4. IMDB overview
     """
-    text = ""
-
     if movie.imdb_data.synopses and max(movie.imdb_data.synopses, key=len):
         # 1. Full original scraped synopsis — richest source of plot detail
-        text = max(movie.imdb_data.synopses, key=len)
-    elif movie.plot_events_metadata:
+        return max(movie.imdb_data.synopses, key=len)
+    if movie.plot_events_metadata:
         # 2. LLM-generated plot summary from plot_events metadata
-        text = movie.plot_events_metadata.embedding_text()
-    elif movie.imdb_data.plot_summaries and max(movie.imdb_data.plot_summaries, key=len):
+        return movie.plot_events_metadata.embedding_text()
+    if movie.imdb_data.plot_summaries and max(movie.imdb_data.plot_summaries, key=len):
         # 3. Longest scraped plot_summary entry
-        text = max(movie.imdb_data.plot_summaries, key=len)
-    elif movie.imdb_data.overview:
+        return max(movie.imdb_data.plot_summaries, key=len)
+    if movie.imdb_data.overview:
         # 4. Overview as last resort
-        text = movie.imdb_data.overview
+        return movie.imdb_data.overview
+    return ""
 
-    return text.lower() if text else None
 
-
-def create_plot_events_vector_text_fallback(movie: Movie) -> str | None:
-    """
-    Fallback text for plot_events when the primary text exceeds the
-    embedding model's token limit (8,191 tokens for text-embedding-3-small).
+def _plot_events_fallback_text(movie: Movie) -> str:
+    """Shorter alternative text for when primary text exceeds the token limit.
 
     Uses the longer of:
       1. Longest scraped plot_summary entry
       2. Generated plot_summary from plot_events metadata
     Then falls back to overview if neither is available.
     """
-    text = ""
-
     # Collect the two candidates and pick the longer one
     longest_plot_summary = ""
     if movie.imdb_data.plot_summaries:
@@ -217,11 +237,31 @@ def create_plot_events_vector_text_fallback(movie: Movie) -> str | None:
     best = max(longest_plot_summary, generated_plot_summary, key=len)
 
     if best:
-        text = best
-    elif movie.imdb_data.overview:
-        text = movie.imdb_data.overview
+        return best
+    if movie.imdb_data.overview:
+        return movie.imdb_data.overview
+    return ""
 
-    return text.lower() if text else None
+
+def create_plot_events_vector_text(movie: Movie) -> str | None:
+    """Create the text representation for the plot_events vector embedding.
+
+    Selects the richest available plot text, but if the primary text
+    exceeds the embedding model's token limit (8,191 tokens for
+    text-embedding-3-small), falls back to a shorter alternative that
+    skips the full synopsis in favor of plot summaries or metadata.
+    """
+    text = _plot_events_primary_text(movie)
+    if text:
+        text = text.lower()
+
+    if text and _exceeds_token_limit(text):
+        text = _plot_events_fallback_text(movie)
+        if text:
+            text = text.lower()
+        print(f"   Fallback events being used with length {len(text)}")
+
+    return text if text else None
 
 
 def create_plot_analysis_vector_text(movie: Movie) -> str | None:

@@ -11,11 +11,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
-from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
-from implementation.classes.enums import Genre, MaturityRating, StreamingAccessType
 from implementation.classes.schemas import MetadataFilters
-from implementation.classes.languages import Language
 
 
 class PostingTable(Enum):
@@ -493,105 +490,6 @@ async def batch_upsert_character_strings(
     """
     await _execute_on_conn(conn, query, (deduped_string_ids, deduped_norm_strings))
 
-
-async def batch_upsert_genre_dictionary(conn=None) -> None:
-    """
-    Batch upsert genre lookup rows in lex.genre_dictionary.
-
-    Args:
-        genre_ids: Genre IDs aligned one-to-one with ``names``.
-        names: Genre names aligned one-to-one with ``genre_ids``.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    genre_ids = [genre.genre_id for genre in Genre]
-    names = [genre.normalized_name for genre in Genre]
-    if not genre_ids:
-        return
-    if len(genre_ids) != len(names):
-        raise ValueError("Genre dictionary upsert failed: genre_ids and names lengths differ.")
-
-    query = """
-    INSERT INTO lex.genre_dictionary (genre_id, name)
-    SELECT input.genre_id, input.name
-    FROM unnest(%s::int[], %s::text[]) AS input(genre_id, name)
-    ON CONFLICT (genre_id) DO UPDATE SET
-        name = EXCLUDED.name;
-    """
-    await _execute_on_conn(conn, query, (genre_ids, names))
-
-
-async def batch_upsert_language_dictionary(conn=None) -> None:
-    """
-    Batch upsert language lookup rows in lex.language_dictionary.
-
-    Args:
-        language_ids: Language IDs aligned one-to-one with ``names``.
-        names: Language names aligned one-to-one with ``language_ids``.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    language_ids = [lang.language_id for lang in Language]
-    names = [normalize_string(lang.value) for lang in Language]
-    if not language_ids:
-        return
-    if len(language_ids) != len(names):
-        raise ValueError("Language dictionary upsert failed: language_ids and names lengths differ.")
-
-    query = """
-    INSERT INTO lex.language_dictionary (language_id, name)
-    SELECT input.language_id, input.name
-    FROM unnest(%s::int[], %s::text[]) AS input(language_id, name)
-    ON CONFLICT (language_id) DO UPDATE SET
-        name = EXCLUDED.name;
-    """
-    await _execute_on_conn(conn, query, (language_ids, names))
-
-
-async def batch_upsert_maturity_dictionary(conn=None) -> None:
-    """
-    Upsert a maturity-rating lookup row in lex.maturity_dictionary.
-    
-    Args:
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    maturity_ranks = [maturity.maturity_rank for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
-    labels = [normalize_string(maturity.value) for maturity in MaturityRating if maturity != MaturityRating.UNRATED]
-    if not maturity_ranks:
-        return
-    if len(maturity_ranks) != len(labels):
-        raise ValueError("Maturity dictionary upsert failed: maturity_ranks and labels lengths differ.")
-
-    query = """
-    INSERT INTO lex.maturity_dictionary (maturity_rank, label)
-    SELECT input.maturity_rank, input.label
-    FROM unnest(%s::int[], %s::text[]) AS input(maturity_rank, label)
-    ON CONFLICT (maturity_rank) DO UPDATE SET
-        label = EXCLUDED.label;
-    """
-    await _execute_on_conn(conn, query, (maturity_ranks, labels))
-
-
-async def batch_upsert_watch_method_dictionary(conn=None) -> None:
-    """
-    Batch upsert watch-method lookup rows in lex.watch_method_dictionary.
-
-    Args:
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    watch_method_types = [watch_method_type.type_id for watch_method_type in StreamingAccessType]
-    watch_method_names = [normalize_string(watch_method_type.value) for watch_method_type in StreamingAccessType]
-    if not watch_method_types:
-        return
-    if len(watch_method_types) != len(watch_method_names):
-        raise ValueError("Watch method dictionary upsert failed: watch_method_types and watch_method_names lengths differ.")
-
-    query = """
-    INSERT INTO lex.watch_method_dictionary (method_id, name)
-    SELECT input.method_id, input.name
-    FROM unnest(%s::int[], %s::text[]) AS input(method_id, name)
-    ON CONFLICT (method_id) DO UPDATE SET
-        name = EXCLUDED.name;
-    """
-    await _execute_on_conn(conn, query, (watch_method_types, watch_method_names))
 
 
 async def batch_insert_title_token_postings(term_ids: list[int], movie_id: int, conn=None) -> None:

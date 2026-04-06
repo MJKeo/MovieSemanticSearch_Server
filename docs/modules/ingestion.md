@@ -17,7 +17,7 @@ this module.
 
 | File | Purpose |
 |------|---------|
-| `tracker.py` | Shared backbone — SQLite database at `./ingestion_data/tracker.db`. Manages `movie_progress`, `filter_log`, `tmdb_data`, and `imdb_data` tables. Defines `MovieStatus`/`PipelineStage` enums. Provides `log_filter()`, `batch_log_filter()`, `serialize_imdb_movie()`, `deserialize_imdb_row()`, and `IMDB_DATA_COLUMNS`. |
+| `tracker.py` | Shared backbone — SQLite database at `./ingestion_data/tracker.db`. Manages `movie_progress`, `filter_log`, `tmdb_data`, `imdb_data`, `generated_metadata`, and `ingestion_failures` tables. Defines `MovieStatus`/`PipelineStage` enums. Provides `log_filter()`, `batch_log_filter()`, `log_ingestion_failures()`, `serialize_imdb_movie()`, `deserialize_imdb_row()`, and `IMDB_DATA_COLUMNS`. |
 | `tmdb_fetching/daily_export.py` | Stage 1: Stream-download gzipped JSONL (~1M entries), filter (adult=False, video=False, popularity>0), insert ~800K as 'pending'. |
 | `tmdb_fetching/tmdb_fetcher.py` | Stage 2: Async TMDB detail fetch for all pending movies. Extracts fields into `tmdb_data` table. Filters movies missing IMDB ID. Uses adaptive rate limiting from `db/tmdb.py`. HTTP fetching and DB writes are separated: async tasks return result NamedTuples, all DB writes happen via `executemany` after `asyncio.gather()`. |
 | `tmdb_quality_scoring/tmdb_quality_scorer.py` | Stage 3 scorer: edge cases (unreleased → 0.0, has providers → 1.0) + 4-signal weighted formula for no-provider movies. |
@@ -50,8 +50,8 @@ this module.
 | `metadata_generation/helper_scripts/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
 | `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All 8 generators are now locked (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative), `narrative_techniques.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, 9-section schema), `watch_context.py` (gpt-5-mini, reasoning_effort=minimal, WatchContextWithIdentityNoteOutput), `source_of_inspiration.py` (gpt-5-mini, reasoning_effort=low, base SourceOfInspirationOutput schema, see ADR-053), `production_keywords.py` (gpt-5-mini, reasoning_effort=low, base ProductionKeywordsOutput schema — only Wave 2 generator using base schema in production, see ADR-054). See ADR-026, ADR-027, ADR-045, ADR-048, ADR-049, ADR-053, ADR-054. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant. All generators are now locked; no unlocked generators remain. `production_keywords.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` (retained for evaluation notebook backward compatibility). `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. Locked generators use the base (non-reasoning) prompt as production. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
-| `final_ingestion/vector_text.py` | Generates the text for each of the 8 vector spaces from a `Movie` object. One function per space (e.g. `create_plot_events_vector_text`, `create_reception_vector_text`). All functions accept `Movie` and return `str | None` (None when required metadata is absent). Synopsis-first fallback hierarchy for plot_events; labeled fields and per-term `normalize_string()` for plot_analysis and reception; thin wrappers over `embedding_text()` for remaining spaces. |
-| `final_ingestion/ingest_movie.py` | Stage 8: Upserts final movie data into Postgres (movie_card + lexical postings) and Qdrant (8 named vectors + hard-filter payload). Supports single and batched ingestion. |
+| `final_ingestion/vector_text.py` | Generates the text for each of the 8 vector spaces from a `Movie` object. One function per space (e.g. `create_plot_events_vector_text`, `create_reception_vector_text`). All functions accept `Movie` and return `str | None` (None when required metadata is absent). Synopsis-first fallback hierarchy for plot_events; labeled fields and per-term `normalize_string()` for plot_analysis and reception; thin wrappers over `embedding_text()` for remaining spaces. Token-limit fallback is wired into `create_plot_events_vector_text()` automatically — callers do not need to handle it. Two-tier check: cheap 15K-char gate first, tiktoken only on the ~0.5% that exceed it. |
+| `final_ingestion/ingest_movie.py` | Stage 8: Upserts final movie data into Postgres (movie_card + lexical postings) and Qdrant (8 named vectors + hard-filter payload). All functions accept `Movie` exclusively (BaseMovie fully removed). Includes CLI entry point (`cmd_ingest`) for orchestrated batch ingestion: parallel Postgres + Qdrant via `asyncio.gather`, Postgres sub-batches with SAVEPOINTs for per-movie error isolation. Returns `BatchIngestionResult` (succeeded_ids, failed_ids, filtered_ids, errors). `MissingRequiredAttributeError` routes movies with unrecoverable missing fields to `filtered_out` rather than the retryable `ingestion_failed` status. `_mark_ingested` uses `json_each()` for a single UPDATE statement avoiding SQLITE_MAX_VARIABLE_NUMBER limits. |
 | `scoring_utils.py` | Shared scoring utilities: `unpack_provider_keys()`, `score_vote_count()`, `score_popularity()`, `validate_weights()`, age-adjustment constants. Also the canonical group classification: `MovieGroup` enum, `classify_movie_group()`, `passes_imdb_quality_threshold()`, `IMDB_QUALITY_THRESHOLDS`, and SQL fragment constants (`HAS_PROVIDERS_SQL`, `NO_PROVIDERS_SQL`, `THEATER_WINDOW_SQL_PARAM`). |
 | `survival_curve_utils.py` | Shared Gaussian-smoothed survival curve plotting utility. Provides normalization, zero-crossing detection, survival count interpolation at extrema, and parameterized plotting. Used by the TMDB and IMDB `plot_quality_scores.py` wrappers. |
 
@@ -368,8 +368,7 @@ through without normalization — provider-specific params (e.g., `max_tokens`
 for OpenAI vs `max_output_tokens` for Gemini) cause 400 errors on other
 providers. Document at the call site.
 
-**Status progression**: `imdb_quality_passed` → `phase1_complete`
-(after plot_events + reception) → `phase2_complete` (after remaining 6).
+**Status progression**: `imdb_quality_passed` → `metadata_generated` (all 8 types complete). The former `phase1_complete`/`phase2_complete` statuses have been collapsed — metadata generation is a single logical step. DB init applies a migration for any lingering rows.
 
 ### plot_events Generator: Two-Branch Design
 
@@ -564,9 +563,11 @@ The `tracker.py` module is the shared backbone. Key rules:
   to get those when needed for display.
 - Status progression: `pending` → `tmdb_fetched` →
   `tmdb_quality_calculated` → `tmdb_quality_passed` → `imdb_scraped` →
-  `imdb_quality_calculated` → `imdb_quality_passed` → `phase1_complete` →
-  `phase2_complete` → `embedded` → `ingested`
+  `imdb_quality_calculated` → `imdb_quality_passed` → `metadata_generated` →
+  `embedded` → `ingested`
 - Terminal statuses: `filtered_out`
+- Retryable failure status: `ingestion_failed` (set when Postgres or Qdrant
+  ingestion fails; eligible movies are retried on the next batch run)
 
 ### Tables
 
@@ -587,6 +588,11 @@ The `tracker.py` module is the shared backbone. Key rules:
 - `generation_failures` — per-request failures: `tmdb_id`, `metadata_type`,
   `error_message`. Separate from `generated_metadata` — a failure row
   distinguishes "attempted and failed" from "not yet attempted."
+- `ingestion_failures` — per-movie ingestion failures: `tmdb_id`,
+  `error_message` (step label encoded in prefix, e.g. "Postgres movie card: <err>"),
+  `created_at`. Indexed on tmdb_id. Cleared when a movie succeeds on retry.
+  Written by `log_ingestion_failures()` in tracker.py (mirrors `batch_log_filter`
+  pattern: bulk INSERT + bulk UPDATE, does NOT commit).
 
 ### Durability settings
 

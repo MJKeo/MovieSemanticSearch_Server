@@ -486,3 +486,196 @@ class TestReceptionTier:
         """Score of exactly 61 should be 'Generally favorable reviews'."""
         movie = _make_movie(imdb_data={"imdb_rating": 6.1, "metacritic_rating": None})
         assert movie.reception_tier() == "Generally favorable reviews"
+
+
+# ---------------------------------------------------------------------------
+# release_ts
+# ---------------------------------------------------------------------------
+
+class TestReleaseTs:
+    def test_valid_date_returns_unix_timestamp(self):
+        """'2002-05-03' should produce the expected UTC Unix timestamp."""
+        movie = _make_movie(tmdb_data={"release_date": "2002-05-03"})
+        assert movie.release_ts() == 1020384000
+
+    def test_none_when_release_date_missing(self):
+        movie = _make_movie(tmdb_data={"release_date": None})
+        assert movie.release_ts() is None
+
+    def test_invalid_format_raises_value_error(self):
+        """Malformed date string should raise ValueError from strptime."""
+        movie = _make_movie(tmdb_data={"release_date": "not-a-date"})
+        with pytest.raises(ValueError):
+            movie.release_ts()
+
+    def test_epoch_date(self):
+        """'1970-01-01' should produce timestamp 0."""
+        movie = _make_movie(tmdb_data={"release_date": "1970-01-01"})
+        assert movie.release_ts() == 0
+
+
+# ---------------------------------------------------------------------------
+# maturity_rating_and_rank
+# ---------------------------------------------------------------------------
+
+class TestMaturityRatingAndRank:
+    def test_known_rating_pg13(self):
+        """'PG-13' should resolve to ('pg-13', 3)."""
+        movie = _make_movie(
+            imdb_data={"maturity_rating": "PG-13"},
+            tmdb_data={"maturity_rating": None},
+        )
+        assert movie.maturity_rating_and_rank() == ("pg-13", 3)
+
+    def test_unknown_rating_falls_back_to_unrated(self):
+        """Unrecognized string should resolve to ('unrated', 999)."""
+        movie = _make_movie(
+            imdb_data={"maturity_rating": "XYZ-RATING"},
+            tmdb_data={"maturity_rating": None},
+        )
+        assert movie.maturity_rating_and_rank() == ("unrated", 999)
+
+    def test_prefers_imdb_over_tmdb(self):
+        """IMDB maturity rating should take precedence over TMDB."""
+        movie = _make_movie(
+            imdb_data={"maturity_rating": "R"},
+            tmdb_data={"maturity_rating": "PG"},
+        )
+        label, rank = movie.maturity_rating_and_rank()
+        assert label == "r"
+        assert rank == 4
+
+    def test_falls_back_to_tmdb_when_imdb_missing(self):
+        """When IMDB has no maturity rating, should use TMDB's."""
+        movie = _make_movie(
+            imdb_data={"maturity_rating": None},
+            tmdb_data={"maturity_rating": "G"},
+        )
+        label, rank = movie.maturity_rating_and_rank()
+        assert label == "g"
+        assert rank == 1
+
+
+# ---------------------------------------------------------------------------
+# normalized_title_tokens
+# ---------------------------------------------------------------------------
+
+class TestMovieNormalizedTitleTokens:
+    def test_title_only_no_original(self):
+        """No original_title — returns only title tokens."""
+        movie = _make_movie(
+            tmdb_data={"title": "Spider-Man"},
+            imdb_data={"original_title": None},
+        )
+        tokens = movie.normalized_title_tokens()
+        assert tokens == ["spider-man", "spider", "man"]
+
+    def test_different_original_title_appends_new_tokens(self):
+        """Original title with new tokens appends them after title tokens."""
+        movie = _make_movie(
+            tmdb_data={"title": "Spider-Man"},
+            imdb_data={"original_title": "El Hombre Araña"},
+        )
+        tokens = movie.normalized_title_tokens()
+        # Title tokens come first, then unique original tokens
+        assert tokens[:3] == ["spider-man", "spider", "man"]
+        assert "el" in tokens
+        assert "hombre" in tokens
+
+    def test_same_original_title_no_duplicates(self):
+        """original_title == title should not add duplicate tokens."""
+        movie = _make_movie(
+            tmdb_data={"title": "Spider-Man"},
+            imdb_data={"original_title": "Spider-Man"},
+        )
+        tokens = movie.normalized_title_tokens()
+        assert tokens == ["spider-man", "spider", "man"]
+
+    def test_shared_tokens_deduplicated(self):
+        """Tokens shared between title and original appear only once."""
+        movie = _make_movie(
+            tmdb_data={"title": "The Matrix"},
+            imdb_data={"original_title": "Matrix Reloaded"},
+        )
+        tokens = movie.normalized_title_tokens()
+        assert tokens.count("matrix") == 1
+        assert "reloaded" in tokens
+        assert "the" in tokens
+
+
+# ---------------------------------------------------------------------------
+# genre_ids
+# ---------------------------------------------------------------------------
+
+class TestGenreIds:
+    def test_valid_genres_return_ids(self):
+        """Known genre strings should map to their integer genre IDs."""
+        movie = _make_movie(imdb_data={"genres": ["Action", "Drama"]})
+        ids = movie.genre_ids()
+        assert len(ids) == 2
+        assert all(isinstance(gid, int) for gid in ids)
+
+    def test_unknown_genre_is_skipped(self):
+        """Unrecognized genre string should be silently skipped."""
+        movie = _make_movie(imdb_data={"genres": ["Action", "NotARealGenre"]})
+        ids = movie.genre_ids()
+        assert len(ids) == 1  # Only Action resolves
+
+    def test_empty_genres(self):
+        movie = _make_movie(imdb_data={"genres": []})
+        assert movie.genre_ids() == []
+
+
+# ---------------------------------------------------------------------------
+# watch_offer_keys
+# ---------------------------------------------------------------------------
+
+class TestWatchOfferKeys:
+    def test_returns_tmdb_watch_provider_keys(self):
+        """Should return the pre-decoded keys from tmdb_data."""
+        movie = _make_movie(tmdb_data={"watch_provider_keys": [100, 200, 300]})
+        assert movie.watch_offer_keys() == [100, 200, 300]
+
+    def test_empty_when_no_providers(self):
+        movie = _make_movie(tmdb_data={"watch_provider_keys": []})
+        assert movie.watch_offer_keys() == []
+
+
+# ---------------------------------------------------------------------------
+# audio_language_ids
+# ---------------------------------------------------------------------------
+
+class TestAudioLanguageIds:
+    def test_valid_language_returns_id(self):
+        """Known language string should map to its integer ID."""
+        movie = _make_movie(imdb_data={"languages": ["English"]})
+        ids = movie.audio_language_ids()
+        assert len(ids) == 1
+        assert isinstance(ids[0], int)
+
+    def test_unknown_language_is_skipped(self):
+        """Unrecognized language string should be silently skipped."""
+        movie = _make_movie(imdb_data={"languages": ["English", "Zzyzxian"]})
+        ids = movie.audio_language_ids()
+        assert len(ids) == 1  # Only English resolves
+
+    def test_empty_languages(self):
+        movie = _make_movie(imdb_data={"languages": []})
+        assert movie.audio_language_ids() == []
+
+
+# ---------------------------------------------------------------------------
+# from_tmdb_ids (batch loader)
+# ---------------------------------------------------------------------------
+
+class TestFromTmdbIds:
+    def test_empty_list_returns_empty_dict(self):
+        """Empty input should return empty dict without touching the DB."""
+        result = Movie.from_tmdb_ids([])
+        assert result == {}
+
+    def test_missing_db_file_raises(self, tmp_path):
+        """Non-existent DB path should raise FileNotFoundError."""
+        fake_path = tmp_path / "nonexistent.db"
+        with pytest.raises(FileNotFoundError):
+            Movie.from_tmdb_ids([1, 2], tracker_db_path=fake_path)

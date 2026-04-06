@@ -23,6 +23,7 @@ from movie_ingestion.tracker import (
     init_db,
     load_json,
     log_filter,
+    log_ingestion_failures,
     save_json,
     serialize_imdb_movie,
 )
@@ -959,3 +960,203 @@ class TestSerializeImdbMovie:
         assert result["imdb_title_type"] == "short"
         assert result["original_title"] == "Test"
         assert result["genres"] == ["Drama"]
+
+
+# ---------------------------------------------------------------------------
+# MovieStatus enum updates
+# ---------------------------------------------------------------------------
+
+
+class TestMovieStatusUpdates:
+    """Tests for new and removed MovieStatus enum members."""
+
+    def test_metadata_generated_exists(self) -> None:
+        """METADATA_GENERATED should be a valid member."""
+        assert MovieStatus.METADATA_GENERATED == "metadata_generated"
+
+    def test_ingestion_failed_exists(self) -> None:
+        """INGESTION_FAILED should be a valid member."""
+        assert MovieStatus.INGESTION_FAILED == "ingestion_failed"
+
+    def test_phase1_complete_does_not_exist(self) -> None:
+        """PHASE1_COMPLETE should no longer be a member."""
+        assert not hasattr(MovieStatus, "PHASE1_COMPLETE")
+
+    def test_phase2_complete_does_not_exist(self) -> None:
+        """PHASE2_COMPLETE should no longer be a member."""
+        assert not hasattr(MovieStatus, "PHASE2_COMPLETE")
+
+
+# ---------------------------------------------------------------------------
+# ingestion_failures table
+# ---------------------------------------------------------------------------
+
+
+class TestIngestionFailuresTable:
+    """Tests for the ingestion_failures table schema created by _SCHEMA_SQL."""
+
+    def test_table_exists(self, in_memory_db) -> None:
+        """ingestion_failures table should be created by the schema."""
+        tables = in_memory_db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ingestion_failures'"
+        ).fetchall()
+        assert len(tables) == 1
+
+    def test_expected_columns(self, in_memory_db) -> None:
+        """ingestion_failures should have id, tmdb_id, error_message, created_at columns."""
+        cols = in_memory_db.execute("PRAGMA table_info(ingestion_failures)").fetchall()
+        col_names = {row[1] for row in cols}
+        assert col_names == {"id", "tmdb_id", "error_message", "created_at"}
+
+    def test_index_exists(self, in_memory_db) -> None:
+        """idx_ingest_failures_tmdb index should exist."""
+        rows = in_memory_db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_ingest_failures_tmdb'"
+        ).fetchall()
+        assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# log_ingestion_failures
+# ---------------------------------------------------------------------------
+
+
+class TestLogIngestionFailures:
+    """Tests for the log_ingestion_failures bulk-insert function."""
+
+    def test_happy_path_inserts_rows_and_updates_status(self, in_memory_db) -> None:
+        """Should insert failure rows and update movie_progress to ingestion_failed."""
+        in_memory_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (100, 'embedded')"
+        )
+        in_memory_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (200, 'embedded')"
+        )
+        in_memory_db.commit()
+
+        log_ingestion_failures(in_memory_db, [
+            (100, "Postgres movie card: connection timeout"),
+            (200, "Qdrant upsert: vector dimension mismatch"),
+        ])
+        in_memory_db.commit()
+
+        # Verify failure rows
+        rows = in_memory_db.execute(
+            "SELECT tmdb_id, error_message FROM ingestion_failures ORDER BY tmdb_id"
+        ).fetchall()
+        assert len(rows) == 2
+        assert rows[0] == (100, "Postgres movie card: connection timeout")
+        assert rows[1] == (200, "Qdrant upsert: vector dimension mismatch")
+
+        # Verify status updates
+        for tid in (100, 200):
+            status = in_memory_db.execute(
+                "SELECT status FROM movie_progress WHERE tmdb_id = ?", (tid,)
+            ).fetchone()[0]
+            assert status == "ingestion_failed"
+
+    def test_empty_list_is_noop(self, in_memory_db) -> None:
+        """Empty failures list should not insert anything."""
+        log_ingestion_failures(in_memory_db, [])
+        count = in_memory_db.execute("SELECT COUNT(*) FROM ingestion_failures").fetchone()[0]
+        assert count == 0
+
+    def test_deduplicates_status_update(self, in_memory_db) -> None:
+        """Same tmdb_id with multiple errors should only update status once."""
+        in_memory_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (300, 'embedded')"
+        )
+        in_memory_db.commit()
+
+        log_ingestion_failures(in_memory_db, [
+            (300, "Postgres movie card: error A"),
+            (300, "Postgres lexical: error B"),
+        ])
+        in_memory_db.commit()
+
+        # Should have 2 failure rows
+        failure_count = in_memory_db.execute(
+            "SELECT COUNT(*) FROM ingestion_failures WHERE tmdb_id = 300"
+        ).fetchone()[0]
+        assert failure_count == 2
+
+        # But only 1 movie_progress row
+        status = in_memory_db.execute(
+            "SELECT status FROM movie_progress WHERE tmdb_id = 300"
+        ).fetchone()[0]
+        assert status == "ingestion_failed"
+
+    def test_does_not_commit(self, in_memory_db) -> None:
+        """log_ingestion_failures should not commit — caller is responsible."""
+        in_memory_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (400, 'embedded')"
+        )
+        in_memory_db.commit()
+
+        log_ingestion_failures(in_memory_db, [(400, "test error")])
+
+        # Row visible within same connection
+        count = in_memory_db.execute(
+            "SELECT COUNT(*) FROM ingestion_failures WHERE tmdb_id = 400"
+        ).fetchone()[0]
+        assert count == 1
+
+        # Rollback proves it was not committed
+        in_memory_db.rollback()
+        count_after = in_memory_db.execute(
+            "SELECT COUNT(*) FROM ingestion_failures WHERE tmdb_id = 400"
+        ).fetchone()[0]
+        assert count_after == 0
+
+
+# ---------------------------------------------------------------------------
+# Migration: phase1/phase2 → metadata_generated
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseStatusMigration:
+    """Tests for the migration that collapses phase1/phase2 into metadata_generated."""
+
+    def test_migration_updates_phase1_to_metadata_generated(self, mocker, tmp_path) -> None:
+        """Movies with phase1_complete status should become metadata_generated after init_db."""
+        data_dir = tmp_path / "ingestion_data"
+        db_path = data_dir / "tracker.db"
+        mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
+        mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", db_path)
+
+        # Create old schema with phase1_complete status
+        data_dir.mkdir(parents=True, exist_ok=True)
+        old_db = sqlite3.connect(str(db_path))
+        old_db.execute("""
+            CREATE TABLE IF NOT EXISTS movie_progress (
+                tmdb_id INTEGER PRIMARY KEY,
+                imdb_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                stage_3_quality_score REAL,
+                stage_5_quality_score REAL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        old_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (100, 'phase1_complete')"
+        )
+        old_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (200, 'phase2_complete')"
+        )
+        old_db.execute(
+            "INSERT INTO movie_progress (tmdb_id, status) VALUES (300, 'embedded')"
+        )
+        old_db.commit()
+        old_db.close()
+
+        # Run init_db which should apply the migration
+        db = init_db()
+        statuses = {
+            row[0]: row[1]
+            for row in db.execute("SELECT tmdb_id, status FROM movie_progress").fetchall()
+        }
+        db.close()
+
+        assert statuses[100] == "metadata_generated"
+        assert statuses[200] == "metadata_generated"
+        assert statuses[300] == "embedded"  # Unaffected

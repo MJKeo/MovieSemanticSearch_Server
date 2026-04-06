@@ -29,7 +29,6 @@ from movie_ingestion.final_ingestion.vector_text import (
     budget_size_to_vector_text,
     create_anchor_vector_text,
     create_plot_events_vector_text,
-    create_plot_events_vector_text_fallback,
     create_plot_analysis_vector_text,
     create_narrative_techniques_vector_text,
     create_viewer_experience_vector_text,
@@ -372,31 +371,9 @@ class TestPlotEventsVectorText:
         assert "fallback overview." in result
 
 
-# ---------------------------------------------------------------------------
-# Plot events fallback
-# ---------------------------------------------------------------------------
-
-class TestPlotEventsFallback:
-    def test_picks_longer(self):
-        """Fallback should pick the longer of plot_summary vs generated."""
-        movie = _make_movie(
-            imdb_data={"plot_summaries": ["Short."]},
-            plot_events_metadata=PlotEventsOutput(
-                plot_summary="This is a much longer generated summary text."
-            ),
-        )
-        result = create_plot_events_vector_text_fallback(movie)
-        assert "this is a much longer generated summary text." in result
-
-    def test_falls_back_to_overview(self):
-        movie = _make_movie(
-            imdb_data={
-                "plot_summaries": [],
-                "overview": "Fallback overview.",
-            },
-        )
-        result = create_plot_events_vector_text_fallback(movie)
-        assert "fallback overview." in result
+# TestPlotEventsFallback removed — create_plot_events_vector_text_fallback
+# was inlined as _plot_events_fallback_text (private). Fallback behavior is
+# now tested via create_plot_events_vector_text auto-fallback tests.
 
 
 # ---------------------------------------------------------------------------
@@ -573,3 +550,95 @@ class TestReceptionVectorText:
         result = create_reception_vector_text(movie)
         assert "an instant classic." in result
         assert "praised:" in result
+
+
+# ---------------------------------------------------------------------------
+# Token limit checking (_exceeds_token_limit)
+# ---------------------------------------------------------------------------
+
+from movie_ingestion.final_ingestion.vector_text import (
+    _exceeds_token_limit,
+    _CHAR_GATE_THRESHOLD,
+    _EMBEDDING_TOKEN_LIMIT,
+)
+
+
+class TestExceedsTokenLimit:
+    def test_short_text_below_char_gate_returns_false(self):
+        """Text under the character gate threshold always returns False."""
+        short_text = "a" * (_CHAR_GATE_THRESHOLD - 1)
+        assert _exceeds_token_limit(short_text) is False
+
+    def test_long_text_above_char_gate_but_under_token_limit(self):
+        """Text above char gate but under token limit returns False."""
+        # Each word is ~1 token. 5000 words ≈ 5000 tokens, well under 8191.
+        # But text length > 15K chars.
+        text = ("longword " * 2000)  # ~18K chars, ~2000 tokens
+        assert _exceeds_token_limit(text) is False
+
+    def test_text_exceeding_token_limit_returns_true(self):
+        """Text exceeding the token limit should return True."""
+        # Each unique word is ~1 token. Generate enough to exceed 8191.
+        words = [f"word{i}" for i in range(9000)]
+        text = " ".join(words)
+        assert _exceeds_token_limit(text) is True
+
+
+# ---------------------------------------------------------------------------
+# create_plot_events_vector_text — auto-fallback on token overflow
+# ---------------------------------------------------------------------------
+
+
+class TestPlotEventsAutoFallback:
+    def test_normal_path_returns_primary_text(self):
+        """When primary text is short, should return it lowercased."""
+        movie = _make_movie(
+            imdb_data={"synopses": ["A hero saves the city from danger."]},
+        )
+        result = create_plot_events_vector_text(movie)
+        assert "a hero saves the city from danger." in result
+
+    def test_auto_fallback_on_token_overflow(self, mocker):
+        """When primary text exceeds token limit, should fall back to shorter text."""
+        # Create a movie with a very long synopsis and a shorter plot summary
+        movie = _make_movie(
+            imdb_data={
+                "synopses": ["Very long synopsis text."],
+                "plot_summaries": ["Short summary."],
+                "overview": "Overview.",
+            },
+        )
+
+        # Mock _exceeds_token_limit to return True on first call (primary),
+        # False on second (fallback)
+        call_count = [0]
+        original_exceeds = _exceeds_token_limit
+
+        def _mock_exceeds(text):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return True  # Primary text "exceeds" the limit
+            return False  # Fallback is fine
+
+        mocker.patch(
+            "movie_ingestion.final_ingestion.vector_text._exceeds_token_limit",
+            side_effect=_mock_exceeds,
+        )
+
+        result = create_plot_events_vector_text(movie)
+        # Should have fallen back — the fallback picks the longer of
+        # plot_summaries vs generated metadata, then overview
+        assert result is not None
+        # The primary synopsis should NOT be the result since we forced fallback
+        assert "very long synopsis text." not in result
+
+    def test_returns_none_when_all_empty(self):
+        """No text sources at all should return None."""
+        movie = _make_movie(
+            imdb_data={
+                "synopses": [],
+                "plot_summaries": [],
+                "overview": None,
+            },
+        )
+        assert create_plot_events_vector_text(movie) is None

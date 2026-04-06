@@ -662,11 +662,15 @@ async def generate_vector_embedding(
     text: list[str],
     model: str = "text-embedding-3-small",
 ) -> list[list[float]]:
-    try:
-        response = await async_openai_client.embeddings.create(
-            model=model,
-            input=text,
-        )
-        return [item.embedding for item in response.data]
-    except Exception as e:
-        raise ValueError(f"OpenAI failed to generate vector embedding: {e}")
+    # Create a fresh AsyncOpenAI client per call to avoid httpx connection
+    # pool exhaustion that causes silent hangs when reusing a single instance.
+    # See: https://github.com/openai/openai-python/issues/769
+    async with AsyncOpenAI(api_key=openai_api_key, timeout=5.0) as client:
+        try:
+            response = await client.embeddings.create(
+                model=model,
+                input=text,
+            )
+            return [item.embedding for item in response.data]
+        except Exception as e:
+            raise ValueError(f"OpenAI failed to generate vector embedding: {e}")

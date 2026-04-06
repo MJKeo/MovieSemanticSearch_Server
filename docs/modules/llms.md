@@ -135,6 +135,12 @@ partial DAG results.
   uses `responses.stream()` (Responses API), not `chat.completions`.
   With any `reasoning_effort` other than `"none"`, GPT-5.4 rejects
   `temperature`, `top_p`, `max_output_tokens`, and `logprobs`.
+- **`generate_vector_embedding` uses a per-call `async with AsyncOpenAI(...)`
+  context manager** instead of the module-level singleton. This avoids
+  httpx connection pool exhaustion (openai-python#769) that caused
+  embedding calls to stall indefinitely after N successful calls. The
+  sync `openai_client` singleton is unaffected. A 5s timeout is set as
+  a safety net.
 - Required env vars: `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, `GOOGLE_API_KEY`,
   `GROQ_API_KEY`, `ALIBABA_API_KEY`, `ANTHROPIC_API_KEY`. WHAM uses OAuth
   tokens from `evaluation_data/openai_oauth_tokens.json` (no dedicated env var).

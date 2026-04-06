@@ -1,22 +1,37 @@
 """
-Movie ingestion methods for database operations.
+Movie ingestion CLI and batch ingestion methods for Postgres and Qdrant.
 
-This module provides methods for ingesting movie data into the database.
+Provides:
+  - Per-movie ingestion (ingest_movie, ingest_movie_to_qdrant)
+  - Batched ingestion with per-movie error isolation
+    (ingest_movies_to_postgres_batched, ingest_movies_to_qdrant_batched)
+  - CLI entry point for orchestrated parallel ingestion to both databases
+
+Usage:
+    python -m movie_ingestion.final_ingestion.ingest_movie \\
+        --batch-size 200 \\
+        --postgres-batch-size 100 \\
+        --qdrant-batch-size 50 \\
+        --max-movies 1000
 """
 
+from __future__ import annotations
 
-import os
-import time
+import argparse
+import asyncio
 import json
+import os
+import sqlite3
+import time
+from dataclasses import dataclass
+from pathlib import Path
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
-from typing import Sequence, List, TYPE_CHECKING
-from datetime import datetime, timezone
-from implementation.classes.movie import BaseMovie
-from implementation.classes.languages import Language, LANGUAGE_BY_NORMALIZED_NAME
+from typing import List
+from schemas.movie import Movie
 from implementation.llms.generic_methods import generate_vector_embedding
-from implementation.classes.enums import BudgetSize, MaturityRating, VectorName
+from implementation.classes.enums import MaturityRating, VectorName
 from .vector_text import (
     create_anchor_vector_text,
     create_plot_events_vector_text,
@@ -27,10 +42,8 @@ from .vector_text import (
     create_production_vector_text,
     create_reception_vector_text,
 )
-from implementation.misc.helpers import (
-    normalize_string,
-    create_watch_provider_offering_key,
-)
+from implementation.misc.helpers import normalize_string
+from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_failures, batch_log_filter, PipelineStage
 from db.postgres import (
     pool,
     batch_insert_title_token_postings,
@@ -41,6 +54,8 @@ from db.postgres import (
     batch_upsert_title_token_strings,
     batch_upsert_character_strings,
     upsert_movie_card,
+    refresh_title_token_doc_frequency,
+    refresh_movie_popularity_scores,
 )
 
 # ---------------------------------------------------------------------------
@@ -49,19 +64,59 @@ from db.postgres import (
 
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-_qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+# Ingestion upserts are much heavier than search queries (50 movies × 8
+# vectors × 1536 dims per batch), so we set a generous timeout.
+_qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=120)
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 COLLECTION_ALIAS = "movies"
+
+
+class MissingRequiredAttributeError(ValueError):
+    """Raised when a movie is missing a required attribute for ingestion.
+
+    Movies with missing required attributes cannot be fixed by retrying —
+    they should be filtered out of the pipeline rather than marked as
+    retryable ingestion failures.
+    """
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionError:
+    """Structured error record from a batch ingestion step.
+
+    Returned by both postgres and qdrant batch functions so that
+    cmd_ingest can log all failures to the ingestion_failures table.
+    The message should include a step prefix (e.g. "Postgres movie card: <error>").
+    """
+    tmdb_id: int
+    message: str
+
+
+@dataclass(slots=True)
+class BatchIngestionResult:
+    """Result from a batched ingestion function (Postgres or Qdrant).
+
+    ``filtered_ids`` contains movies that are permanently ineligible
+    (e.g. missing a required attribute) and should be marked as
+    ``filtered_out`` rather than retried. Each entry in
+    ``filter_reasons`` is a (tmdb_id, reason_string) tuple.
+    """
+    succeeded_ids: set[int]
+    failed_ids: set[int]
+    errors: list[IngestionError]
+    filtered_ids: set[int]
+    filter_reasons: list[tuple[int, str]]
 
 
 # ================================
 #       OVERALL INGESTION
 # ================================
 
-async def ingest_movie(movie: BaseMovie) -> None:
+async def ingest_movie(movie: Movie) -> None:
     """
-    Ingest one BaseMovie into movie_card plus all lexical posting tables.
+    Ingest one Movie into movie_card plus all lexical posting tables.
 
     Acquires a single connection for the entire movie so all writes share one
     transaction. On success the transaction is committed; on failure it is
@@ -82,49 +137,46 @@ async def ingest_movie(movie: BaseMovie) -> None:
 #       POSTGRES INGESTION
 # ================================
 
-async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
+async def ingest_movie_card(movie: Movie, conn=None) -> None:
     """
-    Extract fields from a BaseMovie and upsert the canonical movie_card row.
+    Extract fields from a Movie and upsert the canonical movie_card row.
 
     Args:
         movie: Movie object to ingest.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     try:
-        movie_id = getattr(movie, "tmdb_id") or None
+        movie_id = movie.tmdb_data.tmdb_id
         if movie_id is None:
-            raise ValueError("Movie ingestion failed: ID is required but not found.")
+            raise MissingRequiredAttributeError("ID is required but not found.")
         movie_id = int(movie_id)
 
-        title = getattr(movie, "title") or None
+        title = movie.tmdb_data.title
         if title is None:
-            raise ValueError("Movie ingestion failed: Title is required but not found.")
+            raise MissingRequiredAttributeError("Title is required but not found.")
         title = str(title)
 
-        poster_url = getattr(movie, "poster_url", None)
-        if poster_url is None:
-            raise ValueError("Movie ingestion failed: Poster URL is required but not found.")
-        poster_url = str(poster_url)
+        poster_url = str(movie.tmdb_data.poster_url) if movie.tmdb_data.poster_url else None
 
         release_ts = movie.release_ts()
         if release_ts is None:
-            raise ValueError("Movie ingestion failed: Release date is required but not found.")
+            raise MissingRequiredAttributeError("Release date is required but not found.")
 
-        runtime_value = getattr(movie, "duration", None)
+        runtime_value = movie.tmdb_data.duration
         if runtime_value is None:
-            raise ValueError("Movie ingestion failed: Duration is required but not found.")
+            raise MissingRequiredAttributeError("Duration is required but not found.")
         runtime_minutes = int(runtime_value)
 
         maturity_rating, maturity_rank = movie.maturity_rating_and_rank()
         if not maturity_rating or not maturity_rank:
-            raise ValueError(f"Movie ingestion failed: One or more are None. Maturity rating: {maturity_rating} and rank: {maturity_rank}.")
+            raise MissingRequiredAttributeError(f"Maturity rating ({maturity_rating}) or rank ({maturity_rank}) is missing.")
         if maturity_rank == MaturityRating.UNRATED.maturity_rank:
             maturity_rank = None
 
-        genre_ids = await create_genre_ids(movie, conn=conn)
-        watch_offer_keys = await create_watch_offer_keys(movie, conn=conn)
-        audio_language_ids = await create_audio_language_ids(movie, conn=conn)
-        imdb_vote_count = int(getattr(movie, "imdb_vote_count", 0) or 0)
+        genre_ids = await create_genre_ids(movie)
+        watch_offer_keys = await create_watch_offer_keys(movie)
+        audio_language_ids = await create_audio_language_ids(movie)
+        imdb_vote_count = int(movie.imdb_data.imdb_vote_count or 0)
         reception_score = movie.reception_score()
         title_token_count = len(movie.normalized_title_tokens())
 
@@ -150,11 +202,15 @@ async def ingest_movie_card(movie: BaseMovie, conn=None) -> None:
             budget_bucket=budget_bucket,
             conn=conn,
         )
+    except MissingRequiredAttributeError:
+        # Propagate missing-attribute errors unwrapped so callers can
+        # distinguish them from transient failures.
+        raise
     except Exception as e:
         raise ValueError(f"Movie ingestion failed: {e}")
 
 
-async def ingest_lexical_data(movie: BaseMovie, conn=None) -> None:
+async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     """
     Ingest all lexical posting data (title tokens, people, characters, studios) for a movie.
 
@@ -162,7 +218,7 @@ async def ingest_lexical_data(movie: BaseMovie, conn=None) -> None:
         movie: Movie object to ingest lexical data for.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
-    movie_id = getattr(movie, "tmdb_id") or None
+    movie_id = movie.tmdb_data.tmdb_id
     if movie_id is None:
         raise ValueError("Movie ingestion failed: ID is required but not found.")
     movie_id = int(movie_id)
@@ -175,21 +231,15 @@ async def ingest_lexical_data(movie: BaseMovie, conn=None) -> None:
     ]
     people = list(create_people_list(movie))
 
-    raw_characters = getattr(movie, "characters", [])
-    if not isinstance(raw_characters, list):
-        raw_characters = []
     characters: list[str] = []
-    for character in raw_characters:
+    for character in movie.imdb_data.characters:
         normalized_character = normalize_string(str(character))
         if not normalized_character:
             continue
         characters.append(normalized_character)
 
-    raw_studios = getattr(movie, "production_companies", [])
-    if not isinstance(raw_studios, list):
-        raw_studios = []
     studios: list[str] = []
-    for studio in raw_studios:
+    for studio in movie.imdb_data.production_companies:
         normalized_studio = normalize_string(str(studio))
         if not normalized_studio:
             continue
@@ -234,6 +284,119 @@ async def ingest_lexical_data(movie: BaseMovie, conn=None) -> None:
 
 
 # ================================
+#    BATCHED POSTGRES INGESTION
+# ================================
+
+async def ingest_movies_to_postgres_batched(
+    movies: list[Movie],
+    *,
+    batch_size: int = 100,
+) -> BatchIngestionResult:
+    """
+    Ingest movies to Postgres in batches with per-movie error isolation.
+
+    For each sub-batch of ``batch_size`` movies:
+      1. Acquire one connection from the pool.
+      2. For each movie, use nested SAVEPOINTs to attempt movie_card and
+         lexical inserts independently — both are always attempted so we
+         can collect separate error messages for each step.
+      3. An outer SAVEPOINT ensures per-movie atomicity: if either step
+         fails, all changes for that movie are rolled back.
+      4. Commit the entire transaction once at the end of the sub-batch.
+
+    Args:
+        movies:     List of Movie instances to ingest.
+        batch_size: Movies per Postgres transaction (default: 100).
+    """
+    succeeded_ids: set[int] = set()
+    failed_ids: set[int] = set()
+    errors: list[IngestionError] = []
+    filtered_ids: set[int] = set()
+    filter_reasons: list[tuple[int, str]] = []
+
+    for batch_start in range(0, len(movies), batch_size):
+        batch = movies[batch_start : batch_start + batch_size]
+
+        async with pool.connection() as conn:
+            try:
+                for movie in batch:
+                    tmdb_id = movie.tmdb_data.tmdb_id
+                    savepoint_name = f"sp_{tmdb_id}"
+
+                    # Outer SAVEPOINT for per-movie atomicity. If this
+                    # fails the connection is likely dead — propagate to
+                    # the outer handler.
+                    await conn.execute(f"SAVEPOINT {savepoint_name}")
+
+                    # Attempt each step in its own inner SAVEPOINT so
+                    # that a failure in movie_card doesn't prevent us
+                    # from also attempting (and diagnosing) lexical.
+                    # PostgreSQL enters an error state after a failed
+                    # query — the inner savepoint rollback restores a
+                    # clean transaction state for the next step.
+                    card_error: str | None = None
+                    lex_error: str | None = None
+
+                    # --- movie_card step ---
+                    inner_sp_card = f"sp_{tmdb_id}_card"
+                    await conn.execute(f"SAVEPOINT {inner_sp_card}")
+                    try:
+                        await ingest_movie_card(movie, conn=conn)
+                        await conn.execute(f"RELEASE SAVEPOINT {inner_sp_card}")
+                    except MissingRequiredAttributeError as e:
+                        # Missing required attribute — permanent data issue.
+                        # Roll back the outer savepoint (covers the inner
+                        # too) and skip this movie entirely.
+                        await conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                        filtered_ids.add(tmdb_id)
+                        filter_reasons.append((tmdb_id, f"missing_required_attribute: {e}"))
+                        print(f"Postgres movie_card filtered for {tmdb_id}: {e}")
+                        continue
+                    except Exception as e:
+                        card_error = str(e)
+                        await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_card}")
+
+                    # --- lexical step ---
+                    inner_sp_lex = f"sp_{tmdb_id}_lex"
+                    await conn.execute(f"SAVEPOINT {inner_sp_lex}")
+                    try:
+                        await ingest_lexical_data(movie, conn=conn)
+                        await conn.execute(f"RELEASE SAVEPOINT {inner_sp_lex}")
+                    except Exception as e:
+                        lex_error = str(e)
+                        await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_lex}")
+
+                    if card_error or lex_error:
+                        # Roll back the outer savepoint so neither partial
+                        # result persists for this movie.
+                        await conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                        failed_ids.add(tmdb_id)
+                        if card_error:
+                            print(f"Postgres movie_card failed for {tmdb_id}: {card_error}")
+                            errors.append(IngestionError(tmdb_id, f"Postgres movie card: {card_error}"))
+                        if lex_error:
+                            print(f"Postgres lexical failed for {tmdb_id}: {lex_error}")
+                            errors.append(IngestionError(tmdb_id, f"Postgres lexical: {lex_error}"))
+                    else:
+                        await conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                        succeeded_ids.add(tmdb_id)
+
+                await conn.commit()
+            except Exception as e:
+                # Connection-level failure — commit failed, nothing was
+                # persisted. Move every ID in this batch to failed.
+                print(f"Postgres batch commit failed at offset {batch_start}: {e}")
+                await conn.rollback()
+                batch_ids = {m.tmdb_data.tmdb_id for m in batch}
+                succeeded_ids -= batch_ids
+                failed_ids |= batch_ids
+                for mid in batch_ids:
+                    errors.append(IngestionError(mid, f"Postgres batch commit: {e}"))
+
+    return BatchIngestionResult(succeeded_ids, failed_ids, errors, filtered_ids, filter_reasons)
+
+
+# ================================
 #       QDRANT INGESTION
 # ================================
 
@@ -249,7 +412,7 @@ _TEXT_GENERATORS: dict[str, callable] = {
     "reception": create_reception_vector_text,
 }
 
-def _build_qdrant_payload(movie: BaseMovie) -> dict:
+def _build_qdrant_payload(movie: Movie) -> dict:
     """
     Build the minimal hard-filter payload for the Qdrant point.
 
@@ -259,18 +422,17 @@ def _build_qdrant_payload(movie: BaseMovie) -> dict:
 
     ts = movie.release_ts()
     if not ts:
-        raise ValueError("Qdrant ingestion failed: Release date is required but not found.")
+        raise MissingRequiredAttributeError("Release date is required but not found.")
     payload["release_ts"] = ts
-        
 
-    runtime_value = getattr(movie, "duration", None)
+    runtime_value = movie.tmdb_data.duration
     if runtime_value is None:
-        raise ValueError("Qdrant ingestion failed: Duration is required but not found.")
+        raise MissingRequiredAttributeError("Duration is required but not found.")
     payload["runtime_minutes"] = int(runtime_value)
 
     _, maturity_rank = movie.maturity_rating_and_rank()
     if not maturity_rank:
-        raise ValueError(f"Qdrant ingestion failed: Maturity rank is None")
+        raise MissingRequiredAttributeError("Maturity rank is missing.")
     if maturity_rank == MaturityRating.UNRATED.maturity_rank:
         payload["maturity_rank"] = None
     else:
@@ -283,7 +445,7 @@ def _build_qdrant_payload(movie: BaseMovie) -> dict:
     return payload
 
 async def ingest_movie_to_qdrant(
-    movie: BaseMovie,
+    movie: Movie,
     *,
     collection: str = COLLECTION_ALIAS,
     client: QdrantClient | None = None,
@@ -298,10 +460,9 @@ async def ingest_movie_to_qdrant(
       4. Upserts one point (with named vectors + payload) to Qdrant.
 
     Args:
-        movie:          BaseMovie instance with all enriched metadata.
+        movie:          Movie instance with all enriched metadata.
         collection:     Qdrant collection name/alias (default: "movies").
         client:         Optional QdrantClient override.
-        openai_client:  Optional OpenAI client override.
 
     Raises:
         ValueError: If movie is missing required ID.
@@ -311,10 +472,7 @@ async def ingest_movie_to_qdrant(
         qdrant = client or _qdrant_client
 
         # --- Validate required fields ---
-        movie_id = getattr(movie, "tmdb_id", None)
-        if movie_id is None:
-            raise ValueError("Movie must have a tmdb_id for Qdrant point ID.")
-        movie_id = int(movie_id)
+        movie_id = movie.tmdb_data.tmdb_id
 
         # --- Step 1: Generate all 8 text representations ---
         texts: list[str] = []
@@ -358,12 +516,12 @@ async def ingest_movie_to_qdrant(
         raise ValueError(f"Qdrant ingestion failed: {e}")
 
 async def ingest_movies_to_qdrant_batched(
-    movies: list[BaseMovie],
+    movies: list[Movie],
     *,
     batch_size: int = 50,
     collection: str = COLLECTION_ALIAS,
     client: QdrantClient | None = None,
-) -> dict[str, int]:
+) -> BatchIngestionResult:
     """
     Ingest movies to Qdrant in batches, minimizing API calls.
 
@@ -373,28 +531,29 @@ async def ingest_movies_to_qdrant_batched(
       3. Build all N points (named vectors + payloads).
       4. Upsert all N points in a single Qdrant upsert.
 
+    The sync QdrantClient upsert is offloaded to a thread via
+    asyncio.to_thread so it does not block the event loop.
+
     Args:
-        movies:      List of BaseMovie instances to ingest.
+        movies:      List of Movie instances to ingest.
         batch_size:  Number of movies per batch (default: 50).
         collection:  Qdrant collection name/alias.
         client:      Optional QdrantClient override.
-
-    Returns:
-        Summary dict with counts: {"ingested": int, "failed": int, "total": int}
     """
     qdrant = client or _qdrant_client
     vector_names = [name.value for name in VectorName]
-    total = len(movies)
-    ingested = 0
-    failed = 0
+    succeeded_ids: set[int] = set()
+    failed_ids: set[int] = set()
+    errors: list[IngestionError] = []
+    filtered_ids: set[int] = set()
+    filter_reasons: list[tuple[int, str]] = []
 
-    for batch_start in range(0, total, batch_size):
+    for batch_start in range(0, len(movies), batch_size):
         batch = movies[batch_start : batch_start + batch_size]
 
         # ----------------------------------------------------------
         # Phase 1: Generate text representations for every movie
         # ----------------------------------------------------------
-        # Each entry: (movie_index, vector_name, global_text_index)
         # We track which texts are non-empty so we can map embeddings back.
         batch_texts: list[str] = []                         # flat list of all non-empty texts
         text_map: list[tuple[int, str]] = []                # (movie_idx_in_batch, vector_name)
@@ -403,32 +562,47 @@ async def ingest_movies_to_qdrant_batched(
         payloads: list[dict] = []                           # payloads per batch slot
 
         for movie_idx, movie in enumerate(batch):
-            # --- Validate ID ---
-            movie_id = getattr(movie, "tmdb_id", None)
-            if movie_id is None:
-                print(f"Skipping movie without tmdb_id at batch index {batch_start + movie_idx}")
-                skipped_movies.add(movie_idx)
-                movie_ids.append(-1)
+            # --- Validate ID and build payload ---
+            movie_id = movie.tmdb_data.tmdb_id
+            movie_ids.append(movie_id)
+            try:
+                payloads.append(_build_qdrant_payload(movie))
+            except MissingRequiredAttributeError as e:
+                # Permanent data issue — filter out, don't retry.
+                print(f"Qdrant payload filtered for movie {movie_id}: {e}")
                 payloads.append({})
-                failed += 1
+                skipped_movies.add(movie_idx)
+                filtered_ids.add(movie_id)
+                filter_reasons.append((movie_id, f"missing_required_attribute: {e}"))
                 continue
-
-            movie_ids.append(int(movie_id))
-            payloads.append(_build_qdrant_payload(movie))
+            except Exception as e:
+                print(f"Payload build failed for movie {movie_id}: {e}")
+                payloads.append({})
+                skipped_movies.add(movie_idx)
+                failed_ids.add(movie_id)
+                errors.append(IngestionError(movie_id, f"Qdrant payload build: {e}"))
+                continue
 
             movie_has_text = False
             for vname in vector_names:
                 text = _TEXT_GENERATORS[vname](movie)
                 text = text.strip() if text else None
                 if text:
+                    char_count = len(text)
+                    # ~4 chars per token; flag anything that might hit the 8191 token limit
+                    if char_count > 25000:
+                        print(f"⚠ LONG TEXT movie {movie_id} | {vname} | {char_count} chars (~{char_count // 4} tokens)")
                     text_map.append((movie_idx, vname))
                     batch_texts.append(text)
                     movie_has_text = True
 
             if not movie_has_text:
+                # No embeddable text is a data-quality outcome, not an error.
+                # Mark as succeeded so the pipeline moves past this movie,
+                # but also track as skipped so later errors can't flip it to failed.
                 print(f"No valid texts for movie {movie_id} — skipping")
                 skipped_movies.add(movie_idx)
-                failed += 1
+                succeeded_ids.add(movie_id)
 
         if not batch_texts:
             continue
@@ -443,7 +617,14 @@ async def ingest_movies_to_qdrant_batched(
             )
         except Exception as e:
             print(f"Embedding call failed for batch starting at {batch_start}: {e}")
-            failed += len(batch) - len(skipped_movies)
+            # Dump the texts in this batch to identify the culprit
+            for tm_idx, (m_idx, vn) in enumerate(text_map):
+                print(f"  batch text #{tm_idx}: movie {movie_ids[m_idx]} | {vn} | {len(batch_texts[tm_idx])} chars")
+            # All non-skipped movies in this batch are failed
+            for idx in range(len(batch)):
+                if idx not in skipped_movies:
+                    failed_ids.add(movie_ids[idx])
+                    errors.append(IngestionError(movie_ids[idx], f"Qdrant embedding: {e}"))
             continue
 
         # ----------------------------------------------------------
@@ -458,6 +639,7 @@ async def ingest_movies_to_qdrant_batched(
         # Phase 4: Build PointStructs and batch upsert
         # ----------------------------------------------------------
         points: list[PointStruct] = []
+        point_tmdb_ids: list[int] = []
         for movie_idx in range(len(batch)):
             if movie_idx in skipped_movies:
                 continue
@@ -471,80 +653,351 @@ async def ingest_movies_to_qdrant_batched(
                     payload=payloads[movie_idx],
                 )
             )
+            point_tmdb_ids.append(movie_ids[movie_idx])
 
         if points:
             try:
-                qdrant.upsert(
+                # Offload sync upsert to a thread so it doesn't block the event loop
+                await asyncio.to_thread(
+                    qdrant.upsert,
                     collection_name=collection,
                     points=points,
                 )
-                ingested += len(points)
+                succeeded_ids.update(point_tmdb_ids)
             except Exception as e:
                 print(f"Qdrant upsert failed for batch starting at {batch_start}: {e}")
-                failed += len(points)
+                failed_ids.update(point_tmdb_ids)
+                for tid in point_tmdb_ids:
+                    errors.append(IngestionError(tid, f"Qdrant upsert: {e}"))
 
-    return {"ingested": ingested, "failed": failed, "total": total}
+    return BatchIngestionResult(succeeded_ids, failed_ids, errors, filtered_ids, filter_reasons)
 
 
 # ================================
 #       HELPER METHODS
 # ================================
 
-async def create_genre_ids(movie: BaseMovie, conn=None) -> List[int]:
+async def create_genre_ids(movie: Movie) -> List[int]:
     """
-    Return genre IDs by delegating to ``BaseMovie.genre_ids()``.
+    Return genre IDs by delegating to ``Movie.genre_ids()``.
 
     Args:
         movie: Movie object implementing ``genre_ids()``.
-        conn: Optional existing async connection for caller-managed transaction scope.
-            Unused in this delegating helper.
     """
     genre_ids = movie.genre_ids()
     return genre_ids
 
 
-async def create_watch_offer_keys(movie: BaseMovie, conn=None) -> List[int]:
+async def create_watch_offer_keys(movie: Movie) -> List[int]:
     """
-    Return watch-offer keys by delegating to ``BaseMovie.watch_offer_keys()``.
+    Return watch-offer keys by delegating to ``Movie.watch_offer_keys()``.
 
     Args:
         movie: Movie object implementing ``watch_offer_keys()``.
-        conn: Optional existing async connection for caller-managed transaction scope.
-            Unused in this delegating helper.
     """
     return movie.watch_offer_keys()
 
 
-async def create_audio_language_ids(movie: BaseMovie, conn=None) -> List[int]:
+async def create_audio_language_ids(movie: Movie) -> List[int]:
     """
-    Return audio language IDs by delegating to ``BaseMovie.audio_language_ids()``.
+    Return audio language IDs by delegating to ``Movie.audio_language_ids()``.
 
     Args:
         movie: Movie object implementing ``audio_language_ids()``.
-        conn: Optional existing async connection for caller-managed transaction scope.
-            Unused in this delegating helper.
     """
     language_ids = movie.audio_language_ids()
     return language_ids
 
 
-def create_people_list(movie: BaseMovie) -> List[str]:
+def create_people_list(movie: Movie) -> set[str]:
     raw_people_lists = [
-        getattr(movie, "actors", []),
-        getattr(movie, "directors", []),
-        getattr(movie, "writers", []),
-        getattr(movie, "composers", []),
-        getattr(movie, "producers", []),
+        movie.imdb_data.actors,
+        movie.imdb_data.directors,
+        movie.imdb_data.writers,
+        movie.imdb_data.composers,
+        movie.imdb_data.producers,
     ]
     people_names: set[str] = set()
     for people_list in raw_people_lists:
-        if not isinstance(people_list, list):
-            # Default value used here because BaseMovie may not provide a person list.
-            people_list = []
-            
         for name in people_list:
             normalized_name = normalize_string(str(name))
             if normalized_name:
                 people_names.add(normalized_name)
 
     return people_names
+
+
+# ================================
+#       CLI ORCHESTRATION
+# ================================
+
+def _get_eligible_tmdb_ids(
+    tracker_db_path: Path,
+    max_movies: int | None = None,
+) -> list[int]:
+    """Query the tracker for movies eligible for ingestion.
+
+    Returns movies at metadata_generated status (first attempt) and
+    ingestion_failed status (automatic retry).
+
+    Args:
+        tracker_db_path: Path to the ingestion tracker SQLite DB.
+        max_movies: Optional cap on total movies returned.
+
+    Returns:
+        List of tmdb_ids ready for ingestion.
+    """
+    query = "SELECT tmdb_id FROM movie_progress WHERE status IN (?, ?)"
+    params: list[object] = [MovieStatus.METADATA_GENERATED, MovieStatus.INGESTION_FAILED]
+    if max_movies is not None:
+        query += " LIMIT ?"
+        params.append(max_movies)
+
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        rows = db.execute(query, params).fetchall()
+
+    return [row[0] for row in rows]
+
+
+def _mark_ingested(
+    tracker_db_path: Path,
+    tmdb_ids: set[int],
+) -> None:
+    """Batch-update movie_progress status to 'ingested' for successfully ingested movies.
+
+    Also clears any old ingestion_failures rows for these movies, so that
+    movies that succeed on retry don't leave stale failure records behind.
+    """
+    if not tmdb_ids:
+        return
+
+    ids_json = json.dumps(list(tmdb_ids))
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        # json_each() expands a JSON array into a virtual table, giving us
+        # a single UPDATE with one bound parameter — no placeholder string
+        # building and no SQLITE_MAX_VARIABLE_NUMBER limit.
+        db.execute(
+            "UPDATE movie_progress SET status = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE tmdb_id IN (SELECT value FROM json_each(?))",
+            (MovieStatus.INGESTED, ids_json),
+        )
+        # Purge old failure rows for movies that succeeded on retry.
+        db.execute(
+            "DELETE FROM ingestion_failures "
+            "WHERE tmdb_id IN (SELECT value FROM json_each(?))",
+            (ids_json,),
+        )
+        db.commit()
+
+
+def _mark_ingestion_failed(
+    tracker_db_path: Path,
+    errors: list[IngestionError],
+) -> None:
+    """Log ingestion failures to SQLite and set status to ingestion_failed."""
+    if not errors:
+        return
+
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        log_ingestion_failures(
+            db,
+            [(e.tmdb_id, e.message) for e in errors],
+        )
+        db.commit()
+
+
+def _mark_filtered_out(
+    tracker_db_path: Path,
+    filter_reasons: list[tuple[int, str]],
+) -> None:
+    """Mark movies as filtered_out in the tracker and log the reason.
+
+    Each entry in filter_reasons is (tmdb_id, reason_string). Uses
+    batch_log_filter so both filter_log and movie_progress are updated
+    atomically.
+    """
+    if not filter_reasons:
+        return
+
+    entries = [
+        (tmdb_id, PipelineStage.INGESTION, reason, None)
+        for tmdb_id, reason in filter_reasons
+    ]
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        batch_log_filter(db, entries)
+        db.commit()
+
+
+async def cmd_ingest(
+    batch_size: int = 200,
+    postgres_batch_size: int = 100,
+    qdrant_batch_size: int = 50,
+    max_movies: int | None = None,
+    tracker_db_path: Path = TRACKER_DB_PATH,
+) -> None:
+    """Orchestrate parallel batch ingestion to Postgres and Qdrant.
+
+    For each super-batch of ``batch_size`` movies:
+      1. Batch-load Movie objects from the tracker SQLite DB.
+      2. Run Postgres and Qdrant ingestion in parallel (asyncio.gather).
+      3. Intersect succeeded sets — only movies that pass BOTH are marked ingested.
+      4. Update tracker status.
+      5. Print progress.
+
+    After all movies are processed, refreshes Postgres materialized views.
+    """
+    all_tmdb_ids = _get_eligible_tmdb_ids(tracker_db_path, max_movies)
+    total = len(all_tmdb_ids)
+    if not total:
+        print("No eligible movies (metadata_generated or ingestion_failed). Nothing to ingest.")
+        return
+
+    print(
+        f"Found {total:,} eligible movies (metadata_generated + ingestion_failed).\n"
+        f"Config: batch_size={batch_size}, postgres_batch_size={postgres_batch_size}, "
+        f"qdrant_batch_size={qdrant_batch_size}"
+    )
+
+    # Open the Postgres connection pool (created with open=False)
+    await pool.open()
+
+    cumulative_ingested = 0
+    cumulative_failed = 0
+    cumulative_filtered = 0
+    start_time = time.time()
+
+    try:
+        for super_start in range(0, total, batch_size):
+            super_ids = all_tmdb_ids[super_start : super_start + batch_size]
+            batch_start_time = time.time()
+
+            # Step 1: Batch-load Movie objects from SQLite
+            movies_map = Movie.from_tmdb_ids(super_ids, tracker_db_path)
+            load_failures = set(super_ids) - set(movies_map.keys())
+            if load_failures:
+                print(f"  Failed to load {len(load_failures)} movie(s) from tracker DB")
+
+            movie_list = list(movies_map.values())
+            if not movie_list:
+                # All movies in this super-batch failed to load — log them.
+                load_errors = [
+                    IngestionError(tid, "Movie load: failed to load from tracker DB")
+                    for tid in super_ids
+                ]
+                _mark_ingestion_failed(tracker_db_path, load_errors)
+                cumulative_failed += len(super_ids)
+                continue
+
+            # Step 2: Run Postgres and Qdrant ingestion in parallel
+            pg_result, qdrant_result = await asyncio.gather(
+                ingest_movies_to_postgres_batched(movie_list, batch_size=postgres_batch_size),
+                ingest_movies_to_qdrant_batched(movie_list, batch_size=qdrant_batch_size),
+            )
+            pg = pg_result
+            qd = qdrant_result
+
+            # Step 3: Separate filtered (permanent) from failed (retryable).
+            # Filtered movies are missing required attributes and should
+            # never be retried — they get terminal filtered_out status.
+            batch_filtered = pg.filtered_ids | qd.filtered_ids
+            all_filter_reasons = pg.filter_reasons + qd.filter_reasons
+
+            # Only movies that succeeded in BOTH databases are marked ingested.
+            # Filtered movies are excluded from both succeeded and failed.
+            both_succeeded = (pg.succeeded_ids & qd.succeeded_ids) - batch_filtered
+            batch_failed = (pg.failed_ids | qd.failed_ids | load_failures) - batch_filtered
+
+            # Step 4: Update tracker status for successfully ingested movies
+            _mark_ingested(tracker_db_path, both_succeeded)
+
+            # Step 4b: Mark permanently ineligible movies as filtered_out.
+            _mark_filtered_out(tracker_db_path, all_filter_reasons)
+
+            # Step 4c: Log failures to ingestion_failures table and mark
+            # failed movies as ingestion_failed for retry on the next run.
+            all_errors = pg.errors + qd.errors
+            for tid in load_failures:
+                all_errors.append(IngestionError(tid, "Movie load: failed to load from tracker DB"))
+            _mark_ingestion_failed(tracker_db_path, all_errors)
+
+            cumulative_ingested += len(both_succeeded)
+            cumulative_failed += len(batch_failed)
+            cumulative_filtered += len(batch_filtered)
+            batch_elapsed = time.time() - batch_start_time
+
+            # Step 5: Progress reporting
+            processed = min(super_start + batch_size, total)
+            filtered_note = f", {len(batch_filtered)} filtered" if batch_filtered else ""
+            print(
+                f"[{processed:,}/{total:,}] "
+                f"Batch: {len(both_succeeded)} ingested, {len(batch_failed)} failed{filtered_note} "
+                f"(PG: {len(pg.succeeded_ids)}/{len(pg.failed_ids)}, "
+                f"Qdrant: {len(qd.succeeded_ids)}/{len(qd.failed_ids)}) "
+                f"| {batch_elapsed:.1f}s "
+                f"| Cumulative: {cumulative_ingested:,} ingested, {cumulative_failed:,} failed, {cumulative_filtered:,} filtered"
+            )
+
+        # Post-ingestion: refresh materialized views
+        if cumulative_ingested > 0:
+            print("\nRefreshing materialized views...")
+            await refresh_title_token_doc_frequency()
+            await refresh_movie_popularity_scores()
+            print("Materialized views refreshed.")
+
+    finally:
+        await pool.close()
+
+    elapsed = time.time() - start_time
+    print(
+        f"\nDone. {cumulative_ingested:,} ingested, {cumulative_failed:,} failed, "
+        f"{cumulative_filtered:,} filtered out of {total:,} total in {elapsed:.1f}s"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Batch movie ingestion to Postgres and Qdrant",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=200,
+        help="Movies loaded per super-batch iteration (default: 200). "
+             "Controls memory usage and progress reporting granularity.",
+    )
+    parser.add_argument(
+        "--postgres-batch-size",
+        type=int,
+        default=100,
+        help="Movies per Postgres transaction (default: 100).",
+    )
+    parser.add_argument(
+        "--qdrant-batch-size",
+        type=int,
+        default=50,
+        help="Movies per Qdrant embedding + upsert cycle (default: 50).",
+    )
+    parser.add_argument(
+        "--max-movies",
+        type=int,
+        default=None,
+        help="Max total movies to ingest in this run (default: all eligible).",
+    )
+
+    args = parser.parse_args()
+    asyncio.run(
+        cmd_ingest(
+            batch_size=args.batch_size,
+            postgres_batch_size=args.postgres_batch_size,
+            qdrant_batch_size=args.qdrant_batch_size,
+            max_movies=args.max_movies,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -27,7 +27,22 @@ patterns observed in the session.
 **Proposed convention:** Never include raw numeric scores (ratings, vote counts, years, budgets) in vector embedding text. Use qualitative labels derived from scores (e.g., "universally acclaimed" from a score >= 81) instead. Numeric filtering belongs in metadata scoring, not vector similarity.
 **Sessions observed:** 1
 
+## json_each() for SQLite batch WHERE IN clauses
+**Observed:** User pointed to Movie._BATCH_QUERY using `WHERE tmdb_id IN (SELECT value FROM json_each(?))` and asked why _mark_ingested didn't use the same pattern instead of executemany. Applied to _mark_ingested — now matches.
+**Proposed convention:** For SQLite queries that filter on a set of IDs, use `WHERE column IN (SELECT value FROM json_each(?))` with `json.dumps(list_of_ids)` as the single bound parameter. This avoids placeholder string building, sidesteps SQLITE_MAX_VARIABLE_NUMBER limits, and keeps the query text constant for plan caching. Prefer over both executemany loops and `IN (?, ?, ...)` expansion.
+**Sessions observed:** 1
+
 ## No re-export shims when moving modules
 **Observed:** User explicitly rejected keeping old files as re-export shims after moving schemas to a new package. Said "No hacking by re-exporting moved files in their original file. Update at the source of each import directly."
 **Proposed convention:** When moving a module to a new location, update all import sites directly. Never leave the old file as a re-export shim — delete it and fix every consumer.
+**Sessions observed:** 1
+
+## Per-call async clients for connection-pooled HTTP SDKs
+**Observed:** AsyncOpenAI singleton caused silent hangs due to httpx connection pool exhaustion after N calls. Fix was `async with AsyncOpenAI(...) as client:` per call instead of reusing a module-level instance. The sync client was unaffected.
+**Proposed convention:** For async SDK clients that manage HTTP connection pools internally (OpenAI, httpx-based), prefer per-call instantiation with `async with` over module-level singletons — especially when the client is called repeatedly in batch loops. Sync clients can remain singletons. If a singleton is used, configure an explicit timeout so pool exhaustion surfaces as an error rather than a silent hang.
+**Sessions observed:** 1
+
+## Search prompts must match actual embedded content, not assumed content
+**Observed:** During vector search prompt realignment, found that search prompts (subquery generation + weight assessment) described content that didn't match what's actually embedded — stale field names, content from adjacent vector spaces, fabricated data sources (e.g., cast/crew names listed in production vector but not actually embedded). The realignment process required reading vector_text.py and embedding_text() methods as the source of truth, then rewriting prompts from scratch.
+**Proposed convention:** Every content claim in a vector search prompt (subquery or weight) must trace to a specific field in the vector_text.py generation function or the metadata class's embedding_text() method. When metadata generation schemas change, the corresponding search prompts must be updated in the same changeset or explicitly tracked as a follow-up. vector_text.py is the single source of truth for what's embedded.
 **Sessions observed:** 1

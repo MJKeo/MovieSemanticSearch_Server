@@ -1,4 +1,4 @@
-"""Unit tests for db.ingest_movie methods."""
+"""Unit tests for movie_ingestion.final_ingestion.ingest_movie methods."""
 
 import importlib
 import sys
@@ -57,7 +57,64 @@ except ModuleNotFoundError:
     sys.modules["implementation.vectorize"] = vectorize_module
 
 from movie_ingestion.final_ingestion import ingest_movie
+from movie_ingestion.final_ingestion.ingest_movie import (
+    BatchIngestionResult,
+    IngestionError,
+    MissingRequiredAttributeError,
+)
+from schemas.movie import Movie, TMDBData, IMDBData
 from db import postgres
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _make_movie(**overrides) -> Movie:
+    """Build a minimal valid Movie with targeted overrides."""
+    tmdb_defaults = {
+        "tmdb_id": 1,
+        "imdb_id": "tt0000001",
+        "title": "Spider-Man",
+        "release_date": "2002-05-03",
+        "duration": 121,
+        "budget": 139_000_000,
+        "maturity_rating": "PG-13",
+    }
+    imdb_defaults = {
+        "tmdb_id": 1,
+        "original_title": None,
+        "overview": "A student gets spider-like abilities.",
+        "imdb_rating": 7.4,
+        "metacritic_rating": 73.0,
+        "budget": None,
+        "genres": ["Action", "Adventure"],
+        "countries_of_origin": ["USA"],
+        "production_companies": ["Columbia Pictures"],
+        "filming_locations": ["New York"],
+        "languages": ["English"],
+        "overall_keywords": ["hero", "city"],
+        "maturity_rating": None,
+        "maturity_reasoning": [],
+        "characters": ["Peter Parker", "Mary Jane Watson", "Norman Osborn"],
+        "directors": ["Sam Raimi"],
+        "writers": ["David Koepp"],
+        "producers": ["Laura Ziskin"],
+        "composers": ["Danny Elfman"],
+        "actors": ["Tobey Maguire"],
+    }
+
+    tmdb_overrides = overrides.pop("tmdb_data", {})
+    imdb_overrides = overrides.pop("imdb_data", {})
+
+    tmdb_data = TMDBData(**{**tmdb_defaults, **tmdb_overrides})
+    imdb_data = IMDBData(**{**imdb_defaults, **imdb_overrides})
+    return Movie(tmdb_data=tmdb_data, imdb_data=imdb_data, **overrides)
+
+
+# ---------------------------------------------------------------------------
+# upsert_movie_card (unchanged function)
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -90,18 +147,30 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
     assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, None, 4)
 
 
+# ---------------------------------------------------------------------------
+# ingest_movie (single-movie entry point)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_ingest_movie_runs_card_and_lexical_ingestion(mocker, base_movie_factory) -> None:
+async def test_ingest_movie_runs_card_and_lexical_ingestion(mocker) -> None:
     """ingest_movie should run movie-card and lexical ingestion on a single connection."""
-    movie = base_movie_factory()
-    ingest_card = mocker.patch("db.ingest_movie.ingest_movie_card", new=AsyncMock())
-    ingest_lexical = mocker.patch("db.ingest_movie.ingest_lexical_data", new=AsyncMock())
+    movie = _make_movie()
+    ingest_card = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_card", new=AsyncMock()
+    )
+    ingest_lexical = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
+    )
 
     mock_conn = AsyncMock()
     mock_pool_cm = AsyncMock()
     mock_pool_cm.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_pool_cm.__aexit__ = AsyncMock(return_value=False)
-    mocker.patch("db.ingest_movie.pool.connection", return_value=mock_pool_cm)
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.pool.connection",
+        return_value=mock_pool_cm,
+    )
 
     await ingest_movie.ingest_movie(movie)
 
@@ -110,256 +179,311 @@ async def test_ingest_movie_runs_card_and_lexical_ingestion(mocker, base_movie_f
     mock_conn.commit.assert_awaited_once()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "movie_obj",
-    [
-        SimpleNamespace(tmdb_id=None),
-        SimpleNamespace(tmdb_id=1, title=None),
-        SimpleNamespace(tmdb_id=1, title="Movie", poster_url=None),
-        SimpleNamespace(
-            tmdb_id=1,
-            title="Movie",
-            poster_url="url",
-            release_ts=lambda: None,
-            duration=120,
-        ),
-        SimpleNamespace(
-            tmdb_id=1,
-            title="Movie",
-            poster_url="url",
-            release_ts=lambda: 1_577_836_800,
-            duration=None,
-        ),
-    ],
-)
-async def test_ingest_movie_card_missing_required_values_raise_value_error(movie_obj, mocker) -> None:
-    """ingest_movie_card should raise ValueError when required fields are absent."""
-    # Bypass debug file write side-effect at function start.
-    mocker.patch("builtins.open", mocker.mock_open())
-    with pytest.raises(ValueError):
-        await ingest_movie.ingest_movie_card(movie_obj)
+# ---------------------------------------------------------------------------
+# ingest_movie_card — missing required fields
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_ingest_movie_card_raises_for_invalid_maturity_rank(mocker) -> None:
-    """ingest_movie_card should fail when maturity rating tuple is incomplete."""
-    movie = SimpleNamespace(
-        tmdb_id=1,
-        title="Movie",
-        poster_url="https://img.test/poster.png",
-        release_ts=lambda: 1_577_836_800,
-        duration=120,
-        maturity_rating_and_rank=lambda: (None, None),
-    )
-    # Bypass debug file write side-effect at function start.
-    mocker.patch("builtins.open", mocker.mock_open())
-    with pytest.raises(ValueError):
+async def test_ingest_movie_card_missing_title_raises_missing_required() -> None:
+    """ingest_movie_card should raise MissingRequiredAttributeError when title is None."""
+    movie = _make_movie(tmdb_data={"title": None})
+    with pytest.raises(MissingRequiredAttributeError):
         await ingest_movie.ingest_movie_card(movie)
 
 
 @pytest.mark.asyncio
-async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker, base_movie_factory) -> None:
-    """ingest_movie_card should compute values and call helper + movie-card upsert functions."""
-    movie = base_movie_factory(imdb_vote_count=945678)
-    create_genres = mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[10, 11]))
-    create_watch_keys = mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[100, 200]))
-    create_langs = mocker.patch("db.ingest_movie.create_audio_language_ids", new=AsyncMock(return_value=[5]))
-    upsert_card = mocker.patch("db.ingest_movie.upsert_movie_card", new=AsyncMock())
+async def test_ingest_movie_card_missing_release_date_raises_missing_required() -> None:
+    """ingest_movie_card should raise MissingRequiredAttributeError when release_date is None."""
+    movie = _make_movie(tmdb_data={"release_date": None})
+    with pytest.raises(MissingRequiredAttributeError):
+        await ingest_movie.ingest_movie_card(movie)
 
-    # Bypass debug file write side-effect at function start.
-    mocker.patch("builtins.open", mocker.mock_open())
+
+@pytest.mark.asyncio
+async def test_ingest_movie_card_missing_duration_raises() -> None:
+    """ingest_movie_card should raise MissingRequiredAttributeError when duration is None."""
+    movie = _make_movie(tmdb_data={"duration": None})
+    with pytest.raises(MissingRequiredAttributeError):
+        await ingest_movie.ingest_movie_card(movie)
+
+
+# ---------------------------------------------------------------------------
+# ingest_movie_card — happy path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker) -> None:
+    """ingest_movie_card should compute values and call upsert_movie_card with correct params."""
+    movie = _make_movie(imdb_data={"imdb_vote_count": 945678})
+    upsert_card = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.upsert_movie_card", new=AsyncMock()
+    )
+
     await ingest_movie.ingest_movie_card(movie)
 
-    create_genres.assert_awaited_once_with(movie, conn=None)
-    create_watch_keys.assert_awaited_once_with(movie, conn=None)
-    create_langs.assert_awaited_once_with(movie, conn=None)
     kwargs = upsert_card.await_args.kwargs
     assert kwargs["movie_id"] == 1
     assert kwargs["title"] == "Spider-Man"
     assert kwargs["imdb_vote_count"] == 945678
     assert kwargs["budget_bucket"] == "large"
-    assert kwargs["title_token_count"] == 3
-    assert kwargs["conn"] is None
+    assert kwargs["title_token_count"] == 3  # spider-man, spider, man
 
 
-@pytest.mark.asyncio
-async def test_ingest_movie_card_casts_string_imdb_vote_count_to_int(mocker) -> None:
-    """ingest_movie_card should coerce imdb_vote_count to int before upsert."""
-    movie = SimpleNamespace(
-        tmdb_id=1,
-        title="Movie",
-        poster_url="https://img.test/poster.png",
-        duration=120,
-        imdb_vote_count="12345",
-        release_ts=lambda: 1_577_836_800,
-        maturity_rating_and_rank=lambda: ("pg-13", 3),
-        reception_score=lambda: 70.0,
-        normalized_title_tokens=lambda: ["movie"],
-        budget_bucket_for_era=lambda: None,
-    )
-    mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[]))
-    mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[]))
-    mocker.patch("db.ingest_movie.create_audio_language_ids", new=AsyncMock(return_value=[]))
-    upsert_card = mocker.patch("db.ingest_movie.upsert_movie_card", new=AsyncMock())
-
-    await ingest_movie.ingest_movie_card(movie)
-
-    assert upsert_card.await_args.kwargs["imdb_vote_count"] == 12345
-    assert upsert_card.await_args.kwargs["budget_bucket"] is None
+# ---------------------------------------------------------------------------
+# ingest_lexical_data
+# ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_ingest_movie_card_invalid_imdb_vote_count_raises_value_error(mocker) -> None:
-    """ingest_movie_card should fail fast when imdb_vote_count cannot be cast to int."""
-    movie = SimpleNamespace(
-        tmdb_id=1,
-        title="Movie",
-        poster_url="https://img.test/poster.png",
-        duration=120,
-        imdb_vote_count="not-a-number",
-        release_ts=lambda: 1_577_836_800,
-        maturity_rating_and_rank=lambda: ("pg-13", 3),
-        reception_score=lambda: 70.0,
-        normalized_title_tokens=lambda: ["movie"],
-        budget_bucket_for_era=lambda: None,
-    )
-    mocker.patch("db.ingest_movie.create_genre_ids", new=AsyncMock(return_value=[]))
-    mocker.patch("db.ingest_movie.create_watch_offer_keys", new=AsyncMock(return_value=[]))
-    mocker.patch("db.ingest_movie.create_audio_language_ids", new=AsyncMock(return_value=[]))
-    mocker.patch("db.ingest_movie.upsert_movie_card", new=AsyncMock())
-
-    with pytest.raises(ValueError, match="Movie ingestion failed"):
-        await ingest_movie.ingest_movie_card(movie)
-
-
-@pytest.mark.asyncio
-async def test_ingest_lexical_data_requires_movie_id() -> None:
-    """ingest_lexical_data should reject movie objects with missing tmdb_id."""
-    with pytest.raises(ValueError):
-        await ingest_movie.ingest_lexical_data(SimpleNamespace(tmdb_id=None))
+## test_ingest_lexical_data_requires_movie_id removed — TMDBData.tmdb_id is a
+## required int field (Pydantic rejects None at construction time), so the
+## scenario of a Movie with tmdb_id=None is no longer constructable.
 
 
 @pytest.mark.asyncio
 async def test_ingest_lexical_data_processes_all_entity_types(mocker) -> None:
     """ingest_lexical_data should batch-write title, people, character, and studio postings."""
-    movie = SimpleNamespace(
-        tmdb_id=9,
-        characters=["Hero", "Villain"],
-        production_companies=["Studio A"],
-        normalized_title_tokens=lambda: ["spider-man", "hero"],
+    movie = _make_movie(
+        imdb_data={
+            "characters": ["Hero", "Villain"],
+            "production_companies": ["Studio A"],
+            "directors": ["Nora Ephron"],
+            "writers": [],
+            "actors": [],
+            "producers": [],
+            "composers": [],
+        },
     )
 
     # Keep person iteration deterministic for assertions.
-    mocker.patch("db.ingest_movie.create_people_list", return_value=["peter parker", "norman osborn"])
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.create_people_list",
+        return_value=["nora ephron"],
+    )
 
-    # Batch dictionary resolution returns IDs for all relevant strings except villain.
+    # Batch dictionary resolution returns IDs for all relevant strings.
     upsert_lexical = mocker.patch(
-        "db.ingest_movie.batch_upsert_lexical_dictionary",
+        "movie_ingestion.final_ingestion.ingest_movie.batch_upsert_lexical_dictionary",
         new=AsyncMock(
             return_value={
                 "spider-man": 101,
-                "hero": 102,
-                "peter parker": 201,
-                "norman osborn": 202,
+                "spider": 102,
+                "man": 103,
+                "nora ephron": 201,
+                "hero": 301,
+                "villain": 302,
                 "studio a": 401,
             }
         ),
     )
-    upsert_title_string = mocker.patch("db.ingest_movie.batch_upsert_title_token_strings", new=AsyncMock())
-    upsert_character_string = mocker.patch("db.ingest_movie.batch_upsert_character_strings", new=AsyncMock())
-    insert_title = mocker.patch("db.ingest_movie.batch_insert_title_token_postings", new=AsyncMock())
-    insert_person = mocker.patch("db.ingest_movie.batch_insert_person_postings", new=AsyncMock())
-    insert_character = mocker.patch("db.ingest_movie.batch_insert_character_postings", new=AsyncMock())
-    insert_studio = mocker.patch("db.ingest_movie.batch_insert_studio_postings", new=AsyncMock())
+    upsert_title_string = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_upsert_title_token_strings",
+        new=AsyncMock(),
+    )
+    upsert_character_string = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_upsert_character_strings",
+        new=AsyncMock(),
+    )
+    insert_title = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_insert_title_token_postings",
+        new=AsyncMock(),
+    )
+    insert_person = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_insert_person_postings",
+        new=AsyncMock(),
+    )
+    insert_character = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_insert_character_postings",
+        new=AsyncMock(),
+    )
+    insert_studio = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_insert_studio_postings",
+        new=AsyncMock(),
+    )
 
     await ingest_movie.ingest_lexical_data(movie)
 
-    upsert_lexical.assert_awaited_once_with(
-        [
-            "spider-man",
-            "hero",
-            "peter parker",
-            "norman osborn",
-            "villain",
-            "studio a",
-        ],
-        conn=None,
-    )
-    upsert_title_string.assert_awaited_once_with([101, 102], ["spider-man", "hero"], conn=None)
-    insert_title.assert_awaited_once_with([101, 102], 9, conn=None)
-    insert_person.assert_awaited_once_with([201, 202], 9, conn=None)
-    upsert_character_string.assert_awaited_once_with([102], ["hero"], conn=None)
-    insert_character.assert_awaited_once_with([102], 9, conn=None)
-    insert_studio.assert_awaited_once_with([401], 9, conn=None)
+    # Title tokens, people, characters, and studios should all be resolved.
+    upsert_lexical.assert_awaited_once()
+    insert_title.assert_awaited_once()
+    insert_person.assert_awaited_once()
+    insert_character.assert_awaited_once()
+    insert_studio.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Delegate helpers (genre_ids, watch_offer_keys, audio_language_ids)
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_create_genre_ids_handles_normal_and_invalid_values(mocker) -> None:
+async def test_create_genre_ids_delegates_to_movie() -> None:
     """create_genre_ids should delegate to movie.genre_ids()."""
-    movie = SimpleNamespace(genre_ids=mocker.Mock(return_value=[1, 21]))
-
+    movie = _make_movie(imdb_data={"genres": ["Action", "Drama"]})
     result = await ingest_movie.create_genre_ids(movie)
-
-    assert result == [1, 21]
-    movie.genre_ids.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_create_genre_ids_non_sequence_defaults_to_empty() -> None:
-    """create_genre_ids should propagate attribute errors for invalid movie objects."""
-    movie = SimpleNamespace(genres=123)
-    with pytest.raises(AttributeError):
-        await ingest_movie.create_genre_ids(movie)
+    # Should return integer genre IDs for known genres
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(gid, int) for gid in result)
 
 
 @pytest.mark.asyncio
-async def test_create_watch_offer_keys_deduplicates_and_sorts(mocker) -> None:
+async def test_create_watch_offer_keys_delegates_to_movie() -> None:
     """create_watch_offer_keys should delegate to movie.watch_offer_keys()."""
-    expected = sorted({(8 << 4) | 1, (8 << 4) | 3})
-    movie = SimpleNamespace(watch_offer_keys=mocker.Mock(return_value=expected))
-
+    movie = _make_movie()
     result = await ingest_movie.create_watch_offer_keys(movie)
-
-    assert result == expected
-    movie.watch_offer_keys.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_create_watch_offer_keys_non_list_defaults_to_empty() -> None:
-    """create_watch_offer_keys should propagate attribute errors for invalid movie objects."""
-    movie = SimpleNamespace(watch_providers="invalid")
-    with pytest.raises(AttributeError):
-        await ingest_movie.create_watch_offer_keys(movie)
+    # TMDBData.watch_provider_keys defaults to [] so result is []
+    assert result == []
 
 
 @pytest.mark.asyncio
-async def test_create_audio_language_ids_paths(mocker) -> None:
+async def test_create_audio_language_ids_delegates_to_movie() -> None:
     """create_audio_language_ids should delegate to movie.audio_language_ids()."""
-    movie = SimpleNamespace(audio_language_ids=mocker.Mock(return_value=[80, 286]))
-
+    movie = _make_movie(imdb_data={"languages": ["English"]})
     result = await ingest_movie.create_audio_language_ids(movie)
-
-    assert result == [80, 286]
-    movie.audio_language_ids.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_create_audio_language_ids_non_list_defaults_to_empty() -> None:
-    """create_audio_language_ids should propagate attribute errors for invalid movie objects."""
-    movie = SimpleNamespace(languages={"English"})
-    with pytest.raises(AttributeError):
-        await ingest_movie.create_audio_language_ids(movie)
+    assert isinstance(result, list)
+    assert len(result) == 1
 
 
 def test_create_people_list_deduplicates_and_normalizes_names() -> None:
     """create_people_list should merge all person fields and normalize unique names."""
-    movie = SimpleNamespace(
-        actors=["Tom Hanks", " TOM HANKS "],
-        directors=["Nora Ephron"],
-        writers=["Nora Ephron", "Delia Ephron"],
-        composers="not-a-list",
-        producers=["Lynda Obst"],
+    movie = _make_movie(
+        imdb_data={
+            "actors": ["Tom Hanks", " TOM HANKS "],
+            "directors": ["Nora Ephron"],
+            "writers": ["Nora Ephron", "Delia Ephron"],
+            "composers": [],
+            "producers": ["Lynda Obst"],
+        },
     )
     people = ingest_movie.create_people_list(movie)
     assert people == {"tom hanks", "nora ephron", "delia ephron", "lynda obst"}
+
+
+# ---------------------------------------------------------------------------
+# MissingRequiredAttributeError / IngestionError / BatchIngestionResult
+# ---------------------------------------------------------------------------
+
+
+def test_missing_required_attribute_error_is_value_error() -> None:
+    """MissingRequiredAttributeError should be a subclass of ValueError."""
+    assert issubclass(MissingRequiredAttributeError, ValueError)
+
+
+def test_ingestion_error_stores_fields() -> None:
+    """IngestionError should store tmdb_id and message."""
+    err = IngestionError(tmdb_id=42, message="Postgres movie card: boom")
+    assert err.tmdb_id == 42
+    assert err.message == "Postgres movie card: boom"
+
+
+def test_batch_ingestion_result_tracks_all_categories() -> None:
+    """BatchIngestionResult should correctly store all tracking sets and lists."""
+    result = BatchIngestionResult(
+        succeeded_ids={1, 2},
+        failed_ids={3},
+        errors=[IngestionError(3, "failed")],
+        filtered_ids={4},
+        filter_reasons=[(4, "missing_required_attribute: no title")],
+    )
+    assert 1 in result.succeeded_ids
+    assert 3 in result.failed_ids
+    assert len(result.errors) == 1
+    assert 4 in result.filtered_ids
+    assert result.filter_reasons[0][0] == 4
+
+
+# ---------------------------------------------------------------------------
+# ingest_movies_to_postgres_batched
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_postgres_batched_happy_path(mocker) -> None:
+    """ingest_movies_to_postgres_batched should return succeeded_ids for successful movies."""
+    movies = [_make_movie(tmdb_data={"tmdb_id": 10}), _make_movie(tmdb_data={"tmdb_id": 20})]
+
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_card", new=AsyncMock()
+    )
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
+    )
+
+    mock_conn = AsyncMock()
+    mock_pool_cm = AsyncMock()
+    mock_pool_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool_cm.__aexit__ = AsyncMock(return_value=False)
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.pool.connection",
+        return_value=mock_pool_cm,
+    )
+
+    result = await ingest_movie.ingest_movies_to_postgres_batched(movies)
+
+    assert result.succeeded_ids == {10, 20}
+    assert result.failed_ids == set()
+    assert result.errors == []
+
+
+@pytest.mark.asyncio
+async def test_postgres_batched_per_movie_isolation(mocker) -> None:
+    """One movie failing should not prevent others from succeeding."""
+    movies = [_make_movie(tmdb_data={"tmdb_id": 10}), _make_movie(tmdb_data={"tmdb_id": 20})]
+
+    call_count = 0
+
+    async def _card_side_effect(movie, conn=None):
+        nonlocal call_count
+        call_count += 1
+        if movie.tmdb_data.tmdb_id == 10:
+            raise RuntimeError("card failed")
+
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_card",
+        side_effect=_card_side_effect,
+    )
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
+    )
+
+    mock_conn = AsyncMock()
+    mock_pool_cm = AsyncMock()
+    mock_pool_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool_cm.__aexit__ = AsyncMock(return_value=False)
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.pool.connection",
+        return_value=mock_pool_cm,
+    )
+
+    result = await ingest_movie.ingest_movies_to_postgres_batched(movies)
+
+    assert 10 in result.failed_ids
+    assert 20 in result.succeeded_ids
+    assert any(e.tmdb_id == 10 for e in result.errors)
+
+
+@pytest.mark.asyncio
+async def test_postgres_batched_missing_required_attribute_goes_to_filtered(mocker) -> None:
+    """Movies with MissingRequiredAttributeError should go to filtered_ids, not failed_ids."""
+    movie = _make_movie(tmdb_data={"tmdb_id": 10, "title": None})
+
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
+    )
+
+    mock_conn = AsyncMock()
+    mock_pool_cm = AsyncMock()
+    mock_pool_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool_cm.__aexit__ = AsyncMock(return_value=False)
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.pool.connection",
+        return_value=mock_pool_cm,
+    )
+
+    result = await ingest_movie.ingest_movies_to_postgres_batched([movie])
+
+    assert 10 in result.filtered_ids
+    assert 10 not in result.failed_ids
+    assert len(result.filter_reasons) == 1

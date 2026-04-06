@@ -139,9 +139,9 @@ async def search(
     query: str,
     metadata_filters: MetadataFilters,
     qdrant_client: AsyncQdrantClient,
-    vector_candidate_limit_original: int = 2000,
-    vector_candidate_limit_subquery: int = 2000,
-    vector_candidate_limit_anchor: int = 2000,
+    vector_candidate_limit_original: int = 500,
+    vector_candidate_limit_subquery: int = 500,
+    vector_candidate_limit_anchor: int = 500,
 ) -> SearchResult:
     """
     Unified search entry point.

@@ -358,3 +358,44 @@ def test_reception_tier_exact_boundaries(base_movie_factory, imdb: float, meta: 
     """reception_tier should map scores at and just below each tier boundary correctly."""
     movie = base_movie_factory(imdb_rating=imdb, metacritic_rating=meta)
     assert movie.reception_tier() == expected_tier
+
+
+# ================================
+#  NORMALIZED TITLE TOKENS — ORIGINAL TITLE MERGING
+# ================================
+
+
+def test_normalized_title_tokens_original_title_adds_new_tokens(base_movie_factory) -> None:
+    """original_title with new tokens should append them after title tokens."""
+    movie = base_movie_factory(title="Spider-Man", original_title="El Hombre Araña")
+    tokens = movie.normalized_title_tokens()
+    # Title tokens come first
+    assert tokens[:3] == ["spider-man", "spider", "man"]
+    # Original title tokens appended
+    assert "el" in tokens
+    assert "hombre" in tokens
+
+
+def test_normalized_title_tokens_original_title_same_as_title(base_movie_factory) -> None:
+    """original_title == title should not add duplicate tokens."""
+    movie = base_movie_factory(title="Spider-Man", original_title="Spider-Man")
+    tokens = movie.normalized_title_tokens()
+    assert tokens == ["spider-man", "spider", "man"]
+
+
+def test_normalized_title_tokens_shared_tokens_deduplicated(base_movie_factory) -> None:
+    """Tokens shared between title and original appear only once."""
+    movie = base_movie_factory(title="The Matrix", original_title="Matrix Reloaded")
+    tokens = movie.normalized_title_tokens()
+    assert tokens.count("matrix") == 1
+    assert "reloaded" in tokens
+    assert "the" in tokens
+
+
+def test_normalized_title_tokens_original_title_none(base_movie_factory) -> None:
+    """original_title=None should produce same result as title-only."""
+    movie = base_movie_factory(title="The Dark Knight", original_title=None)
+    tokens = movie.normalized_title_tokens()
+    assert "the" in tokens
+    assert "dark" in tokens
+    assert "knight" in tokens

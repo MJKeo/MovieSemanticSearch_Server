@@ -153,8 +153,19 @@ class BaseMovie(BaseModel):
         return int(parsed_release.timestamp())
 
     def normalized_title_tokens(self) -> list[str]:
-        """Build normalized title tokens including hyphen expansions."""
-        return tokenize_title_phrase(self.title)
+        """Build normalized title tokens including hyphen expansions.
+
+        Merges tokens from the primary title and original title (if different),
+        deduplicating while preserving first-seen order from the primary title.
+        """
+        tokens = tokenize_title_phrase(self.title)
+        if self.original_title and self.original_title != self.title:
+            seen = set(tokens)
+            for token in tokenize_title_phrase(self.original_title):
+                if token not in seen:
+                    seen.add(token)
+                    tokens.append(token)
+        return tokens
 
     def maturity_rating_and_rank(self) -> tuple[str, int]:
         """

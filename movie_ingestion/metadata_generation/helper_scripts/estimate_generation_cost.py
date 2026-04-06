@@ -227,8 +227,7 @@ def build_candidate_stats(
 # ---------------------------------------------------------------------------
 ELIGIBLE_STATUSES = (
     "imdb_quality_passed",
-    "phase1_complete",
-    "phase2_complete",
+    "metadata_generated",
     "embedded",
     "ingested",
 )

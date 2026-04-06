@@ -74,3 +74,24 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
   was already made using pre-promotion relevance).
 - Missing reception_score defaults to 0.5 (neutral) in reranking,
   not 0 — prevents penalizing movies without ratings data.
+- **`rescore=False` in all Qdrant searches**: Rescoring loads float32
+  vectors from disk for a marginal precision gain; with int8 scalar
+  quantization, in-RAM scoring is sufficient. `rescore=True` was
+  causing 5-7s query times.
+- **Qdrant candidate limit is 500 (not 2000)**: HNSW graph traversal
+  depth (`ef`) silently follows `limit` when `limit > hnsw_ef`. A
+  limit of 2000 was overriding the configured `hnsw_ef=128` and
+  making graph traversal ~16x more expensive than intended. 500
+  keeps ef above the configured hnsw_ef while cutting downstream
+  Postgres fetch from ~13K to ~4K candidates.
+- **Removed lexical dictionary tables**: `genre_dictionary`,
+  `language_dictionary`, `maturity_dictionary`, and
+  `watch_method_dictionary` are no longer in the schema. The
+  `batch_upsert_*_dictionary()` functions in `postgres.py` have
+  been removed along with the CREATE TABLE statements. Any notebook
+  or test still calling these functions must be updated.
+- **`idle_in_transaction_session_timeout = '2min'`** is set at the
+  database level in the init script. Connections left idle in a
+  transaction (e.g. from crashed ingestion runs) are forcibly
+  terminated after 2 minutes, preventing zombie lock accumulation on
+  ingestion tables.

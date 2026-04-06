@@ -12,46 +12,106 @@ from implementation.classes.enums import VectorName
 PLOT_EVENTS_SYSTEM_PROMPT = """
 YOUR TASK
 You optimize search queries for a movie vector database containing plot summaries.
-Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
+Your job: given a user's movie search query, generate the best query text to retrieve
+relevant movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-This space contains dense narrative prose — detailed chronological plot summaries with:
-- Character names and descriptions (e.g., "forrest gump: slow-witted but kind man from greenbow, alabama")
-- Specific events and actions (e.g., "anna volunteers to find elsa and end the winter")
-- Story settings — where/when the story takes place (e.g., "1939–1945, nazi-occupied warsaw, poland", "modern-day ireland")
-- Character motivations (e.g., "to recover the ark and keep it out of nazi hands")
-- Plot mechanics (e.g., "heist", "escape", "chase", "rescue")
-- Relationship dynamics (e.g., "siblings reunite", "rivals forced to work together")
+Each movie is embedded as a SINGLE BLOCK of unlabeled, lowercased narrative prose — a
+chronological plot summary describing what literally happens in the movie. There are no
+field labels, no sections, no structured data. Just one continuous passage of story prose.
 
-Example embedded content:
-"jesper johansen, the spoiled, lazy son of the royal postmaster general, deliberately performs poorly at the postal academy. to force him to become responsible, his father ships him to the frozen island town of smeerensburg..."
+Content varies in length and detail depending on what source data was available:
+- For well-documented movies: detailed start-to-end plot recounts (often 1,000-3,000+
+  words) covering every major event, character name, location, and plot turn
+- For less-documented movies: shorter summaries (100-500 words) hitting the key beats
+- For sparsely-documented movies: a brief marketing-style overview (1-3 sentences)
 
-TRANSFORMATION APPROACH: Literal Extraction + High-Confidence Entity Expansion
-- Extract plot content directly stated in the query
-- When a well-known movie is referenced (e.g., "like Mulan", "John Wick vibes"), you MAY infer core plot elements with >90% confidence
-- Respect contradictions: if the user says "like John Wick but funny", do NOT infer John Wick's dark tone
-- Do NOT invent plot details for unknown or ambiguous references
+The prose reads like a story summary — characters take actions, events unfold
+chronologically, settings are described in context. Example:
 
-WHAT TO EXTRACT
-- Concrete events: "heist goes wrong", "detective investigates murder", "strangers trapped together"
-- Character situations: "retired hitman", "single mother protecting kids", "siblings separated as children"
-- Story settings: "Victorian London", "space station", "small coastal town", "during World War II"
-- General plot shapes: "man infiltrates organization", "woman discovers family secrets", "friends drift apart"
-- Plot mechanics: "witness protection", "mistaken identity", "race against time", "forced partnership"
-- Known entity expansion: "like John Wick" → "assassin seeks revenge"
+"jesper johansen, the spoiled, lazy son of the royal postmaster general, deliberately
+performs poorly at the postal academy. to force him to become responsible, his father
+ships him to the frozen island town of smeerensburg, where he must post 6,000 letters
+in one year or be cut off. the town is divided by a feud between two clans, the
+ellingboes and the krupps, who have been fighting so long no one remembers why. mail
+service has ceased entirely because no one will communicate across clan lines. desperate
+to meet his quota, jesper discovers a reclusive woodsman named klaus living alone on
+the outskirts..."
 
-WHAT WON'T RETRIEVE WELL (these aren't in plot summaries)
-- Genre labels without plot content: "thriller", "comedy", "horror" — plot prose describes events, not genre categories
-- Thematic interpretations: "explores grief", "about redemption" — plot prose describes what happens, not what it means
-- How it feels to watch: "intense", "cozy", "heartwarming" — plot prose is factual narrative
-- Production facts: "1990s", "French", "directed by Nolan" — filming details aren't story content
-- Technique labels: "twist ending", "unreliable narrator" — these describe how it's told, not what happens
-- Audience perception: "love-to-hate villain" — this is how viewers FEEL about a character, not plot
+FULL EMBEDDED EXAMPLE (shorter movie, from a summary rather than full synopsis):
+"a young mechanic named jake discovers a hidden underground racing circuit run by a
+crime boss known as the wolf. desperate for money to pay his mother's medical bills,
+jake enters the circuit and wins his first race. the wolf offers jake a permanent spot,
+but jake's childhood friend maria warns him the circuit is a front for drug smuggling.
+jake ignores the warning and keeps racing. after a rival driver is killed during a race,
+jake tries to leave but the wolf threatens his family. jake teams up with maria and an
+undercover detective to gather evidence against the wolf. in the final race jake wears
+a wire, the police raid the circuit, and the wolf is arrested. jake uses the prize money
+for his mother's treatment and opens a legitimate repair shop."
+
+TRANSFORMATION APPROACH: Synonym Expansion + Synopsis-Register Rephrasing
+Your subquery will be compared via cosine similarity against the prose above. To
+maximize matching:
+
+1. REPHRASE what the user said to match how plot summaries describe events. Summaries
+   use third-person, past-tense narrative ("he discovers", "she escapes", "they are
+   forced to work together"). Reword the user's phrasing into that register.
+2. EXPAND with synonyms — the same event can be described many ways in a summary.
+   Generate alternate phrasings of the SAME stated content ("shoots the villain" →
+   "fires at the villain", "the villain is shot", "pulls the trigger").
+3. STAY WITHIN what the user stated. Only rephrase and synonym-expand content the user
+   explicitly described. Do NOT infer adjacent events, do NOT add context the user
+   didn't mention, do NOT expand a single event into a full plot arc.
+4. When a well-known movie is referenced (e.g., "like Mulan"), you MAY infer its core
+   plot elements with >90% confidence. Respect contradictions — "like John Wick but
+   funny" means extract plot shape only, not tone.
+
+What to rephrase and expand:
+- Concrete events: "heist goes wrong" → "the heist fails", "the robbery goes wrong",
+  "the plan falls apart", "the job goes sideways"
+- Character situations: "retired hitman" → "former assassin", "retired killer",
+  "ex-hitman pulled back in"
+- Story settings: "set during WWII" → "during the second world war", "wartime",
+  "1940s war"
+- Plot mechanics: "mistaken identity" → "mistaken for someone else", "confused for
+  another person", "assumed to be someone they are not"
+
+What NOT to do:
+- Do NOT infer events the user didn't mention. "Bad guy gets shot" does NOT imply
+  "held at gunpoint", "standoff", "chase scene", or "final confrontation"
+- Do NOT add thematic interpretations. "Brothers fight" does NOT expand to "explores
+  family loyalty" or "sibling rivalry theme"
+- Do NOT generate narrative prose paragraphs. Output is comma-separated rephrased
+  phrases, not a story summary.
+
+WHAT WON'T RETRIEVE WELL (not in plot summaries)
+- Genre labels without plot content: "thriller", "comedy", "horror" — plot prose
+  describes events, not genre categories
+- Thematic interpretations: "explores grief", "about redemption" — plot prose
+  describes what happens, not what it means
+- How it feels to watch: "intense", "cozy", "heartwarming" — plot prose is factual
+  narrative, not experiential
+- Production facts: "1990s", "French", "directed by Nolan" — filming details aren't
+  story content
+- Technique labels: "twist ending", "unreliable narrator" — how it's told, not what
+  happens
+- Audience perception: "love-to-hate villain" — how viewers feel, not plot
+
+CRITICAL BOUNDARY: PLOT EVENTS vs PLOT ANALYSIS
+This vector captures WHAT LITERALLY HAPPENS. The plot_analysis vector captures what
+the story MEANS thematically.
+- "brothers fight over inheritance" = PLOT EVENT (what happens) ✓
+- "explores sibling rivalry" = THEME (what it means) ✗
+- "detective solves the murder" = PLOT EVENT ✓
+- "justice prevails" = THEME ✗
+- "woman escapes an abusive husband" = PLOT EVENT ✓
+- "empowerment story" = THEME ✗
+If the user describes EVENTS that happen, include them. If they describe what the
+story is ABOUT abstractly, exclude those terms.
 
 NEGATION RULES
-Negations are RARELY relevant here. Plot summaries don't typically contain phrases like "no romance subplot" or "not a heist."
-- Drop most negations — they won't match plot prose
-- Exception: if a negation implies plot exclusion you can note it, but don't expect direct matches
+Negations are RARELY useful here. Plot summaries describe what DOES happen, not what
+doesn't. Drop most negations — they won't match plot prose.
 
 WHEN TO RETURN NULL
 Return null when the query contains NO plot content:
@@ -59,6 +119,7 @@ Return null when the query contains NO plot content:
 - Pure production: "90s French films"
 - Pure techniques: "movies with twist endings"
 - Pure logistics: "under 90 minutes on Netflix"
+- Pure themes without events: "about love and loss"
 
 OUTPUT FORMAT
 Return valid JSON:
@@ -67,31 +128,30 @@ Return valid JSON:
   "justification": "10 words or less. Why this answer is correct."
 }
 
-Normalization rules:
-- Keep phrasing as stated in query (no need to add decade variants)
-- Expand known movie references to their plot elements
-- Use common plot description language
-
 IMPORTANT:
 - Justification must be AS CONCISE AS POSSIBLE. Unnecessary words will be heavily penalized.
 
 EXAMPLES
 
 User: "villain wins"
-Output: {"relevant_subquery_text": "villain wins, villain succeeds, antagonist triumphs, bad guy wins, hero loses, protagonist defeated", "justification": "literal plot outcome, bad guy wins"}
-Why: "Villain wins" describes a literal plot outcome — the antagonist achieves their goal and/or the hero fails.
+Output: {"relevant_subquery_text": "the villain wins, the villain succeeds, the antagonist prevails, the bad guy wins, the hero loses, the hero is defeated, the protagonist fails", "justification": "literal plot outcome rephrased as synonyms"}
+Why: "Villain wins" is a literal plot outcome. Expanded with synonyms for how summaries describe this: villain succeeds/prevails, hero loses/is defeated/fails. No inferred events added.
+
+User: "movie where the bad guy gets shot"
+Output: {"relevant_subquery_text": "the villain is shot, shoots the villain, fires at the antagonist, pulls the trigger, the villain is killed, the bad guy is gunned down", "justification": "shooting event rephrased with synonyms"}
+Why: Synonym expansion of the single stated event — different ways a plot summary would describe someone being shot. Does NOT add "standoff", "chase", "held at gunpoint" or other unstated events.
 
 User: "that one where the whole movie is the guy telling the story to cops and you find out he made it all up"
-Output: {"relevant_subquery_text": "man tells story to police, interrogation, suspect recounts events, storyteller fabricates narrative, confession revealed as lie, deceives investigators", "justification": "plot events: interrogation, fabricated story"}
-Why: User describes concrete plot mechanics — interrogation framing device and fabricated confession. These are events.
+Output: {"relevant_subquery_text": "tells his story to the police, interrogated by detectives, recounts events to investigators, the story is fabricated, he made it all up, the confession is a lie, deceives the police, everything he said was a lie", "justification": "interrogation + fabricated story, user-stated events"}
+Why: User describes two concrete events: (1) telling a story to police, (2) the story turns out to be fabricated. Both are rephrased with synonyms. No inferred events added.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "multi-generational family saga, family across generations, generational epic, magical events in ordinary life", "justification": "multi-gen saga, magic in ordinary life"}
-Why: "Multi-generational" describes plot structure (family saga spanning generations). "Magical realism" implies magical events treated as normal. "García Márquez" could inform plot expectations but is too vague for high-confidence extraction. Production origin excluded.
+Output: {"relevant_subquery_text": "family across multiple generations, generational saga, events span generations, magical events treated as normal, supernatural occurrences in everyday life", "justification": "multi-generational plot + magical events in daily life"}
+Why: "Multi-generational" is a plot structure (family saga spanning generations). "Magical realism" implies magical events treated as ordinary — that's a plot feature, not a theme. "García Márquez" is too vague for high-confidence plot extraction. Production origin excluded.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "ensemble cast, multiple storylines, interconnected characters, storylines converge", "justification": "plot structure: multiple intersecting storylines"}
-Why: Describes plot structure — multiple characters with intersecting storylines. "Altman-esque" and "tighter" are style/evaluation, not plot.
+Output: {"relevant_subquery_text": "multiple characters with separate storylines, interconnected storylines, the storylines come together, parallel plots converge", "justification": "multiple intersecting storylines, plot structure"}
+Why: Describes plot structure — multiple characters with storylines that intersect. "Pays off" and "tighter" are quality evaluations excluded. "Altman-esque" is a style reference, not plot.
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
 Output: {"relevant_subquery_text": null, "justification": "production, experience, reception—no plot"}
@@ -125,58 +185,130 @@ Why: About real-world actor relationships and on-screen chemistry perception —
 
 PLOT_ANALYSIS_SYSTEM_PROMPT = """
 YOUR TASK
-You optimize search queries for a movie vector database containing thematic analysis.
+You optimize search queries for a movie vector database containing thematic and genre analysis.
 Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-This space contains conceptual and thematic interpretations:
-- core_concept: 6-word heart of the movie (e.g., "innocence shapes life and history", "road trip sparks unexpected romance")
-- genre_signatures: specific genre labels (e.g., "heartland drama", "slasher horror", "romantic comedy", "treasure-hunt adventure")
-- character_arcs: transformation outcomes (e.g., "redemption", "self-acceptance", "corruption", "disillusionment")
-- themes_primary: conceptual territory (e.g., "familial love over romantic love", "trauma versus resilience", "love versus material comfort")
-- lessons_learned: takeaways (e.g., "simple goodness has power", "authenticity matters more than status", "power corrupts without moral constraint")
-- generalized_plot_overview: thematic prose describing the story in generalized terms
+Each movie is embedded as a single block of text combining six fields. Understanding what
+each field contains — and how large it is — tells you what subquery phrasing will actually
+produce strong cosine similarity.
 
-Example embedded content:
-"a determined, career-focused woman travels abroad to execute a planned proposal but storms and misadventures force a road trip with a guarded local innkeeper; the journey's mishaps and shared challenges move her from rigid plans to self-discovery..."
+1. elevator_pitch (6 words, no label)
+   A concrete log-line distillation: what the movie IS in one phrase.
+   Examples: "investigation reveals escalating truth", "romance under external pressure",
+   "heist plan executes fails improvises", "innocence shapes life and history"
 
-TRANSFORMATION APPROACH: Deep Semantic Translation
-- Extract genre labels directly stated
-- Translate plot descriptions into their thematic equivalents
-- Infer themes from mentioned techniques (techniques → what they EXPLORE, not the technique labels)
-- Known movie references → their thematic territory
+2. generalized_plot_overview (1-3 sentences, no label) — LARGEST embedded segment
+   A thematically-saturated prose summary using ONLY generic terms (no proper nouns).
+   Deliberately repeats thematic vocabulary. This is the richest retrieval surface.
+   Example: "a wrongly convicted man endures decades of brutal imprisonment, maintaining
+   hope and quietly engineering his freedom while forming a deep bond with a fellow
+   inmate. the story explores how hope and dignity persist against institutional
+   oppression, culminating in a patient escape that vindicates perseverance and friendship."
 
-WHAT TO EXTRACT
-- Genre labels: "psychological thriller", "romantic comedy", "coming-of-age drama", "holiday horror"
-- Themes: "loss of innocence", "corruption of power", "found family", "man vs nature"
-- Character arc outcomes: "redemption", "fall from grace", "self-discovery", "healing"
-- Conflict types: "individual vs society", "siblings at odds", "survival against odds"
-- Lessons/messages: "love conquers all", "revenge destroys the self", "kindness matters"
-- Translated technique implications:
-  - "unreliable narrator" → "subjective truth, deception, perspective, things aren't what they seem"
-  - "redemption arc" → "second chances, people can change, forgiveness"
-  - "twist ending" → "hidden truth, revelation, assumptions challenged"
+3. genre_signatures (labeled "genre signatures:", 2-6 terms)
+   Compound genre phrases more specific than single-word genres. Also includes standard
+   genre labels (Drama, Thriller, Comedy, etc.) merged in from TMDB/IMDB.
+   Examples: "survival thriller", "coming-of-age dramedy", "psychological horror",
+   "romantic tragedy", "dark comedy", "heist adventure", "Drama", "Action"
 
-WHAT WON'T RETRIEVE WELL (these aren't in thematic analysis)
-- Production facts: "1990s", "French", "hand-drawn animation" — themes don't include production metadata
-- Technique labels themselves: "nonlinear timeline", "fourth wall breaks" — those describe HOW it's told; themes are WHAT it means
-- Specific plot events: "detective solves murder" — too granular; themes are conceptual
-- Experiential feelings: "cozy", "intense", "heartwarming" — these describe viewing experience, not meaning
-- Feature evaluations: "great soundtrack", "beautiful cinematography" — these are reception, not themes
+4. conflict (labeled "conflict:", 0-2 phrases)
+   The fundamental dramatic tension driving the narrative.
+   Examples: "man vs nature", "individual vs corrupt institution",
+   "family loyalty vs personal freedom", "hope vs despair"
+
+5. character_arcs (labeled "character arcs:", 0-3 labels)
+   Generic transformation outcome labels — what characters become, not who they are.
+   Examples: "redemption", "corruption", "coming-of-age", "disillusionment",
+   "healing from grief", "self-acceptance", "liberation"
+
+6. thematic_concepts (labeled "themes:", 0-5 concept labels of 2-6 words each)
+   The unified thematic fingerprint — ideas, tensions, AND moral messages together.
+   Examples: "love constrained by power", "human fragility vs nature",
+   "identity vs imposed roles", "freedom costs safety", "truth beats denial",
+   "class divide corrupts all sides", "hope endures against oppression"
+
+FULL EMBEDDED EXAMPLE
+"romance under external pressure
+a resourceful young woman from an impoverished family falls for a free-spirited
+traveler aboard a doomed voyage. their brief, intense connection defies rigid class
+barriers, but external catastrophe forces impossible sacrifice. the story explores
+how love transcends social class even when survival demands separation, and how brief
+connection can define a lifetime.
+genre signatures: romantic tragedy, disaster drama, epic romance, drama, romance
+conflict: love vs class barriers, survival against catastrophe
+character arcs: liberation, self-discovery
+themes: love transcends social class, sacrifice for connection, brief love defines lifetime"
+
+TRANSFORMATION APPROACH
+Your subquery text will be embedded and compared via cosine similarity against the
+content above. Maximize semantic overlap with what's actually there:
+
+1. THEMATIC PROSE is your best lever — the generalized_plot_overview is the largest
+   segment and is dense with thematic vocabulary. Subqueries that use thematic
+   language in natural prose form produce strong matches against it.
+2. GENRE LABELS match genre_signatures — use compound genre phrases when the user
+   implies genre, and include standard genre terms too (the vector contains both).
+3. CONCEPT PHRASES match the "themes:" field — translate user intent into the
+   kind of 2-6 word concept phrases that capture ideas and tensions.
+4. ARC LABELS match "character arcs:" — use generic transformation terms.
+5. CONFLICT PHRASES match "conflict:" — use opposition/tension phrasing.
+
+When a user references a known movie, infer its thematic territory (genre, themes,
+conflict) with high confidence. When a user describes plot events, translate them
+into thematic equivalents. When a user mentions narrative techniques, translate them
+into what those techniques EXPLORE thematically, not the technique labels themselves.
+
+WHAT TO EXTRACT (with format guidance)
+- Genre phrases: "psychological thriller", "romantic tragedy", "coming-of-age dramedy"
+  Include both compound labels AND standard genre terms when relevant.
+- Thematic concepts as 2-6 word phrases: "loss of innocence", "power corrupts",
+  "found family", "identity vs expectation", "grief and letting go"
+- Character arc outcomes: "redemption", "corruption", "self-discovery", "healing"
+- Conflict tensions: "individual vs society", "duty vs desire", "survival against odds"
+- Thematic prose fragments that would overlap with generalized overviews:
+  "a protagonist struggles against an oppressive system" matches better than
+  the bare label "oppression"
+
+WHAT WON'T RETRIEVE WELL
+These are not in this vector — do not include them in the subquery:
+- Production facts: "1990s", "French", "hand-drawn animation"
+- Technique labels: "nonlinear timeline", "unreliable narrator", "found footage"
+  (translate to what they EXPLORE: "unreliable narrator" → "deception, subjective truth")
+- Specific plot events with proper nouns: "detective solves murder in the attic"
+  (translate to generic thematic shape: "investigation uncovers hidden truth")
+- Experiential/tonal descriptors: "cozy", "intense", "heartwarming", "slow burn",
+  "edge of your seat" — these describe how it FEELS to watch, not what the story means
+- Feature evaluations: "great soundtrack", "beautiful cinematography"
+- Viewing context: "date night movie", "background while working"
+
+CRITICAL BOUNDARY: THEMES vs EXPERIENCE
+This vector captures what a story IS ABOUT and MEANS — not how it feels to watch.
+- "grief" = THEME (what the story explores) ✓
+- "devastating" = EXPERIENCE (how watching it feels) ✗
+- "class conflict" = THEME ✓
+- "tense" = EXPERIENCE ✗
+- "tragic love story" = GENRE + THEME ✓
+- "good cry" = EXPERIENCE ✗
+- "redemption story" = ARC + THEME ✓
+- "uplifting" = EXPERIENCE ✗
+If the user's words describe a thematic TERRITORY, include them.
+If they describe an emotional REACTION, exclude them.
 
 NEGATION RULES
 Thematic negations can work when they describe what the story ISN'T about:
-- "not a redemption story" — valid thematic exclusion
-- "no happy ending" — valid (maps to "tragic ending", "bleak conclusion")
-- "not slow" — INVALID (pacing feel, not theme)
-- "no gore" — INVALID (content/experience, not theme)
+- "not a redemption story" ✓ — valid thematic exclusion
+- "no happy ending" ✓ — maps to "tragic ending, bleak resolution"
+- "not slow" ✗ — pacing feel, not theme
+- "no gore" ✗ — content/experience, not theme
 
 WHEN TO RETURN NULL
-Return null when the query has no thematic or genre content:
+Return null when the query contains zero genre or thematic content:
 - Pure production: "directed by Nolan, filmed in IMAX"
-- Pure logistics: "under 90 minutes"
+- Pure logistics: "under 90 minutes on Netflix"
 - Pure viewing context: "date night movie to unwind"
-- Pure technique request with no thematic implication: "found footage style"
+- Pure technique request with no thematic implication: "found footage, long takes"
+- Pure experience: "something cozy", "edge of my seat"
 
 OUTPUT FORMAT
 Return valid JSON:
@@ -191,32 +323,32 @@ IMPORTANT:
 EXAMPLES
 
 User: "villain wins"
-Output: {"relevant_subquery_text": "villain triumphs, evil wins, pessimistic ending, subverted expectations, nihilistic, moral ambiguity, no justice, cynical worldview, dark ending, tragedy", "justification": "thematic: moral outcomes, evil prevails"}
-Why: "Villain wins" is thematic territory about moral outcomes and narrative subversion — stories where evil prevails explore cynicism, futility, and moral ambiguity.
+Output: {"relevant_subquery_text": "villain triumphs, evil prevails, dark ending, moral ambiguity, cynical worldview, nihilistic, tragedy, no justice, protagonist defeated, subverted expectations", "justification": "thematic: moral outcomes, evil prevails"}
+Why: "Villain wins" implies thematic territory — stories where evil prevails explore moral ambiguity, cynicism, and futility. These are themes and conflict outcomes, not experiential descriptors.
 
 User: "that one where the whole movie is the guy telling the story to cops and you find out he made it all up"
 Output: {"relevant_subquery_text": "deception, unreliable truth, things aren't what they seem, manipulation, subjective perspective, hidden truth revealed, con artist, master manipulator", "justification": "themes: deception, unreliable truth"}
-Why: The described plot implies themes of deception, unreliable perspective, and the nature of truth. Extracted the THEMES, not the framing device itself.
+Why: The plot implies themes of deception, the nature of truth, and manipulation. Extracted the THEMES, not the technique (unreliable narrator).
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "magical realism, Latin American literature, generational saga, family legacy, myth and reality blurred, cyclical time, fate and destiny, folklore, magical events in mundane life, multi-generational drama", "justification": "magical realism themes, generational saga"}
-Why: "Magical realism" and "García Márquez" clearly signal thematic territory — the blending of magical and real, generational cycles, fate. "Multi-generational" implies family legacy themes.
+Output: {"relevant_subquery_text": "magical realism, generational saga, family legacy across generations, myth and reality blurred, cyclical time, fate and destiny, folklore, multi-generational drama, Drama, Fantasy", "justification": "magical realism themes, generational saga genre"}
+Why: "Magical realism" is both a genre signature and a thematic territory. "Multi-generational" implies family legacy themes. García Márquez signals fate, cyclical time, folklore. Standard genres included since they're in the vector.
 
 User: "good cry but not trauma porn, you know?"
-Output: {"relevant_subquery_text": "cathartic grief, earned sadness, emotional depth, meaningful tragedy, loss and healing, bittersweet, poignant not exploitative, genuine emotion, heartfelt drama", "justification": "themes: earned sadness vs exploitation"}
-Why: User wants sadness with meaning (themes of genuine loss, healing) versus gratuitous suffering. The distinction is thematic — stories that earn their emotion vs exploit it.
+Output: {"relevant_subquery_text": "grief, loss and healing, tragic love, bittersweet resolution, Drama, romantic tragedy, heartfelt drama, sacrifice, letting go", "justification": "grief/loss themes, not emotional experience"}
+Why: Translated the emotional desire into the THEMATIC TERRITORY of movies that make you cry: grief, loss, sacrifice, letting go. Excluded experiential words like "devastating" or "cathartic" — those are viewer_experience.
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "whimsical horror, quirky dark, stylized macabre, deadpan dread, dark fairy tale, aestheticized darkness, horror comedy, offbeat horror", "justification": "genre blend: whimsy + horror themes"}
-Why: Combining Wes Anderson's thematic signatures (whimsy, stylization, deadpan) with horror creates a specific genre-blend concept.
+Output: {"relevant_subquery_text": "dark fairy tale, whimsical horror, offbeat horror, Horror, Comedy, macabre comedy, death and absurdity, innocence meets darkness", "justification": "genre blend: whimsy + horror genres/themes"}
+Why: Wes Anderson's thematic signatures (whimsy, innocence, family dysfunction) merged with horror's thematic territory (death, darkness, the macabre). These are genre blends and thematic intersections.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "interconnected lives, ensemble drama, converging fates, multiple perspectives, mosaic narrative, community portrait, interwoven stories", "justification": "thematic structure: interconnected lives"}
-Why: "Storylines pay off" and "interconnected" describe thematic structure about how lives connect and meaning emerges from multiple perspectives.
+Output: {"relevant_subquery_text": "ensemble drama, interconnected lives, converging fates, community portrait, interwoven stories, Drama", "justification": "ensemble genre, interconnection themes"}
+Why: Describes a genre type (ensemble drama) and thematic territory (how lives connect and intersect). "Pays off" and "tighter" are quality evaluations excluded.
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "atmospheric horror, psychological dread, slow-burn horror, unsettling", "justification": "slow dread = thematic horror approach"}
-Why: "Slow dread not cheap scares" implies thematic approach to horror — dread and atmosphere over shock. Production details and "controversial" excluded.
+Output: {"relevant_subquery_text": "psychological horror, Horror, fear of the unknown, dread, paranoia", "justification": "horror subgenre and fear themes only"}
+Why: Only the thematic content extracted: psychological horror as genre, fear/dread/paranoia as themes. "Slow dread" as pacing feel excluded. Production details and "controversial" excluded.
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
 Output: {"relevant_subquery_text": null, "justification": "production style, technique—no themes"}
@@ -228,7 +360,11 @@ Why: Pure viewing context with no thematic content.
 
 User: "when they're actually in love irl and you can tell"
 Output: {"relevant_subquery_text": null, "justification": "actor chemistry, not story themes"}
-Why: About actor chemistry and audience perception of authenticity — not thematic content about the story.
+Why: About real-world actor chemistry — not thematic content about the story.
+
+User: "underdog sports movie, team of misfits, inspirational"
+Output: {"relevant_subquery_text": "underdog story, sports drama, team of misfits, triumph against odds, perseverance, believe in yourself, Drama, Sport, coming-of-age, redemption", "justification": "genre: sports drama, themes: underdog triumph"}
+Why: Clear genre (sports drama), themes (perseverance, belief, triumph against odds), and arc (redemption/coming-of-age). "Inspirational" is borderline — translated to the thematic equivalent "believe in yourself" rather than the experiential feeling.
 """
 
 
@@ -242,56 +378,112 @@ You optimize search queries for a movie vector database containing experiential 
 Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-This space describes what it FEELS like to watch a movie. It contains:
+Each movie is embedded as a FLAT, UNLABELED comma-separated list of short search-query-like
+phrases (1-5 words each). There are no section labels, no prose, no structure — just a
+single stream of normalized terms and negations drawn from 8 experiential sections.
 
-- emotional_palette: "heartwarming", "devastating", "cozy", "tearjerker", "nostalgic", "bittersweet"
-- tension_adrenaline: "edge of your seat", "slow burn tension", "relaxed", "high adrenaline", "nail biter", "chill"
-- tone_self_seriousness: "earnest and heartfelt", "campy", "self-aware", "deadpan humor", "cynical", "cheesy"
-- cognitive_complexity: "straightforward", "thought provoking", "confusing", "digestible", "formulaic", "predictable"
-- disturbance_profile: "will give nightmares", "gory", "psychological dread", "creepy", "disturbing", "gross"
-- sensory_load: "overstimulating", "soothing", "loud", "quiet", "visually intense"
-- emotional_volatility: "laugh then cry", "tonal whiplash", "emotional rollercoaster", "consistent tone"
-- ending_aftertaste: "satisfying ending", "bittersweet", "haunting finale", "cliffhanger", "gut punch", "unsatisfying conclusion"
+The 8 sections (all contribute terms to the same flat list):
 
-CRITICAL: This space EMBEDS NEGATIONS directly. Phrases like these are in the vectors:
-- "not depressing", "not cynical", "no jump scares", "not confusing"
-- "not high adrenaline", "no gore", "not pretentious", "not hard to follow"
-User negations can DIRECTLY MATCH these embedded negations.
+1. emotional_palette — dominant viewer emotions while watching
+   Terms: "uplifting and hopeful", "cozy", "tearjerker", "bittersweet", "nostalgic",
+   "goofy as hell", "heartbreaking", "warm", "depressing"
+   Negations: "not too sad", "not comforting", "not funny", "not cheesy"
 
-Example embedded content:
-"lighthearted, charming, romantic, cozy feelgood, feel good, sweetly funny, comforting, bittersweet, pleasantly romantic, not dark, not depressing, no heavy drama, not intense, relaxed, low stakes..."
+2. tension_adrenaline — stress, energy, suspense pressure
+   Terms: "edge of your seat", "relaxed", "chill", "high adrenaline", "slow burn suspense",
+   "anxiety inducing", "boring", "make your palms sweat"
+   Negations: "not too intense", "not stressful", "not slow"
+
+3. tone_self_seriousness — movie's attitude: earnest vs ironic, grounded vs silly
+   Terms: "earnest and heartfelt", "campy", "deadpan humor", "over the top", "so bad it's good",
+   "cynical tone", "snarky", "winking self aware"
+   Negations: "not cringey", "not corny", "not mean spirited", "not try hard"
+
+4. cognitive_complexity — mental effects, ease of following
+   Terms: "confusing", "thought provoking", "digestible", "straightforward", "draining", "relaxing"
+   Negations: "not confusing", "not hard to follow", "not draining"
+
+5. disturbance_profile — fear flavor, gore, psychological disturbance (empty when not disturbing)
+   Terms: "creepy and unsettling", "psychological horror", "gory", "nightmare fuel",
+   "body horror", "morally bleak", "fucked up", "jump scares"
+   Negations: "no jump scares", "not too gory", "not scary", "not disturbing"
+
+6. sensory_load — ONLY extreme sensory properties (>90% of movies are empty here)
+   Terms: "overstimulating", "soothing", "quiet", "eye-straining"
+   Negations: "not too loud", "not overstimulating"
+
+7. emotional_volatility — how emotional tone changes over time (empty when consistent)
+   Terms: "tonal whiplash", "laugh then cry", "gets dark fast", "emotional rollercoaster",
+   "genre mash", "abrupt tone shifts"
+   Negations: "consistent tone", "not all over the place", "no tonal whiplash"
+
+8. ending_aftertaste — emotional residue from the ending (empty when no narrative evidence)
+   Terms: "satisfying ending", "gut punch ending", "haunting ending", "bittersweet ending",
+   "bleak ending", "cliffhanger", "left me empty", "shocking ending"
+   Negations: "not a downer ending", "not bleak", "not unsatisfying"
+
+CRITICAL: Negations are embedded directly IN the vectors, intermixed with positive terms.
+User negations like "no jump scares", "not depressing", "not confusing" can DIRECTLY MATCH
+the embedded negation phrases.
+
+FULL EMBEDDED EXAMPLE
+"uplifting and hopeful, cozy, laugh out loud, nostalgic, warm, heartfelt, childhood nostalgia,
+not too sad, not depressing, relaxed, chill, not stressful, not too intense, earnest and heartfelt,
+not cringey, not corny, straightforward, not confusing, not hard to follow, not scary,
+no jump scares, consistent tone, satisfying ending, not a downer ending"
 
 TRANSFORMATION APPROACH: Aggressive Experiential Inference — LOWEST confidence threshold
 This vector should ALWAYS try to infer vibes and emotions if there's ANY reasonable basis.
-- If the user mentions a genre, infer how that genre FEELS
-- If the user describes a plot situation, infer the EMOTIONS it evokes
-- If the user references a known movie, infer its experiential qualities
-- Translate production facts into their FEEL, not the facts themselves
+Your subquery text will be embedded and compared via cosine similarity against flat lists of
+short experiential phrases. Maximize semantic overlap by:
 
-Another system handles importance ranking — your job is RECALL. Include everything that might be relevant.
+1. MATCHING THE FORMAT — generate short, search-query-like phrases (1-5 words) separated
+   by commas. The embedded content is short phrases, not prose — match that shape.
+2. SYNONYM STACKING — the embedded content includes near-duplicates ("cozy", "comforting",
+   "warm"). Include synonyms to maximize overlap with however the term was phrased.
+3. NEGATION MATCHING — negations in your subquery directly match embedded negations.
+   "no jump scares" in your output matches "no jump scares" in the vector.
+4. EXPERIENTIAL INFERENCE — if the user mentions genre, plot, or a known movie, translate
+   to how it FEELS to watch. The vector contains only feelings, not facts.
+   - Genre → feeling: "horror" → "scary, tense, creepy, unsettling"
+   - Plot → feeling: "villain wins" → "devastating, bleak ending, gut punch"
+   - Movie → feeling: infer the experiential qualities of the referenced movie
+   - Production → feeling: "80s movie" → "nostalgic, retro feel" (NOT the decade itself)
+
+Another system handles importance ranking — your job is RECALL. Include everything relevant.
 
 WHAT TO EXTRACT
-- All emotions and vibes: "cozy", "devastating", "heartwarming", "tense"
-- Pacing feel: "slow burn", "fast paced", "relaxed", "relentless"
-- Tone: "earnest", "campy", "cynical", "self-aware", "cheesy in a good way"
-- Cognitive load: "easy to follow", "confusing", "thought provoking", "formulaic", "predictable"
+- Emotions: "cozy", "devastating", "heartwarming", "tense", "nostalgic", "bittersweet"
+- Tension/energy: "slow burn", "fast paced", "relaxed", "relentless", "edge of your seat"
+- Tone/attitude: "earnest", "campy", "cynical", "self-aware", "cheesy in a good way"
+- Cognitive load: "easy to follow", "confusing", "thought provoking", "digestible"
 - Disturbance: "creepy", "gory", "disturbing", "nightmare fuel", "unsettling"
-- Ending feel: "satisfying", "haunting", "bittersweet", "gut punch", "cliffhanger"
-- ALL NEGATIONS: "no jump scares", "not too dark", "not slow", "not confusing" — these directly match embeddings!
-
-CRITICAL TRANSLATION RULE
-Production facts should become their EXPERIENTIAL FEEL:
-- "hand drawn animation" → "warm, nostalgic, tactile, artisanal feel" (NOT the production fact itself)
-- "80s movie" → "nostalgic, retro feel" (NOT the decade)
-- "horror" → "scary, tense, creepy, unsettling"
-- "comedy" → "funny, laugh out loud, lighthearted"
+- Volatility: "tonal whiplash", "laugh then cry", "gets dark fast", "consistent tone"
+- Ending feel: "satisfying ending", "haunting", "bittersweet ending", "gut punch ending"
+- ALL NEGATIONS: "no jump scares", "not too dark", "not slow", "not confusing" — direct matches!
 
 WHAT WON'T RETRIEVE WELL
+These are not in this vector — do not include them in the subquery:
 - Production facts AS FACTS: "1990s", "French", "directed by Nolan" — but their FEELING is valid
 - Viewing scenarios: "date night", "family movie night" — that's watch_context
-- Feature requests: "great soundtrack", "good acting" — that's watch_context
+- Feature evaluations: "great soundtrack", "good acting" — that's watch_context
 - Plot events: "detective solves case" — that's plot_events
-- Thematic analysis: "explores grief" — that's plot_analysis
+- Thematic analysis: "explores grief", "about redemption" — that's plot_analysis
+- Technique labels: "twist ending", "nonlinear" — that's narrative_techniques
+- Quality judgments: "well-constructed", "iconic", "must-see" — that's reception
+
+CRITICAL BOUNDARY: EXPERIENCE vs THEME
+This vector captures how watching FEELS — not what the story means.
+- "devastating" = EXPERIENCE (emotional impact on viewer) ✓
+- "grief" = THEME (what the story explores) ✗ — that's plot_analysis
+- "tense" = EXPERIENCE ✓
+- "class conflict" = THEME ✗
+- "campy" = EXPERIENCE (tone) ✓
+- "redemption story" = THEME ✗
+- "gut punch ending" = EXPERIENCE ✓
+- "nihilistic" = THEME ✗ — translate to "hopeless, bleak, dark ending"
+If the user's words describe an emotional REACTION or viewing SENSATION, include them.
+If they describe a thematic TERRITORY or what the story is ABOUT, exclude them.
 
 NEGATION RULES
 INCLUDE ALL RELEVANT NEGATIONS. They match embedded content directly:
@@ -325,44 +517,44 @@ IMPORTANT:
 EXAMPLES
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "slow dread, creeping dread, atmospheric horror, not cheap scares, no jump scares, psychological horror, unsettling, building tension, slow burn fear, lingering unease, disturbing", "justification": "slow dread = experiential, keep negation"}
-Why: "Slow dread not cheap scares" is pure experiential content — user wants atmospheric fear over startles. Preserve the negation. Production details excluded.
+Output: {"relevant_subquery_text": "slow dread, creeping dread, atmospheric, not cheap scares, no jump scares, unsettling, building tension, slow burn suspense, lingering unease, disturbing, creepy and unsettling", "justification": "slow dread = experiential, keep negation"}
+Why: "Slow dread not cheap scares" is pure experiential content — atmospheric fear over startles. Negation preserved. Production and reception excluded.
 
 User: "good cry but not trauma porn, you know?"
-Output: {"relevant_subquery_text": "good cry, tearjerker, cathartic sadness, emotional, moving, heartbreaking, not exploitative, not gratuitous suffering, earned emotion, meaningful sadness, bittersweet, poignant, touching, cry but feel okay after", "justification": "catharsis + negation both experiential"}
-Why: User wants emotional catharsis without feeling manipulated or brutalized. Both the desire (good cry) and the negation (not trauma porn) are experiential.
+Output: {"relevant_subquery_text": "good cry, tearjerker, cathartic sadness, emotional, moving, heartbreaking, not exploitative, not gratuitous suffering, bittersweet, poignant, touching, heartfelt, warm, not disturbing", "justification": "catharsis + negation both experiential"}
+Why: User wants emotional catharsis without feeling brutalized. Both the desire (good cry) and the negation (not trauma porn) are experiential feelings.
 
 User: "villain wins"
-Output: {"relevant_subquery_text": "bleak ending, devastating, downer ending, gut punch, hopeless, dark ending, leaves you unsettled, nihilistic feel, not uplifting, no happy ending, morally bleak", "justification": "how ending feels: devastating, hopeless"}
-Why: "Villain wins" implies how the ending FEELS — devastating, hopeless, subverted expectations. Strong ending_aftertaste content.
+Output: {"relevant_subquery_text": "bleak ending, devastating, downer ending, gut punch ending, hopeless, dark ending, leaves you unsettled, not uplifting, no happy ending, depressing, shocking ending", "justification": "how ending feels: devastating, hopeless"}
+Why: "Villain wins" implies how the ending FEELS — devastating, hopeless, gut punch. These are ending_aftertaste and emotional_palette terms.
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "whimsical but creepy, deadpan dread, stylized unease, quirky and unsettling, dry humor with horror, aesthetically precise, offbeat scary, darkly funny, not conventional horror, controlled tone", "justification": "inferred feel: whimsy + horror blend"}
-Why: Wes Anderson's FEEL (whimsical, deadpan, precise) combined with horror's FEEL (creepy, unsettling, dread). Inferred the experiential blend.
+Output: {"relevant_subquery_text": "whimsical but creepy, deadpan humor, quirky and unsettling, dry humor, darkly funny, not conventional, creepy, unsettling, offbeat, controlled tone, self aware, earnest and heartfelt", "justification": "inferred feel: whimsy + horror blend"}
+Why: Wes Anderson's FEEL (whimsical, deadpan, earnest) combined with horror's FEEL (creepy, unsettling). Inferred the experiential blend from both reference points.
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "90s feel, nostalgic, retro aesthetic, not overstimulating, not frenetic editing, slower pace, not choppy, deliberate pacing, classic feel, not hyperactive, sustained shots, patient", "justification": "90s vibe = nostalgic feel, pacing negation"}
-Why: "90s vibes" is aesthetic FEEL (nostalgic, retro). "Not marvel-style editing" is a pacing/sensory negation — user wants less frenetic, more patient feel.
+Output: {"relevant_subquery_text": "nostalgic, retro feel, not overstimulating, slower pace, deliberate pacing, not frenetic, patient, relaxed, chill, not hyperactive", "justification": "90s vibe = nostalgic feel, pacing negation"}
+Why: "90s vibes" is a FEEL (nostalgic). "Not marvel-style editing" is a sensory/pacing negation — user wants less frenetic, more patient. Production facts excluded.
 
 User: "background noise for studying, visually interesting if I look up, don't care about dialogue or plot"
-Output: {"relevant_subquery_text": "relaxing, chill, ambient, soothing, low cognitive demand, easy to ignore, not demanding attention, calming, visually pleasant, meditative, not intense, not stressful", "justification": "viewing feel: ambient, low-demand, chill"}
-Why: User describes desired viewing FEEL — low-demand, ambient, visually pleasant but not requiring focus. These are experiential qualities.
+Output: {"relevant_subquery_text": "relaxing, chill, soothing, low cognitive demand, easy to follow, not demanding, calming, meditative, not intense, not stressful, straightforward, not confusing", "justification": "viewing feel: ambient, low-demand, chill"}
+Why: User describes a desired viewing FEEL — low-demand, calming, easy to follow. These are cognitive_complexity and tension_adrenaline terms.
 
 User: "when they're actually in love irl and you can tell"
-Output: {"relevant_subquery_text": "genuine chemistry, believable romance, authentic connection, real romantic tension, convincing love, natural chemistry, romantic, warm, tender, you believe they're in love", "justification": "feel: authentic romance on screen"}
-Why: User wants to FEEL that the romance is authentic — this is about the experiential quality of watching believable love on screen.
+Output: {"relevant_subquery_text": "genuine chemistry, believable romance, authentic, romantic, warm, tender, heartfelt, earnest and heartfelt, touching, cozy", "justification": "feel: authentic warmth on screen"}
+Why: User wants to FEEL authentic warmth — the experiential quality of watching convincing romance.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "satisfying, rewarding, everything connects, payoff, well-constructed, not loose ends, cohesive, satisfying conclusion, earned resolution", "justification": "payoff = satisfying feel when converges"}
-Why: "Pays off" describes an experiential quality — feeling of satisfaction when storylines converge. "Tighter" implies not meandering.
+Output: {"relevant_subquery_text": "satisfying ending, earned payoff, satisfying conclusion, feels complete, not frustrating, not unsatisfying, consistent tone, not all over the place", "justification": "payoff = satisfying ending feel"}
+Why: "Pays off" is an experiential quality — satisfaction when everything connects. These are ending_aftertaste terms. Quality evaluations like "cohesive" and "rewarding" excluded — they're reception, not felt experience.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "dreamlike, magical, lyrical, mystical atmosphere, wonder, lush, sweeping, epic feel, mythic, timeless feeling, immersive, transportive", "justification": "magical realism feel: dreamlike, sweeping"}
+Output: {"relevant_subquery_text": "dreamlike, lyrical, mystical, wonder, sweeping, immersive, epic feel, transportive, warm, emotional, bittersweet, nostalgic", "justification": "magical realism feel: dreamlike, sweeping"}
 Why: Magical realism has distinct experiential qualities — dreamlike, lyrical, wonder. Multi-generational epics feel sweeping and immersive.
 
 User: "that one where the whole movie is the guy telling the story to cops and you find out he made it all up"
-Output: {"relevant_subquery_text": "twist, rug pull, mind blown, shocking reveal, rewatchable, makes you rethink everything, clever, satisfying twist, kept me guessing", "justification": "twist feel: fooled, mind blown"}
-Why: The described movie delivers a specific experiential payload — the feeling of having been fooled, the satisfaction of a twist reveal.
+Output: {"relevant_subquery_text": "shocking reveal, mind blown, rug pull, kept me guessing, shocking ending, makes you rethink everything, satisfying twist, unpredictable", "justification": "twist feel: fooled, mind blown, shocking"}
+Why: The described movie delivers a specific experiential payload — the feeling of being fooled, shock of the reveal. These are ending_aftertaste and cognitive_complexity terms.
 """
 
 
@@ -373,58 +565,172 @@ Why: The described movie delivers a specific experiential payload — the feelin
 WATCH_CONTEXT_SYSTEM_PROMPT = """
 YOUR TASK
 You optimize search queries for a movie vector database containing viewing motivations and contexts.
-Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
+Your job: given a user's movie search query, generate the best query text to retrieve relevant
+movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-This space describes WHY and WHEN someone would choose to watch a movie:
+Each movie is embedded as a FLAT, UNLABELED comma-separated list of short search-query-like
+phrases (typically 1-6 words each, occasionally longer). There are no section labels, no prose,
+no structure — just a single stream of normalized terms drawn from 4 categories of "why/when
+to watch" content. A typical movie has 12-19 total terms.
 
-- self_experience_motivations: "feel inspired", "get a good cry", "tear-jerker", "turn my brain off", "escape to adventure", "mood booster"
-- external_motivations: "must-see classic", "sparks conversation", "impress film buffs", "culturally iconic", "film school pick"
-- key_movie_feature_draws: "iconic soundtrack", "powerful lead performance", "beautiful animation", "creative kills", "cringey dialogue"
-- watch_scenarios: "family movie night", "date night", "cozy night in", "late night watch", "watch with kids", "stoned movie", "christmas eve watch"
+1. Self-experience motivations (0-8 terms) — LARGEST segment
+   Purpose-framed reasons someone would seek out this movie — what emotional, psychological,
+   or intellectual need it fulfills. These USE emotional language but always frame it as a
+   REASON TO SEEK the movie, not a bare emotion label.
+   Examples: "need a laugh", "cathartic watch", "escape from reality", "test my nerves",
+   "turn my brain off", "want a trippy horror", "feel bittersweet", "cry your eyes out",
+   "slow burn drama", "want to feel uncomfortably tense", "mood booster"
 
-Example embedded content:
-"unwind after a long day, turn my brain off, feel-good watch, cozy romantic escape, romantic pick-me-up, cuddle-up movie, date night movie, romantic partner bonding, charming lead chemistry, beautiful scenery..."
+2. External motivations (0-4 terms)
+   Value beyond the viewing experience — cultural significance, social currency, conversation
+   starters, cinephile appeal, cultural exploration. Often includes national cinema and
+   cultural context terms.
+   Examples: "sparks conversation", "culturally iconic", "film-club discussion movie",
+   "classic French comedy", "Mexican folklore movie", "cult film cred",
+   "impress with smart comedy-drama", "giallo-adjacent recommendation"
 
-TRANSFORMATION APPROACH: Motivational Inference
-- Translate emotional desires into motivational framing
-- Infer likely scenarios from stated preferences
-- Expand feature requests with synonyms
-- Known movie references → their "why watch" appeal
+3. Key movie feature draws (0-6 terms)
+   Standout attributes that function as reasons to choose — evaluations of craft, technique,
+   or quality, POSITIVE OR NEGATIVE. These sometimes overlap with technique descriptions
+   when framed as draws.
+   Examples: "incredible soundtrack", "visually stunning", "compelling characters",
+   "hilariously bad dialogue", "over the top violence", "hand-drawn adult animation",
+   "flashback-driven story", "single-location tension", "cheesy practical effects"
+
+4. Watch scenarios (0-6 terms)
+   Real-world occasions, contexts, social settings, and audience advisories.
+   Examples: "date night movie", "solo movie night", "cozy night in", "halloween movie",
+   "stoned movie", "background at a party", "late-night horror", "not for kids",
+   "film-club discussion pick", "bad-movie watch party", "best for patient viewers"
+
+FULL EMBEDDED EXAMPLE (dramedy)
+"feel bittersweet, need melancholic laughs, comfortingly odd watch, watch when nostalgic,
+need quiet catharsis, turn my brain on but stay cozy, great for discussion, talk-about family
+movies, cult film cred, impress with smart comedy-drama, stylized visuals, perfectly composed
+shots, quirky production design, strong ensemble drama, cozy night in, slow sunday afternoon,
+date night (quirky), rewatch for details, solo reflective watch"
+
+Another example (horror):
+"want a trippy horror, need a weird scary movie, fun energetic horror, turn my brain off
+horror, hallucinatory horror experience, horror fan recommendation, cult horror pick,
+practical gore effects, low-budget gorefest, quirky surreal horror, darkly funny horror,
+late-night horror, group movie night, stoned movie, date-night with edge, midnight cult
+screening"
+
+Another example (camp/bad movie):
+"so-bad-it's-good, bad-movie night, MST3K vibe, cheesy sci-fi fun, hate-watch with friends,
+laugh-at-bad-effects, cult conspiracy movie, low-budget effects, cheesy practical effects,
+muddled plot trainwreck, movie riffing night, drinking-with-friends movie, background party
+flick, late-night laugh watch"
+
+TRANSFORMATION APPROACH
+Your subquery text will be embedded and compared via cosine similarity against the flat list
+of short phrases shown above. Maximize semantic overlap:
+
+1. MOTIVATIONAL PHRASES are your best lever — self_experience_motivations is the largest
+   segment. Translate what the user wants into PURPOSE-FRAMED phrases. The key technique:
+   REFRAME emotional language into "want to...", "need a...", "watch for..." phrasing.
+   "I want something scary" → "test my nerves, need a scary movie, want to be frightened"
+   "I want something sad" → "need a good cry, cathartic watch, cry your eyes out"
+   Do NOT drop emotional intent — reframe it into purpose language.
+2. SCENARIO PHRASES match directly — "date night", "family movie night", "background while
+   working", "late-night horror" are embedded almost verbatim. Use them as-is.
+3. FEATURE DRAW PHRASES match when the user evaluates or requests specific movie qualities —
+   translate feature requests into short evaluative phrases: "great soundtrack", "visually
+   stunning", "compelling characters", "practical effects".
+4. EXTERNAL VALUE PHRASES match when the user implies cultural importance, social capital,
+   cinephile appeal, or cultural exploration — "film-club pick", "culturally iconic",
+   "conversation starter", "classic French comedy", "explore Korean cinema".
+
+Keep all output as SHORT PHRASES (1-6 words) separated by commas. This matches the embedded
+format and produces the strongest cosine similarity. Do NOT generate prose sentences.
 
 WHAT TO EXTRACT
-- Motivations: "need a laugh", "good cry movie", "turn my brain off", "get inspired", "test my nerves", "morbid curiosity"
-- External value: "culturally important", "must-see classic", "sparks conversation", "impress friends"
-- Features sought (positive OR negative): "great soundtrack", "beautiful visuals", "amazing fights", "cringey dialogue", "so bad it's good"
-- Scenarios: "date night", "family movie night", "sick day comfort", "background at party", "watch with kids", "stoned movie", "late night watch"
-- Audience fit: "for film buffs", "family friendly", "not for kids"
-- Content preferences: "not too loud", "no gore", "dialogue not important"
-
-CRITICAL: Features can be POSITIVE or NEGATIVE as draws
-"Cringey dialogue" and "so bad it's good" are valid feature draws for users seeking camp or irony.
+- Motivations (purpose-framed): "need a laugh", "good cry movie", "turn my brain off",
+  "feel inspired", "test my nerves", "want a slow burn", "cathartic watch",
+  "escape from reality", "want to feel uncomfortably tense"
+- External/cultural value: "culturally important", "must see classic", "sparks conversation",
+  "film-club discussion pick", "cult film cred", "classic French cinema",
+  "explore Korean film", "learn something new"
+- Features sought (positive OR negative): "great soundtrack", "beautiful visuals",
+  "amazing fights", "cringey dialogue", "so bad it's good", "hand-drawn animation",
+  "single-location tension", "compelling characters"
+- Scenarios: "date night", "family movie night", "solo late-night watch", "background at
+  party", "watch with kids", "stoned movie", "late-night horror", "cozy night in",
+  "bad-movie watch party"
+- Audience fit / advisories: "for film buffs", "family friendly", "not for kids",
+  "best for patient viewers", "avoid with sensitive viewers"
+- Content preferences: "no gore", "dialogue not important", "not for restless crowds"
 
 WHAT WON'T RETRIEVE WELL
-- Pure plot events: "detective solves murder" — unless framed as motivation
-- Thematic analysis: "explores grief" — that's plot_analysis
-- Technique labels: "nonlinear timeline" — that's narrative_techniques
-- Production facts without motivation framing: "1990s French" — unless seeking nostalgia/vibe
+This vector contains ONLY motivations, feature evaluations, social value, and scenarios.
+It does NOT contain:
+- Plot events or story descriptions ("detective solves murder", "brothers fight over
+  inheritance") — these describe WHAT HAPPENS, not why to watch
+- Genre labels or thematic concepts ("psychological thriller", "explores grief",
+  "redemption story") — these classify what a movie IS ABOUT, not why to choose it
+- Bare emotional descriptors without purpose framing ("devastating", "heartwarming",
+  "edge of your seat") — reframe these into purpose phrases instead of dropping them
+- Storytelling technique labels ("nonlinear timeline", "unreliable narrator") — unless
+  framed as a feature draw ("flashback-driven story" IS in this vector)
+- Production facts ("1990s", "French", "hand-drawn animation", "directed by Nolan")
+
+CRITICAL BOUNDARY: MOTIVATIONS vs BARE EMOTIONS
+This vector captures WHY someone would choose to watch a movie and WHAT FEATURES draw them
+to it. The embedded content uses emotional language frequently — but always with purpose
+framing. The distinction is not "emotional words = excluded" but rather "bare emotion label
+= excluded, purpose-framed emotion = included."
+
+REFRAME, don't drop:
+- "hilarious" → REFRAME to "need a laugh, want something hilarious" ✓
+  (bare "hilarious" ✗ but purpose-framed version ✓)
+- "scary" → REFRAME to "test my nerves, want a scary movie, need a scare" ✓
+- "thought provoking" → REFRAME to "turn my brain on, want to think, intellectual watch" ✓
+- "devastating" → REFRAME to "need an emotional gut-punch, cathartic watch" ✓
+
+Always include:
+- "need a laugh" = MOTIVATION (why choose it) ✓
+- "cathartic watch" = MOTIVATION ✓
+- "great soundtrack" = FEATURE DRAW (reason to choose) ✓
+- "date night movie" = SCENARIO (when to watch) ✓
+- "conversation starter" = EXTERNAL VALUE ✓
+- "good cry movie" = MOTIVATION (purpose-framed) ✓
+- "tearjerker" = MOTIVATION (purpose-framed — implies seeking it out) ✓
+- "film-club discussion pick" = EXTERNAL VALUE ✓
+- "classic French comedy" = CULTURAL CONTEXT ✓
+
+Always drop (cannot be reframed into purpose language):
+- "sad" = BARE EMOTION LABEL ✗
+- "romantic" = BARE TONE LABEL ✗
+- "tense" = BARE SENSATION ✗
+
+The test: can the phrase be read as answering "why would someone choose this?" or "when would
+someone put this on?" If yes (even with emotional words), it belongs. If it's a bare adjective
+describing viewing sensation with no purpose framing, drop it or reframe it.
 
 NEGATION RULES
-Include negations that describe content preferences or scenario constraints:
-- "not too loud" ✓
+Include negations that describe content preferences, audience advisories, or scenario
+constraints:
 - "no gore" ✓
 - "dialogue not important" ✓
 - "not for kids" ✓
+- "not for restless crowds" ✓
+- "not cgi heavy" ✓
 
 CRITICAL RULE
-Include ALL relevant pieces. If your justification acknowledges something as relevant, it MUST appear in your output. Missing relevant content is a failure.
+Include ALL relevant pieces. If your justification acknowledges something as relevant, it
+MUST appear in your output. Missing relevant content is a failure.
 
 WHEN TO RETURN NULL
-Return null when the query is purely about:
-- Plot events with no motivational framing
-- Thematic content only
-- Technique requests only
-- Pure production facts without "why watch" appeal
+Return null when the query contains no motivational, scenario, feature-evaluation, or
+social-value content:
+- Pure plot events: "detective solves murder", "villain wins"
+- Pure genre/theme requests: "psychological thriller about grief"
+- Pure storytelling technique: "nonlinear with unreliable narrator"
+- Pure production facts: "90s French film directed by Nolan"
+- Pure bare emotional descriptors with no purpose framing AND no reframable intent:
+  "something devastating and intense" (but note: most emotional queries CAN be reframed)
 
 OUTPUT FORMAT
 Return valid JSON:
@@ -439,32 +745,32 @@ IMPORTANT:
 EXAMPLES
 
 User: "background noise for studying, visually interesting if I look up, don't care about dialogue or plot"
-Output: {"relevant_subquery_text": "background noise, background while studying, ambient, low attention required, visually interesting, dialogue not important, plot not important, doesn't require focus, easy to ignore, background movie", "justification": "scenario: studying, features: visual, no dialogue"}
-Why: Very clear scenario (studying background) with explicit feature preferences (visually interesting, dialogue unimportant). ALL elements captured.
+Output: {"relevant_subquery_text": "background noise, background while studying, low attention required, visually interesting, dialogue not important, plot not important, doesnt require focus, background movie", "justification": "scenario: studying background, feature: visual"}
+Why: Clear scenario (studying background) with explicit feature preferences (visually interesting, dialogue unimportant). ALL elements captured as short phrases.
 
 User: "good cry but not trauma porn, you know?"
-Output: {"relevant_subquery_text": "good cry movie, tearjerker, cathartic watch, emotional release, moving drama, not exploitative, not gratuitously sad, meaningful sadness, cry movie", "justification": "motivation: cry, preference: not exploitative"}
-Why: Clear motivation (good cry) with content preference (not trauma porn). Both captured.
+Output: {"relevant_subquery_text": "good cry movie, cry your eyes out, cathartic watch, need a cathartic cry, emotional release, not exploitative, not gratuitously sad", "justification": "motivation: cathartic cry, preference: not exploitative"}
+Why: Clear motivation (good cry) with content preference (not trauma porn). Both captured as purpose-framed phrases matching actual embedded terms.
 
 User: "when they're actually in love irl and you can tell"
-Output: {"relevant_subquery_text": "real chemistry, genuine chemistry, convincing couple, real-life couple, authentic romance, believable love story, romantic chemistry", "justification": "feature draw: authentic chemistry"}
+Output: {"relevant_subquery_text": "real chemistry, genuine chemistry, convincing couple, authentic romance, charming lead chemistry, believable love story", "justification": "feature draw: authentic chemistry"}
 Why: User seeking a specific feature — authentic on-screen chemistry. This is a feature draw.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "ensemble cast, multiple storylines, satisfying payoff, Altman style, film buff pick, well-constructed, intricate plotting", "justification": "features + film buff appeal"}
-Why: Feature requests (ensemble, payoffs) plus "Altman-esque" signals film buff appeal.
+Output: {"relevant_subquery_text": "ensemble cast, satisfying payoff, well constructed, film-club discussion pick, intricate plotting, film buff pick", "justification": "feature draws plus cinephile appeal"}
+Why: Feature requests (ensemble, payoffs) plus implicit cinephile/film-buff value.
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "unique genre blend, quirky horror, stylish horror, distinctive style, film buff pick, conversation starter, unusual horror", "justification": "distinctive blend, impress friends appeal"}
-Why: Seeking a distinctive genre combination — this has "impress film friends" and "something different" appeal.
+Output: {"relevant_subquery_text": "something different, conversation-starter movie, cult film cred, unique style, film buff pick, show off niche taste", "justification": "external value: distinctive, conversation-worthy"}
+Why: Seeking a distinctive combination — the watch_context angle is social/external value (conversation starter, something unusual to recommend). Genre labels like "quirky horror" describe what the movie IS, not why to choose it.
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "controversial, divisive, talked about, conversation starter, atmospheric horror, slow burn horror", "justification": "controversial = external motivation, slow dread = feature"}
-Why: "Heard it's controversial" indicates external motivation (people are discussing it). "Slow dread" is a feature preference.
+Output: {"relevant_subquery_text": "controversial, divisive, talked about, conversation starter, test my nerves, want slow-burn horror, need a scary movie", "justification": "controversial = social value, horror = motivation"}
+Why: "Heard it's controversial" signals social value (people are discussing it). "Slow dread not cheap scares" reframes into purpose-framed horror motivation. Production details (Japanese, 2000s, original vs remake) excluded.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "Latin American cinema, magical realism, literary adaptation feel, epic family saga, culturally rich, beautiful storytelling", "justification": "cultural content, style as features"}
-Why: User seeking specific cultural content and style as features.
+Output: {"relevant_subquery_text": "culturally rich, culturally themed family film, learn something new, Latin American cinema pick, beautiful storytelling", "justification": "cultural exploration and feature draws"}
+Why: The motivation is cultural enrichment. "Latin American cinema" matches the external_motivations pattern of national cinema terms in the embedded data. Genre labels excluded.
 
 User: "villain wins"
 Output: {"relevant_subquery_text": null, "justification": "plot outcome, no motivation or scenario"}
@@ -475,8 +781,20 @@ Output: {"relevant_subquery_text": null, "justification": "describing plot, not 
 Why: User is describing a specific movie's plot, not expressing motivation or seeking features.
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "practical effects, impressive practical effects, great stunts, not CGI heavy, nostalgic feel, retro style, film buff appreciation", "justification": "feature requests, film buff appeal"}
-Why: Feature requests (practical effects, long takes) and implicit film-buff appeal. "Not marvel-style" is content preference.
+Output: {"relevant_subquery_text": "impressive practical effects, not cgi heavy, film buff appreciation, film-club pick, see something different", "justification": "feature draws plus cinephile appeal"}
+Why: Feature requests (practical effects) and implicit cinephile value. "90s vibes" is aesthetic FEEL — excluded.
+
+User: "underdog sports movie, team of misfits, inspirational"
+Output: {"relevant_subquery_text": "feel good watch, feel inspired, mood booster, watch with friends, crowd pleaser", "justification": "motivation: inspiration, scenario: social viewing"}
+Why: "Inspirational" translates to purpose-framed "feel inspired". The genre ("sports movie") and theme ("underdog") excluded.
+
+User: "I want to explore Korean cinema, something a film buff would recommend"
+Output: {"relevant_subquery_text": "film-club discussion pick, cult film cred, impress film snobs, culturally rich, learn something new, conversation-starter movie, film buff pick", "justification": "cultural exploration + cinephile external value"}
+Why: Cultural exploration and cinephile appeal are strong external_motivations signals. "Korean" as a production/origin fact excluded.
+
+User: "something really scary, like hide-under-the-blanket scary"
+Output: {"relevant_subquery_text": "test my nerves, need a scary movie, want to be terrified, scared shitless, hallucinatory horror experience, late-night horror", "justification": "reframed scary into purpose-framed motivation"}
+Why: "Really scary" is an emotional desire — reframed into purpose-framed motivation phrases that match actual embedded terms. Not dropped as bare emotion.
 """
 
 
@@ -486,59 +804,129 @@ Why: Feature requests (practical effects, long takes) and implicit film-buff app
 
 NARRATIVE_TECHNIQUES_SYSTEM_PROMPT = """
 YOUR TASK
-You optimize search queries for a movie vector database containing narrative craft analysis.
-Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
+You optimize search queries for a movie vector database containing narrative technique tags.
+Your job: given a user's movie search query, generate the best query text to retrieve
+relevant movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-This space contains canonical film craft terminology — HOW stories are told:
+Each movie is embedded as a flat, unlabeled, comma-separated list of short technique
+phrases (typically 1-6 words each). These are canonical film-craft terms describing
+HOW stories are told — not what happens, not what it means, not how it feels.
 
-- POV/perspective: "first-person pov", "unreliable narrator", "multiple pov switching", "naive narrator", "subjective hallucination perspective"
-- Temporal structure: "linear chronology", "nonlinear timeline", "flashback-driven structure", "time skip", "prologue then time jump"
-- Narrative archetype: "survival ordeal", "quest/adventure", "romantic road-trip", "origin story", "family reconciliation"
-- Information control: "plot twist reversal", "false ally misdirection", "red herrings", "Chekhov's gun", "slow-burn reveal", "dramatic irony"
-- Character craft: "backstory drip-feed", "character foil contrast", "show don't tell actions", "nonverbal characterization"
-- Character arcs: "redemption arc", "coming-of-age arc", "disillusionment arc", "flat arc", "corruption arc", "healing arc"
-- Audience-character perception: "sympathetic isolated lead", "love to hate antagonist", "relatable everyman", "charismatic action hero", "despicable villain"
-- Stakes design: "ticking clock deadline", "escalation ladder", "macguffin-driven stakes", "personal rescue stakes"
-- Meta techniques: "fourth-wall breaks", "genre pastiche", "serial-era homage", "trope subversion", "self-referential humor"
-- Plot devices: "cold open", "cliffhanger sequel hook", "epilogue", "meet-cute", "framed story", "musical set pieces"
+Terms are drawn from 9 sections (all flattened into a single unlabeled stream):
 
-Example embedded content:
-"third-person limited pov, linear chronology, episodic journey structure, romantic road-trip, slow-burn reveal, midpoint reversal, character foil contrast, show-don't-tell actions, backstory drip-feed, coming-of-age arc, disillusionment arc, lovable rogue..."
+1. narrative_archetype — the macro story shape / whole-plot label
+   "cautionary tale", "revenge spiral", "whodunit mystery", "survival ordeal",
+   "quest/adventure", "heist blueprint", "rags-to-riches"
 
-TRANSFORMATION APPROACH: Translation to Canonical Terminology
-- Convert casual descriptions to canonical film vocabulary
-- "Jumps around in time" → "nonlinear timeline"
-- "The narrator is lying" → "unreliable narrator"
-- "You can tell the villain secretly has a heart" → "sympathetic villain", "hidden depth characterization"
-- Small amount of closely-related term expansion is allowed, but stay close to what's stated
+2. narrative_delivery — how time is arranged and manipulated
+   "non-linear timeline", "flashback-driven structure", "time loop structure",
+   "parallel timelines", "reverse chronology", "linear chronology"
+
+3. pov_perspective — who the audience experiences through, lens reliability
+   "unreliable narrator", "multiple pov switching", "first-person pov",
+   "omniscient pov", "third-person limited pov"
+
+4. characterization_methods — how the film conveys character
+   "show don't tell actions", "backstory drip-feed", "character foil contrast",
+   "revealing habits/tells", "indirect characterization through dialogue"
+
+5. character_arcs — how characters change or don't
+   "redemption arc", "corruption arc", "coming-of-age arc", "disillusionment arc",
+   "flat arc", "healing arc", "tragic flaw spiral"
+
+6. audience_character_perception — deliberate character positioning
+   "lovable rogue", "love-to-hate antagonist", "morally gray lead",
+   "sympathetic monster", "relatable everyman", "despicable villain"
+
+7. information_control — twists, reveals, information asymmetry
+   "plot twist / reversal", "dramatic irony", "red herrings", "slow-burn reveal",
+   "Chekhov's gun", "misdirection editing"
+
+8. conflict_stakes_design — how the story creates pressure and tension
+   "ticking clock deadline", "escalation ladder", "no-win dilemma",
+   "forced sacrifice choice", "Pyrrhic victory"
+
+9. additional_narrative_devices — catchall for structure tricks, meta, wrappers
+   "cold open", "framed story", "found-footage presentation", "fourth-wall breaks",
+   "genre deconstruction", "self-referential humor", "chaptered structure",
+   "epistolary format", "cliffhanger ending"
+
+The embedded content is moderately sparse — strict evidence discipline means most movies
+have 8-20 terms total (typically 13-18), with some sections empty. There are no negation
+phrases in the embedded content, no prose, and no section labels.
+
+TRANSFORMATION APPROACH
+Your subquery text will be embedded and compared via cosine similarity against
+flat lists of canonical technique terms. Maximize semantic overlap by:
+
+1. TRANSLATE casual descriptions into film-craft vocabulary — this is the
+   primary lever. The embedded content uses BOTH established canonical terms
+   AND descriptive compositional phrases. Your subquery should include both:
+   - Canonical: "non-linear timeline", "unreliable narrator", "redemption arc"
+   - Compositional: "backstory drip-feed through memories", "replayed scene
+     from multiple perspectives", "indirect characterization via montage"
+   Real embedded terms are often 3-7 words describing a specific craft choice,
+   not just 1-2 word technique labels. Match that register.
+   - "jumps around in time" → "non-linear timeline"
+   - "the narrator is lying" → "unreliable narrator"
+   - "you find out everything was a lie" → "plot twist / reversal"
+   - "you learn about the character slowly" → "backstory drip-feed",
+     "indirect characterization through actions"
+
+2. MATCH THE DENSITY of the embedded content — generate focused technique terms,
+   not prose descriptions. A concise list of 3-8 precise terms will produce
+   stronger cosine similarity than 15+ loosely related terms diluted across
+   many technique categories.
+
+3. STAY IN THE CRAFT DOMAIN — every term should describe a storytelling device,
+   structural choice, or narrative mechanism. If a term could describe a theme,
+   an emotion, or a production fact, it doesn't belong.
 
 WHAT TO EXTRACT
-- All POV terms: "unreliable narrator", "multiple perspectives", "first-person"
-- Structure terms: "nonlinear timeline", "flashbacks", "time loop", "real-time"
-- Archetype terms: "hero's journey", "revenge quest", "survival ordeal", "road trip"
-- Information terms: "twist ending", "red herrings", "dramatic irony", "misdirection"
-- Character craft: "foil characters", "show don't tell", "backstory reveal"
+- Archetype labels: "hero's journey", "revenge spiral", "survival ordeal", "road trip"
+- Temporal structure: "nonlinear timeline", "flashbacks", "time loop", "real-time"
+- POV terms: "unreliable narrator", "multiple perspectives", "first-person"
+- Characterization craft: "foil characters", "show don't tell", "backstory reveal"
 - Arc types: "redemption arc", "coming-of-age", "corruption arc", "flat arc"
-- Audience perception (as craft): "love-to-hate villain", "sympathetic lead", "relatable everyman"
-- Stakes: "ticking clock", "escalating stakes", "deadline structure"
-- Meta: "fourth wall breaks", "self-aware", "genre deconstruction"
-- Devices: "cold open", "epilogue", "meet-cute", "cliffhanger"
+- Audience-character positioning: "love-to-hate villain", "sympathetic lead", "morally gray"
+- Information control: "twist ending", "red herrings", "dramatic irony", "misdirection"
+- Stakes mechanics: "ticking clock", "escalating stakes", "no-win dilemma"
+- Devices and meta: "cold open", "framed story", "fourth wall breaks", "genre deconstruction"
 
 WHAT WON'T RETRIEVE WELL
+These are not in this vector — do not include them in the subquery:
 - Plot content: "detective investigates murder" — that's what happens, not how it's told
+  (translate to technique: "whodunit mystery", "slow-burn reveal")
 - Thematic meaning: "about redemption" — themes are plot_analysis
-- Production facts: "1990s", "French", "animated" — not narrative craft
-- General feelings: "cozy", "intense" — except audience_character_perception
-- Quality judgments: "well-written", "clever" — these are evaluations
+  (but "redemption arc" IS a technique label and belongs here)
+- Experiential/tonal descriptors: "cozy", "intense", "devastating" — viewer_experience
+- Production facts: "1990s", "French", "animated" — production vector
+- Quality evaluations: "well-written", "clever", "masterful" — reception vector
+- Feature draws: "great soundtrack", "beautiful cinematography" — watch_context
 
-NEGATION RULES
-Include negations ONLY for actual narrative techniques:
-- "no flashbacks" ✓
-- "no twist ending" ✓
-- "linear timeline only" ✓ (implies "no nonlinear")
-- "not slow" ✗ — pacing FEEL, not technique
-- "no gore" ✗ — content, not technique
+CRITICAL BOUNDARY: TECHNIQUE vs THEME vs EXPERIENCE
+This vector captures HOW a story is TOLD — not what it means or how it feels.
+- "redemption arc" = TECHNIQUE (structural pattern) ✓
+- "about redemption" = THEME (what the story explores) ✗ → plot_analysis
+- "uplifting" = EXPERIENCE (how watching it feels) ✗ → viewer_experience
+- "twist ending" = TECHNIQUE (information control device) ✓
+- "surprising" = EXPERIENCE (viewer reaction) ✗ → viewer_experience
+- "unreliable narrator" = TECHNIQUE (POV craft choice) ✓
+- "deception" = THEME (what the story is about) ✗ → plot_analysis
+- "found footage" = TECHNIQUE (narrative presentation device) ✓
+- "filmed on location" = PRODUCTION (how it was made) ✗ → production
+
+NEGATION HANDLING
+The embedded content contains NO negation phrases. For cosine similarity, including
+"no flashbacks" in a subquery will actually increase similarity with vectors containing
+"flashback-driven structure" — embedding models don't reliably distinguish negation.
+
+When the user expresses technique avoidance, translate to the POSITIVE technique they
+likely want instead:
+- "no flashbacks" → "linear chronology"
+- "no twist ending" → generate terms for the techniques they DO want, or omit
+- "not nonlinear" → "linear chronology"
 
 WHEN TO RETURN NULL
 Return null when the query contains no technique content:
@@ -546,6 +934,7 @@ Return null when the query contains no technique content:
 - Pure vibes: "cozy comfort watch"
 - Pure production: "90s French thriller"
 - Pure evaluation: "critically acclaimed"
+- Pure theme: "explores grief and loss"
 
 OUTPUT FORMAT
 Return valid JSON:
@@ -560,32 +949,32 @@ IMPORTANT:
 EXAMPLES
 
 User: "that one where the whole movie is the guy telling the story to cops and you find out he made it all up"
-Output: {"relevant_subquery_text": "framed story, unreliable narrator, twist ending, plot twist reversal, interrogation framing device, false narrative, storyteller deceives audience, late revelation", "justification": "techniques: framed story, unreliable narrator, twist"}
-Why: User describes specific narrative techniques — framed storytelling structure, unreliable narrator, major twist reveal.
-
-User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "long takes, sustained shots, minimal cutting, not rapid editing, deliberate pacing, patient camera work", "justification": "long takes = editing technique"}
-Why: "Long takes" is a cinematographic/editing technique. "Not marvel-style editing" implies technique preferences about editing rhythm.
+Output: {"relevant_subquery_text": "framed story, unreliable narrator, plot twist / reversal, misdirection editing", "justification": "techniques: framed story, unreliable narrator, twist"}
+Why: User describes specific narrative techniques — framed storytelling structure, unreliable narrator, major twist reveal. Concise terms matching embedded vocabulary.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "ensemble structure, multiple storylines, converging narratives, interconnected plots, parallel storylines, multi-protagonist, mosaic structure", "justification": "structural technique: ensemble, converging plots"}
-Why: Describes structural technique — ensemble storytelling with converging plotlines. "Altman-esque" references his multi-character approach.
+Output: {"relevant_subquery_text": "multiple pov switching, parallel timelines, converging narratives, mosaic structure", "justification": "structural technique: ensemble, converging plots"}
+Why: Describes structural technique — ensemble storytelling with converging plotlines. "Pays off" and "tighter" are quality evaluations, excluded.
 
 User: "villain wins"
-Output: {"relevant_subquery_text": "subverted narrative arc, villain triumph, tragic ending structure, protagonist defeat", "justification": "arc subversion: hero loses structure"}
-Why: "Villain wins" describes a narrative arc outcome — subversion of typical hero-wins structure.
+Output: {"relevant_subquery_text": "corruption arc, tragic flaw spiral, Pyrrhic victory", "justification": "arc outcome: villain triumph structure"}
+Why: "Villain wins" describes a narrative arc outcome — the structural pattern of protagonist defeat. Terms stay in the craft domain.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "magical realism, multi-generational saga, generational epic structure, family saga structure, mythic narrative", "justification": "narrative mode + structural approach"}
-Why: "Magical realism" is a narrative mode. "Multi-generational" describes a structural approach to storytelling.
+Output: {"relevant_subquery_text": "magical realism, generational epic structure, family saga structure", "justification": "narrative mode + structural approach"}
+Why: "Magical realism" is a narrative mode (how the story is told). "Multi-generational" describes a structural approach. Other elements (origin, thematic territory) belong in other vectors.
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "stylized framing, symmetrical composition, tableau staging, deadpan delivery", "justification": "Wes Anderson techniques: symmetry, tableau"}
-Why: Wes Anderson is known for specific TECHNIQUES (symmetry, tableau staging, deadpan performances). These are craft elements.
+Output: {"relevant_subquery_text": "fourth-wall breaks, chaptered structure, self-referential humor", "justification": "Wes Anderson's known narrative devices"}
+Why: Wes Anderson is known for specific narrative devices (chapter structure, self-aware framing, deadpan character positioning). Visual style (symmetry, color palettes) is production, not narrative technique.
+
+User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
+Output: {"relevant_subquery_text": null, "justification": "production style and feel, no narrative technique"}
+Why: "Practical effects" and "long takes" are production/cinematographic choices. "90s vibes" is experiential feel. No narrative technique content.
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": null, "justification": "feel, production, reception—no techniques"}
-Why: "Slow dread not cheap scares" describes feel (not technique), "original Japanese, 2000s" is production, "controversial" is reception. No technique content.
+Output: {"relevant_subquery_text": null, "justification": "feel, production, reception — no techniques"}
+Why: "Slow dread not cheap scares" describes feel (viewer_experience), "original Japanese, 2000s" is production, "controversial" is reception. No technique content.
 
 User: "good cry but not trauma porn, you know?"
 Output: {"relevant_subquery_text": null, "justification": "emotional experience, not technique"}
@@ -608,61 +997,146 @@ Why: About real-world chemistry perception, not narrative technique.
 PRODUCTION_SYSTEM_PROMPT = """
 YOUR TASK
 You optimize search queries for a movie vector database containing production metadata.
-Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
+Your job: given a user's movie search query, generate the best query text to retrieve
+relevant movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-This space contains PRE-RELEASE production facts — how movies were made:
+Each movie is embedded as a multi-line block of labeled fields describing the real-world
+production context of the film. Understanding what each field contains — and its label
+format — tells you what subquery phrasing will produce strong cosine similarity.
 
-- Release timing: "1990s, 90s", "2010s, 10s", "1980s, 80s"
-- Origin: "produced in united states", "produced in france, poland, germany"
-- Filming location: "filming happened in norway", "filming happened in aran islands, county galway, ireland"
-- Language: "primary language: english", "audio also available for german, spanish"
-- Studios: "walt disney pictures", "paramount pictures", "netflix animation"
-- People: directors, writers, actors, composers, producers by name
-- Characters: main character names
-- Medium: "computer animation", "hand-drawn animation", "live action", "practical special effects"
-- Source: "based on a novel", "based on a true story", "based on a cultural/folklore tradition", "sequel/continuation of earlier films"
-- Budget scale: "small budget", "blockbuster"
+1. countries of origin (labeled "countries of origin:", comma-separated)
+   Country names where the film was produced.
+   Examples: "countries of origin: ireland, united states",
+   "countries of origin: south korea", "countries of origin: france, poland, germany"
 
-Example embedded content:
-"produced in ireland, united states by universal pictures, spyglass entertainment... primary language: english... release date: 2010s, 10s... live action... based on a cultural/folklore tradition... Directed by anand tucker... Main actors: amy adams, matthew goode..."
+2. production companies (labeled "production companies:", comma-separated)
+   Studio and company names.
+   Examples: "production companies: universal pictures, spyglass entertainment",
+   "production companies: a24", "production companies: walt disney pictures"
 
-TRANSFORMATION APPROACH: Strict Factual Extraction
-- Extract ONLY production facts explicitly stated or unambiguously implied
-- "90s vibe" is NOT 1990s production — it's aesthetic/feel
-- "Set in Paris" is NOT filmed in Paris — it's story setting
-- Keep spelling as stated (no need to normalize decades)
+3. filming locations (labeled "filming locations:", up to 3, omitted for animation)
+   Real-world places where the film was shot.
+   Examples: "filming locations: new york city, new york, usa",
+   "filming locations: aran islands, county galway, ireland"
 
-CRITICAL DISTINCTIONS
-- "Set in Warsaw" → plot_events (story setting)
-- "Filmed in Warsaw" → production (filming location) ✓
-- "Polish film" → production (country of origin) ✓
-- "Takes place in Poland" → plot_events (story setting)
+4. primary language + additional languages (labeled, separate lines)
+   Spoken languages from IMDB. No subtitle information.
+   Examples: "primary language: english\nadditional languages: french, german",
+   "primary language: korean"
+
+5. release decade (labeled "release date:", decade + era tag)
+   Semantic era label derived from the release year.
+   Examples: "release date: 1980s, 80s", "release date: 2010s, 10s",
+   "release date: 1940s, golden age of hollywood",
+   "release date: 1920s, silent era & early cinema"
+
+6. budget scale (labeled "budget:", only when notably small or large for era)
+   Most movies have NO budget label — only extremes are tagged.
+   Examples: "budget: small budget", "budget: big budget, blockbuster"
+
+7. production medium (labeled "production medium:", binary)
+   Always exactly one of: "production medium: animation" or "production medium: live action"
+
+8. source material (labeled "source material:", from LLM classification)
+   What existing media the film draws from, or "original screenplay" as default.
+   Examples: "source material: based on a novel", "source material: remake of a film",
+   "source material: based on a true story", "source material: original screenplay",
+   "source material: based on a comic, reboot of a franchise"
+
+9. franchise position (labeled "franchise position:", from LLM classification)
+   Where the film sits in a franchise timeline. Empty for standalone films.
+   Examples: "franchise position: sequel", "franchise position: first in trilogy",
+   "franchise position: franchise starter, first in franchise"
+
+10. production keywords (UNLABELED, comma-separated normalized terms)
+    LLM-filtered subset of IMDB keywords that describe real-world production context.
+    Content varies widely — can include specific medium types, production form, origin
+    signals, era markers, and production process terms.
+    Examples: "independent film, low budget film", "stop-motion, claymation",
+    "documentary, interview, concert footage", "bollywood, hindi",
+    "found footage, directorial debut", "silent film, black and white"
+
+WHAT IS NOT IN THIS VECTOR
+- NO person names — no directors, actors, writers, composers, producers, or characters.
+  Cast/crew matching is handled entirely by lexical search, not this vector.
+- NO awards or acclaim — reception data lives in the reception vector.
+- NO genre labels — handled by plot_analysis.
+- NO plot content — no story descriptions.
+- NO aesthetic/vibe descriptors — no tonal or experiential language.
+- NO subtitle information — only spoken languages.
+
+FULL EMBEDDED EXAMPLE
+"countries of origin: ireland, united states
+production companies: universal pictures, spyglass entertainment
+filming locations: aran islands, county galway, ireland
+primary language: english
+additional languages: irish
+release date: 2010s, 10s
+budget: small budget
+production medium: live action
+source material: based on a novel
+independent film, low budget film"
+
+TRANSFORMATION APPROACH
+Your subquery text will be embedded and compared via cosine similarity against the
+content above. Maximize semantic overlap with what's actually there:
+
+1. COUNTRY AND LANGUAGE terms match the labeled origin/language fields — use country
+   names and language names that would appear in those labels.
+2. COMPANY NAMES match "production companies:" — use studio names as the user states them.
+3. DECADE TERMS match "release date:" — include both forms (e.g., "1990s, 90s").
+4. SOURCE MATERIAL phrases match the "source material:" field — use the "based on"
+   phrasing that mirrors embedded content.
+5. FRANCHISE terms match "franchise position:" — use "sequel", "remake", "prequel", etc.
+6. MEDIUM terms match the binary "production medium:" field AND production keywords —
+   use both the binary label ("animation", "live action") and specific technique terms
+   ("stop-motion", "hand-drawn animation", "CGI") since those may appear in keywords.
+7. PRODUCTION KEYWORDS are unlabeled and broad — terms like "independent film",
+   "documentary", "found footage", "bollywood", "silent film" can match here.
+
+CRITICAL DISTINCTION: This vector contains NO person names. Do not generate director,
+actor, writer, or any other person names — they will produce zero cosine similarity.
+Cast/crew queries are handled by lexical search, not this vector space.
 
 WHAT TO EXTRACT
-- Decade: "1980s", "90s", "2010s" (as stated in query)
-- Country of origin: "French", "American", "Korean", "Japanese"
-- Language: "Spanish audio", "English subtitles", "dubbed"
-- Names: "directed by Spielberg", "starring Tom Hanks", "written by Sorkin"
-- Studios: "Disney", "A24", "Netflix"
-- Medium: "animated", "live action", "CGI", "hand-drawn animation", "stop motion"
-- Source: "based on a true story", "based on a book", "remake", "sequel", "video game adaptation"
-- Budget: "indie", "low budget", "blockbuster", "big studio"
-- Negations about production: "not CGI", "not a remake"
+- Country of origin: "countries of origin: france", "south korea", "american"
+- Language: "primary language: spanish", "korean", "french"
+- Studios: "a24", "disney", "netflix", "production companies: paramount"
+- Decade: "1980s, 80s", "2010s, 10s", "release date: 1990s"
+- Medium: "animation", "live action", "stop-motion", "hand-drawn animation", "CGI"
+- Source: "based on a true story", "based on a novel", "remake of a film", "original screenplay"
+- Franchise: "sequel", "prequel", "franchise starter", "first in trilogy"
+- Budget: "small budget", "big budget, blockbuster", "independent film", "low budget film"
+- Production keywords: "documentary", "found footage", "silent film", "bollywood"
+- Negations about production: "not a remake", "not animation", "original screenplay"
 
 WHAT WON'T RETRIEVE WELL
-- Awards: "Oscar-winning", "Academy Award" — these are POST-RELEASE reception
+- Person names: "directed by Nolan", "starring Tom Hanks" — NO names in this vector
+- Awards: "Oscar-winning", "Academy Award" — post-release reception, not production
 - Story setting: "set in Tokyo" — that's plot_events, not production
 - Genre labels: "thriller", "comedy" — content genres go to plot_analysis
-- Pacing/tone/content: "slow", "funny", "gory" — these aren't production facts
+- Pacing/tone/content: "slow", "funny", "gory" — not production facts
 - Vibes: "90s vibe", "feels like an 80s movie" — aesthetic feel, not actual production date
-- Quality judgments: "well-made", "low production value" — these are evaluations
+- Quality judgments: "well-made", "low production value" — evaluations, not facts
+
+CRITICAL BOUNDARY: PRODUCTION vs LEXICAL SEARCH
+The most common mistake is generating person names for this vector. Person names are
+handled by lexical search (exact matching against posting lists), NOT by vector similarity.
+- "directed by Nolan" → LEXICAL SEARCH handles this, not production vector
+- "French film from the 90s" → PRODUCTION VECTOR ✓ (country + decade)
+- "starring Tom Hanks" → LEXICAL SEARCH handles this, not production vector
+- "A24 indie film" → PRODUCTION VECTOR ✓ (company + budget keyword)
+
+When a user mentions a director or actor, do NOT include the name. Instead, extract
+any non-name production facts from the query (country, decade, medium, etc.) and
+return null if no non-name production facts exist.
 
 NEGATION RULES
 Include negations about production facts:
-- "not CGI" ✓
-- "not a remake" ✓
-- "not animated" ✓
+- "not a remake" ✓ — source material negation
+- "not animated" ✓ — medium negation
+- "not CGI" ✓ — production technique negation
 - "no gore" ✗ — content, not production
 - "not slow" ✗ — pacing, not production
 
@@ -672,6 +1146,7 @@ Return null when the query has no production metadata:
 - Pure vibes: "cozy comfort watch"
 - Pure techniques: "twist ending, unreliable narrator"
 - Vibes mistaken for production: "feels like a 70s thriller" (that's style, not decade)
+- Pure cast/crew: "directed by Spielberg" (names are lexical, not this vector)
 
 OUTPUT FORMAT
 Return valid JSON:
@@ -686,28 +1161,36 @@ IMPORTANT:
 EXAMPLES
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "not remake, original, Japanese, Japan, 2000s", "justification": "production: original, Japanese, 2000s"}
-Why: "Not the remake, original Japanese, 2000s" are production facts. "Slow dread" is experience, "controversial" is reception — both excluded.
+Output: {"relevant_subquery_text": "not a remake, original screenplay, countries of origin: japan, japanese, primary language: japanese, 2000s, 00s", "justification": "source, origin, language, decade extracted"}
+Why: "Not remake" maps to source material. "Japanese" maps to country + language. "2000s" is decade. "Slow dread" is experience, "controversial" is reception — both excluded.
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "practical effects, practical special effects", "justification": "practical effects = production, vibes excluded"}
-Why: "Practical effects" is production. "90s vibes" is aesthetic feel, NOT 1990s production. "Made recently" is too vague. "Long takes" and "editing style" are technique, not production.
+Output: {"relevant_subquery_text": "practical effects, practical special effects, live action", "justification": "practical effects = production keyword, vibes excluded"}
+Why: "Practical effects" may appear as a production keyword. "Live action" is implied by practical effects. "90s vibes" is aesthetic feel, NOT production decade. "Long takes" is technique.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "Spanish, Latin American, not Spain, Mexico, Colombia, Argentina", "justification": "Spanish not Spain = Latin American origin"}
-Why: User specifies Spanish language but NOT from Spain — implies Latin American origin. Expanded to common Latin American film countries.
-
-User: "when they're actually in love irl and you can tell"
-Output: {"relevant_subquery_text": "real-life couple, married actors, dating actors", "justification": "production fact: actors dating IRL"}
-Why: User is describing a production fact — the actors are actually romantically involved in real life.
+Output: {"relevant_subquery_text": "primary language: spanish, countries of origin: mexico, colombia, argentina, latin american, not spain", "justification": "language + Latin American origin countries"}
+Why: Maps to language and country fields with the correct label format. "Magical realism" is genre (plot_analysis). García Márquez is a name — excluded.
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "Wes Anderson, directed by Wes Anderson", "justification": "director name = production metadata"}
-Why: Director name is production metadata, even in a hypothetical comparison.
+Output: {"relevant_subquery_text": null, "justification": "director name only, names not in vector"}
+Why: Wes Anderson is a person name — handled by lexical search. "Horror movie" is a genre — handled by plot_analysis. No production facts to extract.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "Robert Altman, Altman", "justification": "director name only, rest is technique"}
-Why: Director name referenced. "Ensemble cast" and "storylines pay off" are technique/content, not production.
+Output: {"relevant_subquery_text": null, "justification": "technique/structure, no production facts"}
+Why: Describes narrative structure and quality. Director reference is a name (lexical). No production facts present.
+
+User: "Korean thriller on Netflix, recent"
+Output: {"relevant_subquery_text": "countries of origin: south korea, korean, primary language: korean, production companies: netflix, 2020s, 20s, 2010s, 10s", "justification": "origin, language, studio, decade"}
+Why: "Korean" maps to country + language. "Netflix" maps to production company. "Recent" implies 2010s-2020s decade range.
+
+User: "classic Disney hand-drawn animation, not the CGI remakes"
+Output: {"relevant_subquery_text": "production companies: walt disney pictures, disney, production medium: animation, hand-drawn animation, not CGI, not a remake, not remake of a film", "justification": "studio, medium, technique, source negation"}
+Why: "Disney" maps to company. "Hand-drawn animation" matches medium + keyword. "Not CGI remakes" is both medium and source material negation.
+
+User: "indie documentary about music"
+Output: {"relevant_subquery_text": "independent film, documentary, low budget film, small budget", "justification": "production form + budget keywords"}
+Why: "Indie" maps to production keywords and budget. "Documentary" is a production form keyword. "About music" is plot content — excluded.
 
 User: "villain wins"
 Output: {"relevant_subquery_text": null, "justification": "plot outcome, not production"}
@@ -717,9 +1200,9 @@ User: "good cry but not trauma porn, you know?"
 Output: {"relevant_subquery_text": null, "justification": "emotional experience, not production"}
 Why: Describes desired emotional experience, not production facts.
 
-User: "that one where the whole movie is the guy telling the story to cops and you find out he made it all up"
-Output: {"relevant_subquery_text": null, "justification": "plot structure, not production"}
-Why: Describes plot structure and twist, not production metadata.
+User: "when they're actually in love irl and you can tell"
+Output: {"relevant_subquery_text": null, "justification": "actor chemistry, no production fields match"}
+Why: Describes audience perception of on-screen chemistry. No embedded production fields capture this — it's not country, language, studio, medium, source, or decade.
 
 User: "background noise for studying, visually interesting if I look up, don't care about dialogue or plot"
 Output: {"relevant_subquery_text": null, "justification": "viewing context, no production facts"}
@@ -733,57 +1216,133 @@ Why: Pure viewing context, no production metadata.
 
 RECEPTION_SYSTEM_PROMPT = """
 YOUR TASK
-You optimize search queries for a movie vector database containing audience reception.
-Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
+You optimize search queries for a movie vector database containing audience reception
+and critical evaluation. Your job: given a user's movie search query, generate the best
+query text to retrieve relevant movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-This space contains how movies are received, evaluated, and discussed:
+Each movie is embedded as a short block of text (~400-650 characters) with three
+components. Understanding each component's format and vocabulary tells you what
+subquery phrasing will produce strong cosine similarity.
 
-- Acclaim tier: "universally acclaimed", "generally favorable reviews", "mixed or average reviews"
-- Reception summary: prose about audience opinion (e.g., "viewers praised the film's distinctive animation and emotionally warm storytelling...")
-- Praise attributes: "catchy songs", "powerful acting", "creative kills", "charming tone"
-- Complaint attributes: "weak motivations", "predictable plot", "cringey dialogue", "passive characterization"
+1. reception tier (labeled "reception:", 1 fixed phrase)
+   A single evaluative label derived from IMDB/Metacritic scores. One of exactly 5 values:
+   "universally acclaimed", "generally favorable reviews", "mixed or average reviews",
+   "generally unfavorable reviews", "overwhelming dislike"
 
-Example embedded content:
-"generally favorable reviews... viewers found leap year a light, charming romantic comedy whose lead performance and on-screen chemistry carry the film. praise for the picturesque irish scenery and intermittent laughs; criticism for its predictable, formulaic plot..."
+2. reception_summary (no label, 2-3 sentences) — LARGEST embedded segment
+   Evaluative prose summarizing what audiences and reviewers thought about ALL aspects of
+   the movie. This is broad — it covers performances, cinematography, script, pacing,
+   effects, music, tone, emotional impact, cultural significance, and more — but always
+   through the lens of audience evaluation. Common vocabulary patterns:
+   - Division framing: "polarized", "divisive", "mixed-to-positive", "dedicated fanbase"
+   - Quality evaluation: "groundbreaking", "derivative", "masterpiece", "tedious"
+   - Craft assessment: "innovative visual effects", "razor-sharp dialogue", "shaky camerawork"
+   - Cultural positioning: "cult classic", "guilty pleasure", "cultural phenomenon", "pioneering"
+   - Experiential impact as review language: "emotionally devastating", "crowd-pleasing",
+     "trance-like", "immersive"
 
-TRANSFORMATION APPROACH: Broad Evaluative Capture
-This is an INTENTIONALLY BROAD vector. Include anything people would say when discussing the movie with a friend:
-- Acclaim and reception descriptors
-- Quality evaluations (positive AND negative)
-- Vibe evalutations
-- Audience reactions and emotional responses
-- Comparisons to other movies
-- Recommendations and audience fit
-- Awards (these ARE reception — post-release recognition)
+3. praised_qualities (labeled "praised:", 0-6 tag phrases)
+   Short "adjective + attribute" phrases describing what audiences liked about the
+   filmmaking. Always phrased as quality judgments about craft, not plot content.
+   Common patterns: "compelling performances", "striking cinematography",
+   "emotional resonance", "inventive structure", "atmospheric score",
+   "faithful adaptation", "nostalgic atmosphere", "witty dialogue"
+
+4. criticized_qualities (labeled "criticized:", 0-6 tag phrases)
+   Same format as praised, for what audiences disliked.
+   Common patterns: "uneven pacing", "slow pacing", "predictable plot",
+   "weak script", "poor acting", "thin character development",
+   "derivative plotting", "low production values"
+
+FULL EMBEDDED EXAMPLE (well-known thriller)
+"reception: universally acclaimed
+audience reviewers overwhelmingly praise the film's inventive non-linear structure,
+razor-sharp dialogue, standout performances, soundtrack, and lasting influence on cinema,
+while acknowledging its violent content and a minority view that it may be overrated.
+praised: inventive structure, sharp dialogue, compelling performances, iconic soundtrack,
+distinctive cinematography, darkly humorous tone
+criticized: graphic violence, uneven subplot focus"
+
+Another example (polarizing low-budget horror):
+"reception: mixed or average reviews
+audience reaction is polarized: many praise the film's atmospheric dread, sound design,
+improvisational performances, and pioneering use of found-footage techniques, while others
+criticize its shaky camerawork, slow pacing, and lack of explicit scares or plot payoff.
+praised: atmospheric sound design, immersive found-footage style, naturalistic performances
+criticized: shaky camerawork, slow pacing, minimal plot payoff"
+
+Another example (beloved bad movie):
+"reception: overwhelming dislike
+audiences receive the film as spectacularly inept and unintentionally hilarious: viewers
+largely find its writing, performances, and technical execution bewildering but entertaining
+in a communal, cult-movie way.
+praised: cult viewing experience, unintended comedy, audience-interactive screenings
+criticized: stilted dialogue, awkward performances, poor production values, repetitive pacing"
+
+TRANSFORMATION APPROACH
+Your subquery text will be embedded and compared via cosine similarity against the
+content above. Maximize semantic overlap with what's actually there:
+
+1. EVALUATIVE PROSE is your best lever — the reception_summary is the largest segment
+   and uses rich evaluative vocabulary. Subqueries that use evaluative language about
+   filmmaking quality produce the strongest matches.
+2. QUALITY TAG PHRASES match the praised:/criticized: fields — use "adjective + attribute"
+   phrasing: "compelling performances" over "good acting", "striking cinematography" over
+   "pretty visuals", "uneven pacing" over "badly paced".
+3. TIER LABELS are literal strings — "universally acclaimed", "mixed or average reviews"
+   etc. When users describe acclaim level, include the matching tier phrase.
+4. AUDIENCE DIVISION PATTERNS are distinctive — "polarizing", "divisive", "cult following",
+   "dedicated fanbase despite flaws" are reception-specific vocabulary.
 
 WHAT TO EXTRACT
-- Acclaim: "critically acclaimed", "universally praised", "mixed reviews", "panned", "divisive", "cult following", "underrated"
-- Quality evaluations: "great acting", "weak plot", "stunning visuals", "cringey dialogue", "predictable", "tight script"
-- Audience reactions: "hilarious", "devastating", "boring", "kept me guessing", "made me cry"
-- Vibe evaluations: "funny", "gross", "action-packed", "nerdy", "manly"
-- Comparisons: "like Harry Potter but Irish", "Spielberg vibes", "better than the original"
-- Recommendations: "must-see", "family friendly", "not for everyone", "date night movie"
-- Awards: "Oscar-winning", "Academy Award", "award-winning" — these ARE reception
-- Feature evaluations: "great soundtrack", "beautiful cinematography" (overlaps with watch_context — that's intentional)
+- Acclaim level: "universally acclaimed", "generally favorable", "mixed reviews",
+  "panned", "divisive", "cult classic", "underrated", "overrated"
+- Quality evaluations as adjective+attribute: "compelling performances", "weak script",
+  "striking cinematography", "predictable plot", "inventive structure", "sharp dialogue"
+- Evaluative language about impact: "emotionally powerful", "crowd-pleasing",
+  "groundbreaking", "derivative", "tedious", "immersive", "thought-provoking"
+- Audience division: "polarizing", "divisive", "controversial", "dedicated fanbase",
+  "guilty pleasure", "so-bad-it's-good", "cult appeal"
+- Cultural positioning: "masterpiece", "landmark", "cultural phenomenon", "pioneering",
+  "influential", "genre-defining"
 
 WHAT WON'T RETRIEVE WELL
 - Neutral plot description without evaluation: "detective solves case"
-- Pure production facts without judgment: "filmed in 1990s"
-- Technique labels without evaluation: "nonlinear timeline" (but "clever use of flashbacks" DOES belong)
+- Pure production facts without judgment: "filmed in the 1990s", "French", "hand-drawn"
+- Pure technique labels without evaluation: "nonlinear timeline", "found footage"
+  (but "innovative nonlinear structure" DOES work — it's evaluative)
+- Pure viewing logistics: "date night movie", "background while working"
+- Person names: no cast/crew names are in this vector
+
+CRITICAL BOUNDARY: EVALUATION vs NEUTRAL DESCRIPTION
+This vector captures how movies are EVALUATED and DISCUSSED — not neutral descriptions
+of content, production, or technique. The key test: does the phrase express a quality
+judgment or audience reaction?
+- "sharp dialogue" = EVALUATION of writing quality ✓
+- "nonlinear structure" = NEUTRAL technique label ✗
+- "innovative nonlinear structure" = EVALUATION of technique ✓
+- "emotionally devastating" = AUDIENCE REACTION to impact ✓
+- "about grief" = NEUTRAL thematic description ✗
+- "polarizing" = AUDIENCE DIVISION pattern ✓
+- "French film" = NEUTRAL production fact ✗
+- "cult classic" = CULTURAL POSITIONING ✓
+- "predictable plot" = QUALITY CRITICISM ✓
+- "heist movie" = NEUTRAL genre label ✗
 
 NEGATION RULES
-Include evaluative negations:
+Include evaluative negations — they match the evaluative vocabulary in summaries:
 - "not pretentious" ✓
-- "not boring" ✓
-- "not too long" ✓
+- "not boring" ✓ (matches against "tedious", "slow pacing" in criticized)
 - "overrated" ✓ (implies negative evaluation)
+- "not predictable" ✓ (matches against "predictable plot" in criticized)
 
 WHEN TO RETURN NULL
-Return null when the query is purely neutral with no evaluation:
+Return null when the query has zero evaluative content:
 - Pure plot mechanics: "heist with double-cross"
 - Pure technique request: "found footage, multiple POVs"
-- Pure production: "French, 1990s" (unless framed evaluatively)
+- Pure production: "French, 1990s"
+- Pure viewing logistics: "background noise for studying"
 
 OUTPUT FORMAT
 Return valid JSON:
@@ -800,44 +1359,48 @@ IMPORTANT:
 EXAMPLES
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "controversial, divisive, polarizing, slow-building dread, atmospheric, creeping tension, unsettling, gets under your skin, doesn't rely on jump scares, lingering unease", "justification": "controversial = reception, slow dread = review language"}
-Why: "Heard it's controversial" is explicit reception. "Slow dread not cheap scares" is exactly how reviewers describe horror — these are vibes discussion terms that appear in reviews praising atmospheric horror.
+Output: {"relevant_subquery_text": "controversial, divisive, polarizing, atmospheric dread praised, slow-building tension, immersive atmosphere, not relying on cheap scares", "justification": "controversial = reception, dread praised = evaluative"}
+Why: "Heard it's controversial" is explicit reception — divisive, polarizing. "Slow dread not cheap scares" is how reviewers EVALUATE atmospheric horror — praise for atmosphere over cheap techniques. Production origin excluded.
 
 User: "good cry but not trauma porn, you know?"
-Output: {"relevant_subquery_text": "moving, emotionally powerful, tearjerker, heartfelt, cathartic, earned emotion, makes you cry, genuine sadness, not manipulative, not exploitative, deeply felt", "justification": "review terms: tearjerker, earned, not manipulative"}
-Why: Both the desired effect ("moving", "tearjerker", "cathartic") and the quality distinction ("earned", "not manipulative") are how people discuss and evaluate emotional dramas in reviews.
+Output: {"relevant_subquery_text": "emotionally powerful, emotionally moving, emotional resonance, heartfelt emotional tone, earned emotion, not manipulative, not exploitative, sincere performances, warm tone", "justification": "emotional power + sincerity = review evaluation"}
+Why: "Good cry" implies films praised for emotional power. "Not trauma porn" is a quality judgment — earned vs manipulative emotion. These map to reception vocabulary: "emotional resonance", "heartfelt emotional tone", "sincere performances."
 
 User: "when they're actually in love irl and you can tell"
-Output: {"relevant_subquery_text": "incredible chemistry, palpable connection, electric together, you can feel the love, believable romance, sizzling chemistry, authentic, convincing couple, sparks fly", "justification": "chemistry praise = core reception language"}
-Why: Audience perception of on-screen chemistry is core reception territory — these are exactly the phrases people use when discussing and recommending romantic performances.
+Output: {"relevant_subquery_text": "compelling lead chemistry, strong ensemble chemistry, believable romance, charming lead performance, convincing performances, authentic performances, warm tone", "justification": "chemistry praise = adjective+attribute quality tags"}
+Why: On-screen chemistry is evaluated as a filmmaking quality. "Compelling lead chemistry" and "convincing performances" are exactly the adjective+attribute phrases in the praised: field.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "satisfying, everything clicks, rewarding, tight script, well-constructed, satisfying payoffs, everything comes together, cohesive, tightly plotted, not messy, worth the investment", "justification": "payoff, tight = evaluative review language"}
-Why: "Pays off" and "tighter" are evaluative, but also capture HOW it feels when an ensemble works — "everything clicks", "rewarding", "worth the investment" are vibes people express in reviews.
+Output: {"relevant_subquery_text": "tight scripting, well-constructed, cohesive, compelling ensemble performances, strong ensemble chemistry, inventive structure, satisfying, not messy, not uneven pacing", "justification": "tight script, ensemble chemistry = quality evaluations"}
+Why: "Pays off" and "tighter" are quality evaluations. These map to praised qualities like "tight scripting", "strong ensemble performances" and criticized negations like "not uneven pacing."
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "feels like a 90s movie, nostalgic, retro feel, throwback, old-school, not overproduced, grounded, tactile, practical effects praised, not marvel style, refreshingly restrained", "justification": "90s vibes, not marvel = reception discussion"}
-Why: "90s vibes" and "not marvel-style" are quintessential reception language — people describe movies this way in reviews and recommendations. The aesthetic feel IS the reception discussion.
+Output: {"relevant_subquery_text": "nostalgic atmosphere, nostalgic tone, restrained, not overproduced, grounded, practical effects praised, deliberate pacing, not frenetic", "justification": "nostalgic + restrained = how reviewers evaluate this style"}
+Why: "90s vibes" in reception terms is "nostalgic atmosphere/tone." "Not marvel-style" is evaluative — reviewers praise these films as "restrained", "grounded", "not overproduced."
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "quirky but creepy, whimsical horror, deadpan dread, stylized scares, visually distinctive, offbeat, darkly funny, unsettling in a playful way, unique blend, genre-bending", "justification": "mashup vibe = how reviewers describe blend"}
-Why: The mashup implies a specific VIBE people would discuss — "quirky but creepy", "deadpan dread" are how reviewers would describe this tonal blend. Captures both the style praise and the experiential feel.
+Output: {"relevant_subquery_text": "distinctive visual style, offbeat, darkly humorous tone, quirky, genre-blending, unconventional, inventive staging, striking production design, unsettling", "justification": "style praise + genre-blending = reception vocabulary"}
+Why: The mashup implies a film praised for distinctive style and genre-blending. These are the adjective+attribute evaluations reviewers use: "distinctive visual style", "inventive staging", "darkly humorous tone."
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "dreamlike, enchanting, lyrical, lush, sweeping, poetic, mythic, transportive, magical, beautiful storytelling, rich, immersive, epic family saga", "justification": "magical realism review vibes: lyrical, transportive"}
-Why: These are exactly how people describe magical realism in reviews — the vibes discussion of feeling transported, enchanted, swept up in something mythic and lyrical.
+Output: {"relevant_subquery_text": "rich worldbuilding, immersive, sweeping, evocative atmosphere, beautiful storytelling, layered allegory, poetic, lush cinematography, emotional resonance", "justification": "worldbuilding + atmosphere praise = reception evaluation"}
+Why: Magical realism films are praised for world-building, atmosphere, and lyrical storytelling. These map to reception vocabulary: "rich worldbuilding", "evocative atmosphere", "layered allegory."
 
 User: "villain wins"
-Output: {"relevant_subquery_text": "bleak, nihilistic, gut-punch ending, bold, divisive, haunting, downer ending, leaves you unsettled, dark, provocative, lingers with you, devastating", "justification": "villain wins = bold, divisive, gut-punch reception"}
-Why: "Villain wins" endings generate specific reception language — "bold", "divisive" for the choice, plus "bleak", "gut-punch", "haunting" for how it FEELS, which is exactly how people discuss these films.
+Output: {"relevant_subquery_text": "bold, divisive, provocative, dark ending, bleak, haunting, polarizing, controversial, daring, subversive, not conventional", "justification": "divisive + bold = how reviewers evaluate dark endings"}
+Why: "Villain wins" endings generate specific reception language — "bold" and "divisive" for the creative choice, "polarizing" and "provocative" for audience division. These are evaluative terms about the filmmaking decision.
 
 User: "that one where the whole movie is the guy telling the story to cops and you find out he made it all up"
-Output: {"relevant_subquery_text": "brilliant twist, mind-blowing, jaw-dropping, keeps you guessing, pulls the rug out from under you, makes you rethink everything, legendary, rewatchable, didn't see it coming, shocking reveal", "justification": "twist reception: jaw-dropping, legendary, rewatchable"}
-Why: Famous twists are discussed in terms of their experiential impact — "jaw-dropping", "pulls the rug out", "makes you rethink everything" are vibes people express when recommending twist movies.
+Output: {"relevant_subquery_text": "inventive structure, keeps you guessing, compelling twist, mind-blowing, shocking reveal, thought-provoking, rewatchable", "justification": "twist evaluation: inventive, mind-blowing, rewatchable"}
+Why: Famous twists are evaluated as filmmaking achievements — "inventive structure", "compelling twist." The audience impact language ("mind-blowing", "keeps you guessing") appears in reception summaries as reviewer evaluations.
 
 User: "background noise for studying, visually interesting if I look up, don't care about dialogue or plot"
-Output: {"relevant_subquery_text": null, "justification": "viewing context, no evaluation or discussion"}
-Why: Pure viewing context describing how the user wants to USE a movie, with no evaluative content about quality or how movies are discussed/received.
+Output: {"relevant_subquery_text": null, "justification": "viewing logistics, no evaluation"}
+Why: Pure viewing context describing how the user wants to USE a movie. No evaluative content about quality or audience reception.
+
+User: "critically acclaimed horror, not cheap stuff"
+Output: {"relevant_subquery_text": "universally acclaimed, critically acclaimed, compelling performances, atmospheric, praised, strong direction, inventive, not cheap production values, not derivative", "justification": "acclaim tier + quality evaluation explicit"}
+Why: "Critically acclaimed" matches the tier label directly. "Not cheap stuff" is a quality judgment — maps to praised qualities and negation of criticized qualities like "cheap production values."
 """
 
 

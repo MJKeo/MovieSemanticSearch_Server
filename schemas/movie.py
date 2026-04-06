@@ -18,7 +18,11 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from implementation.classes.enums import BudgetSize
+from datetime import datetime, timezone
+
+from implementation.classes.enums import BudgetSize, Genre, MaturityRating
+from implementation.classes.languages import LANGUAGE_BY_NORMALIZED_NAME
+from implementation.misc.helpers import normalize_string, tokenize_title_phrase
 
 from movie_ingestion.imdb_scraping.models import (
     FeaturedReview,
@@ -190,7 +194,9 @@ class Movie(BaseModel):
         2020: ( 18_000_000, 185_000_000),
     }
 
-    _QUERY: ClassVar[str] = f"""
+    # Shared SELECT + FROM + JOIN clause used by both the single-movie
+    # and batch loaders. Only the WHERE clause differs between them.
+    _SELECT_FROM: ClassVar[str] = f"""
         SELECT
             {", ".join(f"t.{col} AS tmdb__{col}" for col in _TMDB_DATA_COLUMNS)},
             {", ".join(
@@ -201,8 +207,16 @@ class Movie(BaseModel):
         FROM tmdb_data t
         JOIN imdb_data i ON i.tmdb_id = t.tmdb_id
         LEFT JOIN generated_metadata g ON g.tmdb_id = t.tmdb_id
-        WHERE t.tmdb_id = ?
     """
+
+    _QUERY: ClassVar[str] = f"{_SELECT_FROM} WHERE t.tmdb_id = ?"
+
+    # Batch query uses json_each() to expand a JSON array parameter into
+    # a virtual table. This avoids building placeholder strings and also
+    # sidesteps SQLite's bound-parameter count limit.
+    _BATCH_QUERY: ClassVar[str] = (
+        f"{_SELECT_FROM} WHERE t.tmdb_id IN (SELECT value FROM json_each(?))"
+    )
 
     @classmethod
     def from_tmdb_id(
@@ -231,6 +245,58 @@ class Movie(BaseModel):
             imdb_data=_build_imdb_data(row_dict),
             **_build_metadata_fields(row_dict),
         )
+
+    @classmethod
+    def from_tmdb_ids(
+        cls,
+        tmdb_ids: list[int],
+        tracker_db_path: Path = _DEFAULT_TRACKER_DB,
+    ) -> dict[int, "Movie"]:
+        """Batch-load multiple movies from the ingestion tracker DB.
+
+        Executes a single SQLite query for all requested IDs. Movies
+        that are missing from the joined tmdb_data/imdb_data tables or
+        that fail to parse are silently skipped (logged to stdout).
+
+        Args:
+            tmdb_ids: TMDB movie IDs to load.
+            tracker_db_path: Path to the ingestion tracker SQLite DB.
+
+        Returns:
+            Mapping of tmdb_id → Movie for every successfully loaded movie.
+        """
+        if not tmdb_ids:
+            return {}
+
+        if not tracker_db_path.exists():
+            raise FileNotFoundError(
+                f"Tracker DB not found at {tracker_db_path}."
+            )
+
+        # Pass the ID list as a JSON array string; json_each() expands it
+        # in-SQL so we bind exactly one parameter regardless of list size.
+        id_list_json = json.dumps(tmdb_ids)
+
+        with sqlite3.connect(str(tracker_db_path)) as tracker:
+            tracker.row_factory = sqlite3.Row
+            rows = tracker.execute(cls._BATCH_QUERY, (id_list_json,)).fetchall()
+
+        result: dict[int, Movie] = {}
+        for row in rows:
+            row_dict = dict(row)
+            try:
+                movie = cls(
+                    tmdb_data=_build_tmdb_data(row_dict),
+                    imdb_data=_build_imdb_data(row_dict),
+                    **_build_metadata_fields(row_dict),
+                )
+                result[movie.tmdb_data.tmdb_id] = movie
+            except Exception as exc:
+                # Extract tmdb_id from raw row for logging even when parsing fails
+                raw_id = row_dict.get("tmdb__tmdb_id", "unknown")
+                print(f"Failed to parse movie {raw_id}: {exc}")
+
+        return result
 
     # Maturity rating to semantic description mapping (no numbers).
     # Used by maturity_text_short() when maturity_reasoning is unavailable.
@@ -307,6 +373,64 @@ class Movie(BaseModel):
         elif meta:
             return meta
         return None
+
+    def release_ts(self) -> int | None:
+        """Convert the TMDB release_date string to a UTC Unix timestamp."""
+        release_date = self.tmdb_data.release_date
+        if not release_date:
+            return None
+        parsed = datetime.strptime(release_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+
+    def maturity_rating_and_rank(self) -> tuple[str, int]:
+        """Resolve the maturity rating to a normalized label and ordinal rank.
+
+        Uses the IMDB-preferred maturity rating (via resolved_maturity_rating),
+        falling back to UNRATED for missing or unrecognized values.
+        """
+        rating = MaturityRating.from_string_with_default(self.resolved_maturity_rating())
+        return rating.value, rating.maturity_rank
+
+    def normalized_title_tokens(self) -> list[str]:
+        """Build normalized title tokens including hyphen expansions.
+
+        Merges tokens from the primary title and original title (if different),
+        deduplicating while preserving first-seen order from the primary title.
+        """
+        tokens = tokenize_title_phrase(self.tmdb_data.title or "")
+        original = self.imdb_data.original_title
+        if original and original != (self.tmdb_data.title or ""):
+            seen = set(tokens)
+            for token in tokenize_title_phrase(original):
+                if token not in seen:
+                    seen.add(token)
+                    tokens.append(token)
+        return tokens
+
+    def genre_ids(self) -> list[int]:
+        """Map IMDB genre strings to their integer genre IDs."""
+        genre_ids: list[int] = []
+        for genre_name in self.imdb_data.genres:
+            genre_enum = Genre.from_string(str(genre_name))
+            if genre_enum is not None:
+                genre_ids.append(genre_enum.genre_id)
+        return genre_ids
+
+    def watch_offer_keys(self) -> list[int]:
+        """Return pre-decoded watch provider offering keys from TMDB data."""
+        return self.tmdb_data.watch_provider_keys
+
+    def audio_language_ids(self) -> list[int]:
+        """Map IMDB language strings to their integer language IDs."""
+        language_ids: list[int] = []
+        for language in self.imdb_data.languages:
+            normalized = normalize_string(str(language))
+            if not normalized:
+                continue
+            language_enum = LANGUAGE_BY_NORMALIZED_NAME.get(normalized)
+            if language_enum is not None:
+                language_ids.append(language_enum.language_id)
+        return language_ids
 
     def production_text(self, include_filming_locations: bool = True) -> str:
         """Format production info as labeled lines for vector embedding.

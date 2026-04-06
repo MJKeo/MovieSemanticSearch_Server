@@ -72,16 +72,15 @@ COLLECTION_ALIAS = os.getenv("QDRANT_COLLECTION_ALIAS", None)
 # because these values never change between requests.
 #   - hnsw_ef=128: higher than default for better recall (our latency budget
 #     is dominated by LLM calls, so Qdrant can afford to be thorough)
-#   - rescore=True: use original float32 vectors (from disk) to re-rank
-#     candidates found via the quantized int8 index (in RAM)
-#   - oversampling=2.0: fetch 2x candidates in the quantized stage, then
-#     rescore all of them and return the best `limit`. Recovers accuracy
-#     lost from int8 quantization.
+#   - rescore=False: skip loading original float32 vectors from disk for
+#     re-ranking. With on_disk vectors, rescoring was the dominant latency
+#     source (~5-7s per query). The small accuracy loss from int8 quantization
+#     is negligible given 8 redundant vector spaces and exponential decay
+#     normalization in the scoring pipeline.
 _QDRANT_SEARCH_PARAMS = SearchParams(
     hnsw_ef=128,
     quantization=QuantizationSearchParams(
-        rescore=True,
-        oversampling=2.0,
+        rescore=False,
     ),
 )
 
@@ -678,9 +677,9 @@ async def run_vector_search(
     query: str,
     metadata_filters: MetadataFilters,
     qdrant_client: AsyncQdrantClient,
-    candidate_limit_original: int = 2000,
-    candidate_limit_subquery: int = 2000,
-    candidate_limit_anchor: int = 2000,
+    candidate_limit_original: int = 500,
+    candidate_limit_subquery: int = 500,
+    candidate_limit_anchor: int = 500,
 ) -> VectorSearchResult:
     """
     Main entry point for the vector search step.

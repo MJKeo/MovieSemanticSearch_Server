@@ -127,29 +127,18 @@ imdb_quality_passed movies, 22,655 have synopses across all plot_summary
 counts (5,215 with 0 plots, 7,881 with 1, 4,665 with 2, 4,894 with 3).
 
 
-## Handle long synopses (>8K chars) before embedding
-**Context:** ~2,752 synopsis movies exceed 8K chars (~2K tokens), with some
-reaching 60K chars. The embedding model (text-embedding-3-small) has a hard
-8,191 token limit and quality degrades with longer inputs. LLM-based
-distillation via gpt-5-nano was tested and abandoned — the model compressed
-too aggressively (76% reduction vs target ~30%) and introduced hallucinations.
-Alternative approaches: truncation to a char/token limit, or handling in the
-plot_events generator (Option A prompt can instruct the LLM to work with a
-truncated version).
-**When:** Before generating production embeddings for synopsis movies.
-**See:** docs/decisions/ADR-033-plot-events-cost-optimization.md (Section 1)
+## ~~Handle long synopses (>8K chars) before embedding~~ DONE
+Completed (2026-04-03): Integrated token-limit fallback directly into
+create_plot_events_vector_text(). Two-tier check: cheap character gate (15K chars)
+skips tiktoken for 99.5% of movies, then exact token count for the ~561 that exceed
+the gate. Falls back to shorter plot summaries/metadata when over limit.
+**See:** movie_ingestion/final_ingestion/vector_text.py
 
-## Use create_plot_events_vector_text_fallback on token-limit embedding errors
-**Context:** `create_plot_events_vector_text()` may return text that exceeds the
-8,191 token limit of text-embedding-3-small (the model throws an error, it does
-not truncate). When this happens, the embedding pipeline should catch the
-token-limit error specifically and retry using `create_plot_events_vector_text_fallback()`,
-which picks the longer of the longest scraped plot_summary vs the generated
-plot_events metadata plot_summary, then falls back to overview. This keeps the
-happy path simple (use the richest text) while gracefully handling oversize inputs.
-**When:** When wiring up the plot_events embedding pipeline in ingest_movie.py.
-**See:** movie_ingestion/final_ingestion/vector_text.py (create_plot_events_vector_text_fallback),
-movie_ingestion/final_ingestion/ingest_movie.py (ingest_movie_to_qdrant, ingest_movies_to_qdrant_batched)
+## ~~Use create_plot_events_vector_text_fallback on token-limit embedding errors~~ DONE
+Completed (2026-04-03): Addressed proactively in the text generation layer rather than
+reactively in the embedding layer. Fallback is now private (_plot_events_fallback_text)
+and called automatically by create_plot_events_vector_text() when token limit exceeded.
+**See:** movie_ingestion/final_ingestion/vector_text.py
 
 
 ## ~~Replace .lower() with normalize_string() in all generation-side __str__() methods~~ DONE
@@ -418,6 +407,20 @@ pass those params will fail at call time.
 **When:** Next time production_keywords tests are being worked on.
 **See:** unit_tests/test_production_keywords_generator.py,
 movie_ingestion/metadata_generation/generators/production_keywords.py
+
+## Realign search prompts for remaining 6 vector spaces
+**Context:** The plot_analysis search prompts (subquery + weight) were rewritten to match the
+current metadata generation and embedding pipeline. The same misalignment pattern exists across
+all other vectors — stale field names, content boundary errors (e.g., production prompts claim
+cast/crew names are embedded but they aren't), experiential leakage into thematic prompts, etc.
+The production vector has the most severe misalignment (cast/crew/character names listed as
+embedded content but not actually present). The /realign-vector-search-prompts command was
+created to repeat this process for each vector.
+**When:** Before deploying updated search pipeline. Run one at a time:
+plot_events, viewer_experience, watch_context, narrative_techniques, production, reception.
+**See:** implementation/prompts/vector_subquery_prompts.py,
+implementation/prompts/vector_weights_prompts.py,
+.claude/commands/realign-vector-search-prompts.md
 
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts

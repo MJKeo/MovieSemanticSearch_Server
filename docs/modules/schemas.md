@@ -18,7 +18,7 @@ Defines canonical types for:
 | File | Purpose |
 |------|---------|
 | `metadata.py` | `EmbeddableOutput` base class + 8 `*Output` schema classes (one per generation type). Each implements `embedding_text()` returning normalized text for vector embedding. Legacy `__str__()` methods are retained for backward compatibility. Moved from `movie_ingestion/metadata_generation/schemas.py`. |
-| `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns a fully typed object with parsed metadata. |
+| `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata. |
 | `enums.py` | `MetadataType` enum (one value per generation type). |
 | `data_types.py` | `MultiLineList` — a constrained list type used in generation schemas. |
 | `movie_input.py` | `MovieInputData` dataclass + `load_movie_input_data()` — loads raw tracker data into the form consumed by generator prompt builders. |
@@ -26,8 +26,8 @@ Defines canonical types for:
 ## Boundaries
 
 - **In scope**: Shared data structures with no business logic.
-  No database access (except `Movie.from_tmdb_id()`, which is a
-  pure loader). No LLM calls.
+  No database access (except `Movie.from_tmdb_id()` / `Movie.from_tmdb_ids()`,
+  which are pure loaders). No LLM calls.
 - **Out of scope**: Generation-pipeline-specific types that are not
   shared across modules. These remain in
   `movie_ingestion/metadata_generation/inputs.py`:
@@ -65,6 +65,22 @@ metadata objects. Includes helper methods:
 - `release_decade_bucket()` — semantic era label
 - `budget_bucket_for_era()` — era-adjusted budget classification
 
+**Ingestion-compatible methods** added to `Movie` (mirrors `BaseMovie`
+interface for the ingestion pipeline):
+- `release_ts()` — unix timestamp for Postgres/Qdrant payload
+- `maturity_rating_and_rank()` — tuple of `(MaturityRating, int)` for payload
+- `normalized_title_tokens()` — deduplicated token set from both primary and
+  original_title (original_title tokens merged after primary; first-seen order
+  preserved). Foreign-language films are now searchable by original title.
+- `genre_ids()` — list of integer genre IDs
+- `watch_offer_keys()` — list of decoded uint32 provider keys (pre-decoded in TMDBData)
+- `audio_language_ids()` — list of integer language IDs
+
+`Movie.from_tmdb_ids(tmdb_ids, tracker_db_path?)` is the batch loader: executes
+one SQLite query with `json_each()` for N movies instead of N individual queries.
+Reuses the same `_QUERY` column definitions and `_build_*` parsers as the
+single-movie loader.
+
 Default tracker DB path is resolved from the file's own location
 (`schemas/movie.py` → repo root → `ingestion_data/tracker.db`),
 making it stable across notebooks, shells, and other entry points.
@@ -81,6 +97,9 @@ preserved exactly.
 - `movie_ingestion/final_ingestion/vector_text.py` — all vector text
   functions accept `Movie` and call `embedding_text()` on metadata
   objects.
+- `movie_ingestion/final_ingestion/ingest_movie.py` — all ingestion
+  functions accept `Movie` exclusively. `BaseMovie` is no longer used
+  in either Postgres or Qdrant ingestion paths.
 - `movie_ingestion/metadata_generation/inputs.py` — imports
   `MovieInputData` from `schemas.movie_input`.
 - `implementation/classes/schemas.py` (search-side schemas) — remains
@@ -101,6 +120,8 @@ preserved exactly.
 - Generation-side schemas (`schemas/metadata.py`) intentionally diverge
   from search-side schemas (`implementation/classes/schemas.py`). When
   deploying, align the search-side schemas.
-- `schemas/testing.ipynb` is a manual inspection notebook — not part
-  of the test suite. Run via Jupyter with the project root in `sys.path`
-  or use the `find_project_root()` helper already in the first cell.
+- `schemas/testing.ipynb` has been deleted — use the unit tests or a
+  notebook in `implementation/notebooks/` for manual inspection.
+- `normalized_title_tokens()` on `Movie` merges tokens from both
+  `title` and `original_title`. Tests that only cover primary title
+  tokens may need updating.
