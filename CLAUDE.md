@@ -11,6 +11,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 - **Transient context:** DIFF_CONTEXT.md — what changed recently and why
 - **Action items:** docs/TODO.md — deferred TODOs discovered during sessions
 - **Personal preferences:** docs/personal_preferences.md — communication and workflow preferences, read at session start
+- **Search redesign planning:** search_improvement_planning/ — analysis of current search flaws, query type taxonomy, new architecture brainstorm, and open questions. Read when working on search improvements.
 
 ## Autonomous Documentation
 

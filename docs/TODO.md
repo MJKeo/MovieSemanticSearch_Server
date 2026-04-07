@@ -422,6 +422,18 @@ plot_events, viewer_experience, watch_context, narrative_techniques, production,
 implementation/prompts/vector_weights_prompts.py,
 .claude/commands/realign-vector-search-prompts.md
 
+## Run "iconic twist ending" through search notebook to validate scoring theory
+**Context:** Analysis showed the current search pipeline's additive scoring architecture
+is the likely root cause of multi-constraint query failures (iconic twist movies missing
+from results). The theory needs empirical validation by running the query through the
+notebook and inspecting: which vector spaces got what weights, what subqueries were
+generated, per-space scores for Fight Club (550), Sixth Sense (745), Wild Things (617),
+and A Perfect Getaway (12403). Also simulate threshold+flatten by taking narrative_techniques
+results and re-ranking by reception/popularity to see if expected movies surface.
+**When:** When starting implementation of the search redesign.
+**See:** search_improvement_planning/open_questions.md (Theories That Need Testing),
+api/sample_searching.ipynb
+
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts
 with `tmdb_ids`, `movies`, or `samples` keys. The watch_context bucket file uses a flat format
