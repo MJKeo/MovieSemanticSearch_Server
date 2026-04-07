@@ -84,12 +84,13 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
   making graph traversal ~16x more expensive than intended. 500
   keeps ef above the configured hnsw_ef while cutting downstream
   Postgres fetch from ~13K to ~4K candidates.
-- **Removed lexical dictionary tables**: `genre_dictionary`,
+- **Removed non-lexical dictionary tables**: `genre_dictionary`,
   `language_dictionary`, `maturity_dictionary`, and
-  `watch_method_dictionary` are no longer in the schema. The
-  `batch_upsert_*_dictionary()` functions in `postgres.py` have
-  been removed along with the CREATE TABLE statements. Any notebook
-  or test still calling these functions must be updated.
+  `watch_method_dictionary` are no longer in the schema. Their
+  corresponding `batch_upsert_*_dictionary()` functions in
+  `postgres.py` have been removed along with the CREATE TABLE
+  statements. `batch_upsert_lexical_dictionary()` still exists
+  and is unaffected (it targets `lex.lexical_dictionary`).
 - **`idle_in_transaction_session_timeout = '2min'`** is set at the
   database level in the init script. Connections left idle in a
   transaction (e.g. from crashed ingestion runs) are forcibly

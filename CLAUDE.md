@@ -135,7 +135,7 @@ Each vector space has LLM-generated metadata covering 7 types: plot events, plot
 The ingestion pipeline processes ~1M TMDB movies down to ~100K high-quality movies through a multi-stage funnel. All stages are crash-safe and idempotent — restarting picks up where it left off.
 
 **Tracker system:** `movie_ingestion/tracker.py` is the shared backbone. It manages a SQLite database at `./ingestion_data/tracker.db` with two core tables:
-- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_calculated` → `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` → `imdb_quality_passed` → `phase1_complete` → `phase2_complete` → `embedded` → `ingested`; terminal status: `filtered_out`)
+- `movie_progress` — one row per movie, tracks status through the pipeline (status column progresses: `pending` → `tmdb_fetched` → `tmdb_quality_calculated` → `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` → `imdb_quality_passed` → `metadata_generated` → `ingested`; terminal: `filtered_out`; retryable: `ingestion_failed`)
 - `filter_log` — append-only audit trail of every filtered movie with stage, reason, and optional details JSON
 - `tmdb_data` — stores extracted TMDB fields needed by the quality scorer (vote counts, popularity, provider keys, boolean completeness flags)
 
@@ -194,8 +194,7 @@ Stage 6+: LLM Generation → Embedding → Ingestion
      └─ batch_generation/ — run.py (CLI entry point), request_builder.py, openai_batch_manager.py, result_processor.py, generator_registry.py, pre_consolidation.py
      └─ helper_scripts/ — estimate_generation_cost.py, report_bucket_axis_performance.py
   └─ movie_ingestion/final_ingestion/vector_text.py — generates text for each of 8 vector spaces
-  └─ implementation/vectorize.py — embeds metadata into 8 vector spaces via OpenAI
-  └─ movie_ingestion/final_ingestion/ingest_movie.py — upserts final data into Postgres and Qdrant
+  └─ movie_ingestion/final_ingestion/ingest_movie.py — embeds vector text via OpenAI and upserts final data into Postgres and Qdrant (embedding is integrated into Stage 8, not a separate step)
 ```
 
 **`movie_ingestion/` subpackage structure:**
@@ -208,7 +207,7 @@ Stage 6+: LLM Generation → Embedding → Ingestion
 | `tmdb_quality_scoring/tmdb_filter.py` | Stage 3: quality score threshold (no hard filters) |
 | `tmdb_quality_scoring/tmdb_quality_scorer.py` | Quality scoring model (4 weighted signals) |
 | `tmdb_quality_scoring/tmdb_data_analysis.py` | Diagnostic: per-attribute distributions from tmdb_data (informs funnel design) |
-| `tmdb_quality_scoring/plot_quality_scores.py` | Diagnostic: Gaussian-smoothed survival curve + derivatives (determines threshold) |
+| `tmdb_quality_scoring/plot_tmdb_quality_scores.py` | Diagnostic: Gaussian-smoothed survival curve + derivatives (determines threshold) |
 | `imdb_scraping/run.py` | Stage 4 entry point: batch orchestration with commit-per-batch |
 | `imdb_scraping/scraper.py` | Per-movie orchestration: fetch → transform → persist |
 | `imdb_scraping/http_client.py` | Async GraphQL client with proxy, retry, semaphore, and raw JSON caching |

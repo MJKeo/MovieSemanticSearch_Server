@@ -36,7 +36,9 @@ incompatible with `Movie`'s nested structure.
    and `_build_*` parsers.
 
 `BaseMovie` is retained in `implementation/classes/movie.py` — it is still used
-by the search-side pipeline (`db/`) and has not been deprecated there.
+by the `base_movie_factory` test fixture (`unit_tests/conftest.py`) and legacy
+files (`implementation/vectorize.py`, `implementation/scraping/gather_data.py`).
+It is not imported by the search-side pipeline (`db/`).
 
 ## Alternatives Considered
 

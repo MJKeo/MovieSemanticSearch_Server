@@ -34,11 +34,14 @@ in scoring and filtering.
 
 ## Key Models
 
-**BaseMovie** (`movie.py`): Central movie representation with fields
+**BaseMovie** (`movie.py`): Legacy movie representation with fields
 from all pipeline stages — TMDB basics (title, date, duration),
 IMDB enrichment (credits, keywords, reviews, maturity), and 7
-LLM-generated metadata objects. Used during ingestion to construct
-vector text and populate databases.
+LLM-generated metadata objects. No longer used in the active
+ingestion pipeline (replaced by `Movie` in `schemas/movie.py`
+per ADR-060). Remaining uses: `base_movie_factory` test fixture
+in `unit_tests/conftest.py` and legacy files
+(`implementation/vectorize.py`, `implementation/scraping/gather_data.py`).
 
 **LLM Metadata Schemas** (`schemas.py`): Seven metadata types
 generated at ingestion time, each feeding a specific vector space.

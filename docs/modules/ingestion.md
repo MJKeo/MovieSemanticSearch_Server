@@ -10,8 +10,8 @@ Manages the first five stages of the ingestion pipeline: TMDB daily
 export download, TMDB detail fetching, quality scoring/filtering,
 IMDB scraping, and IMDB quality filtering. Also houses Stage 6
 (LLM metadata generation via Batch API) in the `metadata_generation/`
-subpackage. Stages 7+ (embedding, database ingestion) live outside
-this module.
+subpackage. Stage 7 (vector text generation) and Stage 8 (embedding +
+database ingestion) live in `final_ingestion/` within this module.
 
 ## Key Files
 
@@ -48,7 +48,7 @@ this module.
 | `metadata_generation/errors.py` | Custom exception classes (`MetadataGenerationError`, `MetadataGenerationEmptyResponseError`) imported by all generators. |
 | `metadata_generation/helper_scripts/report_bucket_axis_performance.py` | Diagnostic CLI: reads `*_evaluation.json` files and prints per-bucket tables of average candidate performance per scoring axis. Supports both bucket file shapes. |
 | `metadata_generation/helper_scripts/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
-| `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All 8 generators are now locked (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative), `narrative_techniques.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, 9-section schema), `watch_context.py` (gpt-5-mini, reasoning_effort=minimal, WatchContextWithIdentityNoteOutput), `source_of_inspiration.py` (gpt-5-mini, reasoning_effort=low, base SourceOfInspirationOutput schema, see ADR-053), `production_keywords.py` (gpt-5-mini, reasoning_effort=low, base ProductionKeywordsOutput schema — only Wave 2 generator using base schema in production, see ADR-054). See ADR-026, ADR-027, ADR-045, ADR-048, ADR-049, ADR-053, ADR-054. |
+| `metadata_generation/generators/` | 8 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All 8 generators are now locked (provider/model are module constants, no caller params): `plot_events.py` (gpt-5-mini, reasoning_effort=minimal), `reception.py` (gpt-5-mini, reasoning_effort=low), `plot_analysis.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema), `viewer_experience.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, GPO-only narrative), `narrative_techniques.py` (gpt-5-mini, reasoning_effort=minimal, justifications schema, 9-section schema), `watch_context.py` (gpt-5-mini, reasoning_effort=minimal, WatchContextWithIdentityNoteOutput), `source_of_inspiration.py` (gpt-5-mini, reasoning_effort=low, base SourceOfInspirationOutput schema, see ADR-053), `production_keywords.py` (gpt-5-mini, reasoning_effort=low, base ProductionKeywordsOutput schema — only Wave 2 generator using base schema in production, see ADR-054). See ADR-026, ADR-045, ADR-048, ADR-049, ADR-053, ADR-054. |
 | `metadata_generation/prompts/` | 8 system prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant. All generators are now locked; no unlocked generators remain. `production_keywords.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` (retained for evaluation notebook backward compatibility). `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. Locked generators use the base (non-reasoning) prompt as production. `plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS` for the two branches. |
 | `final_ingestion/vector_text.py` | Generates the text for each of the 8 vector spaces from a `Movie` object. One function per space (e.g. `create_plot_events_vector_text`, `create_reception_vector_text`). All functions accept `Movie` and return `str | None` (None when required metadata is absent). Synopsis-first fallback hierarchy for plot_events; labeled fields and per-term `normalize_string()` for plot_analysis and reception; thin wrappers over `embedding_text()` for remaining spaces. Token-limit fallback is wired into `create_plot_events_vector_text()` automatically — callers do not need to handle it. Two-tier check: cheap 15K-char gate first, tiktoken only on the ~0.5% that exceed it. |
 | `final_ingestion/ingest_movie.py` | Stage 8: Upserts final movie data into Postgres (movie_card + lexical postings) and Qdrant (8 named vectors + hard-filter payload). All functions accept `Movie` exclusively (BaseMovie fully removed). Includes CLI entry point (`cmd_ingest`) for orchestrated batch ingestion: parallel Postgres + Qdrant via `asyncio.gather`, Postgres sub-batches with SAVEPOINTs for per-movie error isolation. Returns `BatchIngestionResult` (succeeded_ids, failed_ids, filtered_ids, errors). `MissingRequiredAttributeError` routes movies with unrecoverable missing fields to `filtered_out` rather than the retryable `ingestion_failed` status. `_mark_ingested` uses `json_each()` for a single UPDATE statement avoiding SQLITE_MAX_VARIABLE_NUMBER limits. |
@@ -60,9 +60,11 @@ this module.
 - **In scope**: TMDB export, TMDB detail fetching, quality scoring,
   IMDB scraping, pipeline state tracking, LLM metadata generation
   (Stage 6, `metadata_generation/` subpackage).
-- **Out of scope**: Embedding (Stage 7, `implementation/vectorize.py`).
-  Vector text generation (the text that gets embedded) now lives at
-  `final_ingestion/vector_text.py`. Database ingestion (Stage 8) now
+- **Out of scope**: `implementation/vectorize.py` is legacy ChromaDB
+  and is not used in the active pipeline. Embedding is integrated
+  into Stage 8 inside `final_ingestion/ingest_movie.py` via
+  `generate_vector_embedding()`. Vector text generation lives at
+  `final_ingestion/vector_text.py`. Database ingestion (Stage 8)
   lives in-module at `final_ingestion/ingest_movie.py`.
 
 ## Pipeline Stages

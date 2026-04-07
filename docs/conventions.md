@@ -187,8 +187,9 @@ These rules apply everywhere and are not negotiable:
 - **Ingestion statuses**: Progress through pipeline stages —
   `pending` → `tmdb_fetched` → `tmdb_quality_calculated` →
   `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` →
-  `imdb_quality_passed` → `phase1_complete` → `phase2_complete` →
-  `embedded` → `ingested`. Terminal: `filtered_out`.
+  `imdb_quality_passed` → `metadata_generated` → `ingested`.
+  Terminal: `filtered_out`. Retryable: `ingestion_failed`
+  (failure details in `ingestion_failures` table).
 
 ## Scoring Conventions
 

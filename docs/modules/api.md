@@ -13,6 +13,7 @@ and API endpoints for search and movie detail retrieval.
 | File | Purpose |
 |------|---------|
 | `main.py` | FastAPI app setup, lifespan context manager, health check endpoint. |
+| `cli_search.py` | CLI tool to run the full search pipeline from the terminal. Supports genre, maturity, runtime, and release date filters. Run via `python -m api.cli_search "query"`. |
 
 ## Boundaries
 
