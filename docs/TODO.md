@@ -422,17 +422,55 @@ plot_events, viewer_experience, watch_context, narrative_techniques, production,
 implementation/prompts/vector_weights_prompts.py,
 .claude/commands/realign-vector-search-prompts.md
 
-## Run "iconic twist ending" through search notebook to validate scoring theory
-**Context:** Analysis showed the current search pipeline's additive scoring architecture
-is the likely root cause of multi-constraint query failures (iconic twist movies missing
-from results). The theory needs empirical validation by running the query through the
-notebook and inspecting: which vector spaces got what weights, what subqueries were
-generated, per-space scores for Fight Club (550), Sixth Sense (745), Wild Things (617),
-and A Perfect Getaway (12403). Also simulate threshold+flatten by taking narrative_techniques
-results and re-ranking by reception/popularity to see if expected movies surface.
-**When:** When starting implementation of the search redesign.
-**See:** search_improvement_planning/open_questions.md (Theories That Need Testing),
-api/sample_searching.ipynb
+## ~~Run "iconic twist ending" through search notebook to validate scoring theory~~ DONE
+Completed (2026-04-08): All 7 empirical tests run. Key findings: embedding format is the
+deeper problem (Sixth Sense outside top-1000 for "twist ending"), semantic concepts cannot
+reliably generate candidates (zero intersection for "funny horror"), vector space routing
+is independently broken (watch_context had most twist content but got zero weight).
+Architecture revised: Phase 1 now uses deterministic retrieval only, semantic concepts
+rescore in Phase 2. Threshold+flatten confirmed as directionally correct. Quality prior
+validated. Full results in search_improvement_planning/open_questions.md (Completed Tests).
+
+## Test structured-label embedding format (highest priority)
+**Context:** The single highest-leverage test for the search redesign. Current flat-list
+embedding format dilutes per-attribute signal for multi-dimensional movies (Sixth Sense
+scores only 82% of max for "twist ending" despite having explicit twist metadata).
+Proposed fix: embed with structured labels ("information_control: plot twist / reversal")
+instead of flat term lists, and generate search queries in the same structured shape.
+Test on 10-20 movies without full re-ingestion: re-embed samples with structured format,
+generate structured search queries, compare retrieval ranks for known-relevant movies.
+**When:** Before implementing the search pipeline redesign — results determine whether
+full re-ingestion is needed.
+**See:** search_improvement_planning/open_questions.md (Test A),
+search_improvement_planning/new_system_brainstorm.md (Embedding Format: Structured Labels)
+
+## Test cross-space rescoring latency
+**Context:** The revised architecture requires cross-space rescoring in Phase 2: fetch
+stored vectors from Qdrant for all candidates, compute cosine similarity against query
+embeddings per semantic concept. Need to verify latency stays under ~100ms for typical
+loads (500 candidates × 2 spaces) and worst case (2000 candidates × 4 spaces).
+**When:** During search pipeline implementation.
+**See:** search_improvement_planning/open_questions.md (Test B)
+
+## Test metadata-anchored retrieval quality
+**Context:** Validates the revised Phase 1→Phase 2 flow end-to-end. For "funny horror
+movies": retrieve all horror movies via genre filter, rescore on "funny" via cross-space
+rescoring — do Shaun of the Dead, Tucker and Dale, Cabin in the Woods surface? For "dark
+gritty Marvel": retrieve Marvel via lexical, rescore on "dark and gritty" — does Winter
+Soldier surface?
+**When:** During search pipeline implementation, after cross-space rescoring is built.
+**See:** search_improvement_planning/open_questions.md (Test C)
+
+## Audit IMDB keyword vocabulary from scraped data
+**Context:** The keyword-based deal-breaker filtering design is blocked until we know
+what IMDB keywords actually exist in our data. Need to extract and catalog all distinct
+keywords from scraped IMDB data, their frequencies, and coverage patterns (e.g., what
+% of Christmas movies have the "christmas" keyword). This informs whether static mapping,
+dynamic LLM translation, or a hybrid approach is appropriate for mapping user language
+to IMDB keyword terms.
+**When:** Before implementing keyword-based deal-breaker filtering in the search redesign.
+**See:** search_improvement_planning/open_questions.md (keyword vocabulary mapping),
+movie_ingestion/imdb_scraping/models.py (IMDBScrapedMovie keywords fields)
 
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts

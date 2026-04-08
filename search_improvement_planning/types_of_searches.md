@@ -1,165 +1,547 @@
 # Types of Searches
 
-Categorizing the distinct types of queries the system needs to handle. These form a
-spectrum, but defining clear buckets helps ensure each category has an appropriate
-retrieval strategy.
+Categorizing the distinct types of queries the system needs to handle. Organized
+into simple queries (single retrieval strategy) and complex queries (require
+composing multiple retrieval strategies). 14 categories total: 8 simple, 6
+complex. Categories carry notes on important subtypes and edge cases identified
+through query analysis.
 
 ---
 
-## Category 1: Multi-Constraint Semantic Queries
+## Simple Queries
 
-**Pattern:** Multiple semantic attributes required simultaneously.
-
-**Examples:**
-- "iconic twist ending" — twist (deal-breaker) + iconic (preference)
-- "critically acclaimed christmas movies" — christmas (deal-breaker) + acclaimed (preference)
-- "dark gritty marvel movies" — marvel (deal-breaker) + dark/gritty (preference)
-- "funny horror movies from the 80s" — horror + 80s (deal-breakers) + funny (preference)
-- "underrated foreign thrillers" — foreign + thriller (deal-breakers) + underrated (preference)
-
-**What makes this distinct:** Users require ALL attributes but the attributes have
-different structural roles. Some are gates (the movie MUST have this), others are
-ranking signals (more of this = better). The current system treats them all as
-parallel ranking signals with different weights.
-
-**Key challenge:** Determining which attributes are deal-breakers vs preferences.
-The same attribute can change role depending on context:
-- "thriller with a twist ending" — thriller is deal-breaker, twist is preference
-- "iconic twist ending" — twist is deal-breaker, iconic is preference
-- "twist ending" alone — twist is deal-breaker, no preferences
-
-**Current system failure mode:** Additive scoring favors movies exceptional at one
-attribute over movies good at all attributes. Results satisfy subsets of the query
-rather than the full conjunction.
+Each of these has a single, clear retrieval strategy.
 
 ---
 
-## Category 2: Entity-Centric Queries
+### 1. Known Movie Identification
 
-**Pattern:** Named entities (people, franchises, studios) as the primary constraint.
+User has a specific movie in mind and wants to find it. They may know the title
+exactly, approximately, or not at all — providing plot fragments, scene
+descriptions, or partial cast recall instead.
 
 **Examples:**
-- "leonardo dicaprio movies"
-- "marvel movies"
-- "A24 horror films"
-- "movies like The Godfather"
-- "Christopher Nolan's best work"
-- "Studio Ghibli films for adults"
+- "The Shawshank Redemption"
+- "Lemonade Mouth"
+- "Inception"
+- "That movie where the guy draws the woman on the ship and then it sinks"
+- "The one where Bill Murray relives the same day over and over"
+- "That Leonardo DiCaprio movie in the snow with the bear"
 
-**What makes this distinct:** The primary constraint is a concrete, verifiable entity
-handled by lexical search (for people/characters) or metadata filters (for studios,
-franchises). There's a clear binary pass/fail: the movie either features DiCaprio or
-it doesn't.
+**Behavior:** Fuzzy title match (allow for misspellings or partial recall) with
+the matched movie(s) as primary results, plus similar movies as secondary results
+below. If someone searches "High School Musical," they should see HSM first, then
+movies like Lemonade Mouth just below.
 
-**Current system strength:** Lexical search handles entity matching well. The main
-issue is when entity results need to be cross-filtered with semantic preferences
-(like "best" or "for adults") — that's where it becomes a multi-constraint query.
-
-**Current system failure mode:** When the entity constraint should dominate but the
-additive weights give too much influence to vector similarity. Or when the LLM query
-understanding generates overly creative subqueries that dilute the entity focus.
+For fragmentary recall queries (no title provided), match against plot
+descriptions, cast, and scene-level details simultaneously. The goal is a single
+high-confidence identification, not a ranked recommendation list. If confidence
+is high, surface the identified movie as the primary result with similar movies
+below (same presentation as title match). If ambiguous, surface the top few
+candidates for the user to confirm visually.
 
 ---
 
-## Category 3: Pure Vibe / Experience Queries
+### 2. Title Substring Search
 
-**Pattern:** No concrete constraints, just a desired feeling or experience.
+User wants movies whose titles contain a specific word or phrase.
 
 **Examples:**
-- "something cozy for a rainy day"
-- "I want to feel inspired"
-- "background movie while working"
-- "need a good cry"
-- "fun popcorn movie"
-- "turn my brain off"
-- "date night movie"
+- "Movies with 'love' in the title"
+- "Movies with 'star' in the title"
+- "Movies with 'death' in the name"
 
-**What makes this distinct:** There are NO deal-breakers. The entire query is
-preferences and implicit expectations. Any movie that delivers the right experience
-is a valid result regardless of genre, era, or other attributes.
-
-**Current system strength:** This is where additive scoring across viewer_experience
-and watch_context vectors actually works well. The system is designed for this type of
-query.
-
-**Challenge for new system:** Must detect an empty deal-breaker set and fall back to
-broad retrieval with preference-based ranking rather than trying to force the
-deal-breaker pipeline.
+**Behavior:** SQL LIKE/ILIKE on the title field. Similar to title lookup but
+without the similar-movies secondary results — the user is browsing titles, not
+looking for a specific movie.
 
 ---
 
-## Category 4: Negation-Heavy Queries
+### 3. Entity Lookup
 
-**Pattern:** Constraints defined primarily by what the user DOESN'T want.
+User is searching for movies associated with specific people, studios, or
+franchises. No semantic or metadata qualifiers beyond the entities themselves.
 
 **Examples:**
-- "not animated, not too long, not depressing"
-- "horror but no jump scares and no gore"
-- "romcom that isn't cheesy"
-- "sci-fi that's not action-heavy"
-- "something good but not too popular — I've seen all the obvious ones"
+- "Leonardo DiCaprio movies"
+- "A24 films starring Florence Pugh"
+- "Warner Brothers films"
+- "Marvel studios films"
+- "Movies starring the Rock and John Cena"
 
-**What makes this distinct:** You can't retrieve candidates by what they aren't. The
-system needs to fetch broadly and filter down, which is the reverse of the
-deal-breaker → preference flow.
+**Behavior:** Lexical search on entity fields. When multiple entities are
+specified, rank by percentage of entities matched (a movie matching both "the
+Rock" and "John Cena" ranks above one matching only one of them), with quality
+sorting within each match-count tier.
 
-**Challenge:** Embedding models don't reliably handle negation in cosine similarity.
-"no jump scares" actually increases similarity with vectors containing "jump scares."
-The current system's subquery prompts try to translate negations into positive
-alternatives ("no flashbacks" → "linear chronology"), but this is imperfect.
+**Note on franchise enumeration:** Queries like "all the Fast and Furious movies"
+or "every movie in the MCU" are structurally entity lookups, but the user's
+expectation differs — they want completeness and chronological ordering, not
+quality-ranked top-N. Both cases involve lexical filtering followed by an
+ordering step, but the ordering signal (release date vs. quality) and success
+metric (exhaustive recall vs. best subset) diverge. The system needs to
+distinguish between "best X movies" and "all X movies" intent for franchise
+entities specifically.
 
-**Possible approach:** Positive retrieval for the genre/vibe + post-retrieval
-filtering using metadata or LLM-based evaluation for the negated attributes.
+**Note on franchise entity resolution:** Franchise is a multi-level concept,
+and the entity extraction step needs to distinguish which level the user means:
+- **Studio level:** "Marvel Studios films" → production company match
+- **Brand level:** "MCU movies" → specific cinematic universe
+- **Character level:** "Spider-Man movies" → includes Sony Spider-Man, not MCU
+
+"Marvel" should route to studio/brand, not match any movie with a Marvel
+character in the cast. "Spider-Man movies" should include all Spider-Man films
+regardless of studio. Entity extraction needs to identify the franchise level
+and route accordingly.
+
+**Note on actor prominence:** For multi-entity queries like "movies starring
+the Rock and John Cena," the current system treats actor presence as binary.
+But a starring role should score higher than a 30-second cameo. **Decided:**
+role-specific posting tables with billing_position + cast_size stored on
+actor postings. Three query modes (exclude non-major / boost by position /
+binary) controlled by Phase 0 based on query language. "Starring" triggers
+exclude-non-major mode. Default is boost-by-position. When person role isn't
+stated ("Spielberg films"), boost the implied role (director) but still
+include other roles (producer) at lower weight.
+
+**Note on awards as entities:** Queries like "Oscar-winning films" or "Cannes
+Palme d'Or winners" are structurally entity lookups where the entity is an
+award. **Decided:** new `movie_awards` table with ceremony, category, and
+outcome fields. Supports inverse lookup (given award → find movies). Award
+text also included in reception vector for vaguer queries like "award-winning
+thriller."
 
 ---
 
-## Category 5: Similarity / Comparison Queries
+### 4. Pure Metadata Filter
 
-**Pattern:** A reference movie (or set of movies) defines the desired results.
+Every attribute in the query maps to a deterministic, structured filter — genre,
+era, runtime, rating, streaming availability, etc. No semantic interpretation
+needed.
 
 **Examples:**
-- "movies like Inception"
-- "something similar to Parasite but funnier"
-- "if you liked The Dark Knight"
-- "Wes Anderson meets horror"
-- "the Korean Parasite but the original Spanish version" (reference for recall,
-  not actual similarity search)
+- "Comedies"
+- "80s action thrillers"
+- "Movies under 90 minutes"
+- "Horror movies from 2020"
+- "PG-13 animated movies"
 
-**What makes this distinct:** The "deal-breaker" is "similar to X" but similar along
-which dimensions is ambiguous. Users typically mean multiple dimensions simultaneously
-(structure, tone, complexity, theme) making this an implicit multi-constraint query.
+**Behavior:** SQL filters on structured metadata fields, results ranked by
+quality. It's fine if few results show up — this is a browsing/filtering
+operation where quality expectation is implied.
 
-**Challenge for new system:** Decomposing the reference movie into specific
-attributes, deciding which are deal-breakers vs preferences. "Like Inception" probably
-means: complex narrative structure (deal-breaker) + mind-bending (preference) +
-visually ambitious (preference). But different users might mean different aspects.
+**Note:** Queries that look like pure metadata but contain concepts without clean
+metadata fields (e.g., "indie horror" — there's no `is_indie` boolean) are
+actually semantic queries and belong in other categories.
 
-**Possible approach:** Anchor vector for broad similarity (captures overall identity),
-then use the decomposed attributes from the reference movie to weight specific vector
-spaces. The reference movie's actual metadata could inform which attributes matter
-most (its most distinctive features vs its generic ones).
+**Note on expanded metadata fields:** The data layer redesign adds several new
+filterable fields that expand what counts as "pure metadata": country of origin
+(enables "Korean movies"), box office bucket (enables "box office hits"), source
+material type as enum array (enables "based on true stories," "book
+adaptations"), and production medium via keyword search (enables "animated
+movies," "stop motion"). Previously these required semantic retrieval; now they
+can be handled deterministically.
 
 ---
 
-## Category 6: Discovery / Browsing Queries
+### 5. Single-Concept Semantic Query
 
-**Pattern:** Broad exploration with loose criteria, emphasis on surfacing
-interesting or unexpected results.
+User is searching for a single concept or experience that maps to one (or at
+most two) vector spaces. No named entities, no metadata filters, no
+qualifications — just one idea.
 
 **Examples:**
-- "what's good right now"
-- "trending movies"
-- "hidden gems from 2024"
-- "best movies I probably haven't seen"
-- "surprise me"
+- "Date night" → watch_context
+- "Movie where toys come to life" → plot_events
+- "Movies with a great soundtrack" → production
+- "Turn my brain off" → viewer_experience
+- "Something cozy for a rainy day" → watch_context / viewer_experience
 
-**What makes this distinct:** There's minimal semantic retrieval to do — the value
-is in curation and personalization. "Hidden gems" implies high quality + low
-popularity, which is a metadata-layer operation more than a vector search problem.
+**Behavior:** Vector search on the 1-2 most relevant spaces, results ranked by
+similarity score. This is where the current system already performs reasonably
+well.
 
-**Current system approach:** Trending/popular movies are handled via the metadata
-scoring channel with explicit trending preference extraction. This works for simple
-cases but breaks down for "hidden gems" which requires anti-popularity filtering.
+**Note on retrieval strategy:** This is the primary query type where vector
+retrieval remains the candidate generator in the revised architecture. No
+deterministic anchors exist (no entities, no metadata filters, no keywords),
+so vector search is the only option. The structured-label embedding improvement
+(see new_system_brainstorm.md) is particularly important for this query type
+since retrieval quality directly determines result quality.
+
+**Note:** Scene/moment queries ("movie with an epic training montage," "movie
+with a great car chase") fit here. Even though the user is asking about a
+contained element rather than the movie's overall identity, the retrieval
+pattern is the same — plot_events embeds full synopses that capture scene-level
+detail, reception's praised_qualities flags standout moments, and watch_context's
+key_movie_feature_draws captures scenes-as-draws. Retrieval quality may vary
+based on how prominently the scene features in the embedded text, but the
+structural pattern is standard semantic search.
+
+---
+
+### 6. Reference Movie Similarity
+
+User provides a specific movie as a reference point and wants similar movies,
+without further qualifications.
+
+**Examples:**
+- "Movies like Inception"
+- "Something similar to Parasite"
+- "If you liked The Dark Knight"
+
+**Behavior:** Identify the reference movie's tmdb_id, retrieve its stored
+vectors, find the N nearest neighbors across a predetermined set of vector
+spaces with fixed weights (e.g., plot_analysis carries more weight for
+similarity than plot_events). The hard part is correctly resolving which movie
+the user means when titles are ambiguous — multiple movies may share a title
+but the user almost certainly means the most well-known one.
+
+**Note on distinctive vs generic decomposition:** Not all of a reference
+movie's traits are equally important for similarity. Inception's mind-bending
+nested reality structure is distinctive; its "action movie" genre is generic.
+Similarity search should weight traits by how much they differentiate the
+reference from the average movie. Traits shared by thousands of movies
+(action, drama, English-language) are weak similarity signals; traits shared
+by few movies (nested dream worlds, unreliable reality) are strong ones. This
+could inform which vector spaces get higher weights for a given reference
+movie — spaces where the reference is an outlier carry more similarity signal
+than spaces where it's average.
+
+**Note on weaving similarity into other searches:** When any search query
+(not just explicit "movies like X") produces a strong single-movie match at
+the top (large score gap between #1 and #2), consider running a secondary
+similarity search on that movie and presenting those results as a "similar
+to your top match" tier below. Someone searching "High School Musical" gets
+HSM first, then movies like Lemonade Mouth below — combining identification
+with discovery.
+
+---
+
+### 7. Discovery / Curation
+
+User wants recommendations driven by popularity, trending status, or general
+quality — not a specific concept or attribute.
+
+**Examples:**
+- "Trending now"
+- "Popular movies right now"
+- "What's good"
+- "Hidden gems"
+- "Best movies I probably haven't seen"
+- "Surprise me"
+- "Movies every film student should watch"
+- "Essential sci-fi"
+- "Movies that changed cinema"
+
+**Behavior:** Primarily a metadata/curation operation — quality scores,
+popularity metrics, trending data. Minimal semantic retrieval. "Hidden gems"
+is a special case requiring high quality + low popularity, which is an
+anti-correlation filter.
+
+**Note on trending candidate injection:** For explicitly trending queries
+("trending now," "popular movies right now"), the candidate pool should come
+from the trending set in Redis rather than from vector retrieval. Vector
+search is unnecessary — the user is asking about temporal popularity, not
+semantic content. Rank the trending set by trending signal (recency,
+popularity velocity) with the quality prior on top. For hybrid cases where
+discovery intent is mixed with attribute preferences ("trending horror
+movies"), constrain a portion of vector retrieval to the trending pool while
+searching globally for the rest.
+
+**Note:** Canon/curriculum queries ("movies every film student should watch,"
+"essential horror") are a subtype where the curation signal is cultural
+influence and historical importance rather than popularity or general acclaim.
+Reception and watch_context spaces carry partial signal for this ("culturally
+iconic" is an explicit watch_context term, reception summaries capture
+critical significance), but canonical influence — a movie's impact on
+filmmaking itself — is entangled with general acclaim in our current
+embeddings. A movie can be canon-essential without being conventionally
+"good" (Triumph of the Will, The Room).
+
+**Note on quality inversion:** "So bad it's good" queries ("a movie that's
+so bad it's hilarious," "best worst movies") are a subtype where the
+universal quality prior actively works against correct results. Low
+conventional quality IS the appeal — the user wants The Room, Troll 2,
+Birdemic. The signal is a specific combination: low critic scores + high
+audience engagement/cult following + reception language indicating ironic
+enjoyment. The system must recognize when the quality prior should be
+suppressed or inverted based on query interpretation.
+
+---
+
+### 8. Superlative / Degree-of-Attribute
+
+User wants the most extreme example of a specific attribute — not just movies
+that have the attribute, but the ones that have it the most.
+
+**Examples:**
+- "The scariest movie ever made"
+- "Funniest comedy of the 2010s"
+- "Most visually stunning movie"
+- "Saddest movie ever"
+- "Most mind-bending movie"
+
+**Behavior:** The defining attribute is simultaneously the retrieval concept
+AND the ranking signal. Retrieve movies matching the attribute (e.g.,
+viewer_experience for "scary"), then rank by how strongly they exhibit it.
+A quality prior should still apply on top to avoid surfacing obscure movies
+that are one-dimensionally extreme.
+
+**Key challenge:** This conflicts with the threshold + flatten approach for
+deal-breakers. If "scary" gets flattened to pass/fail, the ranking the user
+is asking for disappears. But if raw cosine similarity is the ranking signal,
+the embedding density problem returns — movies whose entire identity is
+"scary" outrank movies that are terrifying but also have rich plot, character,
+and thematic depth. The system needs a mode where the gate attribute's
+similarity score is preserved as a ranking signal without letting embedding
+density dominate.
+
+**Note on banded constraints:** Queries like "a sad movie that won't completely
+destroy me" or "something tense but still fun" appear to combine a superlative
+with a negation/ceiling. But these are more naturally handled as a semantic
+interpretation problem: "sad but not devastating" translates to a positive
+concept like "cathartic" or "bittersweet," and "tense but still fun" translates
+to "thrilling." The LLM interpretation step (Phase 0) should translate these
+banded constraints into positive query concepts rather than the retrieval layer
+trying to score with a floor and ceiling on the same axis.
+
+---
+
+## Complex Queries
+
+These require composing multiple retrieval strategies. The key design challenge
+is determining how the components relate to each other: does one anchor the
+search while others filter/rank (sequential), must all constraints be satisfied
+(intersection), or can any suffice (union)?
+
+---
+
+### 9. Sequential: Deal-Breaker Anchor + Preference Qualifier
+
+One attribute is the core constraint (deal-breaker) and the other qualifies
+or ranks the results. There's a clear ordering — retrieve first, rank second.
+
+**Examples:**
+- "Iconic twist endings" — retrieve movies with twist endings, rank by how
+  iconic they are
+- "Critically acclaimed movies about female empowerment" — retrieve movies
+  about female empowerment, rank by critical acclaim
+- "Underrated foreign thrillers" — retrieve foreign thrillers, rank by
+  the "underrated" signal (high quality + low popularity)
+- "Movies that are better than the book" — retrieve adaptations via
+  `source_material_types` enum filter (NOVEL_ADAPTATION), rank by critical
+  reception. Deterministic deal-breaker now, no vector matching needed.
+- "Best trilogies" — retrieve franchise members via `franchise_membership`
+  table, filter to franchise_role MAINLINE, rank by reception quality.
+  Deterministic deal-breaker now.
+
+**Key challenge:** Determining which attribute is the deal-breaker and which
+is the preference. The narrower, more defining attribute should anchor
+retrieval. "Iconic" applied first would give you The Godfather, Casablanca,
+etc. — then you'd be fishing for twist endings among those, which misses most
+twist movies.
+
+**Note on aggregate queries:** "Best trilogies" and similar franchise-level
+queries ("best movie series to binge") fit this pattern at the individual
+movie level — retrieve franchise members, rank by quality. However, the user
+may expect franchise-level results (the trilogy as a unit, not individual
+films). Presentation-layer grouping may be needed to collapse individual
+movie results into franchise-level recommendations.
+
+---
+
+### 10. Intersection: Multiple Deal-Breakers
+
+Multiple attributes are all required simultaneously. The user wants movies
+that satisfy ALL constraints — a movie excelling at only one is a miss.
+
+**Examples:**
+- "Family-friendly musicals" — must be both family-friendly AND a musical;
+  a dark musical or a family-friendly drama both fail
+- "A movie that satisfies a psych-thriller lover and their partner who likes
+  artistically driven, well-crafted movies" — must partially satisfy both
+  people's somewhat conflicting preferences
+- "Funny horror movies" — must be genuinely funny AND genuinely horror;
+  a comedy that's slightly creepy or a horror with one joke doesn't cut it
+- "Something the whole family can watch but won't bore the adults" — the
+  constraints are audience-defined rather than attribute-defined, but reduce
+  to attribute intersection after LLM translation: "family-friendly" →
+  metadata rating filter + watch_context, "won't bore adults" →
+  viewer_experience (sophistication, cognitive complexity)
+
+**Key challenge:** Syntactically identical to sequential queries — "funny
+horror" looks just like "iconic twist endings" (adjective + noun). But
+"funny" is a deal-breaker (a non-funny horror movie fails) while "iconic"
+is a preference (a non-iconic twist movie is still acceptable). The system
+needs to understand this distinction.
+
+**Retrieval strategy (revised by empirical testing):** Cross-channel
+intersection at retrieval time fails — "funny horror" had zero intersection
+between vector candidate sets. The correct approach: generate candidates from
+the most reliable deterministic channel (genre=horror via metadata filter),
+then score on the semantic deal-breaker ("funny") via cross-space rescoring in
+Phase 2. The intersection happens at scoring time, not retrieval time. See
+new_system_brainstorm.md "Deterministic Retrieval + Semantic Rescore."
+
+---
+
+### 11. Union: Any Constraint Suffices
+
+Multiple attributes where satisfying ANY of them qualifies a movie. Results
+from each branch are merged.
+
+**Examples:**
+- "Movies that take place in medieval times or the distant future" — either
+  setting independently qualifies a movie
+- "Something with great action scenes or a really compelling mystery" — either
+  quality makes the movie worth showing
+
+**Behavior:** Run independent retrievals for each branch and merge results.
+Movies matching both branches rank highest. Relatively rare query pattern
+compared to sequential and intersection.
+
+---
+
+### 12. Cross-Channel Composition
+
+Query components span different retrieval channels (lexical, metadata, vector)
+and need to be combined.
+
+**Examples:**
+- "Tom Cruise 80s movies" — entity (lexical) + era (metadata)
+- "Jim Carrey but only his more serious movies" — entity (lexical) +
+  tone qualifier (semantic/vector)
+- "Dark, gritty marvel movies" — franchise (lexical) + tone (semantic/vector)
+- "Disney animated classics" — studio (lexical) + medium (metadata) +
+  quality/age qualifier (semantic + metadata)
+- "Christmas classics" — Christmas-ness (semantic, deal-breaker) + classic
+  status (quality/reception + age, preference)
+
+**Key challenge:** These are sequential or intersection queries where the
+components happen to live in different retrieval channels. The composition
+logic (sequential vs. intersection) still applies — the added complexity is
+that Phase 1 must execute different retrieval mechanisms and combine their
+results. "Dark gritty marvel movies" retrieves marvel movies via lexical
+search, then scores them on darkness/grittiness via vector search.
+
+**Retrieval strategy (revised by empirical testing):** This is the query type
+that most directly benefits from the deterministic-retrieval-then-semantic-
+rescore architecture. Empirical testing of "dark gritty marvel movies" showed
+that vector results for "dark and gritty" miss key movies like Winter Soldier.
+The correct approach: retrieve Marvel movies via lexical search (deterministic),
+then score on "dark and gritty" via cross-space rescoring. The deterministic
+channel generates reliable candidates; the semantic channel scores them.
+
+**Note on similarity + metadata:** Queries like "something like Inception
+that's on Netflix" combine reference movie similarity (vector) with platform
+availability (metadata). This creates an ordering dilemma absent from entity
++ semantic cases: do you run similarity search globally then filter by
+platform (better similarity matches, risk of empty results after filtering),
+or filter to the platform catalog first then find the most similar within
+that pool (guaranteed availability, constrained similarity neighborhood)?
+The choice affects result quality because pre-filtering changes which
+similarity neighbors are reachable.
+
+**Note on entity + divergence:** Queries like "a serious Will Ferrell movie"
+or "Jim Carrey but only his more serious movies" are cross-channel
+(entity lexical + tone semantic), but carry a heavier interpretation burden
+than other cross-channel queries. The system must understand the entity's
+*typical* genre profile to recognize that "serious" is a divergence request
+— the query is implicitly "Will Ferrell NOT doing comedy." This makes the
+Phase 0 interpretation step load-bearing in a way it isn't for straightforward
+cross-channel queries like "Tom Cruise 80s movies."
+
+---
+
+### 13. Negation-Modified Queries
+
+Query includes constraints defined by what the user DOESN'T want. May be
+negation-only or combined with positive attributes.
+
+**Examples:**
+- "Movies that aren't too scary" — negation only, implies the user wants
+  something mildly thrilling or suspenseful
+- "Movies not starring Arnold Schwarzenegger" — entity negation
+- "Horror movie that doesn't have many jump scares" — positive anchor
+  (horror) + negation modifier (no jump scares)
+- "Movies with a great soundtrack that aren't actually about a musician" —
+  positive anchor (great soundtrack) + negation modifier (not about musicians)
+- "Comedies but not cheap immature jokes" — positive anchor (comedy) +
+  quality negation (not lowbrow)
+- "Rocky movies but not the one where he fights that Russian guy" — entity
+  anchor (Rocky franchise) + specific exclusion (Rocky IV)
+
+**Key challenge:** Embedding models don't handle negation in cosine
+similarity — "no jump scares" actually increases similarity with vectors
+containing "jump scares." Negations need to be handled as post-retrieval
+filters rather than retrieval queries. The system retrieves on the positive
+components and filters out the negated attributes afterward.
+
+---
+
+### 14. Intent Interpretation + Retrieval
+
+User's query doesn't directly state movie attributes — the system must
+interpret the user's intent through an LLM reasoning step before any
+retrieval can happen. The LLM uses its training knowledge to translate the
+query into concrete movie-attribute targets, then existing retrieval
+patterns (semantic, metadata, lexical) execute on those targets.
+
+**Examples:**
+- "Movies like Inception but funnier" — reference movie similarity as
+  anchor, LLM identifies "funnier" as a preference overlay
+- "Wes Anderson visuals with Tarantino dialogue" — LLM decomposes two
+  references into specific attribute extractions (visual style from one,
+  dialogue style from the other)
+- "I just went through a breakup" — LLM infers desired viewing experience
+  from user's emotional state (cathartic crying? empowering recovery?
+  comforting distraction?)
+- "I need to feel something" — user state implies emotionally impactful
+  movies, but the specific emotional direction is ambiguous
+- "Spielberg meets Kubrick" — LLM must determine what each director
+  represents (Spielberg's emotional warmth + Kubrick's visual precision?)
+  and construct attribute targets from that
+
+**Behavior:** Phase 0 carries heavier interpretive weight than other
+categories. The LLM must translate non-attribute query language into
+concrete retrieval targets, then the downstream pipeline uses whatever
+pattern fits the translated intent (sequential, intersection, single-
+concept semantic, etc.). The query's surface form varies widely — reference
+movies, user emotional states, cultural shorthand — but the pipeline
+pattern is the same: interpret first, then route to existing retrieval.
+
+**Key challenge:** The interpretation step introduces ambiguity that
+doesn't exist in other categories. "I just went through a breakup" has
+multiple valid translations, and the LLM's choice determines the results
+entirely. For multi-reference queries ("Wes Anderson meets horror"), the
+LLM must map each reference to the right vector space — Wes Anderson's
+visual style lives in production/narrative_techniques, while "horror" is
+a genre/viewer_experience concept. The correctness of Phase 0's attribute
+extraction is load-bearing in a way it isn't for queries that state
+attributes directly.
+
+**Note on multi-interpretation branching:** When Phase 0 detects genuinely
+ambiguous intent (multiple valid translations with no strong signal
+favoring one), the system should surface the competing interpretations
+rather than forcing a single one. "I need to feel something" could mean
+emotional catharsis, adrenaline, or intellectual stimulation — each
+interpretation produces a different deal-breaker/preference structure and
+different results. Present the user with clickable interpretation groups
+("Did you mean: emotional movies | intense thrillers | mind-bending
+films?") and let them choose. This should trigger only when Phase 0's
+confidence in a single interpretation is low — most queries should resolve
+to one interpretation confidently.
+
+**Note on multi-audience queries:** "A movie that satisfies a
+psych-thriller lover and their partner who likes artistically driven,
+well-crafted movies" requires partially satisfying two conflicting
+preference profiles simultaneously. This is structurally an intersection
+query (type #10) but with the added complexity that the constraints come
+from different audience profiles rather than from a single user's
+requirements. The system needs to find movies in the overlap zone of two
+different taste spaces — psychological intensity AND artistic craft. Phase
+0 should decompose this into the two audience profiles and identify
+attributes that could satisfy both.
 
 ---
 
@@ -167,22 +549,71 @@ cases but breaks down for "hidden gems" which requires anti-popularity filtering
 
 ### Implicit Expectations
 
-Every category carries implicit expectations that the user doesn't state:
-- Quality: "comedies" really means "good comedies I'd enjoy"
-- Accessibility: most users implicitly want well-known or mainstream-accessible films
-- Recency bias: unless specifying era, users often prefer more recent results
-- Language: English-language or at least widely available with subtitles
+Every category carries unstated expectations:
+- **Quality:** "comedies" really means "good comedies I'd enjoy"
+- **Accessibility:** most users implicitly want well-known or mainstream-
+  accessible films unless their query signals otherwise
+- **Recency bias:** unless specifying an era, users often prefer more
+  recent results
+- **Language/availability:** English-language or widely available with
+  subtitles, watchable in the US
 
-These should be handled as a universal quality prior, not as per-query classification.
+These should be handled as a universal quality prior applied across all
+categories, not as per-query classification.
 
-### Mixed-Category Queries
+**Caveat:** The quality prior is a strong default, not a universal. Specific
+query types override it: "so bad it's good" inverts the quality signal
+(see #7 note), and background/passive viewing queries ("something to put on
+while I cook") may actively penalize high-engagement, high-complexity films.
+The quality prior should be suppressible when Phase 0 interpretation
+identifies these cases.
 
-Many real queries span categories:
-- "something like Inception but cozy" — similarity + vibe
-- "marvel movies, surprise me" — entity + discovery
-- "critically acclaimed Korean thrillers, not too gory" — multi-constraint + negation
+### Metadata-Semantic Boundary
 
-The system needs to handle category blending, not force each query into exactly one
-bucket. The deal-breaker / preference / implicit hierarchy should work across
-categories — the categories above describe what the deal-breakers and preferences
-typically look like, not rigid processing modes.
+Some concepts sit at the boundary between metadata and semantic:
+- "Indie" — feels like metadata but has no clean database field; it's a
+  concept requiring semantic retrieval
+- "Critically acclaimed" — could be metadata (Metacritic > 70) or semantic
+  (reception vector space)
+- "Trilogy finales" — now partially structured via `franchise_membership`
+  table (franchise_role + franchise group), but "finale" specifically may
+  still need semantic retrieval
+
+The system needs to recognize when a surface-level-simple query actually
+requires semantic retrieval because the relevant metadata field doesn't exist.
+
+**Note:** The data layer redesign moves several concepts from the semantic side
+to the metadata side: source material type (now enum), franchise membership
+(now structured table), country of origin (now filterable), production medium
+(now keyword-searchable), awards (now structured table). This shrinks the
+semantic-only zone and enables more deal-breaker concepts to use deterministic
+retrieval.
+
+**Empirical update:** This boundary is now even more consequential than
+originally understood. Testing showed that semantic concepts cannot reliably
+generate candidates via vector retrieval (see current_search_flaws.md #14).
+Every concept that can be moved to the deterministic/metadata side gains
+reliable candidate generation instead of unreliable vector-based generation.
+The more concepts that live on the deterministic side, the more query types
+can use the deterministic-retrieval-then-semantic-rescore architecture that
+empirically produces better results.
+
+### Temporal-Establishment Terms
+
+Some metadata-adjacent concepts carry implicit temporal signals that are easily
+missed. "Classics," "iconic," "legendary," "timeless," and "essential" all
+imply cultural staying power — quality PLUS age/establishment. The query
+understanding step needs to translate these into soft date preferences (bias
+toward older) rather than hard date filters or nothing at all. "Disney animated
+classics" failing to bias toward older films is a concrete failure case of this
+gap.
+
+### NLP-Extracted Constraint Imprecision
+
+Users are frequently imprecise with metadata constraints in natural language.
+"Classic 80s action movies" should include Terminator 2 (1991). "Leonardo
+DiCaprio boat movie from the 2000s" clearly means Titanic (1997). The system
+uses a three-tier constraint strictness model to handle this — UI-set filters
+are strict, NLP-extracted metadata uses generous gates with preference decay,
+and semantic attributes use vector thresholds. See new_system_brainstorm.md
+"Three-Tier Constraint Strictness" for the full design.
