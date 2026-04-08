@@ -7,39 +7,64 @@ implemented. Organized by dependency order where possible.
 
 ## Prerequisites (unblocks other work)
 
-### 1. IMDB keyword vocabulary audit
+### 1. IMDB keyword vocabulary audit — COMPLETED
 
-**What:** Extract and catalog ALL distinct `overall_keywords` from the scraped
-IMDB data in `tracker.db`. Produce frequency counts, coverage patterns, and
-a mapping of which keywords correspond to which deal-breaker concepts.
+**Status:** Finalized. See
+[keyword_vocabulary_audit.md](keyword_vocabulary_audit.md) for the full
+report with concept→keyword mappings.
 
-**Why:** The keyword-based deal-breaker filtering design (production medium
-search, holiday themes, structural attributes) is blocked until we know the
-actual keyword vocabulary. Determines whether static mapping, dynamic LLM
-translation, or a hybrid approach is appropriate.
+**What was done:** Extracted and cataloged all `overall_keywords` and
+`plot_keywords` from 109,238 qualifying movies in tracker.db.
 
-**How:** Query `imdb_data.overall_keywords` (JSON column) across all movies
-in the tracker DB. Parse, deduplicate, count frequencies.
+**Key findings:**
+- `overall_keywords` is a compact curated genre taxonomy of exactly 225
+  terms (not a free-form tagging system). 100% of movies have at least
+  one tag. Zero overlap with `plot_keywords`.
+- `plot_keywords` is the free-form community system (114,547 terms) but
+  its value is already absorbed by the metadata generation pipeline. No
+  need to index it separately.
+- **Static mapping is trivially feasible** — no LLM translation or
+  hybrid approach needed. The full vocabulary can be provided as context
+  to the QU LLM for user query→keyword mapping.
+- Primary deal-breaker value: sub-genre precision across the entire
+  genre space (16 horror sub-types, 17 comedy sub-types, etc.) — exactly
+  the deterministic signal that vector search is weakest at.
+- Language/nationality tags (30 terms) complement structured
+  `country_of_origin_ids` / `audio_language_ids` fields.
+- Holiday tags capture curated editorial judgment ("this is a holiday
+  movie") including non-obvious cases (Die Hard, Harry Potter).
 
-**Output:** Keyword vocabulary report + proposed concept→keyword mappings.
+**Output:** Full vocabulary report + concept→keyword mappings in
+[keyword_vocabulary_audit.md](keyword_vocabulary_audit.md).
 
-### 2. Source material type enum derivation
+### 2. Source material type enum derivation — COMPLETED
 
-**What:** Evaluate ALL current `source_of_inspiration.source_material` values
-from `generated_metadata` to determine the final enum taxonomy.
+**Status:** Finalized. See
+[source_material_type_enum.md](source_material_type_enum.md) for the full
+enum definition with boundary notes, encompassed values, and re-generation
+guidance.
 
-**Why:** The brainstorm doc proposed a draft enum (ORIGINAL_SCREENPLAY,
-NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, TRUE_STORY, BIOGRAPHY,
-COMIC_BOOK_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, STAGE_PLAY_ADAPTATION,
-TV_ADAPTATION) but the final values must be validated against what the LLM
-actually generated. There may be categories we missed or categories that
-should be merged.
+**What was done:** Extracted all 4,311 unique free-text `source_material`
+values from `generated_metadata.source_of_inspiration`, analyzed the top 100
+by movie count, and clustered them into 11 distinct enum values:
+```
+ORIGINAL_SCREENPLAY, NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION,
+TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION,
+STAGE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION
+```
 
-**How:** Extract all distinct `source_material` values from
-`generated_metadata.source_of_inspiration`, cluster them, and finalize the
-enum. Then re-generate with enum-constrained output.
+**Key changes from the draft enum:**
+- Added `FOLKLORE_ADAPTATION` (~560 movies: fairy tales, mythology, religious
+  texts, legends) — was a gap in the original proposal
+- Renamed `COMIC_BOOK_ADAPTATION` → `COMIC_ADAPTATION` (includes manga,
+  manhwa, graphic novels, comic strips)
+- Renamed `STAGE_PLAY_ADAPTATION` → `STAGE_ADAPTATION` (includes opera,
+  ballet, musicals — not just plays)
+- Songs, toys, spinoffs, reboots, documentary, and parody were deliberately
+  excluded with documented reasoning
 
-**Output:** Finalized `SourceMaterialType` enum definition.
+**Output:** Finalized `SourceMaterialType` enum definition in
+[source_material_type_enum.md](source_material_type_enum.md).
 
 ### 3. Country enum derivation
 
@@ -67,17 +92,65 @@ file like `languages.py`).
 **What:** Scrape award nominations and wins from the IMDB GraphQL API for
 all movies that pass quality filtering.
 
-**Scope:** Major ceremonies only — Academy Awards, Golden Globes, BAFTA,
-Cannes, Venice, Berlin, SAG, Critics Choice, Sundance.
+**Scope:** 12 major ceremonies — Academy Awards, Golden Globes, BAFTA,
+Cannes, Venice, Berlin, SAG, Critics Choice, Sundance, Razzie Awards,
+Film Independent Spirit Awards, Gotham Awards.
+
+**GraphQL source:** `awardNominations(first: 500)` field on the `title` type.
+Movies can have 300-570+ total nominations across all award bodies, but
+filtering to the 12 in-scope ceremonies produces ~10-50 rows per movie.
+
+**GraphQL response structure per nomination:**
+```json
+{
+  "award": {
+    "text": "Oscar",
+    "event": { "text": "Academy Awards, USA" },
+    "year": 2020
+  },
+  "isWinner": true,
+  "category": { "text": "Best Picture" }
+}
+```
+
+**Field mapping:**
+- `ceremony` ← `award.event.text` (filtered to 12 known values)
+- `category` ← `category.text` (nullable — festival grand prizes like
+  Palme d'Or, Golden Lion have no category; the award name IS the category)
+- `outcome` ← `isWinner` → `"winner"` / `"nominee"`
+- `year` ← `award.year`
+
+**IMDB `event.text` → ceremony mapping:**
+
+| `event.text` | Ceremony |
+|--------------|----------|
+| `Academy Awards, USA` | Academy Awards |
+| `Golden Globes, USA` | Golden Globes |
+| `BAFTA Awards` | BAFTA |
+| `Cannes Film Festival` | Cannes |
+| `Venice Film Festival` | Venice |
+| `Berlin International Film Festival` | Berlin |
+| `Actor Awards` | SAG |
+| `Critics Choice Awards` | Critics Choice |
+| `Sundance Film Festival` | Sundance |
+| `Razzie Awards` | Razzie Awards |
+| `Film Independent Spirit Awards` | Spirit Awards |
+| `Gotham Awards` | Gotham Awards |
 
 **Per-movie output:**
 ```json
 [
   {
-    "ceremony": "Academy Awards",
+    "ceremony": "Academy Awards, USA",
     "category": "Best Picture",
     "outcome": "winner",
     "year": 2020
+  },
+  {
+    "ceremony": "Cannes Film Festival",
+    "category": null,
+    "outcome": "winner",
+    "year": 2019
   },
   ...
 ]
@@ -88,9 +161,10 @@ Cannes, Venice, Berlin, SAG, Critics Choice, Sundance.
 - Postgres: `movie_awards` table — structured for deterministic lookup
 - Reception vector: generated prose summary appended to embedding text
 
-**Pipeline integration:** New scraping step, likely after Stage 4 (IMDB
-scraping) or as an extension of it. Needs to handle the same proxy/retry
-infrastructure as existing IMDB scraping.
+**Pipeline integration:** Extension of Stage 4 (IMDB scraping). The
+`awardNominations` field can be added to the existing GraphQL query in
+`http_client.py` — no separate request needed. Filtering to the 12
+ceremonies happens in the parser.
 
 ### 5. TMDB collection name capture
 
@@ -151,17 +225,24 @@ when a movie is standalone.
 output instead of the current free-text `source_material` and
 `franchise_lineage` fields.
 
-**Why:** The current free-text output can't be reliably mapped to
-`SourceMaterialType` enum IDs. Re-generation with enum constraints ensures
+**Why:** The current free-text output produced 4,311 unique strings with
+massive duplication (e.g., "based on true events" vs "based on a true story")
+and concept leakage (spinoff/reboot appearing in source_material). Can't be
+reliably mapped to enum IDs. Re-generation with enum constraints ensures
 consistent, filterable output.
 
 **Changes to generation:**
 - `source_material` output becomes `source_material_types: SourceMaterialType[]`
-  (enum values, not free text)
+  (array of enum values, not free text). Must remain an array — movies
+  frequently have multiple applicable types (e.g., NOVEL_ADAPTATION +
+  TRUE_STORY).
 - `franchise_lineage` field is removed entirely (replaced by franchise
   generation in #6)
+- The LLM prompt must include the full enum definitions with boundary notes
+  from [source_material_type_enum.md](source_material_type_enum.md) so the
+  model understands each category's scope and exclusions
 
-**Depends on:** #2 (enum derivation must be finalized first).
+**Depends on:** #2 (enum derivation — now complete).
 
 ### 8. Production technique keyword re-generation
 
@@ -195,17 +276,32 @@ distinguish from the V1 `production_keywords`.
 ### 9. Box office bucket calculation
 
 **What:** Compute `box_office_bucket` (`HIT` / `FLOP` / null) for each movie
-based on TMDB revenue data, era-adjusted using the same pattern as the
+based on IMDB box office data, era-adjusted using the same pattern as the
 existing `budget_bucket`.
+
+**Data source:** IMDB GraphQL API — `lifetimeGross(boxOfficeArea: ...)` field
+on the `title` type. Two variants:
+- `lifetimeGross(boxOfficeArea: DOMESTIC)` — US + Canada + Puerto Rico
+- `lifetimeGross(boxOfficeArea: WORLDWIDE)` — domestic + international (inclusive)
+
+Both return `{ total: { amount: int, currency: str } }` or `null`. Amount is
+whole dollars (not cents). Also available:
+`openingWeekendGross(boxOfficeArea: DOMESTIC)` with `{ gross: { total: ... }, weekendEndDate }`.
+
+**Worldwide is inclusive of domestic** — verified via Box Office Mojo glossary.
+International-only = worldwide - domestic.
 
 **Rules:**
 - Movies < 75 days old → always `NULL` (too early to judge)
 - Movies with no revenue data → `NULL`
 - Era-adjusted thresholds (like budget_bucket) to account for inflation
 
-**Depends on:** #5 (TMDB revenue capture — check if revenue is already
-available in TMDB detail data; `has_revenue` exists on `tmdb_data` but actual
-revenue value may not be stored).
+**Pipeline integration:** Box office fields can be added to the existing IMDB
+GraphQL query alongside awards data. No separate request needed.
+
+**Depends on:** IMDB box office scraping (extension of Stage 4). Previously
+depended on #5 (TMDB revenue) but IMDB is the better source — more complete
+data and already fetched via GraphQL.
 
 ### 10. Country of origin ID mapping
 
@@ -219,10 +315,13 @@ name strings) to `Country` enum IDs and store as `movie_card.country_of_origin_i
 **What:** Map each movie's `imdb_data.overall_keywords` to
 `lex.lexical_dictionary` string IDs and store as `movie_card.keyword_ids`.
 
-**Depends on:** #1 (keyword vocabulary audit, to understand what we're working
-with).
+**Depends on:** #1 (keyword vocabulary audit — now complete). Audit
+confirmed: only 225 distinct terms, static mapping is trivial. See
+[keyword_vocabulary_audit.md](keyword_vocabulary_audit.md).
 
-**Note:** Only `overall_keywords`, NOT `plot_keywords`.
+**Note:** Only `overall_keywords`, NOT `plot_keywords`. Audit confirmed
+`plot_keywords` value is already absorbed by the metadata generation
+pipeline.
 
 ---
 
@@ -267,10 +366,11 @@ to reception vector embedding text and re-embed.
 CREATE TABLE IF NOT EXISTS public.movie_awards (
     movie_id    BIGINT NOT NULL REFERENCES movie_card,
     ceremony    TEXT NOT NULL,
-    category    TEXT NOT NULL,
+    award_name  TEXT NOT NULL,     -- specific prize name ("Oscar", "Palme d'Or", etc.)
+    category    TEXT,
     outcome     TEXT NOT NULL,
     year        INT,
-    PRIMARY KEY (movie_id, ceremony, category, year)
+    PRIMARY KEY (movie_id, ceremony, award_name, COALESCE(category, ''), year)
 );
 CREATE INDEX idx_awards_ceremony_outcome
     ON public.movie_awards (ceremony, outcome);
@@ -399,7 +499,7 @@ class FranchiseRole(Enum):
 ## Dependency graph
 
 ```
-#1 Keyword audit ──────────────────────────────→ #11 Keyword ID mapping
+#1 Keyword audit (DONE) ───────────────────────→ #11 Keyword ID mapping
 #2 Source material enum derivation ────────────→ #7 Source of inspiration re-gen
 #3 Country enum derivation ────────────────────→ #10 Country ID mapping
 #5 TMDB collection capture ───────┬────────────→ #6 Franchise generation

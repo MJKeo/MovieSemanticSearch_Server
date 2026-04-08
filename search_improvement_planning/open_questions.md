@@ -433,18 +433,26 @@ Alternatives considered and rejected:
 - Average of above-threshold spaces (penalizes concentrated signal)
 - Max for pass/fail + average for partial (unnecessary complexity)
 
-### How should keyword vocabulary mapping work?
+### ~~How should keyword vocabulary mapping work?~~ DECIDED
 
-**Prerequisite:** We don't actually know the full set of IMDB keywords that exist
-in our data. Before designing the mapping approach, we need to extract and catalog
-the keyword vocabulary from our scraped IMDB data.
+**Answer: Pure static mapping.** The keyword vocabulary audit
+([keyword_vocabulary_audit.md](keyword_vocabulary_audit.md)) revealed that
+`overall_keywords` is a compact curated genre taxonomy of exactly 225 terms
+— not the free-form community tagging system we assumed. 100% coverage,
+near-zero long tail, trivially enumerable.
 
-**Action needed:** Query the tracker DB or IMDB data to enumerate all distinct
-keywords, their frequencies, and coverage patterns. This informs whether static
-mapping, dynamic LLM translation, or a hybrid approach is appropriate.
+**Mapping approach:** Provide the full 225-term vocabulary as context to the
+QU LLM. The LLM selects matching terms from the provided list when the user's
+query implies a sub-genre or deal-breaker concept. No separate synonym table
+or dynamic LLM classification needed.
 
-Design decisions on keyword-based deal-breaker filtering are blocked until this
-audit is complete.
+**`plot_keywords` excluded:** The 114K-term `plot_keywords` vocabulary is
+already consumed by the metadata generation pipeline and distilled into
+structured LLM metadata. No incremental value in indexing raw plot_keywords
+separately.
+
+See [keyword_vocabulary_audit.md](keyword_vocabulary_audit.md) for the full
+report including concept→keyword mappings across all deal-breaker categories.
 
 ### ~~What does source_of_inspiration re-generation look like?~~ DEFERRED
 

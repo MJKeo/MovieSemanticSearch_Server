@@ -85,8 +85,9 @@ _INSERT_TMDB_DATA_SQL = """
         overview_length, genre_count, has_revenue, has_budget,
         has_production_companies, has_production_countries,
         has_keywords, has_cast_and_crew,
-        budget, maturity_rating, reviews
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        budget, maturity_rating, reviews,
+        collection_name, revenue
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _UPDATE_PROGRESS_SQL = """
@@ -238,6 +239,8 @@ def _extract_fields(raw: dict) -> dict:
     genres = raw.get("genres") or []
     revenue = raw.get("revenue") or 0
     budget = raw.get("budget") or 0
+    collection = raw.get("belongs_to_collection")
+    collection_name = collection.get("name") if collection else None
     production_companies = raw.get("production_companies") or []
     production_countries = raw.get("production_countries") or []
 
@@ -276,6 +279,9 @@ def _extract_fields(raw: dict) -> dict:
         "budget": budget,
         "maturity_rating": _extract_us_maturity_rating(raw),
         "reviews": _extract_review_contents(raw),
+        # Additional fields for downstream use
+        "collection_name": collection_name,
+        "revenue": revenue,
     }
 
 
@@ -322,7 +328,7 @@ def _persist_movies(db, results: list[_MovieResult]) -> None:
             f["has_budget"], f["has_production_companies"],
             f["has_production_countries"], f["has_keywords"],
             f["has_cast_and_crew"], f["budget"], f["maturity_rating"],
-            f["reviews"],
+            f["reviews"], f["collection_name"], f["revenue"],
         ))
     db.executemany(_INSERT_TMDB_DATA_SQL, tmdb_rows)
 

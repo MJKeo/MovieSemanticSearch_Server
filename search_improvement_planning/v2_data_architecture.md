@@ -36,8 +36,8 @@ and hard filtering via GIN-indexed array overlap.
 | Column | Type | Source | Description |
 |--------|------|--------|-------------|
 | `country_of_origin_ids` | `INT[]` | IMDB `countries_of_origin` mapped to `Country` enum | GIN index. Postgres-only, NOT in Qdrant payload. Hard filter for "Korean movies" etc. |
-| `box_office_bucket` | `TEXT?` | TMDB revenue + era adjustment | `"hit"` / `"flop"` / `NULL`. Same pattern as budget_bucket. Movies < 75 days old always `NULL` (too early to judge). |
-| `source_material_type_ids` | `INT[]` | LLM source_of_inspiration (re-generated with enum) | `SourceMaterialType` enum IDs. Array because movies can have multiple (e.g. Schindler's List = NOVEL_ADAPTATION + TRUE_STORY). GIN index. |
+| `box_office_bucket` | `TEXT?` | IMDB box office + era adjustment | `"hit"` / `"flop"` / `NULL`. Same pattern as budget_bucket. Movies < 75 days old always `NULL` (too early to judge). Source: IMDB GraphQL `lifetimeGross(boxOfficeArea: DOMESTIC)` and `lifetimeGross(boxOfficeArea: WORLDWIDE)`. Worldwide is inclusive of domestic. |
+| `source_material_type_ids` | `INT[]` | LLM source_of_inspiration (re-generated with enum) | `SourceMaterialType` enum IDs (11 values, finalized — see [source_material_type_enum.md](source_material_type_enum.md)). Array because movies can have multiple (e.g. Schindler's List = NOVEL_ADAPTATION + TRUE_STORY). GIN index. |
 | `keyword_ids` | `INT[]` | IMDB `overall_keywords` mapped to `lex.lexical_dictionary` IDs | GIN index. Used for keyword-based deal-breaker boost. Only `overall_keywords`, NOT `plot_keywords`. |
 
 ### Indexes
@@ -60,18 +60,51 @@ for inverse lookup: given an award, find movies.
 movie_awards (
     movie_id    BIGINT NOT NULL REFERENCES movie_card,
     ceremony    TEXT NOT NULL,
-    category    TEXT NOT NULL,
+    award_name  TEXT NOT NULL,     -- specific prize name (e.g., "Oscar", "Palme d'Or", "Golden Lion")
+    category    TEXT,              -- nullable: festival grand prizes have no category
     outcome     TEXT NOT NULL,     -- "winner" | "nominee"
     year        INT,               -- ceremony year
-    PRIMARY KEY (movie_id, ceremony, category, year)
+    PRIMARY KEY (movie_id, ceremony, award_name, COALESCE(category, ''), year)
 )
 ```
+
+**Note on `award_name`:** The specific prize name users search for — "Oscar",
+"Palme d'Or", "Golden Lion", "Golden Globe", etc. Distinct from `ceremony`
+(the organization) and `category` (the specific category within the prize).
+A single ceremony can give out differently-named awards (e.g., BAFTA gives
+both "BAFTA Film Award" and "David Lean Award for Direction").
+
+**Note on nullable `category`:** Festival grand prizes (Palme d'Or, Golden Lion,
+Golden Bear, etc.) have no category — the award name IS the category. These
+return `null` from the IMDB GraphQL API. The PK uses `COALESCE(category, '')`
+to handle this.
 
 **Index:** `idx_awards_ceremony_outcome (ceremony, outcome)` for queries like
 "Oscar winners", "Cannes Palme d'Or nominees".
 
-**Ceremonies in scope:** Academy Awards, Golden Globes, BAFTA, Cannes, Venice,
-Berlin, SAG, Critics Choice, Sundance.
+**Ceremonies in scope (12):** Academy Awards, Golden Globes, BAFTA, Cannes,
+Venice, Berlin, SAG, Critics Choice, Sundance, Razzie Awards, Film Independent
+Spirit Awards, Gotham Awards.
+
+**IMDB GraphQL `event.text` mapping:**
+
+| Ceremony | `event.text` value |
+|----------|-------------------|
+| Academy Awards | `"Academy Awards, USA"` |
+| Golden Globes | `"Golden Globes, USA"` |
+| BAFTA | `"BAFTA Awards"` |
+| Cannes | `"Cannes Film Festival"` |
+| Venice | `"Venice Film Festival"` |
+| Berlin | `"Berlin International Film Festival"` |
+| SAG | `"Actor Awards"` |
+| Critics Choice | `"Critics Choice Awards"` |
+| Sundance | `"Sundance Film Festival"` |
+| Razzie Awards | `"Razzie Awards"` |
+| Spirit Awards | `"Film Independent Spirit Awards"` |
+| Gotham Awards | `"Gotham Awards"` |
+
+After filtering to these 12 ceremonies, per-movie row counts are ~10-50 (vs
+300-570 total nominations across all regional critics circles).
 
 **Also embedded in reception vector** as generated prose summary for semantic
 queries like "award-winning thriller."
@@ -541,13 +574,14 @@ Pipeline state management. Not queried at search time.
 | Column | Type | Purpose |
 |--------|------|---------|
 | `collection_name` | `TEXT?` | TMDB `belongs_to_collection.name`. Input to franchise LLM. |
-| `revenue` | `INTEGER?` | TMDB revenue. Input to box_office_bucket calculation. |
+| `revenue` | `INTEGER?` | TMDB revenue. Superseded by IMDB box office data for bucket calculation, but already captured — kept as supplementary signal. |
 
 ### V2 additions to imdb_data
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `awards` | `TEXT` (JSON) | Scraped award nominations/wins from IMDB GraphQL |
+| `awards` | `TEXT` (JSON) | Scraped award nominations/wins from IMDB GraphQL `awardNominations`. Filtered to 12 in-scope ceremonies at parse time. |
+| `box_office_worldwide` | `INTEGER?` | IMDB GraphQL `lifetimeGross(boxOfficeArea: WORLDWIDE)`. Whole USD, inclusive of domestic. |
 
 ### V2 additions to generated_metadata
 

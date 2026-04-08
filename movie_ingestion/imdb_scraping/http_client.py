@@ -129,6 +129,23 @@ query MovieData($id: ID!) {
         }
       }
     }
+    awardNominations(first: 250) {
+      pageInfo { hasNextPage endCursor }
+      edges {
+        node {
+          award {
+            text
+            event { text }
+            year
+          }
+          isWinner
+          category { text }
+        }
+      }
+    }
+    lifetimeGross(boxOfficeArea: WORLDWIDE) {
+      total { amount currency }
+    }
   }
 }
 """.strip()
@@ -188,6 +205,31 @@ def create_ua_generator() -> UserAgent:
     is possible with mobile User-Agents).
     """
     return UserAgent(browsers=["Chrome", "Firefox"], os=["Windows", "Mac OS X"])
+
+
+# Lightweight query for fetching additional pages of award nominations.
+# The main query returns the first 250; this fetches subsequent pages
+# using cursor-based pagination. Only fired when hasNextPage is true.
+_AWARDS_PAGE_QUERY = """
+query AwardPage($id: ID!, $after: ID!) {
+  title(id: $id) {
+    awardNominations(first: 250, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      edges {
+        node {
+          award {
+            text
+            event { text }
+            year
+          }
+          isWinner
+          category { text }
+        }
+      }
+    }
+  }
+}
+""".strip()
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +321,10 @@ async def fetch_movie(
                 print(f"    {tag} -> HTTP_404 (null title, {elapsed:.2f}s)")
                 return (FetchResult.HTTP_404, None)
 
+            # Paginate remaining award nominations if the first page
+            # didn't return all of them (API caps at 250 per page).
+            await _paginate_awards(client, semaphore, ua, imdb_id, title_data)
+
             # Success — cache raw JSON response to disk before returning
             await _cache_json(imdb_id, title_data)
             return (FetchResult.SUCCESS, title_data)
@@ -296,6 +342,85 @@ async def fetch_movie(
     print(f"    {tag} -> FAILED ({last_failure_reason}, "
           f"exhausted {_MAX_RETRIES} retries, {elapsed:.2f}s)")
     return (FetchResult.FAILED, None)
+
+
+# ---------------------------------------------------------------------------
+# Award nomination pagination
+# ---------------------------------------------------------------------------
+
+# Safety cap to prevent runaway pagination. The most-awarded movies
+# have ~600 nominations, so 5 pages of 250 (= 1250) is generous.
+_MAX_AWARD_PAGES = 5
+
+
+async def _paginate_awards(
+    client: httpx.AsyncClient,
+    semaphore: asyncio.Semaphore,
+    ua: UserAgent,
+    imdb_id: str,
+    title_data: dict,
+) -> None:
+    """
+    Fetch remaining award nomination pages and merge into title_data.
+
+    The main GraphQL query returns the first 250 award nominations. The
+    IMDB API hard-caps at 250 per request regardless of the `first` arg.
+    If `pageInfo.hasNextPage` is true, this fires additional small queries
+    to fetch remaining pages and appends their edges to the existing list.
+
+    Mutates title_data in place. Silently stops on any fetch failure —
+    partial award data is better than failing the entire movie.
+    """
+    nominations = (title_data.get("awardNominations") or {})
+    page_info = nominations.get("pageInfo") or {}
+
+    if not page_info.get("hasNextPage"):
+        return
+
+    edges = nominations.get("edges") or []
+    cursor = page_info.get("endCursor")
+    pages_fetched = 0
+
+    while cursor and pages_fetched < _MAX_AWARD_PAGES:
+        payload = {
+            "query": _AWARDS_PAGE_QUERY,
+            "variables": {"id": imdb_id, "after": cursor},
+        }
+
+        try:
+            async with semaphore:
+                await asyncio.sleep(random.uniform(_MIN_DELAY, _MAX_DELAY))
+                response = await client.post(
+                    _GRAPHQL_URL,
+                    json=payload,
+                    headers={"User-Agent": ua.random},
+                )
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError, ssl.SSLError):
+            break  # Partial award data is acceptable
+
+        if response.status_code != 200:
+            break
+
+        data = response.json()
+        page_noms = (
+            ((data.get("data") or {}).get("title") or {})
+            .get("awardNominations") or {}
+        )
+        page_edges = page_noms.get("edges") or []
+        if not page_edges:
+            break
+
+        edges.extend(page_edges)
+        pages_fetched += 1
+
+        page_info = page_noms.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            break
+        cursor = page_info.get("endCursor")
+
+    # Write the merged edges back into the title_data dict so the
+    # parser sees all nominations in a single list.
+    nominations["edges"] = edges
 
 
 # ---------------------------------------------------------------------------

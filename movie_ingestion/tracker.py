@@ -152,7 +152,9 @@ CREATE TABLE IF NOT EXISTS tmdb_data (
     has_cast_and_crew   INTEGER DEFAULT 0,
     budget              INTEGER DEFAULT 0,
     maturity_rating     TEXT,
-    reviews             TEXT
+    reviews             TEXT,
+    collection_name     TEXT,
+    revenue             INTEGER DEFAULT 0
 );
 
 -- IMDB scraped data: one row per movie scraped in Stage 4.
@@ -191,7 +193,11 @@ CREATE TABLE IF NOT EXISTS imdb_data (
     -- List-of-objects (JSON arrays of objects)
     review_themes        TEXT,    -- JSON array of {name, sentiment}
     parental_guide_items TEXT,    -- JSON array of {category, severity}
-    featured_reviews     TEXT     -- JSON array of {summary, text}
+    featured_reviews     TEXT,    -- JSON array of {summary, text}
+    -- Awards (JSON array of {ceremony, category, outcome, year})
+    awards               TEXT,
+    -- Box office (whole USD dollars, NULL when data unavailable)
+    box_office_worldwide INTEGER  -- inclusive of domestic
 );
 
 -- Batch IDs per movie per metadata generation type.
@@ -315,6 +321,12 @@ def init_db() -> sqlite3.Connection:
         "ALTER TABLE generation_failures ADD COLUMN batch_id TEXT",
         # Collapse phase1_complete / phase2_complete into metadata_generated.
         "UPDATE movie_progress SET status = 'metadata_generated' WHERE status IN ('phase1_complete', 'phase2_complete')",
+        # Add collection_name and revenue columns to tmdb_data.
+        "ALTER TABLE tmdb_data ADD COLUMN collection_name TEXT",
+        "ALTER TABLE tmdb_data ADD COLUMN revenue INTEGER DEFAULT 0",
+        # Add awards and box office columns to imdb_data.
+        "ALTER TABLE imdb_data ADD COLUMN awards TEXT",
+        "ALTER TABLE imdb_data ADD COLUMN box_office_worldwide INTEGER",
     ]
     for stmt in _MIGRATIONS:
         try:
@@ -349,6 +361,7 @@ IMDB_DATA_COLUMNS: tuple[str, ...] = (
     "synopses", "plot_summaries", "plot_keywords", "maturity_reasoning",
     "directors", "writers", "actors", "characters", "producers", "composers",
     "review_themes", "parental_guide_items", "featured_reviews",
+    "awards", "box_office_worldwide",
 )
 
 # Columns that store JSON arrays/objects and need deserialization on read.
@@ -358,6 +371,7 @@ IMDB_JSON_COLUMNS: frozenset[str] = frozenset({
     "synopses", "plot_summaries", "plot_keywords", "maturity_reasoning",
     "directors", "writers", "actors", "characters", "producers", "composers",
     "review_themes", "parental_guide_items", "featured_reviews",
+    "awards",
 })
 
 # Pre-built SQL fragments for INSERT, derived from IMDB_DATA_COLUMNS.

@@ -760,11 +760,12 @@ which movies won it.
 ```
 movie_awards (
     movie_id      BIGINT REFERENCES movie_card,
-    ceremony      TEXT NOT NULL,     -- "Academy Awards", "Golden Globes", "Cannes"
-    category      TEXT NOT NULL,     -- "Best Picture", "Best Director", etc.
+    ceremony      TEXT NOT NULL,     -- "Academy Awards, USA", "Cannes Film Festival"
+    award_name    TEXT NOT NULL,     -- "Oscar", "Palme d'Or", "Golden Lion"
+    category      TEXT,              -- "Best Picture", etc. (nullable for grand prizes)
     outcome       TEXT NOT NULL,     -- "winner" | "nominee"
     year          INT,               -- ceremony year
-    PRIMARY KEY (movie_id, ceremony, category, year)
+    PRIMARY KEY (movie_id, ceremony, award_name, COALESCE(category, ''), year)
 )
 ```
 
@@ -878,16 +879,19 @@ Most queries use mode 2. Mode 3 is the fallback.
 | `box_office_bucket` | TEXT | TMDB revenue + era adjustment | "hit" / "flop" / null. Same era-adjusted pattern as budget_bucket. |
 | `source_material_types` | INT[] (enum) | LLM source_of_inspiration (re-generated with enum constraints) | Array because movies can have multiple sources (e.g., novel adaptation + based on true story). |
 
-**Source material enum taxonomy:**
+**Source material enum taxonomy (finalized):**
+See [source_material_type_enum.md](source_material_type_enum.md) for the full
+definition with boundary notes and re-generation guidance.
 ```
 ORIGINAL_SCREENPLAY, NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION,
-TRUE_STORY, BIOGRAPHY, COMIC_BOOK_ADAPTATION, VIDEO_GAME_ADAPTATION,
-REMAKE, STAGE_PLAY_ADAPTATION, TV_ADAPTATION
+TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION,
+STAGE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION
 ```
 
-Array-valued because a movie like Schindler's List is both NOVEL_ADAPTATION and
-TRUE_STORY. The source_of_inspiration metadata generator needs re-generation with
-enum-constrained output instead of free text.
+Array-valued because movies frequently have multiple applicable types (e.g.,
+Schindler's List = NOVEL_ADAPTATION + TRUE_STORY, a live-action anime remake =
+REMAKE + COMIC_ADAPTATION). The source_of_inspiration metadata generator needs
+re-generation with enum-constrained output instead of free text.
 
 **Note on budget_bucket:** Already exists on movie_card and is already era-adjusted.
 No change needed — confirmed as correctly placed.
@@ -957,33 +961,46 @@ lexical-matchable entities.
 
 ### Keyword-Based Deal-Breaker Filtering
 
-IMDB's overall_keywords and plot_keywords are community-curated topical tags that map
-well to deal-breaker concepts. A movie tagged "christmas" is definitively a Christmas
-movie — no semantic ambiguity.
+**Updated after vocabulary audit** — see
+[keyword_vocabulary_audit.md](keyword_vocabulary_audit.md) for full findings.
+
+IMDB's `overall_keywords` is a curated genre/sub-genre taxonomy of exactly
+225 terms with 100% movie coverage. It is NOT a free-form tagging system —
+it's disjoint from `plot_keywords` (zero overlap). The vocabulary is compact
+enough for pure static mapping; no LLM translation needed.
+
+The primary deal-breaker value is **sub-genre precision across the entire
+genre space**: 16 horror sub-types, 17 comedy sub-types, 3 western variants,
+5 sci-fi sub-types, etc. These are exactly the deterministic signals that
+vector search is weakest at. `plot_keywords` does not need its own search
+path — its value is already absorbed by the metadata generation pipeline.
 
 **Proposed approach:** Keywords as a **boost signal within deal-breaker retrieval, not
 a hard pre-filter.** Hard filtering risks false negatives from missing tags (a
-legitimate Christmas movie without the "holiday" keyword gets silently excluded).
+legitimate Christmas movie without the "Holiday" keyword gets silently excluded).
 
 **How it works:**
 1. Phase 0 identifies deal-breaker concepts and checks if they map to known
-   high-coverage keywords
+   `overall_keywords` terms (225-term vocabulary provided as QU LLM context)
 2. Phase 1 retrieves candidates via BOTH vector search AND keyword matching (union)
 3. Candidates matching the keyword get automatic pass on deal-breaker threshold
 4. Candidates without the keyword can still enter via vector similarity — they just
    need to clear the vector threshold independently
 
-**Storage:** Keywords stored as a TEXT[] or INT[] field, either in Qdrant payload
-(for combined filtering) or in Postgres (for pre-filtering before Qdrant). Exact
-storage location is an open question.
+**Storage:** `movie_card.keyword_ids INT[]` with GIN index (Postgres). Maps
+`overall_keywords` to `lex.lexical_dictionary` string IDs.
 
-**Query understanding needs:** A keyword vocabulary mapping — the system needs to know
-which IMDB keywords correspond to which deal-breaker concepts, and how to translate
-user language to keyword terms.
+**Query understanding:** The full 225-term vocabulary is small enough to include
+as context in the QU prompt. The LLM selects matching terms when the user's
+query implies a sub-genre or deal-breaker concept.
 
-**Production medium search is the first concrete use case** for this pattern. If it
-works well, extend to other high-coverage concepts (holiday themes, historical
-settings, structural attributes like "sequel" or "based-on-novel").
+**Deal-breaker categories identified:** Production medium (6 tags), holiday
+(5 tags), horror sub-genres (16), comedy sub-genres (17), thriller sub-genres
+(6), drama sub-genres (12), crime sub-genres (8), western sub-genres (3),
+sci-fi sub-genres (5), fantasy sub-genres (4), action styles (7), romance
+sub-genres (5), thematic concepts (9), adventure sub-types (12), documentary
+sub-types (11), sports (8), musical sub-types (4), language/nationality (30),
+format/other (8). See audit report for full mappings.
 
 ---
 

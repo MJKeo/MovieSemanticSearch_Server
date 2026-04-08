@@ -461,16 +461,9 @@ Soldier surface?
 **When:** During search pipeline implementation, after cross-space rescoring is built.
 **See:** search_improvement_planning/open_questions.md (Test C)
 
-## Audit IMDB keyword vocabulary from scraped data
-**Context:** The keyword-based deal-breaker filtering design is blocked until we know
-what IMDB keywords actually exist in our data. Need to extract and catalog all distinct
-keywords from scraped IMDB data, their frequencies, and coverage patterns (e.g., what
-% of Christmas movies have the "christmas" keyword). This informs whether static mapping,
-dynamic LLM translation, or a hybrid approach is appropriate for mapping user language
-to IMDB keyword terms.
-**When:** Before implementing keyword-based deal-breaker filtering in the search redesign.
-**See:** search_improvement_planning/open_questions.md (keyword vocabulary mapping),
-movie_ingestion/imdb_scraping/models.py (IMDBScrapedMovie keywords fields)
+## ~~Audit IMDB keyword vocabulary from scraped data~~ DONE
+Completed. `overall_keywords` is a 225-term curated genre taxonomy; static mapping
+confirmed as the right approach. See search_improvement_planning/keyword_vocabulary_audit.md.
 
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts

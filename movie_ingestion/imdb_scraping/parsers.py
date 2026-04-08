@@ -15,10 +15,34 @@ from bs4 import BeautifulSoup
 
 from .models import (
     IMDBScrapedMovie,
+    AwardNomination,
     ReviewTheme,
     ParentalGuideItem,
     FeaturedReview,
 )
+
+
+# ---------------------------------------------------------------------------
+# Award ceremony filter
+# ---------------------------------------------------------------------------
+
+# The 12 major ceremonies whose nominations we store. Values are the exact
+# `award.event.text` strings returned by the IMDB GraphQL API (verified via
+# live queries). Everything outside this set is silently dropped.
+_IN_SCOPE_CEREMONIES: frozenset[str] = frozenset({
+    "Academy Awards, USA",
+    "Golden Globes, USA",
+    "BAFTA Awards",
+    "Cannes Film Festival",
+    "Venice Film Festival",
+    "Berlin International Film Festival",
+    "Actor Awards",                  # SAG (rebranded in IMDB's data)
+    "Critics Choice Awards",
+    "Sundance Film Festival",
+    "Razzie Awards",
+    "Film Independent Spirit Awards",
+    "Gotham Awards",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +264,75 @@ def _score_and_filter_keywords(keyword_edges: list | None) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Award nomination extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_awards(award_edges: list | None) -> list[AwardNomination]:
+    """
+    Extract and filter award nominations to in-scope ceremonies.
+
+    Iterates the `awardNominations.edges` array from the GraphQL response
+    and keeps only nominations whose `award.event.text` matches one of the
+    12 tracked ceremonies in _IN_SCOPE_CEREMONIES. All other nominations
+    (regional critics circles, etc.) are silently dropped.
+
+    Returns a list of AwardNomination objects. Returns empty list when
+    no in-scope nominations exist.
+    """
+    if not award_edges:
+        return []
+
+    awards: list[AwardNomination] = []
+    for edge in award_edges:
+        node = (edge.get("node") or {}) if isinstance(edge, dict) else {}
+
+        # Extract ceremony name from award.event.text
+        ceremony = _safe_get(node, ["award", "event", "text"])
+        if not ceremony or not isinstance(ceremony, str):
+            continue
+        ceremony = ceremony.strip()
+
+        # Filter to in-scope ceremonies only
+        if ceremony not in _IN_SCOPE_CEREMONIES:
+            continue
+
+        # Extract the specific prize name (e.g., "Oscar", "Palme d'Or",
+        # "Golden Lion"). Required — this is the user-facing award term.
+        award_name = _safe_get(node, ["award", "text"])
+        if not award_name or not isinstance(award_name, str):
+            continue
+        award_name = award_name.strip()
+
+        # Extract year (required — skip if missing or non-numeric)
+        year = _safe_get(node, ["award", "year"])
+        if year is None:
+            continue
+        try:
+            year = int(year)
+        except (TypeError, ValueError):
+            continue
+
+        # Map isWinner boolean to outcome string
+        is_winner = _safe_get(node, ["isWinner"])
+        outcome = "winner" if is_winner else "nominee"
+
+        # Extract category (nullable — festival grand prizes like Palme d'Or
+        # have no category; the award name IS the category)
+        category = _strip_or_none(_safe_get(node, ["category", "text"]))
+
+        awards.append(AwardNomination(
+            ceremony=ceremony,
+            award_name=award_name,
+            category=category,
+            outcome=outcome,
+            year=year,
+        ))
+
+    return awards
+
+
+# ---------------------------------------------------------------------------
 # Main transformer
 # ---------------------------------------------------------------------------
 
@@ -269,6 +362,21 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
     metacritic_rating = _safe_get(title_data, ["metacritic", "metascore", "score"])
     raw_budget = _safe_get(title_data, ["productionBudget", "budget", "amount"])
     budget = round(raw_budget) if raw_budget is not None else None
+
+    # -- Box office data -------------------------------------------------------
+    # Worldwide lifetime gross (inclusive of domestic, verified via Box Office
+    # Mojo glossary). Whole USD dollars, None when data unavailable.
+    raw_worldwide = _safe_get(title_data, ["lifetimeGross", "total", "amount"])
+    bo_currency = _safe_get(title_data, ["lifetimeGross", "total", "currency"])
+    if raw_worldwide is not None and bo_currency != "USD":
+        # Flag non-USD currencies so we know if this assumption ever breaks.
+        # Store 0 rather than None to distinguish "non-USD data exists" from
+        # "no data at all".
+        print(f"    [WARNING] Non-USD box office currency: {bo_currency} "
+              f"(amount={raw_worldwide})")
+        box_office_worldwide = 0
+    else:
+        box_office_worldwide = round(raw_worldwide) if raw_worldwide is not None else None
 
     # Vote count — defaults to 0, coerced to int
     imdb_vote_count_raw = _safe_get(title_data, ["ratingsSummary", "voteCount"], 0)
@@ -434,6 +542,11 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
         if summary and text:
             featured_reviews.append(FeaturedReview(summary=summary, text=text))
 
+    # -- Awards (filtered to in-scope ceremonies) ----------------------------
+
+    award_edges = _safe_get(title_data, ["awardNominations", "edges"]) or []
+    awards = _extract_awards(award_edges)
+
     # -- Assemble the final model --------------------------------------------
 
     return IMDBScrapedMovie(
@@ -465,4 +578,6 @@ def transform_graphql_response(title_data: dict) -> IMDBScrapedMovie:
         producers=producers,
         composers=list(composers_set),
         featured_reviews=featured_reviews,
+        awards=awards,
+        box_office_worldwide=box_office_worldwide,
     )

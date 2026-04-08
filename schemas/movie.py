@@ -25,6 +25,7 @@ from implementation.classes.languages import LANGUAGE_BY_NORMALIZED_NAME
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase
 
 from movie_ingestion.imdb_scraping.models import (
+    AwardNomination,
     FeaturedReview,
     ParentalGuideItem,
     ReviewTheme,
@@ -69,6 +70,7 @@ _TMDB_DATA_COLUMNS: tuple[str, ...] = (
     "budget",
     "maturity_rating",
     "reviews",
+    "revenue",
 )
 
 _METADATA_COLUMNS: tuple[str, ...] = (
@@ -125,6 +127,7 @@ class TMDBData(BaseModel):
     budget: int | None = None
     maturity_rating: str | None = None
     reviews: list[str] = Field(default_factory=list)
+    revenue: int | None = None
 
 
 class IMDBData(BaseModel):
@@ -160,6 +163,8 @@ class IMDBData(BaseModel):
     review_themes: list[ReviewTheme] = Field(default_factory=list)
     parental_guide_items: list[ParentalGuideItem] = Field(default_factory=list)
     featured_reviews: list[FeaturedReview] = Field(default_factory=list)
+    awards: list[AwardNomination] = Field(default_factory=list)
+    box_office_worldwide: int | None = None
     imdb_title_type: str | None = None
 
 
@@ -349,6 +354,20 @@ class Movie(BaseModel):
             return self.imdb_data.budget
         if self.tmdb_data.budget:
             return self.tmdb_data.budget
+        return None
+
+    def resolved_box_office_revenue(self) -> int | None:
+        """Prefer IMDB worldwide box office when positive; fall back to TMDB revenue.
+
+        Returns None when neither source has a valid (positive) value.
+        Zero and negative values are treated as missing data.
+        """
+        imdb_box_office = self.imdb_data.box_office_worldwide
+        if imdb_box_office and imdb_box_office > 0:
+            return imdb_box_office
+        tmdb_revenue = self.tmdb_data.revenue
+        if tmdb_revenue and tmdb_revenue > 0:
+            return tmdb_revenue
         return None
 
     def resolved_maturity_rating(self) -> str | None:
@@ -651,6 +670,8 @@ def _build_imdb_data(row: dict[str, object]) -> IMDBData:
             data[column] = [ParentalGuideItem.model_validate(item) for item in parsed]
         elif column == "featured_reviews":
             data[column] = [FeaturedReview.model_validate(item) for item in parsed]
+        elif column == "awards":
+            data[column] = [AwardNomination.model_validate(item) for item in parsed]
         else:
             data[column] = parsed
 

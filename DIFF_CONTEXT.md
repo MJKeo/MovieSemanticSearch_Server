@@ -357,3 +357,137 @@ Can reintroduce if clear failure examples emerge during testing.
 
 **Cascading updates:** Production vector open question updated (can't fold into
 anchor since anchor is dropped — options are now keep/eliminate/repurpose).
+
+## Added collection_name and revenue columns to tmdb_data
+
+Files: movie_ingestion/tracker.py, movie_ingestion/tmdb_fetching/tmdb_fetcher.py
+Why: V2 data architecture needs TMDB `belongs_to_collection.name` for franchise generation, and raw revenue for box office bucketing. Neither was persisted previously.
+Approach: Added columns to CREATE TABLE schema + ALTER TABLE migrations in tracker.py. Extended _extract_fields() to pull collection_name from belongs_to_collection dict, and added both collection_name and revenue to the INSERT template and persist tuple in tmdb_fetcher.py. Revenue was already extracted but only used for the boolean has_revenue flag.
+
+## IMDB GraphQL API research — awards and box office fields
+
+Files: search_improvement_planning/v2_data_architecture.md, search_improvement_planning/v2_data_needs.md
+
+### Intent
+Researched the IMDB GraphQL API to determine exact field names, response structures,
+and argument requirements for awards and box office data needed by V2 search.
+
+### Key Decisions
+
+**Awards — ceremony list expanded to 12:** Original 9 (Academy Awards, Golden Globes,
+BAFTA, Cannes, Venice, Berlin, SAG, Critics Choice, Sundance) expanded to include
+Razzie Awards, Film Independent Spirit Awards, and Gotham Awards. Razzies capture a
+distinct search intent ("worst movies"); Spirit/Gotham capture indie prestige. DGA/WGA/PGA
+excluded — rarely user search terms, typically 1 nomination per movie.
+
+**Awards — `category` is nullable:** Festival grand prizes (Palme d'Or, Golden Lion,
+Golden Bear) return null `category` from the API. Table schema updated to allow NULL
+category with `COALESCE(category, '')` in the composite PK.
+
+**Awards — SAG is "Actor Awards" in IMDB:** SAG-AFTRA Awards are listed as event
+`"Actor Awards"` in the GraphQL API. Documented in the event.text mapping table.
+
+**Awards — filtering yields ~10-50 rows per movie:** Movies have 300-570+ total
+nominations (mostly regional critics circles), but filtering to 12 ceremonies produces
+manageable counts.
+
+**Box office — IMDB replaces TMDB as primary source:** `lifetimeGross(boxOfficeArea: DOMESTIC|WORLDWIDE)`
+provides more complete data. Worldwide is inclusive of domestic (verified via Box Office
+Mojo glossary). `openingWeekendGross(boxOfficeArea: DOMESTIC)` also available. TMDB
+revenue column kept as supplementary signal.
+
+**Box office — new imdb_data columns:** `box_office_domestic`, `box_office_worldwide`,
+`opening_weekend_gross` added to tracker DB imdb_data table spec.
+
+## Added awards and box office fetching to IMDB scraping pipeline
+
+Files: movie_ingestion/imdb_scraping/models.py, movie_ingestion/imdb_scraping/http_client.py, movie_ingestion/imdb_scraping/parsers.py, movie_ingestion/tracker.py
+
+### Intent
+Extend the IMDB GraphQL scrape to fetch award nominations (filtered to 12 major
+ceremonies) and box office revenue data, as required by the V2 data architecture
+(v2_data_needs.md items #4 and #9).
+
+### Approach
+- Added `awardNominations(first: 250)` with `pageInfo` pagination support, plus
+  `lifetimeGross(boxOfficeArea: WORLDWIDE)` to the GraphQL query.
+- Award pagination: IMDB hard-caps at 250 edges per request. `_paginate_awards()`
+  in http_client.py fetches remaining pages via cursor-based pagination and merges
+  edges into title_data before the parser sees it. Most movies need 0 extra requests;
+  heavily-awarded films (Parasite=570, Everything Everywhere=582) need 1-2 extra.
+  Without pagination, major awards (Parasite's Best Picture Oscar) were missed.
+- New `AwardNomination` Pydantic sub-model (ceremony, award_name, category, outcome,
+  year). `award_name` is the specific prize name users search for ("Oscar", "Palme
+  d'Or", "Golden Lion") — distinct from ceremony (organization) and category (specific
+  category within the prize). Category is nullable for festival grand prizes.
+- Parser filters to 12 in-scope ceremonies via `_IN_SCOPE_CEREMONIES` frozenset
+  (exact `event.text` values verified via live API queries). Drops ~95% of
+  nominations (regional critics circles).
+- Box office: only worldwide lifetime gross, which is inclusive of domestic.
+  Whole USD dollars. Non-USD currencies are flagged via print warning and stored
+  as 0 to distinguish from missing data (None).
+- V2 planning docs updated: `movie_awards` table schema now includes `award_name`
+  column in all three planning files.
+- Tracker DB: 2 new columns on `imdb_data` (awards TEXT, box_office_worldwide INTEGER)
+  with ALTER TABLE migrations for existing databases.
+- No changes to scraper.py or run.py — they handle data generically via
+  `model_dump()` and the `IMDB_DATA_COLUMNS`-driven serialization.
+
+## Backfill script for awards + box office on already-ingested movies
+
+Files: movie_ingestion/imdb_scraping/backfill_awards_boxoffice.py
+Why: ~100K already-ingested movies have NULL awards and box_office_worldwide.
+Approach: Slimmed-down copy of run.py that queries `status='ingested'`, reuses
+the same process_movie → serialize_imdb_movie → IMDB_INSERT_SQL pipeline, but
+skips all status updates and filter logging. Failures are printed, not persisted.
+Run: `python -m movie_ingestion.imdb_scraping.backfill_awards_boxoffice`
+
+## Created Country enum for V2 data architecture
+
+Files: implementation/classes/countries.py
+Why: V2 data architecture (v2_data_needs.md item #3) requires a Country enum for `country_of_origin_ids` on movie_card. Follows the same pattern as the existing Language enum.
+Approach: Extracted all 261 IMDB regions from the IMDB GraphQL API i18n data. 250 current countries/territories + 12 historical entities (Soviet Union, Yugoslavia, etc.) retained for older films. Each member is a (country_id, display_name) tuple with stable numeric IDs. Includes `COUNTRY_BY_NORMALIZED_NAME` dict for string→enum lookup, matching the Language enum pattern.
+
+## Added box office revenue field to Movie object
+
+Files: schemas/movie.py
+Why: V2 needs box office data accessible on the Movie object for bucketing and display.
+Approach: Added `revenue` (int | None) to TMDBData and `_TMDB_DATA_COLUMNS`, added `box_office_worldwide` (int | None) and `awards` (list[AwardNomination]) to IMDBData. All fields already existed in the tracker DB — they just weren't surfaced through the Pydantic models. Added explicit `AwardNomination.model_validate()` branch in `_build_imdb_data()` for consistency with other sub-model columns. Added `resolved_box_office_revenue()` method to Movie following the same IMDB-first-then-TMDB pattern as `resolved_budget()`. Zero and negative values treated as missing.
+
+## IMDB keyword vocabulary audit — completed
+
+Files: search_improvement_planning/keyword_vocabulary_audit.md (new), search_improvement_planning/v2_data_needs.md, search_improvement_planning/open_questions.md, search_improvement_planning/new_system_brainstorm.md, docs/TODO.md
+
+### Intent
+Completed the keyword vocabulary audit (v2_data_needs.md item #1) — prerequisite
+for keyword-based deal-breaker filtering in V2 search. Unblocks task #11 (keyword
+ID mapping).
+
+### Key Findings
+- `overall_keywords` is a curated 225-term genre/sub-genre taxonomy (not a
+  free-form tagging system). 100% movie coverage, near-zero long tail, zero
+  overlap with `plot_keywords`. Static mapping trivially feasible — no LLM
+  translation needed.
+- `plot_keywords` (114K terms) value is already absorbed by the metadata
+  generation pipeline. Does not need a separate search path.
+- Primary deal-breaker value: sub-genre precision across the entire genre
+  space — 16 horror sub-types, 17 comedy sub-types, 3 western variants, etc.
+  Exactly the deterministic signal vector search is weakest at.
+- Holiday tags capture curated editorial judgment (Die Hard, Harry Potter
+  correctly tagged). 83.8% christmas, remainder is other holidays and
+  viewing traditions.
+- 30 language/nationality tags complement structured country/language fields.
+
+### Planning Context
+Audit was originally blocked on by the keyword deal-breaker filtering design.
+Finding that overall_keywords is a compact taxonomy (not 100K+ free-form tags)
+simplifies the entire design: full vocabulary fits in the QU prompt, mapping
+is static, and plot_keywords can be ignored for keyword_ids.
+
+### Docs Updated
+- v2_data_needs.md: task #1 marked completed with findings summary, task #11
+  dependency note updated, dependency graph updated
+- open_questions.md: keyword vocabulary mapping question marked DECIDED
+- new_system_brainstorm.md: "Keyword-Based Deal-Breaker Filtering" section
+  rewritten to reflect actual vocabulary structure and audit results
+- docs/TODO.md: audit item marked done

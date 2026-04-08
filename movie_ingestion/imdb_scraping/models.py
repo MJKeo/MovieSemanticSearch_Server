@@ -38,6 +38,15 @@ class FeaturedReview(BaseModel):
     text: str
 
 
+class AwardNomination(BaseModel):
+    """A single award nomination with ceremony, award name, category, outcome, and year."""
+    ceremony: str
+    award_name: str                  # specific prize name (e.g., "Oscar", "Palme d'Or", "Golden Lion")
+    category: Optional[str] = None   # null for festival grand prizes (Palme d'Or, etc.)
+    outcome: str                     # "winner" or "nominee"
+    year: int
+
+
 # ---------------------------------------------------------------------------
 # Per-page parser output models
 # ---------------------------------------------------------------------------
@@ -148,3 +157,10 @@ class IMDBScrapedMovie(BaseModel):
 
     # From reviews page
     featured_reviews: list[FeaturedReview] = Field(default_factory=list)
+
+    # Awards (filtered to 12 in-scope ceremonies)
+    awards: list[AwardNomination] = Field(default_factory=list)
+
+    # Box office (whole USD dollars, None when data unavailable)
+    # Worldwide is inclusive of domestic (verified via Box Office Mojo glossary).
+    box_office_worldwide: Optional[int] = None
