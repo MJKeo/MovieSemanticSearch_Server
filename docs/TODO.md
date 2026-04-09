@@ -465,6 +465,17 @@ Soldier surface?
 Completed. `overall_keywords` is a 225-term curated genre taxonomy; static mapping
 confirmed as the right approach. See search_improvement_planning/keyword_vocabulary_audit.md.
 
+## Update v2_data_needs.md item #8 — superseded by concept tags
+**Context:** Item #8 (production technique keyword re-generation) is superseded by the
+concept tag system designed in search_improvement_planning/concept_tags.md. The concept
+tags replace the production_keywords generation slot entirely. Item #8 should be marked
+as superseded with a pointer to concept_tags.md. Also update v2_data_architecture.md to
+add the concept_tag_ids INT[] column to the movie_card spec and reflect that the
+production vector space may be dropped (its content was absorbed by structured fields
+and concept tags).
+**When:** Next time v2 planning docs are being updated or when beginning concept tag implementation.
+**See:** search_improvement_planning/concept_tags.md, search_improvement_planning/v2_data_needs.md (item #8), search_improvement_planning/v2_data_architecture.md
+
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts
 with `tmdb_ids`, `movies`, or `samples` keys. The watch_context bucket file uses a flat format

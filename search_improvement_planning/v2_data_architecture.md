@@ -37,7 +37,7 @@ and hard filtering via GIN-indexed array overlap.
 |--------|------|--------|-------------|
 | `country_of_origin_ids` | `INT[]` | IMDB `countries_of_origin` mapped to `Country` enum | GIN index. Postgres-only, NOT in Qdrant payload. Hard filter for "Korean movies" etc. |
 | `box_office_bucket` | `TEXT?` | IMDB box office + era adjustment | `"hit"` / `"flop"` / `NULL`. Same pattern as budget_bucket. Movies < 75 days old always `NULL` (too early to judge). Source: IMDB GraphQL `lifetimeGross(boxOfficeArea: DOMESTIC)` and `lifetimeGross(boxOfficeArea: WORLDWIDE)`. Worldwide is inclusive of domestic. |
-| `source_material_type_ids` | `INT[]` | LLM source_of_inspiration (re-generated with enum) | `SourceMaterialType` enum IDs (11 values, finalized — see [source_material_type_enum.md](source_material_type_enum.md)). Array because movies can have multiple (e.g. Schindler's List = NOVEL_ADAPTATION + TRUE_STORY). GIN index. |
+| `source_material_type_ids` | `INT[]` | LLM source_of_inspiration (re-generated with enum) | `SourceMaterialType` enum IDs (10 values, finalized — see [source_material_type_enum.md](source_material_type_enum.md)). Array because movies can have multiple (e.g. Schindler's List = NOVEL_ADAPTATION + TRUE_STORY). Empty array = original screenplay (no explicit enum value for originals). GIN index. |
 | `keyword_ids` | `INT[]` | IMDB `overall_keywords` mapped to `lex.lexical_dictionary` IDs | GIN index. Used for keyword-based deal-breaker boost. Only `overall_keywords`, NOT `plot_keywords`. |
 
 ### Indexes
@@ -339,7 +339,7 @@ Scored as weighted average against movie_card data. Range [0,1] per candidate.
 |------|--------|----------|-------|
 | `Country` | TBD — derive from IMDB's country list | `country_id: int` | Same pattern as Language enum. ~100-200 values. |
 | `BoxOfficeBucket` | HIT, FLOP | string-valued | Movies < 75 days old → NULL (not enough data). |
-| `SourceMaterialType` | TBD — derive from current generated source_of_inspiration values | `source_material_type_id: int` | Brainstorm draft: ORIGINAL_SCREENPLAY, NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, TRUE_STORY, BIOGRAPHY, COMIC_BOOK_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, STAGE_PLAY_ADAPTATION, TV_ADAPTATION. Final values must be validated against actual generated data. |
+| `SourceMaterialType` | 10 values (finalized, implemented in `schemas/enums.py`) | `source_material_type_id: int` | NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, STAGE_ADAPTATION, TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION. Empty array = original screenplay. |
 | `FranchiseRole` | STARTER, MAINLINE, SPINOFF, PREBOOT, REMAKE | string-valued | Stored on `franchise_membership.franchise_role`. |
 
 ---

@@ -6,7 +6,7 @@ ingestion tracker SQLite database. Use `Movie.from_tmdb_id()` to load:
 
 - non-null `tmdb_data`
 - non-null `imdb_data`
-- optional parsed metadata objects for all 8 generated metadata columns
+- optional parsed metadata objects for all generated metadata columns
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from schemas.metadata import (
     PlotEventsOutput,
     ProductionKeywordsOutput,
     ReceptionOutput,
+    SourceMaterialV2Output,
     SourceOfInspirationOutput,
     ViewerExperienceOutput,
     WatchContextOutput,
@@ -82,6 +83,7 @@ _METADATA_COLUMNS: tuple[str, ...] = (
     "narrative_techniques",
     "production_keywords",
     "source_of_inspiration",
+    "source_material_v2",
 )
 
 _METADATA_FIELD_TO_MODEL: dict[str, type[BaseModel]] = {
@@ -93,6 +95,7 @@ _METADATA_FIELD_TO_MODEL: dict[str, type[BaseModel]] = {
     "narrative_techniques_metadata": NarrativeTechniquesOutput,
     "production_keywords_metadata": ProductionKeywordsOutput,
     "source_of_inspiration_metadata": SourceOfInspirationOutput,
+    "source_material_v2_metadata": SourceMaterialV2Output,
 }
 
 _METADATA_FIELD_TO_COLUMN: dict[str, str] = {
@@ -183,6 +186,7 @@ class Movie(BaseModel):
     narrative_techniques_metadata: NarrativeTechniquesOutput | None = None
     production_keywords_metadata: ProductionKeywordsOutput | None = None
     source_of_inspiration_metadata: SourceOfInspirationOutput | None = None
+    source_material_v2_metadata: SourceMaterialV2Output | None = None
 
     # Era-adjusted budget thresholds: decade → (small_ceiling, large_floor)
     _DECADE_THRESHOLDS: ClassVar[dict[int, tuple[int, int]]] = {

@@ -46,12 +46,15 @@ guidance.
 
 **What was done:** Extracted all 4,311 unique free-text `source_material`
 values from `generated_metadata.source_of_inspiration`, analyzed the top 100
-by movie count, and clustered them into 11 distinct enum values:
+by movie count, and clustered them into 10 distinct enum values:
 ```
-ORIGINAL_SCREENPLAY, NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION,
-TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION,
-STAGE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION
+NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, TRUE_STORY, BIOGRAPHY,
+COMIC_ADAPTATION, FOLKLORE_ADAPTATION, STAGE_ADAPTATION,
+VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION
 ```
+`ORIGINAL_SCREENPLAY` was removed during implementation — original screenplays
+are identified by an empty `source_material_type_ids` array, not an explicit
+enum value. Queries for "original screenplays" filter for empty arrays.
 
 **Key changes from the draft enum:**
 - Added `FOLKLORE_ADAPTATION` (~560 movies: fairy tales, mythology, religious
@@ -478,12 +481,13 @@ class BoxOfficeBucket(Enum):
     HIT = "hit"
     FLOP = "flop"
 
-class SourceMaterialType(Enum):
-    # TBD — derive from current generated values (see #2)
-    # Draft: ORIGINAL_SCREENPLAY, NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION,
-    # TRUE_STORY, BIOGRAPHY, COMIC_BOOK_ADAPTATION, VIDEO_GAME_ADAPTATION,
-    # REMAKE, STAGE_PLAY_ADAPTATION, TV_ADAPTATION
-    # Pattern: source_material_type_id: int, value: str
+class SourceMaterialType(str, Enum):
+    # Finalized — 10 values. Empty array = original screenplay.
+    # NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, TRUE_STORY, BIOGRAPHY,
+    # COMIC_ADAPTATION, FOLKLORE_ADAPTATION, STAGE_ADAPTATION,
+    # VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION
+    # Pattern: (str value, source_material_type_id: int)
+    # Implemented in schemas/enums.py
     pass
 
 class FranchiseRole(Enum):

@@ -8,24 +8,20 @@ represent meaningful user-facing search distinctions.
 **Storage format:** `source_material_types: SourceMaterialType[]` — an array of enum
 values per movie, because movies frequently have multiple applicable types (e.g.,
 Schindler's List = `NOVEL_ADAPTATION` + `TRUE_STORY`, Bohemian Rhapsody = `BIOGRAPHY`
-+ `TRUE_STORY`). The LLM should assign all that apply.
++ `TRUE_STORY`). The LLM should assign all that apply. An empty array means original
+screenplay — the movie has no external source material.
+
+**Original screenplay handling:** `ORIGINAL_SCREENPLAY` was removed from the enum
+during implementation. Original screenplays are identified by an empty
+`source_material_type_ids` array — this is a derivable signal, not something the LLM
+needs to classify. Queries for "original screenplays" filter for movies where the
+array is empty (`source_material_type_ids = '{}'`).
 
 ---
 
 ## Enum Values
 
-### 1. `ORIGINAL_SCREENPLAY`
-
-**Represents:** No external source material — the screenplay is an original work
-written for the screen.
-
-**Encompasses:** Not mapped from existing free-text values. Assigned when a movie has
-no other `source_material_type` values. Exists as an explicit signal, not just the
-absence of tags.
-
----
-
-### 2. `NOVEL_ADAPTATION`
+### `NOVEL_ADAPTATION`
 
 **Represents:** Adapted from a long-form prose work (fiction or non-fiction).
 
@@ -40,7 +36,7 @@ non-fiction book," "based on an autobiographical novel," "based on a light novel
 
 ---
 
-### 3. `SHORT_STORY_ADAPTATION`
+### `SHORT_STORY_ADAPTATION`
 
 **Represents:** Adapted from a shorter written work — a piece that is not a full-length
 book.
@@ -57,7 +53,7 @@ will legitimately carry both this and `FOLKLORE_ADAPTATION`.
 
 ---
 
-### 4. `STAGE_ADAPTATION`
+### `STAGE_ADAPTATION`
 
 **Represents:** Adapted from a work originally performed on stage.
 
@@ -67,7 +63,7 @@ musical," "based on a Broadway musical," "based on a musical," "based on an oper
 
 ---
 
-### 5. `TRUE_STORY`
+### `TRUE_STORY`
 
 **Represents:** The film depicts real events. The focus is on *what happened*, not on
 profiling a specific individual's life.
@@ -82,7 +78,7 @@ split: `TRUE_STORY` = "this happened," `BIOGRAPHY` = "this is someone's life sto
 
 ---
 
-### 6. `BIOGRAPHY`
+### `BIOGRAPHY`
 
 **Represents:** The film is primarily a portrait of a real person's life or a
 significant portion of it.
@@ -100,7 +96,7 @@ as `BIOGRAPHY`.
 
 ---
 
-### 7. `COMIC_ADAPTATION`
+### `COMIC_ADAPTATION`
 
 **Represents:** Adapted from a visual sequential-art medium — comics, graphic novels,
 manga, or related formats.
@@ -118,7 +114,7 @@ Sherlock Holmes -> `NOVEL_ADAPTATION`, Batman -> `COMIC_ADAPTATION`, Bugs Bunny 
 
 ---
 
-### 8. `FOLKLORE_ADAPTATION`
+### `FOLKLORE_ADAPTATION`
 
 **Represents:** Adapted from oral tradition, mythology, religious scripture, or
 culturally inherited stories with no single modern author.
@@ -135,7 +131,7 @@ warranted.
 
 ---
 
-### 9. `VIDEO_GAME_ADAPTATION`
+### `VIDEO_GAME_ADAPTATION`
 
 **Represents:** Adapted from a video game or video game franchise.
 
@@ -145,7 +141,7 @@ Small but culturally distinct and a common user search intent ("video game movie
 
 ---
 
-### 10. `REMAKE`
+### `REMAKE`
 
 **Represents:** A new version of a previously produced film or short film — same
 essential story, re-executed.
@@ -168,7 +164,7 @@ anime," "based on a short film," "remake of a French film," "remake of a TV seri
 
 ---
 
-### 11. `TV_ADAPTATION`
+### `TV_ADAPTATION`
 
 **Represents:** Adapted from serialized audio or visual media — television, web series,
 radio, or animated series.
@@ -190,16 +186,15 @@ These categories were considered and intentionally excluded from the enum:
 
 **Songs (68 movies):** Most "based on a song" movies are better described by their
 other tags — a jukebox musical biopic is `BIOGRAPHY` + `STAGE_ADAPTATION`, a film
-inspired by a single song is borderline `ORIGINAL_SCREENPLAY` with a thematic nod. The
+inspired by a single song has no applicable source material type (empty array). The
 "song as source material" signal is too weak and ambiguous to be a useful filter.
 During re-generation, these should be mapped to their more salient types.
 
 **Toys (77 movies):** Toy-based films (Transformers, Barbie, G.I. Joe) are franchise IP
 products — the franchise system (`franchise_membership`) captures this relationship
 better than source material type. A toy line is not a narrative source the way a novel
-or play is. During re-generation, these would typically be `ORIGINAL_SCREENPLAY` (the
-screenplay is written from scratch, using the IP) unless they also adapt a specific
-comic/TV series, in which case that type applies.
+or play is. During re-generation, these get an empty array (no source material type)
+unless they also adapt a specific comic/TV series, in which case that type applies.
 
 **Spinoff / Reboot (815 movies combined):** These are franchise_lineage concepts that
 leaked into the free-text source_material field. Already handled by the `FranchiseRole`
@@ -207,7 +202,7 @@ enum. Should not appear in re-generated source_material output.
 
 **Documentary (157 movies):** A film format, not a source type. Biographical
 documentaries get `BIOGRAPHY`; event documentaries about real events get `TRUE_STORY`;
-observational documentaries with no narrative source get `ORIGINAL_SCREENPLAY`.
+observational documentaries with no narrative source get an empty array.
 
 **Parody (54 movies):** A film's *relationship* to its reference material, not a source
 type. A parody of a film is still `REMAKE` in the source-material sense. The parody

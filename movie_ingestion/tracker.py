@@ -212,7 +212,8 @@ CREATE TABLE IF NOT EXISTS metadata_batch_ids (
     watch_context_batch_id         TEXT,
     narrative_techniques_batch_id  TEXT,
     production_keywords_batch_id   TEXT,
-    source_of_inspiration_batch_id TEXT
+    source_of_inspiration_batch_id TEXT,
+    source_material_v2_batch_id    TEXT
 );
 
 -- Individual request failures within a batch, for tracking and retry.
@@ -256,6 +257,7 @@ CREATE TABLE IF NOT EXISTS generated_metadata (
     narrative_techniques                 TEXT,
     production_keywords                  TEXT,
     source_of_inspiration                TEXT,
+    source_material_v2                   TEXT,
     -- Eligibility flags (NULL = not evaluated, 1 = eligible, 0 = ineligible)
     eligible_for_plot_events             INTEGER,
     eligible_for_reception               INTEGER,
@@ -264,7 +266,8 @@ CREATE TABLE IF NOT EXISTS generated_metadata (
     eligible_for_watch_context           INTEGER,
     eligible_for_narrative_techniques    INTEGER,
     eligible_for_production_keywords     INTEGER,
-    eligible_for_source_of_inspiration   INTEGER
+    eligible_for_source_of_inspiration   INTEGER,
+    eligible_for_source_material_v2      INTEGER
 );
 """
 
@@ -327,6 +330,10 @@ def init_db() -> sqlite3.Connection:
         # Add awards and box office columns to imdb_data.
         "ALTER TABLE imdb_data ADD COLUMN awards TEXT",
         "ALTER TABLE imdb_data ADD COLUMN box_office_worldwide INTEGER",
+        # Add source_material_v2 columns for enum-constrained re-generation.
+        "ALTER TABLE generated_metadata ADD COLUMN source_material_v2 TEXT",
+        "ALTER TABLE generated_metadata ADD COLUMN eligible_for_source_material_v2 INTEGER",
+        "ALTER TABLE metadata_batch_ids ADD COLUMN source_material_v2_batch_id TEXT",
     ]
     for stmt in _MIGRATIONS:
         try:

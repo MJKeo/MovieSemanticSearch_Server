@@ -33,6 +33,7 @@ from abc import abstractmethod
 from pydantic import BaseModel, Field, ConfigDict, constr, conlist
 
 from implementation.misc.helpers import normalize_string
+from schemas.enums import SourceMaterialType
 
 
 # ---------------------------------------------------------------------------
@@ -825,3 +826,55 @@ class SourceOfInspirationOutput(EmbeddableOutput):
             "first" in t.lower() or "start" in t.lower()
             for t in self.franchise_lineage
         )
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Source Material V2 (enum-constrained re-generation)
+# ---------------------------------------------------------------------------
+
+class SourceMaterialV2Output(EmbeddableOutput):
+    """Enum-constrained source material classification output.
+
+    Replaces the free-text source_material field from SourceOfInspirationOutput
+    with a fixed set of SourceMaterialType enum values. franchise_lineage is
+    removed entirely (handled by a separate franchise generation task).
+
+    The LLM identifies which source material types are genuinely present —
+    either directly evidenced in the inputs or known with 95%+ parametric
+    confidence. This is identification, not fitting: only types that
+    actually apply are included.
+
+    An empty list means original screenplay — the movie has no external
+    source material. This is handled at the search layer, not by the LLM.
+
+    Parametric knowledge allowed at 95%+ confidence. Leaf-node
+    classification — errors don't cascade to other generations.
+
+    Model: gpt-5-mini, reasoning_effort: low
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    source_material_types: list[SourceMaterialType] = Field(
+        default_factory=list,
+        description=(
+            "All SourceMaterialType values that genuinely apply to this "
+            "movie. Assign every type that is directly evidenced in the "
+            "inputs or known with 95%+ confidence from parametric "
+            "knowledge. Empty list when the movie is an original "
+            "screenplay with no external source material. May contain "
+            "multiple values (e.g. a film can be both novel_adaptation "
+            "and true_story)."
+        ),
+    )
+
+    def __str__(self) -> str:
+        return ", ".join(t.value.replace("_", " ") for t in self.source_material_types)
+
+    def embedding_text(self) -> str:
+        if not self.source_material_types:
+            return ""
+        normalized = [
+            normalize_string(t.value.replace("_", " "))
+            for t in self.source_material_types
+        ]
+        return f"sources of inspiration: {', '.join(normalized)}"

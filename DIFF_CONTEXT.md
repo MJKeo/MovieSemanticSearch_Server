@@ -491,3 +491,148 @@ is static, and plot_keywords can be ignored for keyword_ids.
 - new_system_brainstorm.md: "Keyword-Based Deal-Breaker Filtering" section
   rewritten to reflect actual vocabulary structure and audit results
 - docs/TODO.md: audit item marked done
+
+## Concept tags — binary deal-breaker tag system design
+
+Files: search_improvement_planning/concept_tags.md (new)
+
+### Intent
+Designed a binary concept tag system that replaces the production_keywords
+generation slot. Instead of narrow production technique extraction, this LLM
+generation step classifies movies against an enum of ~27 deal-breaker concepts
+that users search for as yes/no expectations but that have no deterministic
+coverage in the current architecture.
+
+### Key Decisions
+
+**Replaces production_keywords entirely.** The keyword audit revealed that most
+of the production vector's original scope (countries, languages, source material,
+franchise, era, budget, animation) now has dedicated structured fields. The
+residual production technique scope (IMAX, single-take, practical-effects) was
+too thin for a dedicated vector space and too sparse for reliable LLM classification
+from text inputs.
+
+**Scope: binary deal-breakers not covered by other systems.** 27 tags across
+7 categories: narrative devices (twist ending, time loop, nonlinear timeline, etc.),
+plot archetypes (revenge, underdog, kidnapping, con artist), settings (post-apocalyptic,
+haunted location, small town), characters (female protagonist, ensemble cast,
+anti-hero), ending types (happy, tragic, open), experiential (feel-good, tearjerker),
+and content flags (animal death).
+
+**Explicit routing doc for excluded concepts.** Concepts that seem like tag
+candidates but belong in other systems are documented with their correct search
+routing: overall_keywords (conspiracy → Conspiracy Thriller, zombie → Zombie Horror,
+etc.), source_material_type_ids, genre_ids, vector spaces (spectrum concepts like
+scary, dark, funny), and computed signals (critically acclaimed, underrated).
+
+**Spectrum concepts excluded from tags.** Dark, scary, funny, intense, mind-bending,
+slow burn, disturbing, cozy, cheesy, gritty — all handled by viewer_experience /
+watch_context vectors where degree matters. FEEL_GOOD and TEARJERKER included as
+exceptions because they function as binary in user perception and are based on
+audience reports, not extrapolated from plot events.
+
+**TWIST_VILLAIN distinct from TWIST_ENDING.** Both tags can coexist. Twist villain
+is a subset where the surprise is specifically about who the villain is. Different
+search intent ("movies with a twist villain" vs "movies with a twist ending").
+
+### Planning Context
+Evolved from production keywords redesign discussion. Original analysis showed the
+V2 production vector was too thin after structured fields absorbed most content.
+User insight: rather than extracting narrow production techniques, use this LLM
+slot to extract binary deal-breaker tags from plot_keywords + other context. This
+solves the broader problem (vector search failing for binary concepts like "twist
+ending") rather than the narrow one (production technique keywords).
+
+### Design context
+Full spec: search_improvement_planning/concept_tags.md
+Related: search_improvement_planning/keyword_vocabulary_audit.md (overall_keywords
+coverage), search_improvement_planning/v2_data_needs.md (item #8 superseded)
+
+## Concept tags — input/output schema design and TWIST_ENDING→PLOT_TWIST rename
+
+Files: search_improvement_planning/concept_tags.md
+
+### Intent
+Refined the concept tag generation pipeline design: finalized LLM inputs (minimum
+viable set for accuracy), designed the output schema, and documented prompt design
+guidance. Also renamed TWIST_ENDING → PLOT_TWIST to capture mid-story twists.
+
+### Key Decisions
+
+**TWIST_ENDING → PLOT_TWIST.** The deal-breaker is "has a significant twist," not
+"twist happens at the ending." Broader tag catches mid-story reveals (Psycho's
+shower twist is Act 1). "Twist ending" queries use PLOT_TWIST for candidate
+retrieval + ranking by ending-specific signals.
+
+**Six LLM inputs, no bloat.** plot_keywords (primary signal for 15+ tags),
+plot_summary (fallback for all, primary for 6 gap tags), narrative_techniques
+terms only from 6 sections (~30-60 tokens of pre-classified labels), plot_analysis
+arc labels + conflict_type (~15-35 tokens), emotional_observations (primary for
+FEEL_GOOD/TEARJERKER), title_with_year. Total ~300-1100 tokens per movie.
+
+**Excluded inputs with rationale.** overall_keywords (marginal disambiguation),
+craft_observations (distilled into narrative_techniques terms), thematic_observations
+(distilled into plot_analysis fields), viewer_experience (emotional_observations
+sufficient, eliminates Wave 2 dependency).
+
+**Category-level output schema.** 7 category fields (narrative_structure,
+plot_archetypes, settings, characters, endings, experiential, content_flags),
+each a list of TagEvidence (evidence sentence + enum tag). Category fields act as
+attention redirects — each field transition forces the model to consider a new
+tag domain. Solves recall failure where a flat array lets the model stop after 1-2
+tags. Same pattern as narrative_techniques 9-section output.
+
+**Not a boolean grid.** 27 boolean fields would cause false-negative bias (~90% of
+fields are false), positional fatigue, and autoregressive anchoring. Array-based
+output biases toward false positives (over-emission), which is the favorable
+direction for deal-breaker retrieval.
+
+**evidence-before-tag ordering.** Justification field precedes enum field, forcing
+lightweight chain-of-thought before classification. Matches existing pipeline
+pattern (ThematicConceptWithJustification, CharacterArcWithReasoning).
+
+**Single LLM call, gpt-5-mini.** Task is multi-label binary classification from
+pre-structured inputs — not complex generation. Category-organized prompt with
+sweep instruction. Split only if evaluation shows accuracy issues.
+
+### Planning Context
+Evolved from analysis of narrative_techniques and plot_analysis schemas to
+identify which structured fields carry the signals needed for each tag. Found that
+narrative_techniques terms provide independent backup for 7+ keyword-reliant tags,
+while 6 tags (KIDNAPPING, SMALL_TOWN, POST_APOCALYPTIC, HAUNTED_LOCATION,
+FEMALE_PROTAGONIST, ANIMAL_DEATH) have single-source dependency on plot_keywords
+with plot_summary as fallback.
+
+## Source Material V2 — enum-constrained re-generation pipeline
+
+Files: schemas/enums.py, schemas/metadata.py, schemas/movie.py, movie_ingestion/metadata_generation/prompts/source_material_v2.py (new), movie_ingestion/metadata_generation/generators/source_material_v2.py (new), movie_ingestion/metadata_generation/inputs.py, movie_ingestion/tracker.py, movie_ingestion/metadata_generation/batch_generation/generator_registry.py, movie_ingestion/metadata_generation/batch_generation/result_processor.py, movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py
+
+### Intent
+Implement the source material V2 generation pipeline (v2_data_needs.md item #7).
+Replaces free-text `source_material` + `franchise_lineage` with an enum-constrained
+`source_material_types: SourceMaterialType[]` output. franchise_lineage removed
+entirely (future separate generator). Stored in new `source_material_v2` column
+alongside V1 data.
+
+### Key Decisions
+- `SourceMaterialType` enum uses `(str, Enum)` with both string values (for Pydantic
+  JSON schema compatibility with OpenAI structured output) and stable integer IDs
+  (for future `movie_card.source_material_type_ids` GIN index). 11 finalized values.
+- New `MetadataType.SOURCE_MATERIAL_V2` rather than modifying existing SOURCE_OF_INSPIRATION,
+  so V1 data and pipeline remain intact.
+- Classification mindset baked into prompt: "identify what's present" not "find the
+  best fit". High confidence threshold (directly evidenced OR 95%+ parametric).
+  Anti-inference rules for genre, setting, era, format. Deliberate exclusions for
+  songs, toys, spinoffs, documentary-as-format, parody.
+- Same eligibility criteria as V1 (keywords OR source_material_hint from Wave 1 reception).
+- Downstream vector_text.py changes deferred — coupled to production vector thinning work.
+
+### Design context
+Enum definition: search_improvement_planning/source_material_type_enum.md
+Data needs: search_improvement_planning/v2_data_needs.md item #7
+
+### Testing Notes
+- Verify `to_strict_json_schema(SourceMaterialV2Output)` produces correct enum
+  constraints on array items
+- Verify Pydantic round-trip with sample LLM response
+- Verify tracker DB migration adds all 3 new columns

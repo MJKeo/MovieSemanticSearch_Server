@@ -27,6 +27,7 @@ from schemas.metadata import (
     NarrativeTechniquesOutput,
     ProductionKeywordsOutput,
     SourceOfInspirationOutput,
+    SourceMaterialV2Output,
     WatchContextOutput,
     ViewerExperienceOutput,
 )
@@ -47,6 +48,7 @@ SCHEMA_BY_TYPE: dict[MetadataType, type[BaseModel]] = {
     MetadataType.NARRATIVE_TECHNIQUES: NarrativeTechniquesOutput,
     MetadataType.PRODUCTION_KEYWORDS: ProductionKeywordsOutput,
     MetadataType.SOURCE_OF_INSPIRATION: SourceOfInspirationOutput,
+    MetadataType.SOURCE_MATERIAL_V2: SourceMaterialV2Output,
     MetadataType.VIEWER_EXPERIENCE: ViewerExperienceOutput,
     MetadataType.WATCH_CONTEXT: WatchContextOutput,
 }

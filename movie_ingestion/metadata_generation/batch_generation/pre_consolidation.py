@@ -699,6 +699,10 @@ def assess_skip_conditions(
     _record("source_of_inspiration", _check_source_of_inspiration(
         merged_keywords, source_material_hint,
     ))
+    # V2 enum-constrained re-generation — same eligibility as V1.
+    _record("source_material_v2", _check_source_of_inspiration(
+        merged_keywords, source_material_hint,
+    ))
 
     return SkipAssessment(
         generations_to_run=generations_to_run,

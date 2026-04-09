@@ -879,19 +879,21 @@ Most queries use mode 2. Mode 3 is the fallback.
 | `box_office_bucket` | TEXT | TMDB revenue + era adjustment | "hit" / "flop" / null. Same era-adjusted pattern as budget_bucket. |
 | `source_material_types` | INT[] (enum) | LLM source_of_inspiration (re-generated with enum constraints) | Array because movies can have multiple sources (e.g., novel adaptation + based on true story). |
 
-**Source material enum taxonomy (finalized):**
+**Source material enum taxonomy (finalized, implemented in `schemas/enums.py`):**
 See [source_material_type_enum.md](source_material_type_enum.md) for the full
 definition with boundary notes and re-generation guidance.
 ```
-ORIGINAL_SCREENPLAY, NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION,
-TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION,
-STAGE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION
+NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, TRUE_STORY, BIOGRAPHY,
+COMIC_ADAPTATION, FOLKLORE_ADAPTATION, STAGE_ADAPTATION,
+VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION
 ```
 
 Array-valued because movies frequently have multiple applicable types (e.g.,
 Schindler's List = NOVEL_ADAPTATION + TRUE_STORY, a live-action anime remake =
-REMAKE + COMIC_ADAPTATION). The source_of_inspiration metadata generator needs
-re-generation with enum-constrained output instead of free text.
+REMAKE + COMIC_ADAPTATION). Empty array = original screenplay (no explicit enum
+value — original screenplays are identified by the absence of any source material
+type). Queries for "original screenplays" filter for movies with an empty
+`source_material_type_ids` array.
 
 **Note on budget_bucket:** Already exists on movie_card and is already era-adjusted.
 No change needed — confirmed as correctly placed.

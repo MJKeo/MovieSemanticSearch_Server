@@ -285,6 +285,35 @@ async def _source_of_inspiration_live_generator(movie: MovieInputData):
     return await generate_source_of_inspiration(movie, w1.source_material_hint)
 
 
+def _source_material_v2_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for source_material_v2 — same criteria as V1.
+
+    Requires keywords or source_material_hint from Wave 1 reception.
+    Reuses the same check function as source_of_inspiration.
+    """
+    from .pre_consolidation import _check_source_of_inspiration
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return _check_source_of_inspiration(movie.merged_keywords(), w1.source_material_hint)
+
+
+def _source_material_v2_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for source_material_v2 — loads Wave 1 outputs and builds prompts."""
+    from ..generators.source_material_v2 import build_source_material_v2_user_prompt
+    from ..prompts.source_material_v2 import SYSTEM_PROMPT
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return build_source_material_v2_user_prompt(movie, w1.source_material_hint), SYSTEM_PROMPT
+
+
+async def _source_material_v2_live_generator(movie: MovieInputData):
+    """Async adapter for source_material_v2 — loads Wave 1 outputs and generates."""
+    from ..generators.source_material_v2 import generate_source_material_v2
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return await generate_source_material_v2(movie, w1.source_material_hint)
+
+
 def _narrative_techniques_eligibility_checker(movie: MovieInputData) -> str | None:
     """Eligibility checker for narrative_techniques — loads Wave 1 outputs from DB.
 
@@ -356,6 +385,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         WatchContextOutput,
         ViewerExperienceOutput,
         SourceOfInspirationOutput,
+        SourceMaterialV2Output,
     )
 
     return {
@@ -430,6 +460,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             live_generator=_narrative_techniques_live_generator,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
+        ),
+        MetadataType.SOURCE_MATERIAL_V2: GeneratorConfig(
+            metadata_type=MetadataType.SOURCE_MATERIAL_V2,
+            schema_class=SourceMaterialV2Output,
+            eligibility_checker=_source_material_v2_eligibility_checker,
+            prompt_builder=_source_material_v2_prompt_builder,
+            live_generator=_source_material_v2_live_generator,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
         ),
     }
 
