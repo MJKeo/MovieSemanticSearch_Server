@@ -189,26 +189,51 @@ code change to the TMDB fetcher extraction logic.
 
 ### 6. Franchise generation
 
-**What:** For each movie, generate `franchise_name`, `franchise_role`
+**What:** For each movie, generate `franchise_name_normalized`, `franchise_role`
 (`FranchiseRole` enum: STARTER, MAINLINE, SPINOFF, PREBOOT, REMAKE), and
-`culturally_recognized_group` (only when internet has established the term).
+`culturally_recognized_group` (only when a culturally established term exists
+globally — any market, not just US).
+
+**Franchise definition:** Any recognizable intellectual property or brand that
+originated in any medium — film series, video games, toys, books, comics, TV
+shows, board games, theme parks, etc. — where the movie is an adaptation,
+extension, or product of that IP. Examples: "Mario" (video game), "Barbie"
+(toy), "Transformers" (toy/cartoon), "Harry Potter" (book), "Marvel Cinematic
+Universe" (comic/film). The franchise name should be the **IP name**, not the
+film series name.
 
 **Inputs to LLM:**
 - Title
 - Release year
+- Overview (as an identification aid — helps the LLM correctly identify which
+  movie this is; NOT for inferring franchise from plot similarity)
 - TMDB `collection_name` (from #5 above, may be null)
 - Production companies
 - Overall keywords
-- Any other helpful context from TMDB/IMDB data
+- Characters
+
+This is a compact, high-signal input set with no generated-metadata
+dependencies. The overview was included because title + year alone can be
+ambiguous (multiple movies share titles), and the overview helps the LLM
+confidently access its parametric knowledge about franchise membership.
+Characters are critical for IP-based franchises (e.g., "Mario", "Luigi" →
+Mario franchise; "Optimus Prime" → Transformers).
 
 **LLM approach:** Pass structured input, generate structured output. The LLM
 uses parametric knowledge to fill gaps that TMDB collection data doesn't cover
-(spinoffs, brand-level groupings like MCU, etc.). `culturally_recognized_group`
-must never be hallucinated — only used when established internet terminology
-exists.
+(spinoffs, brand-level groupings like MCU, real-world IP franchises, etc.).
+`culturally_recognized_group` must never be hallucinated — only used when
+established terminology exists in any market globally. If multiple names exist
+across markets for the same grouping, prefer the American-market term.
+
+**Storage simplification:** Only `franchise_name_normalized` is stored (not a
+separate display-form `franchise_name`). Since `franchise_name_normalized` is
+just `normalize_string()` applied to the canonical name, there's no need to
+store both. Same applies to `culturally_recognized_group` — stored normalized.
+Display-form names can be derived at the UI layer if ever needed.
 
 **Canonical naming convention:** The LLM is instructed to output the most
-common, fully expanded form of the franchise name — no abbreviations. The
+common, fully expanded form of the franchise/IP name — no abbreviations. The
 search extraction LLM follows the same convention (same pattern as the lexical
 entity extractor for person names). This ensures both sides converge on the
 same canonical string without needing alias tables.
@@ -383,11 +408,10 @@ CREATE INDEX idx_awards_ceremony_outcome
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.franchise_membership (
-    movie_id                    BIGINT NOT NULL REFERENCES movie_card,
-    franchise_name              TEXT NOT NULL,
-    franchise_name_normalized   TEXT NOT NULL,
-    culturally_recognized_group TEXT,
-    franchise_role              TEXT NOT NULL,
+    movie_id                        BIGINT NOT NULL REFERENCES movie_card,
+    franchise_name_normalized       TEXT NOT NULL,
+    culturally_recognized_group     TEXT,       -- normalized; globally scoped
+    franchise_role                  TEXT NOT NULL,
     PRIMARY KEY (movie_id, franchise_name_normalized)
 );
 ```

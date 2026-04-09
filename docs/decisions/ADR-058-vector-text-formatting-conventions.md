@@ -89,10 +89,10 @@ Callers can distinguish "no data" from empty content.
 - `embedding_text()` is now a real formatting function, not just a
   `__str__()` alias. Schema changes that affect vector text must update
   `embedding_text()`.
-- `create_plot_events_vector_text_fallback()` needs to be wired into the
-  embedding pipeline's error handling — currently it exists but is not
-  called automatically when the primary text overflows. Tracked in
-  docs/TODO.md.
+- ~~`create_plot_events_vector_text_fallback()` needs to be wired into the
+  embedding pipeline's error handling.~~ Resolved: the token-limit fallback
+  is now integrated directly into `create_plot_events_vector_text()` via
+  `_plot_events_fallback_text()`. Callers do not need to handle it.
 - The synopsis-first hierarchy means that if an IMDB synopsis is very
   long (>8,191 tokens), the fallback kicks in and may produce a shorter
   but less complete embedding. This is an acceptable tradeoff vs. a

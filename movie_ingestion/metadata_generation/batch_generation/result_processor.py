@@ -16,7 +16,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from movie_ingestion.tracker import TRACKER_DB_PATH
 from schemas.enums import MetadataType
@@ -28,6 +28,7 @@ from schemas.metadata import (
     ProductionKeywordsOutput,
     SourceOfInspirationOutput,
     SourceMaterialV2Output,
+    ConceptTagsOutput,
     WatchContextOutput,
     ViewerExperienceOutput,
 )
@@ -37,11 +38,13 @@ from ..inputs import parse_custom_id
 # ---------------------------------------------------------------------------
 # Schema lookup
 # ---------------------------------------------------------------------------
-# Maps MetadataType to its Pydantic output schema for validation.
+# Maps MetadataType to its Pydantic output schema for validation and
+# post-generation fixups. Each schema's validate_and_fix() classmethod
+# handles type-specific logic (default: pure validation, no fixups).
 # Kept separate from the full generator registry to avoid pulling in
 # generator modules (prompt builders, LLM callers) that aren't needed here.
 
-SCHEMA_BY_TYPE: dict[MetadataType, type[BaseModel]] = {
+SCHEMA_BY_TYPE: dict[MetadataType, type] = {
     MetadataType.PLOT_EVENTS: PlotEventsOutput,
     MetadataType.RECEPTION: ReceptionOutput,
     MetadataType.PLOT_ANALYSIS: PlotAnalysisOutput,
@@ -51,6 +54,7 @@ SCHEMA_BY_TYPE: dict[MetadataType, type[BaseModel]] = {
     MetadataType.SOURCE_MATERIAL_V2: SourceMaterialV2Output,
     MetadataType.VIEWER_EXPERIENCE: ViewerExperienceOutput,
     MetadataType.WATCH_CONTEXT: WatchContextOutput,
+    MetadataType.CONCEPT_TAGS: ConceptTagsOutput,
 }
 
 
@@ -239,9 +243,11 @@ def _process_single_result(
         summary.failed += 1
         return False
 
-    # Validate the content against the Pydantic schema
+    # Validate the content and apply any deterministic post-generation
+    # fixups. Each schema's validate_and_fix() handles its own fixup
+    # logic (default: pure validation, no fixups).
     try:
-        schema_class.model_validate_json(content)
+        validated = schema_class.validate_and_fix(content)
     except ValidationError as e:
         _record_failure(
             db, tmdb_id, metadata_type,
@@ -251,7 +257,11 @@ def _process_single_result(
         summary.failed += 1
         return False
 
-    # Store the raw JSON content string to the type's column.
+    # Re-serialize from the validated (possibly fixed) object so any
+    # deterministic fixups are persisted.
+    content = validated.model_dump_json()
+
+    # Store the JSON content string to the type's column.
     # Column name from MetadataType StrEnum — fixed values, not user input.
     result_col = str(metadata_type)
     db.execute(

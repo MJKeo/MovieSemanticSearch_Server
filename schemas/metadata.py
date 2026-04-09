@@ -33,20 +33,44 @@ from abc import abstractmethod
 from pydantic import BaseModel, Field, ConfigDict, constr, conlist
 
 from implementation.misc.helpers import normalize_string
-from schemas.enums import SourceMaterialType
+from schemas.enums import (
+    SourceMaterialType,
+    NarrativeStructureTag,
+    PlotArchetypeTag,
+    SettingTag,
+    CharacterTag,
+    EndingTag,
+    ExperientialTag,
+    ContentFlagTag,
+)
 
 
 # ---------------------------------------------------------------------------
-# Base class for all embeddable output schemas
+# Base class for all metadata output schemas
 # ---------------------------------------------------------------------------
 
+# Base class for metadata output schemas. Provides two extension points:
+#
+# 1. validate_and_fix(content) — classmethod entry point used by the
+#    batch result processor to validate raw LLM JSON and apply any
+#    deterministic post-generation fixups. Default: pure validation.
+#    Subclasses override to add type-specific fixup logic.
+#
+# 2. embedding_text() — returns the normalized string used for vector
+#    embedding. Every embeddable *Output schema must implement this.
+#    Non-embeddable schemas (e.g., ConceptTagsOutput) do not subclass
+#    EmbeddableOutput and do not need to implement this.
 class EmbeddableOutput(BaseModel):
-    """Base class for metadata output schemas that produce embedding text.
 
-    Every *Output schema must subclass this and implement embedding_text(),
-    which returns the normalized string used for vector embedding.
-    This replaces the previous __str__() convention.
-    """
+    @classmethod
+    def validate_and_fix(cls, content: str) -> "EmbeddableOutput":
+        """Validate raw JSON content and apply deterministic fixups.
+
+        Default: pure validation with no fixups. Subclasses that need
+        post-generation transformations (e.g., implied tag insertion)
+        override this method.
+        """
+        return cls.model_validate_json(content)
 
     @abstractmethod
     def embedding_text(self) -> str:
@@ -58,13 +82,11 @@ class EmbeddableOutput(BaseModel):
 # Shared sub-models
 # ---------------------------------------------------------------------------
 
+# A section containing search-query-like term phrases.
+# Used by WatchContext, NarrativeTechniques, and ProductionKeywords
+# where each section is a flat list of terms without negations.
+# No justification field — removed per spec Decision 5.
 class TermsSection(BaseModel):
-    """A section containing search-query-like term phrases.
-
-    Used by WatchContext, NarrativeTechniques, and ProductionKeywords
-    where each section is a flat list of terms without negations.
-    No justification field — removed per spec Decision 5.
-    """
     model_config = ConfigDict(extra="forbid")
 
     terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
@@ -73,13 +95,11 @@ class TermsSection(BaseModel):
     )
 
 
+# A section containing both positive terms and negation phrases.
+# Used by ViewerExperience where each section captures what the movie
+# IS and what it is NOT. No justification field — removed per spec
+# Decision 5.
 class TermsWithNegationsSection(BaseModel):
-    """A section containing both positive terms and negation phrases.
-
-    Used by ViewerExperience where each section captures what the movie
-    IS and what it is NOT. No justification field — removed per spec
-    Decision 5.
-    """
     model_config = ConfigDict(extra="forbid")
 
     terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
@@ -103,20 +123,19 @@ class TermsWithNegationsSection(BaseModel):
 # Wave 1: Plot Events
 # ---------------------------------------------------------------------------
 
+# Structured output from the plot_events generation (Wave 1).
+#
+# Produces a single chronological plot summary. The plot_summary
+# field is passed directly to all downstream Wave 2 consumers.
+#
+# Setting and major_characters fields were removed after evaluation
+# showed setting is redundant (already in the summary) and structured
+# character extraction adds analytical burden better handled by the
+# downstream plot_analysis generator. Character names appear naturally
+# in the plot_summary text.
+#
+# Model: gpt-5-mini, reasoning_effort: minimal
 class PlotEventsOutput(EmbeddableOutput):
-    """Structured output from the plot_events generation (Wave 1).
-
-    Produces a single chronological plot summary. The plot_summary
-    field is passed directly to all downstream Wave 2 consumers.
-
-    Setting and major_characters fields were removed after evaluation
-    showed setting is redundant (already in the summary) and structured
-    character extraction adds analytical burden better handled by the
-    downstream plot_analysis generator. Character names appear naturally
-    in the plot_summary text.
-
-    Model: gpt-5-mini, reasoning_effort: minimal
-    """
     model_config = ConfigDict(extra="forbid")
 
     plot_summary: constr(strip_whitespace=True, min_length=1) = Field(
@@ -134,27 +153,26 @@ class PlotEventsOutput(EmbeddableOutput):
 # Wave 1: Reception
 # ---------------------------------------------------------------------------
 
+# Structured output from the reception generation (Wave 1).
+#
+# Dual-zone output structure:
+#
+# Extraction zone (NOT embedded, consumed by Wave 2 generators):
+#     source_material_hint — short classifying phrase for adaptations/remakes
+#     thematic_observations — themes, meaning, messages from reviews
+#     emotional_observations — emotional tone, mood, atmosphere
+#     craft_observations — narrative structure, pacing, performances as craft
+#
+# Synthesis zone (embedded into reception_vectors):
+#     reception_summary — evaluative summary of audience opinion
+#     praised_qualities — tag phrases for what audiences liked
+#     criticized_qualities — tag phrases for what audiences disliked
+#
+# Fields are ordered extraction-first so that structured output
+# models produce observations before synthesizing evaluative content.
+#
+# Model: gpt-5-mini, reasoning_effort: low
 class ReceptionOutput(EmbeddableOutput):
-    """Structured output from the reception generation (Wave 1).
-
-    Dual-zone output structure:
-
-    Extraction zone (NOT embedded, consumed by Wave 2 generators):
-        source_material_hint — short classifying phrase for adaptations/remakes
-        thematic_observations — themes, meaning, messages from reviews
-        emotional_observations — emotional tone, mood, atmosphere
-        craft_observations — narrative structure, pacing, performances as craft
-
-    Synthesis zone (embedded into reception_vectors):
-        reception_summary — evaluative summary of audience opinion
-        praised_qualities — tag phrases for what audiences liked
-        criticized_qualities — tag phrases for what audiences disliked
-
-    Fields are ordered extraction-first so that structured output
-    models produce observations before synthesizing evaluative content.
-
-    Model: gpt-5-mini, reasoning_effort: low
-    """
     model_config = ConfigDict(extra="forbid")
 
     # -- Extraction zone: observations for downstream generators (NOT embedded) --
@@ -240,13 +258,11 @@ class ReceptionOutput(EmbeddableOutput):
 # ---------------------------------------------------------------------------
 
 
+# Character arc with a reasoning field for chain-of-thought quality.
+# Used only in the justification/evaluation variant. The reasoning
+# field is generated first to scaffold a better label. Only the
+# label is embedded — reasoning is never included in embedding text.
 class CharacterArcWithReasoning(BaseModel):
-    """Character arc with a reasoning field for chain-of-thought quality.
-
-    Used only in the justification/evaluation variant. The reasoning
-    field is generated first to scaffold a better label. Only the
-    label is embedded — reasoning is never included in embedding text.
-    """
     model_config = ConfigDict(extra="forbid")
 
     reasoning: constr(strip_whitespace=True, min_length=1) = Field(
@@ -274,8 +290,8 @@ class CharacterArcWithReasoning(BaseModel):
 # NEVER embedded — __str__() methods return only the label.
 
 
+# Elevator pitch with an explanation field for chain-of-thought quality.
 class ElevatorPitchWithJustification(BaseModel):
-    """Elevator pitch with an explanation field for chain-of-thought quality."""
     model_config = ConfigDict(extra="forbid")
 
     explanation_and_justification: constr(strip_whitespace=True, min_length=1) = Field(
@@ -299,15 +315,13 @@ class ElevatorPitchWithJustification(BaseModel):
         return self.elevator_pitch
 
 
+# A thematic concept (theme or lesson) with a justification field.
+# Replaces both MajorThemeWithJustification and
+# MajorLessonLearnedWithJustification — the theme/lesson distinction
+# was ambiguous for small LLMs and irrelevant for vector search.
+# The justification text is NEVER embedded — only the concept_label
+# is used in embedding text.
 class ThematicConceptWithJustification(BaseModel):
-    """A thematic concept (theme or lesson) with a justification field.
-
-    Replaces both MajorThemeWithJustification and
-    MajorLessonLearnedWithJustification — the theme/lesson distinction
-    was ambiguous for small LLMs and irrelevant for vector search.
-    The justification text is NEVER embedded — only the concept_label
-    is used in embedding text.
-    """
     model_config = ConfigDict(extra="forbid")
 
     explanation_and_justification: constr(strip_whitespace=True, min_length=1) = Field(
@@ -330,18 +344,17 @@ class ThematicConceptWithJustification(BaseModel):
         return self.concept_label
 
 
+# Output schema for plot_analysis generation (Wave 2).
+#
+# Uses sub-models with explanation_and_justification / reasoning fields
+# that scaffold better labels via chain-of-thought. Only the labels
+# are embedded — justification text is never included in embedding text.
+#
+# Field order is optimized for autoregressive generation: genre →
+# themes → elevator pitch → conflict → arcs → overview.
+#
+# Model: gpt-5-mini, reasoning_effort: minimal, verbosity: low
 class PlotAnalysisOutput(EmbeddableOutput):
-    """Output schema for plot_analysis generation (Wave 2).
-
-    Uses sub-models with explanation_and_justification / reasoning fields
-    that scaffold better labels via chain-of-thought. Only the labels
-    are embedded — justification text is never included in embedding text.
-
-    Field order is optimized for autoregressive generation: genre →
-    themes → elevator pitch → conflict → arcs → overview.
-
-    Model: gpt-5-mini, reasoning_effort: minimal, verbosity: low
-    """
     model_config = ConfigDict(extra="forbid")
 
     genre_signatures: conlist(
@@ -454,13 +467,11 @@ class PlotAnalysisOutput(EmbeddableOutput):
 # Wave 2: Viewer Experience
 # ---------------------------------------------------------------------------
 
+# Section with terms, negations, and a justification for chain-of-thought.
+# The justification field provides chain-of-thought that improves
+# output quality. It is NEVER embedded — only terms and negations
+# are used in embedding text.
 class TermsWithNegationsAndJustificationSection(BaseModel):
-    """Section with terms, negations, and a justification for chain-of-thought.
-
-    The justification field provides chain-of-thought that improves
-    output quality. It is NEVER embedded — only terms and negations
-    are used in embedding text.
-    """
     model_config = ConfigDict(extra="forbid")
 
     justification: constr(strip_whitespace=True, min_length=1) = Field(
@@ -487,16 +498,15 @@ class TermsWithNegationsAndJustificationSection(BaseModel):
     )
 
 
+# Output schema for viewer_experience generation (Wave 2).
+#
+# 8 sections capturing the emotional/sensory viewing experience.
+# Each section includes a justification field that provides
+# chain-of-thought improving specificity and term diversity.
+# Justifications are discarded before embedding — no retrieval impact.
+#
+# Model: gpt-5-mini, reasoning_effort: minimal, verbosity: low
 class ViewerExperienceOutput(EmbeddableOutput):
-    """Output schema for viewer_experience generation (Wave 2).
-
-    8 sections capturing the emotional/sensory viewing experience.
-    Each section includes a justification field that provides
-    chain-of-thought improving specificity and term diversity.
-    Justifications are discarded before embedding — no retrieval impact.
-
-    Model: gpt-5-mini, reasoning_effort: minimal, verbosity: low
-    """
     model_config = ConfigDict(extra="forbid")
 
     emotional_palette: TermsWithNegationsAndJustificationSection
@@ -547,19 +557,18 @@ class ViewerExperienceOutput(EmbeddableOutput):
 # Wave 2: Watch Context
 # ---------------------------------------------------------------------------
 
+# TermsSection with upstream evidence assessment.
+#
+# The evidence_basis field forces the model to inventory which specific
+# input phrases support this section BEFORE generating terms. This is
+# an upstream constraint — the model must identify concrete evidence
+# first, then generate only terms that follow from that evidence.
+#
+# If no specific input phrases can be cited, terms should be empty.
+#
+# The evidence_basis text is NEVER embedded — only terms are used in
+# embedding text.
 class TermsWithJustificationSection(BaseModel):
-    """TermsSection with upstream evidence assessment.
-
-    The evidence_basis field forces the model to inventory which specific
-    input phrases support this section BEFORE generating terms. This is
-    an upstream constraint — the model must identify concrete evidence
-    first, then generate only terms that follow from that evidence.
-
-    If no specific input phrases can be cited, terms should be empty.
-
-    The evidence_basis text is NEVER embedded — only terms are used in
-    embedding text.
-    """
     model_config = ConfigDict(extra="forbid")
 
     evidence_basis: constr(strip_whitespace=True, min_length=1) = Field(
@@ -578,23 +587,22 @@ class TermsWithJustificationSection(BaseModel):
     )
 
 
+# Output schema for watch_context generation (Wave 2).
+#
+# Includes a brief identity_note pre-classification (2-8 words)
+# that primes tone calibration before section generation, plus
+# evidence_basis per section as an upstream constraint.
+#
+# 4 sections capturing when/why/how to watch the movie. Deliberately
+# receives NO plot information — focuses on experiential attributes.
+# All sections allow 0 terms — sparse inputs should produce fewer
+# terms, not fabricated ones.
+#
+# The identity_note is NOT embedded — only section terms are used
+# in embedding text.
+#
+# Model: gpt-5-mini, reasoning_effort: low
 class WatchContextOutput(EmbeddableOutput):
-    """Output schema for watch_context generation (Wave 2).
-
-    Includes a brief identity_note pre-classification (2-8 words)
-    that primes tone calibration before section generation, plus
-    evidence_basis per section as an upstream constraint.
-
-    4 sections capturing when/why/how to watch the movie. Deliberately
-    receives NO plot information — focuses on experiential attributes.
-    All sections allow 0 terms — sparse inputs should produce fewer
-    terms, not fabricated ones.
-
-    The identity_note is NOT embedded — only section terms are used
-    in embedding text.
-
-    Model: gpt-5-mini, reasoning_effort: low
-    """
     model_config = ConfigDict(extra="forbid")
 
     identity_note: constr(strip_whitespace=True, min_length=1) = Field(
@@ -665,18 +673,17 @@ class WatchContextOutput(EmbeddableOutput):
 # Wave 2: Narrative Techniques
 # ---------------------------------------------------------------------------
 
+# Output schema for narrative_techniques generation (Wave 2).
+#
+# 9 sections capturing storytelling structure, POV, delivery mechanism,
+# and narrative devices. Each section includes a justification field
+# for chain-of-thought quality. Justification text is NEVER embedded.
+#
+# Field order is optimized for autoregressive generation: specific
+# sections first, catchall last.
+#
+# Model: gpt-5-mini, reasoning_effort: minimal
 class NarrativeTechniquesOutput(EmbeddableOutput):
-    """Output schema for narrative_techniques generation (Wave 2).
-
-    9 sections capturing storytelling structure, POV, delivery mechanism,
-    and narrative devices. Each section includes a justification field
-    for chain-of-thought quality. Justification text is NEVER embedded.
-
-    Field order is optimized for autoregressive generation: specific
-    sections first, catchall last.
-
-    Model: gpt-5-mini, reasoning_effort: minimal
-    """
     model_config = ConfigDict(extra="forbid")
 
     # Easiest to identify from any input type
@@ -731,14 +738,13 @@ class NarrativeTechniquesOutput(EmbeddableOutput):
 # Wave 2: Production Keywords (separate LLM call)
 # ---------------------------------------------------------------------------
 
+# Structured output from the production_keywords generation (Wave 2).
+#
+# Classification task: the LLM filters merged_keywords to keep only
+# production-relevant ones. Not generative — purely selective.
+#
+# Model: gpt-5-mini, reasoning_effort: low
 class ProductionKeywordsOutput(EmbeddableOutput):
-    """Structured output from the production_keywords generation (Wave 2).
-
-    Classification task: the LLM filters merged_keywords to keep only
-    production-relevant ones. Not generative — purely selective.
-
-    Model: gpt-5-mini, reasoning_effort: low
-    """
     model_config = ConfigDict(extra="forbid")
 
     terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
@@ -758,18 +764,17 @@ class ProductionKeywordsOutput(EmbeddableOutput):
 # Wave 2: Source of Inspiration (separate LLM call)
 # ---------------------------------------------------------------------------
 
+# Source of inspiration classification output.
+#
+# Two independent lists from the same inputs:
+# - source_material: what existing media the film draws from
+#   (adaptations, remakes, reboots, reimaginings, spinoffs)
+# - franchise_lineage: where the film sits in a franchise timeline
+#   (sequel, prequel, trilogy position, franchise starter)
+#
+# Parametric knowledge allowed at 95%+ confidence. Leaf-node
+# classification — errors don't cascade to other generations.
 class SourceOfInspirationOutput(EmbeddableOutput):
-    """Source of inspiration classification output.
-
-    Two independent lists from the same inputs:
-    - source_material: what existing media the film draws from
-      (adaptations, remakes, reboots, reimaginings, spinoffs)
-    - franchise_lineage: where the film sits in a franchise timeline
-      (sequel, prequel, trilogy position, franchise starter)
-
-    Parametric knowledge allowed at 95%+ confidence. Leaf-node
-    classification — errors don't cascade to other generations.
-    """
     model_config = ConfigDict(extra="forbid")
 
     source_material: list[str] = Field(
@@ -832,26 +837,25 @@ class SourceOfInspirationOutput(EmbeddableOutput):
 # Wave 2: Source Material V2 (enum-constrained re-generation)
 # ---------------------------------------------------------------------------
 
+# Enum-constrained source material classification output.
+#
+# Replaces the free-text source_material field from SourceOfInspirationOutput
+# with a fixed set of SourceMaterialType enum values. franchise_lineage is
+# removed entirely (handled by a separate franchise generation task).
+#
+# The LLM identifies which source material types are genuinely present —
+# either directly evidenced in the inputs or known with 95%+ parametric
+# confidence. This is identification, not fitting: only types that
+# actually apply are included.
+#
+# An empty list means original screenplay — the movie has no external
+# source material. This is handled at the search layer, not by the LLM.
+#
+# Parametric knowledge allowed at 95%+ confidence. Leaf-node
+# classification — errors don't cascade to other generations.
+#
+# Model: gpt-5-mini, reasoning_effort: low
 class SourceMaterialV2Output(EmbeddableOutput):
-    """Enum-constrained source material classification output.
-
-    Replaces the free-text source_material field from SourceOfInspirationOutput
-    with a fixed set of SourceMaterialType enum values. franchise_lineage is
-    removed entirely (handled by a separate franchise generation task).
-
-    The LLM identifies which source material types are genuinely present —
-    either directly evidenced in the inputs or known with 95%+ parametric
-    confidence. This is identification, not fitting: only types that
-    actually apply are included.
-
-    An empty list means original screenplay — the movie has no external
-    source material. This is handled at the search layer, not by the LLM.
-
-    Parametric knowledge allowed at 95%+ confidence. Leaf-node
-    classification — errors don't cascade to other generations.
-
-    Model: gpt-5-mini, reasoning_effort: low
-    """
     model_config = ConfigDict(extra="forbid")
 
     source_material_types: list[SourceMaterialType] = Field(
@@ -878,3 +882,228 @@ class SourceMaterialV2Output(EmbeddableOutput):
             for t in self.source_material_types
         ]
         return f"sources of inspiration: {', '.join(normalized)}"
+
+
+# ---------------------------------------------------------------------------
+# Concept Tags (binary classification — NOT embedded into vectors)
+# ---------------------------------------------------------------------------
+
+# Multi-label binary classification of 23 concept tags across 7 categories.
+# Each tag answers a yes/no question: "does this movie have X?"
+#
+# Unlike all other output schemas, ConceptTagsOutput does NOT subclass
+# EmbeddableOutput because concept tags are stored as integer IDs in a
+# Postgres INT[] column, not embedded into vector spaces.
+#
+# Model: gpt-5-mini, reasoning_effort: minimal
+
+# Per-category concept tag evidence classes.
+#
+# Each category has its own evidence class with a typed tag enum field,
+# making the JSON schema self-enforcing — the model cannot produce a
+# tag in the wrong category field. This eliminates the need for a
+# runtime model_validator.
+#
+# The evidence field precedes the tag field in every class to force
+# the LLM to articulate supporting input signals before committing
+# to a classification — lightweight chain-of-thought that improves
+# accuracy even at minimal reasoning effort.
+
+class NarrativeStructureEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1 sentence: what input signal supports this tag.",
+    )
+    tag: NarrativeStructureTag = Field(
+        ...,
+        description="The concept tag identified.",
+    )
+
+
+class PlotArchetypeEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1 sentence: what input signal supports this tag.",
+    )
+    tag: PlotArchetypeTag = Field(
+        ...,
+        description="The concept tag identified.",
+    )
+
+
+class SettingEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1 sentence: what input signal supports this tag.",
+    )
+    tag: SettingTag = Field(
+        ...,
+        description="The concept tag identified.",
+    )
+
+
+class CharacterEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1 sentence: what input signal supports this tag.",
+    )
+    tag: CharacterTag = Field(
+        ...,
+        description="The concept tag identified.",
+    )
+
+
+class EndingEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1 sentence: what input signal supports this tag.",
+    )
+    tag: EndingTag = Field(
+        ...,
+        description="The concept tag identified.",
+    )
+
+
+class ExperientialEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1 sentence: what input signal supports this tag.",
+    )
+    tag: ExperientialTag = Field(
+        ...,
+        description="The concept tag identified.",
+    )
+
+
+class ContentFlagEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description="1 sentence: what input signal supports this tag.",
+    )
+    tag: ContentFlagTag = Field(
+        ...,
+        description="The concept tag identified.",
+    )
+
+
+# Multi-label binary classification of concept tags by category.
+#
+# Each category field uses its own typed evidence class, making the
+# JSON schema self-enforcing for category membership. The category
+# structure forces the model to consider each domain independently —
+# it cannot skip settings or endings by stopping early in a flat array.
+#
+# Not an EmbeddableOutput — concept tags become integer IDs in
+# movie_card.concept_tag_ids, not embedding text.
+
+class ConceptTagsOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    narrative_structure: list[NarrativeStructureEvidence] = Field(
+        default_factory=list,
+        description=(
+            "Structural storytelling choices: plot_twist, twist_villain, "
+            "time_loop, nonlinear_timeline, unreliable_narrator, "
+            "open_ending, single_location, breaking_fourth_wall."
+        ),
+    )
+    plot_archetypes: list[PlotArchetypeEvidence] = Field(
+        default_factory=list,
+        description=(
+            "Central premise or driving force: revenge, underdog, "
+            "kidnapping, con_artist."
+        ),
+    )
+    settings: list[SettingEvidence] = Field(
+        default_factory=list,
+        description=(
+            "Settings users search for as the primary filter: "
+            "post_apocalyptic, haunted_location, small_town."
+        ),
+    )
+    characters: list[CharacterEvidence] = Field(
+        default_factory=list,
+        description=(
+            "Character-level concepts: female_protagonist, "
+            "ensemble_cast, anti_hero."
+        ),
+    )
+    endings: list[EndingEvidence] = Field(
+        default_factory=list,
+        description="How the movie ends: happy_ending, sad_ending.",
+    )
+    experiential: list[ExperientialEvidence] = Field(
+        default_factory=list,
+        description=(
+            "Binary experiential qualities: feel_good, tearjerker."
+        ),
+    )
+    content_flags: list[ContentFlagEvidence] = Field(
+        default_factory=list,
+        description="Avoidance deal-breakers: animal_death.",
+    )
+
+    def apply_deterministic_fixups(self) -> "ConceptTagsOutput":
+        """Apply deterministic post-generation fixups.
+
+        Currently applies one rule:
+        - TWIST_VILLAIN implies PLOT_TWIST: if narrative_structure
+          contains TWIST_VILLAIN but not PLOT_TWIST, insert PLOT_TWIST
+          with synthetic evidence. TWIST_VILLAIN is definitionally a
+          subset of PLOT_TWIST, so this is handled deterministically
+          rather than adding cognitive load to the LLM prompt.
+
+        Mutates in place and returns self for chaining.
+        """
+        has_twist_villain = any(
+            item.tag == NarrativeStructureTag.TWIST_VILLAIN
+            for item in self.narrative_structure
+        )
+        has_plot_twist = any(
+            item.tag == NarrativeStructureTag.PLOT_TWIST
+            for item in self.narrative_structure
+        )
+
+        if has_twist_villain and not has_plot_twist:
+            self.narrative_structure.append(
+                NarrativeStructureEvidence(
+                    evidence="Implied by TWIST_VILLAIN classification.",
+                    tag=NarrativeStructureTag.PLOT_TWIST,
+                )
+            )
+
+        return self
+
+    @classmethod
+    def validate_and_fix(cls, content: str) -> "ConceptTagsOutput":
+        """Validate raw JSON and apply TWIST_VILLAIN → PLOT_TWIST fixup."""
+        instance = cls.model_validate_json(content)
+        return instance.apply_deterministic_fixups()
+
+    def all_concept_tag_ids(self) -> list[int]:
+        """Extract all concept_tag_ids as a sorted deduplicated int list.
+
+        This is the value stored in movie_card.concept_tag_ids (planned).
+        """
+        ids: set[int] = set()
+        for field_name in (
+            "narrative_structure", "plot_archetypes", "settings",
+            "characters", "endings", "experiential", "content_flags",
+        ):
+            for item in getattr(self, field_name):
+                ids.add(item.tag.concept_tag_id)
+        return sorted(ids)

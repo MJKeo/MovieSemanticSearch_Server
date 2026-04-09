@@ -782,18 +782,35 @@ Requires new scraping target.
 
 Replaces the current title-token + character-matching hack for franchise search.
 
+**Franchise definition:** Any recognizable intellectual property or brand that
+originated in any medium — film series, video games, toys, books, comics, TV
+shows, board games, theme parks, etc. — where the movie is an adaptation,
+extension, or product of that IP. This matches the current lexical entity
+extractor's definition. Examples: "Mario" (video game IP), "Barbie" (toy IP),
+"Transformers" (toy/cartoon IP), "Harry Potter" (book IP), "Marvel Cinematic
+Universe" (comic/film IP). The `franchise_name_normalized` should be the **IP
+name** (e.g., "mario"), not the film series name (e.g., "super mario bros movie
+series"), since users search by IP name.
+
 ```
 franchise_membership (
-    movie_id                    BIGINT REFERENCES movie_card,
-    franchise_name              TEXT NOT NULL,           -- "Star Wars", "Marvel Cinematic Universe"
-    franchise_name_normalized   TEXT NOT NULL,           -- normalize_string() for matching
-    culturally_recognized_group TEXT,                    -- "original trilogy", "MCU Phase 1"
-                                                        -- only if internet has established the term;
-                                                        -- never hallucinate a new grouping
-    franchise_role              TEXT NOT NULL,            -- enum: STARTER, MAINLINE, SPINOFF, REBOOT, etc.
+    movie_id                        BIGINT REFERENCES movie_card,
+    franchise_name_normalized       TEXT NOT NULL,           -- normalize_string() applied; the only stored form
+    culturally_recognized_group     TEXT,                    -- normalized; "original trilogy", "mcu phase 1"
+                                                            -- only if a culturally established term exists
+                                                            -- globally (any market, not just US);
+                                                            -- never hallucinate a new grouping.
+                                                            -- If multiple names exist across markets,
+                                                            -- prefer the American-market term.
+    franchise_role                  TEXT NOT NULL,            -- enum: STARTER, MAINLINE, SPINOFF, REBOOT, etc.
     PRIMARY KEY (movie_id, franchise_name_normalized)
 )
 ```
+
+**No display-name column:** Only the normalized form is stored. If display-form
+franchise names are ever needed for UI, they can be derived at that layer —
+the normalized form is sufficient for all retrieval and matching purposes.
+Same applies to `culturally_recognized_group` (stored normalized).
 
 **Index:** GIN on `franchise_name_normalized` for lexical matching.
 
@@ -804,10 +821,15 @@ can answer "what started the X franchise."
 **Data sources:**
 1. TMDB `belongs_to_collection` — reliable base for ~25% of movies. Gives franchise
    name + movie membership. Doesn't cover spinoffs or brand-level groupings.
-2. LLM enrichment — receives TMDB collection (if any), production companies, keywords,
-   title, release year. Fills gaps: assigns spinoffs to parent franchises, infers brand-
+2. LLM enrichment — fills gaps: assigns spinoffs to parent franchises, infers brand-
    level groupings (MCU), classifies franchise_role, names culturally_recognized_group
-   only when established terminology exists.
+   only when established terminology exists globally.
+
+**LLM inputs:** title, release_year, overview (as an identification aid — helps
+the LLM correctly identify which movie this is, NOT for inferring franchise from
+plot similarity), TMDB collection_name (if any), production_companies,
+overall_keywords, characters. Compact, high-signal set with no generated-metadata
+dependencies.
 
 **Replaces:** Current franchise search in lexical_search.py that combines title tokens
 + character matching. New approach: franchise becomes its own lexical posting table
@@ -820,11 +842,12 @@ franchise name, franchise role, and culturally recognized group qualifier.
 
 **franchise_name resolution:** Both the ingestion LLM (franchise generation) and
 the search extraction LLM are instructed to output the most common, fully expanded
-form of the franchise name — no abbreviations. Same convention as the lexical
+form of the franchise/IP name — no abbreviations. Same convention as the lexical
 entity extractor for person names. "MCU" → "Marvel Cinematic Universe", "HP" →
-"Harry Potter". This ensures both sides converge on the same canonical string
-without needing alias tables. After extraction, `normalize_string()` is applied
-and trigram similarity against `lex.lexical_dictionary` resolves to a `term_id`.
+"Harry Potter", "Mario" → "Super Mario" (or whatever the canonical IP name is).
+This ensures both sides converge on the same canonical string without needing
+alias tables. After extraction, `normalize_string()` is applied and trigram
+similarity against `lex.lexical_dictionary` resolves to a `term_id`.
 
 **franchise_role filtering:** `franchise_role` is stored as an integer derived
 from the `FranchiseRole` enum. The search extraction LLM receives the same enum
@@ -833,10 +856,11 @@ the post-lookup result set.
 
 **culturally_recognized_group matching:** After franchise lexical lookup narrows
 to 3-30 movies, the group qualifier is matched via trigram similarity on the
-`culturally_recognized_group` column. The candidate set is small enough that no
-index is needed — `similarity()` or `ILIKE` on a few dozen rows is effectively
-free. Example: "Star Wars original trilogy" → franchise lookup returns ~12 Star
-Wars movies → trigram match "original trilogy" against each movie's group value.
+normalized `culturally_recognized_group` column. The candidate set is small
+enough that no index is needed — `similarity()` or `ILIKE` on a few dozen rows
+is effectively free. Example: "Star Wars original trilogy" → franchise lookup
+returns ~12 Star Wars movies → trigram match "original trilogy" against each
+movie's group value.
 
 #### Role-specific person posting tables
 

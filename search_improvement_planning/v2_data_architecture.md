@@ -116,34 +116,46 @@ queries like "award-winning thriller."
 New table. Replaces the current title-token + character-matching franchise
 heuristic in lexical search.
 
+**Franchise definition:** Any recognizable intellectual property or brand that
+originated in any medium — film series, video games, toys, books, comics, TV
+shows, board games, theme parks, etc. — where the movie is an adaptation,
+extension, or product of that IP. Examples: "Mario" (video game), "Barbie"
+(toy), "Transformers" (toy/cartoon), "Harry Potter" (book), "Marvel Cinematic
+Universe" (comic/film).
+
 ```sql
 franchise_membership (
-    movie_id                    BIGINT NOT NULL REFERENCES movie_card,
-    franchise_name              TEXT NOT NULL,
-    franchise_name_normalized   TEXT NOT NULL,
-    culturally_recognized_group TEXT,
-    franchise_role              TEXT NOT NULL,
+    movie_id                        BIGINT NOT NULL REFERENCES movie_card,
+    franchise_name_normalized       TEXT NOT NULL,
+    culturally_recognized_group     TEXT,
+    franchise_role                  TEXT NOT NULL,
     PRIMARY KEY (movie_id, franchise_name_normalized)
 )
 ```
 
 **Fields:**
-- `franchise_name` — display name ("Star Wars", "Marvel Cinematic Universe")
-- `franchise_name_normalized` — `normalize_string()` applied, for matching
-- `culturally_recognized_group` — only when internet has established the term
-  (e.g. "original trilogy", "MCU Phase 1"). Never hallucinated by LLM.
+- `franchise_name_normalized` — `normalize_string()` applied; the **only**
+  stored form. No separate display-name column. The franchise name should be
+  the IP name (e.g., "mario"), not the film series name (e.g., "super mario
+  bros movie series").
+- `culturally_recognized_group` — stored normalized. Only when a culturally
+  established term exists **globally** (any market, not just US). Examples:
+  "original trilogy", "mcu phase 1". Never hallucinated by LLM. If multiple
+  names exist across markets for the same grouping, prefer the American-market
+  term.
 - `franchise_role` — `FranchiseRole` enum value stored as integer ordinal:
   `STARTER`, `MAINLINE`, `SPINOFF`, `PREBOOT`, `REMAKE`. The search extraction
   LLM receives the same enum definition for consistent output.
 
 **Data sources:**
 1. TMDB `belongs_to_collection` — reliable base for ~25% of movies
-2. LLM enrichment — receives title, year, TMDB collection name (if any),
-   production companies, keywords. Generates franchise_name, franchise_role,
+2. LLM enrichment — receives title, release_year, overview (identification
+   aid only), TMDB collection_name (if any), production_companies,
+   overall_keywords, characters. Generates franchise_name_normalized, franchise_role,
    and culturally_recognized_group using parametric knowledge.
 
 **Canonical naming convention:** The franchise generation LLM is instructed to
-output the most common, fully expanded form of the franchise name — no
+output the most common, fully expanded form of the franchise/IP name — no
 abbreviations. The search extraction LLM follows the same convention (same
 pattern as the lexical entity extractor for person names). This ensures both
 sides converge on the same canonical string without needing alias tables.
@@ -153,8 +165,9 @@ sides converge on the same canonical string without needing alias tables.
 `term_id → movie_id` for text-based franchise lookup.
 
 **Search strategy:**
-- `franchise_name` — trigram matching via lexical dictionary. Both LLMs use
-  the same canonical naming convention, so no enum or alias table needed.
+- `franchise_name_normalized` — trigram matching via lexical dictionary. Both
+  LLMs use the same canonical naming convention, so no enum or alias table
+  needed.
 - `franchise_role` — integer WHERE clause on the post-lookup result set.
 - `culturally_recognized_group` — trigram similarity on the post-franchise-lookup
   result set (3-30 movies). No separate index needed at this scale.
@@ -587,6 +600,6 @@ Pipeline state management. Not queried at search time.
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `franchise` | `TEXT` (JSON) | LLM-generated franchise_name, franchise_role, culturally_recognized_group |
+| `franchise` | `TEXT` (JSON) | LLM-generated franchise_name_normalized, franchise_role, culturally_recognized_group |
 | `production_techniques` | `TEXT` (JSON) | Replaces `production_keywords` with tightened scope |
 | `source_material_v2` | `TEXT` (JSON) | Re-generated with enum-constrained output |

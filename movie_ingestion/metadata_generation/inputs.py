@@ -41,6 +41,7 @@ WAVE2_TYPES = frozenset({
     MetadataType.PRODUCTION_KEYWORDS,
     MetadataType.SOURCE_OF_INSPIRATION,
     MetadataType.SOURCE_MATERIAL_V2,
+    MetadataType.CONCEPT_TAGS,
 })
 ALL_GENERATION_TYPES = WAVE1_TYPES | WAVE2_TYPES
 
@@ -246,3 +247,61 @@ def load_plot_analysis_output(
         return PlotAnalysisOutput.model_validate_json(row[0])
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Narrative techniques output loading for downstream Wave 2 consumers
+# ---------------------------------------------------------------------------
+
+def load_narrative_techniques_output(
+    tmdb_id: int,
+    tracker_db_path: Path = _DEFAULT_TRACKER_DB,
+):
+    """Load the parsed narrative_techniques output for a movie.
+
+    Single DB query for the narrative_techniques JSON column, parsed into
+    the existing schema model. Returns None when narrative_techniques wasn't
+    generated or can't be parsed.
+    """
+    from schemas.metadata import NarrativeTechniquesOutput
+
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        row = db.execute(
+            "SELECT narrative_techniques FROM generated_metadata WHERE tmdb_id = ?",
+            (tmdb_id,),
+        ).fetchone()
+
+    if row is None or not row[0]:
+        return None
+
+    try:
+        return NarrativeTechniquesOutput.model_validate_json(row[0])
+    except Exception:
+        return None
+
+
+def extract_narrative_technique_terms(
+    nt,
+) -> dict[str, list[str]]:
+    """Extract terms (no justifications) from the 6 NT sections concept tags need.
+
+    Returns a dict mapping section name -> list of term strings. Sections
+    with empty term lists are included with empty lists so the caller can
+    distinguish "section had no terms" from "section wasn't available."
+
+    The 3 excluded sections (characterization_methods, character_arcs,
+    conflict_stakes_design) don't carry signal for any of the 27 concept
+    tags — character arcs come from plot_analysis instead.
+
+    Args:
+        nt: A NarrativeTechniquesOutput instance. Type hint omitted to
+            avoid circular import (schemas.metadata imports schemas.enums).
+    """
+    return {
+        "narrative_archetype": list(nt.narrative_archetype.terms),
+        "narrative_delivery": list(nt.narrative_delivery.terms),
+        "pov_perspective": list(nt.pov_perspective.terms),
+        "information_control": list(nt.information_control.terms),
+        "audience_character_perception": list(nt.audience_character_perception.terms),
+        "additional_narrative_devices": list(nt.additional_narrative_devices.terms),
+    }

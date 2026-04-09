@@ -23,7 +23,7 @@ No LLM cost — all logic is deterministic and testable without mocking.
     - If nothing useful: returns None
 
 3. Per-generation eligibility checks (_check_<type> methods):
-    Eight individual methods, one per generation type, each returning
+    Nine individual methods, one per generation type, each returning
     str | None (None = eligible, str = skip reason). These are composed
     by assess_skip_conditions() into a SkipAssessment.
 
@@ -32,7 +32,7 @@ No LLM cost — all logic is deterministic and testable without mocking.
     Wave 2 (need Wave 1 outputs + derived data):
         _check_plot_analysis, _check_viewer_experience, _check_watch_context,
         _check_narrative_techniques, _check_production_keywords,
-        _check_source_of_inspiration
+        _check_source_of_inspiration, _check_concept_tags
 
 4. assess_skip_conditions(movie_input, ...) -> SkipAssessment:
     Thin orchestrator that calls the relevant per-generation checks
@@ -572,6 +572,56 @@ def _check_source_of_inspiration(
     return "No keywords or source material hint available"
 
 
+# Minimum plot_keywords count for concept tag eligibility when no
+# plot text is available. 3 keywords provides enough signal for
+# binary classification from keyword evidence alone.
+_MIN_CONCEPT_TAGS_PLOT_KEYWORDS = 3
+
+# Minimum plot fallback length for concept tag eligibility when
+# plot_summary is absent and keywords are insufficient. Lower than
+# plot_analysis (250 vs 400) because concept tags are binary
+# classification, not generative analysis.
+_MIN_CONCEPT_TAGS_PLOT_FALLBACK_CHARS = 250
+
+
+def _check_concept_tags(
+    plot_summary: str | None,
+    movie_input: MovieInputData,
+) -> str | None:
+    """Concept tags eligibility: any meaningful signal source.
+
+    Binary classification needs less input depth than generative tasks.
+    Eligible when ANY of:
+    - plot_summary exists (Wave 1 plot_events succeeded)
+    - best_plot_fallback() >= 250 chars (enough narrative for most tags)
+    - plot_keywords >= 3 (keyword-only classification is reliable for
+      well-tagged movies — "revenge", "female protagonist", etc.)
+
+    When none of these are met, the movie has essentially no structured
+    data to classify against. Skipping avoids noise tags.
+    """
+    # Path 1: Wave 1 plot_events produced a plot_summary
+    if plot_summary:
+        return None
+
+    # Path 2: raw plot text meets minimum length
+    fallback = movie_input.best_plot_fallback()
+    if fallback and len(fallback) >= _MIN_CONCEPT_TAGS_PLOT_FALLBACK_CHARS:
+        return None
+
+    # Path 3: enough plot_keywords for keyword-based classification
+    if len(movie_input.plot_keywords) >= _MIN_CONCEPT_TAGS_PLOT_KEYWORDS:
+        return None
+
+    fallback_len = len(fallback) if fallback else 0
+    return (
+        f"Insufficient data for concept tags: no plot_summary, "
+        f"best plot fallback is {fallback_len} chars "
+        f"(need >={_MIN_CONCEPT_TAGS_PLOT_FALLBACK_CHARS}), "
+        f"and only {len(movie_input.plot_keywords)} plot_keywords "
+        f"(need >={_MIN_CONCEPT_TAGS_PLOT_KEYWORDS})"
+    )
+
 
 # ---------------------------------------------------------------------------
 # 4. Skip condition orchestrator
@@ -703,6 +753,8 @@ def assess_skip_conditions(
     _record("source_material_v2", _check_source_of_inspiration(
         merged_keywords, source_material_hint,
     ))
+    # Concept tags — binary classification from plot + keyword + upstream outputs.
+    _record("concept_tags", _check_concept_tags(plot_summary, movie_input))
 
     return SkipAssessment(
         generations_to_run=generations_to_run,

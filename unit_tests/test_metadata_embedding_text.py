@@ -23,7 +23,9 @@ from schemas.metadata import (
     NarrativeTechniquesOutput,
     ProductionKeywordsOutput,
     SourceOfInspirationOutput,
+    SourceMaterialV2Output,
 )
+from schemas.enums import SourceMaterialType
 
 
 # ---------------------------------------------------------------------------
@@ -544,3 +546,57 @@ class TestEmbeddingTextVsStr:
         output = _make_plot_analysis()
         assert "genre signatures:" in output.embedding_text()
         assert "genre signatures:" not in str(output)
+
+    def test_source_material_v2_diverges(self):
+        """SourceMaterialV2Output embedding_text uses label + normalize_string; __str__ uses .replace()."""
+        output = SourceMaterialV2Output(
+            source_material_types=[SourceMaterialType.NOVEL_ADAPTATION],
+        )
+        # __str__ returns "novel adaptation" (underscores replaced with spaces)
+        str_result = str(output)
+        # embedding_text returns "sources of inspiration: ..." with normalize_string
+        et_result = output.embedding_text()
+        assert str_result != et_result
+        assert "sources of inspiration:" in et_result
+        assert "sources of inspiration:" not in str_result
+
+
+# ---------------------------------------------------------------------------
+# SourceMaterialV2Output
+# ---------------------------------------------------------------------------
+
+class TestSourceMaterialV2EmbeddingText:
+    def test_empty_returns_empty_string(self):
+        """embedding_text() returns '' when source_material_types is empty."""
+        output = SourceMaterialV2Output(source_material_types=[])
+        assert output.embedding_text() == ""
+
+    def test_single_type(self):
+        """embedding_text() includes 'sources of inspiration:' label with single type."""
+        output = SourceMaterialV2Output(
+            source_material_types=[SourceMaterialType.NOVEL_ADAPTATION],
+        )
+        result = output.embedding_text()
+        assert "sources of inspiration:" in result
+        assert normalize_string("novel adaptation") in result
+
+    def test_multiple_types(self):
+        """All types appear comma-separated after the label."""
+        output = SourceMaterialV2Output(
+            source_material_types=[
+                SourceMaterialType.NOVEL_ADAPTATION,
+                SourceMaterialType.TRUE_STORY,
+            ],
+        )
+        result = output.embedding_text()
+        assert "sources of inspiration:" in result
+        assert normalize_string("novel adaptation") in result
+        assert normalize_string("true story") in result
+
+    def test_uses_normalize_string(self):
+        """Each type value is passed through normalize_string()."""
+        output = SourceMaterialV2Output(
+            source_material_types=[SourceMaterialType.VIDEO_GAME_ADAPTATION],
+        )
+        result = output.embedding_text()
+        assert normalize_string("video game adaptation") in result

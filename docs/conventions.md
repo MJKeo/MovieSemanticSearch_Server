@@ -16,11 +16,13 @@ These rules apply everywhere and are not negotiable:
   (`implementation/misc/helpers.py:normalize_string`) applies:
   Unicode NFC normalization, lowercase, diacritic removal,
   hyphen preservation, apostrophe/period removal.
-- `__str__()` methods on Pydantic schema classes that feed the embedding
-  pipeline must normalize all concatenated text using `normalize_string()`
+- `embedding_text()` methods on `EmbeddableOutput` subclasses that feed the
+  embedding pipeline must normalize all concatenated text using `normalize_string()`
   (`implementation/misc/helpers.py`). This applies the same NFC normalization,
   lowercasing, and diacritic removal used at ingest time. Inconsistent
-  normalization silently degrades embedding quality.
+  normalization silently degrades embedding quality. (Legacy `__str__()` methods
+  are retained for backward compatibility but `embedding_text()` is the canonical
+  contract; see ADR-057.)
 - Qdrant scores are final. Vector similarity is not recomputed at
   reranking. The reranker uses Qdrant scores directly, normalized
   via exponential decay within each vector space.
@@ -37,6 +39,25 @@ These rules apply everywhere and are not negotiable:
   membership in-memory — never query Redis per-candidate.
 - Keep reranking server-side for consistency and to protect scoring
   logic from client manipulation.
+
+- **Exact-match convergence for LLM-generated strings.** When two
+  independent LLM calls must produce strings that match exactly
+  (e.g., one at ingestion, one at query time), even
+  single-character differences cause silent retrieval failures.
+  Instruct both sides to use the most common, fully expanded
+  form — no abbreviations, no shorthand, no stylistic variation.
+  This makes both sides converge without alias tables or fuzzy
+  matching infrastructure. Applies to any entity where the match
+  is string-equality-based (lexical dictionary entries, franchise
+  names, person names, etc.).
+- **GIN arrays for enum filtering, posting tables for text-matched
+  entities.** Use GIN-indexed `INT[]` columns for set-membership
+  filtering on enum-like IDs (genres, languages, providers,
+  keywords, countries). Use inverse posting tables for entities
+  that require fuzzy/trigram text matching at the entry point,
+  reverse lookup (entity → movies), or per-pair metadata (e.g.,
+  billing position). Never create posting tables for enum-only
+  fields; never use GIN arrays for text-matchable entities.
 
 ## Python Conventions
 
@@ -129,6 +150,23 @@ These rules apply everywhere and are not negotiable:
   Pydantic model already represents the data, return it directly
   rather than creating a parallel dataclass.
 
+- **Per-call async clients for pooled HTTP SDKs.** For async SDK
+  clients that manage HTTP connection pools internally (e.g.,
+  `AsyncOpenAI`, `httpx.AsyncClient`), prefer per-call
+  instantiation with `async with` over module-level singletons —
+  especially in batch loops. Pool exhaustion on singletons causes
+  silent hangs. Sync clients can remain singletons. If an async
+  singleton is unavoidable, configure an explicit timeout so
+  exhaustion surfaces as an error.
+- **`json_each()` for SQLite batch filtering.** For SQLite queries
+  that filter on a set of values, use
+  `WHERE column IN (SELECT value FROM json_each(?))` with
+  `json.dumps(list)` as the single bound parameter. This avoids
+  placeholder string building, sidesteps
+  `SQLITE_MAX_VARIABLE_NUMBER` limits, and keeps query text
+  constant for plan caching. Prefer over both `executemany` loops
+  and `IN (?, ?, ...)` expansion.
+
 ## Error Handling
 
 - **Ingestion pipeline**: Every error state has a defined behavior.
@@ -187,7 +225,7 @@ These rules apply everywhere and are not negotiable:
 - **Ingestion statuses**: Progress through pipeline stages —
   `pending` → `tmdb_fetched` → `tmdb_quality_calculated` →
   `tmdb_quality_passed` → `imdb_scraped` → `imdb_quality_calculated` →
-  `imdb_quality_passed` → `metadata_generated` → `ingested`.
+  `imdb_quality_passed` → `metadata_generated` → `embedded` → `ingested`.
   Terminal: `filtered_out`. Retryable: `ingestion_failed`
   (failure details in `ingestion_failures` table).
 
@@ -209,6 +247,40 @@ to [0, 1] unless explicitly noted otherwise:
   (BUCKET_PRECISION=2), sort within buckets by normalized
   reception score. Reception normalization: [30.0, 90.0] → [0, 1],
   None → 0.5 (neutral).
+
+## Embedding Conventions
+
+- **Semantic labels on short embedding fields.** When assembling
+  text for vector embedding, prefix short or ambiguous categorical
+  fields with a semantic label (`"field_name: value1, value2"`).
+  Prose fields (summaries, overviews) are self-contextualizing and
+  should remain unlabeled. Labels help the embedding model
+  disambiguate the role of terse values that lack surrounding
+  context. Apply consistently on both sides of the similarity
+  match — ingestion embedding text and query subquery generation —
+  so the label structure aligns in vector space.
+
+- **Metadata classes own their embedding representation.** Each
+  metadata output class should own its embedding text assembly in
+  its `embedding_text()` method. External consumers (e.g.,
+  `vector_text.py`) should be thin wrappers that may enrich with
+  external data (merged genres, quality tiers) but delegate core
+  formatting to the class. This keeps the embedding contract
+  co-located with the schema definition.
+- **No numeric values in embedding text.** Never include raw
+  numeric scores (ratings, vote counts, years, budgets) in vector
+  embedding text. Numeric values don't produce meaningful
+  similarity in embedding space. Derive qualitative labels from
+  numeric ranges (e.g., "universally acclaimed" from a score
+  ≥ 81) for embedding; keep numeric filtering in the metadata
+  scoring channel.
+- **Per-term normalization in embedding text.** In
+  `embedding_text()` methods, normalize each individual term or
+  value before joining into the final string. Do not run
+  `normalize_string()` on the fully assembled output — this would
+  strip structural formatting (label prefixes, colons, commas)
+  that the embedding model needs for disambiguation. Normalize
+  the content; preserve the structure.
 
 ## Caching Conventions
 
@@ -392,3 +464,30 @@ to [0, 1] unless explicitly noted otherwise:
   Overlapping examples make it impossible to distinguish "learned
   the principle" from "memorized the example." Keep examples to 2-4
   and ensure the abstract rules stand alone without them.
+- **Category-level fields for sparse multi-label classification.**
+  When an LLM must assign labels from a large set where most are
+  negative per item (<20% positive rate), group labels into
+  category-level array fields — not a boolean grid or a single
+  flat array. Boolean grids cause false-negative bias and
+  positional fatigue; flat arrays cause recall failure (model
+  stops emitting early, skips entire categories). Category
+  boundaries force the model to restart attention for each domain.
+  Pair with evidence-before-answer field ordering for lightweight
+  chain-of-thought.
+- **Don't ask LLMs to do what code can derive.** If a
+  classification or value can be derived programmatically from the
+  LLM's own output, don't include it as a generation target.
+  Handle it at the consuming layer instead. For example, if an
+  empty array already implies "original screenplay," don't add an
+  `ORIGINAL_SCREENPLAY` enum value for the LLM to assign — it
+  increases confusion and over-assignment of the default. Every
+  field in a structured output schema should require genuine
+  reasoning the model can't be replaced for.
+- **No docstrings on Pydantic classes used as LLM
+  `response_format`.** Pydantic class and enum docstrings
+  propagate into the JSON schema `description` field via
+  `model_json_schema()`, which means pipeline internals (model
+  config, index plans, embedding decisions) get sent on every API
+  call. Use `#` comment blocks above the class for developer
+  documentation. `Field(description=...)` values are intentional
+  — these should contain task-relevant instructions for the model.

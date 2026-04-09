@@ -334,6 +334,10 @@ def init_db() -> sqlite3.Connection:
         "ALTER TABLE generated_metadata ADD COLUMN source_material_v2 TEXT",
         "ALTER TABLE generated_metadata ADD COLUMN eligible_for_source_material_v2 INTEGER",
         "ALTER TABLE metadata_batch_ids ADD COLUMN source_material_v2_batch_id TEXT",
+        # Add concept_tags columns for binary concept tag classification.
+        "ALTER TABLE generated_metadata ADD COLUMN concept_tags TEXT",
+        "ALTER TABLE generated_metadata ADD COLUMN eligible_for_concept_tags INTEGER",
+        "ALTER TABLE metadata_batch_ids ADD COLUMN concept_tags_batch_id TEXT",
     ]
     for stmt in _MIGRATIONS:
         try:

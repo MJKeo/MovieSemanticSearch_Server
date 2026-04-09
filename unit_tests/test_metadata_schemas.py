@@ -32,7 +32,10 @@ from schemas.metadata import (
     NarrativeTechniquesOutput,
     ProductionKeywordsOutput,
     SourceOfInspirationOutput,
+    SourceMaterialV2Output,
+    EmbeddableOutput,
 )
+from schemas.enums import SourceMaterialType
 
 
 # ---------------------------------------------------------------------------
@@ -818,6 +821,102 @@ class TestSourceOfInspirationOutputStrEmpty:
 # ---------------------------------------------------------------------------
 # TermsSection / TermsWithNegationsSection extra="forbid"
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# SourceMaterialV2Output
+# ---------------------------------------------------------------------------
+
+class TestSourceMaterialV2OutputValidation:
+    def test_extra_forbid(self):
+        """Extra fields are rejected by extra='forbid'."""
+        with pytest.raises(ValidationError):
+            SourceMaterialV2Output(
+                source_material_types=[],
+                unknown_field="not allowed",
+            )
+
+    def test_empty_list_valid(self):
+        """Empty list is valid — represents original screenplays."""
+        output = SourceMaterialV2Output(source_material_types=[])
+        assert output.source_material_types == []
+
+    def test_single_type_valid(self):
+        """A single SourceMaterialType value is accepted."""
+        output = SourceMaterialV2Output(
+            source_material_types=[SourceMaterialType.NOVEL_ADAPTATION],
+        )
+        assert len(output.source_material_types) == 1
+        assert output.source_material_types[0] == SourceMaterialType.NOVEL_ADAPTATION
+
+    def test_multiple_types_valid(self):
+        """Multiple SourceMaterialType values are accepted."""
+        output = SourceMaterialV2Output(
+            source_material_types=[
+                SourceMaterialType.NOVEL_ADAPTATION,
+                SourceMaterialType.TRUE_STORY,
+            ],
+        )
+        assert len(output.source_material_types) == 2
+
+    def test_rejects_invalid_enum_value(self):
+        """A raw string not in SourceMaterialType raises ValidationError."""
+        with pytest.raises(ValidationError):
+            SourceMaterialV2Output(source_material_types=["nonexistent_type"])
+
+    def test_string_auto_coercion(self):
+        """Pydantic accepts string values that match enum members."""
+        output = SourceMaterialV2Output(
+            source_material_types=["novel_adaptation"],
+        )
+        assert output.source_material_types[0] == SourceMaterialType.NOVEL_ADAPTATION
+
+    def test_duplicate_enum_values_accepted(self):
+        """Duplicate enum values in the list are accepted by Pydantic."""
+        output = SourceMaterialV2Output(
+            source_material_types=[
+                SourceMaterialType.NOVEL_ADAPTATION,
+                SourceMaterialType.NOVEL_ADAPTATION,
+            ],
+        )
+        assert len(output.source_material_types) == 2
+
+
+class TestSourceMaterialV2OutputStr:
+    def test_str_empty(self):
+        """__str__() returns '' when source_material_types is empty."""
+        output = SourceMaterialV2Output(source_material_types=[])
+        assert str(output) == ""
+
+    def test_str_single(self):
+        """__str__() with one type returns human-readable form (underscores → spaces)."""
+        output = SourceMaterialV2Output(
+            source_material_types=[SourceMaterialType.NOVEL_ADAPTATION],
+        )
+        assert str(output) == "novel adaptation"
+
+    def test_str_multiple(self):
+        """__str__() with multiple types returns comma-separated human-readable forms."""
+        output = SourceMaterialV2Output(
+            source_material_types=[
+                SourceMaterialType.NOVEL_ADAPTATION,
+                SourceMaterialType.TRUE_STORY,
+            ],
+        )
+        assert str(output) == "novel adaptation, true story"
+
+
+class TestSourceMaterialV2OutputIsEmbeddable:
+    def test_is_embeddable_subclass(self):
+        """SourceMaterialV2Output is a subclass of EmbeddableOutput."""
+        assert issubclass(SourceMaterialV2Output, EmbeddableOutput)
+
+    def test_implements_embedding_text(self):
+        """SourceMaterialV2Output implements embedding_text()."""
+        output = SourceMaterialV2Output(source_material_types=[])
+        # Should not raise — method is implemented, not abstract
+        result = output.embedding_text()
+        assert isinstance(result, str)
+
 
 class TestSectionExtraForbid:
     def test_terms_section_extra_forbid(self):

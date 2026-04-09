@@ -329,33 +329,47 @@ See new_system_brainstorm.md "Role-specific person posting tables."
 See new_system_brainstorm.md "franchise_membership" table design and
 "Franchise Search Flow" section for the full search strategy.
 
+**Franchise definition:** Any recognizable intellectual property or brand from
+any medium (film, video games, toys, books, comics, TV, etc.) where the movie
+is an adaptation/extension of that IP. Examples: Mario, Barbie, Transformers,
+Harry Potter, Marvel Cinematic Universe. The franchise name is the **IP name**,
+not the film series name.
+
+**Storage:** Only `franchise_name_normalized` is stored (no separate display-
+form column). `culturally_recognized_group` is also stored normalized. Display
+names can be derived at the UI layer if ever needed.
+
 **Search approach decisions:**
 
-- **franchise_name:** Both the ingestion LLM and search extraction LLM are
-  instructed to output the most common, fully expanded form — no abbreviations.
-  Same convention as the lexical entity extractor for person names. This ensures
-  both sides converge on the same canonical string. Searched via
-  `inv_franchise_postings` using trigram matching on `franchise_name_normalized`
-  in `lex.lexical_dictionary`. No enum or alias table needed.
+- **franchise_name_normalized:** Both the ingestion LLM and search extraction
+  LLM are instructed to output the most common, fully expanded form of the
+  franchise/IP name — no abbreviations. Same convention as the lexical entity
+  extractor for person names. This ensures both sides converge on the same
+  canonical string. Searched via `inv_franchise_postings` using trigram matching
+  on `franchise_name_normalized` in `lex.lexical_dictionary`. No enum or alias
+  table needed.
 - **franchise_role:** Stored as an integer (enum ordinal) on `franchise_membership`.
   The search extraction LLM receives the same enum definition and outputs the
   matching value. Trivially filterable with `WHERE franchise_role = $1`.
-- **culturally_recognized_group:** Searched via trigram matching within the
-  post-franchise-lookup result set. Since franchise lookup narrows to 3-30 movies,
-  simple `similarity()` or `ILIKE` on the group field is sufficient. No separate
-  index or posting table needed.
+- **culturally_recognized_group:** Stored normalized. Searched via trigram
+  matching within the post-franchise-lookup result set. Since franchise lookup
+  narrows to 3-30 movies, simple `similarity()` or `ILIKE` on the group field
+  is sufficient. No separate index or posting table needed.
 
 **Remaining sub-questions (unchanged):**
 
 - **LLM reliability for franchise assignment:** Expect high for mainstream
-  franchises (MCU, Star Wars, HP), spotty for obscure ones. Acceptable —
-  mainstream is where franchise search matters most. TMDB `belongs_to_collection`
-  covers the base case; LLM fills gaps best-effort.
+  franchises (MCU, Star Wars, HP) and well-known IPs (Mario, Barbie), spotty
+  for obscure ones. Acceptable — mainstream is where franchise search matters
+  most. TMDB `belongs_to_collection` covers the base case; LLM fills gaps
+  best-effort.
 - **"Disney" ambiguity:** Phase 0 problem, not data layer. Data stores actual
   relationships; Phase 0 interprets which level the user means from context.
 - **culturally_recognized_group coverage:** Instruct LLM to leave null when no
-  established term exists. High-value for a small number of franchises (Star Wars
-  trilogies, MCU phases); correctly absent for most.
+  established term exists **globally** (any market, not just US). If multiple
+  names exist across markets, prefer the American-market term. High-value for
+  a small number of franchises (Star Wars trilogies, MCU phases); correctly
+  absent for most.
 
 ### ~~How should the dynamic quality prior be calibrated?~~ DECIDED
 

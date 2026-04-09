@@ -34,6 +34,7 @@ from schemas.movie_input import MovieInputData
 from movie_ingestion.metadata_generation.inputs import (
     load_wave1_outputs,
     load_plot_analysis_output,
+    load_narrative_techniques_output,
 )
 
 
@@ -362,6 +363,48 @@ async def _narrative_techniques_live_generator(movie: MovieInputData):
     )
 
 
+def _concept_tags_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for concept_tags — loads Wave 1 outputs from DB.
+
+    Delegates to _check_concept_tags which requires plot_summary, sufficient
+    plot fallback text, or enough plot keywords for keyword-based classification.
+    """
+    from .pre_consolidation import _check_concept_tags
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    return _check_concept_tags(w1.plot_summary, movie)
+
+
+def _concept_tags_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for concept_tags — loads Wave 1 + Wave 2 outputs and builds prompts.
+
+    Loads plot_summary and emotional_observations from Wave 1, plus
+    narrative_techniques and plot_analysis from Wave 2. Missing outputs
+    are passed as None — the generator handles "not available" formatting.
+    """
+    from ..generators.concept_tags import build_concept_tags_user_prompt
+    from ..prompts.concept_tags import SYSTEM_PROMPT
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    nt = load_narrative_techniques_output(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return build_concept_tags_user_prompt(
+        movie, w1.plot_summary, w1.emotional_observations, nt, pa,
+    ), SYSTEM_PROMPT
+
+
+async def _concept_tags_live_generator(movie: MovieInputData):
+    """Async adapter for concept_tags — loads all dependencies and generates."""
+    from ..generators.concept_tags import generate_concept_tags
+
+    w1 = load_wave1_outputs(movie.tmdb_id)
+    nt = load_narrative_techniques_output(movie.tmdb_id)
+    pa = load_plot_analysis_output(movie.tmdb_id)
+    return await generate_concept_tags(
+        movie, w1.plot_summary, w1.emotional_observations, nt, pa,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -386,6 +429,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         ViewerExperienceOutput,
         SourceOfInspirationOutput,
         SourceMaterialV2Output,
+        ConceptTagsOutput,
     )
 
     return {
@@ -469,6 +513,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             live_generator=_source_material_v2_live_generator,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
+        ),
+        MetadataType.CONCEPT_TAGS: GeneratorConfig(
+            metadata_type=MetadataType.CONCEPT_TAGS,
+            schema_class=ConceptTagsOutput,
+            eligibility_checker=_concept_tags_eligibility_checker,
+            prompt_builder=_concept_tags_prompt_builder,
+            live_generator=_concept_tags_live_generator,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "minimal", "verbosity": "low"},
         ),
     }
 

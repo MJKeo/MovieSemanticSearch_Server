@@ -189,3 +189,75 @@ class TestProductionKeywordsPromptConstants:
         """Both prompt variants start with the same preamble content."""
         assert PK_SYSTEM_PROMPT.startswith(PK_PREAMBLE)
         assert PK_SYSTEM_PROMPT_WITH_JUSTIFICATIONS.startswith(PK_PREAMBLE)
+
+
+# ---------------------------------------------------------------------------
+# Source material V2 prompt constants
+# ---------------------------------------------------------------------------
+
+from movie_ingestion.metadata_generation.prompts.source_material_v2 import (
+    SYSTEM_PROMPT as SMV2_SYSTEM_PROMPT,
+)
+
+# All 10 SourceMaterialType enum value strings that must appear in the prompt
+_ALL_SMV2_TYPE_NAMES = [
+    "novel_adaptation", "short_story_adaptation", "stage_adaptation",
+    "true_story", "biography", "comic_adaptation", "folklore_adaptation",
+    "video_game_adaptation", "remake", "tv_adaptation",
+]
+
+
+class TestSourceMaterialV2PromptConstants:
+    """Tests for the source material V2 system prompt."""
+
+    def test_prompt_is_non_empty(self) -> None:
+        """SYSTEM_PROMPT is a non-empty string."""
+        assert isinstance(SMV2_SYSTEM_PROMPT, str)
+        assert len(SMV2_SYSTEM_PROMPT) > 0
+
+    def test_prompt_contains_all_10_type_names(self) -> None:
+        """Prompt contains all 10 SourceMaterialType headings."""
+        for type_name in _ALL_SMV2_TYPE_NAMES:
+            assert type_name in SMV2_SYSTEM_PROMPT, (
+                f"Missing type name in prompt: {type_name}"
+            )
+
+    def test_prompt_contains_identification_not_fitting(self) -> None:
+        """Prompt contains the 'IDENTIFICATION, not fitting' framing."""
+        assert "IDENTIFICATION, not fitting" in SMV2_SYSTEM_PROMPT
+
+    def test_prompt_contains_parametric_knowledge_allowance(self) -> None:
+        """Prompt contains the 95% parametric knowledge threshold."""
+        assert "95%" in SMV2_SYSTEM_PROMPT
+
+    def test_prompt_contains_empty_list_guidance(self) -> None:
+        """Prompt mentions empty list as valid output for original screenplays."""
+        lower = SMV2_SYSTEM_PROMPT.lower()
+        assert "empty list" in lower
+
+    def test_prompt_contains_decision_rules(self) -> None:
+        """Prompt includes DECISION RULES section."""
+        assert "DECISION RULES" in SMV2_SYSTEM_PROMPT
+
+    def test_prompt_contains_output_format(self) -> None:
+        """Prompt includes OUTPUT FORMAT section."""
+        assert "OUTPUT FORMAT" in SMV2_SYSTEM_PROMPT
+
+    def test_prompt_mentions_source_material_types(self) -> None:
+        """Prompt references the SourceMaterialType enum in output format."""
+        assert "SourceMaterialType" in SMV2_SYSTEM_PROMPT
+
+    def test_prompt_does_not_mention_franchise_lineage_as_output(self) -> None:
+        """franchise_lineage does not appear in the OUTPUT section (removed from V2)."""
+        # Find the OUTPUT FORMAT section and check it
+        output_idx = SMV2_SYSTEM_PROMPT.find("OUTPUT FORMAT")
+        assert output_idx >= 0
+        output_section = SMV2_SYSTEM_PROMPT[output_idx:]
+        assert "franchise_lineage" not in output_section
+
+    def test_prompt_mentions_franchise_ignore(self) -> None:
+        """Prompt tells the LLM to ignore franchise terms in source_material_hint."""
+        lower = SMV2_SYSTEM_PROMPT.lower()
+        # The prompt says franchise terms like "sequel" should be ignored
+        assert "franchise" in lower
+        assert "ignore" in lower
