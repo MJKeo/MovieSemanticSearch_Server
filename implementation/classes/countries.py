@@ -287,8 +287,42 @@ class Country(Enum):
     FEDERAL_REPUBLIC_OF_YUGOSLAVIA = (261, "Federal Republic of Yugoslavia")
     ZAIRE = (262, "Zaire")
 
+_COUNTRY_ALIASES: dict[str, Country] = {
+    "Antigua and Barbuda": Country.ANTIGUA_AND_BARBUDA,
+    "Bosnia and Herzegovina": Country.BOSNIA_AND_HERZEGOVINA,
+    "Cocos Islands": Country.COCOS_KEELING_ISLANDS,
+    "Congo": Country.CONGO_BRAZZAVILLE,
+    "Czech Republic": Country.CZECHIA,
+    "Hong Kong": Country.HONG_KONG,
+    "Macao": Country.MACAO,
+    "Myanmar": Country.MYANMAR,
+    "Occupied Palestinian Territory": Country.PALESTINIAN_TERRITORIES,
+    "Saint Helena": Country.ST_HELENA,
+    "Saint Kitts and Nevis": Country.ST_KITTS_AND_NEVIS,
+    "Saint Lucia": Country.ST_LUCIA,
+    "Saint Vincent and the Grenadines": Country.ST_VINCENT_AND_GRENADINES,
+    "Sao Tome and Principe": Country.SAO_TOME_AND_PRINCIPE,
+    "South Georgia and the South Sandwich Islands": Country.SOUTH_GEORGIA_AND_SOUTH_SANDWICH_ISLANDS,
+    "Svalbard and Jan Mayen": Country.SVALBARD_AND_JAN_MAYEN,
+    "Swaziland": Country.ESWATINI,
+    "The Democratic Republic of Congo": Country.CONGO_KINSHASA,
+    "Trinidad and Tobago": Country.TRINIDAD_AND_TOBAGO,
+    "Turks and Caicos Islands": Country.TURKS_AND_CAICOS_ISLANDS,
+    "Vatican": Country.VATICAN_CITY,
+}
 
 COUNTRY_BY_NORMALIZED_NAME: dict[str, Country] = {
-    normalize_string(country.value): country
-    for country in Country
+    normalize_string(name): country
+    for name, country in (
+        [(country.value, country) for country in Country]
+        + list(_COUNTRY_ALIASES.items())
+    )
 }
+
+
+def country_from_string(raw_country: str) -> Country | None:
+    """Resolve a raw country string to the canonical Country enum."""
+    normalized = normalize_string(raw_country)
+    if not normalized:
+        return None
+    return COUNTRY_BY_NORMALIZED_NAME.get(normalized)

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from datetime import datetime, timezone
 
+from implementation.classes.countries import country_from_string
 from implementation.classes.enums import BudgetSize, Genre, MaturityRating
 from implementation.classes.languages import LANGUAGE_BY_NORMALIZED_NAME
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase
@@ -454,6 +455,18 @@ class Movie(BaseModel):
             if language_enum is not None:
                 language_ids.append(language_enum.language_id)
         return language_ids
+
+    def country_ids(self) -> list[int]:
+        """Map IMDB country-of-origin strings to their integer country IDs."""
+        country_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for country_name in self.imdb_data.countries_of_origin:
+            country = country_from_string(str(country_name))
+            if country is None or country.country_id in seen_ids:
+                continue
+            seen_ids.add(country.country_id)
+            country_ids.append(country.country_id)
+        return country_ids
 
     def production_text(self, include_filming_locations: bool = True) -> str:
         """Format production info as labeled lines for vector embedding.

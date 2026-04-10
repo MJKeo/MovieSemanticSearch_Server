@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from movie_ingestion.tracker import TRACKER_DB_PATH
 from schemas.enums import MetadataType
 from schemas.metadata import (
+    FranchiseOutput,
     PlotEventsOutput,
     ReceptionOutput,
     PlotAnalysisOutput,
@@ -50,6 +51,7 @@ SCHEMA_BY_TYPE: dict[MetadataType, type] = {
     MetadataType.PLOT_ANALYSIS: PlotAnalysisOutput,
     MetadataType.NARRATIVE_TECHNIQUES: NarrativeTechniquesOutput,
     MetadataType.PRODUCTION_KEYWORDS: ProductionKeywordsOutput,
+    MetadataType.FRANCHISE: FranchiseOutput,
     MetadataType.SOURCE_OF_INSPIRATION: SourceOfInspirationOutput,
     MetadataType.SOURCE_MATERIAL_V2: SourceMaterialV2Output,
     MetadataType.VIEWER_EXPERIENCE: ViewerExperienceOutput,

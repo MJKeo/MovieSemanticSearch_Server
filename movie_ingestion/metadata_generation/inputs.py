@@ -13,7 +13,8 @@ Utilities:
     - load_plot_analysis_output — load plot analysis output from tracker DB
 
 Constants:
-    - WAVE1_TYPES, WAVE2_TYPES, ALL_GENERATION_TYPES — generation type sets
+    - WAVE1_TYPES, WAVE_INDEPENDENT_TYPES, WAVE2_TYPES, ALL_GENERATION_TYPES
+      — generation type sets
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from schemas.movie_input import MovieInputData
 # ---------------------------------------------------------------------------
 
 WAVE1_TYPES = frozenset({MetadataType.PLOT_EVENTS, MetadataType.RECEPTION})
+WAVE_INDEPENDENT_TYPES = frozenset({MetadataType.FRANCHISE})
 WAVE2_TYPES = frozenset({
     MetadataType.PLOT_ANALYSIS,
     MetadataType.VIEWER_EXPERIENCE,
@@ -43,7 +45,7 @@ WAVE2_TYPES = frozenset({
     MetadataType.SOURCE_MATERIAL_V2,
     MetadataType.CONCEPT_TAGS,
 })
-ALL_GENERATION_TYPES = WAVE1_TYPES | WAVE2_TYPES
+ALL_GENERATION_TYPES = WAVE1_TYPES | WAVE_INDEPENDENT_TYPES | WAVE2_TYPES
 
 
 # ---------------------------------------------------------------------------

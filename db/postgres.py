@@ -646,6 +646,7 @@ async def upsert_movie_card(
     genre_ids: Sequence[int],
     watch_offer_keys: Sequence[int],
     audio_language_ids: Sequence[int],
+    country_ids: Sequence[int],
     imdb_vote_count: int,
     reception_score: Optional[float],
     title_token_count: int,
@@ -665,6 +666,7 @@ async def upsert_movie_card(
         genre_ids: List of genre IDs.
         watch_offer_keys: List of watch offer keys (encoded provider+method).
         audio_language_ids: List of audio language IDs.
+        country_ids: List of country-of-origin IDs.
         imdb_vote_count: Raw IMDb vote count.
         reception_score: Precomputed reception score from IMDB/Metacritic.
         title_token_count: Number of tokens in the title.
@@ -674,10 +676,10 @@ async def upsert_movie_card(
     query = """
     INSERT INTO public.movie_card (
         movie_id, title, poster_url, release_ts, runtime_minutes,
-        maturity_rank, genre_ids, watch_offer_keys, audio_language_ids,
+        maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_ids,
         imdb_vote_count, reception_score, budget_bucket, title_token_count, created_at, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
         poster_url = EXCLUDED.poster_url,
@@ -687,6 +689,7 @@ async def upsert_movie_card(
         genre_ids = EXCLUDED.genre_ids,
         watch_offer_keys = EXCLUDED.watch_offer_keys,
         audio_language_ids = EXCLUDED.audio_language_ids,
+        country_ids = EXCLUDED.country_ids,
         imdb_vote_count = EXCLUDED.imdb_vote_count,
         reception_score = EXCLUDED.reception_score,
         budget_bucket = EXCLUDED.budget_bucket,
@@ -703,6 +706,7 @@ async def upsert_movie_card(
         list(genre_ids),
         list(watch_offer_keys),
         list(audio_language_ids),
+        list(country_ids),
         imdb_vote_count,
         reception_score,
         budget_bucket,
@@ -1244,15 +1248,15 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     Returns:
         List of dicts with keys: movie_id, title, poster_url,
         release_ts, runtime_minutes, maturity_rank, genre_ids,
-        watch_offer_keys, audio_language_ids, imdb_vote_count, popularity_score,
-        reception_score, budget_bucket.
+        watch_offer_keys, audio_language_ids, country_ids,
+        imdb_vote_count, popularity_score, reception_score, budget_bucket.
     """
     if not movie_ids:
         return []
 
     query = """
         SELECT movie_id, title, poster_url, release_ts, runtime_minutes,
-               maturity_rank, genre_ids, watch_offer_keys, audio_language_ids,
+               maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_ids,
                imdb_vote_count, popularity_score, reception_score, budget_bucket
         FROM public.movie_card
         WHERE movie_id = ANY(%s::bigint[])
@@ -1260,8 +1264,8 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     columns = [
         "movie_id", "title", "poster_url", "release_ts",
         "runtime_minutes", "maturity_rank", "genre_ids", "watch_offer_keys",
-        "audio_language_ids", "imdb_vote_count", "popularity_score", "reception_score",
-        "budget_bucket",
+        "audio_language_ids", "country_ids", "imdb_vote_count", "popularity_score",
+        "reception_score", "budget_bucket",
     ]
 
     search_results = await _execute_read(query, (movie_ids,))

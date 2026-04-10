@@ -110,6 +110,19 @@ def _production_keywords_prompt_builder(movie: MovieInputData) -> tuple[str, str
     return build_production_keywords_user_prompt(movie), SYSTEM_PROMPT
 
 
+def _franchise_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for franchise — every loaded movie is eligible."""
+    from .pre_consolidation import _check_franchise
+    return _check_franchise(movie)
+
+
+def _franchise_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for franchise — builds user prompt + system prompt tuple."""
+    from ..generators.franchise import build_franchise_user_prompt
+    from ..prompts.franchise import SYSTEM_PROMPT
+    return build_franchise_user_prompt(movie), SYSTEM_PROMPT
+
+
 def _plot_analysis_eligibility_checker(movie: MovieInputData) -> str | None:
     """Eligibility checker for plot_analysis — loads Wave 1 outputs from DB.
 
@@ -416,10 +429,12 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
     (generators import from inputs, which is also imported here).
     """
     from .pre_consolidation import check_plot_events, check_reception
+    from ..generators.franchise import generate_franchise
     from ..generators.plot_events import generate_plot_events
     from ..generators.reception import generate_reception
     from ..generators.production_keywords import generate_production_keywords
     from schemas.metadata import (
+        FranchiseOutput,
         PlotEventsOutput,
         ReceptionOutput,
         PlotAnalysisOutput,
@@ -466,6 +481,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             eligibility_checker=_production_keywords_eligibility_checker,
             prompt_builder=_production_keywords_prompt_builder,
             live_generator=generate_production_keywords,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
+        ),
+        MetadataType.FRANCHISE: GeneratorConfig(
+            metadata_type=MetadataType.FRANCHISE,
+            schema_class=FranchiseOutput,
+            eligibility_checker=_franchise_eligibility_checker,
+            prompt_builder=_franchise_prompt_builder,
+            live_generator=generate_franchise,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
         ),

@@ -32,12 +32,20 @@ class MovieInputData:
     tmdb_id: int
     title: str
     release_year: int | None = None
+    collection_name: str | None = None
     overview: str = ""
     genres: list[str] = field(default_factory=list)
     plot_synopses: list[str] = field(default_factory=list)
     plot_summaries: list[str] = field(default_factory=list)
     plot_keywords: list[str] = field(default_factory=list)
     overall_keywords: list[str] = field(default_factory=list)
+    production_companies: list[str] = field(default_factory=list)
+    # actors and characters preserve IMDB billing order. They are
+    # positionally aligned in the common case (one role per actor);
+    # for the rare multi-role actor they may drift slightly past the
+    # top billed few. See top_billed_cast() for the paired view.
+    actors: list[str] = field(default_factory=list)
+    characters: list[str] = field(default_factory=list)
     # Each dict has keys: summary (str), text (str)
     featured_reviews: list[dict] = field(default_factory=list)
     reception_summary: str | None = None
@@ -54,6 +62,43 @@ class MovieInputData:
         if self.release_year is not None:
             return f"{self.title} ({self.release_year})"
         return self.title
+
+    def top_billed_cast(self, n: int = 5) -> str | None:
+        """Format the top-n billed cast as 'Character (Actor), ...'.
+
+        Used as a prompt input signal for concept tag classification
+        (especially female_lead / ensemble_cast) and any other generator
+        that benefits from knowing who the most prominent on-screen
+        characters are. Billing order is preserved from IMDB.
+
+        Pairing semantics: actors[i] is zipped with characters[i]. When
+        a character name is missing (short characters list or empty
+        entry), the actor is rendered alone. When an actor name is
+        missing, the entry is skipped entirely — a nameless actor
+        carries no signal.
+
+        Returns None when no actors are available — callers should
+        render this as "not available" in the prompt so the LLM sees
+        explicit absence rather than silent omission.
+        """
+        if not self.actors:
+            return None
+
+        top_actors = self.actors[:n]
+        top_characters = self.characters[:n]
+
+        entries: list[str] = []
+        for i, actor in enumerate(top_actors):
+            actor = actor.strip()
+            if not actor:
+                continue
+            character = top_characters[i].strip() if i < len(top_characters) else ""
+            if character:
+                entries.append(f"{character} ({actor})")
+            else:
+                entries.append(actor)
+
+        return ", ".join(entries) if entries else None
 
     def merged_keywords(self) -> list[str]:
         """Deduplicated union of plot + overall keywords, normalized.
@@ -159,6 +204,7 @@ def load_movie_input_data(
                 t.tmdb_id,
                 t.title,
                 CAST(SUBSTR(t.release_date, 1, 4) AS INTEGER) AS release_year,
+                t.collection_name,
                 i.overview,
                 i.maturity_rating,
                 i.reception_summary,
@@ -167,6 +213,9 @@ def load_movie_input_data(
                 i.plot_summaries,
                 i.plot_keywords,
                 i.overall_keywords,
+                i.production_companies,
+                i.actors,
+                i.characters,
                 i.featured_reviews,
                 i.review_themes,
                 i.maturity_reasoning,
@@ -196,12 +245,16 @@ def load_movie_input_data(
             tmdb_id=tmdb_id,
             title=row["title"] or "",
             release_year=row["release_year"],
+            collection_name=row["collection_name"],
             overview=row["overview"] or "",
             genres=_parse_json_list(row["genres"]),
             plot_synopses=_parse_json_list(row["synopses"]),
             plot_summaries=_parse_json_list(row["plot_summaries"]),
             plot_keywords=_parse_json_list(row["plot_keywords"]),
             overall_keywords=_parse_json_list(row["overall_keywords"]),
+            production_companies=_parse_json_list(row["production_companies"]),
+            actors=_parse_json_list(row["actors"]),
+            characters=_parse_json_list(row["characters"]),
             featured_reviews=_parse_json_list(row["featured_reviews"]),
             reception_summary=row["reception_summary"],
             # review_themes maps to audience_reception_attributes: [{name, sentiment}]

@@ -18,9 +18,26 @@ class MetadataType(StrEnum):
     WATCH_CONTEXT = "watch_context"
     NARRATIVE_TECHNIQUES = "narrative_techniques"
     PRODUCTION_KEYWORDS = "production_keywords"
+    FRANCHISE = "franchise"
     SOURCE_OF_INSPIRATION = "source_of_inspiration"
     SOURCE_MATERIAL_V2 = "source_material_v2"
     CONCEPT_TAGS = "concept_tags"
+
+
+class FranchiseRole(str, Enum):
+    franchise_role_id: int
+
+    def __new__(cls, value: str, franchise_role_id: int) -> "FranchiseRole":
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.franchise_role_id = franchise_role_id
+        return obj
+
+    STARTER = ("starter", 1)
+    MAINLINE = ("mainline", 2)
+    SPINOFF = ("spinoff", 3)
+    REBOOT = ("reboot", 4)
+    REMAKE = ("remake", 5)
 
 
 # Source material classification for movies.
@@ -71,7 +88,7 @@ class SourceMaterialType(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-# Narrative structure tags (IDs 1-8): structural choices in how the
+# Narrative structure tags (IDs 1-9): structural choices in how the
 # story is told.
 class NarrativeStructureTag(str, Enum):
     concept_tag_id: int
@@ -90,6 +107,7 @@ class NarrativeStructureTag(str, Enum):
     OPEN_ENDING           = ("open_ending", 6)
     SINGLE_LOCATION       = ("single_location", 7)
     BREAKING_FOURTH_WALL  = ("breaking_fourth_wall", 8)
+    CLIFFHANGER_ENDING    = ("cliffhanger_ending", 9)
 
 
 # Plot archetype tags (IDs 11-14): the central premise or driving force.
@@ -133,12 +151,12 @@ class CharacterTag(str, Enum):
         obj.concept_tag_id = concept_tag_id
         return obj
 
-    FEMALE_PROTAGONIST = ("female_protagonist", 31)
+    FEMALE_LEAD        = ("female_lead", 31)
     ENSEMBLE_CAST      = ("ensemble_cast", 32)
     ANTI_HERO          = ("anti_hero", 33)
 
 
-# Ending tags (IDs 41-42): strong deal-breakers based on how the movie ends.
+# Ending tags (IDs 41-43): strong deal-breakers based on how the movie ends.
 class EndingTag(str, Enum):
     concept_tag_id: int
 
@@ -148,8 +166,12 @@ class EndingTag(str, Enum):
         obj.concept_tag_id = concept_tag_id
         return obj
 
-    HAPPY_ENDING = ("happy_ending", 41)
-    SAD_ENDING   = ("sad_ending", 42)
+    HAPPY_ENDING       = ("happy_ending", 41)
+    SAD_ENDING         = ("sad_ending", 42)
+    BITTERSWEET_ENDING = ("bittersweet_ending", 43)
+    # Classification-only value: none of the above ending tags apply.
+    # Filtered out before storage — never appears in concept_tag_ids.
+    NO_CLEAR_CHOICE    = ("no_clear_choice", -1)
 
 
 # Experiential tags (IDs 51-52): binary experiential qualities.
@@ -179,14 +201,17 @@ class ContentFlagTag(str, Enum):
     ANIMAL_DEATH = ("animal_death", 61)
 
 
-# All concept tags as a flat tuple, for consumers that need to iterate
-# across categories (GIN index population, query routing, etc.).
-ALL_CONCEPT_TAGS: tuple = (
-    *NarrativeStructureTag,
-    *PlotArchetypeTag,
-    *SettingTag,
-    *CharacterTag,
-    *EndingTag,
-    *ExperientialTag,
-    *ContentFlagTag,
+# All concept tags as a flat tuple, excluding classification-only
+# values (NO_CLEAR_CHOICE) that are never stored or searched.
+ALL_CONCEPT_TAGS: tuple = tuple(
+    tag for tag in (
+        *NarrativeStructureTag,
+        *PlotArchetypeTag,
+        *SettingTag,
+        *CharacterTag,
+        *EndingTag,
+        *ExperientialTag,
+        *ContentFlagTag,
+    )
+    if tag.concept_tag_id >= 0
 )

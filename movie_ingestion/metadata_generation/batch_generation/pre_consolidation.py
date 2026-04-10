@@ -23,7 +23,7 @@ No LLM cost — all logic is deterministic and testable without mocking.
     - If nothing useful: returns None
 
 3. Per-generation eligibility checks (_check_<type> methods):
-    Nine individual methods, one per generation type, each returning
+    Ten individual methods, one per generation type, each returning
     str | None (None = eligible, str = skip reason). These are composed
     by assess_skip_conditions() into a SkipAssessment.
 
@@ -32,7 +32,7 @@ No LLM cost — all logic is deterministic and testable without mocking.
     Wave 2 (need Wave 1 outputs + derived data):
         _check_plot_analysis, _check_viewer_experience, _check_watch_context,
         _check_narrative_techniques, _check_production_keywords,
-        _check_source_of_inspiration, _check_concept_tags
+        _check_franchise, _check_source_of_inspiration, _check_concept_tags
 
 4. assess_skip_conditions(movie_input, ...) -> SkipAssessment:
     Thin orchestrator that calls the relevant per-generation checks
@@ -555,6 +555,11 @@ def _check_production_keywords(merged_keywords: list[str]) -> str | None:
     return "No keywords available"
 
 
+def _check_franchise(movie_input: MovieInputData) -> str | None:
+    """Franchise generation is eligible for every successfully loaded movie."""
+    return None
+
+
 def _check_source_of_inspiration(
     merged_keywords: list[str],
     source_material_hint: str | None,
@@ -643,7 +648,7 @@ def assess_skip_conditions(
 
     Called twice in the pipeline:
     - Before Wave 1 (all kwargs None): checks plot_events + reception
-    - Before Wave 2 (outputs provided): checks the 6 Wave 2 types
+    - Before Wave 2 (outputs provided): checks downstream generation types
 
     Args:
         movie_input: Raw movie data from the database.
@@ -673,6 +678,7 @@ def assess_skip_conditions(
     if plot_events_output is None and reception_output is None:
         _record("plot_events", check_plot_events(movie_input))
         _record("reception", check_reception(movie_input))
+        _record("franchise", _check_franchise(movie_input))
         return SkipAssessment(
             generations_to_run=generations_to_run,
             skip_reasons=skip_reasons,
@@ -746,6 +752,7 @@ def assess_skip_conditions(
         plot_summary, craft_observations, movie_input,
     ))
     _record("production_keywords", _check_production_keywords(merged_keywords))
+    _record("franchise", _check_franchise(movie_input))
     _record("source_of_inspiration", _check_source_of_inspiration(
         merged_keywords, source_material_hint,
     ))

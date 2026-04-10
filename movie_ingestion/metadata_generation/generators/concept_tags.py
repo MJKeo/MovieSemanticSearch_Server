@@ -1,7 +1,7 @@
 """
 Concept Tags generator (Wave 2).
 
-Multi-label binary classification of 23 concept tags across 7 categories.
+Multi-label binary classification of 25 concept tags across 7 categories.
 Each tag answers a yes/no question: "does this movie have X?" Tags enable
 deterministic search retrieval ("give me ALL revenge movies") via Postgres
 integer array containment queries.
@@ -28,7 +28,7 @@ Skip condition (enforced by pre_consolidation):
     - best_plot_fallback() >= 250 chars
     - plot_keywords >= 3
 
-Provider/model defaults: OpenAI gpt-5-mini, reasoning_effort: minimal.
+Provider/model: OpenAI gpt-5-mini, reasoning_effort: medium, verbosity: low.
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ from implementation.llms.vector_metadata_generation_methods import TokenUsage
 
 GENERATION_TYPE = MetadataType.CONCEPT_TAGS
 
-_DEFAULT_PROVIDER = LLMProvider.OPENAI
-_DEFAULT_MODEL = "gpt-5-mini"
+_PROVIDER = LLMProvider.OPENAI
+_MODEL = "gpt-5-mini"
 
 
 def _format_narrative_technique_terms(
@@ -156,10 +156,17 @@ def build_concept_tags_user_prompt(
     nt_terms_str = _format_narrative_technique_terms(nt_output)
     arc_labels_str, conflict_type_str = _format_plot_analysis_fields(pa_output)
 
+    # Top-5 billed cast gives the LLM a prominence ranking to cross-
+    # reference against plot_summary character mentions. Critical for
+    # disambiguating lead vs. ensemble vs. supporting roles (used
+    # especially by FEMALE_LEAD and ENSEMBLE_CAST classification).
+    top_billed_cast = movie.top_billed_cast(n=5) or "not available"
+
     return build_user_prompt(
         title=movie.title_with_year(),
         plot_keywords=movie.plot_keywords or "not available",
         **{plot_label: plot_value},
+        top_billed_cast=top_billed_cast,
         emotional_observations=emotional_observations or "not available",
         narrative_technique_terms=nt_terms_str,
         character_arc_labels=arc_labels_str,
@@ -173,16 +180,14 @@ async def generate_concept_tags(
     emotional_observations: str | None = None,
     nt_output: NarrativeTechniquesOutput | None = None,
     pa_output: PlotAnalysisOutput | None = None,
-    *,
-    provider: LLMProvider | None = None,
-    model: str | None = None,
-    llm_kwargs: dict | None = None,
 ) -> Tuple[ConceptTagsOutput, TokenUsage]:
     """Generate concept tags for a single movie.
 
     Builds the user prompt from the movie's fields plus Wave 1/2 outputs,
     calls the LLM with the binary classification prompt, and returns the
     parsed result alongside token usage.
+
+    Uses gpt-5-mini with medium reasoning effort and low verbosity.
 
     Args:
         movie: Raw movie input data from the ingestion pipeline.
@@ -194,12 +199,6 @@ async def generate_concept_tags(
             narrative_techniques was skipped or not yet generated.
         pa_output: Full PlotAnalysisOutput from Wave 2. None if
             plot_analysis was skipped or not yet generated.
-        provider: LLM provider override. Defaults to OpenAI.
-        model: Model override. Defaults to gpt-5-mini.
-        llm_kwargs: Additional kwargs passed to generate_llm_response_async
-            (e.g. reasoning_effort, verbosity, thinking_config). When not
-            provided, uses the production defaults (minimal reasoning, low
-            verbosity).
 
     Returns:
         Tuple of (ConceptTagsOutput, TokenUsage).
@@ -208,14 +207,6 @@ async def generate_concept_tags(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
-    use_provider = provider or _DEFAULT_PROVIDER
-    use_model = model or _DEFAULT_MODEL
-    # Production defaults: minimal reasoning, low verbosity (OpenAI-specific).
-    # Callers can override entirely via llm_kwargs.
-    use_kwargs = llm_kwargs if llm_kwargs is not None else {
-        "reasoning_effort": "minimal",
-        "verbosity": "low",
-    }
 
     user_prompt = build_concept_tags_user_prompt(
         movie, plot_summary, emotional_observations, nt_output, pa_output,
@@ -224,12 +215,13 @@ async def generate_concept_tags(
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=use_provider,
+            provider=_PROVIDER,
             user_prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT,
             response_format=ConceptTagsOutput,
-            model=use_model,
-            **use_kwargs,
+            model=_MODEL,
+            reasoning_effort="medium",
+            verbosity="low",
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
@@ -242,4 +234,4 @@ async def generate_concept_tags(
     # Apply deterministic fixups (e.g., TWIST_VILLAIN → PLOT_TWIST implication)
     parsed.apply_deterministic_fixups()
 
-    return parsed, TokenUsage(input_tokens, output_tokens, use_model)
+    return parsed, TokenUsage(input_tokens, output_tokens, _MODEL)

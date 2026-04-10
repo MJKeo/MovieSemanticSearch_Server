@@ -476,6 +476,85 @@ and concept tags).
 **When:** Next time v2 planning docs are being updated or when beginning concept tag implementation.
 **See:** search_improvement_planning/concept_tags.md, search_improvement_planning/v2_data_needs.md (item #8), search_improvement_planning/v2_data_architecture.md
 
+## Measure FranchiseOutput null-pairing violation rates during evaluation
+**Context:** The model_validator on FranchiseOutput was removed pre-evaluation. During
+franchise evaluation, count how often gpt-5-mini produces: (1) franchise_role without
+franchise_name, (2) culturally_recognized_groups without franchise_name, (3) franchise_name
+without franchise_role. If rates are negligible (<1%), keep removed. If significant, implement
+deterministic fixups in validate_and_fix() (e.g., clear orphaned role/groups when name is null).
+**When:** During franchise evaluation phase.
+**See:** schemas/metadata.py (FranchiseOutput), movie_ingestion/metadata_generation/generators/franchise.py
+
+## Update franchise_metadata_planning.md for post-prompt-rewrite changes
+**Context:** The planning doc is stale on: PREBOOT→REBOOT rename, singular→plural
+culturally_recognized_groups, shared universe rule (use universe name when one exists),
+public domain exclusion, parametric knowledge framing, collection_name caveat, "about"
+counts as membership. Code and prompt are authoritative; planning doc should be updated
+to match for reference consistency.
+**When:** Before generating franchise at scale — the planning doc is the design reference.
+**See:** search_improvement_planning/franchise_metadata_planning.md,
+movie_ingestion/metadata_generation/prompts/franchise.py, schemas/metadata.py, schemas/enums.py
+
+## Remove or pin conflicting `schemas` namespace package from venv
+**Context:** A third-party `schemas` package installed in `.venv/lib/python3.13/site-packages/schemas`
+shadows the local `schemas/` package when notebooks run with cwd != project root. This caused
+`ModuleNotFoundError: No module named 'schemas.movie_input'` in test_concept_tags.ipynb even
+with the project root on sys.path. The workaround is `importlib.invalidate_caches()` + purging
+`sys.modules["schemas*"]`, but the root fix is removing the conflicting package (`pip uninstall schemas`
+or adding it to a pip constraint/exclusion) so the local package wins without hacks.
+**When:** Next time venv or dependency issues are being cleaned up.
+**See:** movie_ingestion/metadata_generation/generators/test_concept_tags.ipynb (cell 2 import block)
+
+## Update concept_tags.md planning doc for 25 tags and new definitions
+**Context:** search_improvement_planning/concept_tags.md still documents 23 tags. Two new
+tags were added (`bittersweet_ending`, `cliffhanger_ending`) and 6 definitions were refined
+(`anti_hero`, `happy_ending`, `sad_ending`, `plot_twist`, `feel_good`, `open_ending`). The
+planning doc should reflect the current 25-tag taxonomy with updated definitions and the
+new ending spectrum (happy/bittersweet/sad) and open_ending/cliffhanger_ending split.
+**When:** Before generating concept tags at scale — the planning doc is the design reference.
+**See:** search_improvement_planning/concept_tags.md, schemas/enums.py,
+movie_ingestion/metadata_generation/prompts/concept_tags.py
+
+## Regenerate concept_tags_test_results.json with updated prompt/schema/definitions
+**Context:** The test results JSON was generated before three major changes: (1) section-level
+reasoning schema restructure (per-tag evidence+tag → per-section reasoning+tags), (2) endings
+section rewrite replacing keyword shortcuts and factual ledger rules with comparative evaluation,
+(3) 2 new tags and 6 definition refinements. Results need regenerating to evaluate whether
+the combined structural + evaluation changes improve precision (especially endings) and
+consistency. Also fix `female_protagonist` → `female_lead` in expected_tags (test data uses
+old enum name).
+**When:** Next concept tags evaluation session.
+**See:** movie_ingestion/metadata_generation/generators/test_concept_tags.ipynb,
+movie_ingestion/metadata_generation/generators/concept_tags_test_results.json
+
+## Implement concept_tags production config: 2-run union + batch API
+**Context:** Evaluation across three configurations (gpt-5-mini medium with reasoning fields,
+gpt-5-mini medium without reasoning fields, gpt-5-mini low) concluded that the best production
+setup is gpt-5-mini medium reasoning, reasoning fields removed from the output schema, run
+twice per movie, union the tag sets. 2-run union of the "medium" file (no reasoning fields)
+hit P=80.2% R=97.9% F1=88.2% with only 3 FNs across 40 movies — effectively eliminating false
+negatives on deal-breaker tags. Cost is ~50% cheaper than the reasoning-fields-on variant
+because output tokens drop sharply when the model no longer emits reasoning strings. Stacks
+with OpenAI Batch API (another 50% off) for total production cost far below single-run
+baseline. Production pipeline should run each movie twice and merge tag sets before storage.
+**When:** When wiring concept_tags into the production batch pipeline.
+**See:** movie_ingestion/metadata_generation/generators/concept_tags_test_results_medium.json,
+schemas/metadata.py (ConceptTagsOutput), DIFF_CONTEXT.md (reasoning field removal entry)
+
+## Rethink deterministic fixup hooks now that reasoning fields are gone
+**Context:** Earlier concept_tags design called for deterministic post-generation fixups on
+the chronic FP tags (`bittersweet_ending`, `anti_hero`, `kidnapping`) that would inspect the
+reasoning field text for keywords like "cost"/"loss"/"moral ambiguity"/"captivity". With
+reasoning fields removed from the output schema for cost reasons, those fixups can no longer
+key off reasoning text. Options: (1) move fixups to look at `emotional_observations` input
+text for the keywords, (2) add a separate lightweight validation pass, (3) keep reasoning
+on just the endings category where it matters most. Evaluation showed ~8 anti_hero FPs,
+~5 bittersweet FPs, ~3 kidnapping FPs per 2-run union across 40 movies — enough to be worth
+addressing after shipping the baseline.
+**When:** After shipping 2-run union baseline, if precision turns out to be the bottleneck.
+**See:** schemas/metadata.py (ConceptTagsOutput.apply_deterministic_fixups),
+movie_ingestion/metadata_generation/prompts/concept_tags.py
+
 ## Fix report_bucket_axis_performance.py for flat-list bucket formats
 **Context:** `report_bucket_axis_performance.py` expects bucket files to contain nested dicts
 with `tmdb_ids`, `movies`, or `samples` keys. The watch_context bucket file uses a flat format

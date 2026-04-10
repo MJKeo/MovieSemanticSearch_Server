@@ -13,6 +13,10 @@ Usage:
         --postgres-batch-size 100 \\
         --qdrant-batch-size 50 \\
         --max-movies 1000
+
+    # Re-run only Postgres movie_card + lexical ingestion
+    python -m movie_ingestion.final_ingestion.ingest_movie \\
+        --disable-vectors
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ from implementation.misc.helpers import normalize_string
 from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_failures, batch_log_filter, PipelineStage
 from db.postgres import (
     pool,
+    _execute_read,
     batch_insert_title_token_postings,
     batch_insert_person_postings,
     batch_insert_character_postings,
@@ -108,6 +113,12 @@ class BatchIngestionResult:
     errors: list[IngestionError]
     filtered_ids: set[int]
     filter_reasons: list[tuple[int, str]]
+
+
+def _build_skipped_qdrant_result(movies: list[Movie]) -> BatchIngestionResult:
+    """Return a synthetic all-succeeded result when Qdrant is disabled."""
+    succeeded_ids = {movie.tmdb_data.tmdb_id for movie in movies}
+    return BatchIngestionResult(succeeded_ids, set(), [], set(), [])
 
 
 # ================================
@@ -176,6 +187,7 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
         genre_ids = await create_genre_ids(movie)
         watch_offer_keys = await create_watch_offer_keys(movie)
         audio_language_ids = await create_audio_language_ids(movie)
+        country_ids = await create_country_ids(movie)
         imdb_vote_count = int(movie.imdb_data.imdb_vote_count or 0)
         reception_score = movie.reception_score()
         title_token_count = len(movie.normalized_title_tokens())
@@ -196,6 +208,7 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
             genre_ids=genre_ids,
             watch_offer_keys=watch_offer_keys,
             audio_language_ids=audio_language_ids,
+            country_ids=country_ids,
             imdb_vote_count=imdb_vote_count,
             reception_score=reception_score,
             title_token_count=title_token_count,
@@ -709,6 +722,16 @@ async def create_audio_language_ids(movie: Movie) -> List[int]:
     return language_ids
 
 
+async def create_country_ids(movie: Movie) -> List[int]:
+    """
+    Return country-of-origin IDs by delegating to ``Movie.country_ids()``.
+
+    Args:
+        movie: Movie object implementing ``country_ids()``.
+    """
+    return movie.country_ids()
+
+
 def create_people_list(movie: Movie) -> set[str]:
     raw_people_lists = [
         movie.imdb_data.actors,
@@ -731,32 +754,36 @@ def create_people_list(movie: Movie) -> set[str]:
 #       CLI ORCHESTRATION
 # ================================
 
-def _get_eligible_tmdb_ids(
+async def _get_eligible_tmdb_ids(
     tracker_db_path: Path,
     max_movies: int | None = None,
 ) -> list[int]:
-    """Query the tracker for movies eligible for ingestion.
+    """Return movie IDs whose movie_card rows still have empty country IDs.
 
-    Returns movies at metadata_generated status (first attempt) and
-    ingestion_failed status (automatic retry).
+    The backfill target lives entirely in Postgres, so we no longer
+    constrain by tracker status here.
 
     Args:
-        tracker_db_path: Path to the ingestion tracker SQLite DB.
+        tracker_db_path: Unused. Retained for call-site stability.
         max_movies: Optional cap on total movies returned.
 
     Returns:
         List of tmdb_ids ready for ingestion.
     """
-    query = "SELECT tmdb_id FROM movie_progress WHERE status IN (?, ?)"
-    params: list[object] = [MovieStatus.METADATA_GENERATED, MovieStatus.INGESTION_FAILED]
+    query = """
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE cardinality(country_ids) = 0
+        ORDER BY movie_id
+    """
+    params: tuple[object, ...] | None = None
     if max_movies is not None:
-        query += " LIMIT ?"
-        params.append(max_movies)
+        query += " LIMIT %s"
+        params = (max_movies,)
 
-    with sqlite3.connect(str(tracker_db_path)) as db:
-        rows = db.execute(query, params).fetchall()
-
-    return [row[0] for row in rows]
+    rows = await _execute_read(query, params)
+    eligible_ids = [row[0] for row in rows]
+    return eligible_ids
 
 
 def _mark_ingested(
@@ -833,31 +860,22 @@ async def cmd_ingest(
     postgres_batch_size: int = 100,
     qdrant_batch_size: int = 50,
     max_movies: int | None = None,
+    disable_vectors: bool = False,
     tracker_db_path: Path = TRACKER_DB_PATH,
 ) -> None:
     """Orchestrate parallel batch ingestion to Postgres and Qdrant.
 
     For each super-batch of ``batch_size`` movies:
       1. Batch-load Movie objects from the tracker SQLite DB.
-      2. Run Postgres and Qdrant ingestion in parallel (asyncio.gather).
-      3. Intersect succeeded sets — only movies that pass BOTH are marked ingested.
+      2. Run Postgres ingestion and, unless disabled, Qdrant ingestion.
+      3. When vectors are enabled, intersect succeeded sets so only movies
+         that pass BOTH are marked ingested. When vectors are disabled,
+         Postgres success alone is sufficient.
       4. Update tracker status.
       5. Print progress.
 
     After all movies are processed, refreshes Postgres materialized views.
     """
-    all_tmdb_ids = _get_eligible_tmdb_ids(tracker_db_path, max_movies)
-    total = len(all_tmdb_ids)
-    if not total:
-        print("No eligible movies (metadata_generated or ingestion_failed). Nothing to ingest.")
-        return
-
-    print(
-        f"Found {total:,} eligible movies (metadata_generated + ingestion_failed).\n"
-        f"Config: batch_size={batch_size}, postgres_batch_size={postgres_batch_size}, "
-        f"qdrant_batch_size={qdrant_batch_size}"
-    )
-
     # Open the Postgres connection pool (created with open=False)
     await pool.open()
 
@@ -867,6 +885,19 @@ async def cmd_ingest(
     start_time = time.time()
 
     try:
+        all_tmdb_ids = await _get_eligible_tmdb_ids(tracker_db_path, max_movies)
+        total = len(all_tmdb_ids)
+        if not total:
+            print("No eligible movies (movie_card.country_ids is already populated). Nothing to ingest.")
+            return
+
+        print(
+            f"Found {total:,} eligible movies "
+            f"(movie_card rows with empty country_ids).\n"
+            f"Config: batch_size={batch_size}, postgres_batch_size={postgres_batch_size}, "
+            f"qdrant_batch_size={qdrant_batch_size}, vectors={'disabled' if disable_vectors else 'enabled'}"
+        )
+
         for super_start in range(0, total, batch_size):
             super_ids = all_tmdb_ids[super_start : super_start + batch_size]
             batch_start_time = time.time()
@@ -888,13 +919,20 @@ async def cmd_ingest(
                 cumulative_failed += len(super_ids)
                 continue
 
-            # Step 2: Run Postgres and Qdrant ingestion in parallel
-            pg_result, qdrant_result = await asyncio.gather(
-                ingest_movies_to_postgres_batched(movie_list, batch_size=postgres_batch_size),
-                ingest_movies_to_qdrant_batched(movie_list, batch_size=qdrant_batch_size),
-            )
-            pg = pg_result
-            qd = qdrant_result
+            # Step 2: Run Postgres ingestion and optionally Qdrant ingestion.
+            if disable_vectors:
+                pg = await ingest_movies_to_postgres_batched(
+                    movie_list,
+                    batch_size=postgres_batch_size,
+                )
+                qd = _build_skipped_qdrant_result(movie_list)
+            else:
+                pg_result, qdrant_result = await asyncio.gather(
+                    ingest_movies_to_postgres_batched(movie_list, batch_size=postgres_batch_size),
+                    ingest_movies_to_qdrant_batched(movie_list, batch_size=qdrant_batch_size),
+                )
+                pg = pg_result
+                qd = qdrant_result
 
             # Step 3: Separate filtered (permanent) from failed (retryable).
             # Filtered movies are missing required attributes and should
@@ -928,11 +966,16 @@ async def cmd_ingest(
             # Step 5: Progress reporting
             processed = min(super_start + batch_size, total)
             filtered_note = f", {len(batch_filtered)} filtered" if batch_filtered else ""
+            qdrant_summary = (
+                "disabled"
+                if disable_vectors
+                else f"{len(qd.succeeded_ids)}/{len(qd.failed_ids)}"
+            )
             print(
                 f"[{processed:,}/{total:,}] "
                 f"Batch: {len(both_succeeded)} ingested, {len(batch_failed)} failed{filtered_note} "
                 f"(PG: {len(pg.succeeded_ids)}/{len(pg.failed_ids)}, "
-                f"Qdrant: {len(qd.succeeded_ids)}/{len(qd.failed_ids)}) "
+                f"Qdrant: {qdrant_summary}) "
                 f"| {batch_elapsed:.1f}s "
                 f"| Cumulative: {cumulative_ingested:,} ingested, {cumulative_failed:,} failed, {cumulative_filtered:,} filtered"
             )
@@ -987,6 +1030,11 @@ def main() -> None:
         default=None,
         help="Max total movies to ingest in this run (default: all eligible).",
     )
+    parser.add_argument(
+        "--disable-vectors",
+        action="store_true",
+        help="Skip Qdrant embedding/vector ingestion and run only Postgres movie_card + lexical ingestion.",
+    )
 
     args = parser.parse_args()
     asyncio.run(
@@ -995,6 +1043,7 @@ def main() -> None:
             postgres_batch_size=args.postgres_batch_size,
             qdrant_batch_size=args.qdrant_batch_size,
             max_movies=args.max_movies,
+            disable_vectors=args.disable_vectors,
         )
     )
 

@@ -20,9 +20,13 @@ Read these when relevant:
 - `docs/modules/<module>.md` the first time you work in that module
   during a session
 - `docs/decisions/` before making non-trivial tradeoff decisions
+- `docs/conventions.md` when working across module boundaries or
+  relying on shared invariants/patterns
 - `docs/TODO.md` when starting work in an area, in case there is
   already queued follow-up work there
 - `DIFF_CONTEXT.md` for current-session uncommitted context
+- `search_improvement_planning/` when working on search redesigns or
+  architecture changes in retrieval/query understanding
 
 ## Decision Framework
 
@@ -239,9 +243,15 @@ Environment notes:
 
 - Python 3.13
 - `pytest` uses `asyncio_mode = "auto"`
+- Production target is a single EC2 `t3.large` running all services
+  via Docker Compose, so latency/cost wins must respect tight CPU/RAM
+  limits
 - `.env` must define `TMDB_API_KEY`, `OPENAI_API_KEY`,
   `MOONSHOT_API_KEY`, Postgres/Redis/Qdrant connection strings, and
   IMDB proxy credentials when scraping
+- IMDB scraping uses DataImpulse proxies via
+  `DATA_IMPULSE_LOGIN`/`DATA_IMPULSE_PASSWORD` and optionally
+  `DATA_IMPULSE_HOST`/`DATA_IMPULSE_PORT`
 
 ## Project Overview
 
@@ -258,6 +268,7 @@ Search flow:
 Core directories:
 
 - `db/` search orchestration, scoring, Postgres/Qdrant/Redis clients
+- `api/` FastAPI application
 - `implementation/classes/` Pydantic models and shared enums
 - `implementation/llms/` shared LLM routing and structured output handling
 - `implementation/prompts/` prompts for query understanding tasks
@@ -301,18 +312,21 @@ Data stores:
 High-level stages:
 
 1. TMDB daily export download and initial filtering
-2. TMDB detail fetch
-3. TMDB quality scoring and filter
+2. TMDB detail fetching
+3. TMDB quality scoring and filtering
 4. IMDB scraping via GraphQL through US-targeted proxies
 5. IMDB quality filtering
 6. LLM metadata generation
-7. Embedding generation
-8. Ingestion into Postgres, Qdrant, and Redis
+7. Vector text generation in `movie_ingestion/final_ingestion/vector_text.py`
+8. Ingestion into Postgres and Qdrant, with embedding generated inside
+   `movie_ingestion/final_ingestion/ingest_movie.py`
 
 Important tracker invariant:
 
 - `movie_ingestion/tracker.py` owns pipeline progress tracking
 - Use `log_filter()` rather than directly mutating tracker tables
+- `implementation/vectorize.py` is legacy ChromaDB code and is not part
+  of the active ingestion pipeline
 
 ## LLM Routing
 
@@ -322,6 +336,12 @@ LLM routing is centralized in
 Supported backends include OpenAI, Moonshot/Kimi, Gemini, Groq,
 Alibaba/Qwen, Anthropic, and WHAM. Query understanding and metadata
 generation share this routing layer.
+
+Current operational split:
+
+- Search-time query understanding uses Moonshot/Kimi structured output
+- Ingestion-time metadata generation uses OpenAI `gpt-5-mini`
+- Embeddings use OpenAI `text-embedding-3-small` (1536 dims)
 
 Structured output handling is provider-specific. OpenAI uses parsed
 structured outputs; other providers use adapter-specific handling and

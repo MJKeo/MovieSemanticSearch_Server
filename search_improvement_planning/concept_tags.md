@@ -74,7 +74,7 @@ setting is a defining characteristic of the movie.
 
 | Tag | Description | Example user query | Classification signals |
 |-----|-------------|-------------------|----------------------|
-| `FEMALE_PROTAGONIST` | The lead character (or co-lead in a two-hander) is female. About the story's protagonist, not just "women appear in the movie." | "movies with a female lead" | plot_keywords ("female protagonist" 2,127), plot_summary character names and roles |
+| `FEMALE_LEAD` | The single protagonist is female, or in a two-hander one co-lead is female. Ensemble casts never qualify. Not just "women appear in the movie." | "movies with a female lead" | plot_keywords ("female protagonist" 2,127), plot_summary character names and roles |
 | `ENSEMBLE_CAST` | No single protagonist — multiple characters share roughly equal narrative weight. Pulp Fiction, Love Actually, Magnolia. | "ensemble movies", "ensemble cast" | plot_summary (multiple POV characters), cast structure, parametric knowledge |
 | `ANTI_HERO` | Protagonist is morally ambiguous, operates outside conventional morality, or lacks traditional heroic qualities. The moral ambiguity must be a defining character trait. | "anti-hero movies" | plot_keywords ("anti hero" 205), plot_summary (protagonist behavior), parametric knowledge |
 
@@ -338,7 +338,7 @@ REVENGE, ANTI_HERO, BREAKING_FOURTH_WALL, UNDERDOG.
 
 Tags with single-source dependency on plot_keywords (no structured backup —
 rely on plot_summary fallback + parametric knowledge): KIDNAPPING,
-SMALL_TOWN, POST_APOCALYPTIC, HAUNTED_LOCATION, FEMALE_PROTAGONIST,
+SMALL_TOWN, POST_APOCALYPTIC, HAUNTED_LOCATION, FEMALE_LEAD,
 ANIMAL_DEATH.
 
 ### Output schema design
@@ -365,7 +365,7 @@ class ConceptTagsOutput(BaseModel):
     plot_archetypes: list[TagEvidence]      # REVENGE, UNDERDOG, KIDNAPPING, CON_ARTIST
     settings: list[TagEvidence]             # POST_APOCALYPTIC, HAUNTED_LOCATION,
                                             # SMALL_TOWN
-    characters: list[TagEvidence]           # FEMALE_PROTAGONIST, ENSEMBLE_CAST,
+    characters: list[TagEvidence]           # FEMALE_LEAD, ENSEMBLE_CAST,
                                             # ANTI_HERO
     endings: list[TagEvidence]              # HAPPY_ENDING, SAD_ENDING
     experiential: list[TagEvidence]         # FEEL_GOOD, TEARJERKER

@@ -11,6 +11,7 @@ requests. One output schema per generation type:
     - WatchContextOutput (Wave 2, identity_note + evidence_basis)
     - NarrativeTechniquesOutput (Wave 2, per-section justifications)
     - ProductionKeywordsOutput (Wave 2, classification only)
+    - FranchiseOutput (independent, non-embeddable classification)
     - SourceOfInspirationOutput (Wave 2, parametric knowledge allowed)
 
 The existing schemas in implementation/classes/schemas.py remain
@@ -30,10 +31,11 @@ the Batch API's response_format field.
 
 from abc import abstractmethod
 
-from pydantic import BaseModel, Field, ConfigDict, constr, conlist
+from pydantic import BaseModel, Field, ConfigDict, constr, conlist, model_validator
 
 from implementation.misc.helpers import normalize_string
 from schemas.enums import (
+    FranchiseRole,
     SourceMaterialType,
     NarrativeStructureTag,
     PlotArchetypeTag,
@@ -117,6 +119,46 @@ class TermsWithNegationsSection(BaseModel):
         ),
     )
 
+
+
+# ---------------------------------------------------------------------------
+# Franchise (independent classification — NOT embedded into vectors)
+# ---------------------------------------------------------------------------
+
+class FranchiseOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    franchise_name: constr(strip_whitespace=True, min_length=1) | None = Field(
+        default=None,
+        description=(
+            "The canonical, fully expanded franchise or IP name this movie "
+            "belongs to. Null when the movie is standalone."
+        ),
+    )
+    franchise_role: FranchiseRole | None = Field(
+        default=None,
+        description=(
+            "The movie's role within the franchise. Null when the movie is standalone."
+        ),
+    )
+    culturally_recognized_groups: list[constr(strip_whitespace=True, min_length=1)] = Field(
+        default_factory=list,
+        description=(
+            "Established grouping terms for franchise subsections, phrased "
+            "conversationally (e.g. 'original trilogy', 'phase 1'). Empty "
+            "whenever no established terms exists."
+        ),
+    )
+
+    # NOTE: model_validator removed pre-evaluation. During testing, measure
+    # how often the LLM produces mismatched null/non-null pairings across
+    # franchise_name, franchise_role, and culturally_recognized_groups.
+    # If the rate is negligible, keep removed. If significant, re-add as
+    # a validate_and_fix() fixup rather than a hard validation error.
+
+    @classmethod
+    def validate_and_fix(cls, content: str) -> "FranchiseOutput":
+        return cls.model_validate_json(content)
 
 
 # ---------------------------------------------------------------------------
@@ -888,7 +930,7 @@ class SourceMaterialV2Output(EmbeddableOutput):
 # Concept Tags (binary classification — NOT embedded into vectors)
 # ---------------------------------------------------------------------------
 
-# Multi-label binary classification of 23 concept tags across 7 categories.
+# Multi-label binary classification of 25 concept tags across 7 categories.
 # Each tag answers a yes/no question: "does this movie have X?"
 #
 # Unlike all other output schemas, ConceptTagsOutput does NOT subclass
@@ -904,108 +946,89 @@ class SourceMaterialV2Output(EmbeddableOutput):
 # tag in the wrong category field. This eliminates the need for a
 # runtime model_validator.
 #
-# The evidence field precedes the tag field in every class to force
-# the LLM to articulate supporting input signals before committing
-# to a classification — lightweight chain-of-thought that improves
-# accuracy even at minimal reasoning effort.
+# Each category is a single assessment object containing just the
+# selected tags (or a single tag for endings). The model works
+# through the evidence for each tag internally (per the system
+# prompt) and emits only the resulting tag list.
 
-class NarrativeStructureEvidence(BaseModel):
+
+class NarrativeStructureAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="1 sentence: what input signal supports this tag.",
-    )
-    tag: NarrativeStructureTag = Field(
-        ...,
-        description="The concept tag identified.",
+    tags: list[NarrativeStructureTag] = Field(
+        default_factory=list,
+        description="Supported tags. Empty list is correct when no tags apply.",
     )
 
 
-class PlotArchetypeEvidence(BaseModel):
+class PlotArchetypeAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="1 sentence: what input signal supports this tag.",
-    )
-    tag: PlotArchetypeTag = Field(
-        ...,
-        description="The concept tag identified.",
+    tags: list[PlotArchetypeTag] = Field(
+        default_factory=list,
+        description="Supported tags. Empty list is correct when no tags apply.",
     )
 
 
-class SettingEvidence(BaseModel):
+class SettingAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="1 sentence: what input signal supports this tag.",
-    )
-    tag: SettingTag = Field(
-        ...,
-        description="The concept tag identified.",
+    tags: list[SettingTag] = Field(
+        default_factory=list,
+        description="Supported tags. Empty list is correct when no tags apply.",
     )
 
 
-class CharacterEvidence(BaseModel):
+class CharacterAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="1 sentence: what input signal supports this tag.",
-    )
-    tag: CharacterTag = Field(
-        ...,
-        description="The concept tag identified.",
+    tags: list[CharacterTag] = Field(
+        default_factory=list,
+        description="Supported tags. Empty list is correct when no tags apply.",
     )
 
 
-class EndingEvidence(BaseModel):
+class EndingAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="1 sentence: what input signal supports this tag.",
-    )
     tag: EndingTag = Field(
         ...,
-        description="The concept tag identified.",
+        description=(
+            "Exactly one ending classification. Use no_clear_choice "
+            "when the evidence is ambiguous, insufficient, or the "
+            "ending's emotion does not fit happy/sad/bittersweet."
+        ),
     )
 
 
-class ExperientialEvidence(BaseModel):
+class ExperientialAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="1 sentence: what input signal supports this tag.",
-    )
-    tag: ExperientialTag = Field(
-        ...,
-        description="The concept tag identified.",
+    tags: list[ExperientialTag] = Field(
+        default_factory=list,
+        description="Supported tags. Empty list is correct when no tags apply.",
     )
 
 
-class ContentFlagEvidence(BaseModel):
+class ContentFlagAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    evidence: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description="1 sentence: what input signal supports this tag.",
-    )
-    tag: ContentFlagTag = Field(
-        ...,
-        description="The concept tag identified.",
+    tags: list[ContentFlagTag] = Field(
+        default_factory=list,
+        description="Supported tags. Empty list is correct when no tags apply.",
     )
 
 
 # Multi-label binary classification of concept tags by category.
 #
-# Each category field uses its own typed evidence class, making the
-# JSON schema self-enforcing for category membership. The category
-# structure forces the model to consider each domain independently —
-# it cannot skip settings or endings by stopping early in a flat array.
+# Each category is a single assessment object containing the selected
+# tags (or a single tag for endings). The system prompt instructs the
+# model on how to think through each category internally; no reasoning
+# trace is emitted in the output.
+#
+# The per-category typed enum lists are JSON-schema self-enforcing
+# for category membership. The category structure forces the model
+# to consider each domain independently.
 #
 # Not an EmbeddableOutput — concept tags become integer IDs in
 # movie_card.concept_tag_ids, not embedding text.
@@ -1013,84 +1036,110 @@ class ContentFlagEvidence(BaseModel):
 class ConceptTagsOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    narrative_structure: list[NarrativeStructureEvidence] = Field(
-        default_factory=list,
+    narrative_structure: NarrativeStructureAssessment = Field(
+        ...,
         description=(
-            "Structural storytelling choices: plot_twist, twist_villain, "
-            "time_loop, nonlinear_timeline, unreliable_narrator, "
-            "open_ending, single_location, breaking_fourth_wall."
+            "Structural choices in how the story is told. Include "
+            "only tags supported by input evidence."
         ),
     )
-    plot_archetypes: list[PlotArchetypeEvidence] = Field(
-        default_factory=list,
+    plot_archetypes: PlotArchetypeAssessment = Field(
+        ...,
         description=(
-            "Central premise or driving force: revenge, underdog, "
-            "kidnapping, con_artist."
+            "The central premise or driving force of the movie. "
+            "Tag applies when the concept IS the movie, not just "
+            "an element in the plot."
         ),
     )
-    settings: list[SettingEvidence] = Field(
-        default_factory=list,
+    settings: SettingAssessment = Field(
+        ...,
         description=(
-            "Settings users search for as the primary filter: "
-            "post_apocalyptic, haunted_location, small_town."
+            "Settings that define the movie's identity. The setting "
+            "must be a defining characteristic, not incidental."
         ),
     )
-    characters: list[CharacterEvidence] = Field(
-        default_factory=list,
+    characters: CharacterAssessment = Field(
+        ...,
         description=(
-            "Character-level concepts: female_protagonist, "
-            "ensemble_cast, anti_hero."
+            "Character-level classifications about the protagonist "
+            "or cast structure."
         ),
     )
-    endings: list[EndingEvidence] = Field(
-        default_factory=list,
-        description="How the movie ends: happy_ending, sad_ending.",
-    )
-    experiential: list[ExperientialEvidence] = Field(
-        default_factory=list,
+    endings: EndingAssessment = Field(
+        ...,
         description=(
-            "Binary experiential qualities: feel_good, tearjerker."
+            "How the audience feels when the credits roll. Exactly "
+            "one classification (including no_clear_choice). "
+            "Independent of open/cliffhanger structure tags."
         ),
     )
-    content_flags: list[ContentFlagEvidence] = Field(
-        default_factory=list,
-        description="Avoidance deal-breakers: animal_death.",
+    experiential: ExperientialAssessment = Field(
+        ...,
+        description=(
+            "Binary experiential qualities that users treat as "
+            "deal-breakers when choosing what to watch."
+        ),
     )
+    content_flags: ContentFlagAssessment = Field(
+        ...,
+        description=(
+            "Content that users specifically search to avoid. "
+            "Strong avoidance deal-breakers."
+        ),
+    )
+
+    def _deduplicate_tags(self) -> "ConceptTagsOutput":
+        """Remove duplicate tags from all category tag lists.
+
+        LLMs occasionally emit the same enum value twice in an array.
+        Preserves first-occurrence order. Skips endings (single value,
+        not a list).
+
+        Mutates in place and returns self for chaining.
+        """
+        for field_name in (
+            "narrative_structure", "plot_archetypes", "settings",
+            "characters", "experiential", "content_flags",
+        ):
+            assessment = getattr(self, field_name)
+            seen: set = set()
+            deduped: list = []
+            for tag in assessment.tags:
+                if tag not in seen:
+                    seen.add(tag)
+                    deduped.append(tag)
+            assessment.tags = deduped
+        return self
 
     def apply_deterministic_fixups(self) -> "ConceptTagsOutput":
         """Apply deterministic post-generation fixups.
 
-        Currently applies one rule:
-        - TWIST_VILLAIN implies PLOT_TWIST: if narrative_structure
-          contains TWIST_VILLAIN but not PLOT_TWIST, insert PLOT_TWIST
-          with synthetic evidence. TWIST_VILLAIN is definitionally a
-          subset of PLOT_TWIST, so this is handled deterministically
-          rather than adding cognitive load to the LLM prompt.
+        Two rules applied in order:
+        1. Deduplicate all tag lists (LLMs occasionally repeat tags).
+        2. TWIST_VILLAIN implies PLOT_TWIST: if narrative_structure
+           contains TWIST_VILLAIN but not PLOT_TWIST, add PLOT_TWIST.
+           TWIST_VILLAIN is definitionally a subset of PLOT_TWIST, so
+           this is handled deterministically rather than adding
+           cognitive load to the LLM prompt.
 
         Mutates in place and returns self for chaining.
         """
-        has_twist_villain = any(
-            item.tag == NarrativeStructureTag.TWIST_VILLAIN
-            for item in self.narrative_structure
-        )
-        has_plot_twist = any(
-            item.tag == NarrativeStructureTag.PLOT_TWIST
-            for item in self.narrative_structure
-        )
+        # Step 1: deduplicate before any implication logic
+        self._deduplicate_tags()
+
+        # Step 2: TWIST_VILLAIN → PLOT_TWIST implication
+        ns_tags = self.narrative_structure.tags
+        has_twist_villain = NarrativeStructureTag.TWIST_VILLAIN in ns_tags
+        has_plot_twist = NarrativeStructureTag.PLOT_TWIST in ns_tags
 
         if has_twist_villain and not has_plot_twist:
-            self.narrative_structure.append(
-                NarrativeStructureEvidence(
-                    evidence="Implied by TWIST_VILLAIN classification.",
-                    tag=NarrativeStructureTag.PLOT_TWIST,
-                )
-            )
+            ns_tags.append(NarrativeStructureTag.PLOT_TWIST)
 
         return self
 
     @classmethod
     def validate_and_fix(cls, content: str) -> "ConceptTagsOutput":
-        """Validate raw JSON and apply TWIST_VILLAIN → PLOT_TWIST fixup."""
+        """Validate raw JSON, deduplicate tags, and apply fixups."""
         instance = cls.model_validate_json(content)
         return instance.apply_deterministic_fixups()
 
@@ -1098,12 +1147,19 @@ class ConceptTagsOutput(BaseModel):
         """Extract all concept_tag_ids as a sorted deduplicated int list.
 
         This is the value stored in movie_card.concept_tag_ids (planned).
+        Filters out classification-only values (NO_CLEAR_ENDING, id=-1).
         """
         ids: set[int] = set()
+        # Categories with tag lists
         for field_name in (
             "narrative_structure", "plot_archetypes", "settings",
-            "characters", "endings", "experiential", "content_flags",
+            "characters", "experiential", "content_flags",
         ):
-            for item in getattr(self, field_name):
-                ids.add(item.tag.concept_tag_id)
+            assessment = getattr(self, field_name)
+            for tag in assessment.tags:
+                ids.add(tag.concept_tag_id)
+        # Endings: single tag field, skip classification-only values
+        ending_tag = self.endings.tag
+        if ending_tag.concept_tag_id >= 0:
+            ids.add(ending_tag.concept_tag_id)
         return sorted(ids)
