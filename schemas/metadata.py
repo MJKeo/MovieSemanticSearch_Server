@@ -128,37 +128,149 @@ class TermsWithNegationsSection(BaseModel):
 class FranchiseOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Each decision field is preceded by a two-step reasoning field
+    # (evidence → analysis) so the model commits to a conclusion only
+    # after visibly laying out and weighing the relevant signals. Field
+    # order matters for structured output: the reasoning must be
+    # generated BEFORE the decision it supports.
+
+    franchise_name_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Two-step reasoning for franchise_name. "
+            "Step 1 — Evidence: list the concrete signals that bear on "
+            "franchise membership (title recognition from your own knowledge, "
+            "collection_name, production companies, keywords, characters, "
+            "overview-based identification). "
+            "Step 2 — Analysis: weigh those signals and identify the "
+            "TOP-LEVEL recognizable brand or IP entity this movie belongs to "
+            "(e.g. 'Marvel', 'DC Comics', 'Star Wars'), NOT a more specific "
+            "cinematic sub-grouping (MCU, DCEU, Dark Knight Trilogy, "
+            "Wizarding World, etc.) — those belong in "
+            "culturally_recognized_groups. Must be written BEFORE franchise_name."
+        ),
+    )
     franchise_name: constr(strip_whitespace=True, min_length=1) | None = Field(
         default=None,
         description=(
-            "The canonical, fully expanded franchise or IP name this movie "
-            "belongs to. Null when the movie is standalone."
+            "The TOP-LEVEL publicly recognizable brand or IP entity this "
+            "movie belongs to. Use the broadest canonical brand (e.g. "
+            "'Marvel', 'DC Comics', 'Harry Potter', 'Godzilla') rather than "
+            "a narrower cinematic sub-grouping (MCU, DCEU, Dark Knight "
+            "Trilogy, Wizarding World, MonsterVerse) — those go in "
+            "culturally_recognized_groups. Null when the movie is standalone."
+        ),
+    )
+
+    franchise_role_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Two-step reasoning for franchise_role. "
+            "Step 1 — Evidence: list what you know about this movie's place "
+            "in the franchise (did the franchise entity exist before this "
+            "movie, does it continue prior cinematic canon, does it reset "
+            "continuity, does it retell a prior film's story spine, is a "
+            "minor character/subplot now the focus, is it a crossover). "
+            "Step 2 — Analysis: apply the starter / mainline / spinoff / "
+            "reboot / remake / crossover definitions in order and pick the "
+            "first that fits. If none fit cleanly, leave franchise_role "
+            "null — null role with populated franchise_name is a valid "
+            "output. If franchise_name is null, write 'N/A — standalone'. "
+            "Must be written BEFORE franchise_role."
         ),
     )
     franchise_role: FranchiseRole | None = Field(
         default=None,
         description=(
-            "The movie's role within the franchise. Null when the movie is standalone."
+            "The movie's role within its top-level franchise. One of "
+            "starter, mainline, spinoff, reboot, remake, crossover. Null "
+            "when the movie is standalone OR when no role cleanly fits "
+            "despite belonging to the franchise."
+        ),
+    )
+
+    is_prequel_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Two-step reasoning for is_prequel. "
+            "Step 1 — Evidence: note the in-universe chronology relative to "
+            "prior-released cinematic entries in the same franchise. "
+            "Step 2 — Analysis: set true only when this film is set "
+            "chronologically BEFORE the events of an already-released film "
+            "in the same franchise. Orthogonal to franchise_role — a "
+            "prequel can be mainline, spinoff, etc. If franchise_name is "
+            "null, write 'N/A — standalone'. Must be written BEFORE is_prequel."
+        ),
+    )
+    is_prequel: bool = Field(
+        default=False,
+        description=(
+            "True iff the film is set chronologically before the events of "
+            "a prior-released cinematic entry in the same franchise. "
+            "Orthogonal to franchise_role."
+        ),
+    )
+
+    launches_subgroup_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Two-step reasoning for launches_subgroup. "
+            "Step 1 — Evidence: identify any notable culturally-recognized "
+            "subgroup (cinematic universe, director era, named trilogy, "
+            "actor run) this film may have kicked off. "
+            "Step 2 — Analysis: set true only when this film is the FIRST "
+            "entry in such a subgroup. Middle or final entries are false. "
+            "If franchise_name is null, write 'N/A — standalone'. Must be "
+            "written BEFORE launches_subgroup."
+        ),
+    )
+    launches_subgroup: bool = Field(
+        default=False,
+        description=(
+            "True iff this film is the first entry in a notable, "
+            "culturally-recognized subgroup of its franchise (e.g. Man of "
+            "Steel 2013 launching the DCEU, Star Wars: The Force Awakens "
+            "2015 launching the sequel trilogy, Batman 1989 launching the "
+            "Burton era, Deadpool 2016 launching the Deadpool subseries)."
+        ),
+    )
+
+    culturally_recognized_groups_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Two-step reasoning for culturally_recognized_groups. "
+            "Step 1 — Evidence: list any established sub-grouping terms you "
+            "know are used in conversation for this franchise at any level "
+            "of granularity (cinematic universes, eras, phases, sagas, "
+            "trilogies, actor runs, timelines, etc.) and whether this movie "
+            "falls inside them. "
+            "Step 2 — Analysis: filter to only the terms that are genuinely "
+            "established (never invented) and that this movie actually "
+            "belongs to. Emit every label in NORMALIZED form: lowercase, "
+            "digits spelled out as words ('phase three' not 'phase 3'), "
+            "'&' expanded to 'and', most-common canonical phrasing "
+            "('raimi trilogy' not 'sam raimi trilogy'). If none exist, "
+            "say so explicitly. If franchise_name is null, write "
+            "'N/A — standalone'. Must be written BEFORE "
+            "culturally_recognized_groups."
         ),
     )
     culturally_recognized_groups: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
-            "Established grouping terms for franchise subsections, phrased "
-            "conversationally (e.g. 'original trilogy', 'phase 1'). Empty "
-            "whenever no established terms exists."
+            "Established grouping terms for franchise subsections, always "
+            "in normalized form: lowercase, digits spelled out as words "
+            "('phase three', not 'phase 3'), '&' expanded to 'and' "
+            "('fast and furious', not 'fast & furious'), and using the "
+            "most-common canonical phrasing ('raimi trilogy', not "
+            "'sam raimi trilogy'). Includes cinematic universes (e.g. "
+            "'marvel cinematic universe', 'dc extended universe', "
+            "'monsterverse', 'wizarding world'), named trilogies (e.g. "
+            "'the dark knight trilogy', 'original trilogy'), sagas "
+            "('infinity saga'), phases ('phase one'), and era labels "
+            "('sean connery era'). Empty whenever no established terms exist."
         ),
     )
-
-    # NOTE: model_validator removed pre-evaluation. During testing, measure
-    # how often the LLM produces mismatched null/non-null pairings across
-    # franchise_name, franchise_role, and culturally_recognized_groups.
-    # If the rate is negligible, keep removed. If significant, re-add as
-    # a validate_and_fix() fixup rather than a hard validation error.
-
-    @classmethod
-    def validate_and_fix(cls, content: str) -> "FranchiseOutput":
-        return cls.model_validate_json(content)
 
 
 # ---------------------------------------------------------------------------

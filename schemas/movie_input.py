@@ -46,6 +46,9 @@ class MovieInputData:
     # top billed few. See top_billed_cast() for the paired view.
     actors: list[str] = field(default_factory=list)
     characters: list[str] = field(default_factory=list)
+    # IMDB directors list. Useful for director-era subgroup detection
+    # (e.g. "raimi trilogy", "bay era") in franchise generation.
+    directors: list[str] = field(default_factory=list)
     # Each dict has keys: summary (str), text (str)
     featured_reviews: list[dict] = field(default_factory=list)
     reception_summary: str | None = None
@@ -216,6 +219,7 @@ def load_movie_input_data(
                 i.production_companies,
                 i.actors,
                 i.characters,
+                i.directors,
                 i.featured_reviews,
                 i.review_themes,
                 i.maturity_reasoning,
@@ -255,6 +259,7 @@ def load_movie_input_data(
             production_companies=_parse_json_list(row["production_companies"]),
             actors=_parse_json_list(row["actors"]),
             characters=_parse_json_list(row["characters"]),
+            directors=_parse_json_list(row["directors"]),
             featured_reviews=_parse_json_list(row["featured_reviews"]),
             reception_summary=row["reception_summary"],
             # review_themes maps to audience_reception_attributes: [{name, sentiment}]

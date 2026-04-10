@@ -38,6 +38,7 @@ class FranchiseRole(str, Enum):
     SPINOFF = ("spinoff", 3)
     REBOOT = ("reboot", 4)
     REMAKE = ("remake", 5)
+    CROSSOVER = ("crossover", 6)
 
 
 # Source material classification for movies.
