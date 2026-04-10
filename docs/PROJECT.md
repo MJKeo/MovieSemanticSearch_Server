@@ -67,7 +67,7 @@ Processes TMDB daily exports through a multi-stage funnel:
 5. IMDB quality filtering (combined TMDB+IMDB quality scorer; score is the sole filter)
 6. LLM metadata generation (operational — gpt-5-mini selected after multi-candidate evaluation, multi-type batch pipeline running via generator registry; see ADR-039, ADR-043, ADR-044)
 7. Vector text generation (`movie_ingestion/final_ingestion/vector_text.py`) — generates the text that gets embedded for each of 8 vector spaces
-8. Database ingestion into Postgres and Qdrant (implemented) — embedding is integrated into Stage 8 inside `movie_ingestion/final_ingestion/ingest_movie.py` via `generate_vector_embedding()`. `implementation/vectorize.py` is legacy ChromaDB and is not used in the active pipeline.
+8. Database ingestion into Postgres and Qdrant (implemented) — embedding is integrated into Stage 8 inside `movie_ingestion/final_ingestion/ingest_movie.py` via `generate_vector_embedding()`. Vector text generation lives in `movie_ingestion/final_ingestion/vector_text.py`.
 
 All stages are operational, crash-safe, and idempotent.
 

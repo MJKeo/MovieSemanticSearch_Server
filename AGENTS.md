@@ -325,8 +325,13 @@ Important tracker invariant:
 
 - `movie_ingestion/tracker.py` owns pipeline progress tracking
 - Use `log_filter()` rather than directly mutating tracker tables
-- `implementation/vectorize.py` is legacy ChromaDB code and is not part
-  of the active ingestion pipeline
+- Vector text generation lives in
+  `movie_ingestion/final_ingestion/vector_text.py`. Embedding is
+  integrated into Stage 8 inside
+  `movie_ingestion/final_ingestion/ingest_movie.py` via
+  `generate_vector_embedding()`. The old
+  `implementation/vectorize.py` and `implementation/searching/`
+  (legacy ChromaDB) have been removed
 
 ## LLM Routing
 

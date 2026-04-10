@@ -61,12 +61,13 @@ database ingestion) live in `final_ingestion/` within this module.
 - **In scope**: TMDB export, TMDB detail fetching, quality scoring,
   IMDB scraping, pipeline state tracking, LLM metadata generation
   (Stage 6, `metadata_generation/` subpackage).
-- **Out of scope**: `implementation/vectorize.py` is legacy ChromaDB
-  and is not used in the active pipeline. Embedding is integrated
-  into Stage 8 inside `final_ingestion/ingest_movie.py` via
-  `generate_vector_embedding()`. Vector text generation lives at
-  `final_ingestion/vector_text.py`. Database ingestion (Stage 8)
-  lives in-module at `final_ingestion/ingest_movie.py`.
+- **Embedding and vector text**: Vector text generation lives at
+  `final_ingestion/vector_text.py`. Embedding is integrated into
+  Stage 8 inside `final_ingestion/ingest_movie.py` via
+  `generate_vector_embedding()`. Database ingestion (Stage 8) lives
+  in-module at `final_ingestion/ingest_movie.py`. (The legacy
+  `implementation/vectorize.py` and `implementation/searching/`
+  ChromaDB-era code has been removed.)
 
 ## Pipeline Stages
 

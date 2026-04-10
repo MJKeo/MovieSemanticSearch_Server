@@ -80,13 +80,14 @@ For each data source, note:
 
 Read:
 
-1. `implementation/vectorize.py` — how this metadata type's
-   `__str__()` output gets embedded
+1. `movie_ingestion/final_ingestion/vector_text.py` — how this
+   metadata type's `__str__()` output gets composed into the
+   vector text that Stage 8 embeds via `generate_vector_embedding()`
 2. `implementation/prompts/` — how the search pipeline uses this
    vector space (subquery generation prompts, vector space weight
    assignment)
-3. The search-side schema in `implementation/classes/schemas.py`
-   if one exists for this type
+3. The search-side schema in `schemas/metadata.py` if one exists
+   for this type
 
 Answer:
 - **What queries is this vector space designed to match?**

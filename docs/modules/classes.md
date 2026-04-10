@@ -39,9 +39,10 @@ from all pipeline stages — TMDB basics (title, date, duration),
 IMDB enrichment (credits, keywords, reviews, maturity), and 7
 LLM-generated metadata objects. No longer used in the active
 ingestion pipeline (replaced by `Movie` in `schemas/movie.py`
-per ADR-060). Remaining uses: `base_movie_factory` test fixture
-in `unit_tests/conftest.py` and legacy files
-(`implementation/vectorize.py`, `implementation/scraping/gather_data.py`).
+per ADR-060). Only remaining use is the `base_movie_factory`
+test fixture in `unit_tests/conftest.py`. The legacy consumers
+(`implementation/vectorize.py`, `implementation/scraping/`) have
+been removed from the codebase.
 
 **LLM Metadata Schemas** (`schemas.py`): Seven metadata types
 generated at ingestion time, each feeding a specific vector space.

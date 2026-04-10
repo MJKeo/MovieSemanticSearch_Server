@@ -370,6 +370,25 @@ Search subquery generation must also produce structured-format output.
 **Cost:** 7 × 100K embedding API calls = 700K embeddings. Estimate before
 executing.
 
+**Model choice (decided 2026-04-10):** Upgrade from `text-embedding-3-small`
+to OpenAI `text-embedding-3-large` as part of this re-embed. Rationale:
+lowest-friction upgrade path (same provider, same SDK, same batch API,
+Matryoshka-compatible so Qdrant collection dims can stay at 1536 if desired),
+modest but real MTEB retrieval lift over 3-small, and minimal new vendor risk.
+The structured-label format fix removes one major compensation layer in the
+architecture, so the embedder's raw quality becomes more visible — worth a
+cheap upgrade while we're already rebuilding. Cost delta (~$0.02 → $0.13 per
+M tokens) is trivial at this scale.
+
+**Fallback plan:** If retrieval quality evaluation after this migration still
+shows embedding-quality-attributable failures (known-relevant movies not
+ranking despite correct metadata, correct format, and aligned queries), switch
+to Voyage-3-large. Migration path is tractable: centralize model string in
+`generate_vector_embedding`, add a Voyage client branch, rebuild Qdrant at
+1024 dims, re-embed via Voyage Batch API. Redis embedding cache is keyed by
+model so old/new coexist safely. Do not switch preemptively — wait for eval
+signal that the embedder is the next bottleneck.
+
 ### 13. Production vector re-embedding
 
 **What:** After #8 (production technique re-generation), re-embed the
