@@ -1,6 +1,43 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Plot analysis vector — V2 structured-label embedding format
+Files: schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py, search_improvement_planning/v2_data_architecture.md
+
+Why: Align the plot_analysis vector with the V2 structured-label embedding
+format, which is a prerequisite for cross-space rescoring (see
+search_improvement_planning/new_system_brainstorm.md "Embedding Format:
+Structured Labels"). The flat/partially-labeled format caused per-attribute
+signal dilution that the new architecture cannot tolerate.
+
+Approach: Rewrote `PlotAnalysisOutput.embedding_text()` so every field is
+emitted with an explicit snake_case label matching the Pydantic field name
+(`elevator_pitch:`, `plot_overview:`, `genre_signatures:`, `conflict:`,
+`themes:`, `character_arcs:`). Field order puts the shortest/highest-signal
+capsule first, then prose, then enumerated categorical slots. `character_arcs`
+is placed adjacent to `themes` because plot_analysis character arcs are
+*thematic* arcs (e.g. "mentor's sacrificial legacy"), semantically closest
+to thematic_concepts — distinct from narrative_techniques' film-language arc
+labels. `__str__()` now delegates to `embedding_text()` to keep them in
+lockstep (previously two parallel implementations drifted).
+
+Also removed the TMDB-genre merge from `create_plot_analysis_vector_text()`:
+under V2, genres are a deterministic hard filter via `movie_card.genre_ids`,
+and the LLM-generated `genre_signatures` already carry the compound thematic
+phrasing this space owns. Appending bare enum labels diluted the structured
+field.
+
+Design context: search_improvement_planning/v2_data_architecture.md §8.3
+(updated in this changeset) and §8 header for the V2 format rationale.
+Decision to keep character_arcs in plot_analysis (rather than delegating
+fully to narrative_techniques) was discussed with the user: the two spaces
+host semantically different arc concepts and should not be collapsed.
+
+Testing notes: Existing plot_analysis unit tests assert the old embedding
+format and will need updates in a separate testing phase (per
+.claude/rules/test-boundaries.md, not touched here). No re-ingestion yet —
+that happens as part of the broader V2 rollout.
+
 ## Franchise generator v3 — prompt + schema rewrite from test analysis
 Files: movie_ingestion/metadata_generation/prompts/franchise.py, schemas/metadata.py
 
@@ -181,6 +218,36 @@ fields yet so the change is contained to the generator + tests.
   Spider-Man 2002, X-Men 2000, Rise of Apes, Godzilla 2014,
   Transformers 2007, Sherlock Holmes 2009, Phantom Menace →
   launches_subgroup=True; all group labels normalized to words.
+
+## Add production_techniques metadata type
+Files: schemas/enums.py, schemas/metadata.py, movie_ingestion/tracker.py, movie_ingestion/metadata_generation/inputs.py, movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py, movie_ingestion/metadata_generation/batch_generation/generator_registry.py, movie_ingestion/metadata_generation/batch_generation/result_processor.py, movie_ingestion/metadata_generation/prompts/production_techniques.py, movie_ingestion/metadata_generation/generators/production_techniques.py, unit_tests/test_production_techniques_generator.py, unit_tests/test_pre_consolidation.py, unit_tests/test_generator_registry.py, unit_tests/test_result_processor.py, unit_tests/test_tracker.py, unit_tests/test_enums.py, unit_tests/test_metadata_inputs.py, unit_tests/test_metadata_type_consistency.py
+
+Why: Introduce a new narrowed production metadata type alongside legacy
+`production_keywords`, matching the V2 search-system direction without
+changing any embedding or search-time code yet.
+
+Approach: Added `MetadataType.PRODUCTION_TECHNIQUES`, a new
+`ProductionTechniquesOutput` schema, a dedicated prompt and generator,
+and tracker DB support for result, eligibility, and batch-id columns.
+The new generator takes `title`, `overall_keywords`, and `plot_keywords`
+as separate prompt inputs and uses the locked `gpt-5-mini` + low
+reasoning config. Eligibility is intentionally narrower than legacy
+`production_keywords`: eligible when `plot_keywords` is non-empty or
+`overall_keywords` has at least 3 entries. The batch pipeline remained
+generic; wiring was limited to the enum/registry/result-processor/tracker
+surfaces needed for the new type to flow through `eligibility`, `submit`,
+`process`, and `autopilot`.
+
+Design context: This is additive only. Legacy `production_keywords`
+remains untouched for backwards compatibility, and filming locations stay
+out of this new metadata type for now. Search-time readers, vector text,
+and `schemas/movie.py` were deliberately not updated in this pass.
+
+Testing notes: Focused validation ran through the `uv` environment to pick
+up repo-managed dependencies. Verified generator behavior, eligibility,
+registry wiring, result storage, tracker schema, enum consistency, and
+metadata-type/db-column consistency:
+`uv run python -m pytest unit_tests/test_production_techniques_generator.py unit_tests/test_pre_consolidation.py unit_tests/test_generator_registry.py unit_tests/test_result_processor.py unit_tests/test_tracker.py unit_tests/test_enums.py unit_tests/test_metadata_type_consistency.py -q`
   New counts: 57 franchise / 19 standalone / 5 null-role-with-name
   / 5 prequels / 10 subgroup-launchers.
 - Test notebook evaluation helpers (cell 8) extended with two new
@@ -429,3 +496,188 @@ Files: implementation/vectorize.py, implementation/searching/, implementation/vi
 Why: User pruned implementation/scraping, implementation/generated_data, implementation/notebooks. Verified vectorize.py/searching/visualize.py/chroma_db/ were also stale (chromadb imports, BaseMovie deps, zero external importers; live replacements live at movie_ingestion/final_ingestion/vector_text.py and movie_ingestion/final_ingestion/ingest_movie.py) and removed them.
 Approach: (1) confirmed no external importers via grep; (2) confirmed unit_tests/test_ingest_movie.py already has defensive ModuleNotFoundError fallback stubs for implementation.vectorize so deletion is safe; (3) test_vector_text.py imports from movie_ingestion.final_ingestion.vector_text, not the deleted module; (4) deleted files; (5) rewrote stale doc references to point at the live movie_ingestion paths. Also saved embedding-model decision (upgrade to text-embedding-3-large, Voyage-3-large as fallback) to search_improvement_planning/v2_data_needs.md #12 and updated the stale memory record that previously said "stay with 3-small".
 Testing notes: test_ingest_movie.py fallback path is now the only path (module no longer importable). Worth a pytest run to confirm. ADR-060 still references implementation/vectorize.py as a historical note — left intact since ADRs are point-in-time decision records.
+
+## upgrade embedding model to text-embedding-3-large
+Files: implementation/llms/generic_methods.py, movie_ingestion/final_ingestion/ingest_movie.py, movie_ingestion/final_ingestion/vector_text.py, db/vector_search.py, db/init/02_qdrant_init.sh
+Why: Per the 2026-04-10 decision (project memory / search_improvement_planning/v2_data_needs.md #12), upgrade from text-embedding-3-small (1536 dims) to text-embedding-3-large as part of the structured-label re-embed. Same provider/SDK/batch API, modest MTEB lift, trivial cost delta.
+Approach: Code-only flip — user will handle the Qdrant wipe + re-ingest separately. Both ingestion and search already route through a single shared helper (generate_vector_embedding in implementation/llms/generic_methods.py), so changing the default model + the EMBEDDING_MODEL constant in ingest_movie.py covers every call site automatically. Chose native 3072 dims over Matryoshka truncation because the user is re-embedding everything anyway, so there is no infra-compat reason to sacrifice quality. Updated Qdrant init script (all 8 named vectors: anchor, plot_events, plot_analysis, viewer_experience, watch_context, narrative_techniques, production, reception) from size 1536 → 3072. Swapped tiktoken.encoding_for_model to "text-embedding-3-large" (both models share cl100k_base and the 8191 limit, so no functional change but keeps the string accurate). Fixed stale "1536 floats / 1536 dims" comments in vector_search.py and ingest_movie.py. Left CLAUDE.md / AGENTS.md / docs/PROJECT.md doc references alone — those belong in the follow-up cleanup once the actual re-embed lands.
+Design context: project_embedding_model_decision.md memory; docs/decisions/ADR-011 embedding cache key format (emb:{model}:{hash}) means old 3-small and new 3-large cache entries coexist harmlessly — no manual Redis flush needed.
+Testing notes: Verified via grep that no .py/.sh files still reference text-embedding-3-small or 1536 in the qdrant init. End-to-end validation (Qdrant drop/recreate, re-embed ~100K movies, assert `len(embedding) == 3072`) is explicitly out of scope for this code change and will happen in the follow-up task.
+
+## reception vector awards summary + doc definition realignment
+Files: schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py, search_improvement_planning/v2_data_needs.md, search_improvement_planning/v2_data_architecture.md, search_improvement_planning/new_system_brainstorm.md, search_improvement_planning/types_of_searches.md, docs/modules/schemas.md, docs/modules/ingestion.md, docs/decisions/ADR-001-eight-vector-spaces.md, docs/decisions/ADR-058-vector-text-formatting-conventions.md, docs/llm_metadata_generation_report.md, docs/llm_metadata_generation_efficiency_analysis.md
+Why: We decided the reception vector should represent semantic reception/prestige language, not duplicate deterministic score buckets or award-query logic. `reception_tier` was a coarse derived label already available from structured scoring, while full nomination text would bloat the embedding with low-value detail better handled by `movie_awards`.
+Approach: Changed `ReceptionOutput.embedding_text()` to emit a fully labeled shape (`reception_summary:`, `praised:`, `criticized:`). Removed `reception_tier` from `create_reception_vector_text()` entirely. Added a deterministic `_reception_award_wins_text()` helper in vector assembly that reads `Movie.imdb_data.awards`, keeps winner rows only, collapses to distinct ceremony names, emits them in fixed priority order, and intentionally excludes Razzie so the vector's `major_award_wins:` line stays prestige-oriented. Left `ReceptionOutput`'s schema fields unchanged because awards are external scraped data, not LLM-generated reception metadata. Updated the planning docs, module docs, ADRs, and reference docs so they consistently define the reception vector as labeled summary/qualities plus deterministic major-award wins, with nominations delegated to structured Postgres lookup.
+Design context: search_improvement_planning/v2_data_architecture.md now documents the final embedding shape and the "no nominations in vectors" boundary; ADR-058 now reflects that vector_text supplies deterministic award wins rather than reception tier.
+Testing notes: Ran `python3 -m py_compile schemas/metadata.py movie_ingestion/final_ingestion/vector_text.py`. Did not run pytest or edit tests per repo instructions.
+
+## award outcome enum + helper for tracker-safe award handling
+Files: movie_ingestion/imdb_scraping/models.py, movie_ingestion/imdb_scraping/parsers.py, movie_ingestion/final_ingestion/vector_text.py
+Why: `AwardNomination.outcome` was still a raw string, which made winner checks stringly-typed at call sites. We wanted a typed `WINNER`/`NOMINEE` contract plus a small helper so award consumers can ask intentfully whether a nomination won.
+Approach: Added `AwardOutcome(StrEnum)` with `WINNER` and `NOMINEE`, changed `AwardNomination.outcome` to that enum, and added `AwardNomination.did_win()` returning `self.outcome == AwardOutcome.WINNER`. Updated the GraphQL parser to emit enum values instead of raw strings and changed `_reception_award_wins_text()` to call `award.did_win()`. Left tracker serialization logic unchanged because it already persists IMDB scrape payloads from `IMDBScrapedMovie.model_dump(mode="json")`, which is the correct Pydantic boundary for serializing enums to JSON-compatible string values; `AwardNomination.model_validate(...)` on load reconstructs the enum on the way back out.
+Testing notes: Ran `python3 -m py_compile movie_ingestion/imdb_scraping/models.py movie_ingestion/imdb_scraping/parsers.py movie_ingestion/final_ingestion/vector_text.py schemas/movie.py`. Attempted a runtime dump/validate roundtrip smoke test, but this shell lacks `pydantic`, so import-time execution could not run here.
+
+## move AwardOutcome into shared schemas enums
+Files: schemas/enums.py, movie_ingestion/imdb_scraping/models.py, movie_ingestion/imdb_scraping/parsers.py
+Why: `AwardOutcome` is a shared schema-level concept rather than scraper-local state, so it belongs in `schemas/enums.py` alongside other cross-module enums. This keeps enum ownership consistent and avoids hiding a reusable type inside the IMDB scraper models module.
+Approach: Moved `AwardOutcome(StrEnum)` into `schemas/enums.py`, removed the local definition from `movie_ingestion/imdb_scraping/models.py`, and updated both the scraper models and parser to import it from the shared enums module. JSON representation is unchanged (`"winner"` / `"nominee"`), so tracker persistence behavior remains the same.
+
+## Franchise schema v4 — two-axis rewrite
+Files: schemas/enums.py, schemas/metadata.py, movie_ingestion/metadata_generation/prompts/franchise.py, movie_ingestion/metadata_generation/generators/franchise.py
+
+### Intent
+Replace the v3 closed `franchise_role` enum with a decomposed, two-axis schema that separates IDENTITY (what brands/groups the film belongs to) from NARRATIVE POSITION (how it relates to prior films). The v3 design conflated these axes and produced three structural problems documented in search_improvement_planning/franchise_test_iterations.md that no amount of prompt tuning could fix: pair-remakes with no franchise (Scarface 1983) couldn't be represented, the Iron Man / X-Men 2000 null-case was internally contradictory, and the reboot ↔ remake overlap had no clean tiebreaker. v4 dissolves all three. The final field set was co-designed across ~8 conversation turns starting from a downstream-query inventory.
+
+### Key Decisions
+- **lineage vs shared_universe split.** `lineage` is the NARROWEST recognizable line of films (Batman, Spider-Man, Harry Potter, Godzilla), a SEMANTIC FLIP from v3 where those names were forbidden in favor of broader brands. `shared_universe` is the broader cinematic universe above the lineage (MCU, DCEU, Wizarding World, MonsterVerse) when one exists. Null when the lineage is itself top-level (Star Wars, James Bond). Matches the query shapes users actually type ("Batman movies" vs "Marvel movies").
+- **`lineage_position` as a single nullable enum, not four booleans.** Values: sequel / prequel / remake / reboot / null. Schema-level mutual exclusivity means `sequel=true, prequel=true` is physically unreachable — the v3 overlap problems (Jungle Book 2016 satisfying both reboot and remake definitions) are dissolved by the enum shape, not by tiebreaker rules. Remake vs reboot tiebreaker language still in the prompt: remake = retells a specific prior story spine; reboot = new story with same IP.
+- **`lineage_position` can populate with `lineage=null`.** Pair-remakes like Scarface 1983 retelling Scarface 1932 have a clean remake relationship without forming a multi-entry brand. v3's hard null-propagation rule destroyed this signal; v4 relaxes it so the inter-film relationship survives.
+- **`special_attributes` as a small enum array, not separate booleans.** Spinoff and crossover are independent orthogonal predicates that combine freely with any `lineage_position` and with each other. The array form invites enumeration as a single decision and gives a cleaner empty default than two false booleans. v3's three-constraint spinoff test (MINOR IN SOURCE / GOES SOMEWHERE NEW / LEAVES THE SOURCE BEHIND) is preserved verbatim in the prompt because it was working correctly in v3.
+- **`launches_subgroup` coupled to `recognized_subgroups`.** Defined as: true iff the film is the earliest-released entry in at least one of its `recognized_subgroups`. Replaces v3's vague "culturally-recognized subgroup" language. Silently enforced in `validate_and_fix` — if the model emits `launches_subgroup=true` with an empty groups list, the boolean is cleared. See the narrative-era critique in the conversation history for why this tight coupling beats the "new era trigger" framework (which undercounts MCU phase transitions and overcounts time-jumped sequels).
+- **Reasoning fields before decision fields, scoped per block.** Three reasoning fields (identity, subgroups, position) instead of v3's five. Scoping keeps reasoning adjacent to the commitment it informs (Jason Liu / Instructor's "just-in-time reasoning" pattern) rather than going stale between a single top-level reasoning block and the structured answer at the bottom. Special_attributes has no dedicated reasoning field because the three-constraint spinoff test is operationalized sufficiently in the field description itself; revisit if v4 eval shows drift.
+- **`FranchiseRole` deleted from `schemas/enums.py`.** No production code referenced the stable integer IDs (1–6) that enum carried — confirmed via grep. The aspirational Postgres column it was reserved for was never built.
+- **`validate_and_fix` applies three deterministic fixups silently.** (1) Partial null-propagation: `lineage=null` clears `shared_universe` / `recognized_subgroups` / `launches_subgroup`, but deliberately leaves `lineage_position` and `special_attributes` alone so pair-remakes and Joker-2019-style standalone spinoffs work. (2) `launches_subgroup` coupling to `recognized_subgroups`. (3) `special_attributes` dedup. Silent correction keeps the batch pipeline flowing on single-row inconsistencies instead of hard-failing.
+
+### Planning Context
+Full field-set derivation is in the conversation history starting with the downstream-query inventory (~45 query shapes organized by tier) and progressing through iterative naming and mutual-exclusivity discussions. Key moments: (a) deciding that direct film-to-film relationship pointers are NOT needed because lineage-membership + relational flags compose for the same queries, (b) confirming `launches_subgroup` should be tightly coupled to `recognized_subgroups` rather than derived from narrative triggers (Narrative Era framework was critiqued and rejected), (c) the schema-design decision to use enums over boolean clusters driven by the concept_tags precedent and general LLM structured-output practice (Instructor, BAML, OpenAI structured outputs guide all converge on enums-over-booleans for mutually exclusive choices).
+
+### Files modified
+- `schemas/enums.py`: deleted `FranchiseRole`, added `LineagePosition` and `SpecialAttribute` enums.
+- `schemas/metadata.py`: full rewrite of `FranchiseOutput` class body; updated enum imports; added `validate_and_fix` override.
+- `movie_ingestion/metadata_generation/prompts/franchise.py`: full rewrite of `SYSTEM_PROMPT` (640 → ~720 lines) targeting the new schema. Preserved every v3 element that was working (EMPTY-THEN-ADD framing, three-constraint spinoff test, IS NOT filters, sub-series restatement blocks, Star-Wars-only "original trilogy" scoping, positive-commitment framing). Changed only what the new schema demands: lineage-vs-universe split section with worked examples, new lineage_position procedure with remake-vs-reboot tiebreaker, new special_attributes section, new launches_subgroup definition via earliest-released-in-subgroup rule, legal `lineage=null + lineage_position` combinations.
+- `movie_ingestion/metadata_generation/generators/franchise.py`: module docstring and `build_franchise_user_prompt` docstring updated to reflect two-axis framing. No functional code changes — the generator wires the schema + prompt + LLM call generically, and the batch pipeline (`generator_registry.py`, `request_builder.py`, `result_processor.py`, `pre_consolidation.py`) required zero changes because everything references `FranchiseOutput` by class name (preserved) or `config.schema_class` generically.
+
+### Verification performed
+- Import + JSON-schema smoke test: `FranchiseOutput` imports cleanly, field order in the strict JSON schema matches reasoning-before-answer intent, registry resolves franchise → `FranchiseOutput`, prompt loads.
+- `validate_and_fix` round-trip tests on 8 edge cases, all passing: Scarface pair-remake (position stays with lineage=null), null-propagation clears shared_universe, null-propagation clears recognized_subgroups + launches_subgroup, launches_subgroup forced false when groups empty, special_attributes dedup, Joker-2019-style standalone spinoff (lineage=null + special_attributes=["spinoff"] preserved), healthy Iron Man case untouched, enum rejection of invalid value "mainline" raises ValidationError as expected.
+
+### Follow-up (not in scope for this change)
+- Existing rows in the SQLite `generated_metadata.franchise` column are in v3 format and will be overwritten on the next batch run. Recommendation: re-run franchise generation for all movies after this change lands.
+- `movie_ingestion/metadata_generation/generators/test_franchise.ipynb` and `franchise_test_results.json` (both in git status, uncommitted) will become stale against the new schema. Deferred to a separate task per user decision.
+- Downstream integration: `FranchiseOutput` is NOT currently consumed by `vector_text.py` (which reads `SourceOfInspirationOutput.franchise_lineage` instead) or by `ingest_movie.py` (no franchise references). When FranchiseOutput is eventually wired into vector text or Postgres columns, that will be a separate change.
+
+## Franchise v4 — schema compaction and planning-doc write-through
+Files: schemas/metadata.py, schemas/enums.py, search_improvement_planning/franchise_test_iterations.md
+Why: After the initial v4 rewrite landed, the per-field `Field(description=...)` text and the class-level comments inside `FranchiseOutput` were verbose enough to duplicate most of what the system prompt already carries — wasting LLM context. Separately, `LineagePosition` and `SpecialAttribute` used Python class docstrings for their documentation, which Pydantic ships into the generated JSON schema under `$defs` `description`, leaking guidance to the model through a second uncontrolled channel. And the full v4 decision set was still only in conversation form; it needed to be saved to the permanent planning doc.
+Approach: Compacted every `FranchiseOutput` field description to a single short definitional sentence plus the "must be written BEFORE X" ordering note where relevant. Total per-property description chars dropped from ~9,400 to 1,875 (~80% reduction). Kept reasoning-before-answer field order, `validate_and_fix` behavior, and all validator round-trip test cases unchanged. Replaced the block-header comments inside the class (`# IDENTITY BLOCK`, etc.) with short single-line section comments and moved the architecture rationale into a single comment block ABOVE the class. Moved enum documentation from class docstrings into `#`-comments above each class definition in `schemas/enums.py`, matching the existing `SourceMaterialType` pattern — verified via `to_strict_json_schema` that `LineagePosition.description` and `SpecialAttribute.description` are both `None` in the generated JSON schema. Separately, appended a ~460-line v4 section to `search_improvement_planning/franchise_test_iterations.md` documenting the query-inventory-driven design, the final field list, the per-field definitions, the validator fixups, a 19-film worked-examples acceptance table, the v3→v4 resolution table, seven load-bearing schema-design decisions, and the test acceptance criteria for the next eval.
+Testing notes: Re-ran the strict JSON schema generator — field order preserved, enum `$defs` descriptions are null. Re-ran all six validator round-trip edge cases (pair-remake, null-prop clears SU, null-prop clears groups, launches_subgroup coupling, special_attributes dedup, standalone spinoff) — all still pass. No functional regressions.
+Testing notes: Ran `python3 -m py_compile schemas/enums.py movie_ingestion/imdb_scraping/models.py movie_ingestion/imdb_scraping/parsers.py schemas/movie.py`.
+
+## Viewer experience embedding text — structured labels with explicit negations
+Files: schemas/metadata.py, implementation/prompts/vector_subquery_prompts.py, unit_tests/test_metadata_embedding_text.py, unit_tests/test_vector_text.py, search_improvement_planning/v2_data_architecture.md, docs/modules/schemas.md, docs/modules/ingestion.md, docs/decisions/ADR-058-vector-text-formatting-conventions.md
+Why: The V2 search planning work identified flat term bags as a retrieval weakness for multi-dimensional movies. Viewer experience needed the same structured-label treatment already planned for other spaces, but with one additional requirement: negations had to remain first-class and polarity-safe rather than being mixed into the positive term stream. The docs also needed an explicit boundary statement so new deterministic V2 data does not drift back into this vector space.
+Approach: Reworked `ViewerExperienceOutput.embedding_text()` to emit fixed-order labeled multiline text, with one positive line and one optional `*_negations:` line per section. Kept the existing 8 schema fields and upstream generation inputs unchanged. Left `create_viewer_experience_vector_text()` as a thin wrapper over the schema method. Updated viewer-experience embedding tests to assert labeled output, explicit negation lines, omission of empty negation lines, and stable section ordering. Realigned the viewer-experience search subquery prompt away from the old "flat, unlabeled comma-separated list" model and rewrote its examples into the new labeled multiline shape so query embeddings and document embeddings stay format-aligned. Updated planning docs and persistent docs to describe the new embedding contract, the explicit-negation convention, and the rule that awards, franchise, source-material types, countries, box-office buckets, keyword IDs, production techniques, and concept tags remain outside this vector space.
+Testing notes: `python -m py_compile schemas/metadata.py implementation/prompts/vector_subquery_prompts.py movie_ingestion/final_ingestion/vector_text.py` passed. `pytest unit_tests/test_metadata_embedding_text.py -q -k "ViewerExperienceEmbeddingText"` passed (5 tests). Broader `unit_tests/test_metadata_embedding_text.py` still has pre-existing `plot_analysis` label expectation failures unrelated to this change, and `unit_tests/test_vector_text.py` could not be imported in this environment because `orjson` is missing locally.
+
+## Reduced anchor vector refresh
+Files: movie_ingestion/final_ingestion/vector_text.py, schemas/movie.py, docs/decisions/ADR-001-eight-vector-spaces.md, docs/decisions/ADR-058-vector-text-formatting-conventions.md, docs/llm_metadata_generation_report.md, docs/modules/schemas.md, docs/decisions/ADR-056-movie-tracker-backed-schema-loader.md, search_improvement_planning/v2_data_architecture.md, search_improvement_planning/v2_data_needs.md, search_improvement_planning/open_questions.md, search_improvement_planning/new_system_brainstorm.md, search_improvement_planning/keyword_vocabulary_audit.md
+Why: We decided to keep `anchor` in V2, but only as a lean holistic fingerprint rather than the old broad catch-all movie card. The embedded text needed to drop structured/filterable facts and stabilize around labeled movie-wide summary fields. The planning docs and active reference docs also needed to stop describing anchor as either broad or removed.
+Approach: Rewrote `create_anchor_vector_text()` to emit labeled multiline text in a fixed order: `title`, `original_title`, `identity_pitch`, `identity_overview`, `genre_signatures`, `themes`, `emotional_palette`, `key_draws`, `maturity_summary`, `reception_summary`. Removed keywords, source/franchise signals, languages, decade, budget, awards, reception tier, and other non-holistic content from the anchor text. Switched genre content to plot-analysis `genre_signatures` only, with no IMDB-genre merge. Removed the now-unused `Movie.title_with_original()` helper. Updated the vector-space ADR, vector-formatting ADR, anchor reference section in the metadata-generation report, and the V2 planning docs so they consistently define anchor as retained in reduced form and update the embed-count language back to 8 spaces / 800K embeddings.
+Design context: The reduced anchor intentionally preserves only high-level "movie as a whole" semantics while leaving structured/filterable facts in Postgres or specialized vectors. This keeps anchor useful for holistic similarity without recreating the dilution problem from the broad V1 shape.
+Testing notes: Ran `python3 -m py_compile movie_ingestion/final_ingestion/vector_text.py schemas/movie.py` successfully. Ran targeted grep/consistency checks to confirm the touched planning docs no longer say anchor is dropped from V2 or assume a 7-space embedding rebuild. Did not run pytest or edit tests in this pass.
+
+## Franchise v5 — launched_franchise flag, normalization rule, shared_universe loosening, field rename
+Files: schemas/metadata.py, schemas/enums.py, movie_ingestion/metadata_generation/prompts/franchise.py, movie_ingestion/metadata_generation/generators/franchise.py, movie_ingestion/metadata_generation/generators/test_franchise.ipynb, movie_ingestion/metadata_generation/generators/franchise_test_results.json
+
+### Intent
+Address four structural gaps surfaced by the v4 79-movie eval: (1) "movies that launched a franchise" queries had no retrieval signal because launches_subgroup is structurally locked to false for franchise openers without named subgroups (Shrek, Matrix, Jurassic Park); (2) no global normalization rule for named entities allowed MCU/DCEU to leak into lineage/shared_universe fields; (3) shared_universe was too strict to handle spinoff-parent relationships (Puss in Boots→Shrek, Minions→Despicable Me, Logan→X-Men); (4) the anti-restatement filter stripped disambiguating qualifiers like "connery bond era". Also renamed launches_subgroup → launched_subgroup for tense consistency with the new flag.
+
+### Key Decisions
+- **New FIELD 7 `launched_franchise`** with a four-part test: first cinematic entry (lineage_position null), not a spinoff, source-material recognition test (film franchise dominates over any prior book/game/toy/show), and relevant follow-ups test (audience recognizes a continuing film franchise). Independent from launched_subgroup — a film can fire one, both, or neither. Iron Man 2008 fires launched_subgroup=true (opens phase one inside Marvel) and launched_franchise=false (Marvel franchise already existed). Shrek 2001 fires only launched_franchise=true.
+- **Universal normalization** for every named entity (lineage, shared_universe, every subgroup label): lowercase, digits spelled out, "&" → "and", abbreviations and first+last names expanded only when the expansion is in common use (MCU → marvel cinematic universe ✓; monsterverse stays). Applied as a GLOBAL OUTPUT RULES block near the top of the prompt and restated inside FIELD 3+4 for emphasis (user chose duplication over single source of truth).
+- **shared_universe now accepts two shapes**: (A) formal shared cinematic universe hosting multiple lineages (marvel cinematic universe, dc extended universe, wizarding world, monsterverse, conjuring universe); (B) parent franchise of a spinoff sub-lineage (puss in boots → shrek; minions → despicable me; logan → x-men). Shape B is new — v4 rejected it outright.
+- **Hobbs & Shaw stays under lineage "fast and furious"** with no shared_universe — single spinoff, insufficient volume to promote to its own lineage. Will revisit if a second film ships.
+- **REMAKE enum value retained** for classification fidelity but NOT consumed at search time — source_of_inspiration covers film-to-film retellings. Documented via a code comment above the enum member.
+- **Anti-restatement carveout**: a label that differs from the lineage by a meaningful disambiguating qualifier (era, director, actor, timeline) is NOT a bare restatement. "connery bond era" is now valid.
+- **validate_and_fix() coherence block for launched_franchise**: forcibly false when any precondition fails (lineage null, lineage_position populated, or spinoff in special_attributes). Keeps the flag from drifting out of sync with the rest of the record.
+- **SOT updates**: normalized all expected_lineage / expected_shared_universe / expected_recognized_subgroups to lowercase canonical forms; promoted Minions to its own lineage with shared_universe="despicable me"; added shared_universe="shrek" to Puss in Boots; added shared_universe="x-men" to Logan; gave Rogue One a "star wars anthology films" subgroup with launched_subgroup=true; added expected_launched_franchise=None (placeholder pending joint user review) to all 79 rows.
+- **Eval scorer extended** with a new LAUNCHED_FRANCHISE_WRONG RunResult and a launched_franchise_ok field comparison. When expected_launched_franchise is None the check is skipped (treated as OK) so the scorer remains valid until the user finalizes per-row rulings.
+
+### Planning Context
+Plan file: /Users/michaelkeohane/.claude/plans/nested-jumping-quokka.md. User rulings were iterated over four conversation turns; key changes from my initial "either-axis" framing: Iron Man / Batman Begins / Casino Royale are launched_subgroup only (NOT launched_franchise), Jaws is FALSE because sequels are culturally forgotten, spinoffs can never be launched_franchise=true by definition, and the normalization rule favors the most common form (so compact forms stay when the expansion isn't in common use). Spinoff redefinition was deferred to a future message — FIELD 6 spinoff text is unchanged in this pass.
+
+### Testing Notes
+- All modified files compile (ast.parse on .py; compile() on notebook cell sources).
+- Notebook field rename was done via Python to preserve JSON structure.
+- launched_franchise ruling table for all 79 movies is the next step — I have a proposal ready but will present it for joint walk-through before populating the SOT (user ruling F3).
+- After SOT is locked: rerun the eval notebook against all four candidate models (gpt5-mini-medium, gpt5-mini-low, gpt5-mini-minimal, gpt54-mini-low) and compare v5 accuracy per field against the v4 baseline already in franchise_test_results.json.
+- Watch for regressions specifically on: (a) lineage normalization casing, (b) launched_franchise four-part test accuracy on Group C cases (Iron Man, Black Panther, Wonder Woman, X-Men, Spider-Man 2002), (c) shape B shared_universe on spinoff parents, (d) Sherlock Holmes 2009 firing launched_subgroup for "ritchie sherlock holmes films".
+
+## Spinoff redefinition — protagonist-shift + legacy-centrality test
+Files: movie_ingestion/metadata_generation/prompts/franchise.py, movie_ingestion/metadata_generation/generators/test_franchise.ipynb, search_improvement_planning/franchise_test_iterations.md
+
+Why: The v4 three-constraint spinoff test keyed on "MINOR IN SOURCE" as constraint (a), which bailed out on Creed (Apollo Creed was a co-lead of Rocky 1976, so Adonis technically descends from a non-minor source character). The v4 fallback was constraint (c)'s "legacy sequel with prior protagonist present = NOT a spinoff" rule, which forced Creed into a pure-sequel slot and erased its genuinely spinoff-like nature (new protagonist, Rocky as trainer not fighter, Rocky's arc already complete). User agreed via side-conversation analysis that a protagonist-shift framing is structurally cleaner.
+
+Approach: Replaced constraints (a)(b)(c) in FIELD 6 spinoff block with a revised three-constraint test:
+- (a) NEW-TO-THE-SOURCE PROTAGONIST — measured against the SOURCE at the top of the lineage tree, not the immediate predecessor. Puss in Boots LW still qualifies because Puss was a side character in Shrek 2, even though he's been the lead of his sub-lineage since 2011.
+- (b) PRIOR LEAD NOT IN THE DRIVER'S SEAT — mentors, allies, passengers are fine; prior lead still calling the shots is not.
+- (c) PRIOR LEGACY NOT CENTRAL TO THIS PLOT — the key new test. Distinguishes Creed (Rocky's arc is complete) from legacy sequels whose spine is the prior hero's legacy (Ghostbusters: Afterlife → Egon's redemption, TFA → Skywalker family saga, Blade Runner 2049 → Deckard's paternity, Halloween 2018 → Laurie's trauma).
+
+Planned-pillar carve-out preserved verbatim from v4 (Wonder Woman, Black Panther, Captain Marvel, Doctor Strange, Thor are never spinoffs regardless of the constraint test).
+
+Example lists rewritten: Creed moved from "fails" to "fires" with full constraint-by-constraint reasoning. Added TFA, Blade Runner 2049, Halloween 2018, Tron: Legacy as new negative examples exercising constraint (c) — these hold the line against legacy-sequel drift that the earlier two-constraint version of this redefinition would have mis-classified. IS NOT summary block rewritten to reorganize failures by which constraint they fail.
+
+Test notebook SOT: single entry updated — tmdb_id 312221 (Creed) `expected_special_attributes` flipped from `[]` to `["spinoff"]`, blurb updated with new reasoning. Verified against the notebook that no other test case needed updating: Rogue One / Solo / Puss in Boots LW already `["spinoff"]`, Wonder Woman / Black Panther already `[]` via pillar carve-out. TFA / Blade Runner 2049 / Halloween 2018 / Top Gun: Maverick / Ghostbusters: Afterlife / Joker / Prometheus are not in the SOT at all so no update needed there.
+
+Worked-examples table in search_improvement_planning/franchise_test_iterations.md updated so the Creed row shows `[spinoff]` in the special_attributes column to match the new SOT.
+
+No schema changes, no validator changes, no generator code changes. Enum vocabulary and field structure unchanged.
+
+Design context: Plan file /Users/michaelkeohane/.claude/plans/piped-weaving-tiger.md; in-line analysis in the conversation weighing protagonist-shift vs. minor-in-source framings and resolving the TFA / Rogue One edge cases that a pure two-constraint formulation would have gotten wrong.
+
+Testing Notes:
+- Prompt is LLM-consumed text; no compile check applies beyond reading the rewritten block and confirming internal consistency between (a)(b)(c), the example lists, and the IS NOT summary.
+- Notebook change was a targeted JSON-level two-line edit; verified exactly two lines of cell 3 source differ (blurb + expected_special_attributes).
+- Full eval re-run is deferred (harness re-run is already its own deferred task per the v4 plan). Acceptance targets for the next run: Creed fires spinoff with reasoning traces citing the new-protagonist + Rocky-as-trainer + arc-complete logic; no regressions on Rogue One/Solo/PIB LW/Venom/Joker/Prometheus/Maleficent; pillar disqualifier still holds Wonder Woman/Black Panther/Captain Marvel/Doctor Strange/Thor off; TFA/Blade Runner 2049/Halloween 2018/Top Gun: Maverick/Ghostbusters: Afterlife do not fire spinoff; Creed's lineage_position remains "sequel".
+
+## Watch context embedding text — labeled multiline format
+Files: schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py, implementation/prompts/vector_subquery_prompts.py, search_improvement_planning/v2_data_architecture.md, docs/modules/schemas.md, docs/modules/ingestion.md, docs/decisions/ADR-058-vector-text-formatting-conventions.md, unit_tests/test_metadata_embedding_text.py, unit_tests/test_vector_text.py, unit_tests/test_vector_subquery_prompts.py
+Why: We decided to keep watch-context content untouched and change only its embedding representation. The old flat comma-separated term bag needed to become structured labeled text so document embeddings, query embeddings, and source-of-truth docs all describe the same shape.
+Approach: Reworked `WatchContextOutput.embedding_text()` to emit fixed-order labeled lines for `self_experience_motivations`, `external_motivations`, `key_movie_feature_draws`, and `watch_scenarios`, omitting empty sections and still excluding `identity_note` and `evidence_basis`. Left `__str__()` and the underlying generated data unchanged. Kept `create_watch_context_vector_text()` as a thin wrapper, but documented it as returning labeled multiline schema output. Rewrote the watch-context subquery prompt from the old flat-list description to the new labeled-line format, including updated examples and output contract so query text is generated in the same structure. Updated the planning/docs sources of truth to explicitly call this a formatting-only change.
+Design context: The user explicitly chose an all-or-nothing data policy for watch_context, so no terms or sections were removed. The only behavior change is formatting and alignment between ingestion-time embeddings and search-time prompt guidance.
+Testing notes: `pytest unit_tests/test_metadata_embedding_text.py -q -k WatchContext` passed (6 tests). `pytest unit_tests/test_vector_subquery_prompts.py -q` passed (2 tests). `uv run python -m pytest unit_tests/test_vector_text.py -q -k WatchContext` passed (2 tests). A broader direct run of `unit_tests/test_vector_text.py` outside `uv` is still blocked locally because `orjson` is not installed in the base interpreter, and the broader `unit_tests/test_metadata_embedding_text.py` file still contains unrelated pre-existing plot-analysis expectation failures.
+
+## Narrative techniques embedding text — structured labels on ingestion side
+Files: schemas/metadata.py, unit_tests/test_metadata_embedding_text.py, unit_tests/test_vector_text.py, search_improvement_planning/v2_data_architecture.md, docs/modules/schemas.md, docs/modules/ingestion.md, docs/llm_metadata_generation_new_flow.md, docs/decisions/ADR-058-vector-text-formatting-conventions.md
+Why: The `narrative_techniques` vector was still embedding as a flat comma-separated bag of terms even though the V2 search planning work depends on section-preserving structured labels for cross-space rescoring. The source-of-truth docs for this vector had also drifted: some still described old 11-section outputs and obsolete input assumptions.
+Approach: Reworked `NarrativeTechniquesOutput.embedding_text()` to emit fixed-order labeled multiline text, one line per populated section, using the real schema field names (`narrative_archetype`, `narrative_delivery`, `pov_perspective`, `characterization_methods`, `character_arcs`, `audience_character_perception`, `information_control`, `conflict_stakes_design`, `additional_narrative_devices`). Empty sections are omitted, per-term `normalize_string()` behavior is preserved, and justification/evidence fields remain excluded. Left `__str__()` unchanged and kept `create_narrative_techniques_vector_text()` as a thin wrapper. Updated the V2 data architecture doc, schema/module docs, ingestion module docs, the metadata-generation flow doc, and ADR-058 so they all describe the same 9-section labeled embedding contract and current merged-keyword / plot-or-craft input model.
+Design context: Scope was intentionally limited to ingestion-side embedding text and documentation. No new data sources were added to `narrative_techniques`, and search-side schema/prompt realignment plus full re-embedding remain separate follow-up work.
+Testing notes: `uv run python -m pytest unit_tests/test_metadata_embedding_text.py::TestNarrativeTechniquesEmbeddingText unit_tests/test_vector_text.py::TestNarrativeTechniquesReturnsNone -q` passed (6 tests). A broader `uv run python -m pytest unit_tests/test_metadata_embedding_text.py unit_tests/test_vector_text.py -q` run still reports unrelated pre-existing failures in plot-analysis, anchor, and reception expectations that do not touch the narrative-techniques formatter.
+
+## Franchise metadata v8 — split is_crossover / is_spinoff into independent boolean tests
+Files: schemas/enums.py, schemas/metadata.py, movie_ingestion/metadata_generation/prompts/franchise.py, movie_ingestion/metadata_generation/generators/franchise.py
+
+### Intent
+Replace the `special_attributes: list[SpecialAttribute]` enum array (with a single shared `special_attributes_reasoning` field) with two independent boolean tests: `is_crossover` / `crossover_reasoning` and `is_spinoff` / `spinoff_reasoning`. Rebuild both procedures from scratch. The old v7 scaffold was character-first ("was the lead a major or minor character in the source?") and systematically misclassified origin-story branches like Solo: A Star Wars Story — Han was labeled a "lead" of the 1977 original, constraint (a) mechanically failed, and the model emitted `special_attributes = []` despite Solo being unambiguously a spinoff by its anthology sub-banner framing.
+
+### Key Decisions
+- **Split the reasoning fields.** Spinoff and crossover are two different tests with different inputs and different failure modes. Sharing one reasoning budget let the longer spinoff analysis crowd out crossover and forced the model to juggle both tests at once. Each now has its own reasoning trace, and field ordering (crossover_reasoning → is_crossover → spinoff_reasoning → is_spinoff) enforces "reason before verdict" independently for each test.
+- **Crossover is now a single identity question.** "Is this film's identity the fact that multiple known entities or characters that normally live in separate stories are now interacting?" The old DEFINING-TRAIT TEST asked the model to enumerate parent franchises first, which biased toward hallucinated pairings and false positives. Starting from identity and short-circuiting on the single question is both simpler and less hallucination-prone.
+- **DELIBERATE SEMANTIC CHANGE on crossover.** Shared-universe ensemble films now fire `is_crossover=true`: Avengers (2012), Age of Ultron, Infinity War, Endgame, Civil War, Justice League. The old "same top-level brand disqualifies crossover" rule is removed. User explicitly endorsed this reinterpretation ("Avengers is a crossover movie because it's about all these characters that are normally kept to their own stories have all come together"). Downstream retrieval behavior for "crossover" queries will shift to include team-up films.
+- **Spinoff is rebuilt around structural situating.** New four-step procedure: (1) parametric knowledge supplement — specific named labels only (sub-banner names, studio slates), 95%+ confidence required, no invented framings, supplements rather than overrides the provided inputs; (2) structural situating — carries-forward / leaves-behind analysis plus trunk-vs-branch placement; (3) conditional character disambiguation — only runs when Step 2 is ambiguous, and reframed as lead-character / lead-plotline / lead-events (NOT major vs. minor in source); (4) verdict. Under the new scaffold Solo resolves via Step 1 parametric recall of "A Star Wars Story" before character questions ever run.
+- **Parametric knowledge supplements, never overrides.** If provided inputs clearly contradict a recalled framing, trust the inputs. This is a deliberate failure mode accepted in exchange for hallucination safety — the user explicitly chose this posture over "override-allowed for specific labels".
+- **Trunk-vs-branch stays as a reasoning artifact, not a first-class field.** User declined to promote it. Considered but rejected adding it as a retrieval signal.
+- **Planned-pillar carve-out shrinks to one sentence.** Under structural situating, Wonder Woman / Black Panther / Captain Marvel / Doctor Strange / Thor resolve as trunk entries of their shared cinematic universe from Step 2 alone. No dedicated carve-out block needed.
+- **Schema field descriptions stay minimal.** Per the earlier decision in this session, reasoning-field descriptions only say "follow the procedure defined in the system prompt" and "must be emitted BEFORE X". All definitional content lives in the system prompt to avoid two competing procedures drifting out of sync.
+- **`validate_and_fix` updated.** The launched_franchise coherence check now reads `instance.is_spinoff` instead of `SpecialAttribute.SPINOFF in instance.special_attributes`. The special_attributes dedup block is removed (no longer a list). Partial null-propagation comments updated to reference `is_crossover` and `is_spinoff`.
+- **FIELD 7 Test 2 updated** to read `is_spinoff` directly instead of checking membership in the retired enum list. All stale `special_attributes` references in FIELD 7 facts, decision gate, IS NOT block, and hard-constraints block were swept.
+
+### Planning Context
+The full plan lives at `/Users/michaelkeohane/.claude/plans/radiant-riding-pebble.md`. Rationale for the character-first → structure-first shift, the crossover identity-question framing, the parametric-knowledge posture, and the non-goals (tests out of scope, human planning docs untouched, other reasoning fields unchanged) are all captured there.
+
+### Testing Notes
+Did NOT touch `test_franchise.ipynb` or `franchise_test_results.json` per the test-boundaries rule — both reference `expected_special_attributes` / `special_attributes` and will need a separate pass once the user explicitly asks. Also deliberately untouched: `search_improvement_planning/franchise_metadata_planning.md`, `search_improvement_planning/franchise_test_iterations.md`, `docs/conventions_draft.md`.
+
+Verified end-to-end via an inline Python check: `FranchiseOutput.model_json_schema()` reports the expected 14 fields in the correct order with `special_attributes` / `special_attributes_reasoning` removed and the four new fields present; `validate_and_fix` coerces `launched_franchise=False` when `is_spinoff=True`; `schemas.enums` no longer exposes `SpecialAttribute`. A grep of all `.py` files for `special_attributes` / `SpecialAttribute` returns only historic docstring references in `prompts/franchise.py` (v7 version history), `generators/franchise.py` (v8 migration note), and `schemas/metadata.py` (v8 migration note) — no runtime code references remain.
+
+Wet-run evaluation on Solo / Avengers / a main-trunk sequel / a planned-pillar film is the expected next step and will probably want to happen in the same notebook pass that updates the test fixtures. Not run in this changeset.
+
+## Franchise prompt — Scarface→Cape Fear test-leak replacement
+Files: movie_ingestion/metadata_generation/prompts/franchise.py | Replaced all six Scarface (1983) references (intro v-notes, axes note, Field 5 intro, remake definition, worked examples, RULES section) with Cape Fear (1991) to remove answer leakage for the deterministic franchise test set; de-duplicated the remake examples list since Cape Fear was already present, and preserved the canonical "pair-remake with lineage=null" pedagogy verbatim.
+
+## Batch status/process — tolerate older tracker schemas
+Files: movie_ingestion/metadata_generation/batch_generation/run.py
+Why: The review pass found that `status`/`process` could crash on an older tracker DB if the code knew about a newer metadata type but `metadata_batch_ids` had not been migrated with that `{type}_batch_id` column yet.
+Approach: Made `_get_active_batch_ids()` inspect `PRAGMA table_info(metadata_batch_ids)` and build its UNION query only from batch-id columns that actually exist in that specific DB. Missing columns now also emit a warning print naming the expected `metadata_batch_ids.{type}_batch_id` column before that metadata type is skipped for polling. This keeps batch polling resilient across mixed code/schema states without changing the command entrypoints or widening migration behavior.
+Design context: This is a targeted hardening fix for the batch-processing path only. It preserves the existing registry-driven CLI behavior while avoiding `OperationalError` on legacy tracker snapshots.
+Testing notes: Not run. The change is a small deterministic SQL-schema guard and the repo's AGENTS instructions say not to run tests unless explicitly asked.

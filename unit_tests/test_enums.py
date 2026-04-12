@@ -147,10 +147,14 @@ class TestSourceMaterialTypeUniqueness:
 # ---------------------------------------------------------------------------
 
 class TestMetadataType:
+    def test_metadata_type_production_techniques_exists(self):
+        """New PRODUCTION_TECHNIQUES member exists with correct string value."""
+        assert MetadataType.PRODUCTION_TECHNIQUES == "production_techniques"
+
     def test_metadata_type_source_material_v2_exists(self):
         """New SOURCE_MATERIAL_V2 member exists with correct string value."""
         assert MetadataType.SOURCE_MATERIAL_V2 == "source_material_v2"
 
     def test_metadata_type_member_count(self):
-        """Exactly 9 members after adding SOURCE_MATERIAL_V2."""
-        assert len(MetadataType) == 9
+        """Exactly 12 members after later metadata additions."""
+        assert len(MetadataType) == 12

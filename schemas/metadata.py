@@ -11,6 +11,7 @@ requests. One output schema per generation type:
     - WatchContextOutput (Wave 2, identity_note + evidence_basis)
     - NarrativeTechniquesOutput (Wave 2, per-section justifications)
     - ProductionKeywordsOutput (Wave 2, classification only)
+    - ProductionTechniquesOutput (Wave 2, classification only)
     - FranchiseOutput (independent, non-embeddable classification)
     - SourceOfInspirationOutput (Wave 2, parametric knowledge allowed)
 
@@ -35,7 +36,7 @@ from pydantic import BaseModel, Field, ConfigDict, constr, conlist, model_valida
 
 from implementation.misc.helpers import normalize_string
 from schemas.enums import (
-    FranchiseRole,
+    LineagePosition,
     SourceMaterialType,
     NarrativeStructureTag,
     PlotArchetypeTag,
@@ -122,155 +123,181 @@ class TermsWithNegationsSection(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Franchise (independent classification — NOT embedded into vectors)
+# Franchise (v8 — split crossover/spinoff into independent boolean
+# tests, NOT embedded into vectors)
 # ---------------------------------------------------------------------------
+#
+# Three orthogonal blocks: IDENTITY (lineage, shared_universe,
+# recognized_subgroups, launched_subgroup), NARRATIVE POSITION
+# (lineage_position enum plus independent is_crossover and is_spinoff
+# booleans, each with their own reasoning trace), and FRANCHISE LAUNCH
+# (launched_franchise, which answers "did THIS film kick off a
+# cinematic franchise that people recognize as a multi-film franchise
+# today?"). The crossover and spinoff tests were previously bundled
+# into a single special_attributes enum list with one shared reasoning
+# field; splitting them prevents the longer spinoff analysis from
+# crowding out crossover and lets each test run on its own scaffold.
+# See search_improvement_planning/franchise_test_iterations.md for
+# the full rationale and prompts/franchise.py for the procedure,
+# definitions, and examples driving generation.
+#
+# Field order is load-bearing: each scoped reasoning field comes before
+# the decision block it informs (chain-of-thought via schema order).
+# Field descriptions are intentionally compact — the system prompt
+# carries the main definitional weight. validate_and_fix() enforces
+# internal consistency (partial null-propagation + launched_subgroup
+# coupling + launched_franchise coherence) as cheap post-parse fixup.
 
 class FranchiseOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Each decision field is preceded by a two-step reasoning field
-    # (evidence → analysis) so the model commits to a conclusion only
-    # after visibly laying out and weighing the relevant signals. Field
-    # order matters for structured output: the reasoning must be
-    # generated BEFORE the decision it supports.
-
-    franchise_name_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+    # Identity block
+    lineage_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "Two-step reasoning for franchise_name. "
-            "Step 1 — Evidence: list the concrete signals that bear on "
-            "franchise membership (title recognition from your own knowledge, "
-            "collection_name, production companies, keywords, characters, "
-            "overview-based identification). "
-            "Step 2 — Analysis: weigh those signals and identify the "
-            "TOP-LEVEL recognizable brand or IP entity this movie belongs to "
-            "(e.g. 'Marvel', 'DC Comics', 'Star Wars'), NOT a more specific "
-            "cinematic sub-grouping (MCU, DCEU, Dark Knight Trilogy, "
-            "Wizarding World, etc.) — those belong in "
-            "culturally_recognized_groups. Must be written BEFORE franchise_name."
+            "Required reasoning trace for lineage and shared_universe. "
+            "Follow the procedure defined in the system prompt. Must be "
+            "emitted BEFORE lineage and shared_universe."
         ),
     )
-    franchise_name: constr(strip_whitespace=True, min_length=1) | None = Field(
+    lineage: constr(strip_whitespace=True, min_length=1) | None = Field(
         default=None,
         description=(
-            "The TOP-LEVEL publicly recognizable brand or IP entity this "
-            "movie belongs to. Use the broadest canonical brand (e.g. "
-            "'Marvel', 'DC Comics', 'Harry Potter', 'Godzilla') rather than "
-            "a narrower cinematic sub-grouping (MCU, DCEU, Dark Knight "
-            "Trilogy, Wizarding World, MonsterVerse) — those go in "
-            "culturally_recognized_groups. Null when the movie is standalone."
+            "See the system prompt for the definition, normalization "
+            "rules, and null conditions."
         ),
     )
-
-    franchise_role_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Two-step reasoning for franchise_role. "
-            "Step 1 — Evidence: list what you know about this movie's place "
-            "in the franchise (did the franchise entity exist before this "
-            "movie, does it continue prior cinematic canon, does it reset "
-            "continuity, does it retell a prior film's story spine, is a "
-            "minor character/subplot now the focus, is it a crossover). "
-            "Step 2 — Analysis: apply the starter / mainline / spinoff / "
-            "reboot / remake / crossover definitions in order and pick the "
-            "first that fits. If none fit cleanly, leave franchise_role "
-            "null — null role with populated franchise_name is a valid "
-            "output. If franchise_name is null, write 'N/A — standalone'. "
-            "Must be written BEFORE franchise_role."
-        ),
-    )
-    franchise_role: FranchiseRole | None = Field(
+    shared_universe: constr(strip_whitespace=True, min_length=1) | None = Field(
         default=None,
         description=(
-            "The movie's role within its top-level franchise. One of "
-            "starter, mainline, spinoff, reboot, remake, crossover. Null "
-            "when the movie is standalone OR when no role cleanly fits "
-            "despite belonging to the franchise."
+            "See the system prompt for the definition, valid shapes, "
+            "normalization rules, and null conditions."
         ),
     )
 
-    is_prequel_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+    # Subgroup block
+    subgroups_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "Two-step reasoning for is_prequel. "
-            "Step 1 — Evidence: note the in-universe chronology relative to "
-            "prior-released cinematic entries in the same franchise. "
-            "Step 2 — Analysis: set true only when this film is set "
-            "chronologically BEFORE the events of an already-released film "
-            "in the same franchise. Orthogonal to franchise_role — a "
-            "prequel can be mainline, spinoff, etc. If franchise_name is "
-            "null, write 'N/A — standalone'. Must be written BEFORE is_prequel."
+            "Required reasoning trace for recognized_subgroups and "
+            "launched_subgroup. Follow the procedure defined in the "
+            "system prompt. Must be emitted BEFORE recognized_subgroups "
+            "and launched_subgroup."
         ),
     )
-    is_prequel: bool = Field(
-        default=False,
-        description=(
-            "True iff the film is set chronologically before the events of "
-            "a prior-released cinematic entry in the same franchise. "
-            "Orthogonal to franchise_role."
-        ),
-    )
-
-    launches_subgroup_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Two-step reasoning for launches_subgroup. "
-            "Step 1 — Evidence: identify any notable culturally-recognized "
-            "subgroup (cinematic universe, director era, named trilogy, "
-            "actor run) this film may have kicked off. "
-            "Step 2 — Analysis: set true only when this film is the FIRST "
-            "entry in such a subgroup. Middle or final entries are false. "
-            "If franchise_name is null, write 'N/A — standalone'. Must be "
-            "written BEFORE launches_subgroup."
-        ),
-    )
-    launches_subgroup: bool = Field(
-        default=False,
-        description=(
-            "True iff this film is the first entry in a notable, "
-            "culturally-recognized subgroup of its franchise (e.g. Man of "
-            "Steel 2013 launching the DCEU, Star Wars: The Force Awakens "
-            "2015 launching the sequel trilogy, Batman 1989 launching the "
-            "Burton era, Deadpool 2016 launching the Deadpool subseries)."
-        ),
-    )
-
-    culturally_recognized_groups_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Two-step reasoning for culturally_recognized_groups. "
-            "Step 1 — Evidence: list any established sub-grouping terms you "
-            "know are used in conversation for this franchise at any level "
-            "of granularity (cinematic universes, eras, phases, sagas, "
-            "trilogies, actor runs, timelines, etc.) and whether this movie "
-            "falls inside them. "
-            "Step 2 — Analysis: filter to only the terms that are genuinely "
-            "established (never invented) and that this movie actually "
-            "belongs to. Emit every label in NORMALIZED form: lowercase, "
-            "digits spelled out as words ('phase three' not 'phase 3'), "
-            "'&' expanded to 'and', most-common canonical phrasing "
-            "('raimi trilogy' not 'sam raimi trilogy'). If none exist, "
-            "say so explicitly. If franchise_name is null, write "
-            "'N/A — standalone'. Must be written BEFORE "
-            "culturally_recognized_groups."
-        ),
-    )
-    culturally_recognized_groups: list[constr(strip_whitespace=True, min_length=1)] = Field(
+    recognized_subgroups: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
-            "Established grouping terms for franchise subsections, always "
-            "in normalized form: lowercase, digits spelled out as words "
-            "('phase three', not 'phase 3'), '&' expanded to 'and' "
-            "('fast and furious', not 'fast & furious'), and using the "
-            "most-common canonical phrasing ('raimi trilogy', not "
-            "'sam raimi trilogy'). Includes cinematic universes (e.g. "
-            "'marvel cinematic universe', 'dc extended universe', "
-            "'monsterverse', 'wizarding world'), named trilogies (e.g. "
-            "'the dark knight trilogy', 'original trilogy'), sagas "
-            "('infinity saga'), phases ('phase one'), and era labels "
-            "('sean connery era'). Empty whenever no established terms exist."
+            "See the system prompt for the definition, filters, and "
+            "normalization rules."
         ),
     )
+    launched_subgroup: bool = Field(
+        default=False,
+        description="See the system prompt for the definition.",
+    )
+
+    # Narrative position block
+    position_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Required reasoning trace for lineage_position. Follow the "
+            "procedure defined in the system prompt. Must be emitted "
+            "BEFORE lineage_position."
+        ),
+    )
+    lineage_position: LineagePosition | None = Field(
+        default=None,
+        description=(
+            "See the system prompt for the definition of each enum "
+            "value and the null conditions."
+        ),
+    )
+
+    # Crossover test (runs first — short, often short-circuits)
+    crossover_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Required reasoning trace for is_crossover. Follow the "
+            "procedure defined in the system prompt. Must be emitted "
+            "BEFORE is_crossover."
+        ),
+    )
+    is_crossover: bool = Field(
+        default=False,
+        description="See the system prompt for the definition.",
+    )
+
+    # Spinoff test (runs second — parametric recall, then structural
+    # situating, then conditional character disambiguation)
+    spinoff_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Required reasoning trace for is_spinoff. Follow the "
+            "procedure defined in the system prompt. Must be emitted "
+            "BEFORE is_spinoff."
+        ),
+    )
+    is_spinoff: bool = Field(
+        default=False,
+        description="See the system prompt for the definition.",
+    )
+
+    # Franchise launch flag
+    launch_reasoning: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Required reasoning trace for launched_franchise. Follow "
+            "the procedure defined in the system prompt. Must be "
+            "emitted BEFORE launched_franchise."
+        ),
+    )
+    launched_franchise: bool = Field(
+        default=False,
+        description=(
+            "See the system prompt for the definition and the "
+            "distinction from launched_subgroup."
+        ),
+    )
+
+    @classmethod
+    def validate_and_fix(cls, content: str) -> "FranchiseOutput":
+        """Validate raw LLM JSON and apply deterministic fixups.
+
+        (1) Partial null-propagation: if lineage is null, clear
+        shared_universe / recognized_subgroups / launched_subgroup.
+        lineage_position, is_crossover, and is_spinoff are deliberately
+        preserved — pair-remakes and standalone spinoff-flavored films
+        are legitimate with lineage=null.
+        (2) launched_subgroup ⇄ recognized_subgroups coupling.
+        (3) launched_franchise coherence: forcibly false when any
+        structural precondition fails (lineage null, lineage_position
+        populated, or is_spinoff true). Keeps the flag from drifting
+        out of sync with the rest of the record if the LLM's reasoning
+        slips.
+        """
+        instance = cls.model_validate_json(content)
+
+        if instance.lineage is None:
+            instance.shared_universe = None
+            instance.recognized_subgroups = []
+            instance.launched_subgroup = False
+
+        if instance.launched_subgroup and not instance.recognized_subgroups:
+            instance.launched_subgroup = False
+
+        # launched_franchise coherence — enforce the hard preconditions
+        # from the prompt's FIELD 7 test so a slipped reasoning trace
+        # cannot leave the record internally inconsistent.
+        if instance.launched_franchise:
+            if (
+                instance.lineage is None
+                or instance.lineage_position is not None
+                or instance.is_spinoff
+            ):
+                instance.launched_franchise = False
+
+        return instance
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +424,7 @@ class ReceptionOutput(EmbeddableOutput):
     def embedding_text(self) -> str:
         # Synthesis zone only — extraction-zone fields excluded
         parts = []
-        parts.append(self.reception_summary.lower())
+        parts.append(f"reception_summary: {self.reception_summary.lower()}")
         if self.praised_qualities:
             praised = ", ".join(normalize_string(q) for q in self.praised_qualities)
             parts.append(f"praised: {praised}")
@@ -562,56 +589,59 @@ class PlotAnalysisOutput(EmbeddableOutput):
     )
 
     def __str__(self) -> str:
-        # Must produce identical embedding text to PlotAnalysisOutput.__str__()
-        parts = []
-        if self.generalized_plot_overview:
-            parts.append(self.generalized_plot_overview.lower())
-        if self.elevator_pitch_with_justification:
-            # ElevatorPitchWithJustification.__str__ returns only the pitch
-            parts.append(str(self.elevator_pitch_with_justification).lower())
-        if self.genre_signatures:
-            parts.append(", ".join(self.genre_signatures).lower())
-        if self.conflict_type:
-            parts.append(", ".join(self.conflict_type).lower())
-        if self.character_arcs:
-            # CharacterArcWithReasoning.__str__ returns only the label
-            parts.extend(str(arc).lower() for arc in self.character_arcs)
-        if self.thematic_concepts:
-            # ThematicConceptWithJustification.__str__ returns only concept_label
-            parts.extend(str(t).lower() for t in self.thematic_concepts)
-        return "\n".join(parts)
+        # Delegates to embedding_text() so the two stay in lockstep.
+        return self.embedding_text()
 
     def embedding_text(self) -> str:
         """Build labeled embedding text for the plot_analysis vector space.
 
-        Prose fields (overview, elevator pitch) are self-contextualizing and
-        included without labels. Short categorical fields get semantic labels
-        to disambiguate their role for the embedding model.
+        V2 structured-label format: every field is emitted with an explicit
+        snake_case label matching its Pydantic field name. This preserves
+        per-attribute semantic context for the embedding model and lets the
+        search-side subquery generator template queries into the exact same
+        shape (prerequisite for cross-space rescoring — see
+        search_improvement_planning/new_system_brainstorm.md "Embedding
+        Format: Structured Labels").
+
+        Field order:
+          1. elevator_pitch  — shortest, highest-signal capsule first
+          2. plot_overview   — longer prose thematic summary
+          3. genre_signatures — enumerated categorical slots follow
+          4. conflict
+          5. themes          — thematic_concepts and character_arcs are
+          6. character_arcs    adjacent because plot_analysis character arcs
+                               are *thematic* arcs (e.g. "mentor's sacrificial
+                               legacy"), semantically closest to themes.
+                               Distinct from narrative_techniques'
+                               film-language arc labels ("coming-of-age").
         """
         parts = []
 
-        # Prose fields — lowercased, no label needed
+        # Prose fields — lowercased only; punctuation is meaningful here.
         if self.elevator_pitch_with_justification:
-            parts.append(self.elevator_pitch_with_justification.elevator_pitch.lower())
+            parts.append(
+                "elevator_pitch: "
+                + self.elevator_pitch_with_justification.elevator_pitch.lower()
+            )
         if self.generalized_plot_overview:
-            parts.append(self.generalized_plot_overview.lower())
+            parts.append("plot_overview: " + self.generalized_plot_overview.lower())
 
-        # Short label fields — each term normalized individually, then labeled
+        # Enumerated categorical fields — each term individually normalized.
         if self.genre_signatures:
-            parts.append("genre signatures: " + ", ".join(
+            parts.append("genre_signatures: " + ", ".join(
                 normalize_string(g) for g in self.genre_signatures
             ))
         if self.conflict_type:
             parts.append("conflict: " + ", ".join(
                 normalize_string(c) for c in self.conflict_type
             ))
-        if self.character_arcs:
-            parts.append("character arcs: " + ", ".join(
-                normalize_string(arc.arc_transformation_label) for arc in self.character_arcs
-            ))
         if self.thematic_concepts:
             parts.append("themes: " + ", ".join(
                 normalize_string(t.concept_label) for t in self.thematic_concepts
+            ))
+        if self.character_arcs:
+            parts.append("character_arcs: " + ", ".join(
+                normalize_string(arc.arc_transformation_label) for arc in self.character_arcs
             ))
 
         return "\n".join(parts)
@@ -689,22 +719,31 @@ class ViewerExperienceOutput(EmbeddableOutput):
         return ", ".join(t.lower() for t in combined_terms)
 
     def embedding_text(self) -> str:
-        combined_terms: list[str] = []
-        for section in (
-            self.emotional_palette,
-            self.tension_adrenaline,
-            self.tone_self_seriousness,
-            self.cognitive_complexity,
-            self.disturbance_profile,
-            self.sensory_load,
-            self.emotional_volatility,
-            self.ending_aftertaste,
-        ):
-            combined_terms.extend(section.terms)
-            combined_terms.extend(section.negations)
+        parts: list[str] = []
+        labeled_sections = (
+            ("emotional_palette", self.emotional_palette),
+            ("tension_adrenaline", self.tension_adrenaline),
+            ("tone_self_seriousness", self.tone_self_seriousness),
+            ("cognitive_complexity", self.cognitive_complexity),
+            ("disturbance_profile", self.disturbance_profile),
+            ("sensory_load", self.sensory_load),
+            ("emotional_volatility", self.emotional_volatility),
+            ("ending_aftertaste", self.ending_aftertaste),
+        )
 
-        normalized_combined_terms = [normalize_string(term) for term in combined_terms]
-        return ", ".join(normalized_combined_terms)
+        for label, section in labeled_sections:
+            if section.terms:
+                normalized_terms = ", ".join(
+                    normalize_string(term) for term in section.terms
+                )
+                parts.append(f"{label}: {normalized_terms}")
+            if section.negations:
+                normalized_negations = ", ".join(
+                    normalize_string(term) for term in section.negations
+                )
+                parts.append(f"{label}_negations: {normalized_negations}")
+
+        return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -813,14 +852,21 @@ class WatchContextOutput(EmbeddableOutput):
 
     def embedding_text(self) -> str:
         # identity_note intentionally excluded from embedding text
-        combined_terms = (
-            self.self_experience_motivations.terms
-            + self.external_motivations.terms
-            + self.key_movie_feature_draws.terms
-            + self.watch_scenarios.terms
+        parts: list[str] = []
+
+        sections = (
+            ("self_experience_motivations", self.self_experience_motivations.terms),
+            ("external_motivations", self.external_motivations.terms),
+            ("key_movie_feature_draws", self.key_movie_feature_draws.terms),
+            ("watch_scenarios", self.watch_scenarios.terms),
         )
-        normalized_combined_terms = [normalize_string(term) for term in combined_terms]
-        return ", ".join(normalized_combined_terms)
+        for label, terms in sections:
+            if not terms:
+                continue
+            normalized_terms = [normalize_string(term) for term in terms]
+            parts.append(f"{label}: {', '.join(normalized_terms)}")
+
+        return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -871,21 +917,32 @@ class NarrativeTechniquesOutput(EmbeddableOutput):
         return ", ".join(t.lower() for t in combined_terms)
 
     def embedding_text(self) -> str:
-        combined_terms: list[str] = []
-        for section in (
-            self.narrative_archetype,
-            self.narrative_delivery,
-            self.pov_perspective,
-            self.characterization_methods,
-            self.character_arcs,
-            self.audience_character_perception,
-            self.information_control,
-            self.conflict_stakes_design,
-            self.additional_narrative_devices,
-        ):
-            combined_terms.extend(section.terms)
-        normalized_combined_terms = [normalize_string(term) for term in combined_terms]
-        return ", ".join(normalized_combined_terms)
+        parts: list[str] = []
+
+        sections = (
+            ("narrative_archetype", self.narrative_archetype.terms),
+            ("narrative_delivery", self.narrative_delivery.terms),
+            ("pov_perspective", self.pov_perspective.terms),
+            ("characterization_methods", self.characterization_methods.terms),
+            ("character_arcs", self.character_arcs.terms),
+            (
+                "audience_character_perception",
+                self.audience_character_perception.terms,
+            ),
+            ("information_control", self.information_control.terms),
+            ("conflict_stakes_design", self.conflict_stakes_design.terms),
+            (
+                "additional_narrative_devices",
+                self.additional_narrative_devices.terms,
+            ),
+        )
+        for label, terms in sections:
+            if not terms:
+                continue
+            normalized_terms = [normalize_string(term) for term in terms]
+            parts.append(f"{label}: {', '.join(normalized_terms)}")
+
+        return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +961,34 @@ class ProductionKeywordsOutput(EmbeddableOutput):
     terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description="Production-relevant keywords filtered from the input list.",
+    )
+
+    def __str__(self) -> str:
+        return ", ".join(t.lower() for t in self.terms)
+
+    def embedding_text(self) -> str:
+        normalized_terms = [normalize_string(term) for term in self.terms]
+        return ", ".join(normalized_terms)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2: Production Techniques (separate LLM call)
+# ---------------------------------------------------------------------------
+
+# Structured output from the production_techniques generation (Wave 2).
+#
+# Classification task: the LLM filters plot_keywords and overall_keywords
+# to keep only production-technique terms. Not generative — purely selective.
+#
+# Model: gpt-5-mini, reasoning_effort: low
+class ProductionTechniquesOutput(EmbeddableOutput):
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
+        default_factory=list,
+        description=(
+            "Production-technique keywords filtered from the input lists."
+        ),
     )
 
     def __str__(self) -> str:

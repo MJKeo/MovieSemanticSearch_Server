@@ -212,6 +212,8 @@ CREATE TABLE IF NOT EXISTS metadata_batch_ids (
     watch_context_batch_id         TEXT,
     narrative_techniques_batch_id  TEXT,
     production_keywords_batch_id   TEXT,
+    concept_tags_batch_id          TEXT,
+    production_techniques_batch_id TEXT,
     franchise_batch_id             TEXT,
     source_of_inspiration_batch_id TEXT,
     source_material_v2_batch_id    TEXT
@@ -257,6 +259,9 @@ CREATE TABLE IF NOT EXISTS generated_metadata (
     watch_context                        TEXT,
     narrative_techniques                 TEXT,
     production_keywords                  TEXT,
+    concept_tags                         TEXT,
+    concept_tags_run_2                   TEXT,
+    production_techniques                TEXT,
     franchise                            TEXT,
     source_of_inspiration                TEXT,
     source_material_v2                   TEXT,
@@ -268,6 +273,8 @@ CREATE TABLE IF NOT EXISTS generated_metadata (
     eligible_for_watch_context           INTEGER,
     eligible_for_narrative_techniques    INTEGER,
     eligible_for_production_keywords     INTEGER,
+    eligible_for_concept_tags            INTEGER,
+    eligible_for_production_techniques   INTEGER,
     eligible_for_franchise               INTEGER,
     eligible_for_source_of_inspiration   INTEGER,
     eligible_for_source_material_v2      INTEGER
@@ -345,6 +352,10 @@ def init_db() -> sqlite3.Connection:
         "ALTER TABLE generated_metadata ADD COLUMN concept_tags TEXT",
         "ALTER TABLE generated_metadata ADD COLUMN eligible_for_concept_tags INTEGER",
         "ALTER TABLE metadata_batch_ids ADD COLUMN concept_tags_batch_id TEXT",
+        # Add production_techniques columns for narrowed production metadata.
+        "ALTER TABLE generated_metadata ADD COLUMN production_techniques TEXT",
+        "ALTER TABLE generated_metadata ADD COLUMN eligible_for_production_techniques INTEGER",
+        "ALTER TABLE metadata_batch_ids ADD COLUMN production_techniques_batch_id TEXT",
         # Second concept_tags run — union of both runs improves recall.
         # Column is write-target only; not populated by the first run.
         "ALTER TABLE generated_metadata ADD COLUMN concept_tags_run_2 TEXT",

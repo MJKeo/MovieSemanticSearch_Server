@@ -318,14 +318,6 @@ class Movie(BaseModel):
         "NC-17": "adults only, explicit content, strictly for mature audiences",
     }
 
-    def title_with_original(self) -> str:
-        """Format title for vector text, including original title when different."""
-        title = self.tmdb_data.title or ""
-        original = self.imdb_data.original_title
-        if original and original != title:
-            return f"{title} ({original})"
-        return title
-
     def maturity_text_short(self) -> str:
         """Compact maturity signal for vector embedding.
 

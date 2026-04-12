@@ -136,7 +136,7 @@ class TestInitDb:
         assert col_names == expected
 
     def test_creates_tmdb_data_table(self, mocker, tmp_path) -> None:
-        """init_db creates the tmdb_data table with all 21 columns."""
+        """init_db creates the tmdb_data table with all current columns."""
         data_dir = tmp_path / "ingestion_data"
         mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
         mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
@@ -145,7 +145,7 @@ class TestInitDb:
         cols = db.execute("PRAGMA table_info(tmdb_data)").fetchall()
         db.close()
 
-        assert len(cols) == 21
+        assert len(cols) == 23
 
     def test_creates_indexes(self, mocker, tmp_path) -> None:
         """init_db creates all three expected indexes."""
@@ -297,12 +297,14 @@ class TestInitDb:
             "plot_events_batch_id", "reception_batch_id",
             "plot_analysis_batch_id", "viewer_experience_batch_id",
             "watch_context_batch_id", "narrative_techniques_batch_id",
-            "production_keywords_batch_id", "source_of_inspiration_batch_id",
+            "production_keywords_batch_id", "production_techniques_batch_id",
+            "concept_tags_batch_id", "franchise_batch_id",
+            "source_of_inspiration_batch_id", "source_material_v2_batch_id",
         }
         assert col_names == expected
 
     def test_creates_generated_metadata_table(self, mocker, tmp_path) -> None:
-        """init_db creates generated_metadata with 8 JSON cols + 8 eligible_for_ cols."""
+        """init_db creates generated_metadata with current JSON and eligibility columns."""
         data_dir = tmp_path / "ingestion_data"
         mocker.patch("movie_ingestion.tracker.INGESTION_DATA_DIR", data_dir)
         mocker.patch("movie_ingestion.tracker.TRACKER_DB_PATH", data_dir / "tracker.db")
@@ -312,15 +314,16 @@ class TestInitDb:
         col_names = {row[1] for row in cols}
         db.close()
 
-        # 1 PK + 8 JSON result cols + 8 eligible_for_ cols = 17
         assert "tmdb_id" in col_names
         for mt in [
             "plot_events", "reception", "plot_analysis", "viewer_experience",
             "watch_context", "narrative_techniques", "production_keywords",
-            "source_of_inspiration",
+            "production_techniques", "franchise", "source_of_inspiration",
+            "source_material_v2", "concept_tags",
         ]:
             assert mt in col_names, f"Missing JSON column: {mt}"
             assert f"eligible_for_{mt}" in col_names, f"Missing eligible column: eligible_for_{mt}"
+        assert "concept_tags_run_2" in col_names
 
     def test_creates_generation_failures_table(self, mocker, tmp_path) -> None:
         """init_db creates generation_failures table with expected columns."""
@@ -333,7 +336,10 @@ class TestInitDb:
         col_names = {row[1] for row in cols}
         db.close()
 
-        expected = {"id", "tmdb_id", "metadata_type", "error_message", "created_at"}
+        expected = {
+            "id", "tmdb_id", "metadata_type", "error_message",
+            "batch_id", "created_at",
+        }
         assert col_names == expected
 
     def test_creates_generation_failures_index(self, mocker, tmp_path) -> None:

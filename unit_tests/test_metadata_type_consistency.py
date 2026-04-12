@@ -1,5 +1,5 @@
 """
-Unit tests for MetadataType enum consistency across all 8 generators.
+Unit tests for MetadataType enum consistency across all generator types.
 
 Covers:
   - All generators use MetadataType for GENERATION_TYPE
@@ -19,7 +19,7 @@ from movie_ingestion.tracker import _SCHEMA_SQL
 
 
 class TestAllGeneratorsUseMetadataType:
-    """Tests that all 8 generators use MetadataType for their GENERATION_TYPE constant."""
+    """Tests that all generators use MetadataType for their GENERATION_TYPE constant."""
 
     def test_all_generators_use_metadata_type_for_generation_type(self) -> None:
         """Import GENERATION_TYPE from each generator and verify it's a MetadataType instance."""
@@ -44,8 +44,20 @@ class TestAllGeneratorsUseMetadataType:
         from movie_ingestion.metadata_generation.generators.production_keywords import (
             GENERATION_TYPE as gt_production_keywords,
         )
+        from movie_ingestion.metadata_generation.generators.production_techniques import (
+            GENERATION_TYPE as gt_production_techniques,
+        )
         from movie_ingestion.metadata_generation.generators.source_of_inspiration import (
             GENERATION_TYPE as gt_source_of_inspiration,
+        )
+        from movie_ingestion.metadata_generation.generators.source_material_v2 import (
+            GENERATION_TYPE as gt_source_material_v2,
+        )
+        from movie_ingestion.metadata_generation.generators.franchise import (
+            GENERATION_TYPE as gt_franchise,
+        )
+        from movie_ingestion.metadata_generation.generators.concept_tags import (
+            GENERATION_TYPE as gt_concept_tags,
         )
 
         all_types = [
@@ -56,7 +68,11 @@ class TestAllGeneratorsUseMetadataType:
             gt_watch_context,
             gt_narrative_techniques,
             gt_production_keywords,
+            gt_production_techniques,
             gt_source_of_inspiration,
+            gt_source_material_v2,
+            gt_franchise,
+            gt_concept_tags,
         ]
 
         for gt in all_types:
@@ -73,7 +89,7 @@ class TestAllGeneratorsUseMetadataType:
 class TestAllMetadataTypesHaveGenerators:
     """Tests that each MetadataType enum value has a corresponding generator."""
 
-    def test_all_8_metadata_types_have_generators(self) -> None:
+    def test_all_metadata_types_have_generators(self) -> None:
         """Verify each MetadataType enum value has a generator module with a matching GENERATION_TYPE."""
         from movie_ingestion.metadata_generation.generators.plot_events import (
             GENERATION_TYPE as gt_plot_events,
@@ -96,8 +112,20 @@ class TestAllMetadataTypesHaveGenerators:
         from movie_ingestion.metadata_generation.generators.production_keywords import (
             GENERATION_TYPE as gt_production_keywords,
         )
+        from movie_ingestion.metadata_generation.generators.production_techniques import (
+            GENERATION_TYPE as gt_production_techniques,
+        )
         from movie_ingestion.metadata_generation.generators.source_of_inspiration import (
             GENERATION_TYPE as gt_source_of_inspiration,
+        )
+        from movie_ingestion.metadata_generation.generators.source_material_v2 import (
+            GENERATION_TYPE as gt_source_material_v2,
+        )
+        from movie_ingestion.metadata_generation.generators.franchise import (
+            GENERATION_TYPE as gt_franchise,
+        )
+        from movie_ingestion.metadata_generation.generators.concept_tags import (
+            GENERATION_TYPE as gt_concept_tags,
         )
 
         covered_types = {
@@ -108,7 +136,11 @@ class TestAllMetadataTypesHaveGenerators:
             gt_watch_context,
             gt_narrative_techniques,
             gt_production_keywords,
+            gt_production_techniques,
             gt_source_of_inspiration,
+            gt_source_material_v2,
+            gt_franchise,
+            gt_concept_tags,
         }
         all_types = set(MetadataType)
 

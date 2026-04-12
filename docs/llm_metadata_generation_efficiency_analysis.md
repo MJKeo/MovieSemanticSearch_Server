@@ -231,7 +231,7 @@ A movie should be considered too sparse for a given generation if the generation
 
 ## 7. Partial Embedding: Should Sparse Movies Skip Vector Spaces? <a name="partial-embedding"></a>
 
-Currently, if a metadata generation fails (exception), the metadata is set to `None` and the movie proceeds. The corresponding vector text will either be empty or degenerate (e.g., `create_reception_vector_text` returns just the reception tier label if `reception_metadata` is None).
+Currently, if a metadata generation fails (exception), the metadata is set to `None` and the movie proceeds. The corresponding vector text will either be empty or absent (e.g., `create_reception_vector_text` returns `None` when `reception_metadata` is missing).
 
 ### The case FOR partial embedding
 

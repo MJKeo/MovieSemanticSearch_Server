@@ -654,10 +654,12 @@ def _get_active_batch_ids(
     """Get all active batch_ids across all registered metadata types.
 
     Returns (batch_id, MetadataType) pairs via a single UNION ALL query
-    across all registered types' batch_id columns.
+    across all registered types' batch_id columns that actually exist in
+    the current tracker DB schema.
 
-    Only queries columns for types in GENERATOR_REGISTRY — unregistered
-    types (Wave 2 types not yet added) are skipped without touching the DB.
+    This makes status/process resilient when the code knows about newer
+    metadata types but the SQLite DB has not yet been migrated to add the
+    corresponding batch_id columns.
     """
     from movie_ingestion.metadata_generation.batch_generation.generator_registry import GENERATOR_REGISTRY
 
@@ -665,18 +667,31 @@ def _get_active_batch_ids(
     if not registered_types:
         return []
 
-    # Build a single UNION ALL query across all registered types.
-    # Column names are from MetadataType StrEnum — fixed values, not user input.
-    parts = []
-    for mt in registered_types:
-        batch_col = f"{mt}_batch_id"
-        parts.append(
-            f"SELECT DISTINCT {batch_col} AS batch_id, '{mt}' AS metadata_type "
-            f"FROM metadata_batch_ids WHERE {batch_col} IS NOT NULL"
-        )
-    query = "\nUNION ALL\n".join(parts)
-
     with sqlite3.connect(str(tracker_db_path)) as db:
+        column_rows = db.execute("PRAGMA table_info(metadata_batch_ids)").fetchall()
+        existing_columns = {row[1] for row in column_rows}
+
+        # Build a single UNION ALL query across only the batch_id columns
+        # present in this specific DB.
+        parts = []
+        for mt in registered_types:
+            batch_col = f"{mt}_batch_id"
+            if batch_col not in existing_columns:
+                print(
+                    f"[batch-status] Warning: expected column "
+                    f"metadata_batch_ids.{batch_col} is missing; "
+                    "skipping this metadata type for batch polling."
+                )
+                continue
+            parts.append(
+                f"SELECT DISTINCT {batch_col} AS batch_id, '{mt}' AS metadata_type "
+                f"FROM metadata_batch_ids WHERE {batch_col} IS NOT NULL"
+            )
+
+        if not parts:
+            return []
+
+        query = "\nUNION ALL\n".join(parts)
         rows = db.execute(query).fetchall()
 
     return [(row[0], MetadataType(row[1])) for row in rows]

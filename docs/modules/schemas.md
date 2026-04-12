@@ -51,6 +51,23 @@ structured output — `PlotEventsOutput`, `ReceptionOutput`,
 `NarrativeTechniquesOutput`, `ProductionKeywordsOutput`,
 `SourceOfInspirationOutput`, `SourceMaterialV2Output`. Each
 `embedding_text()` produces the text for its corresponding vector space.
+`ReceptionOutput.embedding_text()` now emits labeled synthesis-zone lines
+(`reception_summary:`, `praised:`, `criticized:`); deterministic award wins
+are appended later in `vector_text.py`, not stored on the schema itself.
+`ViewerExperienceOutput.embedding_text()` emits fixed-order labeled multiline
+text with separate `*_negations:` lines for polarity-preserving retrieval.
+`WatchContextOutput.embedding_text()` emits fixed-order labeled multiline
+text with up to four section lines: `self_experience_motivations:`,
+`external_motivations:`, `key_movie_feature_draws:`, and
+`watch_scenarios:`; empty sections are omitted, and `identity_note` /
+`evidence_basis` are excluded.
+`NarrativeTechniquesOutput.embedding_text()` emits fixed-order labeled
+multiline text with one line per populated section:
+`narrative_archetype:`, `narrative_delivery:`, `pov_perspective:`,
+`characterization_methods:`, `character_arcs:`,
+`audience_character_perception:`, `information_control:`,
+`conflict_stakes_design:`, and `additional_narrative_devices:`.
+Empty sections are omitted, and justification/evidence fields are excluded.
 `WithJustificationsOutput` variants exist for evaluation (identical
 `embedding_text()` output to base variant).
 
@@ -83,7 +100,6 @@ See `search_improvement_planning/source_material_type_enum.md` for boundary note
 fully typed row from `tracker.db` including parsed IMDB JSON columns,
 TMDB review JSON, provider-key blob unpacking, and all generated
 metadata objects. Includes helper methods:
-- `title_with_original()` — "Title (Original Title)" or just "Title"
 - `maturity_text_short()` — IMDB reasoning prose or MPA description fallback
 - `deduplicated_genres()` — genre_signatures + IMDB genres, substring-deduped
 - `reception_score()` / `reception_tier()` — blended IMDB + Metacritic score and tier label
@@ -133,7 +149,8 @@ grand prizes), `outcome`, `year`.
   and `MetadataType` from `schemas.enums`.
 - `movie_ingestion/final_ingestion/vector_text.py` — all vector text
   functions accept `Movie` and call `embedding_text()` on metadata
-  objects.
+  objects. `create_viewer_experience_vector_text()` is intentionally a
+  thin wrapper over the schema's labeled multiline `embedding_text()`.
 - `movie_ingestion/final_ingestion/ingest_movie.py` — all ingestion
   functions accept `Movie` exclusively. `BaseMovie` is no longer used
   in either Postgres or Qdrant ingestion paths.

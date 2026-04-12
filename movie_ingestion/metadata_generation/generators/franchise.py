@@ -1,9 +1,33 @@
 """
-Franchise generator.
+Franchise generator (v8 — independent is_crossover / is_spinoff
+booleans with their own reasoning traces, replacing the previous
+special_attributes enum array).
 
-Identifies whether a movie belongs to a recognizable IP or brand, classifies
-its role in that franchise, and optionally captures an established subgroup
-name when one exists.
+Produces FranchiseOutput for a movie along three orthogonal blocks:
+
+    IDENTITY — lineage (narrowest recognizable line), shared_universe
+               (broader entity: formal shared cosmos OR parent
+               franchise of a spinoff sub-lineage),
+               recognized_subgroups (named sub-phases), and
+               launched_subgroup (earliest-released entry in one of
+               those subgroups).
+
+    NARRATIVE POSITION — lineage_position (mutually exclusive enum:
+                         sequel / prequel / remake / reboot / null),
+                         is_crossover (independent boolean driven by
+                         a single identity question), and is_spinoff
+                         (independent boolean driven by structural
+                         trunk-vs-branch situating with a parametric-
+                         knowledge supplement).
+
+    FRANCHISE LAUNCH — launched_franchise (boolean, four-part test:
+                       first cinematic entry, not a spinoff, source-
+                       material recognition test, relevant follow-ups
+                       test).
+
+See schemas/metadata.py::FranchiseOutput for the schema contract and
+movie_ingestion/metadata_generation/prompts/franchise.py for the
+system prompt that drives generation.
 """
 
 from __future__ import annotations
@@ -31,16 +55,20 @@ _DEFAULT_MODEL = "gpt-5-mini"
 def build_franchise_user_prompt(movie: MovieInputData) -> str:
     """Build the user prompt for franchise generation.
 
-    Inputs are chosen to give the model the strongest possible signals
-    for franchise identification, chronology (is_prequel), and director-
-    era subgroup detection (culturally_recognized_groups):
+    Inputs are chosen to give the model the strongest possible
+    signals for lineage/shared_universe identification,
+    launched_subgroup chronology, lineage_position (sequel / prequel
+    / remake / reboot) reasoning, and director/actor-era subgroup
+    detection (recognized_subgroups):
     - release_year is labeled separately so the model can anchor
-      "prior-released at this film's release" reasoning.
+      "is this film the earliest-released entry of its subgroup?"
+      and prequel/sequel ordering reasoning.
     - directors (explicitly labeled) support director-era subgroup
-      detection ("raimi trilogy", "bay era", "daniel craig era"
-      indirectly via the main cast, etc.).
+      detection ("raimi trilogy", "nolan batman era", "snyderverse").
     - top_billed_cast pairs actors with characters, which strengthens
-      actor-run subgroup detection (e.g. "daniel craig era").
+      actor-era subgroup detection ("daniel craig era") and the
+      PRIOR-ROLE PROMINENCE TEST used in the spinoff constraint
+      check.
     """
     return build_user_prompt(
         title_with_year=movie.title_with_year(),

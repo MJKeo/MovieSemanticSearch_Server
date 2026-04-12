@@ -35,10 +35,10 @@ Default tracker DB path is resolved from `schemas/movie.py`'s own location
 work without passing an explicit path.
 
 Helper methods on `Movie` encapsulate derived signals used by vector text
-functions: `title_with_original()`, `maturity_text_short()`,
-`deduplicated_genres()`, `reception_score()`, `reception_tier()`,
-`is_animation()`, `production_text()`, `languages_text()`,
-`release_decade_bucket()`, `budget_bucket_for_era()`.
+functions: `maturity_text_short()`, `deduplicated_genres()`,
+`reception_score()`, `reception_tier()`, `is_animation()`,
+`production_text()`, `languages_text()`, `release_decade_bucket()`,
+`budget_bucket_for_era()`.
 
 ## Alternatives Considered
 

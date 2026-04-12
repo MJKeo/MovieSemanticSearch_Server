@@ -660,7 +660,7 @@ async def generate_llm_response_async(
 
 async def generate_vector_embedding(
     text: list[str],
-    model: str = "text-embedding-3-small",
+    model: str = "text-embedding-3-large",
 ) -> list[list[float]]:
     # Create a fresh AsyncOpenAI client per call to avoid httpx connection
     # pool exhaustion that causes silent hangs when reusing a single instance.

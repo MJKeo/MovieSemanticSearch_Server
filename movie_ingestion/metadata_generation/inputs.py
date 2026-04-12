@@ -41,6 +41,7 @@ WAVE2_TYPES = frozenset({
     MetadataType.WATCH_CONTEXT,
     MetadataType.NARRATIVE_TECHNIQUES,
     MetadataType.PRODUCTION_KEYWORDS,
+    MetadataType.PRODUCTION_TECHNIQUES,
     MetadataType.SOURCE_OF_INSPIRATION,
     MetadataType.SOURCE_MATERIAL_V2,
     MetadataType.CONCEPT_TAGS,

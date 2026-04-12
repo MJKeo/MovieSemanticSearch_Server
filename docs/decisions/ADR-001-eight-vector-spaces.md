@@ -17,14 +17,14 @@ distinct retrieval lens:
 
 | Vector | What it captures |
 |--------|-----------------|
-| `dense_anchor_vectors` | Broad "movie card" — identity, content, production, cast, reception. General recall. |
+| `dense_anchor_vectors` | Lean holistic fingerprint — labeled identity, thematic, experiential, maturity, and reception-summary signals. General recall. |
 | `plot_events_vectors` | Literal chronological plot (who, what, when, where). Spoiler-containing. |
 | `plot_analysis_vectors` | Thematic analysis — core concept, genre signatures, character arcs, themes, lessons. |
 | `narrative_techniques_vectors` | Storytelling mechanics — POV, structure, devices, archetypes. |
 | `viewer_experience_vectors` | Felt experience — emotions, tone, tension, cognitive load, disturbance, aftertaste. Supports negations ("not too scary"). |
 | `watch_context_vectors` | Use-case lens — motivations, scenarios, feature draws ("date night", "background movie"). |
 | `production_vectors` | Making-of facts — countries, studios, locations, languages, decade, budget, cast/crew, adaptation source. |
-| `reception_vectors` | Critical consensus — acclaim tier, praise/complaint attributes, reception summary. |
+| `reception_vectors` | Critical consensus — reception summary, praise/complaint attributes, and major award wins by ceremony. |
 
 All vectors use OpenAI `text-embedding-3-small` (1536 dims).
 

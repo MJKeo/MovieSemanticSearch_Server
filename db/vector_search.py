@@ -176,7 +176,7 @@ class SearchJob:
                      (e.g. "plot_events_score_subquery"). This avoids any string
                      formatting at merge time — the coordinator decides upfront
                      where results go.
-      - embedding:   the dense vector (list of 1536 floats) to use as the query.
+      - embedding:   the dense vector (list of 3072 floats) to use as the query.
       - limit:       max number of results to request from Qdrant.
 
     frozen=True because jobs are immutable once created — no reason to modify

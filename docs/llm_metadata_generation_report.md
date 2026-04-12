@@ -382,7 +382,7 @@ Note: This function runs in Wave 1 (no dependency on plot_events), so it does NO
 
 ## 5. Vector Text Generation: From Metadata to Embeddable Text <a name="vector-text-generation"></a>
 
-After LLM metadata generation, each movie's 7 metadata objects are transformed into 8 text strings (one per vector space) that will be embedded. The 8th vector space ("anchor") aggregates data across all metadata types plus base movie fields.
+After LLM metadata generation, each movie's 7 metadata objects are transformed into 8 text strings (one per vector space) that will be embedded. The 8th vector space ("anchor") is a reduced holistic fingerprint built from a narrow set of movie-wide fields plus selected metadata.
 
 Text generation functions are in `movie_ingestion/final_ingestion/vector_text.py`.
 
@@ -390,51 +390,37 @@ Text generation functions are in `movie_ingestion/final_ingestion/vector_text.py
 
 | Vector Space | Text Generator Function | Primary Content |
 |-------------|------------------------|-----------------|
-| **anchor** | `create_anchor_vector_text()` | Comprehensive "movie card" — title, generalized overview, genres, keywords, production info, cast, themes, emotional palette, maturity, reception. Draws from ALL metadata types + base movie fields. |
+| **anchor** | `create_anchor_vector_text()` | Lean holistic fingerprint — labeled title/original title, identity pitch/overview, genre signatures, themes, emotional palette, key draws, maturity summary, and reception summary. |
 | **plot_events** | `create_plot_events_vector_text()` | `PlotEventsMetadata.__str__()` — plot summary + setting + character descriptions |
 | **plot_analysis** | `create_plot_analysis_vector_text()` | `PlotAnalysisMetadata.__str__()` + genre subset + plot keywords |
 | **viewer_experience** | `create_viewer_experience_vector_text()` | `ViewerExperienceMetadata.__str__()` — all terms + negations from non-skipped sections |
 | **watch_context** | `create_watch_context_vector_text()` | `WatchContextMetadata.__str__()` — all terms from all 4 sections |
 | **narrative_techniques** | `create_narrative_techniques_vector_text()` | `NarrativeTechniquesMetadata.__str__()` — all terms from all 11 sections |
 | **production** | `create_production_vector_text()` | Base movie production info (countries, companies, locations, languages, decade, budget) + production keywords + sources + cast + maturity rating |
-| **reception** | `create_reception_vector_text()` | Reception tier label + new reception summary + praise/complaint attributes |
+| **reception** | `create_reception_vector_text()` | Labeled reception summary + praise/complaint attributes + deterministic major award wins by ceremony |
 
-### Anchor Vector — The Comprehensive One
+### Anchor Vector — The Lean Holistic One
 
-The anchor vector is special. It's the most comprehensive text representation, designed to provide good recall for most general queries. It's structured in sections:
+The anchor vector is special. It's designed to provide good recall for general
+"movie as a whole" queries without duplicating structured facts or specialized
+spaces. It emits only labeled lines, in stable order:
 
 ```
-# Overview:
-<title string>
-<generalized plot overview from plot_analysis_metadata>
-Genres: <genre subset>
-<combined overall_keywords + plot_keywords>
-
-# Production:
-<countries, companies, filming locations>
-<languages>
-<decade bucket, e.g., "Release date: 1980s, 80s">
-Duration: <bucket, e.g., "standard length">
-<budget bucket, e.g., "big budget, blockbuster">
-<production keywords, production mediums, sources of inspiration>
-
-# Cast and Characters:
-<directors, writers, producers, composers, top actors>
-<character names>
-
-# Themes and Lessons:
-Core concept: <core concept label>
-Themes: <theme labels>
-Lessons: <lesson labels>
-
-# Audience Reception:
-Emotional palette: <emotional palette terms>
-Key draws: <key movie feature draws terms>
-<maturity guidance text>
-Reception: <reception tier>
-Praises: <praise attributes>
-Complaints: <complaint attributes>
+title: <tmdb title>
+original_title: <imdb original title, only when different>
+identity_pitch: <plot-analysis elevator pitch>
+identity_overview: <plot-analysis generalized overview, or imdb overview fallback>
+genre_signatures: <plot-analysis genre signatures>
+themes: <plot-analysis thematic concept labels>
+emotional_palette: <viewer-experience positive terms>
+key_draws: <watch-context key movie feature draws>
+maturity_summary: <maturity reasoning or rating-derived semantic summary>
+reception_summary: <reception summary>
 ```
+
+Deliberately excluded from anchor: keywords, source material, franchise
+position, languages, decade, budget/box office, awards, reception tier, and
+other structured/filterable facts that have better homes elsewhere.
 
 ### Production Vector — Also Composite
 

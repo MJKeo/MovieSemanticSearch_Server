@@ -72,7 +72,7 @@ The most impactful change addresses problems #1 and #2 simultaneously.
 | Plot Analysis         | yes           | no               | Thematic keywords support theme identification                                |
 | Viewer Experience     | both          | both             | Broad signal useful for emotional/sensory assessment                          |
 | Watch Context         | no            | yes              | Categorical tags inform occasions; plot events don't                          |
-| Narrative Techniques  | no            | yes              | Structural tags ("nonlinear timeline", "unreliable narrator") live in overall |
+| Narrative Techniques  | both          | both             | Uses merged keywords plus plot/craft evidence; structural cues can appear in either list |
 | Production Keywords   | both          | both             | Filtering task — more keywords = more to filter from                          |
 | Source of Inspiration | both          | both             | Source tags could appear in either list                                       |
 
@@ -217,8 +217,8 @@ Three preprocessing steps run before any LLM calls. All are pure data processing
 **Output data:**
 
 - `plot_keywords` (list[str]) — passed directly to: plot_events, plot_analysis
-- `overall_keywords` (list[str]) — passed directly to: watch_context, narrative_techniques
-- `merged_keywords` (list[str]) — deduplicated union for: viewer_experience, production_keywords, source_of_inspiration
+- `overall_keywords` (list[str]) — not passed directly after routing; folded into `merged_keywords`
+- `merged_keywords` (list[str]) — deduplicated union for: watch_context, narrative_techniques, production_keywords, source_of_inspiration
 
 **Implementation:** `merged_keywords = list(dict.fromkeys(plot_keywords + overall_keywords))` — plot_keywords first, then unique overall_keywords appended.
 
@@ -516,39 +516,53 @@ All 4 sections unchanged:
 | ----------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `title (year)`          | **Changed** | Now formatted as `"Title (Year)"`.                                                                                                                                                                                                                        |
 | `genres`                | **Added**   | ~5-10 tokens. Helps ground structural analysis — "mystery" implies information control techniques, "documentary" implies specific POV structures. Essentially free.                                                                                       |
-| `plot_synopsis`         | Unchanged   | From plot_events Wave 1 output                                                                                                                                                                                                                            |
-| `overall_keywords`      | **Changed** | Was `plot_keywords` + `overall_keywords` as separate inputs. Now receives `overall_keywords` only. Structural tags ("nonlinear timeline", "unreliable narrator") tend to live in overall keywords. Plot keywords add noise without structural signal.     |
-| `review_insights_brief` | **Changed** | Replaces `reception_summary` + `featured_reviews`. Saves ~550-2600 tokens. Reviews often reveal structural observations (e.g., "the twist was predictable", "the non-linear storytelling was confusing") — the brief preserves these structural insights. |
-| ~~`plot_keywords`~~     | **Removed** | Plot-specific keywords rarely carry structural narrative signal. Overall keywords are the relevant source.                                                                                                                                                |
-| ~~`reception_summary`~~ | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                                                                                                                      |
-| ~~`featured_reviews`~~  | **Removed** | Subsumed by `review_insights_brief`.                                                                                                                                                                                                                      |
+| `plot_summary`          | **Changed** | Preferred narrative input from plot_events Wave 1. If present, it clears eligibility immediately and is passed as the higher-quality `plot_synopsis` field to the prompt.                                                                                |
+| `plot_text`             | **Added**   | Raw fallback plot input from `best_plot_fallback()` when it clears the tiered thresholds. Used when `plot_summary` is absent.                                                                                                                            |
+| `craft_observations`    | **Changed** | Review-derived structural commentary used directly when long enough. Can independently clear eligibility or combine with moderate plot fallback.                                                                                                           |
+| `merged_keywords`       | **Changed** | Deduplicated union of `plot_keywords + overall_keywords`. Structural cues can appear in either list, but keywords remain secondary evidence behind plot/craft inputs.                                                                                     |
+| ~~`review_insights_brief`~~ | **Removed** | Replaced by `craft_observations` in the current Wave 2 contract.                                                                                                                                                                                       |
 
 
 #### Minimum required inputs
 
-`plot_synopsis` with meaningful content (>100 words). Structural narrative analysis requires sufficient plot detail to identify techniques. A thin 2-sentence plot_summary doesn't provide enough material to confidently identify POV, temporal structure, or information control patterns.
+Tiered eligibility, any one of:
+- `plot_summary`
+- `plot_text` fallback >= 500 chars
+- `craft_observations` >= 400 chars
+- `plot_text` fallback >= 300 chars plus `craft_observations` >= 300 chars
+
+Genres and keywords alone are not sufficient. Structural narrative analysis still
+needs real plot detail and/or reviewer craft commentary.
 
 **If below threshold:** Skip narrative techniques. The movie's narrative_techniques vector is omitted from Qdrant.
 
 #### Outputs
 
-All 11 sections unchanged:
+Current 9-section schema:
 
 
 | Output                          | Status      | Notes                                                                                   |
 | ------------------------------- | ----------- | --------------------------------------------------------------------------------------- |
+| `narrative_archetype`           | Unchanged   | 0-1 phrases                                                                             |
+| `narrative_delivery`            | Unchanged   | 0-2 phrases                                                                             |
 | `pov_perspective`               | Unchanged   | 1-2 phrases                                                                             |
-| `narrative_delivery`            | Unchanged   | 1-2 phrases                                                                             |
-| `narrative_archetype`           | Unchanged   | 1 phrase                                                                                |
-| `information_control`           | Unchanged   | 1-2 phrases                                                                             |
 | `characterization_methods`      | Unchanged   | 1-3 phrases                                                                             |
 | `character_arcs`                | Unchanged   | 1-3 phrases                                                                             |
 | `audience_character_perception` | Unchanged   | 1-3 phrases                                                                             |
+| `information_control`           | Unchanged   | 1-2 phrases                                                                             |
 | `conflict_stakes_design`        | Unchanged   | 1-2 phrases                                                                             |
-| `thematic_delivery`             | Unchanged   | 1-2 phrases                                                                             |
-| `meta_techniques`               | Unchanged   | 0-2 phrases                                                                             |
-| `additional_plot_devices`       | Unchanged   | Misc phrases                                                                            |
-| ~~justification fields~~        | **Removed** | One per section (11 total). Pending empirical validation. ~100-220 output tokens saved. |
+| `additional_narrative_devices`  | **Changed** | Catchall section; absorbs the old `meta_techniques` content                            |
+| `evidence_basis`                | **Changed** | Per-section evidence inventory field; kept for generation quality, excluded from embeddings |
+
+#### Embedding text
+
+`embedding_text()` emits fixed-order labeled multiline text with one line per
+populated section:
+`narrative_archetype:`, `narrative_delivery:`, `pov_perspective:`,
+`characterization_methods:`, `character_arcs:`,
+`audience_character_perception:`, `information_control:`,
+`conflict_stakes_design:`, `additional_narrative_devices:`.
+Empty sections are omitted, and evidence text is not embedded.
 
 
 ---

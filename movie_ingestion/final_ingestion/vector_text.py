@@ -7,7 +7,7 @@ same functions are used at ingestion time (batch and single-movie) and
 must stay in sync with the vector space definitions in Qdrant.
 
 Vector spaces:
-    1. anchor            — broad-recall identity fingerprint
+    1. anchor            — lean holistic movie fingerprint
     2. plot_events       — chronological plot details
     3. plot_analysis     — themes, arcs, concepts
     4. narrative_techniques — storytelling style/tone
@@ -23,8 +23,10 @@ from implementation.classes.enums import BudgetSize
 from implementation.misc.helpers import normalize_string
 from schemas.movie import Movie
 
-# Token limit for text-embedding-3-small. Texts exceeding this cause
+# Token limit for text-embedding-3-large. Texts exceeding this cause
 # embedding API errors and need to fall back to shorter alternatives.
+# (3-small and 3-large share the same 8191-token limit and the same
+# cl100k_base tokenizer.)
 _EMBEDDING_TOKEN_LIMIT = 8_191
 
 # Cheap character-length gate to avoid running tiktoken on every movie.
@@ -33,7 +35,24 @@ _EMBEDDING_TOKEN_LIMIT = 8_191
 # so anything below this is guaranteed safe.
 _CHAR_GATE_THRESHOLD = 15_000
 
-_TIKTOKEN_ENC = tiktoken.encoding_for_model("text-embedding-3-small")
+_TIKTOKEN_ENC = tiktoken.encoding_for_model("text-embedding-3-large")
+
+_RECEPTION_AWARD_CEREMONY_ORDER: tuple[tuple[str, str], ...] = (
+    ("Academy Awards, USA", "academy awards"),
+    ("Golden Globes, USA", "golden globes"),
+    ("BAFTA Awards", "bafta"),
+    ("Cannes Film Festival", "cannes"),
+    ("Venice Film Festival", "venice"),
+    ("Berlin International Film Festival", "berlin"),
+    ("Actor Awards", "sag"),
+    ("Critics Choice Awards", "critics choice"),
+    ("Sundance Film Festival", "sundance"),
+    # Deliberately excluded: Razzie Awards. Negative-award queries should
+    # route to structured award data, not prestige-oriented vector text.
+    ("Film Independent Spirit Awards", "spirit awards"),
+    ("Gotham Awards", "gotham awards"),
+)
+_RECEPTION_AWARD_CEREMONY_DISPLAY = dict(_RECEPTION_AWARD_CEREMONY_ORDER)
 
 
 # ===============================
@@ -56,58 +75,46 @@ def budget_size_to_vector_text(budget_size: BudgetSize | None) -> str:
 def create_anchor_vector_text(movie: Movie) -> str:
     """Create the text representation for the anchor (dense_anchor) vector.
 
-    The anchor is always queried and weighted as a broad-recall safety net
-    (0.8× mean of active non-anchor weights). Its job is to capture the
-    movie's core semantic identity without duplicating signals that
-    specialized spaces or lexical/metadata channels handle better.
-
-    Formatting rules:
-        - Prose fields use .lower() — self-contextualizing, no label needed
-        - Categorical term lists use normalize_string() with a semantic
-          label to disambiguate their role for the embedding model
+    The anchor is a lean, holistic fingerprint for "movie as a whole"
+    similarity. It keeps only high-level identity, thematic, experiential,
+    maturity, and reception summary signals, while leaving structured or
+    filterable facts to specialized spaces and deterministic retrieval.
 
     Deliberately excluded (handled better elsewhere):
-        - Cast/crew/character names → lexical search
-        - Production companies/filming locations → production vector
-        - Detailed maturity reasoning → metadata filters
-        - Reception praise/complaint lists → reception vector
+        - Keywords, source material, franchise position
+        - Languages, decade, budget / box office
+        - Awards, reception tiers, detailed praise / complaint tags
+        - Watch-context scenarios / motivations and viewer-experience negations
     """
     parts: list[str] = []
 
-    # -- Identity: what is this movie? --
-
-    # Title with original title for international films
-    title = movie.title_with_original()
+    title = movie.tmdb_data.title
     if title:
-        parts.append(title.lower())
+        parts.append(f"title: {title.lower()}")
 
-    # Elevator pitch — single most concise "what is this movie about" (~6 words)
+    original_title = movie.imdb_data.original_title
+    if original_title and original_title != title:
+        parts.append(f"original_title: {original_title.lower()}")
+
     if movie.plot_analysis_metadata:
         pitch = movie.plot_analysis_metadata.elevator_pitch_with_justification.elevator_pitch
-        parts.append(pitch.lower())
+        parts.append(f"identity_pitch: {pitch.lower()}")
 
-    # Generalized overview gives thematic context in 1-3 sentences.
-    # Fall back to IMDB overview when plot_analysis wasn't generated.
+    overview = ""
     if movie.plot_analysis_metadata:
-        parts.append(movie.plot_analysis_metadata.generalized_plot_overview.lower())
+        overview = movie.plot_analysis_metadata.generalized_plot_overview
     elif movie.imdb_data.overview:
-        parts.append(movie.imdb_data.overview.lower())
+        overview = movie.imdb_data.overview
+    if overview:
+        parts.append(f"identity_overview: {overview.lower()}")
 
-    # -- Classification: what type of movie is this? --
+    if movie.plot_analysis_metadata and movie.plot_analysis_metadata.genre_signatures:
+        genre_signatures = [
+            normalize_string(signature)
+            for signature in movie.plot_analysis_metadata.genre_signatures
+        ]
+        parts.append("genre_signatures: " + ", ".join(genre_signatures))
 
-    # Deduplicated merge of LLM genre_signatures + IMDB genres
-    genres = movie.deduplicated_genres()
-    if genres:
-        genres = [normalize_string(g) for g in genres]
-        parts.append("genres: " + ", ".join(genres))
-
-    # Overall keywords — broad topical descriptors. Plot keywords excluded
-    # to avoid over-emphasizing minor content details (e.g. "male nudity").
-    if movie.imdb_data.overall_keywords:
-        keywords = [normalize_string(kw) for kw in movie.imdb_data.overall_keywords]
-        parts.append("keywords: " + ", ".join(keywords))
-
-    # Thematic concepts from plot analysis
     if movie.plot_analysis_metadata and movie.plot_analysis_metadata.thematic_concepts:
         themes = [
             normalize_string(t.concept_label)
@@ -115,65 +122,26 @@ def create_anchor_vector_text(movie: Movie) -> str:
         ]
         parts.append("themes: " + ", ".join(themes))
 
-    # Source material and franchise position — helps match queries like
-    # "book adaptations", "sequels", "remakes"
-    if movie.source_of_inspiration_metadata:
-        src = movie.source_of_inspiration_metadata
-        if src.source_material:
-            normalized = [normalize_string(t) for t in src.source_material]
-            parts.append("source material: " + ", ".join(normalized))
-        if src.franchise_lineage:
-            normalized = [normalize_string(t) for t in src.franchise_lineage]
-            parts.append("franchise position: " + ", ".join(normalized))
-
-    # -- Experience: what does watching it feel like? --
-
-    # Cherry-picked experiential signals give anchor a taste of the
-    # viewer-experience and watch-context dimensions without full duplication
     if movie.viewer_experience_metadata:
         palette_terms = movie.viewer_experience_metadata.emotional_palette.terms
         if palette_terms:
             normalized = [normalize_string(t) for t in palette_terms]
-            parts.append("emotional palette: " + ", ".join(normalized))
+            parts.append("emotional_palette: " + ", ".join(normalized))
 
     if movie.watch_context_metadata:
         draw_terms = movie.watch_context_metadata.key_movie_feature_draws.terms
         if draw_terms:
             normalized = [normalize_string(t) for t in draw_terms]
-            parts.append("key draws: " + ", ".join(normalized))
+            parts.append("key_draws: " + ", ".join(normalized))
 
-    # -- Context: when, where, how? --
-
-    # Release decade with semantic era label
-    decade_bucket = movie.release_decade_bucket()
-    if decade_bucket:
-        parts.append(decade_bucket.lower())
-
-    # All languages together as a flat list
-    if movie.imdb_data.languages:
-        languages = [normalize_string(lang) for lang in movie.imdb_data.languages]
-        parts.append("languages: " + ", ".join(languages))
-
-    # Budget scale relative to era (only when notable)
-    budget_text = budget_size_to_vector_text(movie.budget_bucket_for_era())
-    if budget_text:
-        parts.append(budget_text)
-
-    # Maturity — prose reasoning when available, MPA description as fallback
     maturity = movie.maturity_text_short()
     if maturity:
-        parts.append(maturity.lower())
+        parts.append(f"maturity_summary: {maturity.lower()}")
 
-    # -- Reception: how was it received? --
-
-    # Prose reception summary — evaluative "what did people think?"
-    if movie.reception_metadata:
-        parts.append(movie.reception_metadata.reception_summary.lower())
-
-    # Tier label as a compact quality signal
-    reception_tier = movie.reception_tier()
-    if reception_tier:
-        parts.append("reception: " + reception_tier.lower())
+    if movie.reception_metadata and movie.reception_metadata.reception_summary:
+        parts.append(
+            f"reception_summary: {movie.reception_metadata.reception_summary.lower()}"
+        )
 
     return "\n".join(parts)
 
@@ -248,7 +216,7 @@ def create_plot_events_vector_text(movie: Movie) -> str | None:
 
     Selects the richest available plot text, but if the primary text
     exceeds the embedding model's token limit (8,191 tokens for
-    text-embedding-3-small), falls back to a shorter alternative that
+    text-embedding-3-large), falls back to a shorter alternative that
     skips the full synopsis in favor of plot summaries or metadata.
     """
     text = _plot_events_primary_text(movie)
@@ -268,21 +236,14 @@ def create_plot_analysis_vector_text(movie: Movie) -> str | None:
     """
     Creates the text representation for the plot_analysis vector embedding.
 
-    Merges TMDB genres into the metadata's genre_signatures so they are
-    embedded as a single labeled field, then delegates to embedding_text().
+    Thin wrapper over PlotAnalysisOutput.embedding_text(). TMDB genres are
+    no longer merged in — under V2 they are a deterministic hard filter
+    via movie_card.genre_ids, and the LLM-generated genre_signatures
+    already carry the thematic phrasing this space is responsible for.
     """
     if not movie.plot_analysis_metadata:
         return None
-
-    # Append TMDB genres to the LLM-generated genre signatures for grounding
-    meta = movie.plot_analysis_metadata
-    if movie.imdb_data.genres:
-        existing = set(g.lower() for g in meta.genre_signatures)
-        for genre in movie.imdb_data.genres:
-            if genre.lower() not in existing:
-                meta.genre_signatures.append(genre)
-
-    return meta.embedding_text()
+    return movie.plot_analysis_metadata.embedding_text()
 
 
 def create_narrative_techniques_vector_text(movie: Movie) -> str | None:
@@ -298,6 +259,7 @@ def create_viewer_experience_vector_text(movie: Movie) -> str | None:
 
 
 def create_watch_context_vector_text(movie: Movie) -> str | None:
+    """Return watch-context embedding text in labeled multiline schema format."""
     if not movie.watch_context_metadata:
         return None
     return movie.watch_context_metadata.embedding_text()
@@ -360,12 +322,39 @@ def create_reception_vector_text(movie: Movie) -> str | None:
     if not movie.reception_metadata:
         return None
 
-    parts = []
+    parts = [movie.reception_metadata.embedding_text()]
 
-    tier = movie.reception_tier()
-    if tier:
-        parts.append(f"reception: {tier.lower()}")
-
-    parts.append(movie.reception_metadata.embedding_text())
+    award_wins_text = _reception_award_wins_text(movie)
+    if award_wins_text:
+        parts.append(award_wins_text)
 
     return "\n".join(parts)
+
+
+def _reception_award_wins_text(movie: Movie) -> str | None:
+    """Summarize prestige-oriented award wins for the reception vector.
+
+    Uses only winning rows from tracked major ceremonies, collapses
+    multiple wins in the same ceremony to a single ceremony label, and
+    omits Razzie entirely so "award-winning" semantics stay positive.
+    """
+    if not movie.imdb_data.awards:
+        return None
+
+    winning_ceremonies = {
+        award.ceremony
+        for award in movie.imdb_data.awards
+        if award.did_win() and award.ceremony in _RECEPTION_AWARD_CEREMONY_DISPLAY
+    }
+    if not winning_ceremonies:
+        return None
+
+    ordered_ceremonies = [
+        display_name
+        for ceremony, display_name in _RECEPTION_AWARD_CEREMONY_ORDER
+        if ceremony in winning_ceremonies
+    ]
+    if not ordered_ceremonies:
+        return None
+
+    return "major_award_wins: " + ", ".join(ordered_ceremonies)

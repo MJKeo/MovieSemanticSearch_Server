@@ -18,27 +18,40 @@ class MetadataType(StrEnum):
     WATCH_CONTEXT = "watch_context"
     NARRATIVE_TECHNIQUES = "narrative_techniques"
     PRODUCTION_KEYWORDS = "production_keywords"
+    PRODUCTION_TECHNIQUES = "production_techniques"
     FRANCHISE = "franchise"
     SOURCE_OF_INSPIRATION = "source_of_inspiration"
     SOURCE_MATERIAL_V2 = "source_material_v2"
     CONCEPT_TAGS = "concept_tags"
 
 
-class FranchiseRole(str, Enum):
-    franchise_role_id: int
+class AwardOutcome(StrEnum):
+    WINNER = "winner"
+    NOMINEE = "nominee"
 
-    def __new__(cls, value: str, franchise_role_id: int) -> "FranchiseRole":
-        obj = str.__new__(cls, value)
-        obj._value_ = value
-        obj.franchise_role_id = franchise_role_id
-        return obj
 
-    STARTER = ("starter", 1)
-    MAINLINE = ("mainline", 2)
-    SPINOFF = ("spinoff", 3)
-    REBOOT = ("reboot", 4)
-    REMAKE = ("remake", 5)
-    CROSSOVER = ("crossover", 6)
+# Narrative-position axis of franchise classification. Mutually
+# exclusive: a film carries at most one value, or null. Null covers
+# first-entry and standalone films. Orthogonal to the is_crossover
+# and is_spinoff booleans on FranchiseOutput; may populate even when
+# FranchiseOutput.lineage is null (pair-remakes like Scarface 1983).
+#
+# Comment above the class so it is NOT sent to the LLM as part of
+# the JSON schema description — the system prompt carries the
+# definitional text.
+class LineagePosition(str, Enum):
+    SEQUEL = "sequel"
+    PREQUEL = "prequel"
+    # REMAKE is retained in the enum for classification fidelity but
+    # is NOT consumed at search time — film-to-film retellings are
+    # covered by source_of_inspiration, which handles the cross-medium
+    # adaptation case more uniformly. Removing the value outright
+    # would push borderline cases (Scarface 1983 / 1932) into
+    # misleading alternative labels. Keep writing it; don't read it
+    # in the search path. See search_improvement_planning/
+    # franchise_test_iterations.md (v5).
+    REMAKE = "remake"
+    REBOOT = "reboot"
 
 
 # Source material classification for movies.

@@ -110,6 +110,21 @@ def _production_keywords_prompt_builder(movie: MovieInputData) -> tuple[str, str
     return build_production_keywords_user_prompt(movie), SYSTEM_PROMPT
 
 
+def _production_techniques_eligibility_checker(movie: MovieInputData) -> str | None:
+    """Eligibility checker for production_techniques keyword filtering."""
+    from .pre_consolidation import _check_production_techniques
+    return _check_production_techniques(movie)
+
+
+def _production_techniques_prompt_builder(movie: MovieInputData) -> tuple[str, str]:
+    """Adapter for production_techniques — builds user prompt + system prompt tuple."""
+    from ..generators.production_techniques import (
+        build_production_techniques_user_prompt,
+    )
+    from ..prompts.production_techniques import SYSTEM_PROMPT
+    return build_production_techniques_user_prompt(movie), SYSTEM_PROMPT
+
+
 def _franchise_eligibility_checker(movie: MovieInputData) -> str | None:
     """Eligibility checker for franchise — every loaded movie is eligible."""
     from .pre_consolidation import _check_franchise
@@ -433,6 +448,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
     from ..generators.plot_events import generate_plot_events
     from ..generators.reception import generate_reception
     from ..generators.production_keywords import generate_production_keywords
+    from ..generators.production_techniques import generate_production_techniques
     from schemas.metadata import (
         FranchiseOutput,
         PlotEventsOutput,
@@ -440,6 +456,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
         PlotAnalysisOutput,
         NarrativeTechniquesOutput,
         ProductionKeywordsOutput,
+        ProductionTechniquesOutput,
         WatchContextOutput,
         ViewerExperienceOutput,
         SourceOfInspirationOutput,
@@ -481,6 +498,15 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             eligibility_checker=_production_keywords_eligibility_checker,
             prompt_builder=_production_keywords_prompt_builder,
             live_generator=generate_production_keywords,
+            model="gpt-5-mini",
+            model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
+        ),
+        MetadataType.PRODUCTION_TECHNIQUES: GeneratorConfig(
+            metadata_type=MetadataType.PRODUCTION_TECHNIQUES,
+            schema_class=ProductionTechniquesOutput,
+            eligibility_checker=_production_techniques_eligibility_checker,
+            prompt_builder=_production_techniques_prompt_builder,
+            live_generator=generate_production_techniques,
             model="gpt-5-mini",
             model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
         ),

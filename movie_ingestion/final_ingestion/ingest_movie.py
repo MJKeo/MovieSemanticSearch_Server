@@ -70,10 +70,10 @@ from db.postgres import (
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 # Ingestion upserts are much heavier than search queries (50 movies × 8
-# vectors × 1536 dims per batch), so we set a generous timeout.
+# vectors × 3072 dims per batch), so we set a generous timeout.
 _qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=120)
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 COLLECTION_ALIAS = "movies"
 
 

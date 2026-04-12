@@ -32,6 +32,7 @@ No LLM cost — all logic is deterministic and testable without mocking.
     Wave 2 (need Wave 1 outputs + derived data):
         _check_plot_analysis, _check_viewer_experience, _check_watch_context,
         _check_narrative_techniques, _check_production_keywords,
+        _check_production_techniques,
         _check_franchise, _check_source_of_inspiration, _check_concept_tags
 
 4. assess_skip_conditions(movie_input, ...) -> SkipAssessment:
@@ -555,6 +556,27 @@ def _check_production_keywords(merged_keywords: list[str]) -> str | None:
     return "No keywords available"
 
 
+def _check_production_techniques(movie_input: MovieInputData) -> str | None:
+    """Production techniques require plot keywords or rich overall keywords.
+
+    Eligible when at least one plot keyword is available, or when the
+    curated overall_keywords list has at least 3 entries. Plot keywords
+    get a special carveout because even a single free-form keyword can
+    carry strong production-technique signal ("single take", "imax").
+    """
+    plot_count = len(movie_input.plot_keywords)
+    overall_count = len(movie_input.overall_keywords)
+
+    if plot_count > 0 or overall_count >= 3:
+        return None
+
+    return (
+        "Insufficient keyword evidence for production_techniques: "
+        f"plot_keywords={plot_count}, overall_keywords={overall_count} "
+        "(need plot_keywords>0 or overall_keywords>=3)"
+    )
+
+
 def _check_franchise(movie_input: MovieInputData) -> str | None:
     """Franchise generation is eligible for every successfully loaded movie."""
     return None
@@ -752,6 +774,7 @@ def assess_skip_conditions(
         plot_summary, craft_observations, movie_input,
     ))
     _record("production_keywords", _check_production_keywords(merged_keywords))
+    _record("production_techniques", _check_production_techniques(movie_input))
     _record("franchise", _check_franchise(movie_input))
     _record("source_of_inspiration", _check_source_of_inspiration(
         merged_keywords, source_material_hint,

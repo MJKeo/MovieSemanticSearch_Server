@@ -277,6 +277,18 @@ consistent, filterable output.
 **What:** Re-generate the `production_keywords` metadata with a tightened
 scope: only filming locations + production technique keywords.
 
+**Status clarification:** This work remains in scope. It is NOT superseded by
+concept tags. Concept tags answer binary content questions like "does this
+movie have X?" for story, character, ending, and experiential deal-breakers.
+Production techniques serve a different purpose: they capture real-world
+making-of signals like IMAX, black-and-white, single-take, stop-motion, and
+practical-effects. Those are production-context retrieval signals, not the
+same kind of binary movie-concept filter.
+
+**Relationship to scraped data:** the generation step is for production
+technique keywords. Scraped filming locations remain a separate raw input and
+pair with those generated technique terms in the production vector.
+
 **Tightened scope includes:**
 - Visual techniques: black-and-white, IMAX, 3D, found-footage, single-take,
   handheld-camera
@@ -355,7 +367,7 @@ pipeline.
 
 ## Embedding regeneration
 
-### 12. Structured-label embedding format (all 7 vector spaces)
+### 12. Structured-label embedding format (all 8 vector spaces)
 
 **What:** Convert all vector space embedding text from flat comma-separated
 lists to section-labeled structured text. Regenerate all embeddings.
@@ -364,10 +376,11 @@ lists to section-labeled structured text. Regenerate all embeddings.
 cross-space rescoring to work effectively. Flat lists lose per-attribute
 signal; structured labels preserve it.
 
-**Scope:** All ~100K movies × 7 vector spaces (anchor dropped from V2).
+**Scope:** All ~100K movies × 8 vector spaces. Anchor is retained in V2 in a
+reduced labeled form alongside the 7 specialized spaces.
 Search subquery generation must also produce structured-format output.
 
-**Cost:** 7 × 100K embedding API calls = 700K embeddings. Estimate before
+**Cost:** 8 × 100K embedding API calls = 800K embeddings. Estimate before
 executing.
 
 **Model choice (decided 2026-04-10):** Upgrade from `text-embedding-3-small`
@@ -400,8 +413,12 @@ space? Options: keep as lean space, fold into anchor, or repurpose slot.
 
 ### 14. Reception vector re-embedding
 
-**What:** After #4 (awards scraping), append generated awards prose summary
-to reception vector embedding text and re-embed.
+**What:** After #4 (awards scraping), append deterministic `major_award_wins`
+ceremony summary text to reception vector embedding text and re-embed.
+
+**Definition:** Use winners only, collapse to distinct ceremony names in fixed
+priority order, and exclude nominations from the vector entirely. Precise
+award/category/nominee queries stay deterministic via `movie_awards`.
 
 ---
 

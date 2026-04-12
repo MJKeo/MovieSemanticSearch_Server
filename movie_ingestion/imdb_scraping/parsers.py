@@ -20,6 +20,7 @@ from .models import (
     ParentalGuideItem,
     FeaturedReview,
 )
+from schemas.enums import AwardOutcome
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +316,7 @@ def _extract_awards(award_edges: list | None) -> list[AwardNomination]:
 
         # Map isWinner boolean to outcome string
         is_winner = _safe_get(node, ["isWinner"])
-        outcome = "winner" if is_winner else "nominee"
+        outcome = AwardOutcome.WINNER if is_winner else AwardOutcome.NOMINEE
 
         # Extract category (nullable — festival grand prizes like Palme d'Or
         # have no category; the award name IS the category)

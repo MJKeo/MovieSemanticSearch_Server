@@ -370,7 +370,7 @@ class TestBuildCustomId:
         assert result == "source_of_inspiration_42"
 
     def test_build_custom_id_all_types(self):
-        """All 8 MetadataType values produce valid custom_ids."""
+        """All MetadataType values produce valid custom_ids."""
         for mt in MetadataType:
             result = build_custom_id(1, mt)
             assert result == f"{mt.value}_1"
@@ -425,9 +425,9 @@ class TestParseCustomId:
 
 
 class TestMetadataTypeEnum:
-    def test_metadata_type_enum_has_8_members(self):
-        """MetadataType has exactly 8 members."""
-        assert len(MetadataType) == 8
+    def test_metadata_type_enum_has_12_members(self):
+        """MetadataType has all current generation types."""
+        assert len(MetadataType) == 12
 
     def test_metadata_type_is_strenum(self):
         """All MetadataType members are strings."""
@@ -440,15 +440,18 @@ class TestMetadataTypeEnum:
         assert MetadataType.RECEPTION in WAVE1_TYPES
         assert len(WAVE1_TYPES) == 2
 
-    def test_wave2_types_contains_6_types(self):
-        """WAVE2_TYPES contains exactly 6 types."""
-        assert len(WAVE2_TYPES) == 6
+    def test_wave2_types_contains_current_types(self):
+        """WAVE2_TYPES contains all current Wave 2 generation types."""
+        assert len(WAVE2_TYPES) == 8
         assert MetadataType.PLOT_ANALYSIS in WAVE2_TYPES
         assert MetadataType.VIEWER_EXPERIENCE in WAVE2_TYPES
         assert MetadataType.WATCH_CONTEXT in WAVE2_TYPES
         assert MetadataType.NARRATIVE_TECHNIQUES in WAVE2_TYPES
         assert MetadataType.PRODUCTION_KEYWORDS in WAVE2_TYPES
+        assert MetadataType.PRODUCTION_TECHNIQUES in WAVE2_TYPES
         assert MetadataType.SOURCE_OF_INSPIRATION in WAVE2_TYPES
+        assert MetadataType.SOURCE_MATERIAL_V2 in WAVE2_TYPES
+        assert MetadataType.CONCEPT_TAGS in WAVE2_TYPES
 
     def test_all_generation_types_is_union(self):
         """ALL_GENERATION_TYPES is the union of WAVE1_TYPES and WAVE2_TYPES."""

@@ -771,9 +771,11 @@ movie_awards (
 
 **Index:** `idx_awards_ceremony_outcome (ceremony, outcome)` for "Oscar winners" queries.
 
-**Also in vectors:** Award text included in reception vector embedding for semantic
-queries like "award-winning thriller." The structured table handles specific ceremony
-filtering; the vector handles vague award-related language.
+**Also in vectors:** Deterministic `major_award_wins` ceremony summary included in
+the reception vector for semantic queries like "award-winning thriller." Winner rows
+only, distinct ceremonies only, fixed priority order, no nominations. The structured
+table handles specific ceremony/category/nominee filtering; the vector handles vague
+prestige language.
 
 **Data source:** IMDB GraphQL API exposes award data (nominations + wins by ceremony).
 Requires new scraping target.
@@ -974,7 +976,8 @@ caused thematic bleed that diluted the embedding.
 **Open question:** After regeneration, is the tightened content enough to justify a
 dedicated vector space? The remaining content is coherent but thin. Options:
 1. Keep as a lean, focused vector space
-2. Eliminate the production slot entirely (anchor is already dropped from V2)
+2. Eliminate the production slot entirely while keeping anchor as a separate
+   lean holistic vector
 3. Repurpose the slot for a different vector space that would add more value
 
 Revisit after regeneration and measure whether the lean production vector contributes

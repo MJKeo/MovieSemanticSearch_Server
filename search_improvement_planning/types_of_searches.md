@@ -108,8 +108,9 @@ include other roles (producer) at lower weight.
 Palme d'Or winners" are structurally entity lookups where the entity is an
 award. **Decided:** new `movie_awards` table with ceremony, category, and
 outcome fields. Supports inverse lookup (given award → find movies). Award
-text also included in reception vector for vaguer queries like "award-winning
-thriller."
+win ceremony text also included in reception vector for vaguer queries like
+"award-winning thriller." Nominations stay out of the vector and are handled
+deterministically via `movie_awards`.
 
 ---
 

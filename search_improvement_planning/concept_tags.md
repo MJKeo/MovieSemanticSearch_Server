@@ -4,8 +4,16 @@ Binary deal-breaker tags extracted by LLM classification. These are concepts
 that users expect as yes/no when searching ("movies with X") and that cannot
 be reliably retrieved through vector similarity alone.
 
-Replaces the V1 `production_keywords` generation slot. Stored as
+Stored as
 `concept_tag_ids INT[]` on `movie_card` with a GIN index.
+
+Concept tags do NOT replace production-technique metadata. They serve a
+different retrieval purpose. Concept tags are binary content filters for
+questions like "has a plot twist," "sad ending," or "animal death." Production
+techniques cover real-world making-of signals like IMAX, black-and-white,
+single-take, stop-motion, or practical-effects. Those remain separate because
+they are not the same kind of story/content concept and should not be forced
+into the binary tag system.
 
 ---
 
@@ -280,7 +288,7 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_concept_tags
 
 ### Generation pipeline placement
 
-Replaces the `production_keywords` generation slot. Late Wave 1 — needs
+Runs as a separate classification task from production-technique metadata. Late Wave 1 — needs
 Wave 1 outputs (plot_summary from plot_events, emotional_observations from
 reception) but does NOT need Wave 2 viewer_experience. Can generate as soon
 as plot_events and reception are complete.

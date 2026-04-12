@@ -106,8 +106,10 @@ Spirit Awards, Gotham Awards.
 After filtering to these 12 ceremonies, per-movie row counts are ~10-50 (vs
 300-570 total nominations across all regional critics circles).
 
-**Also embedded in reception vector** as generated prose summary for semantic
-queries like "award-winning thriller."
+**Also embedded in reception vector** as deterministic `major_award_wins`
+ceremony summary text for semantic queries like "award-winning thriller."
+Nominations stay out of the vector and are handled via structured Postgres
+lookup.
 
 ---
 
@@ -359,7 +361,7 @@ Scored as weighted average against movie_card data. Range [0,1] per candidate.
 
 ## 8. Vector Spaces
 
-V2 has 7 spaces (anchor dropped). OpenAI `text-embedding-3-small`, 1536 dims,
+V2 has 8 spaces, with anchor retained in reduced form. OpenAI `text-embedding-3-small`, 1536 dims,
 8191 token limit. Stored in Qdrant with scalar quantization + memmap.
 
 ### V2 embedding format change (applies to all spaces)
@@ -372,41 +374,39 @@ plot twist / reversal, planted-foreshadowing clues, slow-burn reveal, ...
 V2 (structured labels — PREREQUISITE for cross-space rescoring):
 ```
 information_control: plot twist / reversal, planted-foreshadowing clues
-pacing_and_structure: slow-burn reveal, flashback storytelling
-perspective_and_voice: multiple-perspective narration, ...
+narrative_delivery: slow-burn reveal, flashback storytelling
+pov_perspective: multiple-perspective narration, ...
 ```
 
 Search subqueries generated in the same structured shape as embedded text.
 
-### ~~8.1 Anchor (`dense_anchor_vectors`)~~ DROPPED FROM V2
+### 8.1 Anchor (`dense_anchor_vectors`)
 
-**Decision:** The anchor vector is dropped from V2. Its generalist role is
-superseded by deterministic candidate generation (Phase 1) and cross-space
-rescoring across specialized vectors (Phase 2). Similarity queries use a
-weighted mix of targeted vectors instead. See open_questions.md for full
-reasoning.
+**Decision:** Anchor is retained in V2, but only as a lean holistic
+"movie-as-a-whole" fingerprint. It is no longer a catch-all movie card and is
+not the home for structured/filterable facts that belong in Postgres or
+specialized vectors.
 
-If clear failure examples emerge during V2 testing, the anchor vector can be
-reintroduced in a reduced role. The embedded content definition is preserved
-below for reference.
+**Embedded content** (stable labeled order, omit empty fields):
 
-<details>
-<summary>V1 embedded content (reference only)</summary>
+| Label | Source |
+|-------|--------|
+| `title:` | TMDB title |
+| `original_title:` | IMDB original title, only when different |
+| `identity_pitch:` | PlotAnalysis elevator pitch |
+| `identity_overview:` | PlotAnalysis generalized overview, or IMDB overview fallback when plot_analysis is absent |
+| `genre_signatures:` | PlotAnalysis `genre_signatures` only |
+| `themes:` | PlotAnalysis thematic concept labels |
+| `emotional_palette:` | ViewerExperience positive terms only |
+| `key_draws:` | WatchContext key movie feature draws only |
+| `maturity_summary:` | `maturity_text_short()` output |
+| `reception_summary:` | Reception summary only |
 
-- Title + original title
-- Elevator pitch (6 words, from plot_analysis)
-- Generalized plot overview (1-3 sentences, no proper nouns)
-- Deduplicated genres (LLM + IMDB merged)
-- Overall keywords (not plot keywords)
-- Thematic concepts (from plot_analysis)
-- Source material + franchise lineage (from source_of_inspiration)
-- Subsampled experiential signals: emotional palette + key movie feature draws
-- Release decade bucket + semantic era label
-- Languages
-- Budget scale relative to era
-- Maturity rating
-- Reception summary (prose) + reception tier label
-</details>
+**V2 removes from anchor:** keywords, source material, franchise position,
+languages, decade, budget/box office, awards, reception tier, merged generic
+genres, viewer-experience negations, and watch-context scenarios/motivations.
+
+**Boundary:** High-level holistic identity only, NOT structured retrieval facts.
 
 ### 8.2 Plot Events (`plot_events_vectors`)
 
@@ -428,18 +428,31 @@ rephrasing. Null for pure vibes/production/technique queries.
 **Purpose:** What type of story — thematic territory, genres, concepts. Generalized
 terms only, no proper nouns.
 
-**Embedded content** (from PlotAnalysisOutput):
-- Elevator pitch (6 words max)
-- Generalized plot overview (1-3 sentences, thematically saturated) — largest segment
-- Genre signatures (2-6 compound phrases)
-- Conflict type (0-2 phrases)
-- Character arcs (0-3 transformation labels)
-- Thematic concepts (0-5 labels)
-- TMDB genres merged into genre_signatures
+**Embedded content** (from PlotAnalysisOutput) — V2 structured-label format,
+fields emitted in this order with snake_case labels matching the Pydantic
+field names:
 
-**Subquery:** Thematic territory. Genre phrases, concept labels, arc labels.
-Translates events to thematic equivalents. Null for production/logistics/pure
-technique/pure experience.
+| Label | Count | Description |
+|-------|-------|-------------|
+| `elevator_pitch:` | 1 | 6 words max, log-line style capsule |
+| `plot_overview:` | 1 | 1-3 sentence thematically saturated overview (largest segment) |
+| `genre_signatures:` | 2-6 | Compound genre phrases (LLM-generated) |
+| `conflict:` | 0-2 | Fundamental dramatic tension phrases |
+| `themes:` | 0-5 | Thematic concept labels |
+| `character_arcs:` | 0-3 | **Thematic** arc labels (e.g. "mentor's sacrificial legacy") — adjacent to themes because thematic arcs are semantically closest to thematic concepts. Distinct from narrative_techniques' film-language arc labels (e.g. "coming-of-age"), which describe generic narrative patterns rather than specific thematic transformations. |
+
+**V2 changes:**
+- TMDB genres are no longer merged into `genre_signatures` — genres are
+  a deterministic hard filter via `movie_card.genre_ids` in V2, and the
+  LLM-generated compound phrases carry the thematic phrasing this space
+  owns.
+- Prose fields (`elevator_pitch`, `plot_overview`) now receive explicit
+  labels instead of being emitted bare, matching the V2 structured-label
+  format from §8 (prerequisite for cross-space rescoring).
+
+**Subquery:** Thematic territory. Generated in the same structured-label
+shape as embedded text (PlotAnalysisOutput → templated string). Null for
+production/logistics/pure technique/pure experience.
 
 **Boundary:** What story IS ABOUT thematically, NOT how it FEELS.
 
@@ -448,7 +461,7 @@ technique/pure experience.
 **Purpose:** What it FEELS like to watch. Emotional, sensory, cognitive.
 
 **Embedded content** (from ViewerExperienceOutput) — 8 sections, each with
-`terms` + `negations`:
+`terms` + `negations`, emitted as structured labels in fixed order:
 
 | Section | Examples |
 |---------|----------|
@@ -461,10 +474,32 @@ technique/pure experience.
 | Emotional volatility | tonal whiplash, gets dark fast (empty when consistent) |
 | Ending aftertaste | satisfying, gut punch, haunting, cliffhanger |
 
-**Key feature:** Negations embedded directly ("no jump scares", "not too dark").
+**Embedding shape:** Each populated section emits up to two lines:
+- `{section_name}: term 1, term 2, ...`
+- `{section_name}_negations: negation 1, negation 2, ...`
+
+Example:
+```
+emotional_palette: cozy, nostalgic, bittersweet
+emotional_palette_negations: not depressing
+tension_adrenaline: slow burn suspense
+disturbance_profile_negations: no jump scares
+ending_aftertaste: haunting, gut punch ending
+```
+
+**Key feature:** Negations are preserved as first-class labeled lines
+(`*_negations:`), not mixed into the positive term line.
+
+**V2 boundary clarification:** No new structured V2 data is added directly to
+this space. Awards stay in `movie_awards` / reception, franchise stays in
+`franchise_membership`, source material stays in `source_material_type_ids`,
+countries stay in `country_of_origin_ids`, box office stays in
+`box_office_bucket`, keywords stay in `keyword_ids`, production techniques stay
+in the production space, and concept tags remain deterministic retrieval aids.
 
 **Subquery:** Aggressively translates ANY query to experiential language.
-Null ONLY for purely logistical queries.
+Generated in the same structured-label shape as embedded text. Null ONLY for
+purely logistical queries.
 
 **Boundary:** Emotional REACTION / viewing SENSATION, NOT thematic territory.
 
@@ -480,6 +515,18 @@ Null ONLY for purely logistical queries.
 | External motivations | 1-4 | learn something, cultural significance |
 | Key movie feature draws | 1-4 | amazing soundtrack, incredible acting |
 | Watch scenarios | 3-6 | date night, solo watch, halloween movie |
+
+**Embedding shape:** Fixed-order labeled multiline text. Each populated section
+emits one line; empty sections are omitted. This is a formatting change only —
+the underlying watch_context data stays the same.
+
+Example:
+```
+self_experience_motivations: mood booster, good cry
+external_motivations: learn something new, culturally iconic
+key_movie_feature_draws: amazing soundtrack, incredible acting
+watch_scenarios: date night, halloween movie
+```
 
 **Design:** Receives ZERO plot information. `identity_note` NOT embedded.
 
@@ -504,6 +551,19 @@ Null ONLY for purely logistical queries.
 | Audience-character perception | 1-3 | lovable rogue, morally gray lead |
 | Conflict/stakes design | 1-2 | ticking clock, no-win dilemma |
 | Additional narrative devices | varies | found footage, cold open, framed story |
+
+**Embedding shape:** Fixed-order labeled multiline text. Each populated section
+emits one line using the schema field name as the label; empty sections are
+omitted.
+
+Example:
+```
+narrative_archetype: cautionary tale
+narrative_delivery: non linear timeline, time loop
+pov_perspective: unreliable narrator
+information_control: plot twist, red herrings
+additional_narrative_devices: found footage
+```
 
 **Subquery:** Shares routing with plot_analysis (technique → thematic translation).
 
@@ -535,23 +595,31 @@ Null ONLY for purely logistical queries.
 keyword search.
 
 **Open question:** After regeneration, is the thinned content enough to justify
-a dedicated vector space? With anchor dropped, options are: keep as lean space,
-eliminate entirely, or repurpose the slot.
+a dedicated vector space? With anchor retained as a separate lean holistic
+surface, options are: keep production as a lean space, eliminate it entirely,
+or repurpose the slot.
 
 ### 8.8 Reception (`reception_vectors`)
 
 **Purpose:** What people thought. Critical/audience reception.
 
 **V1 embedded content** (from ReceptionOutput):
-- Reception tier label
 - Reception summary (2-3 sentence evaluation)
 - Praised qualities (0-6 tags)
 - Criticized qualities (0-6 tags)
 
 **V2 addition:**
-- Awards summary text generated from `movie_awards` structured data
-  (e.g. "Won Academy Award for Best Picture (2020). Nominated for Golden Globe
-  for Best Director."). Appended alongside praised/criticized qualities.
+- `major_award_wins:` deterministic ceremony summary built from
+  `movie_awards` winner rows only (e.g. `major_award_wins: academy awards,
+  cannes`). Distinct ceremonies only, fixed priority order, Razzie excluded.
+- Nominations are NOT embedded here; exact award/category/nominee queries are
+  handled deterministically via `movie_awards`.
+
+**Final embedding shape:**
+- `reception_summary: ...`
+- `praised: ...` (when present)
+- `criticized: ...` (when present)
+- `major_award_wins: ...` (when present)
 
 ---
 

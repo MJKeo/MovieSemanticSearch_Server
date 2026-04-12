@@ -21,14 +21,14 @@ create_code="$(
     --data-binary @- <<'JSON'
 {
   "vectors": {
-    "anchor": { "size": 1536, "distance": "Cosine", "on_disk": true },
-    "plot_events": { "size": 1536, "distance": "Cosine", "on_disk": true },
-    "plot_analysis": { "size": 1536, "distance": "Cosine", "on_disk": true },
-    "viewer_experience": { "size": 1536, "distance": "Cosine", "on_disk": true },
-    "watch_context": { "size": 1536, "distance": "Cosine", "on_disk": true },
-    "narrative_techniques": { "size": 1536, "distance": "Cosine", "on_disk": true },
-    "production": { "size": 1536, "distance": "Cosine", "on_disk": true },
-    "reception": { "size": 1536, "distance": "Cosine", "on_disk": true }
+    "anchor": { "size": 3072, "distance": "Cosine", "on_disk": true },
+    "plot_events": { "size": 3072, "distance": "Cosine", "on_disk": true },
+    "plot_analysis": { "size": 3072, "distance": "Cosine", "on_disk": true },
+    "viewer_experience": { "size": 3072, "distance": "Cosine", "on_disk": true },
+    "watch_context": { "size": 3072, "distance": "Cosine", "on_disk": true },
+    "narrative_techniques": { "size": 3072, "distance": "Cosine", "on_disk": true },
+    "production": { "size": 3072, "distance": "Cosine", "on_disk": true },
+    "reception": { "size": 3072, "distance": "Cosine", "on_disk": true }
   },
   "quantization_config": {
     "scalar": { "type": "int8", "quantile": 0.99, "always_ram": true }

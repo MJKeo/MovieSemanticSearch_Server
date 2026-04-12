@@ -8,7 +8,7 @@ Active
 As vector text functions were ported from `BaseMovie` to the new `Movie`
 object (see ADR-056), several formatting questions arose that would set
 patterns for all 8 vector spaces:
-1. Should short categorical fields carry semantic labels ("genre:", "reception:") or be left bare?
+1. Should short categorical fields carry semantic labels ("genre:", "praised:") or be left bare?
 2. For plot_events, should IMDB synopses or LLM-generated summaries be preferred?
 3. Should field formatting logic live in the vector text function or in the metadata schema's `embedding_text()`?
 4. What normalization strategy applies to assembled vector text?
@@ -18,12 +18,30 @@ patterns for all 8 vector spaces:
 **1. Labeled short fields.** Short categorical fields (genre lists, quality
 tags, keywords) are prefixed with lowercase semantic labels
 ("genre: drama, thriller", "praised: tight editing, performances").
-Prose fields (elevator_pitch, generalized_plot_overview, reception_summary)
-are left unlabeled as self-contextualizing. Rationale: contextual retrieval
-research (Anthropic, Google Gemini embedding docs, LlamaIndex defaults)
-supports labels for disambiguation of short values. Labels are applied
-consistently across plot_analysis, reception, anchor, and production vector
-spaces.
+Reception summary is also labeled (`reception_summary:`) so the full
+reception vector has a consistently structured shape. Viewer experience
+follows the same rule at section granularity: each populated section emits
+`section_name:` and, when applicable, `section_name_negations:` as separate
+lines so polarity is preserved explicitly rather than mixing negations into
+the positive term list. Rationale: contextual retrieval research (Anthropic,
+Google Gemini embedding docs, LlamaIndex defaults) supports labels for
+disambiguation of short values. Labels are applied consistently across
+plot_analysis, narrative_techniques, viewer_experience, watch_context,
+reception, anchor, and production vector spaces. The anchor now uses this
+convention for every populated field in a
+stable multiline order:
+`title:`, `original_title:`, `identity_pitch:`, `identity_overview:`,
+`genre_signatures:`, `themes:`, `emotional_palette:`, `key_draws:`,
+`maturity_summary:`, `reception_summary:`.
+Narrative techniques follows the same section-label rule in a stable order:
+`narrative_archetype:`, `narrative_delivery:`, `pov_perspective:`,
+`characterization_methods:`, `character_arcs:`,
+`audience_character_perception:`, `information_control:`,
+`conflict_stakes_design:`, `additional_narrative_devices:`. Empty sections
+are omitted.
+Watch context follows the same section-label rule in a stable order:
+`self_experience_motivations:`, `external_motivations:`,
+`key_movie_feature_draws:`, `watch_scenarios:`. Empty sections are omitted.
 
 **2. Synopsis-first fallback hierarchy for plot_events.** The plot_events
 vector embeds the richest available plot text in order:
@@ -41,7 +59,7 @@ the highest-quality plot text in the tracker.
 For schemas with non-trivial formatting (labeled fields, per-term
 normalization, genre merging), the formatting lives inside the schema's
 `embedding_text()` method. The vector text function is a thin wrapper
-that supplies derived signals (reception tier, TMDB genres) and delegates
+that supplies derived signals (TMDB genres, deterministic award wins) and delegates
 to `embedding_text()`. Rationale: keeps field formatting co-located with
 schema field definitions; vector text functions focus on combining data
 sources rather than formatting individual fields.
@@ -86,6 +104,14 @@ Callers can distinguish "no data" from empty content.
 - Labeled field convention must be applied consistently when adding new
   vector spaces or modifying existing ones. An unlabeled field in a labeled
   context creates inconsistent embedding behavior.
+- The anchor is a lean holistic surface, not a catch-all metadata dump.
+  Structured/filterable facts like keywords, franchise/source material,
+  languages, decade, budget, and awards belong in deterministic retrieval
+  or specialized spaces rather than being reintroduced into anchor text.
+- For schemas with positive/negative polarity, negations should receive their
+  own explicit label (for example `*_negations:`) rather than being appended
+  to the positive line. This keeps retrieval aligned with how search prompts
+  target the same structure.
 - `embedding_text()` is now a real formatting function, not just a
   `__str__()` alias. Schema changes that affect vector text must update
   `embedding_text()`.

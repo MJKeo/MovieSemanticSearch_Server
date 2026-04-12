@@ -4,6 +4,19 @@ Tracks actionable items discovered during development sessions.
 Items here are things to address when the relevant work begins,
 not urgent fixes.
 
+## Update plot_analysis unit tests for V2 structured-label embedding format
+**Context:** `PlotAnalysisOutput.embedding_text()` and
+`create_plot_analysis_vector_text()` were rewritten to the V2 structured-label
+format (every field labeled with snake_case keys, `character_arcs` adjacent
+to `themes`, TMDB-genre merge removed, `__str__()` delegates to
+`embedding_text()`). Existing unit tests assert the old format and will fail.
+Per .claude/rules/test-boundaries.md tests were not touched in the
+implementation session — update them as part of the next dedicated testing
+phase.
+**When:** When running the next testing/validation pass on the ingestion
+pipeline, or as part of the broader V2 rollout.
+**See:** schemas/metadata.py (PlotAnalysisOutput.embedding_text), movie_ingestion/final_ingestion/vector_text.py (create_plot_analysis_vector_text), search_improvement_planning/v2_data_architecture.md §8.3
+
 ## Include imdb_vote_count in search reranking quality boost
 **Context:** The search reranking process should use `imdb_vote_count` as
 a signal in its automatic quality and relevance booster. This likely
@@ -465,16 +478,12 @@ Soldier surface?
 Completed. `overall_keywords` is a 225-term curated genre taxonomy; static mapping
 confirmed as the right approach. See search_improvement_planning/keyword_vocabulary_audit.md.
 
-## Update v2_data_needs.md item #8 — superseded by concept tags
-**Context:** Item #8 (production technique keyword re-generation) is superseded by the
-concept tag system designed in search_improvement_planning/concept_tags.md. The concept
-tags replace the production_keywords generation slot entirely. Item #8 should be marked
-as superseded with a pointer to concept_tags.md. Also update v2_data_architecture.md to
-add the concept_tag_ids INT[] column to the movie_card spec and reflect that the
-production vector space may be dropped (its content was absorbed by structured fields
-and concept tags).
-**When:** Next time v2 planning docs are being updated or when beginning concept tag implementation.
-**See:** search_improvement_planning/concept_tags.md, search_improvement_planning/v2_data_needs.md (item #8), search_improvement_planning/v2_data_architecture.md
+## ~~Update v2_data_needs.md item #8 — superseded by concept tags~~ RESOLVED
+**Resolution:** Docs were clarified to the opposite conclusion: concept tags do
+not supersede production-technique metadata. Concept tags cover binary
+story/content deal-breakers; production techniques cover real-world making-of
+signals. Both remain part of the V2 plan, though the production vector may
+still be evaluated later for whether it earns a dedicated slot.
 
 ## Measure FranchiseOutput null-pairing violation rates during evaluation
 **Context:** The model_validator on FranchiseOutput was removed pre-evaluation. During
@@ -563,3 +572,65 @@ all movies to map to "unknown" bucket. The `build_id_to_bucket_map()` function f
 `isinstance(bucket_payload, dict)` which skips list payloads entirely.
 **When:** Next time the reporting script is used (low priority — manual Python works around it).
 **See:** movie_ingestion/metadata_generation/helper_scripts/report_bucket_axis_performance.py (lines 47-86)
+
+## Complete the text-embedding-3-large migration (Qdrant rebuild + re-embed + doc sweep)
+**Context:** Code-only flip to text-embedding-3-large landed in this session
+(see DIFF_CONTEXT.md entry "upgrade embedding model to text-embedding-3-large").
+The new model is wired into both ingestion and search via the shared
+`generate_vector_embedding()` helper, and the Qdrant init script now declares
+all 8 named vectors at size 3072. The following operational steps were
+deliberately deferred and must run before the new model can be used in anger:
+1. Drop the existing `movies_v1` Qdrant collection (currently sized 1536 — it
+   will reject 3072-dim upserts). Let the init script recreate it, or POST
+   the new schema manually.
+2. Re-run Stage 8 ingestion (`movie_ingestion/final_ingestion/ingest_movie.py`)
+   for every already-ingested movie to regenerate embeddings at 3072 dims.
+3. Sweep and update remaining "1536 dims" / "text-embedding-3-small"
+   references in docs: CLAUDE.md, AGENTS.md, docs/PROJECT.md, docs/modules/,
+   docs/conventions.md, docs/decisions/ADR-011, search_improvement_planning/
+   v2_data_architecture.md and v2_data_needs.md, .cursor/rules/.
+4. Redis embedding cache keys are `emb:{model}:{hash}`, so old 3-small cache
+   entries will coexist harmlessly — no manual flush required, but they can
+   be pruned opportunistically.
+**When:** When ready to actually deploy the upgraded embedding model to the
+production search index. This is the structured-label re-embed milestone from
+search_improvement_planning/v2_data_needs.md #12.
+**See:** DIFF_CONTEXT.md (upgrade embedding model entry),
+db/init/02_qdrant_init.sh,
+movie_ingestion/final_ingestion/ingest_movie.py,
+search_improvement_planning/v2_data_needs.md
+
+## Wire v4 FranchiseOutput into downstream consumers
+**Context:** The franchise v4 schema (`lineage`, `shared_universe`,
+`recognized_subgroups`, `launches_subgroup`, `lineage_position`,
+`special_attributes`) landed in `schemas/metadata.py` and is being
+generated into the SQLite `generated_metadata.franchise` column,
+but nothing reads it yet. `vector_text.py` still consumes
+`SourceOfInspirationOutput.franchise_lineage`, `ingest_movie.py`
+has no franchise references, and `db/lexical_search.py` operates
+on source_material phrases. To serve the downstream query
+inventory documented in
+search_improvement_planning/franchise_test_iterations.md (direct
+lineage / shared_universe / subgroups / position / attributes
+lookups) we need to: (a) decide whether franchise fields embed
+into any vector space or whether they become structured Postgres
+columns with hard filters at search time, (b) add the storage
+columns or vector_text integration accordingly, (c) add query-time
+filter/scoring logic in `db/` for the target query shapes. Also
+kick a franchise regeneration run — existing rows are stale v3
+format and will be overwritten, but we should actually kick the
+run. Also update
+`movie_ingestion/metadata_generation/generators/test_franchise.ipynb`
+and `franchise_test_results.json` (both currently uncommitted in
+git status) to score v4 outputs — they're stale against the new
+schema.
+**When:** Before the next search-quality iteration that depends on
+franchise-aware retrieval (e.g., "Harry Potter spinoffs",
+"Marvel movies from Phase 3"). Not blocking unrelated work.
+**See:** schemas/metadata.py (FranchiseOutput v4),
+movie_ingestion/metadata_generation/prompts/franchise.py,
+search_improvement_planning/franchise_test_iterations.md (v4
+section — worked examples table and test acceptance criteria),
+movie_ingestion/final_ingestion/vector_text.py,
+movie_ingestion/final_ingestion/ingest_movie.py,
+db/lexical_search.py.

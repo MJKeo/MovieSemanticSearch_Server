@@ -28,8 +28,8 @@ needed for `overall_keywords`.
 `plot_keywords` is the free-form community tagging system (114,547
 distinct terms, 53% appear exactly once, massive long tail). These raw
 tags are already consumed by the metadata generation pipeline and
-distilled into structured LLM metadata across the 7 vector spaces. They
-do not need a separate search path via `keyword_ids`.
+distilled into structured LLM metadata across the vector spaces. They do
+not need a separate search path via `keyword_ids`.
 
 ---
 

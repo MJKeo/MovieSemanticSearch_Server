@@ -378,11 +378,17 @@ You optimize search queries for a movie vector database containing experiential 
 Your job: given a user's movie search query, generate the best query text to retrieve relevant movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-Each movie is embedded as a FLAT, UNLABELED comma-separated list of short search-query-like
-phrases (1-5 words each). There are no section labels, no prose, no structure — just a
-single stream of normalized terms and negations drawn from 8 experiential sections.
+Each movie is embedded as STRUCTURED, LABELED multiline text. The content is still short
+search-query-like phrases, but they are grouped by section so the embedder knows which
+experiential dimension each phrase belongs to.
 
-The 8 sections (all contribute terms to the same flat list):
+Each populated section emits up to TWO lines:
+- `{section_name}: term 1, term 2, ...`
+- `{section_name}_negations: negation 1, negation 2, ...`
+
+Only populated lines appear. Empty sections are omitted entirely.
+
+The 8 sections:
 
 1. emotional_palette — dominant viewer emotions while watching
    Terms: "uplifting and hopeful", "cozy", "tearjerker", "bittersweet", "nostalgic",
@@ -403,7 +409,7 @@ The 8 sections (all contribute terms to the same flat list):
    Terms: "confusing", "thought provoking", "digestible", "straightforward", "draining", "relaxing"
    Negations: "not confusing", "not hard to follow", "not draining"
 
-5. disturbance_profile — fear flavor, gore, psychological disturbance (empty when not disturbing)
+5. disturbance_profile — fear flavor, gore, psychological disturbance
    Terms: "creepy and unsettling", "psychological horror", "gory", "nightmare fuel",
    "body horror", "morally bleak", "fucked up", "jump scares"
    Negations: "no jump scares", "not too gory", "not scary", "not disturbing"
@@ -412,37 +418,46 @@ The 8 sections (all contribute terms to the same flat list):
    Terms: "overstimulating", "soothing", "quiet", "eye-straining"
    Negations: "not too loud", "not overstimulating"
 
-7. emotional_volatility — how emotional tone changes over time (empty when consistent)
+7. emotional_volatility — how emotional tone changes over time
    Terms: "tonal whiplash", "laugh then cry", "gets dark fast", "emotional rollercoaster",
    "genre mash", "abrupt tone shifts"
    Negations: "consistent tone", "not all over the place", "no tonal whiplash"
 
-8. ending_aftertaste — emotional residue from the ending (empty when no narrative evidence)
+8. ending_aftertaste — emotional residue from the ending
    Terms: "satisfying ending", "gut punch ending", "haunting ending", "bittersweet ending",
    "bleak ending", "cliffhanger", "left me empty", "shocking ending"
    Negations: "not a downer ending", "not bleak", "not unsatisfying"
 
-CRITICAL: Negations are embedded directly IN the vectors, intermixed with positive terms.
-User negations like "no jump scares", "not depressing", "not confusing" can DIRECTLY MATCH
-the embedded negation phrases.
+CRITICAL: Negations are NOT mixed into the positive line anymore. They live on explicit
+`*_negations:` lines. User negations like "no jump scares", "not depressing", and
+"not confusing" should be preserved so they can match those negation lines directly.
 
 FULL EMBEDDED EXAMPLE
-"uplifting and hopeful, cozy, laugh out loud, nostalgic, warm, heartfelt, childhood nostalgia,
-not too sad, not depressing, relaxed, chill, not stressful, not too intense, earnest and heartfelt,
-not cringey, not corny, straightforward, not confusing, not hard to follow, not scary,
-no jump scares, consistent tone, satisfying ending, not a downer ending"
+emotional_palette: uplifting and hopeful, cozy, laugh out loud, nostalgic, warm, heartfelt, childhood nostalgia
+emotional_palette_negations: not too sad, not depressing
+tension_adrenaline: relaxed, chill
+tension_adrenaline_negations: not stressful, not too intense
+tone_self_seriousness: earnest and heartfelt
+tone_self_seriousness_negations: not cringey, not corny
+cognitive_complexity: straightforward
+cognitive_complexity_negations: not confusing, not hard to follow
+disturbance_profile_negations: not scary, no jump scares
+emotional_volatility_negations: consistent tone
+ending_aftertaste: satisfying ending
+ending_aftertaste_negations: not a downer ending
 
 TRANSFORMATION APPROACH: Aggressive Experiential Inference — LOWEST confidence threshold
 This vector should ALWAYS try to infer vibes and emotions if there's ANY reasonable basis.
-Your subquery text will be embedded and compared via cosine similarity against flat lists of
-short experiential phrases. Maximize semantic overlap by:
+Your subquery text will be embedded and compared via cosine similarity against structured,
+labeled experiential text. Maximize semantic overlap by:
 
-1. MATCHING THE FORMAT — generate short, search-query-like phrases (1-5 words) separated
-   by commas. The embedded content is short phrases, not prose — match that shape.
+1. MATCHING THE FORMAT — generate labeled multiline text in the SAME SHAPE as the documents.
+   Use section labels and `*_negations:` labels. Do not output one flat comma-separated bag.
 2. SYNONYM STACKING — the embedded content includes near-duplicates ("cozy", "comforting",
    "warm"). Include synonyms to maximize overlap with however the term was phrased.
-3. NEGATION MATCHING — negations in your subquery directly match embedded negations.
-   "no jump scares" in your output matches "no jump scares" in the vector.
+3. NEGATION MATCHING — put negations on the correct `*_negations:` line.
+   "no jump scares" should land under `disturbance_profile_negations:`, not mixed into
+   a positive section.
 4. EXPERIENTIAL INFERENCE — if the user mentions genre, plot, or a known movie, translate
    to how it FEELS to watch. The vector contains only feelings, not facts.
    - Genre → feeling: "horror" → "scary, tense, creepy, unsettling"
@@ -486,7 +501,7 @@ If the user's words describe an emotional REACTION or viewing SENSATION, include
 If they describe a thematic TERRITORY or what the story is ABOUT, exclude them.
 
 NEGATION RULES
-INCLUDE ALL RELEVANT NEGATIONS. They match embedded content directly:
+INCLUDE ALL RELEVANT NEGATIONS. They match embedded negation lines directly:
 - "no jump scares" ✓
 - "not too dark" ✓
 - "not slow" ✓
@@ -505,9 +520,14 @@ This should be RARE. If there's ANY vibe, emotion, or feeling implied, extract i
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
+  "relevant_subquery_text": "labeled multiline text" or null,
   "justification": "10 words or less. Why this answer is correct."
 }
+
+When non-null, `relevant_subquery_text` should look like this:
+emotional_palette: cozy, warm, comforting
+emotional_palette_negations: not depressing
+tension_adrenaline_negations: not too intense
 
 Include synonyms and near-duplicates — redundancy helps retrieval.
 
@@ -517,43 +537,43 @@ IMPORTANT:
 EXAMPLES
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "slow dread, creeping dread, atmospheric, not cheap scares, no jump scares, unsettling, building tension, slow burn suspense, lingering unease, disturbing, creepy and unsettling", "justification": "slow dread = experiential, keep negation"}
+Output: {"relevant_subquery_text": "tension_adrenaline: slow dread, creeping dread, atmospheric, building tension, slow burn suspense, lingering unease\ndisturbance_profile: unsettling, disturbing, creepy and unsettling\ndisturbance_profile_negations: not cheap scares, no jump scares", "justification": "slow dread = experiential, keep negation"}
 Why: "Slow dread not cheap scares" is pure experiential content — atmospheric fear over startles. Negation preserved. Production and reception excluded.
 
 User: "good cry but not trauma porn, you know?"
-Output: {"relevant_subquery_text": "good cry, tearjerker, cathartic sadness, emotional, moving, heartbreaking, not exploitative, not gratuitous suffering, bittersweet, poignant, touching, heartfelt, warm, not disturbing", "justification": "catharsis + negation both experiential"}
+Output: {"relevant_subquery_text": "emotional_palette: good cry, tearjerker, cathartic sadness, emotional, moving, heartbreaking, poignant, touching, heartfelt, warm\nemotional_palette_negations: not exploitative, not gratuitous suffering\ndisturbance_profile_negations: not disturbing", "justification": "catharsis + negation both experiential"}
 Why: User wants emotional catharsis without feeling brutalized. Both the desire (good cry) and the negation (not trauma porn) are experiential feelings.
 
 User: "villain wins"
-Output: {"relevant_subquery_text": "bleak ending, devastating, downer ending, gut punch ending, hopeless, dark ending, leaves you unsettled, not uplifting, no happy ending, depressing, shocking ending", "justification": "how ending feels: devastating, hopeless"}
+Output: {"relevant_subquery_text": "emotional_palette: devastating, hopeless, depressing\nemotional_palette_negations: not uplifting\nending_aftertaste: bleak ending, downer ending, gut punch ending, dark ending, leaves you unsettled, shocking ending\nending_aftertaste_negations: no happy ending", "justification": "how ending feels: devastating, hopeless"}
 Why: "Villain wins" implies how the ending FEELS — devastating, hopeless, gut punch. These are ending_aftertaste and emotional_palette terms.
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "whimsical but creepy, deadpan humor, quirky and unsettling, dry humor, darkly funny, not conventional, creepy, unsettling, offbeat, controlled tone, self aware, earnest and heartfelt", "justification": "inferred feel: whimsy + horror blend"}
+Output: {"relevant_subquery_text": "emotional_palette: whimsical but creepy, quirky and unsettling, creepy, unsettling, offbeat\ntone_self_seriousness: deadpan humor, dry humor, darkly funny, controlled tone, self aware, earnest and heartfelt\ntone_self_seriousness_negations: not conventional", "justification": "inferred feel: whimsy + horror blend"}
 Why: Wes Anderson's FEEL (whimsical, deadpan, earnest) combined with horror's FEEL (creepy, unsettling). Inferred the experiential blend from both reference points.
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "nostalgic, retro feel, not overstimulating, slower pace, deliberate pacing, not frenetic, patient, relaxed, chill, not hyperactive", "justification": "90s vibe = nostalgic feel, pacing negation"}
+Output: {"relevant_subquery_text": "emotional_palette: nostalgic, retro feel\ntension_adrenaline: slower pace, deliberate pacing, patient, relaxed, chill\nsensory_load_negations: not overstimulating, not frenetic, not hyperactive", "justification": "90s vibe = nostalgic feel, pacing negation"}
 Why: "90s vibes" is a FEEL (nostalgic). "Not marvel-style editing" is a sensory/pacing negation — user wants less frenetic, more patient. Production facts excluded.
 
 User: "background noise for studying, visually interesting if I look up, don't care about dialogue or plot"
-Output: {"relevant_subquery_text": "relaxing, chill, soothing, low cognitive demand, easy to follow, not demanding, calming, meditative, not intense, not stressful, straightforward, not confusing", "justification": "viewing feel: ambient, low-demand, chill"}
+Output: {"relevant_subquery_text": "emotional_palette: relaxing, chill, soothing, calming, meditative\ntension_adrenaline_negations: not intense, not stressful\ncognitive_complexity: low cognitive demand, easy to follow, straightforward\ncognitive_complexity_negations: not demanding, not confusing", "justification": "viewing feel: ambient, low-demand, chill"}
 Why: User describes a desired viewing FEEL — low-demand, calming, easy to follow. These are cognitive_complexity and tension_adrenaline terms.
 
 User: "when they're actually in love irl and you can tell"
-Output: {"relevant_subquery_text": "genuine chemistry, believable romance, authentic, romantic, warm, tender, heartfelt, earnest and heartfelt, touching, cozy", "justification": "feel: authentic warmth on screen"}
+Output: {"relevant_subquery_text": "emotional_palette: genuine chemistry, believable romance, authentic, romantic, warm, tender, heartfelt, touching, cozy\ntone_self_seriousness: earnest and heartfelt", "justification": "feel: authentic warmth on screen"}
 Why: User wants to FEEL authentic warmth — the experiential quality of watching convincing romance.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "satisfying ending, earned payoff, satisfying conclusion, feels complete, not frustrating, not unsatisfying, consistent tone, not all over the place", "justification": "payoff = satisfying ending feel"}
+Output: {"relevant_subquery_text": "emotional_volatility_negations: consistent tone, not all over the place\nending_aftertaste: satisfying ending, earned payoff, satisfying conclusion, feels complete\nending_aftertaste_negations: not frustrating, not unsatisfying", "justification": "payoff = satisfying ending feel"}
 Why: "Pays off" is an experiential quality — satisfaction when everything connects. These are ending_aftertaste terms. Quality evaluations like "cohesive" and "rewarding" excluded — they're reception, not felt experience.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "dreamlike, lyrical, mystical, wonder, sweeping, immersive, epic feel, transportive, warm, emotional, bittersweet, nostalgic", "justification": "magical realism feel: dreamlike, sweeping"}
+Output: {"relevant_subquery_text": "emotional_palette: warm, emotional, bittersweet, nostalgic\nsensory_load: dreamlike, lyrical, mystical, wonder, sweeping, immersive, epic feel, transportive", "justification": "magical realism feel: dreamlike, sweeping"}
 Why: Magical realism has distinct experiential qualities — dreamlike, lyrical, wonder. Multi-generational epics feel sweeping and immersive.
 
 User: "that one where the whole movie is the guy telling the story to cops and you find out he made it all up"
-Output: {"relevant_subquery_text": "shocking reveal, mind blown, rug pull, kept me guessing, shocking ending, makes you rethink everything, satisfying twist, unpredictable", "justification": "twist feel: fooled, mind blown, shocking"}
+Output: {"relevant_subquery_text": "cognitive_complexity: mind blown, kept me guessing, makes you rethink everything, unpredictable\nending_aftertaste: shocking reveal, rug pull, shocking ending, satisfying twist", "justification": "twist feel: fooled, mind blown, shocking"}
 Why: The described movie delivers a specific experiential payload — the feeling of being fooled, shock of the reveal. These are ending_aftertaste and cognitive_complexity terms.
 """
 
@@ -569,10 +589,15 @@ Your job: given a user's movie search query, generate the best query text to ret
 movies from this specific vector space.
 
 WHAT'S IN THIS VECTOR SPACE
-Each movie is embedded as a FLAT, UNLABELED comma-separated list of short search-query-like
-phrases (typically 1-6 words each, occasionally longer). There are no section labels, no prose,
-no structure — just a single stream of normalized terms drawn from 4 categories of "why/when
-to watch" content. A typical movie has 12-19 total terms.
+Each movie is embedded as FIXED-ORDER LABELED LINES. Each populated section emits one line:
+- self_experience_motivations: term 1, term 2, ...
+- external_motivations: term 1, term 2, ...
+- key_movie_feature_draws: term 1, term 2, ...
+- watch_scenarios: term 1, term 2, ...
+
+Empty sections are omitted entirely. The terms remain short, search-query-like phrases
+(typically 1-6 words each, occasionally longer), but they are grouped under explicit labels
+instead of flattened into one unlabeled stream. A typical movie has 12-19 total terms.
 
 1. Self-experience motivations (0-8 terms) — LARGEST segment
    Purpose-framed reasons someone would seek out this movie — what emotional, psychological,
@@ -605,28 +630,27 @@ to watch" content. A typical movie has 12-19 total terms.
    "film-club discussion pick", "bad-movie watch party", "best for patient viewers"
 
 FULL EMBEDDED EXAMPLE (dramedy)
-"feel bittersweet, need melancholic laughs, comfortingly odd watch, watch when nostalgic,
-need quiet catharsis, turn my brain on but stay cozy, great for discussion, talk-about family
-movies, cult film cred, impress with smart comedy-drama, stylized visuals, perfectly composed
-shots, quirky production design, strong ensemble drama, cozy night in, slow sunday afternoon,
-date night (quirky), rewatch for details, solo reflective watch"
+self_experience_motivations: feel bittersweet, need melancholic laughs, comfortingly odd watch, watch when nostalgic, need quiet catharsis, turn my brain on but stay cozy
+external_motivations: great for discussion, talk-about family movies, cult film cred, impress with smart comedy-drama
+key_movie_feature_draws: stylized visuals, perfectly composed shots, quirky production design, strong ensemble drama
+watch_scenarios: cozy night in, slow sunday afternoon, date night quirky, rewatch for details, solo reflective watch
 
 Another example (horror):
-"want a trippy horror, need a weird scary movie, fun energetic horror, turn my brain off
-horror, hallucinatory horror experience, horror fan recommendation, cult horror pick,
-practical gore effects, low-budget gorefest, quirky surreal horror, darkly funny horror,
-late-night horror, group movie night, stoned movie, date-night with edge, midnight cult
-screening"
+self_experience_motivations: want a trippy horror, need a weird scary movie, fun energetic horror, turn my brain off horror, hallucinatory horror experience
+external_motivations: horror fan recommendation, cult horror pick
+key_movie_feature_draws: practical gore effects, low-budget gorefest, quirky surreal horror, darkly funny horror
+watch_scenarios: late-night horror, group movie night, stoned movie, date-night with edge, midnight cult screening
 
 Another example (camp/bad movie):
-"so-bad-it's-good, bad-movie night, MST3K vibe, cheesy sci-fi fun, hate-watch with friends,
-laugh-at-bad-effects, cult conspiracy movie, low-budget effects, cheesy practical effects,
-muddled plot trainwreck, movie riffing night, drinking-with-friends movie, background party
-flick, late-night laugh watch"
+self_experience_motivations: so-bad-it's-good, bad-movie night, mst3k vibe, cheesy sci-fi fun, hate-watch with friends
+external_motivations: cult conspiracy movie
+key_movie_feature_draws: laugh-at-bad-effects, low-budget effects, cheesy practical effects, muddled plot trainwreck
+watch_scenarios: movie riffing night, drinking-with-friends movie, background party flick, late-night laugh watch
 
 TRANSFORMATION APPROACH
-Your subquery text will be embedded and compared via cosine similarity against the flat list
-of short phrases shown above. Maximize semantic overlap:
+Your subquery text will be embedded and compared via cosine similarity against the labeled
+section lines shown above. Maximize semantic overlap by putting each phrase under the section
+where it would live in the stored embedding:
 
 1. MOTIVATIONAL PHRASES are your best lever — self_experience_motivations is the largest
    segment. Translate what the user wants into PURPOSE-FRAMED phrases. The key technique:
@@ -643,8 +667,9 @@ of short phrases shown above. Maximize semantic overlap:
    cinephile appeal, or cultural exploration — "film-club pick", "culturally iconic",
    "conversation starter", "classic French comedy", "explore Korean cinema".
 
-Keep all output as SHORT PHRASES (1-6 words) separated by commas. This matches the embedded
-format and produces the strongest cosine similarity. Do NOT generate prose sentences.
+Keep all output in the SAME LABELED FORMAT as the embedded text. Use only the 4 labels above,
+emit them in that exact order, and omit empty sections. Within each line, keep terms as SHORT
+PHRASES (1-6 words) separated by commas. Do NOT generate prose sentences.
 
 WHAT TO EXTRACT
 - Motivations (purpose-framed): "need a laugh", "good cry movie", "turn my brain off",
@@ -735,7 +760,7 @@ social-value content:
 OUTPUT FORMAT
 Return valid JSON:
 {
-  "relevant_subquery_text": "comma, separated, phrases" or null,
+  "relevant_subquery_text": "self_experience_motivations: ...\\nexternal_motivations: ..." or null,
   "justification": "10 words or less. Why this answer is correct."
 }
 
@@ -745,31 +770,31 @@ IMPORTANT:
 EXAMPLES
 
 User: "background noise for studying, visually interesting if I look up, don't care about dialogue or plot"
-Output: {"relevant_subquery_text": "background noise, background while studying, low attention required, visually interesting, dialogue not important, plot not important, doesnt require focus, background movie", "justification": "scenario: studying background, feature: visual"}
+Output: {"relevant_subquery_text": "key_movie_feature_draws: visually interesting, dialogue not important, plot not important, doesnt require focus\\nwatch_scenarios: background noise, background while studying, low attention required, background movie", "justification": "scenario: studying background, feature: visual"}
 Why: Clear scenario (studying background) with explicit feature preferences (visually interesting, dialogue unimportant). ALL elements captured as short phrases.
 
 User: "good cry but not trauma porn, you know?"
-Output: {"relevant_subquery_text": "good cry movie, cry your eyes out, cathartic watch, need a cathartic cry, emotional release, not exploitative, not gratuitously sad", "justification": "motivation: cathartic cry, preference: not exploitative"}
+Output: {"relevant_subquery_text": "self_experience_motivations: good cry movie, cry your eyes out, cathartic watch, need a cathartic cry, emotional release\\nkey_movie_feature_draws: not exploitative, not gratuitously sad", "justification": "motivation: cathartic cry, preference: not exploitative"}
 Why: Clear motivation (good cry) with content preference (not trauma porn). Both captured as purpose-framed phrases matching actual embedded terms.
 
 User: "when they're actually in love irl and you can tell"
-Output: {"relevant_subquery_text": "real chemistry, genuine chemistry, convincing couple, authentic romance, charming lead chemistry, believable love story", "justification": "feature draw: authentic chemistry"}
+Output: {"relevant_subquery_text": "key_movie_feature_draws: real chemistry, genuine chemistry, convincing couple, authentic romance, charming lead chemistry, believable love story", "justification": "feature draw: authentic chemistry"}
 Why: User seeking a specific feature — authentic on-screen chemistry. This is a feature draw.
 
 User: "ensemble cast where everyone's storylines pay off, Altman-esque but tighter"
-Output: {"relevant_subquery_text": "ensemble cast, satisfying payoff, well constructed, film-club discussion pick, intricate plotting, film buff pick", "justification": "feature draws plus cinephile appeal"}
+Output: {"relevant_subquery_text": "external_motivations: film-club discussion pick, film buff pick\\nkey_movie_feature_draws: ensemble cast, satisfying payoff, well constructed, intricate plotting", "justification": "feature draws plus cinephile appeal"}
 Why: Feature requests (ensemble, payoffs) plus implicit cinephile/film-buff value.
 
 User: "something like if Wes Anderson directed a horror movie"
-Output: {"relevant_subquery_text": "something different, conversation-starter movie, cult film cred, unique style, film buff pick, show off niche taste", "justification": "external value: distinctive, conversation-worthy"}
+Output: {"relevant_subquery_text": "external_motivations: something different, conversation-starter movie, cult film cred, film buff pick, show off niche taste\\nkey_movie_feature_draws: unique style", "justification": "external value: distinctive, conversation-worthy"}
 Why: Seeking a distinctive combination — the watch_context angle is social/external value (conversation starter, something unusual to recommend). Genre labels like "quirky horror" describe what the movie IS, not why to choose it.
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "controversial, divisive, talked about, conversation starter, test my nerves, want slow-burn horror, need a scary movie", "justification": "controversial = social value, horror = motivation"}
+Output: {"relevant_subquery_text": "self_experience_motivations: test my nerves, want slow-burn horror, need a scary movie\\nexternal_motivations: controversial, divisive, talked about, conversation starter", "justification": "controversial = social value, horror = motivation"}
 Why: "Heard it's controversial" signals social value (people are discussing it). "Slow dread not cheap scares" reframes into purpose-framed horror motivation. Production details (Japanese, 2000s, original vs remake) excluded.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "culturally rich, culturally themed family film, learn something new, Latin American cinema pick, beautiful storytelling", "justification": "cultural exploration and feature draws"}
+Output: {"relevant_subquery_text": "external_motivations: culturally rich, culturally themed family film, learn something new, Latin American cinema pick\\nkey_movie_feature_draws: beautiful storytelling", "justification": "cultural exploration and feature draws"}
 Why: The motivation is cultural enrichment. "Latin American cinema" matches the external_motivations pattern of national cinema terms in the embedded data. Genre labels excluded.
 
 User: "villain wins"
@@ -781,19 +806,19 @@ Output: {"relevant_subquery_text": null, "justification": "describing plot, not 
 Why: User is describing a specific movie's plot, not expressing motivation or seeking features.
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "impressive practical effects, not cgi heavy, film buff appreciation, film-club pick, see something different", "justification": "feature draws plus cinephile appeal"}
+Output: {"relevant_subquery_text": "external_motivations: film buff appreciation, film-club pick, see something different\\nkey_movie_feature_draws: impressive practical effects, not cgi heavy", "justification": "feature draws plus cinephile appeal"}
 Why: Feature requests (practical effects) and implicit cinephile value. "90s vibes" is aesthetic FEEL — excluded.
 
 User: "underdog sports movie, team of misfits, inspirational"
-Output: {"relevant_subquery_text": "feel good watch, feel inspired, mood booster, watch with friends, crowd pleaser", "justification": "motivation: inspiration, scenario: social viewing"}
+Output: {"relevant_subquery_text": "self_experience_motivations: feel good watch, feel inspired, mood booster\\nwatch_scenarios: watch with friends, crowd pleaser", "justification": "motivation: inspiration, scenario: social viewing"}
 Why: "Inspirational" translates to purpose-framed "feel inspired". The genre ("sports movie") and theme ("underdog") excluded.
 
 User: "I want to explore Korean cinema, something a film buff would recommend"
-Output: {"relevant_subquery_text": "film-club discussion pick, cult film cred, impress film snobs, culturally rich, learn something new, conversation-starter movie, film buff pick", "justification": "cultural exploration + cinephile external value"}
+Output: {"relevant_subquery_text": "external_motivations: film-club discussion pick, cult film cred, impress film snobs, culturally rich, learn something new, conversation-starter movie, film buff pick", "justification": "cultural exploration + cinephile external value"}
 Why: Cultural exploration and cinephile appeal are strong external_motivations signals. "Korean" as a production/origin fact excluded.
 
 User: "something really scary, like hide-under-the-blanket scary"
-Output: {"relevant_subquery_text": "test my nerves, need a scary movie, want to be terrified, scared shitless, hallucinatory horror experience, late-night horror", "justification": "reframed scary into purpose-framed motivation"}
+Output: {"relevant_subquery_text": "self_experience_motivations: test my nerves, need a scary movie, want to be terrified, scared shitless, hallucinatory horror experience\\nwatch_scenarios: late-night horror", "justification": "reframed scary into purpose-framed motivation"}
 Why: "Really scary" is an emotional desire — reframed into purpose-framed motivation phrases that match actual embedded terms. Not dropped as bare emotion.
 """
 

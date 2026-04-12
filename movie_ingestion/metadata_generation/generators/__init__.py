@@ -12,5 +12,6 @@ output with token usage. Callers can override provider/model/kwargs.
 Generation types and their waves:
     Wave 1: plot_events, reception
     Wave 2: plot_analysis, viewer_experience, watch_context,
-            narrative_techniques, production_keywords, source_of_inspiration
+            narrative_techniques, production_keywords,
+            production_techniques, source_of_inspiration
 """

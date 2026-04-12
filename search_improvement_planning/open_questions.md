@@ -41,24 +41,20 @@ semantic attributes route to vector spaces. No explicit weighting needed.
 
 ### ~~How does the anchor vector fit in the new system?~~ DECIDED
 
-**Anchor vector is dropped from V2.** The generalist "jack of all trades"
-role it played in V1 is superseded by the V2 architecture:
+**Anchor vector is retained in V2, but only in reduced form.** The broad
+jack-of-all-trades role it played in V1 is removed. Instead, anchor becomes a
+lean holistic fingerprint with labeled movie-wide summary fields:
 
-- **Candidate generation:** Replaced by deterministic channels (lexical,
-  metadata, keywords) in Phase 1.
-- **"Whole picture" scoring:** Replaced by cross-space rescoring in Phase 2,
-  which evaluates candidates across all relevant specialized spaces — strictly
-  better because it provides per-dimension signal instead of one blended number.
-- **Similarity queries:** Better served by a weighted mix of targeted vectors
-  (e.g. plot_analysis, viewer_experience) than a single generalist embedding.
-  The targeted approach gives more precise control over which dimensions matter.
-- **Pure-vibe queries:** Handled by querying the 2-3 most relevant specialized
-  spaces rather than a broad anchor.
+- Title and original title
+- Identity pitch and identity overview
+- Genre signatures and themes
+- Emotional palette and key draws
+- Maturity summary and reception summary
 
-If clear failure examples emerge during V2 testing where the specialized spaces
-consistently miss movies that a generalist embedding would catch, the anchor
-vector can be reintroduced in a reduced role (Phase 4 exploratory driver or
-tiebreaker). But the default is to build without it.
+This preserves a useful "movie as a whole" semantic surface without
+reintroducing the clutter that diluted V1 embeddings. Structured/filterable
+facts like keywords, franchise/source material, languages, decade, budget, and
+awards stay in deterministic retrieval or specialized vector spaces.
 
 ---
 

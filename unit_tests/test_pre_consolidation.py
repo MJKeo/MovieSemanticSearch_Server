@@ -37,6 +37,7 @@ from movie_ingestion.metadata_generation.batch_generation.pre_consolidation impo
     _check_watch_context,
     _check_narrative_techniques,
     _check_production_keywords,
+    _check_production_techniques,
     _check_source_of_inspiration,
     assess_skip_conditions,
     run_pre_consolidation,
@@ -487,6 +488,24 @@ class TestCheckProductionAndInspiration:
     def test_check_production_keywords_skip_empty(self):
         assert _check_production_keywords([]) is not None
 
+    def test_check_production_techniques_eligible_with_one_plot_keyword(self):
+        movie = _make_movie(plot_keywords=["single-take"], overall_keywords=[])
+        assert _check_production_techniques(movie) is None
+
+    def test_check_production_techniques_eligible_with_three_overall_keywords(self):
+        movie = _make_movie(
+            plot_keywords=[],
+            overall_keywords=["anthology", "mockumentary", "drama"],
+        )
+        assert _check_production_techniques(movie) is None
+
+    def test_check_production_techniques_skip_with_two_overall_keywords_and_no_plot(self):
+        movie = _make_movie(
+            plot_keywords=[],
+            overall_keywords=["anthology", "mockumentary"],
+        )
+        assert _check_production_techniques(movie) is not None
+
     def test_check_source_of_inspiration_eligible_keywords(self):
         assert _check_source_of_inspiration(["keyword"], None) is None
 
@@ -695,6 +714,7 @@ class TestAssessSkipConditions:
             maturity_summary="R — Restricted",
         )
         assert "production_keywords" in result.generations_to_run
+        assert "production_techniques" in result.generations_to_run
 
     def test_assess_skip_reasons_are_strings(self):
         movie = _make_movie(

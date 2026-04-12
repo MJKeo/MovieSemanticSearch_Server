@@ -14,6 +14,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from schemas.enums import AwardOutcome
+
 
 # ---------------------------------------------------------------------------
 # Shared sub-models used across multiple page-level models
@@ -43,8 +45,11 @@ class AwardNomination(BaseModel):
     ceremony: str
     award_name: str                  # specific prize name (e.g., "Oscar", "Palme d'Or", "Golden Lion")
     category: Optional[str] = None   # null for festival grand prizes (Palme d'Or, etc.)
-    outcome: str                     # "winner" or "nominee"
+    outcome: AwardOutcome
     year: int
+
+    def did_win(self) -> bool:
+        return self.outcome == AwardOutcome.WINNER
 
 
 # ---------------------------------------------------------------------------

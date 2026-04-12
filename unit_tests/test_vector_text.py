@@ -434,14 +434,19 @@ class TestNarrativeTechniquesReturnsNone:
         movie = _make_movie()
         assert create_narrative_techniques_vector_text(movie) is None
 
-    def test_returns_text_with_metadata(self):
+    def test_returns_exact_labeled_embedding_text_with_metadata(self):
         meta = _make_narrative_techniques(
-            narrative_archetype={"terms": ["hero journey"]},
+            narrative_archetype={"terms": ["Hero's Journey"]},
+            information_control={"terms": ["Plot Twist"]},
         )
         movie = _make_movie(narrative_techniques_metadata=meta)
         result = create_narrative_techniques_vector_text(movie)
-        assert result is not None
-        assert normalize_string("hero journey") in result
+        hero = normalize_string("Hero's Journey")
+        twist = normalize_string("Plot Twist")
+        assert result == (
+            f"narrative_archetype: {hero}\n"
+            f"information_control: {twist}"
+        )
 
 
 class TestViewerExperienceReturnsNone:
@@ -449,11 +454,43 @@ class TestViewerExperienceReturnsNone:
         movie = _make_movie()
         assert create_viewer_experience_vector_text(movie) is None
 
+    def test_returns_labeled_embedding_text_with_metadata(self):
+        movie = _make_movie(
+            viewer_experience_metadata=_make_viewer_experience(
+                emotional_palette={
+                    "terms": ["Warm"],
+                    "negations": ["Not Bleak"],
+                },
+                tension_adrenaline={"terms": ["Slow Burn Suspense"]},
+            ),
+        )
+
+        assert create_viewer_experience_vector_text(movie) == (
+            "emotional_palette: warm\n"
+            "emotional_palette_negations: not bleak\n"
+            "tension_adrenaline: slow burn suspense"
+        )
+
 
 class TestWatchContextReturnsNone:
     def test_returns_none_without_metadata(self):
         movie = _make_movie()
         assert create_watch_context_vector_text(movie) is None
+
+    def test_returns_labeled_embedding_text_with_metadata(self):
+        movie = _make_movie(
+            watch_context_metadata=_make_watch_context(
+                self_experience_motivations={"terms": ["Need a Laugh"]},
+                key_movie_feature_draws={"terms": ["Great Soundtrack"]},
+                watch_scenarios={"terms": ["Date Night"]},
+            ),
+        )
+
+        assert create_watch_context_vector_text(movie) == (
+            "self_experience_motivations: need a laugh\n"
+            "key_movie_feature_draws: great soundtrack\n"
+            "watch_scenarios: date night"
+        )
 
 
 # ---------------------------------------------------------------------------

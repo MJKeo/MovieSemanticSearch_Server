@@ -138,11 +138,12 @@ class TestSchemaByType:
     """Tests for SCHEMA_BY_TYPE registry."""
 
     def test_includes_all_registered_types(self) -> None:
-        """SCHEMA_BY_TYPE has entries for all 7 registered types."""
+        """SCHEMA_BY_TYPE has entries for all currently registered types."""
         assert MetadataType.PLOT_EVENTS in SCHEMA_BY_TYPE
         assert MetadataType.RECEPTION in SCHEMA_BY_TYPE
         assert MetadataType.PLOT_ANALYSIS in SCHEMA_BY_TYPE
         assert MetadataType.PRODUCTION_KEYWORDS in SCHEMA_BY_TYPE
+        assert MetadataType.PRODUCTION_TECHNIQUES in SCHEMA_BY_TYPE
         assert MetadataType.VIEWER_EXPERIENCE in SCHEMA_BY_TYPE
         assert MetadataType.WATCH_CONTEXT in SCHEMA_BY_TYPE
         assert MetadataType.NARRATIVE_TECHNIQUES in SCHEMA_BY_TYPE
@@ -264,6 +265,39 @@ class TestProcessResults:
         }
         summary = process_results([result], db_path)
         assert summary.failed == 1
+
+    def test_production_techniques_result_stores_content(self, tracker_db) -> None:
+        """Valid production_techniques result stores content in its SQLite column."""
+        db, db_path = tracker_db
+        db.execute(
+            "INSERT OR IGNORE INTO generated_metadata (tmdb_id, eligible_for_production_techniques) VALUES (?, 1)",
+            (7,),
+        )
+        db.commit()
+        db.close()
+
+        result = {
+            "custom_id": "production_techniques_7",
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "choices": [
+                        {"message": {"content": json.dumps({"terms": ["single-take", "IMAX"]})}}
+                    ],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 5},
+                },
+            },
+        }
+
+        summary = process_results([result], db_path)
+        assert summary.succeeded == 1
+
+        with sqlite3.connect(str(db_path)) as check_db:
+            row = check_db.execute(
+                "SELECT production_techniques FROM generated_metadata WHERE tmdb_id = 7"
+            ).fetchone()
+        assert row[0] is not None
+        assert "single-take" in row[0]
 
     def test_token_accumulation(self, tracker_db) -> None:
         """ProcessingSummary accumulates input/output tokens correctly."""

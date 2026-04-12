@@ -264,6 +264,7 @@ class TestViewerExperienceEmbeddingText:
             emotional_palette={"terms": ["Ocean's Warmth", "L.A. Glow"]},
         )
         result = output.embedding_text()
+        assert "emotional_palette:" in result
         assert normalize_string("Ocean's Warmth") in result
         assert normalize_string("L.A. Glow") in result
 
@@ -276,7 +277,33 @@ class TestViewerExperienceEmbeddingText:
             },
         )
         result = output.embedding_text()
+        assert "emotional_palette_negations:" in result
         assert normalize_string("not scary") in result
+
+    def test_emits_fixed_order_labeled_lines(self):
+        """Sections should emit in fixed order with separate negation labels."""
+        output = _make_viewer_experience(
+            emotional_palette={
+                "terms": ["warm"],
+                "negations": ["not bleak"],
+            },
+            tension_adrenaline={"terms": ["slow burn suspense"]},
+            ending_aftertaste={"negations": ["not a downer ending"]},
+        )
+
+        assert output.embedding_text() == (
+            "emotional_palette: warm\n"
+            "emotional_palette_negations: not bleak\n"
+            "tension_adrenaline: slow burn suspense\n"
+            "ending_aftertaste_negations: not a downer ending"
+        )
+
+    def test_omits_empty_negation_lines(self):
+        """A section with terms only should not emit a *_negations line."""
+        output = _make_viewer_experience(
+            emotional_palette={"terms": ["cozy"]},
+        )
+        assert output.embedding_text() == "emotional_palette: cozy"
 
     def test_empty_sections_produce_empty_string(self):
         """All empty sections should produce an empty string."""
@@ -315,6 +342,17 @@ class TestWatchContextEmbeddingText:
         result = output.embedding_text()
         assert "sincere emotional drama" not in result
 
+    def test_excludes_evidence_basis(self):
+        """evidence_basis should NOT appear in embedding_text()."""
+        output = _make_watch_context(
+            self_experience_motivations={
+                "evidence_basis": "Quoted review text here",
+                "terms": ["Need a Laugh"],
+            },
+        )
+        result = output.embedding_text()
+        assert "quoted review text here" not in result
+
     def test_per_term_normalized(self):
         """Each term should be normalize_string'd individually."""
         output = _make_watch_context(
@@ -322,6 +360,32 @@ class TestWatchContextEmbeddingText:
         )
         result = output.embedding_text()
         assert normalize_string("Ocean's Feel") in result
+
+    def test_labeled_multiline_output_in_fixed_order(self):
+        """Populated sections should render as labeled lines in schema order."""
+        output = _make_watch_context(
+            self_experience_motivations={"terms": ["Need a Laugh"]},
+            external_motivations={"terms": ["Sparks Conversation"]},
+            key_movie_feature_draws={"terms": ["Great Soundtrack"]},
+            watch_scenarios={"terms": ["Date Night"]},
+        )
+        assert output.embedding_text() == (
+            "self_experience_motivations: need a laugh\n"
+            "external_motivations: sparks conversation\n"
+            "key_movie_feature_draws: great soundtrack\n"
+            "watch_scenarios: date night"
+        )
+
+    def test_empty_sections_are_omitted(self):
+        """Empty sections should not emit blank labels or blank lines."""
+        output = _make_watch_context(
+            external_motivations={"terms": ["Learn Something New"]},
+            watch_scenarios={"terms": ["Halloween Movie"]},
+        )
+        assert output.embedding_text() == (
+            "external_motivations: learn something new\n"
+            "watch_scenarios: halloween movie"
+        )
 
     def test_empty_sections_produce_empty_string(self):
         """All empty sections should produce an empty string."""
@@ -348,8 +412,8 @@ def _make_narrative_techniques(**section_overrides):
 
 
 class TestNarrativeTechniquesEmbeddingText:
-    def test_all_9_sections_contribute(self):
-        """Terms from all 9 sections should appear in the output."""
+    def test_all_9_sections_contribute_in_fixed_order(self):
+        """Populated sections should emit labeled lines in schema order."""
         overrides = {}
         section_names = [
             "narrative_archetype", "narrative_delivery", "pov_perspective",
@@ -361,21 +425,48 @@ class TestNarrativeTechniquesEmbeddingText:
             overrides[name] = {"terms": [f"term{i}"]}
         output = _make_narrative_techniques(**overrides)
         result = output.embedding_text()
-        for i in range(9):
-            assert f"term{i}" in result
+        expected_lines = [f"{name}: term{i}" for i, name in enumerate(section_names)]
+        assert result == "\n".join(expected_lines)
 
     def test_per_term_normalized(self):
-        """Each term should be normalize_string'd individually."""
+        """Each term should be normalized individually within labeled lines."""
         output = _make_narrative_techniques(
-            narrative_archetype={"terms": ["Hero's Journey"]},
+            narrative_archetype={"terms": ["Hero's Journey", "Coming-of-Age"]},
         )
         result = output.embedding_text()
-        assert normalize_string("Hero's Journey") in result
+        hero = normalize_string("Hero's Journey")
+        coming = normalize_string("Coming-of-Age")
+        assert result == (
+            "narrative_archetype: "
+            f"{hero}, "
+            f"{coming}"
+        )
 
     def test_empty_sections_produce_empty_string(self):
-        """All empty sections should produce an empty string."""
+        """All-empty output should remain the empty string."""
         output = _make_narrative_techniques()
         assert output.embedding_text() == ""
+
+    def test_sparse_sections_omit_empty_labels_and_justifications(self):
+        """Only populated sections should be emitted and evidence text excluded."""
+        output = _make_narrative_techniques(
+            information_control={
+                "terms": ["Plot Twist"],
+                "evidence_basis": "NT_MARKER",
+            },
+            additional_narrative_devices={
+                "terms": ["Found Footage"],
+                "evidence_basis": "NT_MARKER_2",
+            },
+        )
+        result = output.embedding_text()
+        assert result == (
+            "information_control: plot twist\n"
+            "additional_narrative_devices: found footage"
+        )
+        assert "narrative_archetype:" not in result
+        assert "NT_MARKER" not in result
+        assert not result.endswith("\n")
 
 
 # ---------------------------------------------------------------------------
