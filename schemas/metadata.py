@@ -123,8 +123,9 @@ class TermsWithNegationsSection(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Franchise (v8 — split crossover/spinoff into independent boolean
-# tests, NOT embedded into vectors)
+# Franchise (v9 — exact-match franchise reference anchors plus
+# expanded worked examples, with independent crossover/spinoff
+# boolean tests, NOT embedded into vectors)
 # ---------------------------------------------------------------------------
 #
 # Three orthogonal blocks: IDENTITY (lineage, shared_universe,
@@ -137,6 +138,10 @@ class TermsWithNegationsSection(BaseModel):
 # into a single special_attributes enum list with one shared reasoning
 # field; splitting them prevents the longer spinoff analysis from
 # crowding out crossover and lets each test run on its own scaffold.
+# v9 also adds a prompt-side FRANCHISE REFERENCE section for known
+# exact-match failure cases (Creed, Logan, Space Jam, Detective
+# Pikachu, Venom, etc.) plus extra worked examples for modern sequel /
+# reboot / source-boundary edge cases.
 # See search_improvement_planning/franchise_test_iterations.md for
 # the full rationale and prompts/franchise.py for the procedure,
 # definitions, and examples driving generation.

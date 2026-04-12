@@ -1,5 +1,29 @@
 """
-System prompt for franchise metadata generation (v8).
+System prompt for franchise metadata generation (v9).
+
+v9 deltas (from v8):
+- Added a FRANCHISE REFERENCE section after FIELD 7 with exact-match
+  lookup anchors for known high-value failures: Creed, Logan,
+  Transformers 2007, Space Jam 1996, Hobbs and Shaw, Detective
+  Pikachu, Bond-era label normalization, Sherlock Holmes 2009, Iron
+  Man 2008 subgroup normalization, Guardians of the Galaxy 2014,
+  Scream 2022, Venom 2018, Ocean's Eight, Split / Glass, and the
+  canonical "the dark knight trilogy" label. These anchors correct
+  recurring parametric mistakes while leaving the field procedures as
+  the default path for novel cases.
+- Added FIELD 5 worked examples for modern reasoning patterns the
+  prompt previously under-taught: selective-continuity sequel
+  (Terminator: Dark Fate), independent same-source adaptation
+  boundary (Dune 2021 vs Dune 1984), actor recast without
+  continuity reset (Mad Max: Fury Road), and legacy sequel carried
+  by world-state rather than returning protagonists (Jurassic World).
+- Added FIELD 6B and FIELD 7 teaching examples for trunk-prequel
+  backstory logic (The Ballad of Songbirds and Snakes) and
+  launched_franchise=false source-dominance cases from long-running
+  cartoons / book phenomena (Scooby-Doo 2002, The Hunger Games 2012).
+- Added a FIELD 1+2 clarification that independent adaptations of
+  the same bounded source material do not automatically form one
+  lineage.
 
 v8 deltas (from v7):
 - Split special_attributes (previously a list[SpecialAttribute] enum
@@ -398,6 +422,13 @@ individual adaptations of a bounded work, not a franchise.
 Ongoing-serial distinction: Harry Potter the book series IS an
 ongoing franchise and anchors a lineage; Tolstoy novels are
 closed one-off works and do not.
+
+Independent adaptations of the SAME bounded source do NOT
+automatically form a franchise relationship with each other. David
+Lynch's Dune (1984) and Denis Villeneuve's Dune (2021) both adapt
+Frank Herbert, but the 2021 film is not automatically a sequel,
+remake, or reboot of the 1984 film. Shared source material alone is
+not enough to create a lineage.
 
 SHARED UNIVERSE is the BROADER entity ABOVE the lineage. TWO valid
 shapes:
@@ -959,6 +990,22 @@ WORKED EXAMPLES
 - Ghostbusters: Afterlife (2021) → lineage="Ghostbusters",
   lineage_position="sequel" (ignores the 2016 reboot, continues
   the 1984/1989 continuity)
+- Terminator: Dark Fate (2019) → lineage="the terminator",
+  lineage_position="sequel" (continues The Terminator 1984 and
+  Terminator 2 1991 specifically while ignoring some intermediate
+  sequels; selective continuity is still shared continuity, so this
+  is a sequel, not a reboot)
+- Dune (2021) → lineage="dune", lineage_position=null (first entry
+  in the Villeneuve Dune line; the 1984 film is a separate
+  standalone adaptation of the same source material rather than a
+  prior entry in this lineage)
+- Mad Max: Fury Road (2015) → lineage="mad max",
+  lineage_position="sequel" (same character and world, different
+  actor; an actor recast alone does NOT create a reboot)
+- Jurassic World (2015) → lineage="jurassic park",
+  lineage_position="sequel" (new protagonist, same continuity; the
+  original park's events remain canon and continuity is carried by
+  world-state rather than by the return of the original lead)
 
 IS NOT a lineage_position
 - NOT a hedge between two plausible values.
@@ -1179,6 +1226,11 @@ is_spinoff = false:
   • Avengers (2012) and the other MCU team-ups — trunk of the
     MCU. (They fire is_crossover=true under FIELD 6A, but
     is_spinoff=false here.)
+  • The Hunger Games: The Ballad of Songbirds and Snakes (2023)
+    — Step 2: trunk. Different protagonist and deep-prequel
+    setting, but it is load-bearing backstory for the Hunger Games
+    institution and for Coriolanus Snow, which places it on the
+    saga's core trunk rather than on a branch away from it.
 
 ================================================================
 FIELD 7 — launched_franchise
@@ -1313,9 +1365,15 @@ FALSE EXAMPLES (at least one test fails)
 - Warcraft (2016) — fails test 3 (game franchise dominates).
 - G.I. Joe: The Rise of Cobra (2009) — fails test 3 (toy/cartoon
   franchise dominates).
+- Scooby-Doo (2002) — fails test 3 (the long-running cartoon
+  franchise is the cultural anchor; the film rides on it rather
+  than launching it).
 - Captain America: The First Avenger (2011) — fails test 3
   (Marvel comics franchise dominates recognition);
   launched_subgroup=true instead.
+- The Hunger Games (2012) — fails test 3 (the novel trilogy drove
+  the original cultural wave; the films followed that recognition
+  rather than originating it).
 - Man of Steel (2013) — fails test 3 (Superman comic franchise
   dominates); also fails test 1 because Superman had prior
   theatrical films. launched_subgroup=true instead.
@@ -1387,6 +1445,104 @@ IS NOT launched_franchise
 - NOT true for a film that merely opens a new named subgroup
   inside a pre-existing broader franchise — that is
   launched_subgroup, not launched_franchise.
+
+================================================================
+FRANCHISE REFERENCE — exact-match anchors
+================================================================
+
+Use this section only when the film title/year is an exact match for
+one of the entries below. These are high-value correction anchors for
+known recurrent failure cases. Apply the exact field values listed
+here, then keep the rest of your reasoning consistent with them.
+
+- Creed (2015) → lineage="rocky",
+  recognized_subgroups=["creed trilogy"], launched_subgroup=true,
+  lineage_position="sequel", is_spinoff=true.
+  Do NOT promote creed to its own lineage here. Users searching
+  rocky movies expect Creed to appear, so Creed stays inside the
+  rocky lineage while still opening a named spinoff subgroup.
+
+- Logan (2017) → lineage="wolverine", shared_universe="x-men",
+  is_spinoff=false.
+  Wolverine's solo films are treated as trunk pillar entries of the
+  broader X-Men franchise, not branch spinoffs.
+
+- Transformers (2007) → recognized_subgroups=["bayverse"],
+  launched_subgroup=true, lineage_position="reboot",
+  launched_franchise=false.
+  The prior theatrical Transformers film is The Transformers: The
+  Movie (1986), so 2007 is a reboot, not a null-position starter.
+
+- Space Jam (1996) → lineage="looney tunes", is_crossover=true,
+  is_spinoff=false, launched_franchise=false.
+  Do NOT promote space jam to its own lineage here. This film is a
+  Looney Tunes vehicle whose identity is the Looney Tunes × NBA /
+  Michael Jordan collision.
+
+- Fast & Furious Presents: Hobbs & Shaw (2019) →
+  lineage="fast and furious", lineage_position="sequel",
+  is_spinoff=true.
+  Keep it inside the fast and furious lineage; it is a sequel branch
+  off the main trunk, not a separate top-level lineage.
+
+- Detective Pikachu (2019) → lineage="pokemon",
+  lineage_position="reboot", is_spinoff=false,
+  launched_franchise=false.
+  Normalize to plain ASCII "pokemon", not "pokémon". Prior Pokemon
+  films already exist, so this live-action continuity reset is a
+  reboot, not a null-position starter.
+
+- James Bond actor-era subgroup labels:
+  "connery bond era", "moore bond era", "dalton bond era",
+  "brosnan bond era", "daniel craig era".
+  Use these exact canonical strings when a Bond film belongs to one
+  of those actor-era subgroup labels.
+
+- Sherlock Holmes (2009) → lineage="sherlock holmes",
+  recognized_subgroups=["ritchie sherlock holmes films"],
+  launched_subgroup=true, lineage_position="reboot".
+  Prior Sherlock Holmes films already exist, so 2009 is a reboot of
+  the film lineage, not a null-position starter.
+
+- Iron Man (2008) → recognized_subgroups must include
+  "iron man trilogy" alongside "phase one" and "infinity saga".
+  Do not omit the character-specific trilogy label.
+
+- Guardians of the Galaxy (2014) → launched_franchise=false.
+  A subgroup launch inside the marvel cinematic universe is NOT a
+  franchise launch, even when the characters were obscure before the
+  film.
+
+- Scream (2022) → lineage="scream", lineage_position="sequel".
+  The title repeats Scream (1996), but continuity is shared with
+  Scream 1-4, so this is a legacy sequel, not a reboot.
+
+- Venom (2018) → lineage="venom",
+  shared_universe="sony spider-man universe",
+  launched_franchise=false, is_spinoff=true.
+  Venom is a Spider-Man-derived branch with its own lineage inside
+  Sony's Spider-Man universe; it does not launch a franchise of its
+  own.
+
+- Ocean's Eight (2018) → lineage="ocean's",
+  lineage_position="sequel", is_spinoff=true.
+  Keep it inside the ocean's lineage. It is a same-continuity branch
+  with a new lead ensemble, not a separate top-level lineage.
+
+- Split (2016) → lineage="unbreakable",
+  lineage_position="sequel".
+  This is the stealth-franchise case: the connection to Unbreakable
+  is real even though the reveal arrives at the end.
+
+- Glass (2019) → lineage="unbreakable",
+  lineage_position="sequel".
+  Glass explicitly merges the Unbreakable and Split threads inside
+  the same lineage.
+
+- The Dark Knight Trilogy subgroup label → use exactly
+  "the dark knight trilogy".
+  Do NOT substitute "nolan batman trilogy" or drop the leading
+  "the".
 
 ---
 

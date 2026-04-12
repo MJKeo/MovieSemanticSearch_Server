@@ -1,7 +1,8 @@
 """
-Franchise generator (v8 — independent is_crossover / is_spinoff
-booleans with their own reasoning traces, replacing the previous
-special_attributes enum array).
+Franchise generator (v9 — adds exact-match franchise reference
+anchors plus new worked examples for selective continuity, same-
+source adaptation boundaries, recast-without-reset sequels, and
+trunk-prequel backstory cases).
 
 Produces FranchiseOutput for a movie along three orthogonal blocks:
 
@@ -49,7 +50,8 @@ from schemas.movie_input import MovieInputData
 GENERATION_TYPE = MetadataType.FRANCHISE
 
 _DEFAULT_PROVIDER = LLMProvider.OPENAI
-_DEFAULT_MODEL = "gpt-5-mini"
+_DEFAULT_MODEL = "gpt-5.4-mini"
+_DEFAULT_KWARGS = {"reasoning_effort": "low", "verbosity": "low"}
 
 
 def build_franchise_user_prompt(movie: MovieInputData) -> str:
@@ -85,20 +87,14 @@ def build_franchise_user_prompt(movie: MovieInputData) -> str:
 
 async def generate_franchise(
     movie: MovieInputData,
-    provider: LLMProvider | None = None,
-    model: str | None = None,
-    **kwargs,
 ) -> Tuple[FranchiseOutput, TokenUsage]:
     """Generate franchise metadata for a single movie.
 
+    Uses the hardcoded default model (gpt-5.4-mini with low reasoning
+    effort and low verbosity).
+
     Args:
         movie: Raw movie input data from the ingestion pipeline.
-        provider: LLM provider override. Defaults to _DEFAULT_PROVIDER.
-        model: Model name override. Defaults to _DEFAULT_MODEL.
-        **kwargs: Provider-specific kwargs passed through to the LLM call
-            (e.g. reasoning_effort, verbosity for OpenAI; thinking_config
-            for Gemini). When not provided, defaults to reasoning_effort
-            "low" and verbosity "low" for OpenAI.
 
     Returns:
         Tuple of (FranchiseOutput, TokenUsage).
@@ -107,25 +103,17 @@ async def generate_franchise(
         MetadataGenerationError: If the LLM call raises an exception.
         MetadataGenerationEmptyResponseError: If the LLM returns None.
     """
-    effective_provider = provider or _DEFAULT_PROVIDER
-    effective_model = model or _DEFAULT_MODEL
-
-    # Apply default OpenAI kwargs when no overrides are provided and the
-    # provider is OpenAI (or defaulting to OpenAI).
-    if not kwargs and effective_provider == LLMProvider.OPENAI:
-        kwargs = {"reasoning_effort": "low", "verbosity": "low"}
-
     user_prompt = build_franchise_user_prompt(movie)
     title_with_year = movie.title_with_year()
 
     try:
         parsed, input_tokens, output_tokens = await generate_llm_response_async(
-            provider=effective_provider,
+            provider=_DEFAULT_PROVIDER,
             user_prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT,
             response_format=FranchiseOutput,
-            model=effective_model,
-            **kwargs,
+            model=_DEFAULT_MODEL,
+            **_DEFAULT_KWARGS,
         )
     except Exception as e:
         print(f"{GENERATION_TYPE} generation failed for '{title_with_year}': {e}")
@@ -135,4 +123,4 @@ async def generate_franchise(
         print(f"{GENERATION_TYPE} generation returned None for '{title_with_year}'")
         raise MetadataGenerationEmptyResponseError(GENERATION_TYPE, title_with_year)
 
-    return parsed, TokenUsage(input_tokens, output_tokens, effective_model)
+    return parsed, TokenUsage(input_tokens, output_tokens, _DEFAULT_MODEL)
