@@ -13,13 +13,12 @@ Vector spaces:
     4. narrative_techniques — storytelling style/tone
     5. viewer_experience — emotional tone, pacing
     6. watch_context     — when/how to watch
-    7. production        — budget, locations, technical
+    7. production        — filming locations, production techniques
     8. reception         — critical reception, awards
 """
 
 import tiktoken
 
-from implementation.classes.enums import BudgetSize
 from implementation.misc.helpers import normalize_string
 from schemas.movie import Movie
 
@@ -53,19 +52,6 @@ _RECEPTION_AWARD_CEREMONY_ORDER: tuple[tuple[str, str], ...] = (
     ("Gotham Awards", "gotham awards"),
 )
 _RECEPTION_AWARD_CEREMONY_DISPLAY = dict(_RECEPTION_AWARD_CEREMONY_ORDER)
-
-
-# ===============================
-#         Normalization
-# ===============================
-
-def budget_size_to_vector_text(budget_size: BudgetSize | None) -> str:
-    """Map budget size enums to the semantic phrases used in vector text."""
-    if budget_size == BudgetSize.SMALL:
-        return "small budget"
-    if budget_size == BudgetSize.LARGE:
-        return "big budget, blockbuster"
-    return ""
 
 
 # ===============================
@@ -265,57 +251,26 @@ def create_watch_context_vector_text(movie: Movie) -> str | None:
     return movie.watch_context_metadata.embedding_text()
 
 
-def create_production_vector_text(movie: Movie) -> str:
-    """Build production vector text focused on how/where the film was made.
+def create_production_vector_text(movie: Movie) -> str | None:
+    """Build lean production vector text for where/how the film was made.
 
-    Excludes cast, characters, and maturity rating — those are handled
-    by lexical search (names) or other vector spaces (content classification).
+    The production vector now carries only scraped filming locations plus
+    finalized production-technique terms. Structured/filterable facts such
+    as country, company, language, decade, budget, source material, and
+    franchise position are handled elsewhere and are deliberately excluded.
     """
-    parts = []
+    parts: list[str] = []
 
-    # Origin, companies, filming locations (labeled format).
-    # Filming locations excluded for animation — they're irrelevant
-    # (voice actors record in studios, not on location).
-    production_text = movie.production_text(include_filming_locations=not movie.is_animation())
-    if production_text:
-        parts.append(production_text.lower())
+    if not movie.is_animation() and movie.imdb_data.filming_locations:
+        locations = ", ".join(movie.imdb_data.filming_locations[:3]).lower()
+        parts.append(f"filming_locations: {locations}")
 
-    # Primary and additional languages
-    languages_text = movie.languages_text()
-    if languages_text:
-        parts.append(languages_text.lower())
+    if movie.production_techniques_metadata:
+        techniques_text = movie.production_techniques_metadata.embedding_text()
+        if techniques_text:
+            parts.append(f"production_techniques: {techniques_text}")
 
-    # Semantic era label (e.g. "Release date: 1940s, golden age of hollywood")
-    decade_bucket = movie.release_decade_bucket()
-    if decade_bucket:
-        parts.append(decade_bucket.lower())
-
-    # Budget scale relative to era
-    budget_bucket = budget_size_to_vector_text(movie.budget_bucket_for_era())
-    if budget_bucket:
-        parts.append(f"budget: {budget_bucket.lower()}")
-
-    # Production medium — binary: "animation" or "live action"
-    medium = "animation" if movie.is_animation() else "live action"
-    parts.append(f"production medium: {medium}")
-
-    # Source material and franchise lineage (labeled via embedding_text).
-    # When metadata is None (not generated), default to "original screenplay"
-    # since most movies are original works.
-    if movie.source_of_inspiration_metadata:
-        source_text = movie.source_of_inspiration_metadata.embedding_text()
-        if source_text:
-            parts.append(source_text)
-    else:
-        parts.append("source material: original screenplay")
-
-    # LLM-generated production keywords (unlabeled — intentionally broad grab-bag)
-    if movie.production_keywords_metadata:
-        keywords_text = movie.production_keywords_metadata.embedding_text()
-        if keywords_text:
-            parts.append(keywords_text)
-
-    return "\n".join(parts)
+    return "\n".join(parts) if parts else None
 
 
 def create_reception_vector_text(movie: Movie) -> str | None:

@@ -249,8 +249,9 @@ Completed: gpt-5-mini-minimal with revised prompt + no-overview was evaluated ac
 Completed (2026-04-03): Implemented in `SourceOfInspirationOutput.embedding_text()` with
 `_is_likely_original()` helper. Defaults to "original screenplay" when source_material is
 empty and franchise_lineage is empty or only contains "first"/"start" terms.
-`create_production_vector_text()` also falls back to "source material: original screenplay"
-when metadata is None entirely.
+That old production-vector fallback has since been removed as part of the
+production-vector narrowing; only the source-of-inspiration embedding retains
+the historical "original screenplay" default.
 **See:** schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py
 
 ## ~~Update plot_events embedding to use synopsis when available, generated plot_summary as fallback~~ DONE

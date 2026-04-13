@@ -439,22 +439,12 @@ You assess search query relevance for a movie vector database containing PRODUCT
 WHAT THIS VECTOR CONTAINS
 Real-world production context embedded as labeled fields per movie:
 
-1. Countries of origin — where the film was produced ("countries of origin: south korea")
-2. Production companies — studios ("production companies: a24", "walt disney pictures")
-3. Filming locations — real-world shoot locations, up to 3 ("filming locations: prague")
-4. Languages — spoken languages only, no subtitles ("primary language: korean",
-   "additional languages: english")
-5. Release decade — with era tag ("release date: 1980s, 80s",
-   "release date: 1940s, golden age of hollywood")
-6. Budget scale — only when notably small or large ("budget: small budget",
-   "budget: big budget, blockbuster")
-7. Production medium — binary ("production medium: animation" or "live action")
-8. Source material — adaptation/remake status ("source material: based on a novel",
-   "source material: original screenplay")
-9. Franchise position — series placement ("franchise position: sequel",
-   "franchise position: first in trilogy")
-10. Production keywords — LLM-filtered IMDB keywords about production context
-    ("independent film", "documentary", "stop-motion", "found footage", "bollywood")
+1. Filming locations — real-world shoot locations, up to 3
+   ("filming_locations: prague", "filming_locations: county galway, ireland")
+2. Production techniques — concrete making/rendering/capture methods
+   ("production_techniques: stop motion, rotoscope",
+   "production_techniques: black and white, handheld camera, single take",
+   "production_techniques: hand drawn animation, cgi animation, found footage")
 
 IMPORTANT: This vector contains NO person names — no directors, actors, writers,
 composers, producers, or characters. Cast/crew matching is handled entirely by
@@ -462,8 +452,8 @@ lexical search, a separate retrieval channel. Naming a person does NOT make a
 query relevant to this vector.
 
 KEY QUESTION
-Is the user searching by WHERE, WHEN, or HOW the film was produced — its origin,
-language, studio, decade, medium, source material, or production form?
+Is the user searching by where the movie was physically shot or by a concrete
+making/rendering/capture method?
 
 HOW TO ASSESS RELEVANCE
 1. Identify the user's search intentions — what are they using to find movies?
@@ -471,21 +461,22 @@ HOW TO ASSESS RELEVANCE
 3. Assess how strongly those intentions align with this vector's contents
 
 HIGH RELEVANCE SIGNALS (contribute to a higher relevance)
-- User specifies decade/year ("from the 90s", "recent", "2000s")
-- User specifies origin/language ("French", "Korean", "in Spanish")
-- User specifies medium ("hand-drawn animation", "not CGI", "stop-motion")
-- User specifies studio ("A24", "Disney", "Netflix original")
-- User specifies source ("based on true story", "not a remake", "adapted from book")
-- User specifies franchise position ("sequel", "not a prequel")
-- User specifies production form ("documentary", "indie film", "found footage")
 - User specifies filming location ("filmed in New Zealand", "shot in Prague")
-- User specifies budget ("low budget", "blockbuster", "indie")
+- User specifies concrete techniques ("stop-motion", "hand-drawn animation",
+  "cgi animation", "rotoscope", "motion-capture")
+- User specifies visual capture/rendering methods ("black-and-white",
+  "single-take", "long take", "handheld-camera")
+- User specifies found-footage style as a making/capture method
 
 LOW RELEVANCE SIGNALS (do not contribute to a higher relevance)
 - User names cast/crew ("directed by Nolan", "starring Tom Hanks") — handled by
   lexical search, not embedded in this vector
-- User searches by story setting ("set in Paris") — that's plot_events
+- User searches by story setting ("set in Paris") — that's plot_events, not filming location
 - User searches by aesthetic ("90s vibe") — that's viewer_experience
+- User specifies origin/language/studio ("French", "in Spanish", "A24") — not in this vector
+- User specifies decade/release era ("from the 90s", "recent") — not in this vector
+- User specifies source/franchise ("based on a novel", "sequel") — not in this vector
+- User specifies broad medium labels not embedded here ("live action", generic "animated")
 - User searches by awards ("Oscar-winning") — that's reception
 - User references someone's "energy" or "vibe" — that's viewer_experience
 - User searches by genre or theme ("thriller", "about redemption") — that's plot_analysis

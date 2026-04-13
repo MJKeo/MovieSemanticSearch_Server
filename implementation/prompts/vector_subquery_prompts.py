@@ -926,7 +926,7 @@ These are not in this vector — do not include them in the subquery:
 - Thematic meaning: "about redemption" — themes are plot_analysis
   (but "redemption arc" IS a technique label and belongs here)
 - Experiential/tonal descriptors: "cozy", "intense", "devastating" — viewer_experience
-- Production facts: "1990s", "French", "animated" — production vector
+- Production facts: "shot in Prague", "stop-motion", "single take" — production vector
 - Quality evaluations: "well-written", "clever", "masterful" — reception vector
 - Feature draws: "great soundtrack", "beautiful cinematography" — watch_context
 
@@ -1030,140 +1030,91 @@ Each movie is embedded as a multi-line block of labeled fields describing the re
 production context of the film. Understanding what each field contains — and its label
 format — tells you what subquery phrasing will produce strong cosine similarity.
 
-1. countries of origin (labeled "countries of origin:", comma-separated)
-   Country names where the film was produced.
-   Examples: "countries of origin: ireland, united states",
-   "countries of origin: south korea", "countries of origin: france, poland, germany"
-
-2. production companies (labeled "production companies:", comma-separated)
-   Studio and company names.
-   Examples: "production companies: universal pictures, spyglass entertainment",
-   "production companies: a24", "production companies: walt disney pictures"
-
-3. filming locations (labeled "filming locations:", up to 3, omitted for animation)
+1. filming locations (labeled "filming_locations:", up to 3, omitted for animation)
    Real-world places where the film was shot.
-   Examples: "filming locations: new york city, new york, usa",
-   "filming locations: aran islands, county galway, ireland"
+   Examples: "filming_locations: new york city, new york, usa",
+   "filming_locations: aran islands, county galway, ireland"
 
-4. primary language + additional languages (labeled, separate lines)
-   Spoken languages from IMDB. No subtitle information.
-   Examples: "primary language: english\nadditional languages: french, german",
-   "primary language: korean"
-
-5. release decade (labeled "release date:", decade + era tag)
-   Semantic era label derived from the release year.
-   Examples: "release date: 1980s, 80s", "release date: 2010s, 10s",
-   "release date: 1940s, golden age of hollywood",
-   "release date: 1920s, silent era & early cinema"
-
-6. budget scale (labeled "budget:", only when notably small or large for era)
-   Most movies have NO budget label — only extremes are tagged.
-   Examples: "budget: small budget", "budget: big budget, blockbuster"
-
-7. production medium (labeled "production medium:", binary)
-   Always exactly one of: "production medium: animation" or "production medium: live action"
-
-8. source material (labeled "source material:", from LLM classification)
-   What existing media the film draws from, or "original screenplay" as default.
-   Examples: "source material: based on a novel", "source material: remake of a film",
-   "source material: based on a true story", "source material: original screenplay",
-   "source material: based on a comic, reboot of a franchise"
-
-9. franchise position (labeled "franchise position:", from LLM classification)
-   Where the film sits in a franchise timeline. Empty for standalone films.
-   Examples: "franchise position: sequel", "franchise position: first in trilogy",
-   "franchise position: franchise starter, first in franchise"
-
-10. production keywords (UNLABELED, comma-separated normalized terms)
-    LLM-filtered subset of IMDB keywords that describe real-world production context.
-    Content varies widely — can include specific medium types, production form, origin
-    signals, era markers, and production process terms.
-    Examples: "independent film, low budget film", "stop-motion, claymation",
-    "documentary, interview, concert footage", "bollywood, hindi",
-    "found footage, directorial debut", "silent film, black and white"
+2. production techniques (labeled "production_techniques:", comma-separated)
+   Normalized production-technique terms from the finalized classifier.
+   These are concrete making/rendering/capture methods.
+   Examples: "production_techniques: stop motion, rotoscope",
+   "production_techniques: black and white, handheld camera, single take",
+   "production_techniques: hand drawn animation, computer animation, cgi animation",
+   "production_techniques: motion capture, found footage"
 
 WHAT IS NOT IN THIS VECTOR
 - NO person names — no directors, actors, writers, composers, producers, or characters.
   Cast/crew matching is handled entirely by lexical search, not this vector.
+- NO country, language, studio, decade, budget, source-material, or franchise fields.
 - NO awards or acclaim — reception data lives in the reception vector.
 - NO genre labels — handled by plot_analysis.
 - NO plot content — no story descriptions.
 - NO aesthetic/vibe descriptors — no tonal or experiential language.
-- NO subtitle information — only spoken languages.
+- NO broad medium label like "live action" — only concrete techniques.
 
 FULL EMBEDDED EXAMPLE
-"countries of origin: ireland, united states
-production companies: universal pictures, spyglass entertainment
-filming locations: aran islands, county galway, ireland
-primary language: english
-additional languages: irish
-release date: 2010s, 10s
-budget: small budget
-production medium: live action
-source material: based on a novel
-independent film, low budget film"
+"filming_locations: aran islands, county galway, ireland
+production_techniques: black and white, handheld camera, single take"
 
 TRANSFORMATION APPROACH
 Your subquery text will be embedded and compared via cosine similarity against the
 content above. Maximize semantic overlap with what's actually there:
 
-1. COUNTRY AND LANGUAGE terms match the labeled origin/language fields — use country
-   names and language names that would appear in those labels.
-2. COMPANY NAMES match "production companies:" — use studio names as the user states them.
-3. DECADE TERMS match "release date:" — include both forms (e.g., "1990s, 90s").
-4. SOURCE MATERIAL phrases match the "source material:" field — use the "based on"
-   phrasing that mirrors embedded content.
-5. FRANCHISE terms match "franchise position:" — use "sequel", "remake", "prequel", etc.
-6. MEDIUM terms match the binary "production medium:" field AND production keywords —
-   use both the binary label ("animation", "live action") and specific technique terms
-   ("stop-motion", "hand-drawn animation", "CGI") since those may appear in keywords.
-7. PRODUCTION KEYWORDS are unlabeled and broad — terms like "independent film",
-   "documentary", "found footage", "bollywood", "silent film" can match here.
+1. FILMING-LOCATION terms match the labeled `filming_locations:` field — use place names
+   when the user means where the movie was physically shot.
+2. PRODUCTION-TECHNIQUE terms match the labeled `production_techniques:` field — use the
+   concrete making/rendering/capture method itself.
+3. Prefer the actual embedded technique phrase over broad paraphrase. Use
+   "stop motion", "hand drawn animation", "cgi animation", "rotoscope",
+   "motion capture", "black and white", "single take", "long take",
+   "handheld camera", or "found footage" when the query implies them.
 
 CRITICAL DISTINCTION: This vector contains NO person names. Do not generate director,
 actor, writer, or any other person names — they will produce zero cosine similarity.
 Cast/crew queries are handled by lexical search, not this vector space.
 
 WHAT TO EXTRACT
-- Country of origin: "countries of origin: france", "south korea", "american"
-- Language: "primary language: spanish", "korean", "french"
-- Studios: "a24", "disney", "netflix", "production companies: paramount"
-- Decade: "1980s, 80s", "2010s, 10s", "release date: 1990s"
-- Medium: "animation", "live action", "stop-motion", "hand-drawn animation", "CGI"
-- Source: "based on a true story", "based on a novel", "remake of a film", "original screenplay"
-- Franchise: "sequel", "prequel", "franchise starter", "first in trilogy"
-- Budget: "small budget", "big budget, blockbuster", "independent film", "low budget film"
-- Production keywords: "documentary", "found footage", "silent film", "bollywood"
-- Negations about production: "not a remake", "not animation", "original screenplay"
+- Filming locations: "filming_locations: prague", "filming_locations: new zealand"
+- Production techniques: "production_techniques: stop motion", "hand drawn animation",
+  "cgi animation", "rotoscope", "motion capture", "black and white",
+  "single take", "long take", "handheld camera", "found footage"
+- Positive production-technique terms only. If the user expresses avoidance,
+  translate that into the positive technique they do want.
 
 WHAT WON'T RETRIEVE WELL
 - Person names: "directed by Nolan", "starring Tom Hanks" — NO names in this vector
 - Awards: "Oscar-winning", "Academy Award" — post-release reception, not production
-- Story setting: "set in Tokyo" — that's plot_events, not production
+- Story setting: "set in Tokyo" — that's plot_events, not filming location
 - Genre labels: "thriller", "comedy" — content genres go to plot_analysis
 - Pacing/tone/content: "slow", "funny", "gory" — not production facts
 - Vibes: "90s vibe", "feels like an 80s movie" — aesthetic feel, not actual production date
+- Country/language/studio/source/franchise/decade queries — handled outside this vector
 - Quality judgments: "well-made", "low production value" — evaluations, not facts
 
 CRITICAL BOUNDARY: PRODUCTION vs LEXICAL SEARCH
 The most common mistake is generating person names for this vector. Person names are
 handled by lexical search (exact matching against posting lists), NOT by vector similarity.
 - "directed by Nolan" → LEXICAL SEARCH handles this, not production vector
-- "French film from the 90s" → PRODUCTION VECTOR ✓ (country + decade)
+- "French film from the 90s" → NOT this vector
 - "starring Tom Hanks" → LEXICAL SEARCH handles this, not production vector
-- "A24 indie film" → PRODUCTION VECTOR ✓ (company + budget keyword)
+- "A24 indie film" → NOT this vector
+- "shot in Prague" → PRODUCTION VECTOR ✓
+- "stop-motion movie" → PRODUCTION VECTOR ✓
 
 When a user mentions a director or actor, do NOT include the name. Instead, extract
-any non-name production facts from the query (country, decade, medium, etc.) and
-return null if no non-name production facts exist.
+any non-name filming-location or production-technique facts from the query and
+return null if none exist.
 
 NEGATION RULES
-Include negations about production facts:
-- "not a remake" ✓ — source material negation
-- "not animated" ✓ — medium negation
-- "not CGI" ✓ — production technique negation
+The embedded production text contains NO negation phrases. Embedding models do
+not reliably preserve negation, so avoid emitting "not ..." wording here.
+- "not CGI, I want hand-drawn" → "production_techniques: hand drawn animation"
+- "not shaky handheld" → omit handheld-camera unless the user positively wants another technique
 - "no gore" ✗ — content, not production
 - "not slow" ✗ — pacing, not production
+- "not a remake" ✗ — source material, not this vector
+- "not animated" ✗ — broad medium label, not embedded as a standalone field
 
 WHEN TO RETURN NULL
 Return null when the query has no production metadata:
@@ -1172,6 +1123,7 @@ Return null when the query has no production metadata:
 - Pure techniques: "twist ending, unreliable narrator"
 - Vibes mistaken for production: "feels like a 70s thriller" (that's style, not decade)
 - Pure cast/crew: "directed by Spielberg" (names are lexical, not this vector)
+- Pure origin/studio/source queries: "French film", "A24 movie", "book adaptation"
 
 OUTPUT FORMAT
 Return valid JSON:
@@ -1186,16 +1138,16 @@ IMPORTANT:
 EXAMPLES
 
 User: "not the remake, the original Japanese one from the 2000s, slow dread not cheap scares, heard it's controversial"
-Output: {"relevant_subquery_text": "not a remake, original screenplay, countries of origin: japan, japanese, primary language: japanese, 2000s, 00s", "justification": "source, origin, language, decade extracted"}
-Why: "Not remake" maps to source material. "Japanese" maps to country + language. "2000s" is decade. "Slow dread" is experience, "controversial" is reception — both excluded.
+Output: {"relevant_subquery_text": null, "justification": "source/origin/decade, not production vector"}
+Why: This query is about source/origin/decade plus experience and reception. None of that lives in the narrowed production vector.
 
 User: "90s vibes but actually made recently, practical effects, long takes, not marvel-style editing"
-Output: {"relevant_subquery_text": "practical effects, practical special effects, live action", "justification": "practical effects = production keyword, vibes excluded"}
-Why: "Practical effects" may appear as a production keyword. "Live action" is implied by practical effects. "90s vibes" is aesthetic feel, NOT production decade. "Long takes" is technique.
+Output: {"relevant_subquery_text": "production_techniques: practical effects, long take", "justification": "techniques only"}
+Why: "Practical effects" and "long takes" are production-technique signals. "90s vibes" is aesthetic feel, not production metadata.
 
 User: "Spanish but not Spain Spanish, magical realism, García Márquez energy, multi-generational"
-Output: {"relevant_subquery_text": "primary language: spanish, countries of origin: mexico, colombia, argentina, latin american, not spain", "justification": "language + Latin American origin countries"}
-Why: Maps to language and country fields with the correct label format. "Magical realism" is genre (plot_analysis). García Márquez is a name — excluded.
+Output: {"relevant_subquery_text": null, "justification": "language/origin not in vector"}
+Why: Language and country are no longer in the production vector. The rest is theme/style, not production technique.
 
 User: "something like if Wes Anderson directed a horror movie"
 Output: {"relevant_subquery_text": null, "justification": "director name only, names not in vector"}
@@ -1206,16 +1158,20 @@ Output: {"relevant_subquery_text": null, "justification": "technique/structure, 
 Why: Describes narrative structure and quality. Director reference is a name (lexical). No production facts present.
 
 User: "Korean thriller on Netflix, recent"
-Output: {"relevant_subquery_text": "countries of origin: south korea, korean, primary language: korean, production companies: netflix, 2020s, 20s, 2010s, 10s", "justification": "origin, language, studio, decade"}
-Why: "Korean" maps to country + language. "Netflix" maps to production company. "Recent" implies 2010s-2020s decade range.
+Output: {"relevant_subquery_text": null, "justification": "origin/studio/date not in vector"}
+Why: Country, studio, and release-era hints no longer belong to this vector.
 
 User: "classic Disney hand-drawn animation, not the CGI remakes"
-Output: {"relevant_subquery_text": "production companies: walt disney pictures, disney, production medium: animation, hand-drawn animation, not CGI, not a remake, not remake of a film", "justification": "studio, medium, technique, source negation"}
-Why: "Disney" maps to company. "Hand-drawn animation" matches medium + keyword. "Not CGI remakes" is both medium and source material negation.
+Output: {"relevant_subquery_text": "production_techniques: hand drawn animation", "justification": "positive technique signal only"}
+Why: The useful production signal here is the requested animation technique. Studio and remake/source constraints are outside this vector, and negation is not embedded directly.
 
 User: "indie documentary about music"
-Output: {"relevant_subquery_text": "independent film, documentary, low budget film, small budget", "justification": "production form + budget keywords"}
-Why: "Indie" maps to production keywords and budget. "Documentary" is a production form keyword. "About music" is plot content — excluded.
+Output: {"relevant_subquery_text": null, "justification": "indie/doc not technique metadata"}
+Why: "Indie" and "documentary" are not embedded as production-technique terms in the finalized schema.
+
+User: "shot in Prague with lots of handheld camera"
+Output: {"relevant_subquery_text": "filming_locations: prague, production_techniques: handheld camera", "justification": "location + technique"}
+Why: Both requested signals map directly to the narrowed production vector.
 
 User: "villain wins"
 Output: {"relevant_subquery_text": null, "justification": "plot outcome, not production"}
@@ -1227,7 +1183,7 @@ Why: Describes desired emotional experience, not production facts.
 
 User: "when they're actually in love irl and you can tell"
 Output: {"relevant_subquery_text": null, "justification": "actor chemistry, no production fields match"}
-Why: Describes audience perception of on-screen chemistry. No embedded production fields capture this — it's not country, language, studio, medium, source, or decade.
+Why: Describes audience perception of on-screen chemistry. No embedded production fields capture this — it's not filming location or production technique.
 
 User: "background noise for studying, visually interesting if I look up, don't care about dialogue or plot"
 Output: {"relevant_subquery_text": null, "justification": "viewing context, no production facts"}

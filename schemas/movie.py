@@ -37,7 +37,7 @@ from schemas.metadata import (
     NarrativeTechniquesOutput,
     PlotAnalysisOutput,
     PlotEventsOutput,
-    ProductionKeywordsOutput,
+    ProductionTechniquesOutput,
     ReceptionOutput,
     SourceMaterialV2Output,
     SourceOfInspirationOutput,
@@ -82,7 +82,7 @@ _METADATA_COLUMNS: tuple[str, ...] = (
     "viewer_experience",
     "watch_context",
     "narrative_techniques",
-    "production_keywords",
+    "production_techniques",
     "source_of_inspiration",
     "source_material_v2",
 )
@@ -94,7 +94,7 @@ _METADATA_FIELD_TO_MODEL: dict[str, type[BaseModel]] = {
     "viewer_experience_metadata": ViewerExperienceOutput,
     "watch_context_metadata": WatchContextOutput,
     "narrative_techniques_metadata": NarrativeTechniquesOutput,
-    "production_keywords_metadata": ProductionKeywordsOutput,
+    "production_techniques_metadata": ProductionTechniquesOutput,
     "source_of_inspiration_metadata": SourceOfInspirationOutput,
     "source_material_v2_metadata": SourceMaterialV2Output,
 }
@@ -185,7 +185,7 @@ class Movie(BaseModel):
     viewer_experience_metadata: ViewerExperienceOutput | None = None
     watch_context_metadata: WatchContextOutput | None = None
     narrative_techniques_metadata: NarrativeTechniquesOutput | None = None
-    production_keywords_metadata: ProductionKeywordsOutput | None = None
+    production_techniques_metadata: ProductionTechniquesOutput | None = None
     source_of_inspiration_metadata: SourceOfInspirationOutput | None = None
     source_material_v2_metadata: SourceMaterialV2Output | None = None
 
@@ -459,34 +459,6 @@ class Movie(BaseModel):
             seen_ids.add(country.country_id)
             country_ids.append(country.country_id)
         return country_ids
-
-    def production_text(self, include_filming_locations: bool = True) -> str:
-        """Format production info as labeled lines for vector embedding.
-
-        Uses concise labels so the embedding captures geographic and
-        company signals without filler words diluting the vector.
-
-        Args:
-            include_filming_locations: When False, filming locations are
-                omitted entirely (e.g. for animation where locations are
-                irrelevant to the production).
-        """
-        lines: list[str] = []
-
-        if self.imdb_data.countries_of_origin:
-            countries = ", ".join(self.imdb_data.countries_of_origin)
-            lines.append(f"countries of origin: {countries}")
-
-        if self.imdb_data.production_companies:
-            companies = ", ".join(self.imdb_data.production_companies)
-            lines.append(f"production companies: {companies}")
-
-        # Limit to first 3 locations to keep vector text focused
-        if include_filming_locations and self.imdb_data.filming_locations:
-            locations = ", ".join(self.imdb_data.filming_locations[:3])
-            lines.append(f"filming locations: {locations}")
-
-        return "\n".join(lines)
 
     def languages_text(self) -> str:
         """Format language info as labeled lines for vector embedding."""

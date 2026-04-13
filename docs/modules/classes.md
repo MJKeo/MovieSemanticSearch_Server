@@ -54,9 +54,11 @@ when reading metadata from Qdrant:
 - `WatchContextMetadata` → watch_context vector
 - `NarrativeTechniquesMetadata` → narrative_techniques vector
 - `ProductionMetadata` → production vector (**legacy combined schema**;
-  generation-side has split into `ProductionKeywordsOutput` and
-  `SourceOfInspirationOutput` in `schemas/metadata.py` —
-  search-side schema needs alignment before deployment)
+  the active generation-side production-vector input is now
+  `ProductionTechniquesOutput` in `schemas/metadata.py`, paired with scraped
+  filming locations. `ProductionKeywordsOutput` is a historical predecessor,
+  and `SourceOfInspirationOutput` no longer feeds the production vector.
+  Search-side schema still needs alignment before deployment.)
 - `ReceptionMetadata` → reception vector
 
 The generation-side counterparts live in `schemas/metadata.py` and

@@ -17,9 +17,9 @@ Defines canonical types for:
 
 | File | Purpose |
 |------|---------|
-| `metadata.py` | `EmbeddableOutput` base class + 9 `*Output` schema classes (one per embeddable generation type) + `ConceptTagsOutput` / `TagEvidence` (non-embeddable concept tag classification). Each `EmbeddableOutput` subclass implements `embedding_text()` returning normalized text for vector embedding. `ConceptTagsOutput` produces integer concept_tag_ids via `all_concept_tag_ids()`, not embedding text. Legacy `__str__()` methods are retained for backward compatibility. Class docstrings are written as `#` comment blocks above each class — not as Python docstrings — to prevent them from leaking into the JSON schema payload sent to the LLM via `model_json_schema()`. |
+| `metadata.py` | `EmbeddableOutput` base class + 10 embeddable `*Output` schema classes + `FranchiseOutput` and `ConceptTagsOutput` / `TagEvidence` (non-embeddable franchise/concept-tag classification). Each `EmbeddableOutput` subclass implements `embedding_text()` returning normalized text for vector embedding. `ConceptTagsOutput` produces integer concept_tag_ids via `all_concept_tag_ids()`, not embedding text. Legacy `__str__()` methods are retained for backward compatibility. Class docstrings are written as `#` comment blocks above each class — not as Python docstrings — to prevent them from leaking into the JSON schema payload sent to the LLM via `model_json_schema()`. |
 | `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata. |
-| `enums.py` | `MetadataType` StrEnum (one value per generation type, 10 total including `SOURCE_MATERIAL_V2` and `CONCEPT_TAGS`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), and `ConceptTag` IntEnum (concept tag IDs grouped by category via `CONCEPT_TAG_CATEGORIES` dict). |
+| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), and concept-tag enums grouped by category. |
 | `data_types.py` | `MultiLineList` — a constrained list type used in generation schemas. |
 | `movie_input.py` | `MovieInputData` dataclass + `load_movie_input_data()` — loads raw tracker data into the form consumed by generator prompt builders. |
 
@@ -38,18 +38,19 @@ Defines canonical types for:
 
 ## Key Types
 
-**`EmbeddableOutput`** (`metadata.py`): Abstract base class for 9
+**`EmbeddableOutput`** (`metadata.py`): Abstract base class for 10
 embeddable `*Output` schemas. Declares `embedding_text() -> str` as the
 canonical contract for producing normalized vector embedding text.
 Replaces the previous `__str__()`-based convention, which was implicit
 and inconsistently applied. `ConceptTagsOutput` intentionally does not
 subclass `EmbeddableOutput` — it produces integer IDs, not embedding text.
 
-**`*Output` schemas** (`metadata.py`): 9 embeddable Pydantic models for LLM
+**`*Output` schemas** (`metadata.py`): 10 embeddable Pydantic models for LLM
 structured output — `PlotEventsOutput`, `ReceptionOutput`,
 `PlotAnalysisOutput`, `ViewerExperienceOutput`, `WatchContextOutput`,
 `NarrativeTechniquesOutput`, `ProductionKeywordsOutput`,
-`SourceOfInspirationOutput`, `SourceMaterialV2Output`. Each
+`ProductionTechniquesOutput`, `SourceOfInspirationOutput`,
+`SourceMaterialV2Output`. Each
 `embedding_text()` produces the text for its corresponding vector space.
 `ReceptionOutput.embedding_text()` now emits labeled synthesis-zone lines
 (`reception_summary:`, `praised:`, `criticized:`); deterministic award wins
@@ -68,6 +69,12 @@ multiline text with one line per populated section:
 `audience_character_perception:`, `information_control:`,
 `conflict_stakes_design:`, and `additional_narrative_devices:`.
 Empty sections are omitted, and justification/evidence fields are excluded.
+`ProductionTechniquesOutput.embedding_text()` emits a normalized
+comma-separated term list; the production vector wraps it as
+`production_techniques: ...` and pairs it with scraped
+`filming_locations: ...`. `ProductionKeywordsOutput` remains in the schema
+set as a historical predecessor, but it is no longer the current
+production-vector input.
 `WithJustificationsOutput` variants exist for evaluation (identical
 `embedding_text()` output to base variant).
 
@@ -104,7 +111,6 @@ metadata objects. Includes helper methods:
 - `deduplicated_genres()` — genre_signatures + IMDB genres, substring-deduped
 - `reception_score()` / `reception_tier()` — blended IMDB + Metacritic score and tier label
 - `is_animation()` — binary genre check
-- `production_text()` — labeled format with 3-location cap
 - `languages_text()` — labeled primary + additional languages
 - `release_decade_bucket()` — semantic era label
 - `budget_bucket_for_era()` — era-adjusted budget classification
@@ -151,6 +157,8 @@ grand prizes), `outcome`, `year`.
   functions accept `Movie` and call `embedding_text()` on metadata
   objects. `create_viewer_experience_vector_text()` is intentionally a
   thin wrapper over the schema's labeled multiline `embedding_text()`.
+  `create_production_vector_text()` is the single production-vector
+  formatter; `Movie` no longer duplicates that logic.
 - `movie_ingestion/final_ingestion/ingest_movie.py` — all ingestion
   functions accept `Movie` exclusively. `BaseMovie` is no longer used
   in either Postgres or Qdrant ingestion paths.

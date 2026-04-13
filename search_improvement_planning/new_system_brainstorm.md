@@ -960,9 +960,15 @@ After moving filterable concepts to structured fields, the production vector los
 
 **Production technique keywords** are tightened to terms about HOW the movie was
 made (not what it's about):
-- Visual: black-and-white, IMAX, 3D, found-footage, single-take, handheld-camera
-- Structural: anthology, vignette, nonlinear-timeline, mockumentary
-- Process: stop-motion, rotoscope, practical-effects, motion-capture
+- Animation modalities/sub-techniques: hand-drawn animation, 2d animation,
+  3d animation, traditional animation, computer animation, cgi animation,
+  stop-motion, rotoscope, motion-capture, hybrid/partial animation labels
+- Visual capture/rendering: black-and-white, 3d, found-footage, single-take,
+  long take, handheld-camera
+- Process: practical-effects
+
+**Explicitly excluded:** IMAX, anthology, vignette, mockumentary, nonlinear
+timeline, and broad medium labels like generic "live action".
 
 Together, filming locations (WHERE) + production technique (HOW) form a coherent
 "production context" embedding. The previous definition was too broad, allowing

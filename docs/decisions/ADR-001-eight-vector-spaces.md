@@ -23,7 +23,7 @@ distinct retrieval lens:
 | `narrative_techniques_vectors` | Storytelling mechanics — POV, structure, devices, archetypes. |
 | `viewer_experience_vectors` | Felt experience — emotions, tone, tension, cognitive load, disturbance, aftertaste. Supports negations ("not too scary"). |
 | `watch_context_vectors` | Use-case lens — motivations, scenarios, feature draws ("date night", "background movie"). |
-| `production_vectors` | Making-of facts — countries, studios, locations, languages, decade, budget, cast/crew, adaptation source. |
+| `production_vectors` | Real-world production context — filming locations plus concrete production/rendering/capture techniques. |
 | `reception_vectors` | Critical consensus — reception summary, praise/complaint attributes, and major award wins by ceremony. |
 
 All vectors use OpenAI `text-embedding-3-small` (1536 dims).

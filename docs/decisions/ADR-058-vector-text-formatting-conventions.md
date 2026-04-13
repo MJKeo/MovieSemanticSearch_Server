@@ -42,6 +42,11 @@ are omitted.
 Watch context follows the same section-label rule in a stable order:
 `self_experience_motivations:`, `external_motivations:`,
 `key_movie_feature_draws:`, `watch_scenarios:`. Empty sections are omitted.
+Production follows a fixed two-line shape in stable order:
+`filming_locations:` then `production_techniques:`. Empty lines are omitted,
+and the function returns `None` when both signals are absent. Countries,
+studios, languages, decade, budget/box office, source material, franchise,
+and broad medium labels are deliberately excluded from this vector.
 
 **2. Synopsis-first fallback hierarchy for plot_events.** The plot_events
 vector embeds the richest available plot text in order:

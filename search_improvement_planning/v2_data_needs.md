@@ -272,29 +272,31 @@ consistent, filterable output.
 
 **Depends on:** #2 (enum derivation — now complete).
 
-### 8. Production technique keyword re-generation
+### 8. Production techniques generation
 
-**What:** Re-generate the `production_keywords` metadata with a tightened
-scope: only filming locations + production technique keywords.
+**What:** Generate `production_techniques` metadata with a tightened scope:
+only concrete production-technique terms. Filming locations remain scraped
+raw data and are paired with these terms in the production vector.
 
 **Status clarification:** This work remains in scope. It is NOT superseded by
 concept tags. Concept tags answer binary content questions like "does this
 movie have X?" for story, character, ending, and experiential deal-breakers.
 Production techniques serve a different purpose: they capture real-world
-making-of signals like IMAX, black-and-white, single-take, stop-motion, and
+making-of signals like black-and-white, single-take, stop-motion, and
 practical-effects. Those are production-context retrieval signals, not the
 same kind of binary movie-concept filter.
 
 **Relationship to scraped data:** the generation step is for production
-technique keywords. Scraped filming locations remain a separate raw input and
-pair with those generated technique terms in the production vector.
+technique terms only. Scraped filming locations remain a separate raw input
+and pair with those generated technique terms in the production vector.
 
 **Tightened scope includes:**
-- Visual techniques: black-and-white, IMAX, 3D, found-footage, single-take,
-  handheld-camera
-- Structural formats: anthology, vignette, nonlinear-timeline, mockumentary
-- Production processes: stop-motion, rotoscope, practical-effects,
-  motion-capture
+- Animation modalities/sub-techniques: hand-drawn animation, 2d animation,
+  3d animation, traditional animation, computer animation, cgi animation,
+  stop-motion, rotoscope, motion-capture, hybrid/partial animation labels
+- Visual capture/rendering techniques: black-and-white, 3d, single-take,
+  long take, handheld-camera
+- Special exception: found-footage
 
 **Tightened scope excludes (moved to structured fields):**
 - Countries of origin → `country_of_origin_ids`
@@ -305,6 +307,8 @@ pair with those generated technique terms in the production vector.
 - Franchise/ecosystem → `franchise_membership`
 - Decade/era → derivable from `release_ts`
 - Animation/live action → keyword search
+- IMAX, anthology, vignette, mockumentary, nonlinear timeline → not part of
+  the finalized production-techniques schema
 
 **Output:** Renamed column `generated_metadata.production_techniques` to
 distinguish from the V1 `production_keywords`.

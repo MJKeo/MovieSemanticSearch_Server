@@ -583,16 +583,22 @@ additional_narrative_devices: found footage
 - Production keywords (from ProductionKeywordsOutput)
 
 **V2 embedded content (tightened):**
-- Filming locations only (not countries of origin or production companies)
-- Production technique keywords: visual (black-and-white, IMAX, found-footage,
-  single-take, handheld-camera), structural (anthology, mockumentary),
-  process (stop-motion, rotoscope, practical-effects, motion-capture)
+- `filming_locations:` scraped real-world shooting locations (up to 3,
+  omitted for animation)
+- `production_techniques:` normalized concrete making/rendering/capture terms
+  from `ProductionTechniquesOutput` (for example black-and-white, 3d,
+  found-footage, single-take, long take, handheld-camera, hand-drawn
+  animation, computer animation, cgi animation, stop-motion, rotoscope,
+  motion-capture, practical-effects)
 
 **V2 removes:** Countries → `country_of_origin_ids`. Companies → already in
 `inv_studio_postings`. Languages → `audio_language_ids`. Budget → `budget_bucket` /
 `box_office_bucket`. Source material → `source_material_type_ids`. Franchise →
 `franchise_membership`. Decade → derivable from `release_ts`. Animation →
 keyword search.
+
+**Explicit exclusions from `production_techniques`:** IMAX, anthology,
+mockumentary, vignette, and nonlinear timeline.
 
 **Open question:** After regeneration, is the thinned content enough to justify
 a dedicated vector space? With anchor retained as a separate lean holistic
@@ -648,7 +654,7 @@ Pipeline state management. Not queried at search time.
 | `filter_log` | `tmdb_id, stage, reason, details` | Append-only audit trail |
 | `tmdb_data` | 20 columns including title, release_date, budget, watch_provider_keys (BLOB) | TMDB API data |
 | `imdb_data` | All IMDBScrapedMovie fields as JSON columns | IMDB GraphQL data |
-| `generated_metadata` | Per-type JSON columns: plot_events, reception, plot_analysis, viewer_experience, watch_context, narrative_techniques, production_keywords, source_of_inspiration | LLM outputs |
+| `generated_metadata` | Per-type JSON columns including plot_events, reception, plot_analysis, viewer_experience, watch_context, narrative_techniques, production_techniques, franchise, source_of_inspiration, source_material_v2, and concept_tags | LLM outputs |
 
 ### V2 additions to tmdb_data
 
