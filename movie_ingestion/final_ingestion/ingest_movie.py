@@ -188,6 +188,9 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
         watch_offer_keys = await create_watch_offer_keys(movie)
         audio_language_ids = await create_audio_language_ids(movie)
         country_ids = await create_country_ids(movie)
+        source_material_type_ids = await create_source_material_type_ids(movie)
+        keyword_ids = await create_keyword_ids(movie)
+        concept_tag_ids = await create_concept_tag_ids(movie)
         imdb_vote_count = int(movie.imdb_data.imdb_vote_count or 0)
         reception_score = movie.reception_score()
         title_token_count = len(movie.normalized_title_tokens())
@@ -209,6 +212,9 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
             watch_offer_keys=watch_offer_keys,
             audio_language_ids=audio_language_ids,
             country_ids=country_ids,
+            source_material_type_ids=source_material_type_ids,
+            keyword_ids=keyword_ids,
+            concept_tag_ids=concept_tag_ids,
             imdb_vote_count=imdb_vote_count,
             reception_score=reception_score,
             title_token_count=title_token_count,
@@ -730,6 +736,36 @@ async def create_country_ids(movie: Movie) -> List[int]:
         movie: Movie object implementing ``country_ids()``.
     """
     return movie.country_ids()
+
+
+async def create_source_material_type_ids(movie: Movie) -> List[int]:
+    """
+    Return source material type IDs by delegating to ``Movie.source_material_type_ids()``.
+
+    Args:
+        movie: Movie object implementing ``source_material_type_ids()``.
+    """
+    return movie.source_material_type_ids()
+
+
+async def create_keyword_ids(movie: Movie) -> List[int]:
+    """
+    Return overall keyword IDs by delegating to ``Movie.keyword_ids()``.
+
+    Args:
+        movie: Movie object implementing ``keyword_ids()``.
+    """
+    return movie.keyword_ids()
+
+
+async def create_concept_tag_ids(movie: Movie) -> List[int]:
+    """
+    Return concept tag IDs by delegating to ``Movie.concept_tag_ids()``.
+
+    Args:
+        movie: Movie object implementing ``concept_tag_ids()``.
+    """
+    return movie.concept_tag_ids()
 
 
 def create_people_list(movie: Movie) -> set[str]:

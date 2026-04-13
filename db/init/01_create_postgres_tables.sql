@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   watch_offer_keys    INT[] NOT NULL DEFAULT '{}',
   audio_language_ids  INT[] NOT NULL DEFAULT '{}',
   country_ids         INT[] NOT NULL DEFAULT '{}',
+  source_material_type_ids INT[] NOT NULL DEFAULT '{}',
+  keyword_ids         INT[] NOT NULL DEFAULT '{}',
+  concept_tag_ids     INT[] NOT NULL DEFAULT '{}',
   imdb_vote_count     INT NOT NULL DEFAULT 0,
   popularity_score    FLOAT NOT NULL DEFAULT 0.0,
   reception_score     FLOAT,
@@ -60,6 +63,14 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_audio_language_ids
 CREATE INDEX IF NOT EXISTS idx_movie_card_country_ids
   ON public.movie_card USING GIN (country_ids gin__int_ops);
 
+CREATE INDEX IF NOT EXISTS idx_movie_card_source_material_type_ids
+  ON public.movie_card USING GIN (source_material_type_ids gin__int_ops);
+
+CREATE INDEX IF NOT EXISTS idx_movie_card_keyword_ids
+  ON public.movie_card USING GIN (keyword_ids gin__int_ops);
+
+CREATE INDEX IF NOT EXISTS idx_movie_card_concept_tag_ids
+  ON public.movie_card USING GIN (concept_tag_ids gin__int_ops);
 
 
 -- Global dictionary of normalized lexical strings.

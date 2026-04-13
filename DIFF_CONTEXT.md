@@ -219,6 +219,36 @@ fields yet so the change is contained to the generator + tests.
   Transformers 2007, Sherlock Holmes 2009, Phantom Menace →
   launches_subgroup=True; all group labels normalized to words.
 
+## Overall keyword enum — source-backed LLM-facing definitions
+Files: implementation/classes/overall_keywords.py
+
+Why: `OverallKeyword` previously carried only the stable IMDb ID and
+display label. For query understanding, the LLM also needs a compact,
+unambiguous definition of what each IMDb overall keyword means so it
+can map natural-language requests onto the right tag set without having
+to infer the taxonomy from the label alone.
+
+Approach: Extended `OverallKeyword` with a third stored string,
+`definition`, and populated all 225 members with one-sentence
+descriptions tailored for prompt use. The wording was gathered from a
+web-research pass split across multiple subagents, using IMDb interest
+pages where they were definitional and otherwise stable reference
+sources such as Britannica, Merriam-Webster, and Wikipedia. After the
+research pass, definitions were normalized into a consistent house
+style: short, declarative, and focused on what the keyword represents
+or when it should apply to a movie.
+
+Design context: This change lives in `implementation/classes/` because
+the enum is already the canonical local catalog for IMDb's curated
+overall-keyword taxonomy. The added field is intended for downstream
+LLM prompts rather than end-user UI copy, so clarity and disambiguation
+were prioritized over marketing language.
+
+Testing notes: `uv run python -m py_compile implementation/classes/overall_keywords.py`
+passes, and importing the enum confirms there are still 225 members and
+that `definition` is available on each one. No tests were run per the
+repo's default test-boundary rules.
+
 ## Add production_techniques metadata type
 Files: schemas/enums.py, schemas/metadata.py, movie_ingestion/tracker.py, movie_ingestion/metadata_generation/inputs.py, movie_ingestion/metadata_generation/batch_generation/pre_consolidation.py, movie_ingestion/metadata_generation/batch_generation/generator_registry.py, movie_ingestion/metadata_generation/batch_generation/result_processor.py, movie_ingestion/metadata_generation/prompts/production_techniques.py, movie_ingestion/metadata_generation/generators/production_techniques.py, unit_tests/test_production_techniques_generator.py, unit_tests/test_pre_consolidation.py, unit_tests/test_generator_registry.py, unit_tests/test_result_processor.py, unit_tests/test_tracker.py, unit_tests/test_enums.py, unit_tests/test_metadata_inputs.py, unit_tests/test_metadata_type_consistency.py
 
@@ -750,3 +780,19 @@ Why: `Movie.production_text()` had become a line-for-line duplicate of `create_p
 Approach: Deleted `Movie.production_text()` from `schemas/movie.py` and updated the remaining docs to point to `create_production_vector_text()` in `movie_ingestion/final_ingestion/vector_text.py` as the single production-vector formatter. A repo-wide non-test search confirmed there were no live runtime callers left to migrate.
 Design context: This keeps production-vector formatting logic in the vector-text module, consistent with the current ingestion architecture and with the recent production-vector narrowing work.
 Testing notes: Not run. Test files were not inspected or updated in this pass; any tests still referencing `Movie.production_text()` will need a separate test update when requested.
+
+## Add source_material_type_ids, keyword_ids, concept_tag_ids columns to movie_card
+Files: db/init/01_create_postgres_tables.sql, schemas/movie.py, movie_ingestion/final_ingestion/ingest_movie.py, db/postgres.py
+
+### Intent
+Add three new INT[] columns with GIN indexes to `movie_card` for deterministic filtering on source material types, overall keywords, and concept tags.
+
+### Key Decisions
+- All three columns use `INT[] NOT NULL DEFAULT '{}'` with `gin__int_ops` GIN indexes, matching the existing pattern for genre_ids/country_ids/etc.
+- `keyword_ids` maps from `imdb_data.overall_keywords` via the `OverallKeyword` enum (225 curated terms with stable IDs).
+- `source_material_type_ids` extracts from `source_material_v2_metadata.source_material_types` (10 types with stable IDs in `SourceMaterialType` enum).
+- `concept_tag_ids` merges both `concept_tags_metadata` and `concept_tags_run_2_metadata` generation runs via set union, then returns sorted deduplicated IDs. Uses `ConceptTagsOutput.all_concept_tag_ids()` which already filters out classification-only values (id=-1).
+- Added `concept_tags_metadata` and `concept_tags_run_2_metadata` fields to Movie model, plus corresponding entries in `_METADATA_COLUMNS` and `_METADATA_FIELD_TO_MODEL` so the tracker loader populates them automatically.
+
+### Testing Notes
+Not run. Existing tests for `upsert_movie_card` and `fetch_movie_cards` will need parameter updates. New helper methods (`source_material_type_ids()`, `keyword_ids()`, `concept_tag_ids()`) on Movie need unit test coverage.

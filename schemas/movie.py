@@ -33,7 +33,9 @@ from movie_ingestion.imdb_scraping.models import (
 )
 from movie_ingestion.scoring_utils import unpack_provider_keys
 from movie_ingestion.tracker import IMDB_DATA_COLUMNS, IMDB_JSON_COLUMNS
+from implementation.classes.overall_keywords import keyword_from_string
 from schemas.metadata import (
+    ConceptTagsOutput,
     NarrativeTechniquesOutput,
     PlotAnalysisOutput,
     PlotEventsOutput,
@@ -85,6 +87,7 @@ _METADATA_COLUMNS: tuple[str, ...] = (
     "production_techniques",
     "source_of_inspiration",
     "source_material_v2",
+    "concept_tags",
 )
 
 _METADATA_FIELD_TO_MODEL: dict[str, type[BaseModel]] = {
@@ -97,6 +100,7 @@ _METADATA_FIELD_TO_MODEL: dict[str, type[BaseModel]] = {
     "production_techniques_metadata": ProductionTechniquesOutput,
     "source_of_inspiration_metadata": SourceOfInspirationOutput,
     "source_material_v2_metadata": SourceMaterialV2Output,
+    "concept_tags_metadata": ConceptTagsOutput,
 }
 
 _METADATA_FIELD_TO_COLUMN: dict[str, str] = {
@@ -188,6 +192,7 @@ class Movie(BaseModel):
     production_techniques_metadata: ProductionTechniquesOutput | None = None
     source_of_inspiration_metadata: SourceOfInspirationOutput | None = None
     source_material_v2_metadata: SourceMaterialV2Output | None = None
+    concept_tags_metadata: ConceptTagsOutput | None = None
 
     # Era-adjusted budget thresholds: decade → (small_ceiling, large_floor)
     _DECADE_THRESHOLDS: ClassVar[dict[int, tuple[int, int]]] = {
@@ -459,6 +464,32 @@ class Movie(BaseModel):
             seen_ids.add(country.country_id)
             country_ids.append(country.country_id)
         return country_ids
+
+    def source_material_type_ids(self) -> list[int]:
+        """Extract source material type IDs from LLM-generated metadata."""
+        if self.source_material_v2_metadata is None:
+            return []
+        return [
+            t.source_material_type_id
+            for t in self.source_material_v2_metadata.source_material_types
+        ]
+
+    def keyword_ids(self) -> list[int]:
+        """Map IMDB overall_keywords strings to their integer keyword IDs."""
+        ids: list[int] = []
+        seen: set[int] = set()
+        for kw_str in self.imdb_data.overall_keywords:
+            kw_enum = keyword_from_string(str(kw_str))
+            if kw_enum is None or kw_enum.keyword_id in seen:
+                continue
+            seen.add(kw_enum.keyword_id)
+            ids.append(kw_enum.keyword_id)
+        return ids
+
+    def concept_tag_ids(self) -> list[int]:
+        if self.concept_tags_metadata is None:
+            return []
+        return sorted(self.concept_tags_metadata.all_concept_tag_ids())
 
     def languages_text(self) -> str:
         """Format language info as labeled lines for vector embedding."""
