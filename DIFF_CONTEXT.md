@@ -698,3 +698,41 @@ Testing notes: No tests or notebook executions were run. This pass was limited t
 
 ## Franchise generator: hardcode gpt-5.4-mini model candidate
 Files: movie_ingestion/metadata_generation/generators/franchise.py | Removed provider/model/kwargs params from generate_franchise(); hardcoded gpt-5.4-mini with reasoning_effort=low, verbosity=low as the sole model candidate.
+
+## Production techniques definition — include animation methods and exclude format labels
+Files: movie_ingestion/metadata_generation/prompts/production_techniques.py, movie_ingestion/metadata_generation/generators/production_techniques.py, schemas/metadata.py
+Why: The earlier prompt treated some format/category labels as production techniques while excluding animation modalities the user explicitly wants in-scope. We clarified the boundary so this metadata captures concrete making/rendering/capture methods instead.
+Approach: Rewrote the production-techniques prompt to include animation modalities and sub-techniques (`hand-drawn animation`, `computer animation`, `2d/3d animation`, `traditional animation`, `stop motion`, `rotoscope`, `motion capture`, hybrid/partial labels), keep both broad and specific technique labels when both appear, exclude `imax` as viewing-only, exclude `documentary` / `mockumentary` / `pseudo documentary` / `anthology` / `vignette` / `nonlinear timeline` as movie-type or structural labels, and keep `found footage` as an explicit carveout rather than a general rule. Updated adjacent generator/schema descriptions to match so comments do not drift from prompt behavior.
+Design context: This follows the user's clarified rule that animation is absolutely a production technique, `3d` can count when it reflects design/production, `imax` is out as viewing experience, and format/category labels should not be promoted into production-technique metadata except for the explicit `found footage` exception.
+Testing notes: Not run. This pass only updates prompt/schema/comment definitions; notebook fixtures and unit tests were intentionally left untouched.
+
+## Production techniques notebook — populate deterministic fixture set
+Files: movie_ingestion/metadata_generation/generators/test_production_techniques.ipynb
+Why: The notebook scaffold still had an empty `TEST_MOVIES` dict, so it could not exercise the revised production-techniques definition or measure candidate consistency on known edge cases.
+Approach: Replaced the placeholder cell with a populated fixture set spanning four intent buckets: rich inputs with mixed signal, sparse inputs with mixed signal, hard true positives, and false-positive traps. The selected titles are all present in `tracker.db` and were chosen to stress the newly clarified boundary: animation modalities/sub-techniques in, `imax` out, movie-type/structural labels out, and `found footage` in only as an explicit exception. Each entry now includes `title_year`, a short rationale blurb, a bucket label, and lowercase-normalized expected outputs matching the notebook evaluator.
+Design context: The fixture mix intentionally combines obvious positives (`stop motion animation`, `motion capture`, `rotoscoping`) with boundary cases (`computer animation`, `3d`, `part stop motion animation`, `found footage`) and strong false-positive traps (`mockumentary`, `filmmaking`, `behind the scenes`, `film within a film`). This should make evaluation deltas easier to interpret when comparing prompt/model variants.
+Testing notes: Verified that the notebook JSON is valid and that the populated cell renders as expected when parsed. Did not execute the notebook or run tests.
+
+## Production techniques notebook — persist hydrated inputs and add candidate miss inspector
+Files: movie_ingestion/metadata_generation/generators/test_production_techniques.ipynb
+Why: After the fixtures were populated, the notebook still did not surface the actual input keyword lists in saved results or provide a fast way to inspect all misses for one candidate across the full movie set.
+Approach: Updated the movie-loading cell to hydrate each `TEST_MOVIES` entry with `plot_keywords`, `overall_keywords`, and a deduped `combined_keywords` list from `tracker.db`. Extended the saved `results_payload` so those hydrated inputs persist into the JSON results file. Added a new bottom cell where the user can set `CANDIDATE_MISMATCH_LABEL` and print every movie the candidate failed on, including the plot keywords, overall keywords, combined input, expected output, and per-run received outputs with missing/extra deltas.
+Design context: Keeping the keyword hydration in the load cell avoids bloating the hand-maintained fixture definitions while still making the notebook self-contained after generation runs. The mismatch inspector is intentionally candidate-centric and uses the existing `evaluate_movie()` / `classify_run()` helpers so it reflects the same exact-match logic as the summary tables.
+Testing notes: Verified the notebook JSON remains valid after the new cell and payload changes. Did not execute the notebook or run tests.
+
+## Production techniques notebook — fix Gemini thinking kwargs shape
+Files: movie_ingestion/metadata_generation/generators/test_production_techniques.ipynb
+Why: The Gemini candidate configs were passing `thinking_budget` as a flat string kwarg plus an unsupported `verbosity` field, which does not match either the official Gemini request shape or the installed `google-genai` SDK validation rules.
+Approach: Updated the Gemini notebook candidates to pass nested `thinking_config` kwargs with integer `thinking_budget` values (`0` for off, `1024` for low-budget thinking) and removed the invalid Gemini `verbosity` kwarg. The OpenAI candidates were left unchanged.
+Design context: The repo's Gemini adapter forwards `kwargs` directly into the Gemini SDK config dict, so the notebook must use the SDK's actual field structure. Official Gemini docs show thinking controls under `thinkingConfig`/`thinking_config`, and the local SDK accepts `thinking_config={"thinking_budget": ...}` but rejects flat `thinking_budget` and `verbosity`.
+Testing notes: Verified the notebook JSON remains valid. Also checked locally with `google.genai.types.GenerateContentConfig` that nested `thinking_config` works, while flat `thinking_budget` and Gemini `verbosity` raise validation errors. Did not execute the notebook itself.
+
+## Production techniques notebook — switch Gemini 3 candidates to thinking_level
+Files: movie_ingestion/metadata_generation/generators/test_production_techniques.ipynb
+Why: For Gemini 3 models, `thinking_level` is the more appropriate control than the legacy budget knob, and the notebook labels should match the actual control being tested.
+Approach: Replaced the Gemini notebook candidate configs from nested `thinking_budget` values to nested `thinking_level` values (`minimal` and `low`) and renamed the former `gemini-3-none` label to `gemini-3-minimal` so the candidate name matches the configured level.
+Design context: This keeps the Gemini candidate setup aligned with Gemini 3 terminology while preserving the same low-vs-lower-reasoning comparison shape in the notebook. The OpenAI candidates and the rest of the notebook logic were left untouched.
+Testing notes: Verified the notebook JSON remains valid after the change. Did not execute the notebook or run tests.
+
+## Production techniques generator: hardcode gpt-5.4-mini model candidate
+Files: movie_ingestion/metadata_generation/generators/production_techniques.py, movie_ingestion/metadata_generation/batch_generation/generator_registry.py | Removed provider/model/kwargs params from generate_production_techniques(); hardcoded gpt-5.4-mini with reasoning_effort=low, verbosity=low as the sole model candidate (matching franchise generator pattern). Updated batch registry model string from gpt-5-mini to gpt-5.4-mini.

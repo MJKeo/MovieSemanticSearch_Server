@@ -507,7 +507,7 @@ def _build_registry() -> dict[MetadataType, GeneratorConfig]:
             eligibility_checker=_production_techniques_eligibility_checker,
             prompt_builder=_production_techniques_prompt_builder,
             live_generator=generate_production_techniques,
-            model="gpt-5-mini",
+            model="gpt-5.4-mini",
             model_kwargs={"reasoning_effort": "low", "verbosity": "low"},
         ),
         MetadataType.FRANCHISE: GeneratorConfig(

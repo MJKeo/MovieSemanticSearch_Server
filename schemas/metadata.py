@@ -983,7 +983,9 @@ class ProductionKeywordsOutput(EmbeddableOutput):
 # Structured output from the production_techniques generation (Wave 2).
 #
 # Classification task: the LLM filters plot_keywords and overall_keywords
-# to keep only production-technique terms. Not generative — purely selective.
+# to keep only production-technique terms: concrete making/rendering/capture
+# methods, including animation modalities/sub-techniques plus the explicit
+# found-footage exception. Not generative — purely selective.
 #
 # Model: gpt-5-mini, reasoning_effort: low
 class ProductionTechniquesOutput(EmbeddableOutput):
@@ -992,7 +994,8 @@ class ProductionTechniquesOutput(EmbeddableOutput):
     terms: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
-            "Production-technique keywords filtered from the input lists."
+            "Production-technique keywords filtered from the input lists, "
+            "covering concrete making/rendering/capture methods."
         ),
     )
 
