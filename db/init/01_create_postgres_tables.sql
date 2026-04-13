@@ -29,10 +29,12 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   source_material_type_ids INT[] NOT NULL DEFAULT '{}',
   keyword_ids         INT[] NOT NULL DEFAULT '{}',
   concept_tag_ids     INT[] NOT NULL DEFAULT '{}',
+  award_ceremony_win_ids SMALLINT[] NOT NULL DEFAULT '{}',
   imdb_vote_count     INT NOT NULL DEFAULT 0,
   popularity_score    FLOAT NOT NULL DEFAULT 0.0,
   reception_score     FLOAT,
   budget_bucket       TEXT,
+  box_office_bucket   TEXT,
   title_token_count   INT NOT NULL DEFAULT 0,
   updated_at          TIMESTAMP NOT NULL DEFAULT now(),
   created_at          TIMESTAMP NOT NULL DEFAULT now()
@@ -71,6 +73,29 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_keyword_ids
 
 CREATE INDEX IF NOT EXISTS idx_movie_card_concept_tag_ids
   ON public.movie_card USING GIN (concept_tag_ids gin__int_ops);
+
+CREATE INDEX IF NOT EXISTS idx_movie_card_award_ceremony_win_ids
+  ON public.movie_card USING GIN (award_ceremony_win_ids);
+
+
+-- Structured award nominations and wins for deterministic lookup.
+-- Queried by ceremony_id + category + outcome_id, optionally filtered by year.
+CREATE TABLE IF NOT EXISTS public.movie_awards (
+  movie_id      BIGINT NOT NULL REFERENCES public.movie_card ON DELETE CASCADE,
+  ceremony_id   SMALLINT NOT NULL,
+  category      TEXT,
+  outcome_id    SMALLINT NOT NULL,
+  year          SMALLINT NOT NULL,
+  PRIMARY KEY (movie_id, ceremony_id, COALESCE(category, ''), year)
+);
+
+-- Covers: "Oscar winners", "Best Picture nominees", "Cannes winners after 2000"
+CREATE INDEX IF NOT EXISTS idx_awards_lookup
+  ON public.movie_awards (ceremony_id, category, outcome_id, year);
+
+-- Reverse lookup: given a movie, find all its awards (for display / card rendering)
+CREATE INDEX IF NOT EXISTS idx_awards_movie
+  ON public.movie_awards (movie_id);
 
 
 -- Global dictionary of normalized lexical strings.

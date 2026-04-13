@@ -252,6 +252,43 @@ async def test_batch_insert_posting_functions_empty_term_ids_short_circuit(
 ## and batch_upsert_language_dictionary were deleted from db/postgres.py.
 
 
+# ---------------------------------------------------------------------------
+# batch_upsert_movie_awards
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_movie_awards_deletes_then_inserts(mocker) -> None:
+    """batch_upsert_movie_awards should delete existing rows then insert new ones."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    awards = [
+        (1, "Best Picture", 1, 2024),
+        (4, None, 1, 2023),
+    ]
+    await postgres.batch_upsert_movie_awards(42, awards)
+
+    # Should be called twice: once for DELETE, once for INSERT
+    assert execute_on_conn.await_count == 2
+
+    # First call: DELETE
+    delete_args = execute_on_conn.await_args_list[0].args
+    assert "DELETE" in delete_args[1]
+    assert delete_args[2] == (42,)
+
+    # Second call: INSERT with unnested arrays
+    insert_args = execute_on_conn.await_args_list[1].args
+    assert "movie_awards" in insert_args[1]
+    assert insert_args[2] == (42, [1, 4], ["Best Picture", None], [1, 1], [2024, 2023])
+
+
+@pytest.mark.asyncio
+async def test_batch_upsert_movie_awards_empty_list_short_circuits(mocker) -> None:
+    """batch_upsert_movie_awards should no-op when awards list is empty."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    await postgres.batch_upsert_movie_awards(42, [])
+    execute_on_conn.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     ("token_len", "expected_tier"),
     [
@@ -423,14 +460,24 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params(mock
         genre_ids=(1, 2),
         watch_offer_keys=(100, 200),
         audio_language_ids=(7, 8),
+        country_ids=(9, 10),
+        source_material_type_ids=(11, 12),
+        keyword_ids=(13, 14),
+        concept_tag_ids=(15, 16),
         imdb_vote_count=945678,
         reception_score=72.5,
         title_token_count=4,
+        box_office_bucket="hit",
     )
     conn_arg, query, params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert "public.movie_card" in query
-    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, None, 4)
+    assert params == (
+        10, "Movie", "poster", 1000, 120, 3,
+        [1, 2], [100, 200], [7, 8], [9, 10],
+        [11, 12], [13, 14], [15, 16],
+        945678, 72.5, None, "hit", 4,
+    )
 
 
 @pytest.mark.asyncio
@@ -545,8 +592,18 @@ async def test_fetch_movie_cards_maps_rows_to_dicts(mocker) -> None:
         "db.postgres._execute_read",
         new=AsyncMock(
             return_value=[
-                (1, "A", "u", 10, 90, 2, [1], [11], [21], 945678, 0.82, 80.5),
-                (2, "B", None, None, None, None, [], [], [], 0, 0.0, None),
+                (
+                    1, "A", "u", 10, 90, 2,
+                    [1], [11], [21], [31],
+                    [41], [51], [61],
+                    945678, 0.82, 80.5, "large", "hit",
+                ),
+                (
+                    2, "B", None, None, None, None,
+                    [], [], [], [],
+                    [], [], [],
+                    0, 0.0, None, None, None,
+                ),
             ]
         ),
     )
@@ -555,9 +612,12 @@ async def test_fetch_movie_cards_maps_rows_to_dicts(mocker) -> None:
     assert result[0]["title"] == "A"
     assert result[0]["imdb_vote_count"] == 945678
     assert result[0]["popularity_score"] == 0.82
+    assert result[0]["budget_bucket"] == "large"
+    assert result[0]["box_office_bucket"] == "hit"
     assert result[1]["movie_id"] == 2
     assert "audio_language_ids" in result[0]
     assert "popularity_score" in result[0]
+    assert "box_office_bucket" in result[0]
 
 
 @pytest.mark.asyncio
@@ -685,3 +745,4 @@ def test_movie_card_init_sql_contains_popularity_columns() -> None:
     sql = Path("db/init/01_create_postgres_tables.sql").read_text(encoding="utf-8")
     assert "popularity_score" in sql
     assert "imdb_vote_count" in sql
+    assert "box_office_bucket" in sql

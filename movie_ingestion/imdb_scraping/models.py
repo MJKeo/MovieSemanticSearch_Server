@@ -14,7 +14,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from schemas.enums import AwardOutcome
+from schemas.enums import AwardOutcome, CEREMONY_BY_EVENT_TEXT
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +47,17 @@ class AwardNomination(BaseModel):
     category: Optional[str] = None   # null for festival grand prizes (Palme d'Or, etc.)
     outcome: AwardOutcome
     year: int
+
+    @property
+    def ceremony_id(self) -> int | None:
+        """Stable integer ID for this award's ceremony, for Postgres storage.
+
+        Returns None when the ceremony string doesn't match any known
+        AwardCeremony member — callers must handle the None case
+        (e.g. skip the award row during ingestion).
+        """
+        ceremony = CEREMONY_BY_EVENT_TEXT.get(self.ceremony)
+        return ceremony.ceremony_id if ceremony is not None else None
 
     def did_win(self) -> bool:
         return self.outcome == AwardOutcome.WINNER

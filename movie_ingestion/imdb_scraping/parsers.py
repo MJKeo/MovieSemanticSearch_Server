@@ -20,30 +20,17 @@ from .models import (
     ParentalGuideItem,
     FeaturedReview,
 )
-from schemas.enums import AwardOutcome
+from schemas.enums import AwardOutcome, CEREMONY_BY_EVENT_TEXT
 
 
 # ---------------------------------------------------------------------------
 # Award ceremony filter
 # ---------------------------------------------------------------------------
 
-# The 12 major ceremonies whose nominations we store. Values are the exact
-# `award.event.text` strings returned by the IMDB GraphQL API (verified via
-# live queries). Everything outside this set is silently dropped.
-_IN_SCOPE_CEREMONIES: frozenset[str] = frozenset({
-    "Academy Awards, USA",
-    "Golden Globes, USA",
-    "BAFTA Awards",
-    "Cannes Film Festival",
-    "Venice Film Festival",
-    "Berlin International Film Festival",
-    "Actor Awards",                  # SAG (rebranded in IMDB's data)
-    "Critics Choice Awards",
-    "Sundance Film Festival",
-    "Razzie Awards",
-    "Film Independent Spirit Awards",
-    "Gotham Awards",
-})
+# Derived from AwardCeremony enum — the 12 major ceremonies whose nominations
+# we store. Values are the exact `award.event.text` strings returned by the
+# IMDB GraphQL API. Everything outside this set is silently dropped.
+_IN_SCOPE_CEREMONIES = CEREMONY_BY_EVENT_TEXT.keys()
 
 
 # ---------------------------------------------------------------------------

@@ -796,3 +796,57 @@ Add three new INT[] columns with GIN indexes to `movie_card` for deterministic f
 
 ### Testing Notes
 Not run. Existing tests for `upsert_movie_card` and `fetch_movie_cards` will need parameter updates. New helper methods (`source_material_type_ids()`, `keyword_ids()`, `concept_tag_ids()`) on Movie need unit test coverage.
+
+## Add box office status helper to Movie
+Files: schemas/enums.py, schemas/movie.py, docs/modules/schemas.md, unit_tests/test_enums.py, unit_tests/test_schemas_movie.py
+
+Why: We needed a deterministic helper on the tracker-backed `Movie` object to expose only clear commercial outcomes from the available budget and worldwide gross data, without introducing new persisted fields or overclaiming on ambiguous cases.
+
+Approach: Added `BoxOfficeStatus` as a shared `StrEnum` with stable lowercase values (`hit`, `flop`) and implemented `Movie.box_office_status()` as a pure computed helper that reuses `resolved_budget()` and `resolved_box_office_revenue()` instead of duplicating source-selection logic. The helper returns `None` for missing/unparseable release dates, release years before 1980, missing/non-positive budget or gross, and the intentionally ambiguous 1.0x-3.0x ratio band. `HIT` requires both `ratio >= 3.0` and `budget >= 1_000_000`; `FLOP` uses `ratio <= 1.0` with no budget floor. Updated the schemas module doc to list both the enum and the new helper, and added focused unit coverage for enum stability plus the helper's threshold/source-precedence behavior.
+
+Design context: The 1980 cutoff avoids known pre-1980 gross/re-release comparability problems. The `$1M` floor applies only to `HIT` so very small indie budgets do not produce misleading "hit" tags from trivial absolute grosses, while obvious financial failures still classify as `FLOP`.
+
+Testing notes: `uv run python -m pytest unit_tests/test_enums.py unit_tests/test_schemas_movie.py::TestBoxOfficeStatus -q` passed (`39 passed`). A broader run of `unit_tests/test_schemas_movie.py` still has pre-existing unrelated failures for missing `Movie.title_with_original()` and `Movie.production_text()` methods.
+
+## Persist box_office_bucket on movie_card
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py, docs/modules/db.md, docs/modules/ingestion.md, unit_tests/test_ingest_movie.py, unit_tests/test_postgres.py
+
+Why: `Movie.box_office_status()` already computed a clear commercial outcome bucket, but `movie_card` only persisted `budget_bucket`. To make box-office status available to downstream Postgres consumers with the same shape as budget, the canonical card row needed a nullable `box_office_bucket` text column and the Stage 8 upsert path needed to populate it.
+
+Approach: Added `box_office_bucket TEXT` to the bootstrap `movie_card` schema immediately next to `budget_bucket`. Extended `db.postgres.upsert_movie_card()` to accept and persist the new nullable text field in both insert and conflict-update paths, and extended `fetch_movie_cards()` to select and expose it in returned card dicts. In Stage 8 ingestion, mirrored the `budget_bucket` pattern exactly: call `movie.box_office_status()`, convert the enum to `.value` when present, and pass `None` otherwise. Updated module docs to reflect that `movie_card` now stores both budget and box-office buckets. For existing Postgres databases, the rollout remains manual SQL rather than app-managed schema mutation: `ALTER TABLE public.movie_card ADD COLUMN IF NOT EXISTS box_office_bucket TEXT;`
+
+Design context: This intentionally persists the already-finalized helper output as readable text (`hit` / `flop` / `NULL`) rather than introducing a new ID mapping or any query-understanding/search-time behavior. The goal here is storage and ingestion parity with `budget_bucket`, not search semantics.
+
+Testing notes: `uv run python -m pytest unit_tests/test_ingest_movie.py unit_tests/test_postgres.py -q -k 'upsert_movie_card or fetch_movie_cards or movie_card_init_sql_contains_popularity_columns or ingest_movie_card'` passed (`10 passed, 63 deselected`).
+
+## Add movie_awards Postgres table and award_ceremony_win_ids column
+Files: schemas/enums.py, movie_ingestion/imdb_scraping/models.py, movie_ingestion/imdb_scraping/parsers.py, movie_ingestion/final_ingestion/vector_text.py, db/init/01_create_postgres_tables.sql, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py, unit_tests/test_enums.py, unit_tests/test_schemas_movie.py, unit_tests/test_ingest_movie.py, unit_tests/test_postgres.py
+
+### Intent
+Structured Postgres storage for award data that already flows through the pipeline (scraped from IMDB in Stage 4). Enables deterministic award lookups ("Oscar winners", "Best Picture nominees after 2000") via a new `movie_awards` table, and broad "award-winning" metadata filtering via a GIN-indexed `award_ceremony_win_ids` array column on `movie_card`.
+
+### Key Decisions
+- **AwardCeremony enum** (12 members) consolidates ceremony strings previously hardcoded in parsers.py and vector_text.py into a single source of truth in schemas/enums.py. Each member carries the IMDB event.text string as its value and a stable integer ceremony_id for Postgres.
+- **AwardOutcome upgraded** from plain StrEnum to carry outcome_id (1=winner, 2=nominee). Breaking change to the enum definition but limited blast radius (models.py, parsers.py).
+- **movie_awards table** uses integer IDs for ceremony and outcome but keeps `category` as TEXT. Category will be fuzzy-matched at search time via cached distinct values + rapidfuzz (small candidate set of ~150 categories). See search_improvement_planning discussion for rationale.
+- **award_ceremony_win_ids SMALLINT[]** on movie_card with GIN index for broad metadata filtering (same pattern as genre_ids, keyword_ids). Cannot use gin__int_ops (requires INT[]) but column has at most 12 values per row so negligible impact.
+- **batch_upsert_movie_awards** uses delete+insert (not per-row upsert) since awards for a movie are always ingested as a complete set.
+- **Batched ingestion path** gets a separate inner SAVEPOINT for awards (between movie_card and lexical), matching the existing error isolation pattern.
+
+### Planning Context
+Design evolved through conversation: started with raw TEXT columns, moved to enum IDs after analyzing codebase patterns (posting tables, GIN arrays). Decided against a separate posting table since awards don't need fuzzy text resolution — the LLM outputs structured fields that map directly to enum IDs. The movie_awards table with integer columns and composite index serves both detail and search roles.
+
+### Testing Notes
+Tests added for: AwardCeremony enum stability/uniqueness, AwardOutcome ID stability, CEREMONY_BY_EVENT_TEXT lookup, AwardNomination.ceremony_id property, create_award_ceremony_win_ids helper, ingest_movie_awards flow, batch_upsert_movie_awards DB method, updated upsert_movie_card params. Run: `pytest unit_tests/test_enums.py unit_tests/test_schemas_movie.py unit_tests/test_ingest_movie.py unit_tests/test_postgres.py -v`
+
+## Refinements to movie_awards implementation
+Files: movie_ingestion/imdb_scraping/models.py, movie_ingestion/final_ingestion/vector_text.py, schemas/movie.py, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py
+
+### Intent
+Four follow-up cleanups to the movie_awards implementation for robustness and readability.
+
+### Key Changes
+- **`AwardNomination.ceremony_id`** now returns `int | None` instead of raising `KeyError` for unknown ceremonies. Callers filter out `None` values before ingestion.
+- **`_RECEPTION_AWARD_CEREMONY_DISPLAY`** now maps `AwardCeremony` enum members (not `.value` strings) to display names. Also serves as the ordering source, replacing the deleted `_RECEPTION_AWARD_CEREMONY_ORDER` that was causing a `NameError` in `_reception_award_wins_text()`.
+- **`Movie.award_ceremony_win_ids()`** added as an instance method on `Movie`, following the pattern of `concept_tag_ids()`, `keyword_ids()`, etc. The `create_award_ceremony_win_ids()` helper in ingest_movie.py now delegates to it.
+- **`batch_upsert_movie_awards()`** now accepts `list[AwardNomination]` directly and extracts fields internally, instead of requiring pre-extracted tuples.

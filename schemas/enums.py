@@ -25,9 +25,53 @@ class MetadataType(StrEnum):
     CONCEPT_TAGS = "concept_tags"
 
 
-class AwardOutcome(StrEnum):
-    WINNER = "winner"
-    NOMINEE = "nominee"
+class AwardOutcome(str, Enum):
+    """Award nomination outcome with a stable integer ID for Postgres storage."""
+    outcome_id: int
+
+    def __new__(cls, value: str, outcome_id: int) -> "AwardOutcome":
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.outcome_id = outcome_id
+        return obj
+
+    WINNER = ("winner", 1)
+    NOMINEE = ("nominee", 2)
+
+
+# Twelve major award ceremonies tracked in IMDB scraping.
+# Each member's value is the IMDB GraphQL `event.text` string;
+# ceremony_id is a stable SMALLINT for Postgres storage.
+class AwardCeremony(str, Enum):
+    ceremony_id: int
+
+    def __new__(cls, value: str, ceremony_id: int) -> "AwardCeremony":
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.ceremony_id = ceremony_id
+        return obj
+
+    ACADEMY_AWARDS = ("Academy Awards, USA", 1)
+    GOLDEN_GLOBES  = ("Golden Globes, USA", 2)
+    BAFTA          = ("BAFTA Awards", 3)
+    CANNES         = ("Cannes Film Festival", 4)
+    VENICE         = ("Venice Film Festival", 5)
+    BERLIN         = ("Berlin International Film Festival", 6)
+    SAG            = ("Actor Awards", 7)
+    CRITICS_CHOICE = ("Critics Choice Awards", 8)
+    SUNDANCE       = ("Sundance Film Festival", 9)
+    RAZZIE         = ("Razzie Awards", 10)
+    SPIRIT_AWARDS  = ("Film Independent Spirit Awards", 11)
+    GOTHAM         = ("Gotham Awards", 12)
+
+
+# O(1) lookup from IMDB event.text string to AwardCeremony member.
+CEREMONY_BY_EVENT_TEXT: dict[str, AwardCeremony] = {c.value: c for c in AwardCeremony}
+
+
+class BoxOfficeStatus(StrEnum):
+    HIT = "hit"
+    FLOP = "flop"
 
 
 # Narrative-position axis of franchise classification. Mutually

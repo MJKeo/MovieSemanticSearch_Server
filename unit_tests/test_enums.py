@@ -3,7 +3,14 @@
 import pytest
 
 from implementation.classes.enums import MaturityRating, StreamingAccessType
-from schemas.enums import MetadataType, SourceMaterialType
+from schemas.enums import (
+    AwardCeremony,
+    AwardOutcome,
+    BoxOfficeStatus,
+    CEREMONY_BY_EVENT_TEXT,
+    MetadataType,
+    SourceMaterialType,
+)
 
 
 @pytest.mark.parametrize(
@@ -158,3 +165,109 @@ class TestMetadataType:
     def test_metadata_type_member_count(self):
         """Exactly 12 members after later metadata additions."""
         assert len(MetadataType) == 12
+
+
+# ---------------------------------------------------------------------------
+# AwardOutcome
+# ---------------------------------------------------------------------------
+
+class TestAwardOutcome:
+    def test_award_outcome_values_are_stable(self):
+        """AwardOutcome string values must remain stable for serialized IMDB data."""
+        assert AwardOutcome.WINNER == "winner"
+        assert AwardOutcome.NOMINEE == "nominee"
+
+    def test_award_outcome_ids_are_stable(self):
+        """outcome_id values are persisted in Postgres — must not change."""
+        assert AwardOutcome.WINNER.outcome_id == 1
+        assert AwardOutcome.NOMINEE.outcome_id == 2
+
+    def test_award_outcome_member_count(self):
+        assert len(AwardOutcome) == 2
+
+    def test_award_outcome_is_str_subclass(self):
+        assert isinstance(AwardOutcome.WINNER, str)
+
+
+# ---------------------------------------------------------------------------
+# AwardCeremony
+# ---------------------------------------------------------------------------
+
+_EXPECTED_CEREMONIES = {
+    "ACADEMY_AWARDS": ("Academy Awards, USA", 1),
+    "GOLDEN_GLOBES":  ("Golden Globes, USA", 2),
+    "BAFTA":          ("BAFTA Awards", 3),
+    "CANNES":         ("Cannes Film Festival", 4),
+    "VENICE":         ("Venice Film Festival", 5),
+    "BERLIN":         ("Berlin International Film Festival", 6),
+    "SAG":            ("Actor Awards", 7),
+    "CRITICS_CHOICE": ("Critics Choice Awards", 8),
+    "SUNDANCE":       ("Sundance Film Festival", 9),
+    "RAZZIE":         ("Razzie Awards", 10),
+    "SPIRIT_AWARDS":  ("Film Independent Spirit Awards", 11),
+    "GOTHAM":         ("Gotham Awards", 12),
+}
+
+
+class TestAwardCeremonyStability:
+    def test_ceremony_values_are_stable(self):
+        """String values are IMDB event.text strings — must not change."""
+        for member_name, (expected_value, _) in _EXPECTED_CEREMONIES.items():
+            member = AwardCeremony[member_name]
+            assert member.value == expected_value
+
+    def test_ceremony_ids_are_stable(self):
+        """ceremony_id values are persisted in Postgres — must not change."""
+        for member_name, (_, expected_id) in _EXPECTED_CEREMONIES.items():
+            member = AwardCeremony[member_name]
+            assert member.ceremony_id == expected_id
+
+    def test_ceremony_member_count(self):
+        """Exactly 12 ceremonies — catches accidental additions or removals."""
+        assert len(AwardCeremony) == 12
+
+
+class TestAwardCeremonyBehavior:
+    def test_is_str_subclass(self):
+        assert isinstance(AwardCeremony.ACADEMY_AWARDS, str)
+
+    def test_lookup_by_value(self):
+        """Can construct from the IMDB event.text string."""
+        assert AwardCeremony("Academy Awards, USA") == AwardCeremony.ACADEMY_AWARDS
+
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValueError):
+            AwardCeremony("Nonexistent Awards")
+
+
+class TestAwardCeremonyUniqueness:
+    def test_no_duplicate_ids(self):
+        ids = [c.ceremony_id for c in AwardCeremony]
+        assert len(ids) == len(set(ids))
+
+    def test_no_duplicate_values(self):
+        values = [c.value for c in AwardCeremony]
+        assert len(values) == len(set(values))
+
+
+class TestCeremonyByEventText:
+    def test_lookup_dict_covers_all_members(self):
+        """CEREMONY_BY_EVENT_TEXT should have one entry per AwardCeremony member."""
+        assert len(CEREMONY_BY_EVENT_TEXT) == len(AwardCeremony)
+
+    def test_lookup_returns_correct_member(self):
+        assert CEREMONY_BY_EVENT_TEXT["Academy Awards, USA"] == AwardCeremony.ACADEMY_AWARDS
+        assert CEREMONY_BY_EVENT_TEXT["Cannes Film Festival"] == AwardCeremony.CANNES
+
+
+# ---------------------------------------------------------------------------
+# BoxOfficeStatus
+# ---------------------------------------------------------------------------
+
+class TestBoxOfficeStatus:
+    def test_box_office_status_values_are_stable(self):
+        assert BoxOfficeStatus.HIT == "hit"
+        assert BoxOfficeStatus.FLOP == "flop"
+
+    def test_box_office_status_member_count(self):
+        assert len(BoxOfficeStatus) == 2

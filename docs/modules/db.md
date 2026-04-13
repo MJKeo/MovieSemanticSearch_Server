@@ -22,7 +22,7 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
 | `lexical_search.py` | Entity-based search via Postgres inverted indexes. Resolves actors/directors/franchises/characters to term IDs, computes F-score (beta=2.0). |
 | `metadata_scoring.py` | Scores candidates against LLM-extracted metadata preferences (genres, date, providers, language, maturity, reception, trending, popularity, budget_size). Weighted average, weights are static. |
 | `reranking.py` | Quality-prior reranking: bucket by relevance score (precision=2), sort within buckets by reception score. |
-| `postgres.py` | Async connection pool, all SQL operations, posting list queries, movie card bulk fetch. |
+| `postgres.py` | Async connection pool, all SQL operations, posting list queries, and movie card bulk fetch/upsert. `movie_card` persists nullable text buckets for both `budget_bucket` and `box_office_bucket` alongside the canonical scalar/array metadata used by reranking and downstream filtering. |
 | `qdrant.py` | Minimal Qdrant async client singleton. |
 | `redis.py` | Async Redis pool for all four cache namespaces. |
 | `tmdb.py` | TMDB API client with adaptive token-bucket rate limiting. |
@@ -46,6 +46,9 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
 - Metadata enrichment is a single bulk Postgres query after merge.
 - The trending set is fetched once from Redis per request,
   concurrent with the Postgres bulk fetch.
+- Existing Postgres databases need manual rollout SQL when new
+  `movie_card` columns are added; for `box_office_bucket` the
+  required step is `ALTER TABLE public.movie_card ADD COLUMN IF NOT EXISTS box_office_bucket TEXT;`.
 
 ## Scoring Pipeline Constants
 

@@ -20,6 +20,7 @@ Vector spaces:
 import tiktoken
 
 from implementation.misc.helpers import normalize_string
+from schemas.enums import AwardCeremony
 from schemas.movie import Movie
 
 # Token limit for text-embedding-3-large. Texts exceeding this cause
@@ -36,22 +37,25 @@ _CHAR_GATE_THRESHOLD = 15_000
 
 _TIKTOKEN_ENC = tiktoken.encoding_for_model("text-embedding-3-large")
 
-_RECEPTION_AWARD_CEREMONY_ORDER: tuple[tuple[str, str], ...] = (
-    ("Academy Awards, USA", "academy awards"),
-    ("Golden Globes, USA", "golden globes"),
-    ("BAFTA Awards", "bafta"),
-    ("Cannes Film Festival", "cannes"),
-    ("Venice Film Festival", "venice"),
-    ("Berlin International Film Festival", "berlin"),
-    ("Actor Awards", "sag"),
-    ("Critics Choice Awards", "critics choice"),
-    ("Sundance Film Festival", "sundance"),
-    # Deliberately excluded: Razzie Awards. Negative-award queries should
-    # route to structured award data, not prestige-oriented vector text.
-    ("Film Independent Spirit Awards", "spirit awards"),
-    ("Gotham Awards", "gotham awards"),
-)
-_RECEPTION_AWARD_CEREMONY_DISPLAY = dict(_RECEPTION_AWARD_CEREMONY_ORDER)
+# Ordered mapping of prestige award ceremonies to short display names
+# for the reception vector text. Insertion order defines the output
+# ordering (most prestigious first). Also serves as the membership
+# check — ceremonies not in this dict are excluded from vector text.
+# Deliberately excludes Razzie Awards — negative-award queries should
+# route to structured award data, not prestige-oriented vector text.
+_RECEPTION_AWARD_CEREMONY_DISPLAY: dict[AwardCeremony, str] = {
+    AwardCeremony.ACADEMY_AWARDS: "academy awards",
+    AwardCeremony.GOLDEN_GLOBES:  "golden globes",
+    AwardCeremony.BAFTA:          "bafta",
+    AwardCeremony.CANNES:         "cannes",
+    AwardCeremony.VENICE:         "venice",
+    AwardCeremony.BERLIN:         "berlin",
+    AwardCeremony.SAG:            "sag",
+    AwardCeremony.CRITICS_CHOICE: "critics choice",
+    AwardCeremony.SUNDANCE:       "sundance",
+    AwardCeremony.SPIRIT_AWARDS:  "spirit awards",
+    AwardCeremony.GOTHAM:         "gotham awards",
+}
 
 
 # ===============================
@@ -292,24 +296,32 @@ def _reception_award_wins_text(movie: Movie) -> str | None:
     Uses only winning rows from tracked major ceremonies, collapses
     multiple wins in the same ceremony to a single ceremony label, and
     omits Razzie entirely so "award-winning" semantics stay positive.
+    Output order follows _RECEPTION_AWARD_CEREMONY_DISPLAY insertion
+    order (most prestigious first).
     """
     if not movie.imdb_data.awards:
         return None
 
-    winning_ceremonies = {
-        award.ceremony
-        for award in movie.imdb_data.awards
-        if award.did_win() and award.ceremony in _RECEPTION_AWARD_CEREMONY_DISPLAY
-    }
+    # Collect AwardCeremony enums for winning, known ceremonies.
+    # ceremony_id is None for unknown ceremonies — skip those.
+    from schemas.enums import CEREMONY_BY_EVENT_TEXT
+    winning_ceremonies: set[AwardCeremony] = set()
+    for award in movie.imdb_data.awards:
+        if award.did_win():
+            ceremony_enum = CEREMONY_BY_EVENT_TEXT.get(award.ceremony)
+            if ceremony_enum is not None and ceremony_enum in _RECEPTION_AWARD_CEREMONY_DISPLAY:
+                winning_ceremonies.add(ceremony_enum)
+
     if not winning_ceremonies:
         return None
 
-    ordered_ceremonies = [
+    # Iterate the display dict to preserve prestige ordering.
+    ordered_names = [
         display_name
-        for ceremony, display_name in _RECEPTION_AWARD_CEREMONY_ORDER
+        for ceremony, display_name in _RECEPTION_AWARD_CEREMONY_DISPLAY.items()
         if ceremony in winning_ceremonies
     ]
-    if not ordered_ceremonies:
+    if not ordered_names:
         return None
 
-    return "major_award_wins: " + ", ".join(ordered_ceremonies)
+    return "major_award_wins: " + ", ".join(ordered_names)

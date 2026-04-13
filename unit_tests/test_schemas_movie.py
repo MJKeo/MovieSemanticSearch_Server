@@ -9,6 +9,8 @@ directly via constructor rather than from a SQLite database.
 import pytest
 
 from implementation.classes.enums import BudgetSize
+from movie_ingestion.imdb_scraping.models import AwardNomination
+from schemas.enums import AwardOutcome, BoxOfficeStatus
 from schemas.movie import Movie, TMDBData, IMDBData
 
 
@@ -161,6 +163,100 @@ class TestResolvedBudget:
             tmdb_data={"budget": 15_000_000},
         )
         assert movie.resolved_budget() == 15_000_000
+
+
+# ---------------------------------------------------------------------------
+# box_office_status
+# ---------------------------------------------------------------------------
+
+class TestBoxOfficeStatus:
+    def test_none_when_release_date_missing(self):
+        movie = _make_movie(tmdb_data={"release_date": None}, imdb_data={"budget": 10_000_000})
+        assert movie.box_office_status() is None
+
+    def test_none_when_release_date_invalid(self):
+        movie = _make_movie(
+            tmdb_data={"release_date": "not-a-date", "revenue": 50_000_000},
+            imdb_data={"budget": 10_000_000},
+        )
+        assert movie.box_office_status() is None
+
+    def test_none_when_pre_1980(self):
+        movie = _make_movie(
+            tmdb_data={"release_date": "1979-12-01", "revenue": 50_000_000},
+            imdb_data={"budget": 10_000_000},
+        )
+        assert movie.box_office_status() is None
+
+    def test_none_when_budget_missing(self):
+        movie = _make_movie(
+            tmdb_data={"revenue": 50_000_000, "budget": None},
+            imdb_data={"budget": None},
+        )
+        assert movie.box_office_status() is None
+
+    def test_none_when_budget_zero(self):
+        movie = _make_movie(
+            tmdb_data={"revenue": 50_000_000, "budget": 0},
+            imdb_data={"budget": 0},
+        )
+        assert movie.box_office_status() is None
+
+    def test_none_when_gross_missing(self):
+        movie = _make_movie(
+            tmdb_data={"revenue": None},
+            imdb_data={"budget": 10_000_000, "box_office_worldwide": None},
+        )
+        assert movie.box_office_status() is None
+
+    def test_none_when_gross_zero(self):
+        movie = _make_movie(
+            tmdb_data={"revenue": 0},
+            imdb_data={"budget": 10_000_000, "box_office_worldwide": 0},
+        )
+        assert movie.box_office_status() is None
+
+    def test_hit_when_ratio_at_least_three_and_budget_floor_met(self):
+        movie = _make_movie(
+            tmdb_data={"budget": 10_000_000},
+            imdb_data={"budget": 10_000_000, "box_office_worldwide": 30_000_000},
+        )
+        assert movie.box_office_status() == BoxOfficeStatus.HIT
+
+    def test_none_when_hit_ratio_met_but_budget_below_floor(self):
+        movie = _make_movie(
+            tmdb_data={"budget": 500_000},
+            imdb_data={"budget": 500_000, "box_office_worldwide": 2_000_000},
+        )
+        assert movie.box_office_status() is None
+
+    def test_flop_when_ratio_at_most_one(self):
+        movie = _make_movie(
+            tmdb_data={"budget": 20_000_000},
+            imdb_data={"budget": 20_000_000, "box_office_worldwide": 20_000_000},
+        )
+        assert movie.box_office_status() == BoxOfficeStatus.FLOP
+
+    def test_none_in_ambiguous_zone(self):
+        movie = _make_movie(
+            tmdb_data={"budget": 20_000_000},
+            imdb_data={"budget": 20_000_000, "box_office_worldwide": 40_000_000},
+        )
+        assert movie.box_office_status() is None
+
+    def test_prefers_imdb_gross_over_tmdb_revenue(self):
+        movie = _make_movie(
+            tmdb_data={"budget": 10_000_000, "revenue": 35_000_000},
+            imdb_data={"budget": 10_000_000, "box_office_worldwide": 8_000_000},
+        )
+        assert movie.box_office_status() == BoxOfficeStatus.FLOP
+
+    def test_falls_back_to_tmdb_revenue_when_imdb_gross_missing(self):
+        movie = _make_movie(
+            tmdb_data={"budget": 10_000_000, "revenue": 35_000_000},
+            imdb_data={"budget": 10_000_000, "box_office_worldwide": None},
+        )
+        assert movie.box_office_status() == BoxOfficeStatus.HIT
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +758,45 @@ class TestAudioLanguageIds:
     def test_empty_languages(self):
         movie = _make_movie(imdb_data={"languages": []})
         assert movie.audio_language_ids() == []
+
+
+# ---------------------------------------------------------------------------
+# AwardNomination.ceremony_id
+# ---------------------------------------------------------------------------
+
+class TestAwardNominationCeremonyId:
+    def test_ceremony_id_resolves_for_known_ceremony(self):
+        """ceremony_id should return the correct AwardCeremony enum ID."""
+        award = AwardNomination(
+            ceremony="Academy Awards, USA",
+            award_name="Oscar",
+            category="Best Picture",
+            outcome=AwardOutcome.WINNER,
+            year=2024,
+        )
+        assert award.ceremony_id == 1
+
+    def test_ceremony_id_resolves_for_festival(self):
+        """Festival ceremonies (nullable category) should resolve correctly."""
+        award = AwardNomination(
+            ceremony="Cannes Film Festival",
+            award_name="Palme d'Or",
+            category=None,
+            outcome=AwardOutcome.WINNER,
+            year=2023,
+        )
+        assert award.ceremony_id == 4
+
+    def test_ceremony_id_raises_for_unknown_ceremony(self):
+        """Unknown ceremony string should raise KeyError."""
+        award = AwardNomination(
+            ceremony="Unknown Awards",
+            award_name="Unknown",
+            outcome=AwardOutcome.NOMINEE,
+            year=2024,
+        )
+        with pytest.raises(KeyError):
+            _ = award.ceremony_id
 
 
 # ---------------------------------------------------------------------------

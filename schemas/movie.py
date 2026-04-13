@@ -34,6 +34,7 @@ from movie_ingestion.imdb_scraping.models import (
 from movie_ingestion.scoring_utils import unpack_provider_keys
 from movie_ingestion.tracker import IMDB_DATA_COLUMNS, IMDB_JSON_COLUMNS
 from implementation.classes.overall_keywords import keyword_from_string
+from schemas.enums import BoxOfficeStatus
 from schemas.metadata import (
     ConceptTagsOutput,
     NarrativeTechniquesOutput,
@@ -180,6 +181,11 @@ class Movie(BaseModel):
     """Full tracker-backed movie object with source rows and metadata."""
 
     model_config = ConfigDict(extra="forbid")
+
+    _BOX_OFFICE_CLASSIFICATION_START_YEAR: ClassVar[int] = 1980
+    _BOX_OFFICE_HIT_RATIO: ClassVar[float] = 3.0
+    _BOX_OFFICE_FLOP_RATIO: ClassVar[float] = 1.0
+    _BOX_OFFICE_HIT_MIN_BUDGET: ClassVar[int] = 1_000_000
 
     tmdb_data: TMDBData
     imdb_data: IMDBData
@@ -372,6 +378,35 @@ class Movie(BaseModel):
             return tmdb_revenue
         return None
 
+    def box_office_status(self) -> BoxOfficeStatus | None:
+        """Classify only clear hit/flop outcomes from budget and gross ratio."""
+        release_date = self.tmdb_data.release_date
+        if not release_date:
+            return None
+
+        try:
+            release_year = int(release_date[:4])
+        except (TypeError, ValueError):
+            return None
+
+        if release_year < self._BOX_OFFICE_CLASSIFICATION_START_YEAR:
+            return None
+
+        budget = self.resolved_budget()
+        gross = self.resolved_box_office_revenue()
+        if budget is None or gross is None or budget <= 0 or gross <= 0:
+            return None
+
+        ratio = gross / budget
+        if (
+            ratio >= self._BOX_OFFICE_HIT_RATIO
+            and budget >= self._BOX_OFFICE_HIT_MIN_BUDGET
+        ):
+            return BoxOfficeStatus.HIT
+        if ratio <= self._BOX_OFFICE_FLOP_RATIO:
+            return BoxOfficeStatus.FLOP
+        return None
+
     def resolved_maturity_rating(self) -> str | None:
         """Prefer IMDB maturity rating when present; fall back to TMDB."""
         if self.imdb_data.maturity_rating:
@@ -490,6 +525,24 @@ class Movie(BaseModel):
         if self.concept_tags_metadata is None:
             return []
         return sorted(self.concept_tags_metadata.all_concept_tag_ids())
+
+    def award_ceremony_win_ids(self) -> list[int]:
+        """Distinct AwardCeremony IDs where this movie won (excludes nominees).
+
+        Skips awards whose ceremony string doesn't map to a known
+        AwardCeremony (ceremony_id is None). Preserves first-seen order.
+        """
+        if not self.imdb_data.awards:
+            return []
+        seen: set[int] = set()
+        result: list[int] = []
+        for award in self.imdb_data.awards:
+            if award.did_win():
+                cid = award.ceremony_id
+                if cid is not None and cid not in seen:
+                    seen.add(cid)
+                    result.append(cid)
+        return result
 
     def languages_text(self) -> str:
         """Format language info as labeled lines for vector embedding."""

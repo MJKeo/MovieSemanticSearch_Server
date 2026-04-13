@@ -13,6 +13,7 @@ from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
+from movie_ingestion.imdb_scraping.models import AwardNomination
 
 
 class PostingTable(Enum):
@@ -650,10 +651,12 @@ async def upsert_movie_card(
     source_material_type_ids: Sequence[int],
     keyword_ids: Sequence[int],
     concept_tag_ids: Sequence[int],
+    award_ceremony_win_ids: Sequence[int],
     imdb_vote_count: int,
     reception_score: Optional[float],
     title_token_count: int,
     budget_bucket: Optional[str] = None,
+    box_office_bucket: Optional[str] = None,
     conn=None,
 ) -> None:
     """
@@ -670,20 +673,25 @@ async def upsert_movie_card(
         watch_offer_keys: List of watch offer keys (encoded provider+method).
         audio_language_ids: List of audio language IDs.
         country_ids: List of country-of-origin IDs.
+        source_material_type_ids: List of source material type IDs.
+        keyword_ids: List of keyword IDs.
+        concept_tag_ids: List of concept tag IDs.
+        award_ceremony_win_ids: List of AwardCeremony IDs where this movie won.
         imdb_vote_count: Raw IMDb vote count.
         reception_score: Precomputed reception score from IMDB/Metacritic.
         title_token_count: Number of tokens in the title.
         budget_bucket: Era-adjusted budget classification ('small', 'large', or None for mid-range/unknown).
+        box_office_bucket: Box office classification ('hit', 'flop', or None for ambiguous/unknown).
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
     INSERT INTO public.movie_card (
         movie_id, title, poster_url, release_ts, runtime_minutes,
         maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_ids,
-        source_material_type_ids, keyword_ids, concept_tag_ids,
-        imdb_vote_count, reception_score, budget_bucket, title_token_count, created_at, updated_at
+        source_material_type_ids, keyword_ids, concept_tag_ids, award_ceremony_win_ids,
+        imdb_vote_count, reception_score, budget_bucket, box_office_bucket, title_token_count, created_at, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
         poster_url = EXCLUDED.poster_url,
@@ -697,9 +705,11 @@ async def upsert_movie_card(
         source_material_type_ids = EXCLUDED.source_material_type_ids,
         keyword_ids = EXCLUDED.keyword_ids,
         concept_tag_ids = EXCLUDED.concept_tag_ids,
+        award_ceremony_win_ids = EXCLUDED.award_ceremony_win_ids,
         imdb_vote_count = EXCLUDED.imdb_vote_count,
         reception_score = EXCLUDED.reception_score,
         budget_bucket = EXCLUDED.budget_bucket,
+        box_office_bucket = EXCLUDED.box_office_bucket,
         title_token_count = EXCLUDED.title_token_count,
         updated_at = now();
     """
@@ -717,12 +727,54 @@ async def upsert_movie_card(
         list(source_material_type_ids),
         list(keyword_ids),
         list(concept_tag_ids),
+        list(award_ceremony_win_ids),
         imdb_vote_count,
         reception_score,
         budget_bucket,
+        box_office_bucket,
         title_token_count,
     )
     await _execute_on_conn(conn, query, params)
+
+
+async def batch_upsert_movie_awards(
+    movie_id: int,
+    awards: list[AwardNomination],
+    conn=None,
+) -> None:
+    """
+    Replace all award rows for a movie via delete + bulk insert.
+
+    Accepts AwardNomination objects directly and extracts the relevant
+    fields (ceremony_id, category, outcome_id, year) internally.
+    Uses delete-then-insert rather than per-row upserts because awards
+    for a movie are always ingested as a complete set.
+
+    Args:
+        movie_id: The movie to upsert awards for.
+        awards: AwardNomination objects with known (non-None) ceremony_id values.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    if not awards:
+        return
+
+    # Delete existing awards for this movie, then bulk insert the new set.
+    delete_query = "DELETE FROM public.movie_awards WHERE movie_id = %s"
+    await _execute_on_conn(conn, delete_query, (movie_id,))
+
+    # Extract fields from each AwardNomination into parallel arrays
+    # for unnest-based bulk insert.
+    ceremony_ids = [a.ceremony_id for a in awards]
+    categories = [a.category for a in awards]
+    outcome_ids = [a.outcome.outcome_id for a in awards]
+    years = [a.year for a in awards]
+
+    insert_query = """
+    INSERT INTO public.movie_awards (movie_id, ceremony_id, category, outcome_id, year)
+    SELECT %s, unnest(%s::smallint[]), unnest(%s::text[]), unnest(%s::smallint[]), unnest(%s::smallint[])
+    """
+    params = (movie_id, ceremony_ids, categories, outcome_ids, years)
+    await _execute_on_conn(conn, insert_query, params)
 
 # ===============================
 #        SEARCH METHODS
@@ -1260,7 +1312,8 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
         release_ts, runtime_minutes, maturity_rank, genre_ids,
         watch_offer_keys, audio_language_ids, country_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids,
-        imdb_vote_count, popularity_score, reception_score, budget_bucket.
+        imdb_vote_count, popularity_score, reception_score, budget_bucket,
+        box_office_bucket.
     """
     if not movie_ids:
         return []
@@ -1269,7 +1322,8 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
         SELECT movie_id, title, poster_url, release_ts, runtime_minutes,
                maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_ids,
                source_material_type_ids, keyword_ids, concept_tag_ids,
-               imdb_vote_count, popularity_score, reception_score, budget_bucket
+               imdb_vote_count, popularity_score, reception_score, budget_bucket,
+               box_office_bucket
         FROM public.movie_card
         WHERE movie_id = ANY(%s::bigint[])
     """
@@ -1279,7 +1333,7 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
         "audio_language_ids", "country_ids",
         "source_material_type_ids", "keyword_ids", "concept_tag_ids",
         "imdb_vote_count", "popularity_score",
-        "reception_score", "budget_bucket",
+        "reception_score", "budget_bucket", "box_office_bucket",
     ]
 
     search_results = await _execute_read(query, (movie_ids,))

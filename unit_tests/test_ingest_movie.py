@@ -61,7 +61,10 @@ from movie_ingestion.final_ingestion.ingest_movie import (
     BatchIngestionResult,
     IngestionError,
     MissingRequiredAttributeError,
+    create_award_ceremony_win_ids,
 )
+from movie_ingestion.imdb_scraping.models import AwardNomination
+from schemas.enums import AwardOutcome
 from schemas.movie import Movie, TMDBData, IMDBData
 from db import postgres
 
@@ -134,9 +137,15 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
             genre_ids=(1, 2),
             watch_offer_keys=(100, 200),
             audio_language_ids=(7, 8),
+            country_ids=(9, 10),
+            source_material_type_ids=(11, 12),
+            keyword_ids=(13, 14),
+            concept_tag_ids=(15, 16),
+            award_ceremony_win_ids=(1, 4),
             imdb_vote_count=945678,
             reception_score=72.5,
             title_token_count=4,
+            box_office_bucket="hit",
         )
     finally:
         postgres._execute_on_conn = original
@@ -144,7 +153,12 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
     conn_arg, query, params = execute_on_conn.await_args.args
     assert conn_arg is None
     assert "public.movie_card" in query
-    assert params == (10, "Movie", "poster", 1000, 120, 3, [1, 2], [100, 200], [7, 8], 945678, 72.5, None, 4)
+    assert params == (
+        10, "Movie", "poster", 1000, 120, 3,
+        [1, 2], [100, 200], [7, 8], [9, 10],
+        [11, 12], [13, 14], [15, 16], [1, 4],
+        945678, 72.5, None, "hit", 4,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -153,11 +167,14 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
 
 
 @pytest.mark.asyncio
-async def test_ingest_movie_runs_card_and_lexical_ingestion(mocker) -> None:
-    """ingest_movie should run movie-card and lexical ingestion on a single connection."""
+async def test_ingest_movie_runs_card_awards_and_lexical_ingestion(mocker) -> None:
+    """ingest_movie should run movie-card, awards, and lexical ingestion on a single connection."""
     movie = _make_movie()
     ingest_card = mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_card", new=AsyncMock()
+    )
+    ingest_awards = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_awards", new=AsyncMock()
     )
     ingest_lexical = mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
@@ -175,6 +192,7 @@ async def test_ingest_movie_runs_card_and_lexical_ingestion(mocker) -> None:
     await ingest_movie.ingest_movie(movie)
 
     ingest_card.assert_awaited_once_with(movie, conn=mock_conn)
+    ingest_awards.assert_awaited_once_with(movie, conn=mock_conn)
     ingest_lexical.assert_awaited_once_with(movie, conn=mock_conn)
     mock_conn.commit.assert_awaited_once()
 
@@ -216,7 +234,9 @@ async def test_ingest_movie_card_missing_duration_raises() -> None:
 @pytest.mark.asyncio
 async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker) -> None:
     """ingest_movie_card should compute values and call upsert_movie_card with correct params."""
-    movie = _make_movie(imdb_data={"imdb_vote_count": 945678})
+    movie = _make_movie(
+        imdb_data={"imdb_vote_count": 945678, "box_office_worldwide": 825_000_000},
+    )
     upsert_card = mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.upsert_movie_card", new=AsyncMock()
     )
@@ -228,7 +248,22 @@ async def test_ingest_movie_card_happy_path_calls_downstream_dependencies(mocker
     assert kwargs["title"] == "Spider-Man"
     assert kwargs["imdb_vote_count"] == 945678
     assert kwargs["budget_bucket"] == "large"
+    assert kwargs["box_office_bucket"] == "hit"
     assert kwargs["title_token_count"] == 3  # spider-man, spider, man
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_card_ambiguous_box_office_stores_null(mocker) -> None:
+    """ingest_movie_card should pass None when box office status is ambiguous or missing."""
+    movie = _make_movie(imdb_data={"imdb_vote_count": 945678})
+    upsert_card = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.upsert_movie_card", new=AsyncMock()
+    )
+
+    await ingest_movie.ingest_movie_card(movie)
+
+    kwargs = upsert_card.await_args.kwargs
+    assert kwargs["box_office_bucket"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +394,90 @@ def test_create_people_list_deduplicates_and_normalizes_names() -> None:
     )
     people = ingest_movie.create_people_list(movie)
     assert people == {"tom hanks", "nora ephron", "delia ephron", "lynda obst"}
+
+
+# ---------------------------------------------------------------------------
+# create_award_ceremony_win_ids
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_award_ceremony_win_ids_returns_distinct_winning_ceremony_ids() -> None:
+    """Should return distinct ceremony IDs for wins only, preserving insertion order."""
+    movie = _make_movie(imdb_data={
+        "awards": [
+            AwardNomination(ceremony="Academy Awards, USA", award_name="Oscar", category="Best Picture", outcome=AwardOutcome.WINNER, year=2024),
+            AwardNomination(ceremony="Academy Awards, USA", award_name="Oscar", category="Best Director", outcome=AwardOutcome.WINNER, year=2024),
+            AwardNomination(ceremony="Cannes Film Festival", award_name="Palme d'Or", category=None, outcome=AwardOutcome.WINNER, year=2023),
+            AwardNomination(ceremony="Golden Globes, USA", award_name="Golden Globe", category="Best Picture - Drama", outcome=AwardOutcome.NOMINEE, year=2024),
+        ],
+    })
+    result = await create_award_ceremony_win_ids(movie)
+    # Academy Awards (1) and Cannes (4) are wins; Golden Globes (2) is nominee-only
+    assert result == [1, 4]
+
+
+@pytest.mark.asyncio
+async def test_create_award_ceremony_win_ids_empty_when_no_awards() -> None:
+    """Should return empty list when movie has no awards."""
+    movie = _make_movie(imdb_data={"awards": []})
+    result = await create_award_ceremony_win_ids(movie)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_create_award_ceremony_win_ids_empty_when_all_nominees() -> None:
+    """Should return empty list when all awards are nominations (no wins)."""
+    movie = _make_movie(imdb_data={
+        "awards": [
+            AwardNomination(ceremony="Academy Awards, USA", award_name="Oscar", category="Best Picture", outcome=AwardOutcome.NOMINEE, year=2024),
+        ],
+    })
+    result = await create_award_ceremony_win_ids(movie)
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# ingest_movie_awards
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_awards_calls_batch_upsert(mocker) -> None:
+    """ingest_movie_awards should convert AwardNomination objects and call batch_upsert_movie_awards."""
+    movie = _make_movie(imdb_data={
+        "awards": [
+            AwardNomination(ceremony="Academy Awards, USA", award_name="Oscar", category="Best Picture", outcome=AwardOutcome.WINNER, year=2024),
+            AwardNomination(ceremony="Cannes Film Festival", award_name="Palme d'Or", category=None, outcome=AwardOutcome.WINNER, year=2023),
+        ],
+    })
+    batch_upsert = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_upsert_movie_awards", new=AsyncMock()
+    )
+
+    await ingest_movie.ingest_movie_awards(movie)
+
+    batch_upsert.assert_awaited_once()
+    call_args = batch_upsert.await_args
+    assert call_args.args[0] == 1  # movie_id
+    award_tuples = call_args.args[1]
+    assert len(award_tuples) == 2
+    # (ceremony_id, category, outcome_id, year)
+    assert award_tuples[0] == (1, "Best Picture", 1, 2024)
+    assert award_tuples[1] == (4, None, 1, 2023)
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_awards_skips_when_no_awards(mocker) -> None:
+    """ingest_movie_awards should not call batch_upsert when movie has no awards."""
+    movie = _make_movie(imdb_data={"awards": []})
+    batch_upsert = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_upsert_movie_awards", new=AsyncMock()
+    )
+
+    await ingest_movie.ingest_movie_awards(movie)
+
+    batch_upsert.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

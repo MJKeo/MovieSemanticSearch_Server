@@ -19,7 +19,7 @@ Defines canonical types for:
 |------|---------|
 | `metadata.py` | `EmbeddableOutput` base class + 10 embeddable `*Output` schema classes + `FranchiseOutput` and `ConceptTagsOutput` / `TagEvidence` (non-embeddable franchise/concept-tag classification). Each `EmbeddableOutput` subclass implements `embedding_text()` returning normalized text for vector embedding. `ConceptTagsOutput` produces integer concept_tag_ids via `all_concept_tag_ids()`, not embedding text. Legacy `__str__()` methods are retained for backward compatibility. Class docstrings are written as `#` comment blocks above each class — not as Python docstrings — to prevent them from leaking into the JSON schema payload sent to the LLM via `model_json_schema()`. |
 | `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata. |
-| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), and concept-tag enums grouped by category. |
+| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), and concept-tag enums grouped by category. |
 | `data_types.py` | `MultiLineList` — a constrained list type used in generation schemas. |
 | `movie_input.py` | `MovieInputData` dataclass + `load_movie_input_data()` — loads raw tracker data into the form consumed by generator prompt builders. |
 
@@ -115,6 +115,7 @@ metadata objects. Includes helper methods:
 - `release_decade_bucket()` — semantic era label
 - `budget_bucket_for_era()` — era-adjusted budget classification
 - `resolved_box_office_revenue()` — IMDB worldwide gross when positive, falls back to TMDB revenue. Zero and negative values treated as missing.
+- `box_office_status()` — clear financial outcome classifier (`HIT` / `FLOP` / null) from resolved budget and worldwide gross; only for release year 1980+ and only when both values are positive. `HIT` also requires budget >= $1M to avoid micro-budget ratio noise.
 
 **Ingestion-compatible methods** added to `Movie` (mirrors `BaseMovie`
 interface for the ingestion pipeline):

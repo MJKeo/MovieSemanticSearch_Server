@@ -59,6 +59,7 @@ from db.postgres import (
     batch_upsert_title_token_strings,
     batch_upsert_character_strings,
     upsert_movie_card,
+    batch_upsert_movie_awards,
     refresh_title_token_doc_frequency,
     refresh_movie_popularity_scores,
 )
@@ -137,6 +138,7 @@ async def ingest_movie(movie: Movie) -> None:
     async with pool.connection() as conn:
         try:
             await ingest_movie_card(movie, conn=conn)
+            await ingest_movie_awards(movie, conn=conn)
             await ingest_lexical_data(movie, conn=conn)
             await conn.commit()
         except Exception:
@@ -191,6 +193,7 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
         source_material_type_ids = await create_source_material_type_ids(movie)
         keyword_ids = await create_keyword_ids(movie)
         concept_tag_ids = await create_concept_tag_ids(movie)
+        award_ceremony_win_ids = await create_award_ceremony_win_ids(movie)
         imdb_vote_count = int(movie.imdb_data.imdb_vote_count or 0)
         reception_score = movie.reception_score()
         title_token_count = len(movie.normalized_title_tokens())
@@ -200,6 +203,12 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
         # None for mid-range budgets or when budget data is unavailable.
         budget_bucket_result = movie.budget_bucket_for_era()
         budget_bucket = budget_bucket_result.value if budget_bucket_result is not None else None
+        box_office_bucket_result = movie.box_office_status()
+        box_office_bucket = (
+            box_office_bucket_result.value
+            if box_office_bucket_result is not None
+            else None
+        )
 
         await upsert_movie_card(
             movie_id=movie_id,
@@ -215,10 +224,12 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
             source_material_type_ids=source_material_type_ids,
             keyword_ids=keyword_ids,
             concept_tag_ids=concept_tag_ids,
+            award_ceremony_win_ids=award_ceremony_win_ids,
             imdb_vote_count=imdb_vote_count,
             reception_score=reception_score,
             title_token_count=title_token_count,
             budget_bucket=budget_bucket,
+            box_office_bucket=box_office_bucket,
             conn=conn,
         )
     except MissingRequiredAttributeError:
@@ -302,6 +313,31 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     await batch_insert_studio_postings(list(dict.fromkeys(studio_term_ids)), movie_id, conn=conn)
 
 
+async def ingest_movie_awards(movie: Movie, conn=None) -> None:
+    """
+    Upsert all award rows for a movie into public.movie_awards.
+
+    Filters to awards with known ceremony mappings and passes the
+    AwardNomination objects directly to batch_upsert_movie_awards.
+
+    Args:
+        movie: Movie object with populated ``imdb_data.awards``.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    if not movie.imdb_data or not movie.imdb_data.awards:
+        return
+
+    movie_id = movie.tmdb_data.tmdb_id
+    if movie_id is None:
+        raise ValueError("Movie award ingestion failed: ID is required but not found.")
+    movie_id = int(movie_id)
+
+    # Filter out awards with unknown ceremony strings — they can't be
+    # mapped to a stable integer ID so we skip them silently.
+    known_awards = [a for a in movie.imdb_data.awards if a.ceremony_id is not None]
+    await batch_upsert_movie_awards(movie_id, known_awards, conn=conn)
+
+
 # ================================
 #    BATCHED POSTGRES INGESTION
 # ================================
@@ -375,6 +411,17 @@ async def ingest_movies_to_postgres_batched(
                         card_error = str(e)
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_card}")
 
+                    # --- awards step ---
+                    awards_error: str | None = None
+                    inner_sp_awards = f"sp_{tmdb_id}_awards"
+                    await conn.execute(f"SAVEPOINT {inner_sp_awards}")
+                    try:
+                        await ingest_movie_awards(movie, conn=conn)
+                        await conn.execute(f"RELEASE SAVEPOINT {inner_sp_awards}")
+                    except Exception as e:
+                        awards_error = str(e)
+                        await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_awards}")
+
                     # --- lexical step ---
                     inner_sp_lex = f"sp_{tmdb_id}_lex"
                     await conn.execute(f"SAVEPOINT {inner_sp_lex}")
@@ -385,7 +432,7 @@ async def ingest_movies_to_postgres_batched(
                         lex_error = str(e)
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_lex}")
 
-                    if card_error or lex_error:
+                    if card_error or awards_error or lex_error:
                         # Roll back the outer savepoint so neither partial
                         # result persists for this movie.
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
@@ -393,6 +440,9 @@ async def ingest_movies_to_postgres_batched(
                         if card_error:
                             print(f"Postgres movie_card failed for {tmdb_id}: {card_error}")
                             errors.append(IngestionError(tmdb_id, f"Postgres movie card: {card_error}"))
+                        if awards_error:
+                            print(f"Postgres awards failed for {tmdb_id}: {awards_error}")
+                            errors.append(IngestionError(tmdb_id, f"Postgres awards: {awards_error}"))
                         if lex_error:
                             print(f"Postgres lexical failed for {tmdb_id}: {lex_error}")
                             errors.append(IngestionError(tmdb_id, f"Postgres lexical: {lex_error}"))
@@ -766,6 +816,18 @@ async def create_concept_tag_ids(movie: Movie) -> List[int]:
         movie: Movie object implementing ``concept_tag_ids()``.
     """
     return movie.concept_tag_ids()
+
+
+async def create_award_ceremony_win_ids(movie: Movie) -> list[int]:
+    """
+    Return distinct AwardCeremony IDs where this movie won (excludes nominees).
+
+    Delegates to ``Movie.award_ceremony_win_ids()`` for the core logic.
+
+    Args:
+        movie: Movie object with populated ``imdb_data.awards``.
+    """
+    return movie.award_ceremony_win_ids()
 
 
 def create_people_list(movie: Movie) -> set[str]:
