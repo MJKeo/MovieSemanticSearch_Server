@@ -757,19 +757,23 @@ stored and how, needed to support the query types and pipeline architecture abov
 Stores award nominations and wins. Designed for inverse lookup — given an award, find
 which movies won it.
 
+Implementation uses SMALLINT enum IDs for `ceremony` and `outcome`
+(via `AwardCeremony` and `AwardOutcome` enums in `schemas/enums.py`),
+while `award_name` stays as TEXT.
+
 ```
 movie_awards (
-    movie_id      BIGINT REFERENCES movie_card,
-    ceremony      TEXT NOT NULL,     -- "Academy Awards, USA", "Cannes Film Festival"
-    award_name    TEXT NOT NULL,     -- "Oscar", "Palme d'Or", "Golden Lion"
-    category      TEXT,              -- "Best Picture", etc. (nullable for grand prizes)
-    outcome       TEXT NOT NULL,     -- "winner" | "nominee"
-    year          INT,               -- ceremony year
-    PRIMARY KEY (movie_id, ceremony, award_name, COALESCE(category, ''), year)
+    movie_id      BIGINT REFERENCES movie_card ON DELETE CASCADE,
+    ceremony_id   SMALLINT NOT NULL,  -- AwardCeremony enum ID
+    award_name    TEXT NOT NULL,       -- "Oscar", "Palme d'Or", "Golden Lion"
+    category      TEXT,               -- "Best Picture", etc. (nullable for grand prizes)
+    outcome_id    SMALLINT NOT NULL,  -- AwardOutcome enum ID (1=winner, 2=nominee)
+    year          SMALLINT NOT NULL,
+    PRIMARY KEY (movie_id, ceremony_id, award_name, COALESCE(category, ''), year)
 )
 ```
 
-**Index:** `idx_awards_ceremony_outcome (ceremony, outcome)` for "Oscar winners" queries.
+**Index:** `idx_awards_lookup (ceremony_id, award_name, category, outcome_id, year)` for "Oscar winners" queries.
 
 **Also in vectors:** Deterministic `major_award_wins` ceremony summary included in
 the reception vector for semantic queries like "award-winning thriller." Winner rows

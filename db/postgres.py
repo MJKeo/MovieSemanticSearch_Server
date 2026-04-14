@@ -952,7 +952,7 @@ async def batch_upsert_movie_awards(
     Replace all award rows for a movie via delete + bulk insert.
 
     Accepts AwardNomination objects directly and extracts the relevant
-    fields (ceremony_id, category, outcome_id, year) internally.
+    fields (ceremony_id, award_name, category, outcome_id, year) internally.
     Uses delete-then-insert rather than per-row upserts because awards
     for a movie are always ingested as a complete set.
 
@@ -971,15 +971,16 @@ async def batch_upsert_movie_awards(
     # Extract fields from each AwardNomination into parallel arrays
     # for unnest-based bulk insert.
     ceremony_ids = [a.ceremony_id for a in awards]
+    award_names = [a.award_name for a in awards]
     categories = [a.category for a in awards]
     outcome_ids = [a.outcome.outcome_id for a in awards]
     years = [a.year for a in awards]
 
     insert_query = """
-    INSERT INTO public.movie_awards (movie_id, ceremony_id, category, outcome_id, year)
-    SELECT %s, unnest(%s::smallint[]), unnest(%s::text[]), unnest(%s::smallint[]), unnest(%s::smallint[])
+    INSERT INTO public.movie_awards (movie_id, ceremony_id, award_name, category, outcome_id, year)
+    SELECT %s, unnest(%s::smallint[]), unnest(%s::text[]), unnest(%s::text[]), unnest(%s::smallint[]), unnest(%s::smallint[])
     """
-    params = (movie_id, ceremony_ids, categories, outcome_ids, years)
+    params = (movie_id, ceremony_ids, award_names, categories, outcome_ids, years)
     await _execute_on_conn(conn, insert_query, params)
 
 # ===============================

@@ -19,14 +19,26 @@ reranking.
 
 **Schema** (two schemas):
 - `public.movie_card` — thin table for card rendering + reranking:
-  movie_id (PK), tmdb_id, title, year, poster_url, release_ts,
-  runtime_minutes, maturity_rank, genre_ids (INT[]),
-  watch_offer_keys (INT[]), audio_language_ids (INT[]),
-  reception_score, popularity_score, imdb_vote_count, budget_bucket
+  movie_id (PK), title, poster_url, release_ts, runtime_minutes,
+  maturity_rank, genre_ids (INT[]), watch_offer_keys (INT[]),
+  audio_language_ids (INT[]), country_of_origin_ids (INT[]),
+  source_material_type_ids (INT[]), keyword_ids (INT[]),
+  concept_tag_ids (INT[]), award_ceremony_win_ids (SMALLINT[]),
+  imdb_vote_count, popularity_score, reception_score,
+  budget_bucket, box_office_bucket, title_token_count
+- `public.movie_awards` — structured award nominations/wins for
+  deterministic lookup: ceremony_id (SMALLINT), award_name (TEXT),
+  category (TEXT nullable), outcome_id (SMALLINT), year (SMALLINT).
+  PK includes award_name to distinguish prizes within a ceremony.
+- `public.movie_franchise_metadata` — franchise identity and
+  narrative position: lineage, shared_universe,
+  recognized_subgroups, launched_subgroup, lineage_position,
+  is_spinoff, is_crossover, launched_franchise.
 - `lex.*` — inverted index posting tables for lexical search:
   inv_actor_postings (includes billing_position, cast_size for
   prominence scoring), inv_director_postings, inv_writer_postings,
-  inv_producer_postings, inv_character_postings, inv_studio_postings,
+  inv_producer_postings, inv_composer_postings,
+  inv_character_postings, inv_studio_postings,
   inv_franchise_postings, inv_title_token_postings. Most store
   (term_id, movie_id) pairs; actor table adds billing metadata.
   Dictionaries map normalized strings to term IDs.

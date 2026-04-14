@@ -79,19 +79,20 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_award_ceremony_win_ids
 
 
 -- Structured award nominations and wins for deterministic lookup.
--- Queried by ceremony_id + category + outcome_id, optionally filtered by year.
+-- Queried by ceremony_id + award_name + category + outcome_id, optionally filtered by year.
 CREATE TABLE IF NOT EXISTS public.movie_awards (
   movie_id      BIGINT NOT NULL REFERENCES public.movie_card ON DELETE CASCADE,
   ceremony_id   SMALLINT NOT NULL,
+  award_name    TEXT NOT NULL,
   category      TEXT,
   outcome_id    SMALLINT NOT NULL,
   year          SMALLINT NOT NULL,
-  PRIMARY KEY (movie_id, ceremony_id, COALESCE(category, ''), year)
+  PRIMARY KEY (movie_id, ceremony_id, award_name, COALESCE(category, ''), year)
 );
 
--- Covers: "Oscar winners", "Best Picture nominees", "Cannes winners after 2000"
+-- Covers: "Oscar winners", "Palme d'Or winners", "Best Picture nominees", "Cannes winners after 2000"
 CREATE INDEX IF NOT EXISTS idx_awards_lookup
-  ON public.movie_awards (ceremony_id, category, outcome_id, year);
+  ON public.movie_awards (ceremony_id, award_name, category, outcome_id, year);
 
 -- Reverse lookup: given a movie, find all its awards (for display / card rendering)
 CREATE INDEX IF NOT EXISTS idx_awards_movie

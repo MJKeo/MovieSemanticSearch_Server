@@ -56,20 +56,25 @@ New: GIN `gin__int_ops` on `country_of_origin_ids`, `source_material_type_ids`,
 New table. Stores award nominations and wins for deterministic retrieval. Designed
 for inverse lookup: given an award, find movies.
 
+Implementation uses SMALLINT enum IDs for `ceremony` and `outcome`
+(via `AwardCeremony` and `AwardOutcome` enums in `schemas/enums.py`),
+while `award_name` stays as TEXT since prize names vary within a
+ceremony and don't benefit from enum mapping.
+
 ```sql
 movie_awards (
-    movie_id    BIGINT NOT NULL REFERENCES movie_card,
-    ceremony    TEXT NOT NULL,
-    award_name  TEXT NOT NULL,     -- specific prize name (e.g., "Oscar", "Palme d'Or", "Golden Lion")
-    category    TEXT,              -- nullable: festival grand prizes have no category
-    outcome     TEXT NOT NULL,     -- "winner" | "nominee"
-    year        INT,               -- ceremony year
-    PRIMARY KEY (movie_id, ceremony, award_name, COALESCE(category, ''), year)
+    movie_id      BIGINT NOT NULL REFERENCES movie_card ON DELETE CASCADE,
+    ceremony_id   SMALLINT NOT NULL,  -- AwardCeremony enum ID
+    award_name    TEXT NOT NULL,       -- specific prize name (e.g., "Oscar", "Palme d'Or", "Golden Lion")
+    category      TEXT,               -- nullable: festival grand prizes have no category
+    outcome_id    SMALLINT NOT NULL,  -- AwardOutcome enum ID (1=winner, 2=nominee)
+    year          SMALLINT NOT NULL,
+    PRIMARY KEY (movie_id, ceremony_id, award_name, COALESCE(category, ''), year)
 )
 ```
 
 **Note on `award_name`:** The specific prize name users search for — "Oscar",
-"Palme d'Or", "Golden Lion", "Golden Globe", etc. Distinct from `ceremony`
+"Palme d'Or", "Golden Lion", "Golden Globe", etc. Distinct from `ceremony_id`
 (the organization) and `category` (the specific category within the prize).
 A single ceremony can give out differently-named awards (e.g., BAFTA gives
 both "BAFTA Film Award" and "David Lean Award for Direction").
@@ -79,8 +84,8 @@ Golden Bear, etc.) have no category — the award name IS the category. These
 return `null` from the IMDB GraphQL API. The PK uses `COALESCE(category, '')`
 to handle this.
 
-**Index:** `idx_awards_ceremony_outcome (ceremony, outcome)` for queries like
-"Oscar winners", "Cannes Palme d'Or nominees".
+**Index:** `idx_awards_lookup (ceremony_id, award_name, category, outcome_id, year)`
+for queries like "Oscar winners", "Cannes Palme d'Or nominees".
 
 **Ceremonies in scope (12):** Academy Awards, Golden Globes, BAFTA, Cannes,
 Venice, Berlin, SAG, Critics Choice, Sundance, Razzie Awards, Film Independent
@@ -220,8 +225,8 @@ tables to find matching movies.
 | `lex.inv_character_postings` | `term_id, movie_id` | Unchanged |
 | `lex.inv_studio_postings` | `term_id, movie_id` | Unchanged |
 | `lex.inv_title_token_postings` | `term_id, movie_id` | Unchanged |
-| `lex.inv_country_origin_postings` | `term_id, movie_id` | Country name from `Country` enum |
-| `lex.inv_source_material_postings` | `term_id, movie_id` | Source material type from `SourceMaterialType` enum |
+| ~~`lex.inv_country_origin_postings`~~ | ~~`term_id, movie_id`~~ | SCRAPPED — replaced by GIN-indexed `country_of_origin_ids INT[]` on `movie_card` |
+| ~~`lex.inv_source_material_postings`~~ | ~~`term_id, movie_id`~~ | SCRAPPED — replaced by GIN-indexed `source_material_type_ids INT[]` on `movie_card` |
 
 ### Materialized views
 

@@ -992,3 +992,9 @@ Replace the monolithic `lex.inv_person_postings` table with 4 role-specific tabl
 Files: db/init/01_create_postgres_tables.sql, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py
 Why: Composer data was already scraped/stored in models but excluded from posting tables. Adding enables lexical search for composers.
 Approach: Followed the identical pattern of director/writer/producer postings — same DDL, same batch insert function, same ingestion wiring. Added COMPOSER to PostingTable enum and PEOPLE_POSTING_TABLES so lexical search picks it up automatically.
+
+## Add award_name column to movie_awards table
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py | The `award_name` field (e.g., "Oscar", "Palme d'Or", "Anthony Asquith Award for Film Music") was already scraped and stored on `AwardNomination` but silently dropped during postgres ingestion. Without it, null-category awards lose their identity and PK collisions can occur when a movie has multiple null-category awards at the same ceremony/year. Added to DDL, PK, lookup index, and `batch_upsert_movie_awards()`.
+
+## Planning doc corrections
+Files: search_improvement_planning/v2_data_needs.md, search_improvement_planning/v2_data_architecture.md, search_improvement_planning/new_system_brainstorm.md, docs/decisions/ADR-011-data-store-architecture.md, docs/modules/db.md | Updated planning docs to reflect implementation reality: `BoxOfficeBucket` → `BoxOfficeStatus`, scrapped `inv_country_origin_postings` and `inv_source_material_postings` (replaced by GIN-indexed array columns), updated `movie_awards` schema blocks to show implemented hybrid approach (SMALLINT enum IDs + TEXT award_name), and brought ADR-011 up to date with all current movie_card columns and new tables (movie_awards, movie_franchise_metadata).

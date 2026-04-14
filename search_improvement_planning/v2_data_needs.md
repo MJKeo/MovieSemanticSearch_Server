@@ -425,20 +425,25 @@ award/category/nominee queries stay deterministic via `movie_awards`.
 
 ## New Postgres tables and schema changes
 
-### 15. movie_awards table
+### 15. movie_awards table — IMPLEMENTED
+
+Implementation uses SMALLINT enum IDs for `ceremony` and `outcome`
+(via `AwardCeremony` and `AwardOutcome` enums in `schemas/enums.py`),
+while `award_name` stays as TEXT since prize names vary within a
+ceremony and don't benefit from enum mapping.
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.movie_awards (
-    movie_id    BIGINT NOT NULL REFERENCES movie_card,
-    ceremony    TEXT NOT NULL,
-    award_name  TEXT NOT NULL,     -- specific prize name ("Oscar", "Palme d'Or", etc.)
-    category    TEXT,
-    outcome     TEXT NOT NULL,
-    year        INT,
-    PRIMARY KEY (movie_id, ceremony, award_name, COALESCE(category, ''), year)
+    movie_id      BIGINT NOT NULL REFERENCES movie_card ON DELETE CASCADE,
+    ceremony_id   SMALLINT NOT NULL,  -- AwardCeremony enum ID
+    award_name    TEXT NOT NULL,       -- specific prize name ("Oscar", "Palme d'Or", etc.)
+    category      TEXT,
+    outcome_id    SMALLINT NOT NULL,   -- AwardOutcome enum ID (1=winner, 2=nominee)
+    year          SMALLINT NOT NULL,
+    PRIMARY KEY (movie_id, ceremony_id, award_name, COALESCE(category, ''), year)
 );
-CREATE INDEX idx_awards_ceremony_outcome
-    ON public.movie_awards (ceremony, outcome);
+CREATE INDEX idx_awards_lookup
+    ON public.movie_awards (ceremony_id, award_name, category, outcome_id, year);
 ```
 
 ### 16. movie_franchise_metadata table
@@ -518,20 +523,13 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_keyword_ids
     ON public.movie_card USING GIN (keyword_ids gin__int_ops);
 ```
 
-### 20. New inverse lookup tables for country and source material
+### 20. ~~New inverse lookup tables for country and source material~~ SCRAPPED
 
-```sql
-CREATE TABLE IF NOT EXISTS lex.inv_country_origin_postings (
-    term_id   BIGINT NOT NULL,
-    movie_id  BIGINT NOT NULL,
-    PRIMARY KEY (term_id, movie_id)
-);
-CREATE TABLE IF NOT EXISTS lex.inv_source_material_postings (
-    term_id   BIGINT NOT NULL,
-    movie_id  BIGINT NOT NULL,
-    PRIMARY KEY (term_id, movie_id)
-);
-```
+These proposed posting tables were not implemented. GIN-indexed array
+columns on `movie_card` (`country_of_origin_ids INT[]` and
+`source_material_type_ids INT[]` with `gin__int_ops`) provide
+equivalent overlap-based filtering without the overhead of separate
+posting tables.
 
 ### 21. New enums
 
@@ -542,7 +540,7 @@ class Country(Enum):
     # Same structure as Genre and Language enums
     pass
 
-class BoxOfficeBucket(Enum):
+class BoxOfficeStatus(StrEnum):  # implemented in schemas/enums.py
     HIT = "hit"
     FLOP = "flop"
 
