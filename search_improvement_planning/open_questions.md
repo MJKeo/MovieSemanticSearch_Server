@@ -322,7 +322,8 @@ See new_system_brainstorm.md "Role-specific person posting tables."
 
 ### ~~How should franchise entity resolution work?~~ DECIDED
 
-See new_system_brainstorm.md "franchise_membership" table design and
+See franchise_metadata_planning.md for the implemented
+`movie_franchise_metadata` design and
 "Franchise Search Flow" section for the full search strategy.
 
 **Franchise definition:** Any recognizable intellectual property or brand from
@@ -331,26 +332,24 @@ is an adaptation/extension of that IP. Examples: Mario, Barbie, Transformers,
 Harry Potter, Marvel Cinematic Universe. The franchise name is the **IP name**,
 not the film series name.
 
-**Storage:** Only `franchise_name_normalized` is stored (no separate display-
-form column). `culturally_recognized_group` is also stored normalized. Display
-names can be derived at the UI layer if ever needed.
+**Storage:** The finalized Postgres projection is `movie_franchise_metadata`
+with `lineage`, `shared_universe`, `recognized_subgroups`,
+`launched_subgroup`, `lineage_position`, `is_spinoff`, `is_crossover`, and
+`launched_franchise`. Named identity fields are stored normalized.
 
 **Search approach decisions:**
 
-- **franchise_name_normalized:** Both the ingestion LLM and search extraction
-  LLM are instructed to output the most common, fully expanded form of the
-  franchise/IP name — no abbreviations. Same convention as the lexical entity
-  extractor for person names. This ensures both sides converge on the same
-  canonical string. Searched via `inv_franchise_postings` using trigram matching
-  on `franchise_name_normalized` in `lex.lexical_dictionary`. No enum or alias
-  table needed.
-- **franchise_role:** Stored as an integer (enum ordinal) on `franchise_membership`.
-  The search extraction LLM receives the same enum definition and outputs the
-  matching value. Trivially filterable with `WHERE franchise_role = $1`.
-- **culturally_recognized_group:** Stored normalized. Searched via trigram
-  matching within the post-franchise-lookup result set. Since franchise lookup
-  narrows to 3-30 movies, simple `similarity()` or `ILIKE` on the group field
-  is sufficient. No separate index or posting table needed.
+- **lineage/shared_universe:** Both the ingestion LLM and search extraction
+  LLM are instructed to output the most common, fully expanded franchise/IP
+  names — no abbreviations. Both fields feed the same
+  `inv_franchise_postings` pathway, so lookup tolerates slot swaps and
+  parent-universe cases like Shrek/Puss in Boots.
+- **lineage_position:** Stored as an integer ordinal on
+  `movie_franchise_metadata`. Trivially filterable with `WHERE lineage_position = $1`.
+- **recognized_subgroups:** Stored normalized as a text array. Searched via
+  trigram matching within the post-franchise-lookup result set. Since franchise
+  lookup narrows to 3-30 movies, simple `similarity()` or `ILIKE` on subgroup
+  labels is sufficient.
 
 **Remaining sub-questions (unchanged):**
 

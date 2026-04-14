@@ -56,6 +56,38 @@ except ModuleNotFoundError:
     vectorize_module.create_reception_vector_text = _stub_vectorize_text
     sys.modules["implementation.vectorize"] = vectorize_module
 
+try:
+    importlib.import_module("orjson")
+except ModuleNotFoundError:
+    orjson_module = ModuleType("orjson")
+
+    def _stub_orjson_dumps(obj, *args, **kwargs):
+        return json.dumps(obj).encode("utf-8")
+
+    def _stub_orjson_loads(data, *args, **kwargs):
+        if isinstance(data, (bytes, bytearray)):
+            data = data.decode("utf-8")
+        return json.loads(data)
+
+    orjson_module.dumps = _stub_orjson_dumps
+    orjson_module.loads = _stub_orjson_loads
+    sys.modules["orjson"] = orjson_module
+
+try:
+    importlib.import_module("tiktoken")
+except ModuleNotFoundError:
+    tiktoken_module = ModuleType("tiktoken")
+
+    class _StubEncoding:
+        def encode(self, text):
+            return list(text.encode("utf-8"))
+
+    def _stub_encoding_for_model(*args, **kwargs):
+        return _StubEncoding()
+
+    tiktoken_module.encoding_for_model = _stub_encoding_for_model
+    sys.modules["tiktoken"] = tiktoken_module
+
 from movie_ingestion.final_ingestion import ingest_movie
 from movie_ingestion.final_ingestion.ingest_movie import (
     BatchIngestionResult,
@@ -64,7 +96,8 @@ from movie_ingestion.final_ingestion.ingest_movie import (
     create_award_ceremony_win_ids,
 )
 from movie_ingestion.imdb_scraping.models import AwardNomination
-from schemas.enums import AwardOutcome
+from schemas.enums import AwardOutcome, LineagePosition
+from schemas.metadata import FranchiseOutput
 from schemas.movie import Movie, TMDBData, IMDBData
 from db import postgres
 
@@ -113,6 +146,27 @@ def _make_movie(**overrides) -> Movie:
     tmdb_data = TMDBData(**{**tmdb_defaults, **tmdb_overrides})
     imdb_data = IMDBData(**{**imdb_defaults, **imdb_overrides})
     return Movie(tmdb_data=tmdb_data, imdb_data=imdb_data, **overrides)
+
+
+def _make_franchise_output(**overrides) -> FranchiseOutput:
+    """Build a valid FranchiseOutput with targeted overrides."""
+    defaults = {
+        "lineage_reasoning": "Identified the franchise lineage.",
+        "lineage": "shrek",
+        "shared_universe": "shrek",
+        "subgroups_reasoning": "This film belongs to a named subgroup.",
+        "recognized_subgroups": ["puss in boots films"],
+        "launched_subgroup": True,
+        "position_reasoning": "This is a sequel branch.",
+        "lineage_position": LineagePosition.SEQUEL,
+        "crossover_reasoning": "No crossover franchises are present.",
+        "is_crossover": False,
+        "spinoff_reasoning": "This film is a spinoff branch.",
+        "is_spinoff": True,
+        "launch_reasoning": "It did not launch the broader franchise.",
+        "launched_franchise": False,
+    }
+    return FranchiseOutput(**{**defaults, **overrides})
 
 
 # ---------------------------------------------------------------------------
@@ -168,13 +222,16 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params() ->
 
 @pytest.mark.asyncio
 async def test_ingest_movie_runs_card_awards_and_lexical_ingestion(mocker) -> None:
-    """ingest_movie should run movie-card, awards, and lexical ingestion on a single connection."""
+    """ingest_movie should run card, awards, franchise, and lexical ingestion on one connection."""
     movie = _make_movie()
     ingest_card = mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_card", new=AsyncMock()
     )
     ingest_awards = mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_awards", new=AsyncMock()
+    )
+    ingest_franchise = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_franchise_metadata", new=AsyncMock()
     )
     ingest_lexical = mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
@@ -193,6 +250,7 @@ async def test_ingest_movie_runs_card_awards_and_lexical_ingestion(mocker) -> No
 
     ingest_card.assert_awaited_once_with(movie, conn=mock_conn)
     ingest_awards.assert_awaited_once_with(movie, conn=mock_conn)
+    ingest_franchise.assert_awaited_once_with(movie, conn=mock_conn)
     ingest_lexical.assert_awaited_once_with(movie, conn=mock_conn)
     mock_conn.commit.assert_awaited_once()
 
@@ -264,6 +322,92 @@ async def test_ingest_movie_card_ambiguous_box_office_stores_null(mocker) -> Non
 
     kwargs = upsert_card.await_args.kwargs
     assert kwargs["box_office_bucket"] is None
+
+
+# ---------------------------------------------------------------------------
+# ingest_movie_franchise_metadata
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_franchise_metadata_upserts_row_and_dedupes_identical_terms(mocker) -> None:
+    """Should store franchise metadata and index shared lineage/universe only once."""
+    movie = _make_movie(franchise_metadata=_make_franchise_output())
+    upsert_metadata = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.upsert_movie_franchise_metadata",
+        new=AsyncMock(),
+    )
+    upsert_lexical = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_upsert_lexical_dictionary",
+        new=AsyncMock(return_value={"shrek": 11}),
+    )
+    replace_postings = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.replace_movie_franchise_postings",
+        new=AsyncMock(),
+    )
+
+    await ingest_movie.ingest_movie_franchise_metadata(movie)
+
+    upsert_metadata.assert_awaited_once()
+    assert upsert_metadata.await_args.args[0] == 1
+    assert upsert_metadata.await_args.args[1] == movie.franchise_metadata
+    assert upsert_metadata.await_args.kwargs["conn"] is None
+    upsert_lexical.assert_awaited_once_with(["shrek"], conn=None)
+    replace_postings.assert_awaited_once_with(1, [11], conn=None)
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_franchise_metadata_preserves_lineage_null_rows(mocker) -> None:
+    """Should upsert franchise rows even when lineage is null."""
+    movie = _make_movie(
+        franchise_metadata=_make_franchise_output(
+            lineage=None,
+            shared_universe=None,
+            recognized_subgroups=[],
+            launched_subgroup=False,
+            lineage_position=LineagePosition.REMAKE,
+            is_spinoff=False,
+        )
+    )
+    upsert_metadata = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.upsert_movie_franchise_metadata",
+        new=AsyncMock(),
+    )
+    upsert_lexical = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.batch_upsert_lexical_dictionary",
+        new=AsyncMock(return_value={}),
+    )
+    replace_postings = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.replace_movie_franchise_postings",
+        new=AsyncMock(),
+    )
+
+    await ingest_movie.ingest_movie_franchise_metadata(movie)
+
+    upsert_metadata.assert_awaited_once()
+    assert upsert_metadata.await_args.args[1] == movie.franchise_metadata
+    assert upsert_metadata.await_args.kwargs["conn"] is None
+    upsert_lexical.assert_awaited_once_with([], conn=None)
+    replace_postings.assert_awaited_once_with(1, [], conn=None)
+
+
+@pytest.mark.asyncio
+async def test_ingest_movie_franchise_metadata_deletes_existing_state_when_metadata_missing(mocker) -> None:
+    """Should delete stale Postgres franchise state when tracker franchise metadata is absent."""
+    movie = _make_movie(franchise_metadata=None)
+    delete_metadata = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.delete_movie_franchise_metadata",
+        new=AsyncMock(),
+    )
+    upsert_metadata = mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.upsert_movie_franchise_metadata",
+        new=AsyncMock(),
+    )
+
+    await ingest_movie.ingest_movie_franchise_metadata(movie)
+
+    delete_metadata.assert_awaited_once_with(1, conn=None)
+    upsert_metadata.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -460,11 +604,14 @@ async def test_ingest_movie_awards_calls_batch_upsert(mocker) -> None:
     batch_upsert.assert_awaited_once()
     call_args = batch_upsert.await_args
     assert call_args.args[0] == 1  # movie_id
-    award_tuples = call_args.args[1]
-    assert len(award_tuples) == 2
-    # (ceremony_id, category, outcome_id, year)
-    assert award_tuples[0] == (1, "Best Picture", 1, 2024)
-    assert award_tuples[1] == (4, None, 1, 2023)
+    awards = call_args.args[1]
+    assert len(awards) == 2
+    assert awards[0].ceremony_id == 1
+    assert awards[0].category == "Best Picture"
+    assert awards[0].outcome.outcome_id == 1
+    assert awards[0].year == 2024
+    assert awards[1].ceremony_id == 4
+    assert awards[1].category is None
 
 
 @pytest.mark.asyncio
@@ -527,6 +674,12 @@ async def test_postgres_batched_happy_path(mocker) -> None:
         "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_card", new=AsyncMock()
     )
     mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_awards", new=AsyncMock()
+    )
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_franchise_metadata", new=AsyncMock()
+    )
+    mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
     )
 
@@ -564,6 +717,12 @@ async def test_postgres_batched_per_movie_isolation(mocker) -> None:
         side_effect=_card_side_effect,
     )
     mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_awards", new=AsyncMock()
+    )
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_franchise_metadata", new=AsyncMock()
+    )
+    mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
     )
 
@@ -588,6 +747,12 @@ async def test_postgres_batched_missing_required_attribute_goes_to_filtered(mock
     """Movies with MissingRequiredAttributeError should go to filtered_ids, not failed_ids."""
     movie = _make_movie(tmdb_data={"tmdb_id": 10, "title": None})
 
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_awards", new=AsyncMock()
+    )
+    mocker.patch(
+        "movie_ingestion.final_ingestion.ingest_movie.ingest_movie_franchise_metadata", new=AsyncMock()
+    )
     mocker.patch(
         "movie_ingestion.final_ingestion.ingest_movie.ingest_lexical_data", new=AsyncMock()
     )

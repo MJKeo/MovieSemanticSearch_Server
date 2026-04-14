@@ -780,7 +780,7 @@ prestige language.
 **Data source:** IMDB GraphQL API exposes award data (nominations + wins by ceremony).
 Requires new scraping target.
 
-#### franchise_membership
+#### movie_franchise_metadata
 
 Replaces the current title-token + character-matching hack for franchise search.
 
@@ -795,37 +795,29 @@ name** (e.g., "mario"), not the film series name (e.g., "super mario bros movie
 series"), since users search by IP name.
 
 ```
-franchise_membership (
-    movie_id                        BIGINT REFERENCES movie_card,
-    franchise_name_normalized       TEXT NOT NULL,           -- normalize_string() applied; the only stored form
-    culturally_recognized_group     TEXT,                    -- normalized; "original trilogy", "mcu phase 1"
-                                                            -- only if a culturally established term exists
-                                                            -- globally (any market, not just US);
-                                                            -- never hallucinate a new grouping.
-                                                            -- If multiple names exist across markets,
-                                                            -- prefer the American-market term.
-    franchise_role                  TEXT NOT NULL,            -- enum: STARTER, MAINLINE, SPINOFF, REBOOT, etc.
-    PRIMARY KEY (movie_id, franchise_name_normalized)
+movie_franchise_metadata (
+    movie_id               BIGINT PRIMARY KEY REFERENCES movie_card,
+    lineage                TEXT,
+    shared_universe        TEXT,
+    recognized_subgroups   TEXT[] NOT NULL DEFAULT '{}',
+    launched_subgroup      BOOLEAN NOT NULL DEFAULT FALSE,
+    lineage_position       SMALLINT,
+    is_spinoff             BOOLEAN NOT NULL DEFAULT FALSE,
+    is_crossover           BOOLEAN NOT NULL DEFAULT FALSE,
+    launched_franchise     BOOLEAN NOT NULL DEFAULT FALSE
 )
 ```
 
-**No display-name column:** Only the normalized form is stored. If display-form
-franchise names are ever needed for UI, they can be derived at that layer —
-the normalized form is sufficient for all retrieval and matching purposes.
-Same applies to `culturally_recognized_group` (stored normalized).
-
-**Index:** GIN on `franchise_name_normalized` for lexical matching.
-
-**Franchise role enum:** STARTER (first in franchise), MAINLINE (numbered sequel/continuation),
-SPINOFF, REBOOT, PREQUEL, REMAKE. STARTER specifically marks franchise originators so we
-can answer "what started the X franchise."
+**Storage note:** `lineage` and `shared_universe` are both stored normalized and
+both feed `lex.inv_franchise_postings`, so franchise lookup can match either
+field without caring which slot the LLM used.
 
 **Data sources:**
 1. TMDB `belongs_to_collection` — reliable base for ~25% of movies. Gives franchise
    name + movie membership. Doesn't cover spinoffs or brand-level groupings.
 2. LLM enrichment — fills gaps: assigns spinoffs to parent franchises, infers brand-
-   level groupings (MCU), classifies franchise_role, names culturally_recognized_group
-   only when established terminology exists globally.
+   level groupings (MCU), emits the full `FranchiseOutput` shape, and names
+   `recognized_subgroups` only when established terminology exists globally.
 
 **LLM inputs:** title, release_year, overview (as an identification aid — helps
 the LLM correctly identify which movie this is, NOT for inferring franchise from
@@ -839,8 +831,9 @@ dependencies.
 
 ### Franchise Search Flow
 
-Franchise queries are decomposed by Phase 0 into up to three components:
-franchise name, franchise role, and culturally recognized group qualifier.
+Franchise queries are decomposed by Phase 0 into up to four components:
+franchise identity (`lineage` / `shared_universe`), subgroup qualifier,
+lineage position, and boolean franchise flags.
 
 **franchise_name resolution:** Both the ingestion LLM (franchise generation) and
 the search extraction LLM are instructed to output the most common, fully expanded

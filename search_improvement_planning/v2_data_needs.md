@@ -189,10 +189,9 @@ code change to the TMDB fetcher extraction logic.
 
 ### 6. Franchise generation
 
-**What:** For each movie, generate `franchise_name_normalized`, `franchise_role`
-(`FranchiseRole` enum: STARTER, MAINLINE, SPINOFF, PREBOOT, REMAKE), and
-`culturally_recognized_group` (only when a culturally established term exists
-globally — any market, not just US).
+**What:** For each movie, generate the finalized `FranchiseOutput` shape:
+`lineage`, `shared_universe`, `recognized_subgroups`, `launched_subgroup`,
+`lineage_position`, `is_spinoff`, `is_crossover`, and `launched_franchise`.
 
 **Franchise definition:** Any recognizable intellectual property or brand that
 originated in any medium — film series, video games, toys, books, comics, TV
@@ -222,15 +221,13 @@ Mario franchise; "Optimus Prime" → Transformers).
 **LLM approach:** Pass structured input, generate structured output. The LLM
 uses parametric knowledge to fill gaps that TMDB collection data doesn't cover
 (spinoffs, brand-level groupings like MCU, real-world IP franchises, etc.).
-`culturally_recognized_group` must never be hallucinated — only used when
-established terminology exists in any market globally. If multiple names exist
-across markets for the same grouping, prefer the American-market term.
+`recognized_subgroups` must never be hallucinated — only used when established
+terminology exists in any market globally. If multiple names exist across
+markets for the same grouping, prefer the American-market term.
 
-**Storage simplification:** Only `franchise_name_normalized` is stored (not a
-separate display-form `franchise_name`). Since `franchise_name_normalized` is
-just `normalize_string()` applied to the canonical name, there's no need to
-store both. Same applies to `culturally_recognized_group` — stored normalized.
-Display-form names can be derived at the UI layer if ever needed.
+**Storage simplification:** Named identity fields (`lineage`,
+`shared_universe`, subgroup labels) are stored normalized. Display-form names
+can be derived at the UI layer if ever needed.
 
 **Canonical naming convention:** The LLM is instructed to output the most
 common, fully expanded form of the franchise/IP name — no abbreviations. The
@@ -240,8 +237,8 @@ same canonical string without needing alias tables.
 
 **Output storage:**
 - Tracker DB: `generated_metadata.franchise` (JSON)
-- Postgres: `franchise_membership` table
-- Lexical: `franchise_name_normalized` → `lex.lexical_dictionary` →
+- Postgres: `movie_franchise_metadata` table
+- Lexical: `lineage` and `shared_universe` → `lex.lexical_dictionary` →
   `lex.inv_franchise_postings`
 
 **Note:** Many movies won't have a franchise. The LLM should output null/empty
@@ -304,7 +301,7 @@ and pair with those generated technique terms in the production vector.
 - Languages → `audio_language_ids`
 - Budget/revenue → `budget_bucket` / `box_office_bucket`
 - Source material → `source_material_type_ids`
-- Franchise/ecosystem → `franchise_membership`
+- Franchise/ecosystem → `movie_franchise_metadata`
 - Decade/era → derivable from `release_ts`
 - Animation/live action → keyword search
 - IMAX, anthology, vignette, mockumentary, nonlinear timeline → not part of
@@ -444,15 +441,19 @@ CREATE INDEX idx_awards_ceremony_outcome
     ON public.movie_awards (ceremony, outcome);
 ```
 
-### 16. franchise_membership table
+### 16. movie_franchise_metadata table
 
 ```sql
-CREATE TABLE IF NOT EXISTS public.franchise_membership (
-    movie_id                        BIGINT NOT NULL REFERENCES movie_card,
-    franchise_name_normalized       TEXT NOT NULL,
-    culturally_recognized_group     TEXT,       -- normalized; globally scoped
-    franchise_role                  TEXT NOT NULL,
-    PRIMARY KEY (movie_id, franchise_name_normalized)
+CREATE TABLE IF NOT EXISTS public.movie_franchise_metadata (
+    movie_id               BIGINT PRIMARY KEY REFERENCES movie_card,
+    lineage                TEXT,
+    shared_universe        TEXT,
+    recognized_subgroups   TEXT[] NOT NULL DEFAULT '{}',
+    launched_subgroup      BOOLEAN NOT NULL DEFAULT FALSE,
+    lineage_position       SMALLINT,
+    is_spinoff             BOOLEAN NOT NULL DEFAULT FALSE,
+    is_crossover           BOOLEAN NOT NULL DEFAULT FALSE,
+    launched_franchise     BOOLEAN NOT NULL DEFAULT FALSE
 );
 ```
 
@@ -573,7 +574,7 @@ class FranchiseRole(Enum):
 #5 TMDB collection capture ───────┬────────────→ #6 Franchise generation
                                   └────────────→ #9 Box office calculation
 #4 Awards scraping ────────────────────────────→ #14 Reception re-embedding
-#6 Franchise generation ───────────────────────→ #16 franchise_membership table
+#6 Franchise generation ───────────────────────→ #16 movie_franchise_metadata table
 #7 Source of inspiration re-gen ───────────────→ #19 source_material_type_ids
 #8 Production technique re-gen ────────────────→ #13 Production re-embedding
 #12 Structured-label format ───────────────────→ All embedding regeneration

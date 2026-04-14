@@ -214,11 +214,13 @@ should route to studio/brand matching, not match any movie with a Marvel charact
 the cast. Similarly, "Spider-Man movies" should include all Spider-Man films regardless
 of studio, while "MCU movies" should exclude non-MCU Spider-Man films.
 
-**Resolution:** New `franchise_membership` table with franchise_name, culturally
-recognized group, and franchise_role. Populated via TMDB `belongs_to_collection` +
-LLM enrichment. Franchise becomes its own lexical posting table, replacing the
-title-token + character-matching hack. See data layer decisions in
-new_system_brainstorm.md.
+**Resolution:** New `movie_franchise_metadata` table with `lineage`,
+`shared_universe`, `recognized_subgroups`, `launched_subgroup`,
+`lineage_position`, `is_spinoff`, `is_crossover`, and `launched_franchise`.
+Both `lineage` and `shared_universe` feed the shared
+`lex.inv_franchise_postings` table, replacing the title-token +
+character-matching hack. See the current franchise storage plan in
+`franchise_metadata_planning.md`.
 
 ---
 

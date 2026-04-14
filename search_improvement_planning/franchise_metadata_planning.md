@@ -8,7 +8,7 @@ subgroup", "movies that kicked off a franchise", "sequels vs reboots vs
 spinoffs of X", and "crossovers between X and Y".
 
 Replaces the current title-token + character-matching franchise heuristic in
-lexical search with a dedicated `franchise_membership` table and
+lexical search with a dedicated `movie_franchise_metadata` table and
 `lex.inv_franchise_postings` posting table.
 
 ## Version history
@@ -85,7 +85,8 @@ for the generation prompt.
 | Field | Type | Description |
 |-------|------|-------------|
 | `lineage_position` | ENUM, nullable | Mutually exclusive: `sequel` / `prequel` / `remake` / `reboot` / `null`. Null for first entry in lineage OR standalone. May populate even when `lineage` is null (pair-remakes like Scarface 1983). |
-| `special_attributes` | ENUM[] | Orthogonal, multi-valued: `spinoff` (side character / element / subplot expanded into a new film that leaves the source behind) and/or `crossover` (two or more distinct top-level franchises combined). Empty is the default. |
+| `is_spinoff` | BOOL | Orthogonal flag: derivative work that expands a minor character, story element, or subplot from an existing lineage into a new film that leaves the source behind. |
+| `is_crossover` | BOOL | Orthogonal flag: two or more distinct top-level lineages combined into a single film. |
 
 ### FRANCHISE LAUNCH flag — cinematic origin of a new franchise
 
@@ -110,7 +111,7 @@ original trilogy subgroup).
 All four tests must pass for `launched_franchise` to be true:
 
 1. **First cinematic entry** — `lineage_position` must be null.
-2. **Not a spinoff** — `spinoff` must not be in `special_attributes`.
+2. **Not a spinoff** — `is_spinoff` must be false.
 3. **Source-material recognition test** — if adapted, the audience must
    recognize THE FILM (or film franchise) MORE than any prior book / game
    / toy / cartoon / show. Jurassic Park passes (novel obscure); Harry
@@ -122,7 +123,7 @@ All four tests must pass for `launched_franchise` to be true:
 
 Silently corrected by `FranchiseOutput.validate_and_fix()` when any
 precondition fails (lineage null, lineage_position populated, or
-spinoff in special_attributes).
+`is_spinoff=true`).
 
 ### LineagePosition enum
 
@@ -140,12 +141,12 @@ film-to-film retellings more uniformly (including cross-medium adaptation).
 Documented via code comment above the enum member in
 [schemas/enums.py](../schemas/enums.py).
 
-### SpecialAttribute enum
+### Narrative-position booleans
 
-| Value | Meaning |
+| Field | Meaning |
 |-------|---------|
-| `spinoff` | Derivative work that expands a MINOR character, story element, or subplot from an existing lineage into the focus of a new film that LEAVES THE SOURCE FILM'S MAIN CHARACTERS AND PLOT BEHIND. Three-constraint test: (a) MINOR IN SOURCE, (b) GOES SOMEWHERE NEW, (c) LEAVES THE SOURCE BEHIND. |
-| `crossover` | Two or more distinct top-level lineages combined into a single film with characters from both. |
+| `is_spinoff` | Derivative work that expands a MINOR character, story element, or subplot from an existing lineage into the focus of a new film that LEAVES THE SOURCE FILM'S MAIN CHARACTERS AND PLOT BEHIND. |
+| `is_crossover` | Two or more distinct top-level lineages combined into a single film with characters from both. |
 
 ### Global normalization rule (v5)
 
@@ -432,8 +433,8 @@ The search extraction LLM decomposes franchise queries into any of:
 - `lineage_position` — enum filter. "batman sequels" → lineage=batman,
   lineage_position=sequel. NOTE: `remake` is NOT consumed at search time
   — use `source_of_inspiration` for cross-film retelling queries.
-- `special_attributes` — enum filter. "marvel spinoffs" → shared_universe=
-  marvel cinematic universe, special_attributes contains spinoff.
+- `is_spinoff` / `is_crossover` — boolean filters. "marvel spinoffs" →
+  shared_universe=`marvel cinematic universe` and `is_spinoff=true`.
 - `launched_subgroup` — boolean filter. "first entry in phase three"
   combines subgroup=`phase three` with launched_subgroup=true.
 - `launched_franchise` — boolean filter. "movies that launched a
@@ -441,11 +442,11 @@ The search extraction LLM decomposes franchise queries into any of:
 
 ### Phase 1 (Candidate Retrieval)
 
-1. `lineage` → `normalize_string()` → trigram similarity against
-   `lex.lexical_dictionary` → `term_id` → lexical lookup
-2. `shared_universe` → same pipeline, separate posting list
-3. Boolean filters (`launched_subgroup`, `launched_franchise`, enum
-   filters) applied as structured WHERE clauses on the membership table
+1. `lineage` / `shared_universe` → `normalize_string()` → trigram similarity
+   against `lex.lexical_dictionary` → `term_id` → shared franchise posting lookup
+2. Boolean filters (`launched_subgroup`, `launched_franchise`,
+   `is_spinoff`, `is_crossover`) and `lineage_position` applied as
+   structured WHERE clauses on `movie_franchise_metadata`
 4. Optional `recognized_subgroups` match: trigram similarity on the
    normalized labels. Candidate set is small enough that no index is
    needed.
@@ -453,7 +454,7 @@ The search extraction LLM decomposes franchise queries into any of:
 The two-axis design means a single query like "movies that launched
 a franchise" is a single structured filter (`launched_franchise=true`),
 while "spinoffs of marvel" is two filters (shared_universe=`marvel
-cinematic universe` AND special_attributes CONTAINS `spinoff`), with no
+cinematic universe` AND `is_spinoff=true`), with no
 axis-conflation ambiguity.
 
 ### Replaces
@@ -470,49 +471,34 @@ with unambiguous enum filtering.
 
 ---
 
-## Storage Schema (v5 draft)
+## Storage Schema (implemented)
 
-The storage layout needs revisiting to match the v5 seven-field output.
-One candidate shape:
+The current Postgres projection stores the finalized franchise object in a
+single table, and indexes both `lineage` and `shared_universe` into the same
+franchise posting table for tolerant lookup.
 
 ```sql
-CREATE TABLE IF NOT EXISTS public.franchise_membership (
-    movie_id            BIGINT NOT NULL REFERENCES movie_card,
-    lineage             TEXT,              -- normalized; nullable
-    shared_universe     TEXT,              -- normalized; nullable
-    lineage_position    SMALLINT,          -- LineagePosition ordinal; nullable
-    special_attributes  SMALLINT[],        -- SpecialAttribute ordinals
-    launched_subgroup   BOOLEAN NOT NULL,
-    launched_franchise  BOOLEAN NOT NULL,
-    PRIMARY KEY (movie_id)
-);
-
--- Recognized subgroups live in a side table to preserve multi-label
--- storage with lexical-index friendliness.
-CREATE TABLE IF NOT EXISTS public.franchise_subgroups (
-    movie_id   BIGINT NOT NULL REFERENCES movie_card,
-    subgroup   TEXT NOT NULL,   -- normalized
-    is_launch  BOOLEAN NOT NULL,  -- true iff this film is earliest in the subgroup
-    PRIMARY KEY (movie_id, subgroup)
+CREATE TABLE IF NOT EXISTS public.movie_franchise_metadata (
+    movie_id               BIGINT PRIMARY KEY REFERENCES public.movie_card ON DELETE CASCADE,
+    lineage                TEXT,              -- normalized; nullable
+    shared_universe        TEXT,              -- normalized; nullable
+    recognized_subgroups   TEXT[] NOT NULL DEFAULT '{}',
+    launched_subgroup      BOOLEAN NOT NULL DEFAULT FALSE,
+    lineage_position       SMALLINT,          -- LineagePosition ordinal; nullable
+    is_spinoff             BOOLEAN NOT NULL DEFAULT FALSE,
+    is_crossover           BOOLEAN NOT NULL DEFAULT FALSE,
+    launched_franchise     BOOLEAN NOT NULL DEFAULT FALSE
 );
 ```
 
-### Lexical posting tables
+`recognized_subgroups` stays inline as a text array. `launched_subgroup=true`
+is interpreted as "this movie launched all listed subgroups" — acceptable
+over-counting is preferred to under-counting.
+
+### Lexical posting table
 
 ```sql
-CREATE TABLE IF NOT EXISTS lex.inv_lineage_postings (
-    term_id   BIGINT NOT NULL,
-    movie_id  BIGINT NOT NULL,
-    PRIMARY KEY (term_id, movie_id)
-);
-
-CREATE TABLE IF NOT EXISTS lex.inv_shared_universe_postings (
-    term_id   BIGINT NOT NULL,
-    movie_id  BIGINT NOT NULL,
-    PRIMARY KEY (term_id, movie_id)
-);
-
-CREATE TABLE IF NOT EXISTS lex.inv_subgroup_postings (
+CREATE TABLE IF NOT EXISTS lex.inv_franchise_postings (
     term_id   BIGINT NOT NULL,
     movie_id  BIGINT NOT NULL,
     PRIMARY KEY (term_id, movie_id)
@@ -520,18 +506,27 @@ CREATE TABLE IF NOT EXISTS lex.inv_subgroup_postings (
 ```
 
 Both `lineage` and `shared_universe` are inserted into
-`lex.lexical_dictionary`. `recognized_subgroups` labels are inserted
-separately and kept in their own posting list so a query for "movies in
-the daniel craig era" can resolve via the subgroup pathway without
-lineage-level conflation.
+`lex.lexical_dictionary` and share the same posting table. This is
+deliberately tolerant: lookup should succeed whether the LLM put the
+user-visible brand in `lineage` or `shared_universe`, and whether a
+parent-universe label like `shrek` is acting as the lineage or the
+umbrella for a spinoff branch.
 
-**Status:** The v1/v2 storage schema (single `franchise_name_normalized`
-+ `franchise_role` enum) is no longer adequate. This v5 draft needs an
-ADR before implementation. Open questions: whether
-`special_attributes` should be a separate side table or an array column,
-how to encode the `REMAKE` value we're retaining but not reading, and
-whether to expose `launched_franchise` and `launched_subgroup` as
-queryable posting lists or only as boolean filter columns.
+Important nuance: `term_id` here is only the integer ID of the normalized
+string in `lex.lexical_dictionary`, not a separate franchise-entity ID. That
+storage shape is fine, but query-time franchise resolution must NOT rely on
+exact string lookup alone. `lineage` and `shared_universe` are often known
+enough to normalize consistently, but not reliably enough to assume exact
+LLM string reproduction for every query (`mcu` vs `marvel cinematic universe`,
+`wizarding world` vs `harry potter universe`, etc.). The intended retrieval
+path is fuzzy resolution of the user phrase against franchise strings first,
+then posting lookup by the resolved `term_id`.
+
+`recognized_subgroups` are intentionally NOT inserted into
+`lex.inv_franchise_postings`. Subgroup labels have much higher string
+variability than lineage/shared-universe names, so they stay inline on
+`movie_franchise_metadata` and are matched only after the franchise lookup
+has already narrowed the candidate set.
 
 ---
 

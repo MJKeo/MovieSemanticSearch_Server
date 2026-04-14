@@ -238,6 +238,123 @@ research pass, definitions were normalized into a consistent house
 style: short, declarative, and focused on what the keyword represents
 or when it should apply to a movie.
 
+## Project franchise metadata into Postgres and add a franchise backfill path
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py, schemas/movie.py, movie_ingestion/final_ingestion/ingest_movie.py, unit_tests/test_postgres.py, unit_tests/test_schemas_movie.py, unit_tests/test_ingest_movie.py, docs/modules/db.md, docs/modules/ingestion.md, docs/modules/schemas.md, docs/TODO.md, search_improvement_planning/franchise_metadata_planning.md, search_improvement_planning/v2_data_architecture.md, search_improvement_planning/v2_data_needs.md, search_improvement_planning/current_search_flaws.md, search_improvement_planning/types_of_searches.md, search_improvement_planning/open_questions.md, search_improvement_planning/new_system_brainstorm.md, search_improvement_planning/source_material_type_enum.md, search_improvement_planning/concept_tags.md
+
+Why: `FranchiseOutput` had been finalized in `schemas/metadata.py` and written
+to tracker SQLite, but Stage 8 still ignored it and multiple planning/docs
+surfaces still described the abandoned `franchise_membership` draft. The search
+redesign now needs a queryable Postgres projection that stores full franchise
+metadata per movie and a shared lexical posting table built from both `lineage`
+and `shared_universe`, plus a safe way to backfill existing `movie_card` rows.
+
+Approach: Added `public.movie_franchise_metadata` and
+`lex.inv_franchise_postings` to the bootstrap SQL and introduced
+`ensure_movie_franchise_schema()` in `db/postgres.py` to create the final schema
+and clean up obsolete draft franchise tables/indexes only when the new table is
+not already present. Added Postgres helpers to upsert/delete franchise metadata
+rows and atomically replace per-movie franchise postings. Extended
+`schemas/movie.py` so `Movie.from_tmdb_id()` / `from_tmdb_ids()` parse
+`generated_metadata.franchise` into a new `franchise_metadata` field. In Stage 8
+ingestion, added a dedicated `ingest_movie_franchise_metadata()` slice that
+upserts franchise rows whenever metadata exists, deletes stale PG franchise
+state when it no longer exists in tracker data, and indexes the deduped union of
+`lineage` and `shared_universe`. Added a Postgres-only
+`--backfill-franchise-metadata` CLI path that selects tracker rows with
+franchise metadata but missing `movie_franchise_metadata`, batch-loads `Movie`
+objects from SQLite, and reuses the normal Postgres ingestion path with vectors
+disabled. Updated module docs, TODOs, and search planning docs so they now
+describe `movie_franchise_metadata` rather than the retired role/group draft.
+
+Design context: Driven by the franchise storage plan discussed in
+`search_improvement_planning/` and the repo preference for queryable structured
+storage over opaque blobs. The user explicitly decided to keep subgroup data
+inline as `TEXT[]`, over-count subgroup launches rather than under-count, ingest
+any movie with any franchise metadata signal (including `lineage = NULL`
+remake-style rows), and search both `lineage` and `shared_universe` through one
+lexical channel.
+
+Testing notes: Added targeted unit coverage for the new Postgres helpers,
+tracker-backed `Movie` loading, franchise Stage 8 ingestion behavior, and the
+franchise backfill selector. Verified with:
+`pytest unit_tests/test_postgres.py unit_tests/test_ingest_movie.py unit_tests/test_schemas_movie.py::TestTrackerFranchiseLoading -q`
+which passed (`93 passed`). A broader combined run exposed pre-existing unrelated
+drift in older `test_schemas_movie.py` expectations outside this franchise work,
+so only the franchise-focused subset was treated as the validation target here.
+
+## Document franchise lexical-resolution caveat
+Files: search_improvement_planning/franchise_metadata_planning.md, search_improvement_planning/v2_data_architecture.md
+
+Why: After implementing `lex.inv_franchise_postings`, we clarified that the
+integer `term_id` is only the dictionary ID of a normalized franchise string.
+That storage choice is fine, but exact-only query-time resolution would be too
+brittle for franchise names because small LLM wording shifts can miss entirely.
+
+Approach: Updated the planning docs to state explicitly that `lineage` and
+`shared_universe` should resolve fuzzily against stored franchise strings
+before posting lookup, and that `recognized_subgroups` should remain out of
+`lex.inv_franchise_postings` because subgroup labels have much higher string
+variability and are better matched only after franchise lookup narrows the
+candidate set.
+
+## Remove runtime franchise schema rollout and backfill path
+Files: db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py, unit_tests/test_postgres.py, unit_tests/test_ingest_movie.py, docs/modules/db.md, docs/modules/ingestion.md
+
+Why: After reviewing the workflow, the user confirmed they plan to wipe
+Postgres and rebuild from scratch rather than migrate an existing database.
+That makes the runtime `ensure_movie_franchise_schema()` helper and the
+Postgres-only `--backfill-franchise-metadata` command unnecessary complexity.
+
+Approach: Removed `ensure_movie_franchise_schema()` from `db/postgres.py`,
+deleted the franchise backfill selector/CLI path from Stage 8 ingestion, and
+stopped calling franchise schema rollout from normal ingest code. Stage 8 now
+assumes the database was initialized from `db/init/01_create_postgres_tables.sql`
+before ingestion starts. Updated the affected docs and removed the now-obsolete
+unit tests that only existed for rollout/backfill behavior.
+
+Testing notes: Re-ran the focused franchise suite after the removal:
+`pytest unit_tests/test_postgres.py unit_tests/test_ingest_movie.py unit_tests/test_schemas_movie.py::TestTrackerFranchiseLoading -q`
+and it passed (`91 passed`).
+
+## Put franchise lineage-position IDs on the enum itself
+Files: schemas/enums.py, movie_ingestion/final_ingestion/ingest_movie.py, unit_tests/test_postgres.py, unit_tests/test_ingest_movie.py
+
+Why: The franchise ingest path had a local `_LINEAGE_POSITION_IDS` dict to
+convert `LineagePosition` enum members into Postgres SMALLINT values. The repo
+already uses the stronger pattern of storing stable IDs directly on enums
+(`AwardOutcome`, `AwardCeremony`, `SourceMaterialType`), and the user asked to
+make `LineagePosition` consistent with that design.
+
+Approach: Extended `LineagePosition` to carry `lineage_position_id` while
+keeping its string enum values unchanged for Pydantic/LLM structured output.
+Removed the local mapping from Stage 8 ingestion and now read the Postgres ID
+via `franchise_metadata.lineage_position.lineage_position_id`. Updated the
+franchise helper tests to assert through the enum attribute rather than magic
+integers.
+
+Testing notes: Re-ran the focused franchise suite:
+`pytest unit_tests/test_postgres.py unit_tests/test_ingest_movie.py unit_tests/test_schemas_movie.py::TestTrackerFranchiseLoading -q`
+and it passed (`91 passed`).
+
+## Move franchise lineage-position conversion into the Postgres helper
+Files: db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py, unit_tests/test_postgres.py, unit_tests/test_ingest_movie.py
+
+Why: `ingest_movie_franchise_metadata()` was extracting
+`lineage_position.lineage_position_id` even though the Postgres helper already
+received the full `FranchiseOutput` object and was the only place that needed
+the integer. That made the ingest layer carry a storage-specific conversion it
+didn't otherwise use.
+
+Approach: Simplified `upsert_movie_franchise_metadata()` so it computes the
+SMALLINT value internally from `franchise_metadata.lineage_position`. The
+ingest layer now just passes `movie_id`, `franchise_metadata`, and `conn`,
+which keeps the DB-shaping logic inside `db/postgres.py` and makes the call
+site cleaner.
+
+Testing notes: Re-ran the focused franchise suite:
+`pytest unit_tests/test_postgres.py unit_tests/test_ingest_movie.py unit_tests/test_schemas_movie.py::TestTrackerFranchiseLoading -q`
+and it passed (`91 passed`).
+
 Design context: This change lives in `implementation/classes/` because
 the enum is already the canonical local catalog for IMDb's curated
 overall-keyword taxonomy. The added field is intended for downstream

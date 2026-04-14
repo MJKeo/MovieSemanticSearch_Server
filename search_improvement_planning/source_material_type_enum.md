@@ -191,7 +191,7 @@ inspired by a single song has no applicable source material type (empty array). 
 During re-generation, these should be mapped to their more salient types.
 
 **Toys (77 movies):** Toy-based films (Transformers, Barbie, G.I. Joe) are franchise IP
-products — the franchise system (`franchise_membership`) captures this relationship
+products — the franchise system (`movie_franchise_metadata`) captures this relationship
 better than source material type. A toy line is not a narrative source the way a novel
 or play is. During re-generation, these get an empty array (no source material type)
 unless they also adapt a specific comic/TV series, in which case that type applies.

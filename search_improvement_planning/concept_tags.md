@@ -25,7 +25,7 @@ into the binary tag system.
 
 2. **Not already covered.** Tags must fill a gap not served by `genre_ids`,
    `overall_keywords` (225-term taxonomy), `source_material_type_ids`,
-   `franchise_membership`, `movie_awards`, or other movie_card fields.
+   `movie_franchise_metadata`, `movie_awards`, or other movie_card fields.
 
 3. **Primary search concept.** Users search for the tag as the main filter
    ("revenge movies"), not just a secondary detail. The tag must be something
@@ -196,7 +196,7 @@ corresponding `overall_keywords` term(s) for keyword-based retrieval via
 | "R-rated movies" | `maturity_rank` |
 | "big budget movies" | `budget_bucket` |
 | "box office hits" | `box_office_bucket` |
-| "[franchise] movies" | `franchise_membership` table |
+| "[franchise] movies" | `movie_franchise_metadata` table |
 | "[actor/director] movies" | Role-specific posting tables |
 
 ### Handled by vector similarity (spectrum concepts)

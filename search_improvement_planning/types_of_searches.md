@@ -332,8 +332,9 @@ or ranks the results. There's a clear ordering — retrieve first, rank second.
 - "Movies that are better than the book" — retrieve adaptations via
   `source_material_types` enum filter (NOVEL_ADAPTATION), rank by critical
   reception. Deterministic deal-breaker now, no vector matching needed.
-- "Best trilogies" — retrieve franchise members via `franchise_membership`
-  table, filter to franchise_role MAINLINE, rank by reception quality.
+- "Best trilogies" — retrieve franchise members via
+  `movie_franchise_metadata`, filter to the target lineage/subgroup and
+  non-remake continuation rows, rank by reception quality.
   Deterministic deal-breaker now.
 
 **Key challenge:** Determining which attribute is the deal-breaker and which
@@ -576,8 +577,9 @@ Some concepts sit at the boundary between metadata and semantic:
   concept requiring semantic retrieval
 - "Critically acclaimed" — could be metadata (Metacritic > 70) or semantic
   (reception vector space)
-- "Trilogy finales" — now partially structured via `franchise_membership`
-  table (franchise_role + franchise group), but "finale" specifically may
+- "Trilogy finales" — now partially structured via `movie_franchise_metadata`
+  (`recognized_subgroups` + `lineage_position` + franchise identity), but
+  "finale" specifically may
   still need semantic retrieval
 
 The system needs to recognize when a surface-level-simple query actually

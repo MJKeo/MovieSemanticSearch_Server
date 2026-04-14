@@ -8,9 +8,9 @@ Entries are added automatically during /safe-clear based on
 patterns observed in the session.
 
 ## Type-specific behavior belongs on schema classes, not inline in processors
-**Observed:** When the batch result processor needed post-validation fixups for concept_tags only, an inline `if metadata_type == CONCEPT_TAGS` check with a lazy import was proposed. The user rejected it as "hacky" and asked for a classmethod on the schema class instead (`validate_and_fix()`), so each metadata type owns its own post-processing logic and the processor just calls the uniform interface.
+**Observed:** When the batch result processor needed post-validation fixups for concept_tags only, an inline `if metadata_type == CONCEPT_TAGS` check with a lazy import was proposed. The user rejected it as "hacky" and asked for a classmethod on the schema class instead (`validate_and_fix()`), so each metadata type owns its own post-processing logic and the processor just calls the uniform interface. In a later session, the user asked to move `create_award_ceremony_win_ids()` logic into a `Movie.award_ceremony_win_ids()` instance method, following the pattern of `concept_tag_ids()`, `keyword_ids()`, etc.
 **Proposed convention:** When a generic pipeline function needs type-specific behavior, put that behavior on the schema/model class as a method with a default implementation, not as inline conditionals in the pipeline. The pipeline calls the uniform interface; the class decides what to do.
-**Sessions observed:** 1
+**Sessions observed:** 2
 
 ## Don't introduce base classes that only add one method — extend existing ones
 **Observed:** A `MetadataOutput` base class was created solely to hold `validate_and_fix()`, with `EmbeddableOutput` inheriting from it. The user immediately said "just combine them, I don't see a reason to keep them separate." The extra layer added no value since `ConceptTagsOutput` could have its own standalone override.
@@ -40,6 +40,16 @@ patterns observed in the session.
 ## LLM-generation schema: structural patterns to reduce model burden
 **Observed:** During the franchise v4 rewrite, several schema shape choices were load-bearing for weak-model (gpt-5-mini-minimal, -low, -medium) performance and were discussed explicitly: (1) mutually exclusive choices are a single nullable enum field, not a cluster of booleans (`lineage_position` replacing four separate sequel/prequel/remake/reboot flags — schema-enforced exclusivity makes illegal combinations physically unreachable); (2) orthogonal flags with small fixed vocabularies are an enum array, not separate booleans (`special_attributes: list[SpecialAttribute]` for spinoff/crossover — invites "enumerate and commit" as a single decision, cleaner empty default than two false booleans); (3) reasoning fields are scoped per decision block and placed BEFORE the decision field they inform — chain-of-thought via schema order (three scoped reasoning fields: `lineage_reasoning`, `subgroups_reasoning`, `position_reasoning` — not one top-level reasoning field that goes stale before the answer fields); (4) field ordering mirrors dependency order so later fields can autoregressively condition on earlier commitments (lineage → shared_universe → recognized_subgroups → launches_subgroup → lineage_position → special_attributes).
 **Proposed convention:** When designing Pydantic schemas for LLM structured-output generation, apply these four structural patterns before tuning the prompt: single nullable enum for mutually exclusive choices (never a boolean cluster); small enum array for orthogonal multi-valued flags (never separate booleans when vocabulary is fixed); scoped reasoning fields per hard decision block, placed before the decision; field order reflects dependency order. These are not stylistic preferences — they're load-bearing for weak-tier performance and remove entire failure modes by construction rather than via prompt discipline.
+**Sessions observed:** 1
+
+## Pass domain objects to DB methods, extract fields internally
+**Observed:** `batch_upsert_movie_awards()` originally accepted `list[tuple[int, str | None, int, int]]` — callers had to pre-extract fields from `AwardNomination` objects. The user said "directly pass an array of AwardNomination... that's way more readable" and asked the DB method to extract fields internally. This matches the pattern where `upsert_movie_card` receives semantic parameters rather than raw positional tuples.
+**Proposed convention:** When a DB method operates on domain objects (models, dataclasses), accept the domain objects directly and extract fields inside the method. Don't require callers to destructure objects into positional tuples — it duplicates knowledge of the schema and is harder to read at call sites.
+**Sessions observed:** 1
+
+## Graceful None returns over KeyError for optional enum lookups
+**Observed:** `AwardNomination.ceremony_id` originally did a direct dict lookup (`CEREMONY_BY_EVENT_TEXT[self.ceremony]`) that would raise `KeyError` for unknown ceremonies. The user asked it to return `None` instead and have callers filter. This follows the pattern of other enum lookup methods in the codebase (e.g., `Genre.from_string()`, `country_from_string()`) that return `None` for unrecognized values.
+**Proposed convention:** When looking up an enum or mapping from external/scraped data that may contain unexpected values, return `None` for unknown inputs rather than raising. Let callers decide whether to skip, log, or error — the lookup itself should be safe.
 **Sessions observed:** 1
 
 ## Minimize LLM-facing schema text: compact descriptions + enum docs in comments

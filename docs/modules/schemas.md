@@ -18,7 +18,7 @@ Defines canonical types for:
 | File | Purpose |
 |------|---------|
 | `metadata.py` | `EmbeddableOutput` base class + 10 embeddable `*Output` schema classes + `FranchiseOutput` and `ConceptTagsOutput` / `TagEvidence` (non-embeddable franchise/concept-tag classification). Each `EmbeddableOutput` subclass implements `embedding_text()` returning normalized text for vector embedding. `ConceptTagsOutput` produces integer concept_tag_ids via `all_concept_tag_ids()`, not embedding text. Legacy `__str__()` methods are retained for backward compatibility. Class docstrings are written as `#` comment blocks above each class — not as Python docstrings — to prevent them from leaking into the JSON schema payload sent to the LLM via `model_json_schema()`. |
-| `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata. |
+| `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata, including `franchise_metadata: FranchiseOutput | None`. |
 | `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), and concept-tag enums grouped by category. |
 | `data_types.py` | `MultiLineList` — a constrained list type used in generation schemas. |
 | `movie_input.py` | `MovieInputData` dataclass + `load_movie_input_data()` — loads raw tracker data into the form consumed by generator prompt builders. |
@@ -106,7 +106,10 @@ See `search_improvement_planning/source_material_type_enum.md` for boundary note
 **`Movie`** (`movie.py`): Central ingestion-time data object. Loads a
 fully typed row from `tracker.db` including parsed IMDB JSON columns,
 TMDB review JSON, provider-key blob unpacking, and all generated
-metadata objects. Includes helper methods:
+metadata objects. Franchise classification is exposed directly as
+`franchise_metadata: FranchiseOutput | None` for Stage 8 Postgres
+projection into `movie_franchise_metadata` and `lex.inv_franchise_postings`.
+Includes helper methods:
 - `maturity_text_short()` — IMDB reasoning prose or MPA description fallback
 - `deduplicated_genres()` — genre_signatures + IMDB genres, substring-deduped
 - `reception_score()` / `reception_tier()` — blended IMDB + Metacritic score and tier label

@@ -113,7 +113,7 @@ lookup.
 
 ---
 
-## 3. Postgres: franchise_membership (structured franchise data)
+## 3. Postgres: movie_franchise_metadata (structured franchise data)
 
 New table. Replaces the current title-token + character-matching franchise
 heuristic in lexical search.
@@ -126,53 +126,61 @@ extension, or product of that IP. Examples: "Mario" (video game), "Barbie"
 Universe" (comic/film).
 
 ```sql
-franchise_membership (
-    movie_id                        BIGINT NOT NULL REFERENCES movie_card,
-    franchise_name_normalized       TEXT NOT NULL,
-    culturally_recognized_group     TEXT,
-    franchise_role                  TEXT NOT NULL,
-    PRIMARY KEY (movie_id, franchise_name_normalized)
+movie_franchise_metadata (
+    movie_id               BIGINT PRIMARY KEY REFERENCES movie_card,
+    lineage                TEXT,
+    shared_universe        TEXT,
+    recognized_subgroups   TEXT[] NOT NULL DEFAULT '{}',
+    launched_subgroup      BOOLEAN NOT NULL DEFAULT FALSE,
+    lineage_position       SMALLINT,
+    is_spinoff             BOOLEAN NOT NULL DEFAULT FALSE,
+    is_crossover           BOOLEAN NOT NULL DEFAULT FALSE,
+    launched_franchise     BOOLEAN NOT NULL DEFAULT FALSE
 )
 ```
 
 **Fields:**
-- `franchise_name_normalized` — `normalize_string()` applied; the **only**
-  stored form. No separate display-name column. The franchise name should be
-  the IP name (e.g., "mario"), not the film series name (e.g., "super mario
-  bros movie series").
-- `culturally_recognized_group` — stored normalized. Only when a culturally
-  established term exists **globally** (any market, not just US). Examples:
-  "original trilogy", "mcu phase 1". Never hallucinated by LLM. If multiple
-  names exist across markets for the same grouping, prefer the American-market
-  term.
-- `franchise_role` — `FranchiseRole` enum value stored as integer ordinal:
-  `STARTER`, `MAINLINE`, `SPINOFF`, `PREBOOT`, `REMAKE`. The search extraction
-  LLM receives the same enum definition for consistent output.
+- `lineage` / `shared_universe` — normalized identity fields from
+  `FranchiseOutput`. Both are projected into the same
+  `lex.inv_franchise_postings` lookup table so query-time lookup can match
+  whichever field carries the user-visible brand.
+- `recognized_subgroups` — normalized text array stored inline. `launched_subgroup`
+  is interpreted as applying to all listed subgroups.
+- `lineage_position` — `LineagePosition` stored as integer ordinal.
+- `is_spinoff`, `is_crossover`, `launched_franchise` — direct boolean filters.
 
 **Data sources:**
 1. TMDB `belongs_to_collection` — reliable base for ~25% of movies
 2. LLM enrichment — receives title, release_year, overview (identification
    aid only), TMDB collection_name (if any), production_companies,
-   overall_keywords, characters. Generates franchise_name_normalized, franchise_role,
-   and culturally_recognized_group using parametric knowledge.
+   overall_keywords, characters. Generates the finalized `FranchiseOutput`
+   shape (`lineage`, `shared_universe`, `recognized_subgroups`,
+   `launched_subgroup`, `lineage_position`, `is_spinoff`, `is_crossover`,
+   `launched_franchise`) using parametric knowledge.
 
 **Canonical naming convention:** The franchise generation LLM is instructed to
 output the most common, fully expanded form of the franchise/IP name — no
 abbreviations. The search extraction LLM follows the same convention (same
-pattern as the lexical entity extractor for person names). This ensures both
-sides converge on the same canonical string without needing alias tables.
+pattern as the lexical entity extractor for person names). This improves
+consistency, but should not be treated as strong enough to justify exact-only
+franchise term resolution at query time.
 
-**Lexical access:** `franchise_name_normalized` is inserted into
-`lex.lexical_dictionary` and a new `lex.inv_franchise_postings` table maps
-`term_id → movie_id` for text-based franchise lookup.
+**Lexical access:** Both `lineage` and `shared_universe` are inserted into
+`lex.lexical_dictionary`, and `lex.inv_franchise_postings` maps
+`term_id → movie_id` for tolerant text-based franchise lookup. `term_id` is
+the dictionary ID of the normalized franchise string, not a separately-modeled
+franchise entity ID.
 
 **Search strategy:**
-- `franchise_name_normalized` — trigram matching via lexical dictionary. Both
-  LLMs use the same canonical naming convention, so no enum or alias table
-  needed.
-- `franchise_role` — integer WHERE clause on the post-lookup result set.
-- `culturally_recognized_group` — trigram similarity on the post-franchise-lookup
-  result set (3-30 movies). No separate index needed at this scale.
+- `lineage` / `shared_universe` — fuzzy resolution against stored franchise
+  strings first, then shared franchise postings. Do not rely on exact string
+  lookup only; minor naming variation from the search LLM is a real risk.
+- `lineage_position` — integer WHERE clause on the post-lookup result set.
+- `recognized_subgroups` — trigram similarity on the post-franchise-lookup
+  result set (3-30 movies). No separate index needed at this scale, and no
+  subgroup rows are inserted into `lex.inv_franchise_postings`.
+- `is_spinoff`, `is_crossover`, `launched_subgroup`, `launched_franchise` —
+  boolean WHERE clauses on `movie_franchise_metadata`.
 
 ---
 
@@ -208,7 +216,7 @@ tables to find matching movies.
 | `lex.inv_writer_postings` | `term_id, movie_id` | |
 | `lex.inv_producer_postings` | `term_id, movie_id` | |
 | `lex.inv_composer_postings` | `term_id, movie_id` | |
-| `lex.inv_franchise_postings` | `term_id, movie_id` | Franchise name from `franchise_membership` |
+| `lex.inv_franchise_postings` | `term_id, movie_id` | Franchise identity from `movie_franchise_metadata.lineage` and `.shared_universe` |
 | `lex.inv_character_postings` | `term_id, movie_id` | Unchanged |
 | `lex.inv_studio_postings` | `term_id, movie_id` | Unchanged |
 | `lex.inv_title_token_postings` | `term_id, movie_id` | Unchanged |
@@ -236,7 +244,7 @@ tables to find matching movies.
 | `CHARACTER` | `inv_character_postings` | Unchanged |
 | `STUDIO` | `inv_studio_postings` | Unchanged |
 | `MOVIE_TITLE` | `inv_title_token_postings` | Unchanged |
-| `FRANCHISE` | Title tokens + character heuristic | `inv_franchise_postings` via `franchise_membership` |
+| `FRANCHISE` | Title tokens + character heuristic | `inv_franchise_postings` via `movie_franchise_metadata` |
 
 ---
 
@@ -355,7 +363,7 @@ Scored as weighted average against movie_card data. Range [0,1] per candidate.
 | `Country` | TBD — derive from IMDB's country list | `country_id: int` | Same pattern as Language enum. ~100-200 values. |
 | `BoxOfficeBucket` | HIT, FLOP | string-valued | Movies < 75 days old → NULL (not enough data). |
 | `SourceMaterialType` | 10 values (finalized, implemented in `schemas/enums.py`) | `source_material_type_id: int` | NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, STAGE_ADAPTATION, TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION. Empty array = original screenplay. |
-| `FranchiseRole` | STARTER, MAINLINE, SPINOFF, PREBOOT, REMAKE | string-valued | Stored on `franchise_membership.franchise_role`. |
+| `LineagePosition` | SEQUEL, PREQUEL, REMAKE, REBOOT | string-valued | Stored as SMALLINT on `movie_franchise_metadata.lineage_position`. |
 
 ---
 
@@ -492,7 +500,7 @@ ending_aftertaste: haunting, gut punch ending
 
 **V2 boundary clarification:** No new structured V2 data is added directly to
 this space. Awards stay in `movie_awards` / reception, franchise stays in
-`franchise_membership`, source material stays in `source_material_type_ids`,
+`movie_franchise_metadata`, source material stays in `source_material_type_ids`,
 countries stay in `country_of_origin_ids`, box office stays in
 `box_office_bucket`, keywords stay in `keyword_ids`, production techniques stay
 in the production space, and concept tags remain deterministic retrieval aids.
@@ -594,7 +602,7 @@ additional_narrative_devices: found footage
 **V2 removes:** Countries → `country_of_origin_ids`. Companies → already in
 `inv_studio_postings`. Languages → `audio_language_ids`. Budget → `budget_bucket` /
 `box_office_bucket`. Source material → `source_material_type_ids`. Franchise →
-`franchise_membership`. Decade → derivable from `release_ts`. Animation →
+`movie_franchise_metadata`. Decade → derivable from `release_ts`. Animation →
 keyword search.
 
 **Explicit exclusions from `production_techniques`:** IMAX, anthology,
@@ -674,6 +682,6 @@ Pipeline state management. Not queried at search time.
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `franchise` | `TEXT` (JSON) | LLM-generated franchise_name_normalized, franchise_role, culturally_recognized_group |
+| `franchise` | `TEXT` (JSON) | LLM-generated `FranchiseOutput` JSON (`lineage`, `shared_universe`, `recognized_subgroups`, `launched_subgroup`, `lineage_position`, `is_spinoff`, `is_crossover`, `launched_franchise`) |
 | `production_techniques` | `TEXT` (JSON) | Replaces `production_keywords` with tightened scope |
 | `source_material_v2` | `TEXT` (JSON) | Re-generated with enum-constrained output |

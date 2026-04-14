@@ -25,7 +25,6 @@ import argparse
 import asyncio
 import json
 import os
-import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +32,7 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from typing import List
+from schemas.enums import LineagePosition
 from schemas.movie import Movie
 from implementation.llms.generic_methods import generate_vector_embedding
 from implementation.classes.enums import MaturityRating, VectorName
@@ -50,7 +50,6 @@ from implementation.misc.helpers import normalize_string
 from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_failures, batch_log_filter, PipelineStage
 from db.postgres import (
     pool,
-    _execute_read,
     batch_insert_title_token_postings,
     batch_insert_person_postings,
     batch_insert_character_postings,
@@ -58,6 +57,9 @@ from db.postgres import (
     batch_upsert_lexical_dictionary,
     batch_upsert_title_token_strings,
     batch_upsert_character_strings,
+    delete_movie_franchise_metadata,
+    replace_movie_franchise_postings,
+    upsert_movie_franchise_metadata,
     upsert_movie_card,
     batch_upsert_movie_awards,
     refresh_title_token_doc_frequency,
@@ -139,6 +141,7 @@ async def ingest_movie(movie: Movie) -> None:
         try:
             await ingest_movie_card(movie, conn=conn)
             await ingest_movie_awards(movie, conn=conn)
+            await ingest_movie_franchise_metadata(movie, conn=conn)
             await ingest_lexical_data(movie, conn=conn)
             await conn.commit()
         except Exception:
@@ -238,6 +241,41 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
         raise
     except Exception as e:
         raise ValueError(f"Movie ingestion failed: {e}")
+
+
+async def ingest_movie_franchise_metadata(movie: Movie, conn=None) -> None:
+    """
+    Ingest structured franchise metadata and franchise postings for one movie.
+
+    When tracker franchise metadata is absent, any existing Postgres franchise
+    state for the movie is deleted so reruns can remove stale records.
+    """
+    movie_id = movie.tmdb_data.tmdb_id
+    if movie_id is None:
+        raise ValueError("Movie franchise ingestion failed: ID is required but not found.")
+    movie_id = int(movie_id)
+
+    franchise_metadata = movie.franchise_metadata
+    if franchise_metadata is None:
+        await delete_movie_franchise_metadata(movie_id, conn=conn)
+        return
+
+    await upsert_movie_franchise_metadata(
+        movie_id,
+        franchise_metadata,
+        conn=conn,
+    )
+
+    franchise_strings = []
+    if franchise_metadata.lineage:
+        franchise_strings.append(franchise_metadata.lineage)
+    if franchise_metadata.shared_universe:
+        franchise_strings.append(franchise_metadata.shared_universe)
+    franchise_strings = list(dict.fromkeys(franchise_strings))
+
+    string_id_map = await batch_upsert_lexical_dictionary(franchise_strings, conn=conn)
+    term_ids = [string_id_map[value] for value in franchise_strings if value in string_id_map]
+    await replace_movie_franchise_postings(movie_id, term_ids, conn=conn)
 
 
 async def ingest_lexical_data(movie: Movie, conn=None) -> None:
@@ -390,6 +428,7 @@ async def ingest_movies_to_postgres_batched(
                     # query — the inner savepoint rollback restores a
                     # clean transaction state for the next step.
                     card_error: str | None = None
+                    franchise_error: str | None = None
                     lex_error: str | None = None
 
                     # --- movie_card step ---
@@ -422,6 +461,16 @@ async def ingest_movies_to_postgres_batched(
                         awards_error = str(e)
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_awards}")
 
+                    # --- franchise step ---
+                    inner_sp_franchise = f"sp_{tmdb_id}_franchise"
+                    await conn.execute(f"SAVEPOINT {inner_sp_franchise}")
+                    try:
+                        await ingest_movie_franchise_metadata(movie, conn=conn)
+                        await conn.execute(f"RELEASE SAVEPOINT {inner_sp_franchise}")
+                    except Exception as e:
+                        franchise_error = str(e)
+                        await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_franchise}")
+
                     # --- lexical step ---
                     inner_sp_lex = f"sp_{tmdb_id}_lex"
                     await conn.execute(f"SAVEPOINT {inner_sp_lex}")
@@ -432,7 +481,7 @@ async def ingest_movies_to_postgres_batched(
                         lex_error = str(e)
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_lex}")
 
-                    if card_error or awards_error or lex_error:
+                    if card_error or awards_error or franchise_error or lex_error:
                         # Roll back the outer savepoint so neither partial
                         # result persists for this movie.
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
@@ -443,6 +492,9 @@ async def ingest_movies_to_postgres_batched(
                         if awards_error:
                             print(f"Postgres awards failed for {tmdb_id}: {awards_error}")
                             errors.append(IngestionError(tmdb_id, f"Postgres awards: {awards_error}"))
+                        if franchise_error:
+                            print(f"Postgres franchise failed for {tmdb_id}: {franchise_error}")
+                            errors.append(IngestionError(tmdb_id, f"Postgres franchise: {franchise_error}"))
                         if lex_error:
                             print(f"Postgres lexical failed for {tmdb_id}: {lex_error}")
                             errors.append(IngestionError(tmdb_id, f"Postgres lexical: {lex_error}"))
@@ -1133,7 +1185,6 @@ def main() -> None:
         action="store_true",
         help="Skip Qdrant embedding/vector ingestion and run only Postgres movie_card + lexical ingestion.",
     )
-
     args = parser.parse_args()
     asyncio.run(
         cmd_ingest(

@@ -36,6 +36,7 @@ from movie_ingestion.tracker import IMDB_DATA_COLUMNS, IMDB_JSON_COLUMNS
 from implementation.classes.overall_keywords import keyword_from_string
 from schemas.enums import BoxOfficeStatus
 from schemas.metadata import (
+    FranchiseOutput,
     ConceptTagsOutput,
     NarrativeTechniquesOutput,
     PlotAnalysisOutput,
@@ -86,6 +87,7 @@ _METADATA_COLUMNS: tuple[str, ...] = (
     "watch_context",
     "narrative_techniques",
     "production_techniques",
+    "franchise",
     "source_of_inspiration",
     "source_material_v2",
     "concept_tags",
@@ -99,6 +101,7 @@ _METADATA_FIELD_TO_MODEL: dict[str, type[BaseModel]] = {
     "watch_context_metadata": WatchContextOutput,
     "narrative_techniques_metadata": NarrativeTechniquesOutput,
     "production_techniques_metadata": ProductionTechniquesOutput,
+    "franchise_metadata": FranchiseOutput,
     "source_of_inspiration_metadata": SourceOfInspirationOutput,
     "source_material_v2_metadata": SourceMaterialV2Output,
     "concept_tags_metadata": ConceptTagsOutput,
@@ -196,6 +199,7 @@ class Movie(BaseModel):
     watch_context_metadata: WatchContextOutput | None = None
     narrative_techniques_metadata: NarrativeTechniquesOutput | None = None
     production_techniques_metadata: ProductionTechniquesOutput | None = None
+    franchise_metadata: FranchiseOutput | None = None
     source_of_inspiration_metadata: SourceOfInspirationOutput | None = None
     source_material_v2_metadata: SourceMaterialV2Output | None = None
     concept_tags_metadata: ConceptTagsOutput | None = None

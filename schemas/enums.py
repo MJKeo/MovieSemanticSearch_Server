@@ -84,8 +84,16 @@ class BoxOfficeStatus(StrEnum):
 # the JSON schema description — the system prompt carries the
 # definitional text.
 class LineagePosition(str, Enum):
-    SEQUEL = "sequel"
-    PREQUEL = "prequel"
+    lineage_position_id: int
+
+    def __new__(cls, value: str, lineage_position_id: int) -> "LineagePosition":
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.lineage_position_id = lineage_position_id
+        return obj
+
+    SEQUEL = ("sequel", 1)
+    PREQUEL = ("prequel", 2)
     # REMAKE is retained in the enum for classification fidelity but
     # is NOT consumed at search time — film-to-film retellings are
     # covered by source_of_inspiration, which handles the cross-medium
@@ -94,8 +102,8 @@ class LineagePosition(str, Enum):
     # misleading alternative labels. Keep writing it; don't read it
     # in the search path. See search_improvement_planning/
     # franchise_test_iterations.md (v5).
-    REMAKE = "remake"
-    REBOOT = "reboot"
+    REMAKE = ("remake", 3)
+    REBOOT = ("reboot", 4)
 
 
 # Source material classification for movies.

@@ -7,6 +7,9 @@ import pytest
 
 from db import postgres
 from implementation.classes.enums import Genre
+from movie_ingestion.imdb_scraping.models import AwardNomination
+from schemas.enums import AwardOutcome, LineagePosition
+from schemas.metadata import FranchiseOutput
 
 
 def _mock_pool_connection(
@@ -213,6 +216,7 @@ async def test_batch_upsert_character_strings_dedupes_duplicate_pairs(mocker) ->
         ("batch_insert_person_postings", "lex.inv_person_postings"),
         ("batch_insert_character_postings", "lex.inv_character_postings"),
         ("batch_insert_studio_postings", "lex.inv_studio_postings"),
+        ("batch_insert_franchise_postings", "lex.inv_franchise_postings"),
     ],
 )
 async def test_batch_insert_posting_functions_use_expected_tables(mocker, function_name: str, table_name: str) -> None:
@@ -234,6 +238,7 @@ async def test_batch_insert_posting_functions_use_expected_tables(mocker, functi
         "batch_insert_person_postings",
         "batch_insert_character_postings",
         "batch_insert_studio_postings",
+        "batch_insert_franchise_postings",
     ],
 )
 async def test_batch_insert_posting_functions_empty_term_ids_short_circuit(
@@ -262,8 +267,20 @@ async def test_batch_upsert_movie_awards_deletes_then_inserts(mocker) -> None:
     """batch_upsert_movie_awards should delete existing rows then insert new ones."""
     execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     awards = [
-        (1, "Best Picture", 1, 2024),
-        (4, None, 1, 2023),
+        AwardNomination(
+            ceremony="Academy Awards, USA",
+            award_name="Oscar",
+            category="Best Picture",
+            outcome=AwardOutcome.WINNER,
+            year=2024,
+        ),
+        AwardNomination(
+            ceremony="Cannes Film Festival",
+            award_name="Palme d'Or",
+            category=None,
+            outcome=AwardOutcome.WINNER,
+            year=2023,
+        ),
     ]
     await postgres.batch_upsert_movie_awards(42, awards)
 
@@ -287,6 +304,99 @@ async def test_batch_upsert_movie_awards_empty_list_short_circuits(mocker) -> No
     execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
     await postgres.batch_upsert_movie_awards(42, [])
     execute_on_conn.assert_not_awaited()
+
+
+def _make_franchise_output(**overrides) -> FranchiseOutput:
+    """Build a valid FranchiseOutput with targeted overrides."""
+    defaults = {
+        "lineage_reasoning": "Identified the franchise identity.",
+        "lineage": "shrek",
+        "shared_universe": "shrek",
+        "subgroups_reasoning": "This film belongs to a named subgroup.",
+        "recognized_subgroups": ["puss in boots films"],
+        "launched_subgroup": True,
+        "position_reasoning": "This is a sequel entry.",
+        "lineage_position": LineagePosition.SEQUEL,
+        "crossover_reasoning": "No crossover franchises are present.",
+        "is_crossover": False,
+        "spinoff_reasoning": "This is a spinoff branch.",
+        "is_spinoff": True,
+        "launch_reasoning": "It did not launch the broader franchise.",
+        "launched_franchise": False,
+    }
+    return FranchiseOutput(**{**defaults, **overrides})
+
+
+@pytest.mark.asyncio
+async def test_upsert_movie_franchise_metadata_serializes_fields(mocker) -> None:
+    """upsert_movie_franchise_metadata should pass normalized values and arrays in order."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    metadata = _make_franchise_output()
+
+    await postgres.upsert_movie_franchise_metadata(
+        42,
+        metadata,
+    )
+
+    conn_arg, query, params = execute_on_conn.await_args.args
+    assert conn_arg is None
+    assert "public.movie_franchise_metadata" in query
+    assert params == (
+        42,
+        "shrek",
+        "shrek",
+        ["puss in boots films"],
+        True,
+        LineagePosition.SEQUEL.lineage_position_id,
+        True,
+        False,
+        False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_movie_franchise_metadata_deletes_postings_then_row(mocker) -> None:
+    """delete_movie_franchise_metadata should remove postings and the metadata row."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+
+    await postgres.delete_movie_franchise_metadata(42)
+
+    assert execute_on_conn.await_count == 2
+    assert "lex.inv_franchise_postings" in execute_on_conn.await_args_list[0].args[1]
+    assert execute_on_conn.await_args_list[0].args[2] == (42,)
+    assert "public.movie_franchise_metadata" in execute_on_conn.await_args_list[1].args[1]
+    assert execute_on_conn.await_args_list[1].args[2] == (42,)
+
+
+@pytest.mark.asyncio
+async def test_replace_movie_franchise_postings_deletes_then_inserts_deduped_ids(mocker) -> None:
+    """replace_movie_franchise_postings should replace all existing rows with deduped term IDs."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    insert_postings = mocker.patch(
+        "db.postgres.batch_insert_franchise_postings",
+        new=AsyncMock(),
+    )
+
+    await postgres.replace_movie_franchise_postings(42, [7, 8, 7])
+
+    execute_on_conn.assert_awaited_once()
+    assert "DELETE FROM lex.inv_franchise_postings" in execute_on_conn.await_args.args[1]
+    insert_postings.assert_awaited_once_with([7, 8], 42, conn=None)
+
+
+@pytest.mark.asyncio
+async def test_replace_movie_franchise_postings_keeps_empty_input_as_delete_only(mocker) -> None:
+    """replace_movie_franchise_postings should still clear stale rows when no terms remain."""
+    execute_on_conn = mocker.patch("db.postgres._execute_on_conn", new=AsyncMock())
+    insert_postings = mocker.patch(
+        "db.postgres.batch_insert_franchise_postings",
+        new=AsyncMock(),
+    )
+
+    await postgres.replace_movie_franchise_postings(42, [])
+
+    execute_on_conn.assert_awaited_once()
+    insert_postings.assert_awaited_once_with([], 42, conn=None)
 
 
 @pytest.mark.parametrize(
@@ -464,6 +574,7 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params(mock
         source_material_type_ids=(11, 12),
         keyword_ids=(13, 14),
         concept_tag_ids=(15, 16),
+        award_ceremony_win_ids=(1, 4),
         imdb_vote_count=945678,
         reception_score=72.5,
         title_token_count=4,
@@ -475,7 +586,7 @@ async def test_upsert_movie_card_calls_execute_on_conn_with_expected_params(mock
     assert params == (
         10, "Movie", "poster", 1000, 120, 3,
         [1, 2], [100, 200], [7, 8], [9, 10],
-        [11, 12], [13, 14], [15, 16],
+        [11, 12], [13, 14], [15, 16], [1, 4],
         945678, 72.5, None, "hit", 4,
     )
 

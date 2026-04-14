@@ -97,6 +97,19 @@ CREATE INDEX IF NOT EXISTS idx_awards_lookup
 CREATE INDEX IF NOT EXISTS idx_awards_movie
   ON public.movie_awards (movie_id);
 
+-- Structured franchise metadata for search-time franchise retrieval/filtering.
+CREATE TABLE IF NOT EXISTS public.movie_franchise_metadata (
+  movie_id               BIGINT PRIMARY KEY REFERENCES public.movie_card ON DELETE CASCADE,
+  lineage                TEXT,
+  shared_universe        TEXT,
+  recognized_subgroups   TEXT[] NOT NULL DEFAULT '{}',
+  launched_subgroup      BOOLEAN NOT NULL DEFAULT FALSE,
+  lineage_position       SMALLINT,
+  is_spinoff             BOOLEAN NOT NULL DEFAULT FALSE,
+  is_crossover           BOOLEAN NOT NULL DEFAULT FALSE,
+  launched_franchise     BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 
 -- Global dictionary of normalized lexical strings.
 CREATE TABLE IF NOT EXISTS lex.lexical_dictionary (
@@ -162,6 +175,16 @@ CREATE TABLE IF NOT EXISTS lex.inv_studio_postings (
 
 CREATE INDEX IF NOT EXISTS idx_studio_postings_movie
   ON lex.inv_studio_postings (movie_id);
+
+-- Inverted index postings for franchise lineage/shared-universe names.
+CREATE TABLE IF NOT EXISTS lex.inv_franchise_postings (
+  term_id   BIGINT NOT NULL,
+  movie_id  BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_franchise_postings_movie
+  ON lex.inv_franchise_postings (movie_id);
 
 -- Materialized view used for max_df stop-word filtering in title matching.
 CREATE MATERIALIZED VIEW IF NOT EXISTS lex.title_token_doc_frequency AS

@@ -6,11 +6,28 @@ in implementation/classes/movie.py. The Movie fixture builds objects
 directly via constructor rather than from a SQLite database.
 """
 
+import json
+import importlib
+import sqlite3
+import sys
+from types import ModuleType
+
 import pytest
 
+try:
+    importlib.import_module("orjson")
+except ModuleNotFoundError:
+    orjson_module = ModuleType("orjson")
+    orjson_module.dumps = lambda obj, *args, **kwargs: json.dumps(obj).encode("utf-8")
+    orjson_module.loads = lambda data, *args, **kwargs: json.loads(
+        data.decode("utf-8") if isinstance(data, (bytes, bytearray)) else data
+    )
+    sys.modules["orjson"] = orjson_module
+
 from implementation.classes.enums import BudgetSize
+from movie_ingestion import tracker as tracker_module
 from movie_ingestion.imdb_scraping.models import AwardNomination
-from schemas.enums import AwardOutcome, BoxOfficeStatus
+from schemas.enums import AwardOutcome, BoxOfficeStatus, LineagePosition
 from schemas.movie import Movie, TMDBData, IMDBData
 
 
@@ -56,6 +73,100 @@ def _make_movie(**overrides) -> Movie:
     tmdb_data = TMDBData(**{**tmdb_defaults, **tmdb_overrides})
     imdb_data = IMDBData(**{**imdb_defaults, **imdb_overrides})
     return Movie(tmdb_data=tmdb_data, imdb_data=imdb_data, **overrides)
+
+
+def _write_tracker_db_with_franchise(path, franchise_payload: dict) -> None:
+    """Create a minimal tracker DB containing one movie with franchise metadata."""
+    with sqlite3.connect(path) as db:
+        db.executescript(tracker_module._SCHEMA_SQL)
+        db.execute(
+            """
+            INSERT INTO tmdb_data (
+                tmdb_id, imdb_id, title, release_date, duration, poster_url,
+                watch_provider_keys, vote_count, popularity, vote_average,
+                overview_length, genre_count, has_revenue, has_budget,
+                has_production_companies, has_production_countries,
+                has_keywords, has_cast_and_crew, budget, maturity_rating,
+                reviews, collection_name, revenue
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1,
+                "tt0000001",
+                "Spider-Man",
+                "2002-05-03",
+                121,
+                None,
+                b"",
+                100,
+                1.0,
+                7.0,
+                120,
+                2,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                139_000_000,
+                "PG-13",
+                json.dumps([]),
+                "Spider-Man Collection",
+                0,
+            ),
+        )
+        db.execute(
+            """
+            INSERT INTO imdb_data (
+                tmdb_id, imdb_title_type, original_title, maturity_rating, overview,
+                imdb_rating, imdb_vote_count, metacritic_rating, reception_summary,
+                budget, overall_keywords, genres, countries_of_origin,
+                production_companies, filming_locations, languages, synopses,
+                plot_summaries, plot_keywords, maturity_reasoning, directors,
+                writers, actors, characters, producers, composers, review_themes,
+                parental_guide_items, featured_reviews, awards, box_office_worldwide
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1,
+                "movie",
+                None,
+                None,
+                "A student gets spider-like abilities.",
+                7.4,
+                1000,
+                73.0,
+                "Well received.",
+                None,
+                json.dumps(["hero"]),
+                json.dumps(["Action", "Adventure"]),
+                json.dumps(["USA"]),
+                json.dumps(["Columbia Pictures"]),
+                json.dumps(["New York"]),
+                json.dumps(["English"]),
+                json.dumps([]),
+                json.dumps([]),
+                json.dumps([]),
+                json.dumps([]),
+                json.dumps(["Sam Raimi"]),
+                json.dumps(["David Koepp"]),
+                json.dumps(["Tobey Maguire"]),
+                json.dumps(["Peter Parker"]),
+                json.dumps([]),
+                json.dumps([]),
+                json.dumps([]),
+                json.dumps([]),
+                json.dumps([]),
+                json.dumps([]),
+                None,
+            ),
+        )
+        db.execute(
+            "INSERT INTO generated_metadata (tmdb_id, franchise) VALUES (?, ?)",
+            (1, json.dumps(franchise_payload)),
+        )
+        db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -814,3 +925,66 @@ class TestFromTmdbIds:
         fake_path = tmp_path / "nonexistent.db"
         with pytest.raises(FileNotFoundError):
             Movie.from_tmdb_ids([1, 2], tracker_db_path=fake_path)
+
+
+class TestTrackerFranchiseLoading:
+    def test_from_tmdb_id_parses_franchise_metadata(self, tmp_path):
+        """Single-movie loader should parse generated_metadata.franchise into FranchiseOutput."""
+        db_path = tmp_path / "tracker.db"
+        _write_tracker_db_with_franchise(
+            db_path,
+            {
+                "lineage_reasoning": "Identified the franchise lineage.",
+                "lineage": "spider-man",
+                "shared_universe": "marvel cinematic universe",
+                "subgroups_reasoning": "This film belongs to a named phase.",
+                "recognized_subgroups": ["phase three"],
+                "launched_subgroup": False,
+                "position_reasoning": "This is a sequel.",
+                "lineage_position": "sequel",
+                "crossover_reasoning": "No crossover here.",
+                "is_crossover": False,
+                "spinoff_reasoning": "Not a spinoff.",
+                "is_spinoff": False,
+                "launch_reasoning": "It did not launch the franchise.",
+                "launched_franchise": False,
+            },
+        )
+
+        movie = Movie.from_tmdb_id(1, tracker_db_path=db_path)
+
+        assert movie.franchise_metadata is not None
+        assert movie.franchise_metadata.lineage == "spider-man"
+        assert movie.franchise_metadata.shared_universe == "marvel cinematic universe"
+        assert movie.franchise_metadata.recognized_subgroups == ["phase three"]
+        assert movie.franchise_metadata.lineage_position == LineagePosition.SEQUEL
+
+    def test_from_tmdb_ids_parses_franchise_metadata(self, tmp_path):
+        """Batch loader should expose franchise_metadata on returned Movie objects."""
+        db_path = tmp_path / "tracker.db"
+        _write_tracker_db_with_franchise(
+            db_path,
+            {
+                "lineage_reasoning": "Identified a remake case.",
+                "lineage": None,
+                "shared_universe": None,
+                "subgroups_reasoning": "No recognized subgroups.",
+                "recognized_subgroups": [],
+                "launched_subgroup": False,
+                "position_reasoning": "This is a remake.",
+                "lineage_position": "remake",
+                "crossover_reasoning": "No crossover here.",
+                "is_crossover": False,
+                "spinoff_reasoning": "No spinoff relationship.",
+                "is_spinoff": False,
+                "launch_reasoning": "It did not launch a franchise.",
+                "launched_franchise": False,
+            },
+        )
+
+        result = Movie.from_tmdb_ids([1], tracker_db_path=db_path)
+
+        assert 1 in result
+        assert result[1].franchise_metadata is not None
+        assert result[1].franchise_metadata.lineage is None
+        assert result[1].franchise_metadata.lineage_position == LineagePosition.REMAKE

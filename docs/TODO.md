@@ -601,37 +601,40 @@ db/init/02_qdrant_init.sh,
 movie_ingestion/final_ingestion/ingest_movie.py,
 search_improvement_planning/v2_data_needs.md
 
-## Wire v4 FranchiseOutput into downstream consumers
-**Context:** The franchise v4 schema (`lineage`, `shared_universe`,
-`recognized_subgroups`, `launches_subgroup`, `lineage_position`,
-`special_attributes`) landed in `schemas/metadata.py` and is being
-generated into the SQLite `generated_metadata.franchise` column,
-but nothing reads it yet. `vector_text.py` still consumes
-`SourceOfInspirationOutput.franchise_lineage`, `ingest_movie.py`
-has no franchise references, and `db/lexical_search.py` operates
-on source_material phrases. To serve the downstream query
-inventory documented in
-search_improvement_planning/franchise_test_iterations.md (direct
-lineage / shared_universe / subgroups / position / attributes
-lookups) we need to: (a) decide whether franchise fields embed
-into any vector space or whether they become structured Postgres
-columns with hard filters at search time, (b) add the storage
-columns or vector_text integration accordingly, (c) add query-time
-filter/scoring logic in `db/` for the target query shapes. Also
-kick a franchise regeneration run — existing rows are stale v3
-format and will be overwritten, but we should actually kick the
-run. Also update
-`movie_ingestion/metadata_generation/generators/test_franchise.ipynb`
-and `franchise_test_results.json` (both currently uncommitted in
-git status) to score v4 outputs — they're stale against the new
-schema.
+## Hook query-time search into `movie_franchise_metadata`
+**Context:** Franchise metadata is now projected into Postgres via
+`public.movie_franchise_metadata` plus shared `lex.inv_franchise_postings`,
+and `Movie` now loads `generated_metadata.franchise` as
+`franchise_metadata`. What remains is the actual search-time usage:
+entity extraction should route franchise terms into the new posting
+table, metadata/scoring should use `lineage`, `shared_universe`,
+`recognized_subgroups`, `lineage_position`, `is_spinoff`,
+`is_crossover`, `launched_subgroup`, and `launched_franchise`, and
+legacy franchise behavior still anchored in source-material phrases
+should be removed. This is the remaining step for queries like
+"Harry Potter spinoffs" and "Marvel movies from Phase 3."
 **When:** Before the next search-quality iteration that depends on
-franchise-aware retrieval (e.g., "Harry Potter spinoffs",
-"Marvel movies from Phase 3"). Not blocking unrelated work.
-**See:** schemas/metadata.py (FranchiseOutput v4),
-movie_ingestion/metadata_generation/prompts/franchise.py,
-search_improvement_planning/franchise_test_iterations.md (v4
-section — worked examples table and test acceptance criteria),
-movie_ingestion/final_ingestion/vector_text.py,
+franchise-aware retrieval.
+**See:** schemas/metadata.py (FranchiseOutput),
 movie_ingestion/final_ingestion/ingest_movie.py,
-db/lexical_search.py.
+db/postgres.py,
+db/lexical_search.py,
+search_improvement_planning/franchise_metadata_planning.md.
+
+
+## Update award-related unit tests for post-refinement signatures
+**Context:** Four refinements were made to the movie_awards implementation that
+change signatures and behavior tested in the previous session: (1) `AwardNomination.ceremony_id`
+now returns `int | None` instead of raising `KeyError`; (2) `batch_upsert_movie_awards()`
+now accepts `list[AwardNomination]` instead of `list[tuple[int, str | None, int, int]]`;
+(3) `create_award_ceremony_win_ids()` now delegates to `Movie.award_ceremony_win_ids()`
+instance method; (4) `_reception_award_wins_text()` was rewritten to use `AwardCeremony`
+enum keys instead of the deleted `_RECEPTION_AWARD_CEREMONY_ORDER`. Tests in
+test_enums.py, test_schemas_movie.py, test_ingest_movie.py, and test_postgres.py
+will need updates to match the new signatures and None-handling behavior.
+**When:** Next dedicated testing phase for the awards implementation.
+**See:** unit_tests/test_enums.py, unit_tests/test_schemas_movie.py,
+unit_tests/test_ingest_movie.py, unit_tests/test_postgres.py,
+movie_ingestion/imdb_scraping/models.py (AwardNomination.ceremony_id),
+db/postgres.py (batch_upsert_movie_awards),
+schemas/movie.py (Movie.award_ceremony_win_ids)

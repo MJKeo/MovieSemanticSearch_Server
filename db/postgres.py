@@ -14,6 +14,7 @@ from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
 from movie_ingestion.imdb_scraping.models import AwardNomination
+from schemas.metadata import FranchiseOutput
 
 
 class PostingTable(Enum):
@@ -21,6 +22,7 @@ class PostingTable(Enum):
     PERSON = "lex.inv_person_postings"
     CHARACTER = "lex.inv_character_postings"
     STUDIO = "lex.inv_studio_postings"
+    FRANCHISE = "lex.inv_franchise_postings"
     TITLE_TOKEN = "lex.inv_title_token_postings"
 
 
@@ -569,6 +571,25 @@ async def batch_insert_studio_postings(term_ids: list[int], movie_id: int, conn=
     await _execute_on_conn(conn, query, (term_ids, movie_id))
 
 
+async def batch_insert_franchise_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
+    """
+    Insert franchise postings for one movie in a single round-trip.
+
+    Args:
+        term_ids: Franchise term IDs to insert.
+        movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    if not term_ids:
+        return
+    query = """
+    INSERT INTO lex.inv_franchise_postings (term_id, movie_id)
+    SELECT unnest(%s::bigint[]), %s
+    ON CONFLICT (term_id, movie_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
+
+
 async def refresh_title_token_doc_frequency() -> None:
     """
     Refresh the lex.title_token_doc_frequency materialized view concurrently.
@@ -636,6 +657,91 @@ async def refresh_movie_popularity_scores(
         await _execute_on_conn(local_conn, update_scores_query, (steepness_k, threshold))
         await _execute_on_conn(local_conn, zero_missing_query)
         await local_conn.commit()
+
+
+async def upsert_movie_franchise_metadata(
+    movie_id: int,
+    franchise_metadata: FranchiseOutput,
+    conn=None,
+) -> None:
+    """
+    Upsert the structured franchise projection for one movie.
+
+    Args:
+        movie_id: Target movie ID.
+        franchise_metadata: Parsed FranchiseOutput from tracker metadata.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    query = """
+    INSERT INTO public.movie_franchise_metadata (
+        movie_id,
+        lineage,
+        shared_universe,
+        recognized_subgroups,
+        launched_subgroup,
+        lineage_position,
+        is_spinoff,
+        is_crossover,
+        launched_franchise
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (movie_id) DO UPDATE SET
+        lineage = EXCLUDED.lineage,
+        shared_universe = EXCLUDED.shared_universe,
+        recognized_subgroups = EXCLUDED.recognized_subgroups,
+        launched_subgroup = EXCLUDED.launched_subgroup,
+        lineage_position = EXCLUDED.lineage_position,
+        is_spinoff = EXCLUDED.is_spinoff,
+        is_crossover = EXCLUDED.is_crossover,
+        launched_franchise = EXCLUDED.launched_franchise
+    """
+    lineage_position = (
+        franchise_metadata.lineage_position.lineage_position_id
+        if franchise_metadata.lineage_position is not None
+        else None
+    )
+    params = (
+        movie_id,
+        franchise_metadata.lineage,
+        franchise_metadata.shared_universe,
+        list(franchise_metadata.recognized_subgroups),
+        franchise_metadata.launched_subgroup,
+        lineage_position,
+        franchise_metadata.is_spinoff,
+        franchise_metadata.is_crossover,
+        franchise_metadata.launched_franchise,
+    )
+    await _execute_on_conn(conn, query, params)
+
+
+async def delete_movie_franchise_metadata(movie_id: int, conn=None) -> None:
+    """
+    Delete all franchise metadata and franchise postings for one movie.
+
+    Args:
+        movie_id: Target movie ID.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    delete_postings_query = "DELETE FROM lex.inv_franchise_postings WHERE movie_id = %s"
+    delete_metadata_query = "DELETE FROM public.movie_franchise_metadata WHERE movie_id = %s"
+    await _execute_on_conn(conn, delete_postings_query, (movie_id,))
+    await _execute_on_conn(conn, delete_metadata_query, (movie_id,))
+
+
+async def replace_movie_franchise_postings(movie_id: int, term_ids: list[int], conn=None) -> None:
+    """
+    Replace franchise postings for one movie within the caller transaction.
+
+    Args:
+        movie_id: Target movie ID.
+        term_ids: Resolved franchise term IDs for lineage/shared_universe.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    delete_query = "DELETE FROM lex.inv_franchise_postings WHERE movie_id = %s"
+    await _execute_on_conn(conn, delete_query, (movie_id,))
+    deduped_term_ids = list(dict.fromkeys(term_ids))
+    await batch_insert_franchise_postings(deduped_term_ids, movie_id, conn=conn)
+
 
 async def upsert_movie_card(
     movie_id: int,
