@@ -1,10 +1,11 @@
 # Types of Searches
 
 Categorizing the distinct types of queries the system needs to handle. Organized
-into simple queries (single retrieval strategy) and complex queries (require
-composing multiple retrieval strategies). 14 categories total: 8 simple, 6
-complex. Categories carry notes on important subtypes and edge cases identified
-through query analysis.
+into simple queries (single retrieval strategy), complex queries (require
+composing multiple retrieval strategies), and V2-specific edge cases (query
+patterns that require special handling under the new architecture). 17
+categories total: 8 simple, 6 complex, 3 V2 edge cases. Categories carry notes
+on important subtypes and edge cases identified through query analysis.
 
 ---
 
@@ -197,6 +198,18 @@ similarity than plot_events). The hard part is correctly resolving which movie
 the user means when titles are ambiguous — multiple movies may share a title
 but the user almost certainly means the most well-known one.
 
+**Implementation priority:** This should be routed to a different search flow
+entirely and handled AFTER the initial version of search V2 is validated. The
+core V2 architecture (deal-breaker/preference decomposition, deterministic
+retrieval + semantic rescore) is the priority; similarity search is a distinct
+enough flow to build separately.
+
+**Franchise as similarity signal:** "Similar movies" also includes entries to the
+same franchise — a user asking for "movies like The Dark Knight" expects other
+Batman/DC movies alongside thematically similar non-franchise films. Franchise
+membership from `movie_franchise_metadata` should be checked as an additional
+structured attribute alongside vector similarity.
+
 **Note on distinctive vs generic decomposition:** Not all of a reference
 movie's traits are equally important for similarity. Inception's mind-bending
 nested reality structure is distinctive; its "action movie" genre is generic.
@@ -240,14 +253,15 @@ is a special case requiring high quality + low popularity, which is an
 anti-correlation filter.
 
 **Note on trending candidate injection:** For explicitly trending queries
-("trending now," "popular movies right now"), the candidate pool should come
-from the trending set in Redis rather than from vector retrieval. Vector
-search is unnecessary — the user is asking about temporal popularity, not
-semantic content. Rank the trending set by trending signal (recency,
-popularity velocity) with the quality prior on top. For hybrid cases where
-discovery intent is mixed with attribute preferences ("trending horror
-movies"), constrain a portion of vector retrieval to the trending pool while
-searching globally for the rest.
+("trending now," "popular movies right now"), directly fetch the list of
+trending movies and consider them all to be candidates, so long as they pass
+any active metadata filtering. The candidate pool comes from the trending set
+in Redis rather than from vector retrieval. Vector search is unnecessary — the
+user is asking about temporal popularity, not semantic content. Rank the
+trending set by trending signal (recency, popularity velocity) with the quality
+prior on top. For hybrid cases where discovery intent is mixed with attribute
+preferences ("trending horror movies"), constrain a portion of vector retrieval
+to the trending pool while searching globally for the rest.
 
 **Note:** Canon/curriculum queries ("movies every film student should watch,"
 "essential horror") are a subtype where the curation signal is cultural
@@ -544,6 +558,106 @@ requirements. The system needs to find movies in the overlap zone of two
 different taste spaces — psychological intensity AND artistic craft. Phase
 0 should decompose this into the two audience profiles and identify
 attributes that could satisfy both.
+
+---
+
+### 15. All-Semantic / Pure-Vibe Queries
+
+Every requirement in the query maps to a semantic concept with no deterministic
+anchor. No entity, no metadata filter, no keyword match — the entire query is
+vibes.
+
+**Examples:**
+- "Fun lighthearted movies with car chases"
+- "Something cozy and heartwarming"
+- "Intense edge-of-your-seat thriller vibes"
+- "Movies that feel like a warm hug"
+
+**Behavior:** Since no deterministic source can generate candidates, the query
+enters the pure-vibe flow. All semantic "dealbreakers" become preferences.
+Vector search generates candidates via individual searches per concept across
+relevant spaces, with results unioned. Candidates are rescored by fetching
+distances across all relevant spaces (not just the space where initially
+retrieved). A minimum similarity threshold per space prevents noise from
+weak matches.
+
+**Key distinction from type #5 (single-concept semantic):** These queries have
+multiple semantic axes that need to be evaluated independently. "Fun AND
+lighthearted AND car chases" requires a movie to score well across multiple
+concepts, not just one. Individual searches prevent signal dilution from
+blending concepts into averaged embeddings.
+
+**Note:** The step 1 LLM should consolidate genuinely synonymous concepts
+before creating separate entries (e.g., "fun and lighthearted" might become
+one preference if they target the same vector space and capture the same idea).
+Distinct concepts that happen to target the same space should remain separate
+(e.g., "fun" and "nostalgic" both target viewer_experience but capture
+different qualities).
+
+---
+
+### 16. Semantic Exclusion on Non-Tagged Attributes
+
+Query includes an exclusion requirement for a concept that isn't covered by any
+deterministic data source (no keyword, no entity, no metadata field).
+
+**Examples:**
+- "Funny horror movies but not ones with clowns" — "clowns" isn't a keyword or
+  tag in the system
+- "Action movies without too much CGI" — CGI usage isn't a metadata field
+- "Romantic comedies but nothing with cheating" — infidelity isn't a keyword
+- "Thrillers without torture scenes" — torture isn't discretely tagged
+
+**Behavior:** The exclusion cannot be hard-filtered. Instead, it's handled via
+semantic elbow-threshold penalty: search the full corpus for the exclusion
+concept, analyze the global score distribution to find the elbow, and penalize
+candidates based on where they fall:
+- Above elbow (genuinely matches concept) → harsh penalty / effective removal
+- Near elbow (uncertain match) → soft downrank
+- Below elbow (no meaningful match) → no penalty
+
+**Key challenge:** The penalty must calibrate against the GLOBAL distribution,
+not relative to the candidate set. If no candidates actually contain clowns,
+a relative approach would still penalize the most clown-adjacent candidate
+(maybe a circus-themed horror with no actual clowns). The global search
+establishes what "actually has clowns" looks like in absolute terms.
+
+**Note on routing:** The step 1 LLM must know the keyword/concept tag
+vocabulary to correctly identify that a concept like "clowns" isn't in the
+deterministic vocabulary and must route to `semantic`. If the LLM incorrectly
+routes to `keyword`, the search will silently miss all results. This is why
+the full keyword vocabulary is included in the step 1 prompt.
+
+---
+
+### 17. Concept Without Deterministic Anchor (Dealbreaker Demotion)
+
+User states a requirement as a dealbreaker, but the concept only exists in
+the semantic domain. The system must demote it to a preference since semantic
+search is unreliable for candidate generation.
+
+**Examples:**
+- "Movies with car chases" — no "car chase" keyword; becomes pure-vibe query
+- "Zombie movies" (if "zombie" is not in keyword vocabulary) — no deterministic
+  anchor; vector search is the only option
+- "Movies about artificial intelligence" — if no AI keyword exists, semantic
+  only
+
+**Behavior:** When a dealbreaker routes to `semantic`, it is automatically
+demoted to a high-weight preference. If this was the only dealbreaker, the
+query becomes a pure-vibe query (type #15). If other deterministic dealbreakers
+exist, the semantic concept becomes a preference that strongly influences
+ranking within the tiers established by deterministic dealbreakers.
+
+**Key insight:** The routing decision itself determines the confidence level.
+Deterministic sources give binary, reliable results. Semantic sources give
+fuzzy similarity scores. The system matches the strength of its action (hard
+filter vs soft ranking) to the confidence of its data.
+
+**Note:** This is a signal for where to expand the keyword vocabulary over
+time. Every query where the LLM falls back to semantic for a concept that
+users clearly expect to work as a filter represents a gap in the deterministic
+data. Tracking these fallbacks can inform keyword taxonomy expansion.
 
 ---
 

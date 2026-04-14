@@ -171,6 +171,17 @@ lexical_relevance, metadata_relevance) is eliminated.
      implicitly expects well-known results. Inferred from language signals
      (superlatives/cultural references push high, discovery language pushes low).
 
+### Future Direction: Expert LLMs Per Search Type
+
+Rather than a single monolithic Phase 0 call, a future iteration could decompose
+the query understanding into a top-level intent classifier followed by specialized
+expert LLMs per identified search type. The top-level LLM would examine the query
+against the data store structure and identify which independent search strategies
+are needed, then dispatch to expert LLMs that are tuned for each strategy (entity
+resolution, metadata extraction, semantic concept mapping, etc.). This is not
+planned for V2's initial implementation but is worth revisiting if Phase 0's single-
+call approach struggles with complex multi-type queries.
+
 ### Phase 0 Output Example
 
 ```json
@@ -448,6 +459,16 @@ roles in the pipeline.
 with the highest percentage met. "Dark gritty Marvel christmas movies" with 4
 deal-breakers might yield zero 4/4 matches — show the best 3/4 movies instead.
 
+**Preference weighting relative to deal-breakers:** During rescoring, preferences
+should be weighted such that hitting ALL preferences provides a boost equivalent
+to (or a meaningful percentage of) hitting one additional deal-breaker. This
+means a movie that meets 3/3 deal-breakers and 0/3 preferences should rank close
+to — but still above — a movie that meets 2/3 deal-breakers and 3/3 preferences.
+The exact ratio (full deal-breaker equivalent vs. partial) is an implementation
+tuning parameter. The principle is that preferences in aggregate should matter
+enough to differentiate results meaningfully within a deal-breaker conformance
+tier, and can partially compensate for a marginal deal-breaker miss.
+
 ---
 
 ## Subquery Generation Changes
@@ -590,13 +611,27 @@ Can't retrieve by what movies AREN'T. Retrieve broadly on the positive signals (
 vibe), then post-filter using metadata or LLM evaluation for the negated attributes.
 Negations are more naturally modeled as hard filters than as retrieval queries.
 
-### Similarity Queries ("like Inception")
+### Similarity Queries ("like Inception") — DEFERRED TO AFTER V2
+
+**Decision:** "Movies like xyz" should get routed to a different search flow
+entirely, but this should be handled after the initial version of search V2 is
+complete. The core V2 architecture (deal-breaker/preference decomposition,
+deterministic retrieval + semantic rescore) needs to be validated first. Similarity
+search is a distinct enough flow that bolting it on prematurely would add complexity
+without informing the core design.
+
 Could decompose the reference movie into its actual metadata attributes and determine
 which are most distinctive (vs generic). Use the distinctive attributes as deal-
 breakers and generic ones as preferences. A weighted mix of targeted vectors
 (plot_analysis, viewer_experience, narrative_techniques, etc.) provides more precise
 similarity scoring than a single generalist embedding would — each dimension's
 contribution can be controlled independently.
+
+**Franchise as a similarity attribute:** "Similar movies" also means entries to the
+same franchise — if someone asks for movies like "The Dark Knight," other Batman/DC
+movies are relevant beyond just vector similarity. Franchise membership
+(`movie_franchise_metadata`) should be checked as an additional structured attribute
+when computing similarity, alongside vector distances across spaces.
 
 **Distinctive vs generic decomposition:** Not all of a reference movie's traits are
 equally important for similarity. Inception's mind-bending nested reality structure is
@@ -814,7 +849,10 @@ movie_franchise_metadata (
 
 **Storage note:** `lineage` and `shared_universe` are both stored normalized and
 both feed `lex.inv_franchise_postings`, so franchise lookup can match either
-field without caring which slot the LLM used.
+field without caring which slot the LLM used. **These must always be searched
+together** — LLMs can flip-flop which field gets which value (e.g., putting "Shrek"
+in lineage vs shared_universe), so the search path must be slot-agnostic by
+design.
 
 **Data sources:**
 1. TMDB `belongs_to_collection` — reliable base for ~25% of movies. Gives franchise
@@ -1116,6 +1154,30 @@ structured LLM metadata across the vector spaces.
    preserved similarity for superlatives, diminishing returns for preferences,
    sort-by for ranking axes. Phase 0 determines which function applies where.
 
+10. **Query understanding / expansion LLMs should err on the side of
+    over-inclusion.** The system is designed to surface the right options once
+    we have all the necessary candidates — the bottleneck is getting relevant
+    movies INTO the candidate pool, not filtering them out. QU and expansion
+    LLMs should cast a wider net rather than a narrower one. A false positive
+    in the candidate pool gets filtered by scoring; a false negative is
+    permanently lost.
+
+11. **Separating candidate generation from reordering is load-bearing.** The
+    LLM must understand which parts of the query should generate candidates
+    and which parts should only reorder/score results. This is the single most
+    important classification Phase 0 makes. Getting this wrong means either
+    (a) using a broad vibe as a candidate generator (unreliable) or (b) using
+    a precise entity as merely a scoring signal (wastes its precision). Every
+    other design decision flows from this split being correct.
+
+12. **Be cautiously broad in interpretation.** When a user's query maps to a
+    structured field, prefer the generous interpretation. "Based on a true
+    story" likely means more than just the `TRUE_STORY` enum — it probably
+    also includes `BIOGRAPHY` and possibly `FOLKLORE_ADAPTATION` depending on
+    context. The QU LLM should map to multiple plausible enum values rather
+    than the single most literal one. Same principle applies to genre, era,
+    and other soft constraints.
+
 ---
 
 ## Concept Routing: User Concepts → Retrieval Systems
@@ -1246,3 +1308,37 @@ threshold+flatten handles the binary aspect; raw similarity handles ranking.
 | "cult classics" | Emerges from audience engagement patterns — not classifiable at ingestion |
 | "trending / popular right now" | Redis trending set + `popularity_score` |
 | "classics / iconic movies" | `reception_score` + `popularity_score` + age (dynamic quality prior in Phase 0) |
+
+---
+
+## V3 Ideas (Post-V2)
+
+Ideas that are explicitly scoped to a future V3 iteration, after the core V2
+architecture is validated.
+
+### Variable Queries for Truly Variable Intent
+
+When the user's intent is genuinely variable (ambiguous queries where multiple
+interpretations are valid), V3 should support variable query execution — the
+top-level LLM generates a full query understanding AND a quick human-readable
+label for each interpretation. These labels get passed back to the user alongside
+the results, so the user sees "Showing results for: emotional dramas" or competing
+interpretation options. This extends the multi-interpretation branching concept
+(currently deferred to V2+) with the added UX of transparent intent labeling.
+
+### Document Chunking for Vector Matching
+
+If vector matching quality remains insufficient after the structured-label
+embedding improvement, V3 can explore document chunking — splitting each movie's
+per-space text into multiple smaller chunks, each embedded separately. This would
+allow per-attribute retrieval granularity (e.g., a chunk specifically about "twist
+ending" for The Sixth Sense) rather than compressing all attributes into a single
+vector. Tradeoff: significantly increases storage and retrieval complexity (8
+spaces × N chunks per movie × 150K movies).
+
+### Franchise Search Flow as Independent Search Type
+
+"Movies like xyz" should route to a dedicated similarity search flow (deferred
+from V2). This flow would use franchise membership, vector similarity across
+spaces, and distinctive-vs-generic decomposition as described in the similarity
+queries section above.

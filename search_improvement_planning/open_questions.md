@@ -167,19 +167,21 @@ The finer details — how much a preference should contribute to rescoring relat
 a deal-breaker, exact weighting, decay functions — will be decided during
 implementation when we can test against real query results.
 
-### How to handle the "spectrum deal-breaker" problem?
+### How to handle the "spectrum deal-breaker" problem? — PARTIALLY ADDRESSED
 
 Deal-breakers that are spectrums create a classification problem. "Twist ending"
 exists on a spectrum — does Shutter Island have a "twist ending" or just "a reveal"?
 
-The threshold + flatten approach handles this mechanically, but the threshold
-position determines where on the spectrum you draw the line. This is
-acceptable — the architecture just needs to be *better than today*, not perfect.
-Edge cases at position 20-25 are tolerable as long as the clear-cut examples
-(Fight Club, Sixth Sense) surface in the top 5.
+**Partially addressed:** Keywords and concept tags turn many spectrum questions
+into simpler binary existence checks on hard data, avoiding the vector threshold
+problem entirely. For example, "twist ending" can be matched via concept tags
+rather than relying on vector similarity scores.
 
-The threshold selection question (above) subsumes this one. Solving threshold
-selection solves the spectrum problem.
+**Still open:** Purely semantic criteria not covered by deterministic searching
+(e.g., "cozy date night") remain spectrum problems that need vector-based
+thresholds. The threshold selection question (above) still applies for these
+cases. To be revisited once search v2 is running and we can measure how many
+queries fall into this purely-semantic bucket.
 
 ### ~~How should the scoring function vary by query type?~~ DECIDED
 
@@ -262,10 +264,12 @@ vector similarity, threshold-based). The combination works like this:
 genre (binary), then rank by preference layer (which includes Brad Pitt
 prominence via billing_position scoring).
 
-**Open sub-question:** How to handle the fallback case where no movies meet ALL
-deal-breakers. If the query has 4 deal-breakers and the max any movie meets is 3,
-do we show 3/4 movies? Probably yes, but the presentation should indicate which
-constraint was relaxed.
+**~~Open sub-question:~~ DECIDED** Candidates are generated individually per
+deal-breaker — if a movie matches at least one, it enters contention. Movies
+are then scored by the number of deal-breakers they satisfy and reranked by
+preference data (exact scoring logic TBD). This means the best partial matches
+surface first when no movie meets all deal-breakers. Presentation of which
+constraints were relaxed is handled naturally by the tiered scoring.
 
 ---
 
@@ -412,24 +416,13 @@ results load) is preferred over post-search grouping.
 
 ## Data Layer Questions
 
-### What's the future of the production vector space?
+### ~~What's the future of the production vector space?~~ DECIDED
 
-**Decided:** Regenerate the production vector with tightened definition — filming
-locations (WHERE) + production technique keywords only (HOW). Previous definition
-was too broad, causing thematic bleed. Regeneration is cheap and worth the cost.
-
-**Remaining question:** After regeneration, is the tightened content enough to
-justify a dedicated vector space? Measure whether the lean production vector
-contributes meaningfully to search results. If it rarely appears in candidates'
-top contributing spaces, eliminate the slot entirely (anchor is already dropped
-from V2, so folding into it is no longer an option).
-
-**Empirical evidence against current version:** For "iconic twist ending," the
-routing system gave reception 23.8% weight — not ideal, but reception does carry
-some twist signal in its praised_qualities. Meanwhile watch_context, which had the
-most twist-related content, received zero weight. This is primarily a routing
-problem (#15), but it also shows the current weight allocation system misallocates
-signal across spaces generally.
+**Decided:** Regenerated with tightened definition — filming locations (WHERE) +
+production technique keywords (HOW). The vector now handles queries that are too
+broad or variable for keyword matching, such as "movies filmed in Ireland" or
+"first person perspective filming." The tightened scope justifies keeping it as
+a dedicated vector space.
 
 ### ~~How should multi-vector scores combine for a single semantic concept?~~ DECIDED
 
@@ -567,6 +560,243 @@ embedding format, muting their individual signals.
 **Conclusion:** Embedding density is a symptom of the embedding format
 problem, not a separate root cause. See current_search_flaws.md #13.
 The structured-label embedding hypothesis is the highest-priority fix.
+
+---
+
+## Retrieval & Scoring Questions (New)
+
+### Should retrieval depth vary based on deal-breaker specificity?
+
+Broad or vague deal-breakers may need a larger candidate pool from vector search
+than specific ones. "Christmas" is relatively binary and tight — a few hundred
+candidates probably covers the relevant set. "Family friendly" is much broader and
+fuzzier — the relevant movies span thousands.
+
+**Possible approach for broad deal-breakers:** Start with a deterministic filter
+that provides a generous superset (e.g., maturity rating ≤ PG-13 with buffer),
+then use semantic scoring to evaluate how well each candidate actually adheres to
+the broader label ("family friendly" means more than just not-R-rated). This
+converts a vague vector deal-breaker into a deterministic-retrieval + semantic-
+rescore pattern, which is the architecture's strength.
+
+**Open sub-question:** How do we classify deal-breaker specificity? Is this
+something Phase 0 should output explicitly (e.g., a breadth signal per
+deal-breaker), or can the system infer it from the type of retrieval channel
+used (metadata filters → broad pool, keyword match → medium, entity → narrow)?
+
+### How should preferences interact with deal-breakers from the same attribute?
+
+Some attributes can function as both a deal-breaker AND a preference
+simultaneously. "Family-friendly Christmas comedies" — "Christmas" is a
+deal-breaker (must be a Christmas movie), but among Christmas movies, degree of
+Christmas-ness could also function as a preference signal (a movie where
+Christmas is central vs. one where it's incidental backdrop).
+
+**Cases where this makes sense:**
+- The attribute has a clear binary threshold for deal-breaker status AND a
+  meaningful spectrum above that threshold
+- "Christmas movies" — binary pass/fail on whether it's a Christmas movie, but
+  Christmas-centrality is a useful ranking signal within the passing set
+
+**Cases where this doesn't make sense:**
+- The attribute is truly binary with no meaningful spectrum (entity presence:
+  "Brad Pitt is in it or not")
+- The deal-breaker threshold already captures the full spectrum the user cares
+  about (genre filters)
+
+**Open sub-question:** When Phase 0 identifies an attribute as a deal-breaker,
+should it also emit a preference weight for the same concept? Or should this be
+automatic — any semantic deal-breaker whose similarity score is preserved (not
+flattened) implicitly becomes a preference signal within the passing set?
+
+### How do we handle pure vibes-based deal-breakers?
+
+Some deal-breakers are purely vibes-based — "cozy," "feel-good," "intense" —
+with no deterministic anchor, no keyword mapping, and no concept tag. These are
+user-intent deal-breakers that can only be evaluated via vector similarity, but
+empirical testing showed vector retrieval is unreliable as a candidate generator.
+
+This is a gap in the current architecture: the deterministic-retrieval-then-
+semantic-rescore model assumes at least one deterministic anchor exists. When the
+ONLY deal-breaker is a pure vibe, there's nothing to generate candidates from
+except vector search (the fallback acknowledged for pure-vibe queries).
+
+**Related to the "spectrum deal-breaker problem" above** — pure vibes-based
+deal-breakers are the hardest case of that problem because there's no
+deterministic fallback at all.
+
+**Possible approaches:**
+- Accept vector retrieval as the candidate generator for these cases (current
+  plan for pure-vibe queries) and invest in embedding quality improvements
+- Try to map vibes to proxy deterministic signals (e.g., "cozy" → genre filter
+  for drama/comedy + maturity ≤ PG-13 + keyword matches for "family" or
+  "holiday") as a generous superset, then rescore semantically
+- Combine both: proxy deterministic retrieval UNION vector retrieval, deduplicate
+
+### Is there a better model than t-shirt sizing for relative vector space weighting?
+
+The current approach uses t-shirt sizes (large=3, medium=2, small=1,
+not_relevant=0) for vector space weights. This is simple but coarse.
+
+**Alternative: points-based allocation.** Give the LLM a fixed budget of points
+(e.g., 10 or 100) to distribute across vector spaces. This allows finer-grained
+relative weighting — a space could get 45% of the budget vs 35% vs 20%, rather
+than the limited granularity of large/medium/small.
+
+**Considerations:**
+- Points-based may be harder for the LLM to calibrate consistently
+- T-shirt sizing's simplicity may be a feature if the LLM struggles with
+  fine-grained allocation
+- The new architecture reduces reliance on vector space weighting (semantic
+  concepts are scored per-space via cross-space rescoring, not blended via
+  weighted sum), which may make this less critical than in V1
+- Worth testing whether finer granularity actually improves results
+
+### What does "best" mean — critically acclaimed, popular, or both?
+
+When a user says "best comedies," "best horror movies," or just "best movies,"
+what does "best" map to?
+
+**Options:**
+- Critically acclaimed only (`reception_score`)
+- Popular only (`popularity_score`)
+- Weighted combination (e.g., `0.6 * reception + 0.4 * popularity`)
+- Context-dependent: "best" in "best horror movies" might lean popular, while
+  "best films of 2024" might lean critical
+
+**Note:** The default quality composite (`0.6 * reception + 0.4 * popularity`)
+already addresses this for the null-sorting-criteria case. The question is
+whether "best" as an explicit sorting criterion should use the same composite,
+lean harder toward one signal, or be context-dependent based on the query.
+
+### Reception vector embedding: scraped vs generated summary?
+
+When embedding the reception vector, should we default to the scraped reception
+summary (from IMDB reviews/critic data) over our own LLM-generated reception
+summary?
+
+**Tradeoffs:**
+- Scraped data is grounded in actual critic/audience language and may better
+  match how users search for reception-related concepts
+- LLM-generated summaries are more consistently structured and use our controlled
+  vocabulary, which aligns better with the structured-label embedding format
+- Could use both: LLM-generated for structured labels, scraped for supplementary
+  natural-language signal
+
+### What's the most efficient way to generate metadata structures at search time?
+
+The design calls for generating the same metadata structures used at ingestion
+time (e.g., NarrativeTechniquesOutput shape) as search queries. This ensures
+query and document embeddings occupy the same semantic space.
+
+**Efficiency question:** Generating a full Pydantic model output per vector space
+per query adds LLM latency. Options:
+- Generate all space-specific structures in a single LLM call (current Phase 0
+  approach, but with structured output per space)
+- Generate only for spaces identified as relevant by Phase 0
+- Cache common query patterns (e.g., "christmas" always maps to the same
+  watch_context structure)
+- Use a smaller/faster model for search-time metadata generation since it's
+  less critical than ingestion-time generation
+
+### Which pipeline failure points should be fatal vs graceful?
+
+The search pipeline has multiple stages. Need to identify:
+
+**Fatal failures (should fail the whole query):**
+- Phase 0 query understanding fails entirely (no structured output)
+- Database connection failures
+
+**Graceful failures (skip and still return results):**
+- One vector space query times out → score without that space
+- Cross-space rescoring fails for one concept → score as if concept not evaluated
+- Keyword matching returns zero results → fall back to other channels
+- Trending data unavailable → skip trending injection
+
+**Open question:** Where is the line? If the deal-breaker with the most weight
+fails to evaluate, should we return results with a warning, or fail the query?
+The user would rather see imperfect results than an error page, but showing
+results where the primary deal-breaker wasn't evaluated could be misleading.
+
+### What keywords are available and useful beyond current metadata filters?
+
+**Investigation needed:** Audit the full set of available keywords across the
+movie dataset to identify which ones could serve as useful deterministic signals
+that aren't already covered by metadata filters, concept tags, or the
+overall_keywords enum.
+
+This may uncover additional deal-breaker concepts that can be moved from the
+semantic (vector) side to the deterministic side, improving retrieval reliability
+per the core architectural principle.
+
+---
+
+## V2 Pipeline Questions (from finalized proposal)
+
+### How should elbow detection work for semantic exclusion thresholds?
+
+Semantic exclusions (e.g., "not ones with clowns") use an elbow-threshold
+penalty: search the full corpus for the exclusion concept, find the elbow in
+the score distribution, and penalize candidates above it. The elbow must be
+determined dynamically per concept since different concepts have different
+distributions (see threshold calibration data above — "twist ending" elbows at
+75% of max, "christmas" at 90%).
+
+**Constraints:**
+- Hard-coded percentage of max won't work across concept types
+- Need a method that handles both tight clusters (few movies genuinely match)
+  and broad distributions (many movies partially match)
+- Must distinguish "above elbow" (harsh penalty) from "near elbow" (soft
+  downrank) from "well below" (no penalty)
+
+**Needs empirical testing** before full implementation. Test with concepts of
+varying specificity (clowns vs violence vs Christmas) to see if a single
+detection method generalizes.
+
+### What should the multi-interpretation trigger criteria be?
+
+Step 1 can produce multiple interpretations for ambiguous queries. When should
+it trigger? Candidates:
+- LLM confidence score on primary interpretation falls below a threshold
+- Query contains genuinely ambiguous terms ("dark knight" → the movie vs dark +
+  knight themed)
+- Multiple plausible dealbreaker decompositions exist
+
+**Related opportunity:** Multi-interpretation could also handle broad-vs-narrow
+tension. For "dark gritty marvel movies," one interpretation treats all three as
+dealbreakers (strict) and another treats marvel as dealbreaker with dark+gritty
+as preferences (relaxed). This gives users strict results AND a broader fallback
+without separate fallback logic. Worth exploring post-MVP.
+
+### Should step 1 display semantic dealbreaker demotion to the user?
+
+When a dealbreaker is routed to `semantic` and demoted to a preference, the
+user's stated requirement is being treated as a ranking signal rather than a
+hard filter. If results are good, users won't notice. But if a non-matching
+movie appears mid-results, users might be confused.
+
+Options:
+- Don't surface it — let result quality speak for itself
+- Subtly indicate in the display phrase (e.g., "horror movies, ranked by car
+  chase relevance" vs "horror car chase movies")
+- Show a tooltip/indicator when a requirement couldn't be hard-filtered
+
+Likely a presentation concern to address during UI work, not an architectural
+decision.
+
+### How should the step 2 vector LLM handle semantic exclusion queries?
+
+The vector LLM needs to know it's formulating a query for a NEGATIVE semantic
+signal (exclusion), not a positive one. The search itself is the same (find
+movies similar to "clowns"), but the downstream scoring inverts the signal.
+The LLM should formulate the query to maximize recall of genuinely matching
+movies so the elbow detection has clean data.
+
+Open: should the query formulation differ for exclusions vs inclusions? An
+inclusion query might benefit from expansion ("car chases" → "car chases,
+vehicle pursuits, high-speed driving") while an exclusion query might need
+precision ("clowns" should stay focused to avoid penalizing circus-adjacent
+movies that don't actually have clowns).
 
 ---
 
