@@ -835,9 +835,24 @@ dependencies.
 
 ### Franchise Search Flow
 
-Franchise queries are decomposed by Phase 0 into up to four components:
-franchise identity (`lineage` / `shared_universe`), subgroup qualifier,
-lineage position, and boolean franchise flags.
+Franchise queries are decomposed by Phase 0 into up to six components:
+
+- **`lineage` / `shared_universe`** — canonical expanded form, same global
+  normalization rule as generation. Always lowercase. Example: "dark knight
+  movies" → `batman` with subgroup filter. "spinoffs of shrek" hits
+  `shared_universe = shrek` (shape B: parent franchise of a spinoff).
+- **`recognized_subgroups`** — free-text qualifier, trigram-matched against
+  stored normalized labels. "mcu phase 3 movies" → lineage=any marvel
+  lineage, subgroup=`phase three`.
+- **`lineage_position`** — enum filter. "batman sequels" → lineage=batman,
+  lineage_position=sequel. NOTE: `remake` is NOT consumed at search time
+  — use `source_of_inspiration` for cross-film retelling queries.
+- **`is_spinoff` / `is_crossover`** — boolean filters. "marvel spinoffs" →
+  shared_universe=`marvel cinematic universe` AND `is_spinoff=true`.
+- **`launched_subgroup`** — boolean filter. "first entry in phase three"
+  combines subgroup=`phase three` with launched_subgroup=true.
+- **`launched_franchise`** — boolean filter. "movies that launched a
+  franchise" → launched_franchise=true.
 
 **franchise_name resolution:** Both the ingestion LLM (franchise generation) and
 the search extraction LLM are instructed to output the most common, fully expanded
@@ -848,18 +863,19 @@ This ensures both sides converge on the same canonical string without needing
 alias tables. After extraction, `normalize_string()` is applied and trigram
 similarity against `lex.lexical_dictionary` resolves to a `term_id`.
 
-**franchise_role filtering:** `franchise_role` is stored as an integer derived
-from the `FranchiseRole` enum. The search extraction LLM receives the same enum
-definition and outputs matching values. Filtered with a simple WHERE clause on
-the post-lookup result set.
+**Phase 1 retrieval:**
+1. `lineage` / `shared_universe` → `normalize_string()` → trigram similarity
+   against `lex.lexical_dictionary` → `term_id` → shared franchise posting lookup
+2. Boolean filters (`launched_subgroup`, `launched_franchise`, `is_spinoff`,
+   `is_crossover`) and `lineage_position` applied as structured WHERE clauses
+   on `movie_franchise_metadata`
+3. Optional `recognized_subgroups` match: trigram similarity on the normalized
+   labels. Candidate set is small enough (3-30 movies) that no index is needed.
 
-**culturally_recognized_group matching:** After franchise lexical lookup narrows
-to 3-30 movies, the group qualifier is matched via trigram similarity on the
-normalized `culturally_recognized_group` column. The candidate set is small
-enough that no index is needed — `similarity()` or `ILIKE` on a few dozen rows
-is effectively free. Example: "Star Wars original trilogy" → franchise lookup
-returns ~12 Star Wars movies → trigram match "original trilogy" against each
-movie's group value.
+The two-axis design means a single query like "movies that launched a franchise"
+is a single structured filter (`launched_franchise=true`), while "spinoffs of
+marvel" is two filters (shared_universe + `is_spinoff=true`), with no
+axis-conflation ambiguity.
 
 #### Role-specific person posting tables
 
@@ -993,8 +1009,8 @@ lexical-matchable entities.
 
 ### Keyword-Based Deal-Breaker Filtering
 
-**Updated after vocabulary audit** — see
-[keyword_vocabulary_audit.md](keyword_vocabulary_audit.md) for full findings.
+**Updated after vocabulary audit** — findings are summarized below and
+the full `OverallKeyword` enum is in `implementation/classes/overall_keywords.py`.
 
 IMDB's `overall_keywords` is a curated genre/sub-genre taxonomy of exactly
 225 terms with 100% movie coverage. It is NOT a free-form tagging system —
@@ -1032,7 +1048,22 @@ query implies a sub-genre or deal-breaker concept.
 sci-fi sub-genres (5), fantasy sub-genres (4), action styles (7), romance
 sub-genres (5), thematic concepts (9), adventure sub-types (12), documentary
 sub-types (11), sports (8), musical sub-types (4), language/nationality (30),
-format/other (8). See audit report for full mappings.
+format/other (8). Full per-category mappings (user query → keyword terms) are
+encoded in the `OverallKeyword` enum definitions in
+`implementation/classes/overall_keywords.py`.
+
+**Language/nationality tags complement structured fields.** The 30
+language/nationality `overall_keywords` (French, Hindi, Korean, etc.) capture
+"cinema tradition" rather than just production country. A query for "Korean
+cinema" should check both the `Korean` keyword tag AND
+`country_of_origin_ids` / `audio_language_ids`. The keyword tag captures
+editorial judgment about cinema tradition membership, which doesn't always
+align with production country alone.
+
+**`plot_keywords` do not need a search path.** `plot_keywords` is a free-form
+community tagging system (114K distinct terms, 53% singletons). Its value is
+already absorbed by the metadata generation pipeline and distilled into
+structured LLM metadata across the vector spaces.
 
 ---
 
@@ -1084,3 +1115,134 @@ format/other (8). See audit report for full mappings.
    the same scoring function uniformly. Threshold+flatten for deal-breakers,
    preserved similarity for superlatives, diminishing returns for preferences,
    sort-by for ranking axes. Phase 0 determines which function applies where.
+
+---
+
+## Concept Routing: User Concepts → Retrieval Systems
+
+When Phase 0 decomposes a user query, each concept must be routed to the
+correct retrieval system. Concept tags handle binary deal-breaker filtering
+(27 tags in `concept_tag_ids`), but many common user concepts are served by
+other structured fields, keywords, vectors, or query-time derivations.
+
+### Concept tags vs. vector spaces
+
+Concept tags and vector spaces serve different purposes for the same movie:
+- Tags → Phase 1 deterministic candidate retrieval ("give me ALL revenge movies")
+- Vectors → Phase 2 spectrum scoring ("among these, rank by how dark they are")
+
+A movie tagged PLOT_TWIST still has twist-related content in its
+narrative_techniques vector. The tag gets the candidate set right; the vector
+scores nuance within it. This is complementary, not redundant.
+
+### Concept tag search routing (PLOT_TWIST vs. TWIST_VILLAIN)
+
+TWIST_VILLAIN is a subset of PLOT_TWIST where the surprise is specifically
+about who the villain is. For search routing:
+- "twist movies" / "movies with a plot twist" → filter by `PLOT_TWIST` tag
+- "movies with a twist ending" → filter by `PLOT_TWIST` tag + rank by
+  ending-specific signals (narrative_techniques vector, information_control
+  terms mentioning reveals near resolution)
+- "movies with a twist villain" → filter by `TWIST_VILLAIN` tag
+
+### Route to `overall_keywords` (225-term keyword taxonomy)
+
+Phase 0 emits the corresponding `overall_keywords` term(s) for keyword-based
+retrieval via `keyword_ids`.
+
+| User concept | Route to keyword(s) | Notes |
+|-------------|---------------------|-------|
+| "conspiracy movies" | `Conspiracy Thriller` (384) | Also consider `Political Thriller` (321), `Political Drama` (459). |
+| "heist movies" | `Heist` (346), `Caper` (192) | CON_ARTIST concept tag covers non-heist con/scam space. |
+| "survival movies" | `Survival` (319) | |
+| "road trip movies" | `Road Trip` (269) | |
+| "time travel movies" | `Time Travel` (224) | TIME_LOOP concept tag covers the distinct time-loop sub-concept. |
+| "coming of age movies" | `Coming-of-Age` (1,252) | |
+| "superhero movies" | `Superhero` (839) | |
+| "film noir" | `Film Noir` (926) | |
+| "spy movies" | `Spy` (366) | |
+| "disaster movies" | `Disaster` (247) | |
+| "whodunit / murder mystery" | `Whodunnit` (693) | |
+| "serial killer movies" | `Serial Killer` (281) | |
+| "zombie movies" | `Zombie Horror` (333) | Horror-specific; non-horror zombies may need vector fallback. |
+| "vampire movies" | `Vampire Horror` (239) | Horror-specific; vampire romance/drama may need vector fallback. |
+| "found footage movies" | `Found Footage Horror` (309) | Horror-specific; non-horror found footage (~50 movies) uses vector fallback. |
+| "Christmas / holiday movies" | `Holiday` (804) + sub-types | |
+| "mockumentary" | `Mockumentary` (80) | |
+| "gangster movies" | `Gangster` (383) | |
+| "true crime" | `True Crime` (832) | |
+| "body swap movies" | `Body Swap Comedy` (69) | |
+| "prison movies" | `Prison Drama` (180) | Drama-specific; other genres use vector fallback or genre + keyword combo. |
+| "one-man army / action hero" | `One-Person Army Action` (533) | |
+| "martial arts movies" | `Martial Arts` (991) + sub-types | |
+| "car chase movies" | `Car Action` (137) | |
+
+### Route to `source_material_type_ids`
+
+| User concept | Route to enum value(s) |
+|-------------|----------------------|
+| "based on a true story" | `TRUE_STORY`, `BIOGRAPHY` |
+| "book adaptations" | `NOVEL_ADAPTATION`, `SHORT_STORY_ADAPTATION` |
+| "comic book movies" | `COMIC_ADAPTATION` |
+| "remakes" | `REMAKE` |
+| "video game movies" | `VIDEO_GAME_ADAPTATION` |
+| "based on a play" | `STAGE_ADAPTATION` |
+| "folklore / fairy tale movies" | `FOLKLORE_ADAPTATION` |
+| "original screenplays" | empty `source_material_type_ids` array (`= '{}'`) |
+
+### Route to `genre_ids`
+
+| User concept | Route to genre(s) |
+|-------------|-------------------|
+| "documentaries" | `DOCUMENTARY` |
+| "biographies / biopics" | `BIOGRAPHY` |
+| "musicals" | `MUSICAL` |
+| "war movies" | `WAR` |
+| "westerns" | `WESTERN` |
+
+### Route to other structured fields
+
+| User concept | Route to field |
+|-------------|---------------|
+| "award-winning movies" | `movie_awards` table — filter by ceremony + outcome |
+| "movies from [country]" | `country_of_origin_ids` + `audio_language_ids` + language/nationality keywords |
+| "movies on Netflix" | `watch_offer_keys` |
+| "movies from the 80s" | `release_ts` soft constraint |
+| "short movies" | `runtime_minutes` |
+| "R-rated movies" | `maturity_rank` |
+| "big budget movies" | `budget_bucket` |
+| "box office hits" | `box_office_bucket` |
+| "[franchise] movies" | `movie_franchise_metadata` table |
+| "[actor/director] movies" | Role-specific posting tables |
+
+### Route to vector similarity (spectrum concepts)
+
+Concepts where degree matters. Phase 2 cross-space rescoring with
+threshold+flatten handles the binary aspect; raw similarity handles ranking.
+
+| User concept | Route to vector space(s) | Notes |
+|-------------|-------------------------|-------|
+| "scary movies" | `viewer_experience` (tension_adrenaline, disturbance_profile) | Degree matters — "scariest ever" is a ranking query. |
+| "funny [genre] movies" | `viewer_experience` (tone_self_seriousness) | "Funny horror" needs semantic scoring, not binary tagging. |
+| "dark / bleak movies" | `viewer_experience` (emotional_palette, tone_self_seriousness) | Spectrum from "slightly dark" to "nihilistic." |
+| "intense / tense movies" | `viewer_experience` (tension_adrenaline) | Degree of intensity is the ranking signal. |
+| "mind-bending movies" | `viewer_experience` (cognitive_complexity) + `narrative_techniques` | PLOT_TWIST and NONLINEAR_TIMELINE tags cover structural aspects. |
+| "slow burn movies" | `viewer_experience` (tension_adrenaline) | Pacing is fundamentally a spectrum. |
+| "disturbing movies" | `viewer_experience` (disturbance_profile) | Wide spectrum from "unsettling" to "unwatchable." |
+| "cozy / comforting movies" | `viewer_experience` (emotional_palette) + `watch_context` | Degree matters. |
+| "visually stunning movies" | `viewer_experience` (sensory_load) + `narrative_techniques` | Degree of visual quality. |
+| "great soundtrack movies" | `watch_context` (key_movie_feature_draws) | Degree and subjectivity. |
+| "cheesy movies" | `viewer_experience` (tone_self_seriousness) | Degree of cheesiness is the point. |
+| "gritty movies" | `viewer_experience` (tone_self_seriousness) | Spectrum — realism/rawness varies. |
+| "date night movies" | `watch_context` (watch_scenarios) | Viewing context, not binary movie attribute. |
+| "turn your brain off movies" | `watch_context` (self_experience_motivations) + `viewer_experience` (cognitive_complexity) | Viewing context. |
+
+### Derived at query time (not movie attributes)
+
+| User concept | How to handle |
+|-------------|--------------|
+| "critically acclaimed" | `reception_score` threshold or `movie_awards` presence |
+| "underrated / hidden gems" | High `reception_score` + low `popularity_score` (anti-correlation) |
+| "cult classics" | Emerges from audience engagement patterns — not classifiable at ingestion |
+| "trending / popular right now" | Redis trending set + `popularity_score` |
+| "classics / iconic movies" | `reception_score` + `popularity_score` + age (dynamic quality prior in Phase 0) |

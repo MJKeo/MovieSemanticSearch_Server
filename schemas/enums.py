@@ -101,7 +101,7 @@ class LineagePosition(str, Enum):
     # would push borderline cases (Scarface 1983 / 1932) into
     # misleading alternative labels. Keep writing it; don't read it
     # in the search path. See search_improvement_planning/
-    # franchise_test_iterations.md (v5).
+    # docs/modules/ingestion.md franchise section for rationale.
     REMAKE = ("remake", 3)
     REBOOT = ("reboot", 4)
 
@@ -112,8 +112,8 @@ class LineagePosition(str, Enum):
 # constraints in LLM structured output) and a stable integer ID (for
 # future movie_card.source_material_type_ids GIN-indexed storage).
 #
-# See search_improvement_planning/source_material_type_enum.md for full
-# definitions, boundary notes, and deliberate exclusions.
+# See docs/modules/ingestion.md (SourceMaterialType section) for
+# boundary notes and deliberate exclusions.
 class SourceMaterialType(str, Enum):
     source_material_type_id: int
 
@@ -149,8 +149,8 @@ class SourceMaterialType(str, Enum):
 # IDs are gapped by category to allow future additions within a category
 # without renumbering existing tags.
 #
-# See search_improvement_planning/concept_tags.md for full definitions,
-# classification signals, and deliberate exclusions.
+# See search_improvement_planning/ingestion.md for generation design
+# rationale, and new_system_brainstorm.md for search routing tables.
 # ---------------------------------------------------------------------------
 
 
@@ -158,113 +158,127 @@ class SourceMaterialType(str, Enum):
 # story is told.
 class NarrativeStructureTag(str, Enum):
     concept_tag_id: int
+    description: str
 
-    def __new__(cls, value: str, concept_tag_id: int) -> "NarrativeStructureTag":
+    def __new__(cls, value: str, concept_tag_id: int, description: str) -> "NarrativeStructureTag":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.concept_tag_id = concept_tag_id
+        obj.description = description
         return obj
 
-    PLOT_TWIST            = ("plot_twist", 1)
-    TWIST_VILLAIN         = ("twist_villain", 2)
-    TIME_LOOP             = ("time_loop", 3)
-    NONLINEAR_TIMELINE    = ("nonlinear_timeline", 4)
-    UNRELIABLE_NARRATOR   = ("unreliable_narrator", 5)
-    OPEN_ENDING           = ("open_ending", 6)
-    SINGLE_LOCATION       = ("single_location", 7)
-    BREAKING_FOURTH_WALL  = ("breaking_fourth_wall", 8)
-    CLIFFHANGER_ENDING    = ("cliffhanger_ending", 9)
+    PLOT_TWIST            = ("plot_twist", 1, "Has a significant plot twist or surprise revelation that recontextualizes part or all of the story, including mid-story reveals and identity twists.")
+    TWIST_VILLAIN         = ("twist_villain", 2, "A character revealed as the villain is a surprise — the villain's identity itself is the twist.")
+    TIME_LOOP             = ("time_loop", 3, "Characters relive the same time period repeatedly. Distinct from time travel.")
+    NONLINEAR_TIMELINE    = ("nonlinear_timeline", 4, "Story is told out of chronological order as a deliberate, defining structural choice — not just a brief flashback.")
+    UNRELIABLE_NARRATOR   = ("unreliable_narrator", 5, "The narrator or POV character's account is revealed as untrustworthy.")
+    OPEN_ENDING           = ("open_ending", 6, "The story deliberately leaves its central question unresolved or ambiguous.")
+    SINGLE_LOCATION       = ("single_location", 7, "Nearly all action takes place in one location (bottle movie). The constraint is a defining feature.")
+    BREAKING_FOURTH_WALL  = ("breaking_fourth_wall", 8, "Characters directly address the audience or acknowledge they are in a movie as a notable, deliberate choice.")
+    CLIFFHANGER_ENDING    = ("cliffhanger_ending", 9, "The story ends on a major unresolved moment designed to leave the audience in suspense for a sequel or continuation.")
 
 
 # Plot archetype tags (IDs 11-14): the central premise or driving force.
 class PlotArchetypeTag(str, Enum):
     concept_tag_id: int
+    description: str
 
-    def __new__(cls, value: str, concept_tag_id: int) -> "PlotArchetypeTag":
+    def __new__(cls, value: str, concept_tag_id: int, description: str) -> "PlotArchetypeTag":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.concept_tag_id = concept_tag_id
+        obj.description = description
         return obj
 
-    REVENGE    = ("revenge", 11)
-    UNDERDOG   = ("underdog", 12)
-    KIDNAPPING = ("kidnapping", 13)
-    CON_ARTIST = ("con_artist", 14)
+    REVENGE    = ("revenge", 11, "The central plot is driven by a character seeking vengeance. Revenge is the primary narrative engine, not a subplot.")
+    UNDERDOG   = ("underdog", 12, "Protagonist is clearly outmatched and overcomes the odds. The power imbalance is a defining feature of the story.")
+    KIDNAPPING = ("kidnapping", 13, "The plot centers on a kidnapping or abduction as a central story element, not just one event among many.")
+    CON_ARTIST = ("con_artist", 14, "Protagonist is a con artist, grifter, or scammer — the movie is about deception and manipulation as a craft. Distinct from heist/robbery.")
 
 
 # Setting tags (IDs 21-23): settings users search for as the primary filter.
 class SettingTag(str, Enum):
     concept_tag_id: int
+    description: str
 
-    def __new__(cls, value: str, concept_tag_id: int) -> "SettingTag":
+    def __new__(cls, value: str, concept_tag_id: int, description: str) -> "SettingTag":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.concept_tag_id = concept_tag_id
+        obj.description = description
         return obj
 
-    POST_APOCALYPTIC = ("post_apocalyptic", 21)
-    HAUNTED_LOCATION = ("haunted_location", 22)
-    SMALL_TOWN       = ("small_town", 23)
+    POST_APOCALYPTIC = ("post_apocalyptic", 21, "Set after civilization's collapse. Distinct from dystopian (society intact but oppressive).")
+    HAUNTED_LOCATION = ("haunted_location", 22, "Set in or centered around a haunted house, building, or specific location. Narrower than supernatural horror.")
+    SMALL_TOWN       = ("small_town", 23, "The small-town setting is central to the story's identity and atmosphere, not just incidental.")
 
 
 # Character tags (IDs 31-33).
 class CharacterTag(str, Enum):
     concept_tag_id: int
+    description: str
 
-    def __new__(cls, value: str, concept_tag_id: int) -> "CharacterTag":
+    def __new__(cls, value: str, concept_tag_id: int, description: str) -> "CharacterTag":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.concept_tag_id = concept_tag_id
+        obj.description = description
         return obj
 
-    FEMALE_LEAD        = ("female_lead", 31)
-    ENSEMBLE_CAST      = ("ensemble_cast", 32)
-    ANTI_HERO          = ("anti_hero", 33)
+    FEMALE_LEAD        = ("female_lead", 31, "The single protagonist is female, or in a two-hander one co-lead is female. Ensemble casts never qualify.")
+    ENSEMBLE_CAST      = ("ensemble_cast", 32, "No single protagonist — multiple characters share roughly equal narrative weight.")
+    ANTI_HERO          = ("anti_hero", 33, "Protagonist is morally ambiguous, operates outside conventional morality, or lacks traditional heroic qualities as a defining trait.")
 
 
 # Ending tags (IDs 41-43): strong deal-breakers based on how the movie ends.
 class EndingTag(str, Enum):
     concept_tag_id: int
+    description: str
 
-    def __new__(cls, value: str, concept_tag_id: int) -> "EndingTag":
+    def __new__(cls, value: str, concept_tag_id: int, description: str) -> "EndingTag":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.concept_tag_id = concept_tag_id
+        obj.description = description
         return obj
 
-    HAPPY_ENDING       = ("happy_ending", 41)
-    SAD_ENDING         = ("sad_ending", 42)
-    BITTERSWEET_ENDING = ("bittersweet_ending", 43)
+    HAPPY_ENDING       = ("happy_ending", 41, "Things work out for the protagonists. The overall resolution is positive or optimistic.")
+    SAD_ENDING         = ("sad_ending", 42, "The story ends predominantly sad or negatively for the protagonists — loss, failure, or death. Not just bittersweet.")
+    BITTERSWEET_ENDING = ("bittersweet_ending", 43, "The ending mixes positive and negative elements — some things work out, others don't. Neither purely happy nor purely sad.")
     # Classification-only value: none of the above ending tags apply.
     # Filtered out before storage — never appears in concept_tag_ids.
-    NO_CLEAR_CHOICE    = ("no_clear_choice", -1)
+    NO_CLEAR_CHOICE    = ("no_clear_choice", -1, "None of the above ending tags apply — the evidence is ambiguous, insufficient, or the ending does not fit happy/sad/bittersweet.")
 
 
 # Experiential tags (IDs 51-52): binary experiential qualities.
 class ExperientialTag(str, Enum):
     concept_tag_id: int
+    description: str
 
-    def __new__(cls, value: str, concept_tag_id: int) -> "ExperientialTag":
+    def __new__(cls, value: str, concept_tag_id: int, description: str) -> "ExperientialTag":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.concept_tag_id = concept_tag_id
+        obj.description = description
         return obj
 
-    FEEL_GOOD  = ("feel_good", 51)
-    TEARJERKER = ("tearjerker", 52)
+    FEEL_GOOD  = ("feel_good", 51, "The overall effect of watching the movie is uplifting and positive — the trajectory and ending leave the viewer feeling good.")
+    TEARJERKER = ("tearjerker", 52, "The movie is designed to make you cry and audiences report that it does. Based on emotional impact, not just sad plot events.")
 
 
 # Content flag tags (ID 61): avoidance deal-breakers.
 class ContentFlagTag(str, Enum):
     concept_tag_id: int
+    description: str
 
-    def __new__(cls, value: str, concept_tag_id: int) -> "ContentFlagTag":
+    def __new__(cls, value: str, concept_tag_id: int, description: str) -> "ContentFlagTag":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.concept_tag_id = concept_tag_id
+        obj.description = description
         return obj
 
-    ANIMAL_DEATH = ("animal_death", 61)
+    ANIMAL_DEATH = ("animal_death", 61, "An animal dies on screen or as a significant plot point.")
 
 
 # All concept tags as a flat tuple, excluding classification-only

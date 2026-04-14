@@ -7,7 +7,6 @@ of the 8 named vector spaces. Uses the Movie fixture directly (no DB).
 
 import pytest
 
-from implementation.classes.enums import BudgetSize
 from implementation.misc.helpers import normalize_string
 from schemas.movie import Movie, TMDBData, IMDBData
 from schemas.metadata import (
@@ -20,13 +19,10 @@ from schemas.metadata import (
     ViewerExperienceOutput,
     WatchContextOutput,
     NarrativeTechniquesOutput,
-    ProductionKeywordsOutput,
-    SourceOfInspirationOutput,
     TermsWithNegationsAndJustificationSection,
     TermsWithJustificationSection,
 )
 from movie_ingestion.final_ingestion.vector_text import (
-    budget_size_to_vector_text,
     create_anchor_vector_text,
     create_plot_events_vector_text,
     create_plot_analysis_vector_text,
@@ -163,19 +159,8 @@ def _make_narrative_techniques(**section_overrides):
     return NarrativeTechniquesOutput(**data)
 
 
-# ---------------------------------------------------------------------------
-# budget_size_to_vector_text
-# ---------------------------------------------------------------------------
-
-class TestBudgetSizeToVectorText:
-    def test_small(self):
-        assert budget_size_to_vector_text(BudgetSize.SMALL) == "small budget"
-
-    def test_large(self):
-        assert budget_size_to_vector_text(BudgetSize.LARGE) == "big budget, blockbuster"
-
-    def test_none(self):
-        assert budget_size_to_vector_text(None) == ""
+# TestBudgetSizeToVectorText removed — budget_size_to_vector_text()
+# was removed from vector_text.py.
 
 
 # ---------------------------------------------------------------------------
@@ -204,20 +189,15 @@ class TestAnchorVectorText:
                 reception_summary="A landmark film.",
                 praised_qualities=["great acting"],
             ),
-            source_of_inspiration_metadata=SourceOfInspirationOutput(
-                source_material=["based on comic"],
-                franchise_lineage=[],
-            ),
         )
         result = create_anchor_vector_text(movie)
         assert "spider-man" in result
         assert "revenge in a small town" in result  # elevator pitch
-        assert "genres:" in result
+        assert "genre_signatures:" in result
         assert "themes:" in result
-        assert "source material:" in result
-        assert "emotional palette:" in result
-        assert "key draws:" in result
-        assert "reception:" in result
+        assert "emotional_palette:" in result
+        assert "key_draws:" in result
+        assert "reception_summary:" in result
         assert "a landmark film." in result
 
     def test_uses_lowercase_for_prose(self):
@@ -230,26 +210,39 @@ class TestAnchorVectorText:
         assert "a tense drama." in result
 
     def test_uses_normalize_string_for_terms(self):
-        movie = _make_movie(imdb_data={"overall_keywords": ["Ocean's Treasure"]})
+        """genre_signatures terms should be individually normalized."""
+        movie = _make_movie(
+            plot_analysis_metadata=_make_plot_analysis(
+                genre_signatures=["Ocean's Thriller", "Film-Noir"],
+            ),
+        )
         result = create_anchor_vector_text(movie)
-        assert normalize_string("Ocean's Treasure") in result
+        assert normalize_string("Ocean's Thriller") in result
 
     def test_falls_back_to_overview(self):
         """Without plot_analysis, should fall back to imdb overview."""
         movie = _make_movie(imdb_data={"overview": "A great adventure."})
         result = create_anchor_vector_text(movie)
+        assert "identity_overview:" in result
         assert "a great adventure." in result
 
-    def test_includes_source_material(self):
-        movie = _make_movie(
-            source_of_inspiration_metadata=SourceOfInspirationOutput(
-                source_material=["based on novel"],
-                franchise_lineage=["sequel"],
-            ),
-        )
+    def test_includes_original_title_when_different(self):
+        """original_title should appear when it differs from title."""
+        movie = _make_movie(imdb_data={"original_title": "El Hombre Araña"})
         result = create_anchor_vector_text(movie)
-        assert "source material:" in result
-        assert "franchise position:" in result
+        assert "original_title:" in result
+
+    def test_excludes_original_title_when_same(self):
+        """original_title should be omitted when it matches title."""
+        movie = _make_movie(imdb_data={"original_title": "Spider-Man"})
+        result = create_anchor_vector_text(movie)
+        assert "original_title:" not in result
+
+    def test_includes_identity_pitch(self):
+        """Elevator pitch from plot_analysis should appear as identity_pitch."""
+        movie = _make_movie(plot_analysis_metadata=_make_plot_analysis())
+        result = create_anchor_vector_text(movie)
+        assert "identity_pitch:" in result
 
     def test_includes_emotional_palette(self):
         movie = _make_movie(
@@ -258,7 +251,7 @@ class TestAnchorVectorText:
             ),
         )
         result = create_anchor_vector_text(movie)
-        assert "emotional palette:" in result
+        assert "emotional_palette:" in result
 
     def test_includes_key_draws(self):
         movie = _make_movie(
@@ -267,7 +260,7 @@ class TestAnchorVectorText:
             ),
         )
         result = create_anchor_vector_text(movie)
-        assert "key draws:" in result
+        assert "key_draws:" in result
 
     def test_includes_maturity(self):
         movie = _make_movie(
@@ -284,15 +277,15 @@ class TestAnchorVectorText:
         )
         result = create_anchor_vector_text(movie)
         assert "universally praised." in result
-        assert "reception:" in result
+        assert "reception_summary:" in result
 
     def test_all_optional_metadata_none(self):
         """Should still produce valid text from TMDB/IMDB data alone."""
         movie = _make_movie()
         result = create_anchor_vector_text(movie)
         assert "spider-man" in result
-        assert "genres:" in result
-        assert "keywords:" in result
+        # Without metadata, only title and overview appear
+        assert "title:" in result
 
 
 # ---------------------------------------------------------------------------
@@ -381,48 +374,16 @@ class TestPlotEventsVectorText:
 # ---------------------------------------------------------------------------
 
 class TestPlotAnalysisVectorText:
-    def test_merges_imdb_genres(self):
-        """IMDB genres should be appended to genre_signatures."""
-        meta = _make_plot_analysis(genre_signatures=["Drama", "Mystery"])
-        movie = _make_movie(
-            imdb_data={"genres": ["Thriller"]},
-            plot_analysis_metadata=meta,
-        )
-        result = create_plot_analysis_vector_text(movie)
-        assert normalize_string("Drama") in result
-        assert normalize_string("Thriller") in result
-
-    def test_deduplicates_genres(self):
-        """Overlapping genres should not be duplicated."""
-        meta = _make_plot_analysis(genre_signatures=["Action", "Drama"])
-        movie = _make_movie(
-            imdb_data={"genres": ["Action"]},
-            plot_analysis_metadata=meta,
-        )
-        result = create_plot_analysis_vector_text(movie)
-        # "Action" should appear once in the genre signatures section
-        genre_line = [l for l in result.split("\n") if "genre signatures:" in l][0]
-        assert genre_line.count(normalize_string("Action")) == 1
-
     def test_returns_none_without_metadata(self):
         movie = _make_movie()
         assert create_plot_analysis_vector_text(movie) is None
 
-    def test_genre_mutation_does_not_corrupt_source(self):
-        """Appending IMDB genres should not corrupt the metadata object
-        for a second call with different IMDB genres."""
-        meta = _make_plot_analysis(genre_signatures=["Drama", "Mystery"])
-        movie = _make_movie(
-            imdb_data={"genres": ["Comedy"]},
-            plot_analysis_metadata=meta,
-        )
-        # First call appends "Comedy"
-        create_plot_analysis_vector_text(movie)
-        # genre_signatures now has ["Drama", "Mystery", "Comedy"] due to in-place mutation
-        # A second call should not re-add "Comedy"
+    def test_delegates_to_embedding_text(self):
+        """Result should equal the metadata's embedding_text() output exactly."""
+        meta = _make_plot_analysis()
+        movie = _make_movie(plot_analysis_metadata=meta)
         result = create_plot_analysis_vector_text(movie)
-        genre_line = [l for l in result.split("\n") if "genre signatures:" in l][0]
-        assert genre_line.count(normalize_string("Comedy")) == 1
+        assert result == meta.embedding_text()
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +460,7 @@ class TestWatchContextReturnsNone:
 
 class TestProductionVectorText:
     def test_excludes_filming_locations_for_animation(self):
+        """Animation movies should not include filming locations."""
         movie = _make_movie(
             imdb_data={
                 "genres": ["Animation", "Comedy"],
@@ -506,7 +468,7 @@ class TestProductionVectorText:
             },
         )
         result = create_production_vector_text(movie)
-        assert "filming locations" not in result
+        assert result is None or "filming_locations" not in result
 
     def test_includes_filming_locations_for_live_action(self):
         movie = _make_movie(
@@ -516,45 +478,62 @@ class TestProductionVectorText:
             },
         )
         result = create_production_vector_text(movie)
-        assert "filming locations" in result
+        assert "filming_locations:" in result
 
-    def test_production_medium_animation(self):
-        movie = _make_movie(imdb_data={"genres": ["Animation"]})
-        result = create_production_vector_text(movie)
-        assert "production medium: animation" in result
-
-    def test_production_medium_live_action(self):
-        movie = _make_movie(imdb_data={"genres": ["Drama"]})
-        result = create_production_vector_text(movie)
-        assert "production medium: live action" in result
-
-    def test_default_original_screenplay(self):
-        """No source_of_inspiration_metadata → 'original screenplay'."""
-        movie = _make_movie()
-        result = create_production_vector_text(movie)
-        assert "source material: original screenplay" in result
-
-    def test_uses_source_embedding_text(self):
-        """Source metadata present → delegates to embedding_text()."""
+    def test_returns_none_when_no_data(self):
+        """Animation movie with no techniques → None."""
         movie = _make_movie(
-            source_of_inspiration_metadata=SourceOfInspirationOutput(
-                source_material=["based on novel"],
-                franchise_lineage=[],
-            ),
+            imdb_data={
+                "genres": ["Animation"],
+                "filming_locations": [],
+            },
         )
-        result = create_production_vector_text(movie)
-        assert "source material:" in result
-        assert "original screenplay" not in result
+        assert create_production_vector_text(movie) is None
 
-    def test_includes_production_keywords(self):
+    def test_includes_production_techniques(self):
+        """production_techniques_metadata with terms → 'production_techniques:' in result."""
+        from schemas.metadata import ProductionTechniquesOutput as PTOutput
         movie = _make_movie(
-            production_keywords_metadata=ProductionKeywordsOutput(
+            production_techniques_metadata=PTOutput(
                 terms=["practical effects", "IMAX"],
             ),
         )
         result = create_production_vector_text(movie)
-        assert normalize_string("practical effects") in result
-        assert normalize_string("IMAX") in result
+        assert "production_techniques:" in result
+
+    def test_production_techniques_only(self):
+        """Animation movie with techniques but no locations → result has only techniques."""
+        from schemas.metadata import ProductionTechniquesOutput as PTOutput
+        movie = _make_movie(
+            imdb_data={"genres": ["Animation"], "filming_locations": ["LA"]},
+            production_techniques_metadata=PTOutput(terms=["stop motion"]),
+        )
+        result = create_production_vector_text(movie)
+        assert "production_techniques:" in result
+        assert "filming_locations:" not in result
+
+    def test_filming_locations_only(self):
+        """Live action with locations but no techniques → result has only locations."""
+        movie = _make_movie(
+            imdb_data={"genres": ["Drama"], "filming_locations": ["London"]},
+        )
+        result = create_production_vector_text(movie)
+        assert "filming_locations:" in result
+        assert "production_techniques:" not in result
+
+    def test_filming_locations_limited_to_3(self):
+        """Only first 3 filming locations are included."""
+        movie = _make_movie(
+            imdb_data={
+                "genres": ["Drama"],
+                "filming_locations": ["New York", "London", "Paris", "Tokyo"],
+            },
+        )
+        result = create_production_vector_text(movie)
+        assert "new york" in result
+        assert "london" in result
+        assert "paris" in result
+        assert "tokyo" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -565,16 +544,6 @@ class TestReceptionVectorText:
     def test_returns_none_without_metadata(self):
         movie = _make_movie()
         assert create_reception_vector_text(movie) is None
-
-    def test_includes_tier_label(self):
-        movie = _make_movie(
-            reception_metadata=ReceptionOutput(
-                reception_summary="An instant classic.",
-            ),
-        )
-        result = create_reception_vector_text(movie)
-        # Movie has imdb=7.4, meta=73 → score ~71.8 → "Generally favorable reviews"
-        assert "reception: generally favorable reviews" in result
 
     def test_delegates_to_embedding_text(self):
         """Should include the metadata's embedding_text() output."""
@@ -587,6 +556,144 @@ class TestReceptionVectorText:
         result = create_reception_vector_text(movie)
         assert "an instant classic." in result
         assert "praised:" in result
+
+
+# ---------------------------------------------------------------------------
+# Reception award wins text
+# ---------------------------------------------------------------------------
+
+from schemas.imdb_models import AwardNomination
+from schemas.enums import AwardOutcome
+from movie_ingestion.final_ingestion.vector_text import _reception_award_wins_text
+
+
+class TestReceptionAwardWins:
+    def test_includes_award_wins_in_reception_text(self):
+        """Academy Awards win → 'major_award_wins: academy awards' in reception text."""
+        movie = _make_movie(
+            reception_metadata=ReceptionOutput(reception_summary="Acclaimed."),
+            imdb_data={
+                "awards": [
+                    AwardNomination(
+                        ceremony="Academy Awards, USA",
+                        award_name="Oscar",
+                        category="Best Picture",
+                        outcome=AwardOutcome.WINNER,
+                        year=2020,
+                    ),
+                ],
+            },
+        )
+        result = create_reception_vector_text(movie)
+        assert "major_award_wins: academy awards" in result
+
+    def test_excludes_razzie(self):
+        """Razzie wins are deliberately excluded from the prestige vector."""
+        movie = _make_movie(
+            imdb_data={
+                "awards": [
+                    AwardNomination(
+                        ceremony="Razzie Awards",
+                        award_name="Razzie",
+                        category="Worst Picture",
+                        outcome=AwardOutcome.WINNER,
+                        year=2020,
+                    ),
+                ],
+            },
+        )
+        result = _reception_award_wins_text(movie)
+        assert result is None
+
+    def test_excludes_nominees(self):
+        """Nominee-only awards → no major_award_wins line."""
+        movie = _make_movie(
+            imdb_data={
+                "awards": [
+                    AwardNomination(
+                        ceremony="Academy Awards, USA",
+                        award_name="Oscar",
+                        category="Best Picture",
+                        outcome=AwardOutcome.NOMINEE,
+                        year=2020,
+                    ),
+                ],
+            },
+        )
+        result = _reception_award_wins_text(movie)
+        assert result is None
+
+    def test_deduplicates_ceremonies(self):
+        """Multiple wins in the same ceremony → single ceremony entry."""
+        movie = _make_movie(
+            imdb_data={
+                "awards": [
+                    AwardNomination(
+                        ceremony="Academy Awards, USA",
+                        award_name="Oscar",
+                        category="Best Picture",
+                        outcome=AwardOutcome.WINNER,
+                        year=2020,
+                    ),
+                    AwardNomination(
+                        ceremony="Academy Awards, USA",
+                        award_name="Oscar",
+                        category="Best Director",
+                        outcome=AwardOutcome.WINNER,
+                        year=2020,
+                    ),
+                ],
+            },
+        )
+        result = _reception_award_wins_text(movie)
+        assert result.count("academy awards") == 1
+
+    def test_prestige_ordering(self):
+        """Academy Awards should appear before Sundance."""
+        movie = _make_movie(
+            imdb_data={
+                "awards": [
+                    AwardNomination(
+                        ceremony="Sundance Film Festival",
+                        award_name="Grand Jury Prize",
+                        outcome=AwardOutcome.WINNER,
+                        year=2020,
+                    ),
+                    AwardNomination(
+                        ceremony="Academy Awards, USA",
+                        award_name="Oscar",
+                        category="Best Picture",
+                        outcome=AwardOutcome.WINNER,
+                        year=2020,
+                    ),
+                ],
+            },
+        )
+        result = _reception_award_wins_text(movie)
+        assert result.index("academy awards") < result.index("sundance")
+
+    def test_unknown_ceremony_skipped(self):
+        """Unknown ceremony strings are gracefully skipped."""
+        movie = _make_movie(
+            imdb_data={
+                "awards": [
+                    AwardNomination(
+                        ceremony="Nonexistent Awards",
+                        award_name="Trophy",
+                        outcome=AwardOutcome.WINNER,
+                        year=2020,
+                    ),
+                ],
+            },
+        )
+        result = _reception_award_wins_text(movie)
+        assert result is None
+
+    def test_no_awards_returns_none(self):
+        """Empty awards list → None."""
+        movie = _make_movie(imdb_data={"awards": []})
+        result = _reception_award_wins_text(movie)
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

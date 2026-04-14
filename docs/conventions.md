@@ -144,7 +144,23 @@ These rules apply everywhere and are not negotiable:
   source — renaming mid-chain obscures what the value actually
   represents.
 - When a function returns more than two related values, return a
-  dataclass or Pydantic model — not a positional tuple. Named fields
+  dataclass or Pydantic model — not a positional tuple.
+- **Type-specific behavior on the type, not the pipeline.** When a
+  generic pipeline function needs type-specific behavior, define it
+  as a method on the schema/model class with a default implementation.
+  The pipeline calls the uniform interface; each class decides what
+  to do. Never add `if type == X` conditionals in pipeline code.
+- **Extend existing classes before introducing new ones.** When
+  adding a method or interface, first check if an existing class
+  can absorb it. Only introduce a new class or base class when it
+  has a clear, distinct responsibility that doesn't overlap with
+  an existing one.
+- **Accept domain objects, destructure internally.** When a function
+  operates on fields from a domain object (Pydantic model, dataclass),
+  accept the object directly and extract fields inside the function.
+  Don't require callers to destructure objects into positional tuples
+  or kwargs — it duplicates structural knowledge at every call site
+  and breaks when fields change. Named fields
   eliminate ordering bugs, make call sites self-documenting, and
   allow adding fields without breaking callers. If an existing
   Pydantic model already represents the data, return it directly
@@ -194,6 +210,11 @@ These rules apply everywhere and are not negotiable:
   raise ValueError(...)`), re-raise retryable exceptions (rate limits,
   transient network errors) before the catch-all. Callers need the
   original exception type to decide whether to retry or fail.
+- **Safe lookups for external data.** When looking up an enum or
+  mapping from external/scraped data that may contain unexpected
+  values, return `None` for unknown inputs rather than raising.
+  Let callers decide whether to skip, log, or error — the lookup
+  itself should be safe.
 - **Redis cache misses**: Graceful degradation. Missing trending data
   = log warning, treat as empty set, do not fail the request.
   Missing QU cache = run full DAG. Missing embedding cache = call
@@ -483,6 +504,14 @@ to [0, 1] unless explicitly noted otherwise:
   increases confusion and over-assignment of the default. Every
   field in a structured output schema should require genuine
   reasoning the model can't be replaced for.
+- **Single nullable enum for mutually exclusive choices.** When a
+  structured output field has mutually exclusive options, use a
+  single nullable enum — not a cluster of booleans. Schema-enforced
+  exclusivity makes illegal combinations physically unreachable,
+  removing a failure mode by construction rather than via prompt
+  discipline. This also reduces cognitive load on the model — fewer
+  fields to manage means more reasoning budget for the core task,
+  which matters most for weaker-tier models.
 - **No docstrings on Pydantic classes used as LLM
   `response_format`.** Pydantic class and enum docstrings
   propagate into the JSON schema `description` field via
@@ -490,4 +519,9 @@ to [0, 1] unless explicitly noted otherwise:
   config, index plans, embedding decisions) get sent on every API
   call. Use `#` comment blocks above the class for developer
   documentation. `Field(description=...)` values are intentional
-  — these should contain task-relevant instructions for the model.
+  — these should carry only a compact definitional sentence per
+  field. Worked examples, procedures, and counter-examples belong
+  in the system prompt, never duplicated in field descriptions.
+  Verify with `openai.lib._pydantic.to_strict_json_schema(Model)`
+  that enum `$defs` descriptions are `None` before committing
+  schema changes.

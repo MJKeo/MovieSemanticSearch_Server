@@ -179,9 +179,9 @@ class TestPlotAnalysisEmbeddingText:
             ],
         )
         result = output.embedding_text()
-        assert "genre signatures:" in result
+        assert "genre_signatures:" in result
         assert "conflict:" in result
-        assert "character arcs:" in result
+        assert "character_arcs:" in result
         assert "themes:" in result
 
     def test_field_order_elevator_pitch_before_overview(self):
@@ -224,10 +224,10 @@ class TestPlotAnalysisEmbeddingText:
         )
         result = output.embedding_text()
         assert "conflict:" not in result
-        assert "character arcs:" not in result
+        assert "character_arcs:" not in result
         assert "themes:" not in result
         # Required fields still present
-        assert "genre signatures:" in result
+        assert "genre_signatures:" in result
         assert "revenge in a small town" in result
 
     def test_per_term_normalized(self):
@@ -632,11 +632,10 @@ class TestEmbeddingTextVsStr:
         # embedding_text uses normalize_string (removes apostrophe)
         assert normalize_string("Ocean's Acting") in output.embedding_text()
 
-    def test_plot_analysis_diverges(self):
-        """PlotAnalysisOutput embedding_text uses labels; __str__ does not."""
+    def test_plot_analysis_str_delegates_to_embedding_text(self):
+        """PlotAnalysisOutput __str__() now delegates to embedding_text()."""
         output = _make_plot_analysis()
-        assert "genre signatures:" in output.embedding_text()
-        assert "genre signatures:" not in str(output)
+        assert str(output) == output.embedding_text()
 
     def test_source_material_v2_diverges(self):
         """SourceMaterialV2Output embedding_text uses label + normalize_string; __str__ uses .replace()."""

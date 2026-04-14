@@ -142,9 +142,9 @@ class TermsWithNegationsSection(BaseModel):
 # exact-match failure cases (Creed, Logan, Space Jam, Detective
 # Pikachu, Venom, etc.) plus extra worked examples for modern sequel /
 # reboot / source-boundary edge cases.
-# See search_improvement_planning/franchise_test_iterations.md for
-# the full rationale and prompts/franchise.py for the procedure,
-# definitions, and examples driving generation.
+# See docs/modules/ingestion.md (franchise section) for design rationale
+# and prompts/franchise.py for the procedure, definitions, and examples
+# driving generation.
 #
 # Field order is load-bearing: each scoped reasoning field comes before
 # the decision block it informs (chain-of-thought via schema order).

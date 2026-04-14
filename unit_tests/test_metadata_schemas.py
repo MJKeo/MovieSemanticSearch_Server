@@ -35,7 +35,7 @@ from schemas.metadata import (
     SourceMaterialV2Output,
     EmbeddableOutput,
 )
-from schemas.enums import SourceMaterialType
+from schemas.enums import LineagePosition, SourceMaterialType
 
 
 # ---------------------------------------------------------------------------
@@ -474,32 +474,8 @@ def _make_terms_only_j_section(terms=None, evidence_basis="Because."):
     )
 
 
-class TestWatchContextWithJustificationsStrParity:
-    def test_str_parity_with_watch_context(self):
-        base = WatchContextOutput(
-            self_experience_motivations=_make_terms_only_section(["escape"]),
-            external_motivations=_make_terms_only_section(["date night"]),
-            key_movie_feature_draws=_make_terms_only_section(["star cast"]),
-            watch_scenarios=_make_terms_only_section(["rainy day"]),
-        )
-        with_j = WatchContextWithJustificationsOutput(
-            self_experience_motivations=_make_terms_only_j_section(["escape"]),
-            external_motivations=_make_terms_only_j_section(["date night"]),
-            key_movie_feature_draws=_make_terms_only_j_section(["star cast"]),
-            watch_scenarios=_make_terms_only_j_section(["rainy day"]),
-        )
-        assert str(base) == str(with_j)
-
-    def test_str_excludes_justification_text(self):
-        with_j = WatchContextWithJustificationsOutput(
-            self_experience_motivations=_make_terms_only_j_section(
-                ["escape"], evidence_basis="WC_MARKER"
-            ),
-            external_motivations=_make_terms_only_j_section(),
-            key_movie_feature_draws=_make_terms_only_j_section(),
-            watch_scenarios=_make_terms_only_j_section(),
-        )
-        assert "WC_MARKER" not in str(with_j)
+# TestWatchContextWithJustificationsStrParity removed —
+# WatchContextWithJustificationsOutput was deleted from schemas/metadata.py.
 
 
 # ---------------------------------------------------------------------------
@@ -517,79 +493,24 @@ _NT_SECTION_NAMES = [
 ]
 
 
-class TestNarrativeTechniquesWithJustificationsStrParity:
-    def test_str_parity_with_narrative_techniques(self):
-        sections_base = {
-            name: _make_terms_only_section(["term1"])
-            for name in _NT_SECTION_NAMES
-        }
-        sections_j = {
-            name: _make_terms_only_j_section(["term1"])
-            for name in _NT_SECTION_NAMES
-        }
-        base = NarrativeTechniquesOutput(**sections_base)
-        with_j = NarrativeTechniquesWithJustificationsOutput(**sections_j)
-        assert str(base) == str(with_j)
-
-    def test_str_excludes_justification_text(self):
-        sections = {
-            name: _make_terms_only_j_section(
-                ["term1"], evidence_basis="NT_MARKER"
-            )
-            for name in _NT_SECTION_NAMES
-        }
-        with_j = NarrativeTechniquesWithJustificationsOutput(**sections)
-        assert "NT_MARKER" not in str(with_j)
+# TestNarrativeTechniquesWithJustificationsStrParity removed —
+# NarrativeTechniquesWithJustificationsOutput was deleted from schemas/metadata.py.
 
 
 # ---------------------------------------------------------------------------
 # ProductionKeywords __str__() parity
 # ---------------------------------------------------------------------------
 
-class TestProductionKeywordsWithJustificationsStrParity:
-    def test_str_parity_with_production_keywords(self):
-        base = ProductionKeywordsOutput(terms=["CGI", "IMAX"])
-        with_j = ProductionKeywordsWithJustificationsOutput(
-            justification="These are production terms.",
-            terms=["CGI", "IMAX"],
-        )
-        assert str(base) == str(with_j)
-
-    def test_str_excludes_justification_text(self):
-        with_j = ProductionKeywordsWithJustificationsOutput(
-            justification="PK_MARKER",
-            terms=["CGI"],
-        )
-        assert "PK_MARKER" not in str(with_j)
+# TestProductionKeywordsWithJustificationsStrParity removed —
+# ProductionKeywordsWithJustificationsOutput was deleted from schemas/metadata.py.
 
 
 # ---------------------------------------------------------------------------
 # SourceOfInspiration __str__() parity
 # ---------------------------------------------------------------------------
 
-class TestSourceOfInspirationWithJustificationsStrParity:
-    def test_str_parity_with_source_of_inspiration(self):
-        base = SourceOfInspirationOutput(
-            source_material=["based on a novel"],
-            franchise_lineage=["sequel", "second in trilogy"],
-        )
-        with_j = SourceOfInspirationWithJustificationsOutput(
-            source_evidence="Keywords indicate novel adaptation.",
-            source_material=["based on a novel"],
-            lineage_evidence="Title contains 'Part 2'.",
-            franchise_lineage=["sequel", "second in trilogy"],
-        )
-        assert str(base) == str(with_j)
-
-    def test_str_excludes_justification_text(self):
-        with_j = SourceOfInspirationWithJustificationsOutput(
-            source_evidence="SOI_SOURCE_MARKER",
-            source_material=["based on a novel"],
-            lineage_evidence="SOI_LINEAGE_MARKER",
-            franchise_lineage=["sequel"],
-        )
-        assert "SOI_SOURCE_MARKER" not in str(with_j)
-        assert "SOI_LINEAGE_MARKER" not in str(with_j)
+# TestSourceOfInspirationWithJustificationsStrParity removed —
+# SourceOfInspirationWithJustificationsOutput was deleted from schemas/metadata.py.
 
 
 # ---------------------------------------------------------------------------
@@ -661,24 +582,8 @@ class TestViewerExperienceOutputStrContent:
         )
         assert "tense" in str(output)
 
-    def test_viewer_experience_rejects_optional_wrapper(self):
-        """ViewerExperienceOutput rejects OptionalTermsWithNegationsSection for its fields."""
-        from schemas.metadata import OptionalTermsWithNegationsSection
-        optional_section = OptionalTermsWithNegationsSection(
-            should_skip=False,
-            section_data=_make_terms_section(["term"]),
-        )
-        with pytest.raises(ValidationError):
-            ViewerExperienceOutput(
-                emotional_palette=_make_terms_section(),
-                tension_adrenaline=_make_terms_section(),
-                tone_self_seriousness=_make_terms_section(),
-                cognitive_complexity=_make_terms_section(),
-                disturbance_profile=optional_section,
-                sensory_load=_make_terms_section(),
-                emotional_volatility=_make_terms_section(),
-                ending_aftertaste=_make_terms_section(),
-            )
+    # test_viewer_experience_rejects_optional_wrapper removed —
+    # OptionalTermsWithNegationsSection was deleted from schemas/metadata.py.
 
 
 # ---------------------------------------------------------------------------
@@ -747,16 +652,8 @@ class TestSourceOfInspirationOldFieldNamesRejected:
                 production_mediums=["live-action"],
             )
 
-    def test_source_of_inspiration_with_reasoning_rejects_old_field_names(self):
-        """Old reasoning field names (source_reasoning, production_medium_reasoning) are rejected."""
-        from schemas.metadata import SourceOfInspirationWithReasoningOutput
-        with pytest.raises(ValidationError):
-            SourceOfInspirationWithReasoningOutput(
-                source_reasoning="Evidence.",
-                sources_of_inspiration=["novel"],
-                production_medium_reasoning="Evidence.",
-                production_mediums=["animation"],
-            )
+    # test_source_of_inspiration_with_reasoning_rejects_old_field_names removed —
+    # SourceOfInspirationWithReasoningOutput was deleted from schemas/metadata.py.
 
 
 class TestSourceOfInspirationOutputStrContent:
@@ -785,27 +682,11 @@ class TestSourceOfInspirationOutputStrContent:
         assert str(output) == "franchise starter, first in trilogy"
 
 
-class TestSourceOfInspirationPromptAliasRemoval:
-    def test_system_prompt_with_justifications_not_in_prompts_module(self):
-        """SYSTEM_PROMPT_WITH_JUSTIFICATIONS was removed from the prompts module."""
-        import importlib
-        mod = importlib.import_module(
-            "movie_ingestion.metadata_generation.prompts.source_of_inspiration"
-        )
-        assert not hasattr(mod, "SYSTEM_PROMPT_WITH_JUSTIFICATIONS")
+# TestSourceOfInspirationPromptAliasRemoval removed — no longer relevant.
 
 
-class TestSourceOfInspirationWithReasoningEvidenceConstraints:
-    def test_whitespace_only_evidence_rejected(self):
-        """Whitespace-only evidence strings should fail min_length=1 after strip_whitespace."""
-        from schemas.metadata import SourceOfInspirationWithReasoningOutput
-        with pytest.raises(ValidationError):
-            SourceOfInspirationWithReasoningOutput(
-                source_evidence="   ",
-                source_material=[],
-                lineage_evidence="   ",
-                franchise_lineage=[],
-            )
+# TestSourceOfInspirationWithReasoningEvidenceConstraints removed —
+# SourceOfInspirationWithReasoningOutput was deleted from schemas/metadata.py.
 
 
 class TestSourceOfInspirationOutputStrEmpty:
@@ -947,3 +828,281 @@ class TestReceptionOutputStrEmptyAttributes:
         assert "a fine film." in result
         # No empty comma-separated sections
         assert result.strip() == "a fine film."
+
+
+# ---------------------------------------------------------------------------
+# FranchiseOutput.validate_and_fix()
+# ---------------------------------------------------------------------------
+
+from schemas.metadata import FranchiseOutput
+
+
+def _franchise_json(**overrides) -> str:
+    """Build minimal valid FranchiseOutput JSON with targeted overrides."""
+    defaults = {
+        "lineage_reasoning": "reasoning",
+        "lineage": None,
+        "shared_universe": None,
+        "subgroups_reasoning": "reasoning",
+        "recognized_subgroups": [],
+        "launched_subgroup": False,
+        "position_reasoning": "reasoning",
+        "lineage_position": None,
+        "crossover_reasoning": "reasoning",
+        "is_crossover": False,
+        "spinoff_reasoning": "reasoning",
+        "is_spinoff": False,
+        "launch_reasoning": "reasoning",
+        "launched_franchise": False,
+    }
+    defaults.update(overrides)
+    import json as _json
+    return _json.dumps(defaults)
+
+
+class TestFranchiseOutputValidateAndFix:
+    def test_lineage_null_clears_shared_universe_and_subgroups(self):
+        """Rule 1: lineage=null propagates to shared_universe, subgroups, launched_subgroup."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage=None,
+            shared_universe="marvel cinematic universe",
+            recognized_subgroups=["phase one"],
+            launched_subgroup=True,
+        ))
+        assert result.shared_universe is None
+        assert result.recognized_subgroups == []
+        assert result.launched_subgroup is False
+
+    def test_lineage_null_preserves_lineage_position(self):
+        """Rule 1 exception: lineage_position is kept for pair-remakes."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage=None,
+            lineage_position="sequel",
+        ))
+        assert result.lineage_position == LineagePosition.SEQUEL
+
+    def test_lineage_null_preserves_is_crossover(self):
+        """Rule 1 exception: is_crossover is kept when lineage=null."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage=None,
+            is_crossover=True,
+        ))
+        assert result.is_crossover is True
+
+    def test_lineage_null_preserves_is_spinoff(self):
+        """Rule 1 exception: is_spinoff is kept when lineage=null."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage=None,
+            is_spinoff=True,
+        ))
+        assert result.is_spinoff is True
+
+    def test_launched_subgroup_false_when_no_recognized_subgroups(self):
+        """Rule 2: launched_subgroup forced false when groups list is empty."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage="marvel",
+            launched_subgroup=True,
+            recognized_subgroups=[],
+        ))
+        assert result.launched_subgroup is False
+
+    def test_launched_subgroup_true_with_recognized_subgroups(self):
+        """Rule 2 positive: launched_subgroup stays true when groups list is populated."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage="marvel",
+            launched_subgroup=True,
+            recognized_subgroups=["marvel cinematic universe"],
+        ))
+        assert result.launched_subgroup is True
+
+    def test_launched_franchise_false_when_lineage_null(self):
+        """Rule 3a: launched_franchise forced false when lineage is null."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage=None,
+            launched_franchise=True,
+        ))
+        assert result.launched_franchise is False
+
+    def test_launched_franchise_false_when_lineage_position_populated(self):
+        """Rule 3b: launched_franchise forced false when lineage_position is set."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage="star wars",
+            lineage_position="sequel",
+            launched_franchise=True,
+        ))
+        assert result.launched_franchise is False
+
+    def test_launched_franchise_false_when_is_spinoff(self):
+        """Rule 3c: launched_franchise forced false when is_spinoff is true."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage="shrek",
+            is_spinoff=True,
+            launched_franchise=True,
+        ))
+        assert result.launched_franchise is False
+
+    def test_launched_franchise_true_when_all_preconditions_met(self):
+        """Rule 3 positive: launched_franchise stays true when all preconditions pass."""
+        result = FranchiseOutput.validate_and_fix(_franchise_json(
+            lineage="shrek",
+            lineage_position=None,
+            is_spinoff=False,
+            launched_franchise=True,
+        ))
+        assert result.launched_franchise is True
+
+
+# ---------------------------------------------------------------------------
+# ConceptTagsOutput.validate_and_fix() and all_concept_tag_ids()
+# ---------------------------------------------------------------------------
+
+from schemas.metadata import (
+    ConceptTagsOutput,
+    NarrativeStructureAssessment,
+    PlotArchetypeAssessment,
+    SettingAssessment,
+    CharacterAssessment,
+    EndingAssessment,
+    ExperientialAssessment,
+    ContentFlagAssessment,
+)
+from schemas.enums import (
+    NarrativeStructureTag,
+    PlotArchetypeTag,
+    SettingTag,
+    CharacterTag,
+    EndingTag,
+    ExperientialTag,
+    ContentFlagTag,
+)
+
+
+def _concept_tags_output(**overrides) -> ConceptTagsOutput:
+    """Build a minimal ConceptTagsOutput with targeted overrides."""
+    defaults = {
+        "narrative_structure": NarrativeStructureAssessment(tags=[]),
+        "plot_archetypes": PlotArchetypeAssessment(tags=[]),
+        "settings": SettingAssessment(tags=[]),
+        "characters": CharacterAssessment(tags=[]),
+        "endings": EndingAssessment(tag=EndingTag.NO_CLEAR_CHOICE),
+        "experiential": ExperientialAssessment(tags=[]),
+        "content_flags": ContentFlagAssessment(tags=[]),
+    }
+    defaults.update(overrides)
+    return ConceptTagsOutput(**defaults)
+
+
+class TestConceptTagsOutputValidateAndFix:
+    def test_deduplicates_tags(self):
+        """Duplicate tags within a category are deduplicated."""
+        output = _concept_tags_output(
+            narrative_structure=NarrativeStructureAssessment(
+                tags=[NarrativeStructureTag.PLOT_TWIST, NarrativeStructureTag.PLOT_TWIST],
+            ),
+        )
+        output.apply_deterministic_fixups()
+        assert output.narrative_structure.tags == [NarrativeStructureTag.PLOT_TWIST]
+
+    def test_twist_villain_implies_plot_twist(self):
+        """TWIST_VILLAIN without PLOT_TWIST → PLOT_TWIST added."""
+        output = _concept_tags_output(
+            narrative_structure=NarrativeStructureAssessment(
+                tags=[NarrativeStructureTag.TWIST_VILLAIN],
+            ),
+        )
+        output.apply_deterministic_fixups()
+        assert NarrativeStructureTag.PLOT_TWIST in output.narrative_structure.tags
+
+    def test_twist_villain_no_duplicate_when_plot_twist_present(self):
+        """Both present → no duplicate PLOT_TWIST."""
+        output = _concept_tags_output(
+            narrative_structure=NarrativeStructureAssessment(
+                tags=[NarrativeStructureTag.TWIST_VILLAIN, NarrativeStructureTag.PLOT_TWIST],
+            ),
+        )
+        output.apply_deterministic_fixups()
+        plot_twist_count = output.narrative_structure.tags.count(NarrativeStructureTag.PLOT_TWIST)
+        assert plot_twist_count == 1
+
+    def test_validate_and_fix_roundtrip(self):
+        """Full JSON → validate_and_fix → both fixups applied."""
+        import json as _json
+        raw = _json.dumps({
+            "narrative_structure": {"tags": ["twist_villain"]},
+            "plot_archetypes": {"tags": []},
+            "settings": {"tags": []},
+            "characters": {"tags": []},
+            "endings": {"tag": "happy_ending"},
+            "experiential": {"tags": []},
+            "content_flags": {"tags": []},
+        })
+        result = ConceptTagsOutput.validate_and_fix(raw)
+        assert NarrativeStructureTag.TWIST_VILLAIN in result.narrative_structure.tags
+        assert NarrativeStructureTag.PLOT_TWIST in result.narrative_structure.tags
+
+    def test_all_concept_tag_ids_filters_no_clear_choice(self):
+        """NO_CLEAR_CHOICE (id=-1) is filtered out of all_concept_tag_ids()."""
+        output = _concept_tags_output(
+            endings=EndingAssessment(tag=EndingTag.NO_CLEAR_CHOICE),
+        )
+        assert -1 not in output.all_concept_tag_ids()
+
+    def test_all_concept_tag_ids_includes_positive_ending(self):
+        """Positive ending tags are included in all_concept_tag_ids()."""
+        output = _concept_tags_output(
+            endings=EndingAssessment(tag=EndingTag.HAPPY_ENDING),
+        )
+        assert 41 in output.all_concept_tag_ids()
+
+    def test_all_concept_tag_ids_sorted_and_unique(self):
+        """Result is sorted with no duplicates."""
+        output = _concept_tags_output(
+            narrative_structure=NarrativeStructureAssessment(
+                tags=[NarrativeStructureTag.PLOT_TWIST, NarrativeStructureTag.TWIST_VILLAIN],
+            ),
+            plot_archetypes=PlotArchetypeAssessment(tags=[PlotArchetypeTag.REVENGE]),
+            endings=EndingAssessment(tag=EndingTag.SAD_ENDING),
+        )
+        ids = output.all_concept_tag_ids()
+        assert ids == sorted(set(ids))
+
+    def test_all_concept_tag_ids_empty_when_no_tags(self):
+        """All empty assessments + NO_CLEAR_CHOICE ending → empty list."""
+        output = _concept_tags_output()
+        assert output.all_concept_tag_ids() == []
+
+
+# ---------------------------------------------------------------------------
+# ProductionTechniquesOutput
+# ---------------------------------------------------------------------------
+
+from schemas.metadata import ProductionTechniquesOutput
+
+
+class TestProductionTechniquesOutput:
+    def test_extra_forbid(self):
+        """Extra fields are rejected."""
+        with pytest.raises(ValidationError):
+            ProductionTechniquesOutput(terms=["cgi"], unknown="bad")
+
+    def test_empty_terms_valid(self):
+        """Selective classifier may return nothing — empty terms is valid."""
+        output = ProductionTechniquesOutput(terms=[])
+        assert output.terms == []
+
+    def test_is_embeddable_subclass(self):
+        """ProductionTechniquesOutput subclasses EmbeddableOutput."""
+        assert issubclass(ProductionTechniquesOutput, EmbeddableOutput)
+
+    def test_embedding_text_normalizes(self):
+        """embedding_text() applies normalize_string to each term."""
+        from implementation.misc.helpers import normalize_string
+        output = ProductionTechniquesOutput(terms=["Stop-Motion", "L.A. CGI"])
+        result = output.embedding_text()
+        assert normalize_string("Stop-Motion") in result
+        assert normalize_string("L.A. CGI") in result
+
+    def test_str_lowercases(self):
+        """__str__() returns lowercased comma-separated terms."""
+        output = ProductionTechniquesOutput(terms=["Stop Motion", "CGI"])
+        assert str(output) == "stop motion, cgi"

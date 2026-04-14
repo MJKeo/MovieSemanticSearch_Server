@@ -173,18 +173,7 @@ def _write_tracker_db_with_franchise(path, franchise_payload: dict) -> None:
 # title_with_original
 # ---------------------------------------------------------------------------
 
-class TestTitleWithOriginal:
-    def test_includes_original_when_different(self):
-        movie = _make_movie(imdb_data={"original_title": "El Hombre Araña"})
-        assert movie.title_with_original() == "Spider-Man (El Hombre Araña)"
-
-    def test_excludes_original_when_same(self):
-        movie = _make_movie(imdb_data={"original_title": "Spider-Man"})
-        assert movie.title_with_original() == "Spider-Man"
-
-    def test_empty_when_no_title(self):
-        movie = _make_movie(tmdb_data={"title": None}, imdb_data={"original_title": None})
-        assert movie.title_with_original() == ""
+# TestTitleWithOriginal removed — title_with_original() was deleted from Movie.
 
 
 # ---------------------------------------------------------------------------
@@ -403,48 +392,7 @@ class TestReceptionScore:
 # production_text
 # ---------------------------------------------------------------------------
 
-class TestProductionText:
-    def test_all_fields(self):
-        movie = _make_movie(
-            imdb_data={
-                "countries_of_origin": ["USA", "UK"],
-                "production_companies": ["Columbia Pictures"],
-                "filming_locations": ["New York", "London", "Paris", "Tokyo"],
-            },
-        )
-        result = movie.production_text()
-        assert "countries of origin: USA, UK" in result
-        assert "production companies: Columbia Pictures" in result
-        assert "filming locations:" in result
-
-    def test_excludes_filming_locations_when_flagged(self):
-        movie = _make_movie(
-            imdb_data={"filming_locations": ["New York"]},
-        )
-        result = movie.production_text(include_filming_locations=False)
-        assert "filming locations" not in result
-
-    def test_limits_filming_locations_to_3(self):
-        movie = _make_movie(
-            imdb_data={
-                "filming_locations": ["New York", "London", "Paris", "Tokyo"],
-            },
-        )
-        result = movie.production_text()
-        assert "Tokyo" not in result
-        assert "New York" in result
-        assert "London" in result
-        assert "Paris" in result
-
-    def test_empty_when_no_data(self):
-        movie = _make_movie(
-            imdb_data={
-                "countries_of_origin": [],
-                "production_companies": [],
-                "filming_locations": [],
-            },
-        )
-        assert movie.production_text() == ""
+# TestProductionText removed — production_text() was deleted from Movie.
 
 
 # ---------------------------------------------------------------------------
@@ -988,3 +936,126 @@ class TestTrackerFranchiseLoading:
         assert result[1].franchise_metadata is not None
         assert result[1].franchise_metadata.lineage is None
         assert result[1].franchise_metadata.lineage_position == LineagePosition.REMAKE
+
+
+# ---------------------------------------------------------------------------
+# Movie.source_material_type_ids()
+# ---------------------------------------------------------------------------
+
+from schemas.metadata import SourceMaterialV2Output
+from schemas.enums import SourceMaterialType
+
+
+class TestSourceMaterialTypeIds:
+    def test_returns_ids_from_metadata(self):
+        """Returns source material type IDs when metadata is present."""
+        movie = _make_movie(
+            source_material_v2_metadata=SourceMaterialV2Output(
+                source_material_types=[
+                    SourceMaterialType.NOVEL_ADAPTATION,
+                    SourceMaterialType.TRUE_STORY,
+                ],
+            ),
+        )
+        assert movie.source_material_type_ids() == [1, 4]
+
+    def test_returns_empty_when_metadata_none(self):
+        """Returns empty list when source_material_v2_metadata is None."""
+        movie = _make_movie()
+        assert movie.source_material_type_ids() == []
+
+
+# ---------------------------------------------------------------------------
+# Movie.keyword_ids()
+# ---------------------------------------------------------------------------
+
+class TestKeywordIds:
+    def test_returns_ids_for_known_keywords(self):
+        """Known IMDB overall_keywords produce correct integer IDs."""
+        movie = _make_movie(imdb_data={"overall_keywords": ["Action", "Drama"]})
+        ids = movie.keyword_ids()
+        # Should return non-empty list of ints for known keywords
+        assert len(ids) > 0
+        assert all(isinstance(i, int) for i in ids)
+
+    def test_skips_unknown_keywords(self):
+        """Unknown keyword strings are silently skipped."""
+        movie = _make_movie(imdb_data={"overall_keywords": ["completely_nonexistent_keyword_xyz"]})
+        assert movie.keyword_ids() == []
+
+    def test_deduplicates(self):
+        """Duplicate keywords produce unique IDs."""
+        movie = _make_movie(imdb_data={"overall_keywords": ["Action", "Action"]})
+        ids = movie.keyword_ids()
+        assert len(ids) == len(set(ids))
+
+
+# ---------------------------------------------------------------------------
+# Movie.concept_tag_ids()
+# ---------------------------------------------------------------------------
+
+from schemas.metadata import (
+    ConceptTagsOutput,
+    NarrativeStructureAssessment,
+    PlotArchetypeAssessment,
+    SettingAssessment,
+    CharacterAssessment,
+    EndingAssessment,
+    ExperientialAssessment,
+    ContentFlagAssessment,
+)
+from schemas.enums import NarrativeStructureTag, EndingTag
+
+
+class TestConceptTagIds:
+    def test_returns_sorted_ids(self):
+        """Returns sorted concept tag IDs from metadata."""
+        output = ConceptTagsOutput(
+            narrative_structure=NarrativeStructureAssessment(
+                tags=[NarrativeStructureTag.PLOT_TWIST],
+            ),
+            plot_archetypes=PlotArchetypeAssessment(tags=[]),
+            settings=SettingAssessment(tags=[]),
+            characters=CharacterAssessment(tags=[]),
+            endings=EndingAssessment(tag=EndingTag.HAPPY_ENDING),
+            experiential=ExperientialAssessment(tags=[]),
+            content_flags=ContentFlagAssessment(tags=[]),
+        )
+        movie = _make_movie(concept_tags_metadata=output)
+        ids = movie.concept_tag_ids()
+        assert ids == sorted(ids)
+        assert 1 in ids   # PLOT_TWIST
+        assert 41 in ids   # HAPPY_ENDING
+
+    def test_returns_empty_when_metadata_none(self):
+        """Returns empty list when concept_tags_metadata is None."""
+        movie = _make_movie()
+        assert movie.concept_tag_ids() == []
+
+
+# ---------------------------------------------------------------------------
+# AwardNomination.did_win()
+# ---------------------------------------------------------------------------
+
+class TestAwardNominationDidWin:
+    def test_did_win_true_for_winner(self):
+        """did_win() returns True for WINNER outcome."""
+        award = AwardNomination(
+            ceremony="Academy Awards, USA",
+            award_name="Oscar",
+            category="Best Picture",
+            outcome=AwardOutcome.WINNER,
+            year=2020,
+        )
+        assert award.did_win() is True
+
+    def test_did_win_false_for_nominee(self):
+        """did_win() returns False for NOMINEE outcome."""
+        award = AwardNomination(
+            ceremony="Academy Awards, USA",
+            award_name="Oscar",
+            category="Best Picture",
+            outcome=AwardOutcome.NOMINEE,
+            year=2020,
+        )
+        assert award.did_win() is False

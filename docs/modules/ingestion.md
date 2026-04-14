@@ -49,7 +49,7 @@ database ingestion) live in `final_ingestion/` within this module.
 | `metadata_generation/errors.py` | Custom exception classes (`MetadataGenerationError`, `MetadataGenerationEmptyResponseError`) imported by all generators. |
 | `metadata_generation/helper_scripts/report_bucket_axis_performance.py` | Diagnostic CLI: reads `*_evaluation.json` files and prints per-bucket tables of average candidate performance per scoring axis. Supports both bucket file shapes. |
 | `metadata_generation/helper_scripts/estimate_generation_cost.py` | Diagnostic CLI: projects per-candidate generation cost to the full corpus using evaluation token-usage data, with optional per-bucket breakdown. |
-| `metadata_generation/generators/` | 12 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All are locked (provider/model are module constants, no caller params). Current production-vector input comes from `production_techniques.py` (gpt-5-mini, reasoning_effort=low, `ProductionTechniquesOutput` schema); `production_keywords.py` is retained as the older broader keyword filter. The full set also includes `plot_events.py`, `reception.py`, `plot_analysis.py`, `viewer_experience.py`, `narrative_techniques.py`, `watch_context.py`, `franchise.py`, `source_of_inspiration.py`, `source_material_v2.py`, and `concept_tags.py`. |
+| `metadata_generation/generators/` | 12 generator files (one per generation type). All use `MetadataType.<VARIANT>` for `GENERATION_TYPE`. All are locked (provider/model are module constants, no caller params). Current production-vector input comes from `production_techniques.py` (gpt-5.4-mini, reasoning_effort=low, `ProductionTechniquesOutput` schema); `production_keywords.py` is retained as the older broader keyword filter. The full set also includes `plot_events.py`, `reception.py`, `plot_analysis.py`, `viewer_experience.py`, `narrative_techniques.py`, `watch_context.py`, `franchise.py`, `source_of_inspiration.py`, `source_material_v2.py`, and `concept_tags.py`. |
 | `metadata_generation/prompts/` | 12 prompt files (one per LLM call). Each prompt file exports a `SYSTEM_PROMPT` constant unless the task uses a named variant (`plot_events.py` exports `SYSTEM_PROMPT_SYNOPSIS` and `SYSTEM_PROMPT_SYNTHESIS`). `production_techniques.py` is the active narrowed production-vector prompt; `production_keywords.py` remains only as the older broader prompt and still exports `SYSTEM_PROMPT_WITH_JUSTIFICATIONS` for evaluation-notebook backward compatibility. `source_of_inspiration.py` exports both `SYSTEM_PROMPT` and `SYSTEM_PROMPT_WITH_REASONING` for potential future evaluation. |
 | `final_ingestion/vector_text.py` | Generates the text for each of the 8 vector spaces from a `Movie` object. One function per space (e.g. `create_plot_events_vector_text`, `create_reception_vector_text`). All functions accept `Movie` and return `str | None` (None when required metadata is absent). Synopsis-first fallback hierarchy for plot_events; labeled fields and per-term `normalize_string()` for plot_analysis, narrative_techniques, viewer_experience, watch_context, and reception. The production vector is now a lean two-line shape only: `filming_locations:` plus `production_techniques:`, with empty lines omitted and `None` returned when both are absent. Narrative techniques now emits fixed-order labeled multiline section lines for `narrative_archetype`, `narrative_delivery`, `pov_perspective`, `characterization_methods`, `character_arcs`, `audience_character_perception`, `information_control`, `conflict_stakes_design`, and `additional_narrative_devices`. Viewer experience now emits fixed-order labeled multiline text with separate `*_negations:` lines. Watch context now emits fixed-order labeled multiline section lines for `self_experience_motivations`, `external_motivations`, `key_movie_feature_draws`, and `watch_scenarios`. The reception vector appends deterministic `major_award_wins` ceremony text from scraped award data (wins only, distinct ceremonies, no nominations, no Razzie). Token-limit fallback is wired into `create_plot_events_vector_text()` automatically — callers do not need to handle it. Two-tier check: cheap 15K-char gate first, tiktoken only on the ~0.5% that exceed it. |
 | `final_ingestion/ingest_movie.py` | Stage 8: Upserts final movie data into Postgres (movie_card, movie_awards, `movie_franchise_metadata`, role-specific lexical postings: `lex.inv_actor_postings` with billing_position/cast_size, `lex.inv_director_postings`, `lex.inv_writer_postings`, `lex.inv_producer_postings`, plus `lex.inv_franchise_postings`) and Qdrant (8 named vectors + hard-filter payload). The `movie_card` upsert now persists both `budget_bucket` and `box_office_bucket` as nullable text buckets derived from `Movie` helpers. All functions accept `Movie` exclusively (BaseMovie fully removed). Includes CLI entry point (`cmd_ingest`) for orchestrated batch ingestion: parallel Postgres + Qdrant via `asyncio.gather`, Postgres sub-batches with SAVEPOINTs for per-movie error isolation. Assumes the Postgres schema has already been initialized from `db/init/01_create_postgres_tables.sql`. Returns `BatchIngestionResult` (succeeded_ids, failed_ids, filtered_ids, errors). `MissingRequiredAttributeError` routes movies with unrecoverable missing fields to `filtered_out` rather than the retryable `ingestion_failed` status. `_mark_ingested` uses `json_each()` for a single UPDATE statement avoiding SQLITE_MAX_VARIABLE_NUMBER limits. |
@@ -562,6 +562,13 @@ and raised `MIN_SYNOPSIS_CHARS` to 2,500). See ADR-039, ADR-040.
 The `evaluations/` subpackage was removed after evaluation completed;
 `load_movie_input_data()` was moved to `inputs.py`.
 
+**Test set expected values must be input-derivable**: Expected tags/labels
+in evaluation test sets must be justifiable from the model's actual input
+data (the user prompt contents), not from what's factually true about the
+movie. If the input evidence doesn't support a tag, remove it from
+expected — the test measures what the model *should* produce given its
+inputs, not ground truth.
+
 **Eval guide append-only rule**: When adding a new candidate to an
 evaluation guide round, append its documentation to the existing
 candidates section. Never remove or replace previous candidate docs
@@ -685,3 +692,372 @@ eliminates any uncertainty about concurrent DB access.
   `(edge.get("node") or {}) if isinstance(edge, dict) else {}`. Latent
   in practice (GraphQL edges are always dicts) but any new edge-parsing
   code must use the parenthesized form.
+
+## Concept Tags — Generation Design Rationale
+
+### Pipeline placement
+
+Runs as a separate classification task. Needs Wave 1 outputs (plot_summary
+from plot_events, emotional_observations from reception) and Wave 2 outputs
+(narrative_techniques terms, plot_analysis fields). Does NOT need
+viewer_experience. Can generate once plot_events + reception +
+narrative_techniques + plot_analysis are available.
+
+### LLM inputs — signal design
+
+Six inputs chosen to maximize signal density and minimize context bloat.
+Each serves a distinct purpose with minimal overlap.
+
+| Input | Tokens (typical) | What it reveals | Tags it primarily serves |
+|-------|------------------|-----------------|-------------------------|
+| `title_with_year` | ~5-10 | Parametric knowledge tiebreaker for well-known films | All (confirmation) |
+| `plot_keywords` | ~30-150 | Direct community tags — highest signal when present | 15+ tags with strong keyword frequencies |
+| `plot_summary` (Wave 1) | ~200-800 | Plot events, character arcs, ending, setting | Fallback for all; primary for TWIST_VILLAIN, SINGLE_LOCATION, CON_ARTIST, KIDNAPPING, ANIMAL_DEATH, endings |
+| `emotional_observations` (Wave 1) | ~30-80 | Reviewer reports of audience emotional response | FEEL_GOOD, TEARJERKER (primary), HAPPY_ENDING, SAD_ENDING (confirmation) |
+| `narrative_techniques` terms (Wave 2) | ~30-60 | Pre-classified structural/craft labels from 6 sections | PLOT_TWIST, UNRELIABLE_NARRATOR, UNDERDOG, NONLINEAR_TIMELINE, ANTI_HERO, BREAKING_FOURTH_WALL, ENSEMBLE_CAST |
+| `plot_analysis` fields (Wave 2) | ~15-35 | Pre-classified arc labels and conflict types | HAPPY/SAD_ENDING (arc direction), REVENGE, UNDERDOG (confirmation) |
+
+**Total input: ~310-1140 tokens.** plot_summary is 50-70% of the budget
+and is the only large unstructured input.
+
+**Narrative techniques terms used** (6 of 9 sections, terms only — no
+justifications):
+- `narrative_archetype` → UNDERDOG
+- `narrative_delivery` → NONLINEAR_TIMELINE, TIME_LOOP
+- `pov_perspective` → UNRELIABLE_NARRATOR, ENSEMBLE_CAST
+- `information_control` → PLOT_TWIST, TWIST_VILLAIN
+- `audience_character_perception` → ANTI_HERO
+- `additional_narrative_devices` → BREAKING_FOURTH_WALL
+
+**Plot analysis fields used** (2 of 6):
+- `character_arcs[].arc_transformation_label` → ending valence, anti-hero
+- `conflict_type` → REVENGE, UNDERDOG confirmation
+
+**Inputs explicitly excluded:**
+
+| Input | Why excluded |
+|-------|-------------|
+| `overall_keywords` | Disambiguation already served by plot_summary + plot_keywords together. Marginal improvement not worth token cost. |
+| `craft_observations` (Wave 1) | Already distilled into narrative_techniques terms. Raw prose adds tokens without new signal. |
+| `thematic_observations` (Wave 1) | Already distilled into plot_analysis fields. Same redundancy issue. |
+| `viewer_experience` (Wave 2) | emotional_observations captures the audience response signal needed for FEEL_GOOD/TEARJERKER. Dropping this eliminates the Wave 2 dependency. |
+
+### Coverage analysis by signal source
+
+Tags with strong backup when plot_keywords are absent (narrative_techniques
+terms provide independent signal): PLOT_TWIST, TIME_LOOP, NONLINEAR_TIMELINE,
+REVENGE, ANTI_HERO, BREAKING_FOURTH_WALL, UNDERDOG.
+
+Tags with single-source dependency on plot_keywords (no structured backup —
+rely on plot_summary fallback + parametric knowledge): KIDNAPPING,
+SMALL_TOWN, POST_APOCALYPTIC, HAUNTED_LOCATION, FEMALE_LEAD, ANIMAL_DEATH.
+
+### Output schema design — key decisions
+
+**Category-level enum arrays** rather than a flat list or boolean grid.
+
+- **Not a boolean grid** — with ~90% false values, boolean grids cause
+  false-negative bias, positional fatigue, and autoregressive anchoring
+  toward "false."
+- **Not a flat enum array** — a single list lets the model emit 1-2 tags
+  and stop, silently skipping entire categories.
+- **Category fields act as attention redirects** — each field transition
+  triggers a fresh sweep of a small tag subset. Same mechanism as the
+  9-section narrative_techniques output.
+- **Bias direction is favorable** — array-based outputs tend toward
+  over-emission (false positives); boolean grids toward under-emission
+  (false negatives). For deal-breaker retrieval, false negatives are silent
+  search failures.
+
+**Endings category exception:** The `endings` field uses a single required
+`EndingTag` (not a list), because endings have exactly one outcome per film.
+`EndingTag` includes `NO_CLEAR_CHOICE` (id=-1) as an explicit affirmative
+classification when evidence is insufficient — chosen to eliminate the
+empty-list completion pressure that caused bittersweet_ending false positives
+at 14% precision. `NO_CLEAR_CHOICE` is filtered out of `all_concept_tag_ids()`
+and never reaches storage or search.
+
+**Two-run generation:** `generated_metadata` stores both `concept_tags` and
+`concept_tags_run_2` columns. Running generation twice and taking the union of
+both runs improves recall without schema changes. `concept_tag_ids()` on `Movie`
+merges both columns via set union before returning sorted IDs.
+
+**Classification boundary — plot_twist:** A twist must recontextualize
+events the audience has already processed under a different assumption.
+Betrayals, deceptions, or surprises that occur before the audience has
+formed a contrary understanding are plot events or dramatic irony, not
+twists.
+
+### Prompt design decisions
+
+- Tag definitions organized by category matching the output schema
+  (recognition-level prompting, not pure recall)
+- Model: gpt-5-mini, reasoning effort medium, verbosity low
+- Single LLM call per movie (inputs overlap heavily; splitting by category
+  repeats context for net token increase)
+- Only split into multiple calls if evaluation shows the model struggling
+  with the full tag set
+- Parametric knowledge framed as high-confidence fallback (95%+ certainty),
+  not a tiebreaker — used when input data lacks evidence for something the
+  model knows to be true about a well-known film
+- If input evidence contradicts parametric knowledge, trust the input
+
+### Keyword-only input adaptation
+
+~20.7K movies (19% of eligible) qualify via keywords-only path: no
+plot_events, best_plot_fallback < 250 chars, but plot_keywords >= 3.
+
+These movies have keywords (6-15 typical), short overviews (~170 chars avg),
+and no Wave 1/2 outputs. Use a separate shorter system prompt
+(`SYSTEM_PROMPT_KEYWORD_ONLY`) when detected. Key differences:
+- Drop input descriptions for absent fields
+- Reframe task as classify from keyword matching + overview narrative signal
+- Keep all tags available with uniform evidence standard
+- Parametric knowledge allowed but extra strict given population obscurity
+
+Detection: in `build_concept_tags_user_prompt()`, check whether plot_summary
+is None, plot_text fallback is None/short, and all Wave 1/2 outputs are None.
+
+### Extensibility
+
+Tags can be added without regenerating existing movies (new tag defaults to
+absent). IDs are gapped by category to allow additions without renumbering.
+
+### Concepts excluded from the tag enum
+
+| Concept | Reason |
+|---------|--------|
+| Betrayal | Too generic — almost every thriller/crime movie has some betrayal. |
+| Race against time | Too generic — most action movies have time pressure. |
+| Redemption arc | Too many movies have some redemption element. Boundary too fuzzy. |
+| Rags to riches | Overlaps with UNDERDOG. Incremental value too small. |
+| Escape / breakout | Too broad — different movie types. KIDNAPPING and "Prison Drama" keyword cover sub-cases. |
+| Fish out of water | Fuzzy boundary. Lower-frequency as a primary search concept. |
+| Forbidden love | Overlaps with "Tragic Romance" keyword (375). Most romances have some obstacle. |
+| Isolated location | Too broad — fragments into unrelated sub-types (cabin, arctic, island, submarine). |
+| Anthology | Low search frequency. Small corpus (~200-300 films). |
+| Found footage (as tag) | "Found Footage Horror" keyword (309) covers the vast majority. Non-horror gap is ~50 movies. |
+| Jump scares | LLM can't reliably classify from text inputs. Visual/auditory — not detectable from plot summaries. |
+| Black and white | Not in text inputs available to the LLM. Needs visual metadata from IMDB technical specs. |
+
+### Evaluation notes
+
+- FEEL_GOOD and TEARJERKER boundary cases need specific testing — the strict
+  "audience response evidence, not inferred from plot" standard is correct
+  for precision but needs validation against excessive false negatives
+- Programmatically check results for pairs that shouldn't co-occur
+  (HAPPY_ENDING + SAD_ENDING primary case). Do not add prompt instructions
+  for this — test first, adjust only if data shows a real problem
+- If evaluation shows the model being too liberal, experiment with placing
+  "empty by default" evidence discipline before tag definitions instead of
+  after
+
+## Franchise Metadata — Generation Design Rationale
+
+Prompt evolution history (v3→v7) is summarized in the "Prompt evolution
+highlights" subsection below.
+
+### Version history
+
+- **v1-v3** (historical): Flat fields (`franchise_name`, `franchise_role`
+  enum, `culturally_recognized_group`). Deprecated — `franchise_role`
+  conflated identity with narrative position.
+- **v4**: Two-axis rewrite. Identity axis (lineage, shared_universe,
+  recognized_subgroups) + narrative position axis (lineage_position enum,
+  special_attributes enum array).
+- **v5**: Adds `launched_franchise` top-level flag, global
+  normalization rule, shape-B `shared_universe` for spinoff-parent
+  relationships, field rename `launches_subgroup` → `launched_subgroup`.
+- **v6**: Shape-B lineage for brand-backed single films (Barbie, Sonic, Detective Pikachu). Explicit crossover reasoning field. Crossover definition expanded to non-cinematic franchises.
+- **v7**: FACTS → DECISION rewrite of every reasoning field. Reasoning procedures now gather facts before evaluating candidates — mirrors the concept_tags ENDINGS pattern.
+- **v8** (current): Replaced `special_attributes: list[SpecialAttribute]` enum array with two independent boolean fields: `is_crossover` and `is_spinoff`. Each has its own dedicated reasoning field. Crossover semantics deliberately expanded to include shared-universe team-up films (Avengers). Spinoff rebuilt around structural situating (trunk-vs-branch analysis) rather than character-prominence test.
+- **v9**: Prompt-only update — added FRANCHISE REFERENCE section with exact-match anchors for known failure cases; added clarification that independent adaptations of the same bounded source do not automatically form one lineage. Schema and runtime contract unchanged.
+
+### Output fields (v8+)
+
+Seven fields per movie, organized by axis. See
+`schemas/metadata.py::FranchiseOutput` for the Pydantic contract and
+`movie_ingestion/metadata_generation/prompts/franchise.py` for the prompt.
+
+**Identity axis:**
+- `lineage` — narrowest recognizable line of films (`batman`, `iron man`).
+  Null when standalone.
+- `shared_universe` — broader entity above lineage. Shape A: formal
+  studio-recognized cosmos (`marvel cinematic universe`). Shape B: parent
+  franchise of a spinoff (Puss in Boots → `shrek`). Null when lineage is
+  itself the top-level brand.
+- `recognized_subgroups` — named sub-phases (`phase one`, `raimi trilogy`).
+  Empty list is the most common outcome.
+- `launched_subgroup` — true iff this film is the earliest-released entry
+  in at least one of its recognized_subgroups.
+
+**Narrative position axis:**
+- `lineage_position` — mutually exclusive enum: sequel / prequel / remake /
+  reboot / null. `remake` retained for classification fidelity but NOT
+  consumed at search time (source_of_inspiration covers film-to-film
+  retellings). May populate even when lineage is null (pair-remakes).
+- `is_spinoff` — orthogonal boolean flag.
+- `is_crossover` — orthogonal boolean flag.
+
+**Franchise launch flag:**
+- `launched_franchise` — four-part test: (1) first cinematic entry, (2) not
+  a spinoff, (3) audience recognizes THE FILM more than prior source
+  material, (4) spawned recognized follow-ups. Silently corrected by
+  `validate_and_fix()` when preconditions fail.
+
+### Axis independence
+
+The three blocks are independent. A film can carry a lineage_position even
+when lineage is null (pair-remakes). A film can be both sequel AND spinoff.
+`launched_franchise` and `launched_subgroup` fire independently.
+
+### Eligibility — no gate
+
+All movies are eligible. Deliberate departure from other generators:
+- **Identification, not analysis.** Title + year is sufficient for most
+  franchise movies via parametric knowledge.
+- **Sparse input causes conservative nulls, not hallucination.** Most
+  movies are standalone — null output is correct.
+- **False negatives are worse.** Skipping a franchise movie means
+  permanently missing that retrieval signal.
+- **Cost is negligible.** ~100-300 input tokens, ~50 output tokens.
+
+### LLM inputs
+
+Seven inputs, chosen for high signal with minimal token cost and no
+generated-metadata dependencies:
+
+| Input | Source | What it reveals |
+|-------|--------|-----------------|
+| `title` | tmdb_data.title | Primary identification signal |
+| `release_year` | tmdb_data.release_date | Disambiguates same-title movies |
+| `overview` | imdb_data.overview | Identification aid only — NOT for inferring franchise from plot similarity |
+| `collection_name` | tmdb_data.collection_name | Direct TMDB franchise signal (~25% of movies) |
+| `production_companies` | imdb_data.production_companies | Brand-level franchise identification |
+| `overall_keywords` | imdb_data.overall_keywords | Often contain franchise names directly |
+| `characters` (first 5) | imdb_data.characters | Critical for IP-based franchises. Capped at 5 (billing order puts recognizable IP characters first) |
+
+**Total input: ~100-300 tokens.** Very compact.
+
+**Inputs excluded:** plot_synopses (too much text, risk of plot-similarity
+hallucination), directors/writers/actors (not franchise-relevant),
+featured_reviews, genres, any generated metadata (avoids cross-generation
+dependencies).
+
+### Global normalization rule
+
+Every named entity (lineage, shared_universe, recognized_subgroups labels)
+is normalized: lowercase, digits as words, `&` → `and`, expand
+abbreviations only when expansion is in common use. Enforced by a top-level
+GLOBAL OUTPUT RULES block in the prompt.
+
+### Wave independence
+
+No dependency on Wave 1 or Wave 2 outputs. All inputs come from raw
+TMDB/IMDB data. Can run in parallel with any other generation type.
+
+### validate_and_fix()
+
+Enforces internal consistency after parsing: partial null-propagation
+(if lineage null, clear shared_universe / recognized_subgroups /
+launched_subgroup; preserve lineage_position and special_attributes for
+pair-remakes), `launched_subgroup ⇄ recognized_subgroups` coupling,
+`launched_franchise` coherence, `special_attributes` dedup.
+
+### Prompt evolution highlights (v3→v7)
+
+Key prompt engineering lessons from 5 iterations of eval-driven refinement:
+
+- **v3:** Numbered procedural walkthroughs replaced free-form reasoning.
+  Evidence hierarchy (direct / concrete inference / parametric) stated once
+  up front. EMPTY-THEN-ADD framing for recognized_subgroups. IS NOT clauses
+  added to every field derived from observed failure modes.
+- **v4:** Two-axis schema rewrite dissolved the conflated `franchise_role`
+  enum. Scoped reasoning fields (one per decision block) instead of one
+  top-level field. Compact field descriptions + heavy prompt.
+- **v5:** Global normalization rule. Shape-B shared_universe for spinoff
+  parents. `launched_franchise` four-part test.
+- **v6:** Shape-B lineage for brand-backed single films (Barbie, Sonic,
+  Detective Pikachu). Explicit crossover reasoning field added. Crossover
+  definition expanded to accept non-cinematic franchises.
+- **v7:** FACTS → DECISION rewrite of every reasoning field. The v6 rules
+  were already correct — the problem was reasoning procedures that jumped
+  to evaluating candidates without first writing down the facts. Mirrors
+  the concept_tags ENDINGS pattern: gather facts first ("do not interpret
+  yet"), then read the answer off the facts. Fixed Solo/Rogue One prequel
+  drops, Space Jam crossover misses, and Shape B lineage instability.
+- **v8:** Replaced `special_attributes: list[SpecialAttribute]` with two
+  independent boolean fields (`is_spinoff`, `is_crossover`), each with a
+  dedicated reasoning field. Crossover semantics deliberately expanded to
+  include shared-universe team-up films. Spinoff rebuilt around trunk-vs-branch
+  structural situating rather than character-prominence test. Solo resolves
+  via parametric recall of "A Star Wars Story" sub-banner before character
+  analysis runs.
+- **v9:** Prompt-only addition of a FRANCHISE REFERENCE section with
+  exact-match anchors for recurring failure cases (Creed, Logan, Solo,
+  Transformers 2007, etc.) and a clarification that independent adaptations
+  of the same bounded source do not automatically form one lineage.
+
+**Production setting:** gpt-5.4-mini with `low` reasoning. Medium buys
+nothing over low. Minimal has 2x the harmful error rate and is dropped
+from the tier matrix.
+
+### Spinoff test (v8+)
+
+`is_spinoff=true` requires a four-step procedure:
+1. **Parametric supplement** — recall specific sub-banner labels (e.g. "A
+   Star Wars Story") at 95%+ confidence; supplements but never overrides
+   provided inputs.
+2. **Structural situating** — trunk-vs-branch analysis: does the film carry
+   forward the primary lineage, or branch off from it?
+3. **Conditional character disambiguation** — only when Step 2 is ambiguous;
+   framed as lead-character / lead-plotline analysis.
+4. **Verdict** — `is_spinoff=true` when Steps 1-3 indicate a branch.
+
+Fires: Rogue One, Solo, Puss in Boots (2011), Venom, Joker (2019), Creed.
+Does not fire: Wonder Woman, Black Panther, Top Gun: Maverick, TFA, Blade
+Runner 2049 (legacy-sequel prior-hero-plot disqualifier).
+
+### Open questions
+
+- **Regional launched_franchise ambiguity:** Ip Man and K.G.F Chapter 1
+  are ruled TRUE as judgment calls. May need clarifying bullet in the
+  recognition test about regional cinema.
+
+## SourceMaterialType Enum — Design Rationale
+
+10-value enum stored as `source_material_type_ids INT[]` on movie_card.
+Derived from analysis of 4,311 unique free-text `source_material` values
+in tracker.db. See `schemas/enums.py::SourceMaterialType` for the enum.
+
+### Key boundary decisions
+
+- **TRUE_STORY vs BIOGRAPHY:** A film can carry both. TRUE_STORY = "this
+  happened" (events focus). BIOGRAPHY = "this is someone's life story"
+  (person focus). Bohemian Rhapsody carries both.
+- **COMIC_ADAPTATION includes manga/manhwa.** "Based on a cartoon
+  character" entries should trace to the originating medium during
+  re-generation (Batman → COMIC_ADAPTATION, Sherlock Holmes →
+  NOVEL_ADAPTATION).
+- **FOLKLORE_ADAPTATION includes urban legends and religious texts.** A
+  film adapting the Iliad can carry both SHORT_STORY_ADAPTATION (epic poem
+  as literary form) and FOLKLORE_ADAPTATION (mythological origin).
+- **REMAKE covers film-to-film retellings broadly:** short film expansions,
+  live-action anime adaptations, foreign-language remakes, TV series
+  remakes. A live-action manga adaptation carries both REMAKE and
+  COMIC_ADAPTATION.
+- **TV_ADAPTATION includes radio.** Shared concept is "serialized
+  broadcast media adapted to film."
+- **Original screenplay = empty array.** No ORIGINAL_SCREENPLAY enum
+  value — it's a derivable signal. Queries for "original screenplays"
+  filter for `source_material_type_ids = '{}'`.
+
+### Deliberate exclusions
+
+| Category | Reason |
+|----------|--------|
+| Songs (68 movies) | Too weak/ambiguous as a filter. Most "based on a song" movies are better described by other types. |
+| Toys (77 movies) | Franchise IP products — captured by `movie_franchise_metadata`, not narrative source material. Empty array unless they also adapt a comic/TV series. |
+| Spinoff/Reboot (815 movies) | Franchise_lineage concepts that leaked into free-text. Handled by `FranchiseOutput`. Should not appear in re-generated output. |
+| Documentary (157 movies) | A film format, not a source type. Biographical docs get BIOGRAPHY; event docs get TRUE_STORY; observational docs get empty array. |
+| Parody (54 movies) | A relationship to reference material, not a source type. Better captured by genre/tone metadata. |

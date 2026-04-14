@@ -35,10 +35,12 @@ and hard filtering via GIN-indexed array overlap.
 
 | Column | Type | Source | Description |
 |--------|------|--------|-------------|
-| `country_of_origin_ids` | `INT[]` | IMDB `countries_of_origin` mapped to `Country` enum | GIN index. Postgres-only, NOT in Qdrant payload. Hard filter for "Korean movies" etc. |
+| `country_of_origin_ids` | `INT[]` | IMDB `countries_of_origin` mapped to `Country` enum (262 values in `implementation/classes/countries.py`) | GIN index. Postgres-only, NOT in Qdrant payload. Hard filter for "Korean movies" etc. |
 | `box_office_bucket` | `TEXT?` | IMDB box office + era adjustment | `"hit"` / `"flop"` / `NULL`. Same pattern as budget_bucket. Movies < 75 days old always `NULL` (too early to judge). Source: IMDB GraphQL `lifetimeGross(boxOfficeArea: DOMESTIC)` and `lifetimeGross(boxOfficeArea: WORLDWIDE)`. Worldwide is inclusive of domestic. |
-| `source_material_type_ids` | `INT[]` | LLM source_of_inspiration (re-generated with enum) | `SourceMaterialType` enum IDs (10 values, finalized — see [source_material_type_enum.md](source_material_type_enum.md)). Array because movies can have multiple (e.g. Schindler's List = NOVEL_ADAPTATION + TRUE_STORY). Empty array = original screenplay (no explicit enum value for originals). GIN index. |
-| `keyword_ids` | `INT[]` | IMDB `overall_keywords` mapped to `lex.lexical_dictionary` IDs | GIN index. Used for keyword-based deal-breaker boost. Only `overall_keywords`, NOT `plot_keywords`. |
+| `source_material_type_ids` | `INT[]` | LLM source_of_inspiration (re-generated with enum) | `SourceMaterialType` enum IDs (10 values, implemented in `schemas/enums.py`). Array because movies can have multiple (e.g. Schindler's List = NOVEL_ADAPTATION + TRUE_STORY). Empty array = original screenplay (no explicit enum value for originals). GIN index. |
+| `keyword_ids` | `INT[]` | IMDB `overall_keywords` mapped to `OverallKeyword` enum IDs | GIN index. Used for keyword-based deal-breaker boost. Only `overall_keywords`, NOT `plot_keywords`. See `implementation/classes/overall_keywords.py` for the 225-term enum. |
+| `concept_tag_ids` | `INT[]` | LLM concept tag classification | GIN index. Binary deal-breaker tags (27 tags across 7 categories). See `schemas/enums.py` for the per-category tag enums. Empty array = no tags classified. |
+| `award_ceremony_win_ids` | `INT[]` | Derived from `movie_awards` winner rows | GIN index. `AwardCeremony` enum IDs for ceremonies where the movie has at least one win. Denormalized for fast "award-winning movies" filtering without joining `movie_awards`. |
 
 ### Indexes
 
@@ -47,7 +49,7 @@ B-tree indexes on each of those three, GIN `gin__int_ops` on `genre_ids`,
 `watch_offer_keys`, `audio_language_ids`.
 
 New: GIN `gin__int_ops` on `country_of_origin_ids`, `source_material_type_ids`,
-`keyword_ids`.
+`keyword_ids`, `concept_tag_ids`, `award_ceremony_win_ids`.
 
 ---
 
@@ -365,10 +367,20 @@ Scored as weighted average against movie_card data. Range [0,1] per candidate.
 
 | Enum | Values | ID Field | Notes |
 |------|--------|----------|-------|
-| `Country` | TBD — derive from IMDB's country list | `country_id: int` | Same pattern as Language enum. ~100-200 values. |
-| `BoxOfficeBucket` | HIT, FLOP | string-valued | Movies < 75 days old → NULL (not enough data). |
-| `SourceMaterialType` | 10 values (finalized, implemented in `schemas/enums.py`) | `source_material_type_id: int` | NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, STAGE_ADAPTATION, TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION. Empty array = original screenplay. |
-| `LineagePosition` | SEQUEL, PREQUEL, REMAKE, REBOOT | string-valued | Stored as SMALLINT on `movie_franchise_metadata.lineage_position`. |
+| `Country` | 262 values (implemented in `implementation/classes/countries.py`) | `country_id: int` | 250 current countries/territories + 12 historical entities. Includes alias mapping for variant spellings. |
+| `BoxOfficeStatus` | HIT, FLOP | string-valued | Movies < 75 days old → NULL (not enough data). |
+| `SourceMaterialType` | 10 values (implemented in `schemas/enums.py`) | `source_material_type_id: int` | NOVEL_ADAPTATION, SHORT_STORY_ADAPTATION, STAGE_ADAPTATION, TRUE_STORY, BIOGRAPHY, COMIC_ADAPTATION, FOLKLORE_ADAPTATION, VIDEO_GAME_ADAPTATION, REMAKE, TV_ADAPTATION. Empty array = original screenplay. |
+| `LineagePosition` | SEQUEL, PREQUEL, REMAKE, REBOOT | `lineage_position_id: int` | Stored as SMALLINT on `movie_franchise_metadata.lineage_position`. |
+| `AwardCeremony` | 12 values (implemented in `schemas/enums.py`) | `ceremony_id: int` | Academy Awards through Gotham Awards. |
+| `AwardOutcome` | WINNER, NOMINEE | `outcome_id: int` | |
+| `NarrativeStructureTag` | 9 values | `concept_tag_id: int` | Part of the 7-category concept tag system. |
+| `PlotArchetypeTag` | 4 values | `concept_tag_id: int` | |
+| `SettingTag` | 3 values | `concept_tag_id: int` | |
+| `CharacterTag` | 3 values | `concept_tag_id: int` | |
+| `EndingTag` | 3 values + NO_CLEAR_CHOICE (classification-only) | `concept_tag_id: int` | |
+| `ExperientialTag` | 2 values | `concept_tag_id: int` | |
+| `ContentFlagTag` | 1 value | `concept_tag_id: int` | |
+| `OverallKeyword` | 225 values (implemented in `implementation/classes/overall_keywords.py`) | `keyword_id: int` | Curated IMDB genre/sub-genre taxonomy. Each member carries a `definition` string for LLM context. |
 
 ---
 

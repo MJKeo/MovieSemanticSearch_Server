@@ -456,3 +456,58 @@ class TestMetadataTypeEnum:
     def test_all_generation_types_is_union(self):
         """ALL_GENERATION_TYPES is the union of WAVE1_TYPES and WAVE2_TYPES."""
         assert ALL_GENERATION_TYPES == WAVE1_TYPES | WAVE2_TYPES
+
+
+# ---------------------------------------------------------------------------
+# MovieInputData.top_billed_cast()
+# ---------------------------------------------------------------------------
+
+class TestTopBilledCast:
+    def test_returns_none_when_no_actors(self):
+        """Empty actors list → None."""
+        movie = _make_movie(actors=[])
+        assert movie.top_billed_cast() is None
+
+    def test_pairs_actors_with_characters(self):
+        """Actors and characters are positionally paired."""
+        movie = _make_movie(
+            actors=["Keanu Reeves", "Laurence Fishburne"],
+            characters=["Neo", "Morpheus"],
+        )
+        result = movie.top_billed_cast()
+        assert result == "Neo (Keanu Reeves), Morpheus (Laurence Fishburne)"
+
+    def test_actor_without_character(self):
+        """When characters list is shorter, actor appears alone."""
+        movie = _make_movie(
+            actors=["Keanu Reeves", "Laurence Fishburne"],
+            characters=["Neo"],
+        )
+        result = movie.top_billed_cast()
+        assert result == "Neo (Keanu Reeves), Laurence Fishburne"
+
+    def test_limits_to_n(self):
+        """Default n=5 limits output to first 5 actors."""
+        movie = _make_movie(
+            actors=[f"Actor{i}" for i in range(10)],
+            characters=[f"Char{i}" for i in range(10)],
+        )
+        result = movie.top_billed_cast()
+        assert "Actor4" in result
+        assert "Actor5" not in result
+
+    def test_skips_blank_actor(self):
+        """Blank actor names are filtered out."""
+        movie = _make_movie(
+            actors=["Keanu Reeves", "", "Laurence Fishburne"],
+            characters=["Neo", "Nobody", "Morpheus"],
+        )
+        result = movie.top_billed_cast()
+        assert "Nobody" not in result
+        assert "Neo (Keanu Reeves)" in result
+        assert "Morpheus (Laurence Fishburne)" in result
+
+    def test_returns_none_when_all_blank(self):
+        """All-blank actors → None (not empty string)."""
+        movie = _make_movie(actors=["", "  "], characters=["A", "B"])
+        assert movie.top_billed_cast() is None

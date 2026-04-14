@@ -19,8 +19,9 @@ Defines canonical types for:
 |------|---------|
 | `metadata.py` | `EmbeddableOutput` base class + 10 embeddable `*Output` schema classes + `FranchiseOutput` and `ConceptTagsOutput` / `TagEvidence` (non-embeddable franchise/concept-tag classification). Each `EmbeddableOutput` subclass implements `embedding_text()` returning normalized text for vector embedding. `ConceptTagsOutput` produces integer concept_tag_ids via `all_concept_tag_ids()`, not embedding text. Legacy `__str__()` methods are retained for backward compatibility. Class docstrings are written as `#` comment blocks above each class — not as Python docstrings — to prevent them from leaking into the JSON schema payload sent to the LLM via `model_json_schema()`. |
 | `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata, including `franchise_metadata: FranchiseOutput | None`. |
-| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), and concept-tag enums grouped by category. |
+| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), concept-tag enums grouped by category, `AwardCeremony` (12 members — IMDB event.text string as value, stable `ceremony_id` int for Postgres), `AwardOutcome` StrEnum (`WINNER`/`NOMINEE`, each with stable `outcome_id`), `LineagePosition` enum (sequel/prequel/remake/reboot), and `BoxOfficeStatus` StrEnum. |
 | `data_types.py` | `MultiLineList` — a constrained list type used in generation schemas. |
+| `imdb_models.py` | Shared IMDB sub-models: `AwardNomination`, `FeaturedReview`, `ParentalGuideItem`, `ReviewTheme`. Moved from `movie_ingestion/imdb_scraping/models.py` so `db/` and `api/` containers can import them without mounting `movie_ingestion/`. |
 | `movie_input.py` | `MovieInputData` dataclass + `load_movie_input_data()` — loads raw tracker data into the form consumed by generator prompt builders. |
 
 ## Boundaries
@@ -79,13 +80,16 @@ production-vector input.
 `embedding_text()` output to base variant).
 
 **`ConceptTagsOutput`** (`metadata.py`): Multi-label binary classification
-of concept tags by category. Contains 7 category fields (each a
-`list[TagEvidence]`): `narrative_structure`, `plot_archetypes`, `settings`,
-`characters`, `endings`, `experiential`, `content_flags`. A
-`validate_tag_categories` model validator ensures each category only
+of concept tags by category. Contains 7 category fields: `narrative_structure`,
+`plot_archetypes`, `settings`, `characters`, `experiential`, `content_flags`
+(each a `list[TagEvidence]`), and `endings` (a single required `EndingAssessment`
+with a `tag: EndingTag` field — not a list). The `endings` field uses a single
+required enum rather than a list; `EndingTag` includes `NO_CLEAR_CHOICE` (id=-1)
+as an explicit affirmative classification when evidence is ambiguous. A
+`validate_tag_categories` model validator ensures each list category only
 contains tags from its allowed set (defined in `CONCEPT_TAG_CATEGORIES`).
 `all_concept_tag_ids()` extracts a sorted, deduplicated `list[int]` for
-storage in `movie_card.concept_tag_ids`.
+storage in `movie_card.concept_tag_ids`, filtering out id=-1 values.
 
 **`ConceptTag`** (`enums.py`): IntEnum with a `concept_tag_id` attribute
 per member. Grouped into 7 categories via `CONCEPT_TAG_CATEGORIES` dict
@@ -101,7 +105,7 @@ and stable integer IDs (for future `movie_card.source_material_type_ids`
 GIN-indexed storage). 10 values: `NOVEL_ADAPTATION`, `SHORT_STORY_ADAPTATION`,
 `STAGE_ADAPTATION`, `TRUE_STORY`, `BIOGRAPHY`, `COMIC_ADAPTATION`,
 `FOLKLORE_ADAPTATION`, `VIDEO_GAME_ADAPTATION`, `REMAKE`, `TV_ADAPTATION`.
-See `search_improvement_planning/source_material_type_enum.md` for boundary notes.
+See `docs/modules/ingestion.md` (SourceMaterialType section) for boundary notes.
 
 **`Movie`** (`movie.py`): Central ingestion-time data object. Loads a
 fully typed row from `tracker.db` including parsed IMDB JSON columns,
@@ -109,6 +113,15 @@ TMDB review JSON, provider-key blob unpacking, and all generated
 metadata objects. Franchise classification is exposed directly as
 `franchise_metadata: FranchiseOutput | None` for Stage 8 Postgres
 projection into `movie_franchise_metadata` and `lex.inv_franchise_postings`.
+`FranchiseOutput` uses a two-axis v8 schema: identity axis (`lineage`,
+`shared_universe`, `recognized_subgroups`, `launched_subgroup`) and
+narrative position axis (`lineage_position` enum, `is_spinoff` bool,
+`is_crossover` bool), plus the `launched_franchise` flag. `is_crossover`
+includes shared-universe team-up films. `validate_and_fix()` enforces
+internal consistency after parsing (partial null-propagation, launches_subgroup
+coupling, launched_franchise coherence). `FranchiseRole` enum is deleted.
+Also includes `concept_tags_metadata` and `concept_tags_run_2_metadata` fields
+for both generation runs; `concept_tag_ids()` merges both via set union.
 Includes helper methods:
 - `maturity_text_short()` — IMDB reasoning prose or MPA description fallback
 - `deduplicated_genres()` — genre_signatures + IMDB genres, substring-deduped
@@ -130,6 +143,10 @@ interface for the ingestion pipeline):
 - `genre_ids()` — list of integer genre IDs
 - `watch_offer_keys()` — list of decoded uint32 provider keys (pre-decoded in TMDBData)
 - `audio_language_ids()` — list of integer language IDs
+- `source_material_type_ids()` — sorted list of `SourceMaterialType` IDs from `source_material_v2_metadata`
+- `keyword_ids()` — sorted list of `OverallKeyword` IDs from `imdb_data.overall_keywords`
+- `concept_tag_ids()` — sorted deduplicated list merging both `concept_tags_metadata` and `concept_tags_run_2_metadata` generation runs; id=-1 values filtered out
+- `award_ceremony_win_ids()` — sorted list of `AwardCeremony.ceremony_id` values for ceremonies where the movie won at least one award
 
 `Movie.from_tmdb_ids(tmdb_ids, tracker_db_path?)` is the batch loader: executes
 one SQLite query with `json_each()` for N movies instead of N individual queries.
@@ -148,9 +165,13 @@ to the existing `has_revenue` boolean. Also includes `collection_name: str | Non
 **`IMDBData`** (`movie.py`): Typed sub-model for IMDB data. Now includes
 `awards: list[AwardNomination]` (nominations from 12 in-scope ceremonies,
 parsed from JSON) and `box_office_worldwide: int | None` (IMDB worldwide
-lifetime gross in USD; non-USD flagged as 0). `AwardNomination` sub-model
-has fields: `ceremony`, `award_name`, `category` (nullable for festival
-grand prizes), `outcome`, `year`.
+lifetime gross in USD; non-USD flagged as 0). `AwardNomination` is now in `schemas/imdb_models.py` (moved from
+`movie_ingestion/imdb_scraping/models.py`). Fields: `ceremony` (str, IMDB
+event text), `award_name` (str, e.g. "Oscar"), `category` (nullable for
+festival grand prizes), `outcome` (`AwardOutcome` enum with
+`outcome_id`), `year`. `AwardNomination.ceremony_id` property returns the
+matching `AwardCeremony.ceremony_id` integer for Postgres storage, or
+`None` for unknown ceremonies.
 
 ## Interaction with Other Modules
 

@@ -8,6 +8,7 @@ from schemas.enums import (
     AwardOutcome,
     BoxOfficeStatus,
     CEREMONY_BY_EVENT_TEXT,
+    LineagePosition,
     MetadataType,
     SourceMaterialType,
 )
@@ -271,3 +272,46 @@ class TestBoxOfficeStatus:
 
     def test_box_office_status_member_count(self):
         assert len(BoxOfficeStatus) == 2
+
+
+# ---------------------------------------------------------------------------
+# LineagePosition
+# ---------------------------------------------------------------------------
+
+_EXPECTED_LINEAGE_POSITIONS = {
+    "SEQUEL":  ("sequel", 1),
+    "PREQUEL": ("prequel", 2),
+    "REMAKE":  ("remake", 3),
+    "REBOOT":  ("reboot", 4),
+}
+
+
+class TestLineagePositionStability:
+    def test_lineage_position_values_are_stable(self):
+        """All 4 members exist with their exact (value, id) pairs."""
+        for member_name, (expected_value, expected_id) in _EXPECTED_LINEAGE_POSITIONS.items():
+            member = LineagePosition[member_name]
+            assert member.value == expected_value
+            assert member.lineage_position_id == expected_id
+
+    def test_lineage_position_member_count(self):
+        """Exactly 4 members — catches accidental additions or removals."""
+        assert len(LineagePosition) == 4
+
+    def test_lineage_position_is_str_subclass(self):
+        """Required for Pydantic JSON schema enum constraints in LLM structured output."""
+        assert isinstance(LineagePosition.SEQUEL, str)
+
+    def test_lineage_position_id_accessible(self):
+        """lineage_position_id is an instance attribute returning int."""
+        assert isinstance(LineagePosition.SEQUEL.lineage_position_id, int)
+
+    def test_no_duplicate_ids(self):
+        """No two members share the same lineage_position_id."""
+        ids = [m.lineage_position_id for m in LineagePosition]
+        assert len(ids) == len(set(ids))
+
+    def test_no_duplicate_values(self):
+        """No two members share the same string value."""
+        values = [m.value for m in LineagePosition]
+        assert len(values) == len(set(values))

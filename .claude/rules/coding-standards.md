@@ -37,3 +37,8 @@
 - Liberally include comments explaining what you are doing and why
 - No magic numbers or strings; use named constants
 - Keep nesting depth to 2-3 levels max; use early returns to flatten logic
+- Helpers and abstractions are fine when the pattern is likely to
+  recur — even if currently used in one spot. When adding a new
+  class or base class, first check if an existing class can absorb
+  the responsibility. Only introduce a new class when it has a
+  clear, distinct responsibility that doesn't overlap.
