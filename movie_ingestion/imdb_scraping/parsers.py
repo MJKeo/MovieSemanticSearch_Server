@@ -13,8 +13,8 @@ import html as html_lib
 
 from bs4 import BeautifulSoup
 
-from .models import (
-    IMDBScrapedMovie,
+from .models import IMDBScrapedMovie
+from schemas.imdb_models import (
     AwardNomination,
     ReviewTheme,
     ParentalGuideItem,

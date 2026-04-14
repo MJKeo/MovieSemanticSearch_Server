@@ -60,6 +60,7 @@ services:
         - ./api:/app
         - ./db:/app/db
         - ./implementation:/app/implementation
+        - ./schemas:/app/schemas
 
 volumes:
     postgres_data:

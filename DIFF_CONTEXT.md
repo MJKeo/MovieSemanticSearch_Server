@@ -998,3 +998,12 @@ Files: db/init/01_create_postgres_tables.sql, db/postgres.py | The `award_name` 
 
 ## Planning doc corrections
 Files: search_improvement_planning/v2_data_needs.md, search_improvement_planning/v2_data_architecture.md, search_improvement_planning/new_system_brainstorm.md, docs/decisions/ADR-011-data-store-architecture.md, docs/modules/db.md | Updated planning docs to reflect implementation reality: `BoxOfficeBucket` → `BoxOfficeStatus`, scrapped `inv_country_origin_postings` and `inv_source_material_postings` (replaced by GIN-indexed array columns), updated `movie_awards` schema blocks to show implemented hybrid approach (SMALLINT enum IDs + TEXT award_name), and brought ADR-011 up to date with all current movie_card columns and new tables (movie_awards, movie_franchise_metadata).
+
+
+## Fix _execute_read usage in ingest_movie and update eligibility logic
+Files: db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py | `_get_eligible_tmdb_ids` was calling `_execute_read` (private to db/postgres.py) without importing it. Fixed by adding a new public function `fetch_movie_ids_missing_card()` in db/postgres.py (EXCEPT query pattern). Rewrote eligibility logic: now pulls movies with tracker status "ingested" then filters to those missing a movie_card row, replacing the stale country_of_origin_ids check.
+
+## Move shared IMDB sub-models to schemas/ and fix Docker API startup
+Files: schemas/imdb_models.py (new), movie_ingestion/imdb_scraping/models.py, movie_ingestion/imdb_scraping/parsers.py, schemas/movie.py, db/postgres.py, docker-compose.yml
+Why: `db/postgres.py` imported `AwardNomination` from `movie_ingestion.imdb_scraping.models`, but the API Docker container doesn't mount `movie_ingestion/`, causing `ModuleNotFoundError` at startup.
+Approach: Moved `AwardNomination`, `FeaturedReview`, `ParentalGuideItem`, and `ReviewTheme` to new `schemas/imdb_models.py` — these are shared data types referenced by db/, schemas/, and ingestion code. Updated all non-test import sites to use the new path. Added `./schemas:/app/schemas` volume mount to docker-compose.yml. Also fixed `COALESCE` in `movie_awards` PRIMARY KEY (Postgres doesn't allow expressions in PKs) — changed `category` to `NOT NULL DEFAULT ''` and coalesce at insert time.

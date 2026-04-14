@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
-from movie_ingestion.imdb_scraping.models import AwardNomination
+from schemas.imdb_models import AwardNomination
 from schemas.metadata import FranchiseOutput
 
 
@@ -972,7 +972,7 @@ async def batch_upsert_movie_awards(
     # for unnest-based bulk insert.
     ceremony_ids = [a.ceremony_id for a in awards]
     award_names = [a.award_name for a in awards]
-    categories = [a.category for a in awards]
+    categories = [a.category or "" for a in awards]
     outcome_ids = [a.outcome.outcome_id for a in awards]
     years = [a.year for a in awards]
 
@@ -1600,6 +1600,32 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
 
     search_results = await _execute_read(query, (movie_ids,))
     return [dict(zip(columns, row)) for row in search_results]
+
+
+async def fetch_movie_ids_missing_card(candidate_ids: list[int]) -> list[int]:
+    """Return the subset of candidate_ids that have no row in movie_card.
+
+    Uses an EXCEPT query so we only return IDs that genuinely need
+    ingestion.  Follows the bulk-fetch convention (single query, no
+    per-candidate calls).
+
+    Args:
+        candidate_ids: Movie IDs to check against movie_card.
+
+    Returns:
+        List of movie IDs from candidate_ids that are absent from
+        movie_card, preserving no particular order.
+    """
+    if not candidate_ids:
+        return []
+
+    query = """
+        SELECT unnest(%s::bigint[])
+        EXCEPT
+        SELECT movie_id FROM public.movie_card
+    """
+    rows = await _execute_read(query, (candidate_ids,))
+    return [row[0] for row in rows]
 
 
 async def fetch_reception_scores(movie_ids: list[int]) -> dict[int, float | None]:

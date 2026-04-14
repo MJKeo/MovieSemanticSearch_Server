@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import os
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,7 @@ from db.postgres import (
     batch_upsert_movie_awards,
     refresh_title_token_doc_frequency,
     refresh_movie_popularity_scores,
+    fetch_movie_ids_missing_card,
 )
 
 # ---------------------------------------------------------------------------
@@ -929,31 +931,37 @@ async def _get_eligible_tmdb_ids(
     tracker_db_path: Path,
     max_movies: int | None = None,
 ) -> list[int]:
-    """Return movie IDs whose movie_card rows still have empty country IDs.
+    """Return movie IDs that have tracker status 'ingested' but no movie_card row.
 
-    The backfill target lives entirely in Postgres, so we no longer
-    constrain by tracker status here.
+    Two-step process:
+      1. Pull all tmdb_ids with status 'ingested' from the tracker SQLite DB.
+      2. Filter to only those missing a row in Postgres movie_card.
 
     Args:
-        tracker_db_path: Unused. Retained for call-site stability.
+        tracker_db_path: Path to the tracker SQLite database.
         max_movies: Optional cap on total movies returned.
 
     Returns:
         List of tmdb_ids ready for ingestion.
     """
-    query = """
-        SELECT movie_id
-        FROM public.movie_card
-        WHERE cardinality(country_of_origin_ids) = 0
-        ORDER BY movie_id
-    """
-    params: tuple[object, ...] | None = None
-    if max_movies is not None:
-        query += " LIMIT %s"
-        params = (max_movies,)
+    # Step 1: Get all "ingested" movie IDs from the tracker
+    with sqlite3.connect(str(tracker_db_path)) as db:
+        rows = db.execute(
+            "SELECT tmdb_id FROM movie_progress WHERE status = ?",
+            (MovieStatus.INGESTED,),
+        ).fetchall()
+    ingested_ids = [row[0] for row in rows]
 
-    rows = await _execute_read(query, params)
-    eligible_ids = [row[0] for row in rows]
+    if not ingested_ids:
+        return []
+
+    # Step 2: Keep only those that don't already have a movie_card row
+    eligible_ids = await fetch_movie_ids_missing_card(ingested_ids)
+    eligible_ids.sort()
+
+    if max_movies is not None:
+        eligible_ids = eligible_ids[:max_movies]
+
     return eligible_ids
 
 
@@ -1059,7 +1067,7 @@ async def cmd_ingest(
         all_tmdb_ids = await _get_eligible_tmdb_ids(tracker_db_path, max_movies)
         total = len(all_tmdb_ids)
         if not total:
-            print("No eligible movies (movie_card.country_of_origin_ids is already populated). Nothing to ingest.")
+            print("No eligible movies (all ingested movies already have a movie_card row). Nothing to ingest.")
             return
 
         print(

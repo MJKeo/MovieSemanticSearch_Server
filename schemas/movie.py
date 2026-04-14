@@ -25,7 +25,7 @@ from implementation.classes.enums import BudgetSize, Genre, MaturityRating
 from implementation.classes.languages import LANGUAGE_BY_NORMALIZED_NAME
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase
 
-from movie_ingestion.imdb_scraping.models import (
+from schemas.imdb_models import (
     AwardNomination,
     FeaturedReview,
     ParentalGuideItem,

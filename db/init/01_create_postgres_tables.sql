@@ -84,10 +84,10 @@ CREATE TABLE IF NOT EXISTS public.movie_awards (
   movie_id      BIGINT NOT NULL REFERENCES public.movie_card ON DELETE CASCADE,
   ceremony_id   SMALLINT NOT NULL,
   award_name    TEXT NOT NULL,
-  category      TEXT,
+  category      TEXT NOT NULL DEFAULT '',
   outcome_id    SMALLINT NOT NULL,
   year          SMALLINT NOT NULL,
-  PRIMARY KEY (movie_id, ceremony_id, award_name, COALESCE(category, ''), year)
+  PRIMARY KEY (movie_id, ceremony_id, award_name, category, year)
 );
 
 -- Covers: "Oscar winners", "Palme d'Or winners", "Best Picture nominees", "Cannes winners after 2000"
