@@ -34,6 +34,11 @@ the matched movie(s) as primary results, plus similar movies as secondary result
 below. If someone searches "High School Musical," they should see HSM first, then
 movies like Lemonade Mouth just below.
 
+**Routing note:** This is one of the major flows Step 1 should route into before
+the standard dealbreaker/preference decomposition. If the user's intent is
+clearly "find this one movie," the system should not force the query through
+the full standard pipeline first.
+
 For fragmentary recall queries (no title provided), match against plot
 descriptions, cast, and scene-level details simultaneously. The goal is a single
 high-confidence identification, not a ranked recommendation list. If confidence
@@ -191,6 +196,9 @@ without further qualifications.
 - "Something similar to Parasite"
 - "If you liked The Dark Knight"
 
+**Routing note:** This is a separate major flow from the standard search
+pipeline. Pure `"movies like <movie>"` queries should route here directly.
+
 **Behavior:** Identify the reference movie's tmdb_id, retrieve its stored
 vectors, find the N nearest neighbors across a predetermined set of vector
 spaces with fixed weights (e.g., plot_analysis carries more weight for
@@ -203,6 +211,12 @@ entirely and handled AFTER the initial version of search V2 is validated. The
 core V2 architecture (deal-breaker/preference decomposition, deterministic
 retrieval + semantic rescore) is the priority; similarity search is a distinct
 enough flow to build separately.
+
+**Exception:** `"movies like <movie> but <qualifiers>"` belongs to the standard
+flow, not this pure similarity flow. Once explicit qualifiers are present, the
+query is better treated as an interpreted constrained search. Using the LLM's
+parametric knowledge of mainstream reference movies is an acceptable speed and
+coverage tradeoff for understanding the intended traits.
 
 **Franchise as similarity signal:** "Similar movies" also includes entries to the
 same franchise — a user asking for "movies like The Dark Knight" expects other
@@ -258,10 +272,13 @@ trending movies and consider them all to be candidates, so long as they pass
 any active metadata filtering. The candidate pool comes from the trending set
 in Redis rather than from vector retrieval. Vector search is unnecessary — the
 user is asking about temporal popularity, not semantic content. Rank the
-trending set by trending signal (recency, popularity velocity) with the quality
-prior on top. For hybrid cases where discovery intent is mixed with attribute
-preferences ("trending horror movies"), constrain a portion of vector retrieval
-to the trending pool while searching globally for the rest.
+trending set by trending signal (recency, popularity velocity) with system-level
+priors on top.
+
+For hybrid standard-flow cases like "trending horror movies," treat trending as
+its own deterministic candidate source alongside lexical, metadata, and keyword
+sources. This aligns trending with the broader V2 rule that reliable candidate
+sets should come from deterministic sources when possible.
 
 **Note:** Canon/curriculum queries ("movies every film student should watch,"
 "essential horror") are a subtype where the curation signal is cultural
@@ -275,12 +292,16 @@ embeddings. A movie can be canon-essential without being conventionally
 
 **Note on quality inversion:** "So bad it's good" queries ("a movie that's
 so bad it's hilarious," "best worst movies") are a subtype where the
-universal quality prior actively works against correct results. Low
+default quality-oriented priors actively work against correct results. Low
 conventional quality IS the appeal — the user wants The Room, Troll 2,
 Birdemic. The signal is a specific combination: low critic scores + high
 audience engagement/cult following + reception language indicating ironic
-enjoyment. The system must recognize when the quality prior should be
+enjoyment. The system must recognize when the quality-oriented priors should be
 suppressed or inverted based on query interpretation.
+
+This should be kept distinct from queries like "hidden gems" or "underrated,"
+which usually still want good movies but with lower popularity or lower
+mainstream exposure.
 
 ---
 
@@ -299,7 +320,7 @@ that have the attribute, but the ones that have it the most.
 **Behavior:** The defining attribute is simultaneously the retrieval concept
 AND the ranking signal. Retrieve movies matching the attribute (e.g.,
 viewer_experience for "scary"), then rank by how strongly they exhibit it.
-A quality prior should still apply on top to avoid surfacing obscure movies
+System-level priors should still apply on top to avoid surfacing obscure movies
 that are one-dimensionally extreme.
 
 **Key challenge:** This conflicts with the threshold + flatten approach for
@@ -612,7 +633,7 @@ deterministic data source (no keyword, no entity, no metadata field).
 semantic elbow-threshold penalty: search the full corpus for the exclusion
 concept, analyze the global score distribution to find the elbow, and penalize
 candidates based on where they fall:
-- Above elbow (genuinely matches concept) → harsh penalty / effective removal
+- Above elbow (genuinely matches concept) → harsh downrank
 - Near elbow (uncertain match) → soft downrank
 - Below elbow (no meaningful match) → no penalty
 
@@ -674,15 +695,14 @@ Every category carries unstated expectations:
 - **Language/availability:** English-language or widely available with
   subtitles, watchable in the US
 
-These should be handled as a universal quality prior applied across all
-categories, not as per-query classification.
+These should be handled as system-level priors applied across categories, not
+as per-query classification.
 
-**Caveat:** The quality prior is a strong default, not a universal. Specific
-query types override it: "so bad it's good" inverts the quality signal
-(see #7 note), and background/passive viewing queries ("something to put on
-while I cook") may actively penalize high-engagement, high-complexity films.
-The quality prior should be suppressible when Phase 0 interpretation
-identifies these cases.
+**Caveat:** These priors are strong defaults, not universals. Specific query
+types override them: "so bad it's good" can invert conventional quality, while
+"hidden gems" and "underrated" should reduce mainstream/notability bias rather
+than being treated as low-quality requests. The priors should be suppressible
+when Phase 0 interpretation identifies these cases.
 
 ### Metadata-Semantic Boundary
 

@@ -370,24 +370,23 @@ with `lineage`, `shared_universe`, `recognized_subgroups`,
   a small number of franchises (Star Wars trilogies, MCU phases); correctly
   absent for most.
 
-### ~~How should the dynamic quality prior be calibrated?~~ DECIDED
+### How should system-level priors split quality vs notability/mainstreamness?
 
-**Continuous dial (0.0 to 1.0)**, not discrete modes. Phase 0 outputs a
-quality_weight parameter:
-- 0.0 = "hidden gems, obscurity is a feature"
-- 0.5 = "neutral, quality matters but popularity doesn't"
-- 1.0 = "well-known, established, canonical"
+The earlier design treated these as one dial, but the revised design now
+explicitly separates them conceptually:
 
-This becomes a weight on the reception/popularity signal in Phase 2 scoring.
-Few-shot examples spanning the range to anchor the LLM output.
+- "so bad it's good" can invert conventional quality
+- "hidden gems" and "underrated" usually still want quality, just with lower
+  popularity or lower mainstream exposure
 
-**When Phase 0 outputs null for sorting criteria:** The pipeline applies a
-deterministic default composite (e.g., `0.6 * reception + 0.4 * popularity`).
-This replaces the current bucket-then-sort-by-reception hack with a tunable
-weighted signal.
+**Open question:** What should the wire shape be in Phase 0 and Phase 2?
+Candidates include:
+- Separate fields for conventional quality and mainstream/notability bias
+- A small enum per dimension rather than one combined mode
+- A continuous dial for one dimension and enum for the other
 
-**User-facing toggle deferred** until LLM inference is validated. If the
-inference works well enough for most queries, most users never need the toggle.
+**Settled part:** The conceptual split is finalized.
+**Unsettled part:** Exact field schema, allowed values, and scoring interaction.
 
 ### How should metadata filters handle implicit temporal signals?
 
@@ -411,6 +410,49 @@ Tabled for now. The number of genuinely ambiguous movie search queries is low.
 Phase 4 exploratory results partially address alternative interpretations
 organically. If built later, pre-search disambiguation (clickable options before
 results load) is preferred over post-search grouping.
+
+### What should the exact major-flow routing triggers be in Step 1?
+
+Step 1 now routes queries into major flows before standard decomposition:
+
+- known-movie / exact-title flow
+- reference-movie similarity flow
+- standard flow
+
+**Open questions:**
+- When is a query confidently "known movie identification" vs just title-heavy
+  standard search?
+- When is a query pure `"movies like X"` similarity vs `"movies like X but
+  qualifiers"` standard flow?
+- What signals should cause a query to stay in standard flow even if it
+  contains a reference movie?
+
+The routing categories are decided; the exact trigger criteria still need to be
+specified and tested.
+
+### How should Step 1 handle multiple `is_primary_preference=true` outputs?
+
+The finalized design adds `is_primary_preference` as the minimal mechanism for
+distinguishing one dominant ranking axis from equal-weighted preferences.
+
+**Open question:** If the model marks more than one preference as primary, what
+should code do?
+- Keep the first and demote the rest
+- Fall back to equal-weight additive preferences
+- Preserve multiple primaries and combine them in a special mode
+
+The field itself is decided. Multi-primary conflict handling is not.
+
+### Should full boolean/group logic stay deferred unless query failures justify it?
+
+The current V1 decision is to avoid explicit boolean clause/group logic and rely
+on synonym consolidation plus strict match-count tiering. This keeps the system
+simpler because many OR-style queries degrade gracefully under the current
+structure.
+
+**Open question:** After real-query evaluation, does this simplification hold up
+well enough, or do OR/group-style failures become common enough to justify the
+extra complexity later?
 
 ---
 
@@ -737,7 +779,7 @@ per the core architectural principle.
 
 Semantic exclusions (e.g., "not ones with clowns") use an elbow-threshold
 penalty: search the full corpus for the exclusion concept, find the elbow in
-the score distribution, and penalize candidates above it. The elbow must be
+the score distribution, and penalize candidates relative to it. The elbow must be
 determined dynamically per concept since different concepts have different
 distributions (see threshold calibration data above — "twist ending" elbows at
 75% of max, "christmas" at 90%).
@@ -746,8 +788,10 @@ distributions (see threshold calibration data above — "twist ending" elbows at
 - Hard-coded percentage of max won't work across concept types
 - Need a method that handles both tight clusters (few movies genuinely match)
   and broad distributions (many movies partially match)
-- Must distinguish "above elbow" (harsh penalty) from "near elbow" (soft
+- Must distinguish "above elbow" (harsh downrank) from "near elbow" (soft
   downrank) from "well below" (no penalty)
+- Need to determine the penalty curve shape, not just the elbow location
+- Need to determine how far below the elbow the penalty should decay to zero
 
 **Needs empirical testing** before full implementation. Test with concepts of
 varying specificity (clowns vs violence vs Christmas) to see if a single

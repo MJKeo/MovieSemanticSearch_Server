@@ -48,21 +48,23 @@ qualifications ON the deal-breaker attributes.
 Things the user didn't say but would be disappointed without.
 
 **Characteristics:**
-- Universal quality prior: "comedies" really means "well-received comedies I'd enjoy"
+- Universal quality expectation: "comedies" really means "well-received comedies I'd enjoy"
 - Mainstream accessibility bias (unless query signals otherwise)
 - Language/availability assumptions
 - Temporal establishment for certain language ("classics," "iconic," "legendary"
   imply cultural staying power, not just quality)
 
-**Key insight: the quality prior should be dynamic, not constant.** Different queries
-imply different strengths of notability expectation. Phase 0 should assess this:
+**Key insight: system-level priors should be dynamic, not constant.** Different
+queries imply different strengths of quality expectation and
+notability/mainstreamness expectation. These are related, but not identical,
+and should not be collapsed into one concept.
 
-Signals that push toward **strong quality prior** (well-known/established):
+Signals that push toward **strong quality / establishment expectations**:
 - Superlatives ("best," "greatest," "iconic")
 - Cultural reference language ("classics," "essential," "must-see")
 - Social context ("something everyone's seen," "a crowd-pleaser")
 
-Signals that push toward **weak quality prior** (lesser-known is fine):
+Signals that push toward **lower mainstream/notability expectation**:
 - Discovery language ("hidden gem," "underrated," "something I haven't seen")
 - Niche descriptors ("experimental," "avant-garde," "slow cinema")
 - Explicit novelty ("surprise me," "something different")
@@ -85,7 +87,7 @@ Phase 0: Query Understanding (restructured)
 │   ├── Semantic deal-breakers with target spaces (route to Qdrant)
 │   ├── Semantic preferences with target spaces
 │   ├── Sorting criteria (null → default quality composite)
-│   └── Quality prior weight (0.0-1.0)
+│   └── System-level priors (quality and notability/mainstreamness)
 ├── Resolve conflicts with any UI-set hard filters
 │   (UI filters = hard tier, always override NLP-extracted)
 └── Detect empty deal-breaker set → fall back to broad retrieval mode
@@ -116,7 +118,7 @@ Phase 2: Full Rescore (all candidates scored across all dimensions)
 │   │   (capped at 1.0 above threshold, decay below threshold)
 │   │   Per concept: threshold each relevant vector space separately,
 │   │   take best score across spaces
-│   ├── Semantic preference scores (additive)
+│   ├── Semantic preference scores (additive, with optional primary preference)
 │   └── Sorting/quality score (explicit criteria or default composite)
 ├── Primary sort: deal-breaker conformance (% of deal-breakers met)
 ├── Secondary sort: preference + sorting scores (bounded — cannot
@@ -167,20 +169,18 @@ lexical_relevance, metadata_relevance) is eliminated.
    - **Reranking/sorting criteria:** Explicit ranking axes stated in the query
      ("critically acclaimed," "scariest," "top rated"). **Null if none stated** —
      triggers the default quality composite in Phase 2.
-   - **Quality prior weight:** Continuous 0.0-1.0 dial for how much the user
-     implicitly expects well-known results. Inferred from language signals
-     (superlatives/cultural references push high, discovery language pushes low).
+   - **System-level priors:** Separate quality and
+     notability/mainstreamness adjustments. The exact wire shape is still open,
+     but the conceptual split is now explicit.
 
 ### Future Direction: Expert LLMs Per Search Type
 
-Rather than a single monolithic Phase 0 call, a future iteration could decompose
-the query understanding into a top-level intent classifier followed by specialized
-expert LLMs per identified search type. The top-level LLM would examine the query
-against the data store structure and identify which independent search strategies
-are needed, then dispatch to expert LLMs that are tuned for each strategy (entity
-resolution, metadata extraction, semantic concept mapping, etc.). This is not
-planned for V2's initial implementation but is worth revisiting if Phase 0's single-
-call approach struggles with complex multi-type queries.
+Rather than a single monolithic Phase 0 call, a future iteration could further
+specialize the interpretive layer by search type. This is not because Phase 0
+cannot reason about the query, but because source-specific low-level
+specialization can be separated cleanly from high-level intent interpretation.
+This is not planned for V2's initial implementation but is worth revisiting if
+the current split still overloads the step 1 prompt.
 
 ### Phase 0 Output Example
 
@@ -203,7 +203,7 @@ call approach struggles with complex multi-type queries.
     }
   ],
   "sorting_criteria": null,
-  "quality_prior_weight": 0.85
+  "system_level_priors": "separate quality + notability settings"
 }
 ```
 
@@ -238,11 +238,13 @@ Phase 0's sorting_criteria output determines the ranking mode:
 - **Default quality:** When sorting_criteria is null. Apply default quality composite
   after preference scoring.
 
-The distinction matters because the current system always uses additive balance, even
-when the user's intent is clearly "sort by X." This is why "critically acclaimed
-christmas movies" underweights the acclaim dimension — acclaim competes additively
-with christmas-ness rather than serving as the ranking axis after christmas-ness gates
-the candidate set.
+The distinction matters because the current system always uses additive balance,
+even when the user's intent is clearly "sort by X." This is why "critically
+acclaimed christmas movies" underweights the acclaim dimension — acclaim
+competes additively with christmas-ness rather than serving as the ranking axis
+after christmas-ness gates the candidate set. A minimal `is_primary_preference`
+style mechanism is enough to capture this distinction without adding general
+preference weighting complexity.
 
 ---
 
@@ -459,15 +461,11 @@ roles in the pipeline.
 with the highest percentage met. "Dark gritty Marvel christmas movies" with 4
 deal-breakers might yield zero 4/4 matches — show the best 3/4 movies instead.
 
-**Preference weighting relative to deal-breakers:** During rescoring, preferences
-should be weighted such that hitting ALL preferences provides a boost equivalent
-to (or a meaningful percentage of) hitting one additional deal-breaker. This
-means a movie that meets 3/3 deal-breakers and 0/3 preferences should rank close
-to — but still above — a movie that meets 2/3 deal-breakers and 3/3 preferences.
-The exact ratio (full deal-breaker equivalent vs. partial) is an implementation
-tuning parameter. The principle is that preferences in aggregate should matter
-enough to differentiate results meaningfully within a deal-breaker conformance
-tier, and can partially compensate for a marginal deal-breaker miss.
+**Preference weighting relative to deal-breakers:** Keep V1 simple. Preferences
+remain equal-weighted relative to each other unless one is explicitly marked as
+the primary preference. The structural tiering already ensures preferences
+cannot override a higher deal-breaker-conformance tier, so rich preference
+weighting is not required up front.
 
 ---
 
@@ -569,10 +567,11 @@ all deal-breakers (deterministic + semantic) with decay below threshold:
 4. **Phase 4 exploratory:** For broader "you might also like" suggestions beyond even
    partial matches, Phase 4 runs the current-style expansive search.
 
-This replaces the previously considered approaches (tiered results, progressive
-relaxation, weighted-AND scoring) with a single unified scoring model that handles
-both strict and relaxed results in one ranked list. The deal-breaker conformance
-percentage creates natural tiers without explicit tier logic.
+This keeps the graceful degradation behavior from the earlier unified-scoring
+idea, but the finalized V2 design now makes the tiers explicit rather than
+implicit. Movies that satisfy more inclusion dealbreakers form higher tiers,
+and partial matches naturally fill lower tiers without requiring a separate
+relaxation policy.
 
 ---
 
@@ -611,14 +610,11 @@ Can't retrieve by what movies AREN'T. Retrieve broadly on the positive signals (
 vibe), then post-filter using metadata or LLM evaluation for the negated attributes.
 Negations are more naturally modeled as hard filters than as retrieval queries.
 
-### Similarity Queries ("like Inception") — DEFERRED TO AFTER V2
+### Similarity Queries ("like Inception")
 
-**Decision:** "Movies like xyz" should get routed to a different search flow
-entirely, but this should be handled after the initial version of search V2 is
-complete. The core V2 architecture (deal-breaker/preference decomposition,
-deterministic retrieval + semantic rescore) needs to be validated first. Similarity
-search is a distinct enough flow that bolting it on prematurely would add complexity
-without informing the core design.
+**Decision:** "Movies like xyz" should get routed to a different major flow
+from standard constrained search. The routing distinction is finalized even if
+the exact implementation can still trail the core standard-flow work.
 
 Could decompose the reference movie into its actual metadata attributes and determine
 which are most distinctive (vs generic). Use the distinctive attributes as deal-
@@ -762,8 +758,8 @@ trending movie set directly as the candidate pool.
 ### Full Injection
 When Phase 0 classifies the query as primarily trending/discovery (query type #7),
 skip vector retrieval entirely and use the trending set from Redis as the candidate
-pool. Rank by the trending signal (recency, popularity velocity, etc.) with the
-quality prior applied on top.
+pool. Rank by the trending signal (recency, popularity velocity, etc.) with
+system-level priors applied on top.
 
 ### Partial Injection (Hybrid)
 For queries that aren't explicitly trending but could benefit from trending awareness,
@@ -1307,7 +1303,7 @@ threshold+flatten handles the binary aspect; raw similarity handles ranking.
 | "underrated / hidden gems" | High `reception_score` + low `popularity_score` (anti-correlation) |
 | "cult classics" | Emerges from audience engagement patterns — not classifiable at ingestion |
 | "trending / popular right now" | Redis trending set + `popularity_score` |
-| "classics / iconic movies" | `reception_score` + `popularity_score` + age (dynamic quality prior in Phase 0) |
+| "classics / iconic movies" | `reception_score` + `popularity_score` + age (dynamic system-level priors in Phase 0) |
 
 ---
 
@@ -1338,7 +1334,7 @@ spaces × N chunks per movie × 150K movies).
 
 ### Franchise Search Flow as Independent Search Type
 
-"Movies like xyz" should route to a dedicated similarity search flow (deferred
-from V2). This flow would use franchise membership, vector similarity across
-spaces, and distinctive-vs-generic decomposition as described in the similarity
-queries section above.
+"Movies like xyz" should route to a dedicated similarity search flow. That flow
+would use franchise membership, vector similarity across spaces, and
+distinctive-vs-generic decomposition as described in the similarity queries
+section above.
