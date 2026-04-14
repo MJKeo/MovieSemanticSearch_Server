@@ -19,6 +19,7 @@ from db.postgres import (
     execute_compound_lexical_search,
     fetch_movie_ids_by_term_ids,
     PostingTable,
+    PEOPLE_POSTING_TABLES,
     TitleSearchInput,
 )
 
@@ -418,9 +419,10 @@ async def lexical_search(
     excluded_movie_ids: set[int] = set()
     exclusion_resolution_tasks = []
     if exclude_people_ids:
-        exclusion_resolution_tasks.append(
-            fetch_movie_ids_by_term_ids(PostingTable.PERSON, exclude_people_ids)
-        )
+        for table in PEOPLE_POSTING_TABLES:
+            exclusion_resolution_tasks.append(
+                fetch_movie_ids_by_term_ids(table, exclude_people_ids)
+            )
     if exclude_studio_ids:
         exclusion_resolution_tasks.append(
             fetch_movie_ids_by_term_ids(PostingTable.STUDIO, exclude_studio_ids)

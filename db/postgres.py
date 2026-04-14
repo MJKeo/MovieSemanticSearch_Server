@@ -19,11 +19,26 @@ from schemas.metadata import FranchiseOutput
 
 class PostingTable(Enum):
     """Supported posting tables for lexical matching and exclusion resolution."""
-    PERSON = "lex.inv_person_postings"
+    ACTOR = "lex.inv_actor_postings"
+    DIRECTOR = "lex.inv_director_postings"
+    WRITER = "lex.inv_writer_postings"
+    PRODUCER = "lex.inv_producer_postings"
+    COMPOSER = "lex.inv_composer_postings"
     CHARACTER = "lex.inv_character_postings"
     STUDIO = "lex.inv_studio_postings"
     FRANCHISE = "lex.inv_franchise_postings"
     TITLE_TOKEN = "lex.inv_title_token_postings"
+
+
+# All role-specific people posting tables, used by search code that needs
+# to union across roles (compound lexical search, exclusion resolution).
+PEOPLE_POSTING_TABLES: list[PostingTable] = [
+    PostingTable.ACTOR,
+    PostingTable.DIRECTOR,
+    PostingTable.WRITER,
+    PostingTable.PRODUCER,
+    PostingTable.COMPOSER,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,19 +529,104 @@ async def batch_insert_title_token_postings(term_ids: list[int], movie_id: int, 
     await _execute_on_conn(conn, query, (term_ids, movie_id))
 
 
-async def batch_insert_person_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
+async def batch_insert_actor_postings(
+    term_ids: list[int], movie_id: int, cast_size: int, conn=None,
+) -> None:
     """
-    Insert person postings for one movie in a single round-trip.
+    Insert actor postings with billing metadata for one movie.
+
+    term_ids must be in billing order (lead actor first). billing_position
+    is auto-generated as 1-based index from the list order.
 
     Args:
-        term_ids: Person term IDs to insert.
+        term_ids: Actor term IDs in billing order.
+        movie_id: Movie ID that owns all postings.
+        cast_size: Total number of credited cast members in the film.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    if not term_ids:
+        return
+    # Parallel unnest: term_ids[i] pairs with billing_positions[i].
+    # cast_size is a scalar that broadcasts across all rows.
+    billing_positions = list(range(1, len(term_ids) + 1))
+    query = """
+    INSERT INTO lex.inv_actor_postings (term_id, movie_id, billing_position, cast_size)
+    SELECT unnest(%s::bigint[]), %s, unnest(%s::int[]), %s
+    ON CONFLICT (term_id, movie_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (term_ids, movie_id, billing_positions, cast_size))
+
+
+async def batch_insert_director_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
+    """
+    Insert director postings for one movie in a single round-trip.
+
+    Args:
+        term_ids: Director term IDs to insert.
         movie_id: Movie ID that owns all postings.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not term_ids:
         return
     query = """
-    INSERT INTO lex.inv_person_postings (term_id, movie_id)
+    INSERT INTO lex.inv_director_postings (term_id, movie_id)
+    SELECT unnest(%s::bigint[]), %s
+    ON CONFLICT (term_id, movie_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
+
+
+async def batch_insert_writer_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
+    """
+    Insert writer postings for one movie in a single round-trip.
+
+    Args:
+        term_ids: Writer term IDs to insert.
+        movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    if not term_ids:
+        return
+    query = """
+    INSERT INTO lex.inv_writer_postings (term_id, movie_id)
+    SELECT unnest(%s::bigint[]), %s
+    ON CONFLICT (term_id, movie_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
+
+
+async def batch_insert_producer_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
+    """
+    Insert producer postings for one movie in a single round-trip.
+
+    Args:
+        term_ids: Producer term IDs to insert.
+        movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    if not term_ids:
+        return
+    query = """
+    INSERT INTO lex.inv_producer_postings (term_id, movie_id)
+    SELECT unnest(%s::bigint[]), %s
+    ON CONFLICT (term_id, movie_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (term_ids, movie_id))
+
+
+async def batch_insert_composer_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
+    """
+    Insert composer postings for one movie in a single round-trip.
+
+    Args:
+        term_ids: Composer term IDs to insert.
+        movie_id: Movie ID that owns all postings.
+        conn: Optional existing async connection for caller-managed transaction scope.
+    """
+    if not term_ids:
+        return
+    query = """
+    INSERT INTO lex.inv_composer_postings (term_id, movie_id)
     SELECT unnest(%s::bigint[]), %s
     ON CONFLICT (term_id, movie_id) DO NOTHING;
     """
@@ -953,6 +1053,62 @@ def _build_compound_phrase_bucket_cte(
     return cte_sql, params
 
 
+def _build_people_union_cte(
+    *,
+    cte_name: str,
+    term_ids: list[int],
+    use_eligible: bool,
+    exclude_movie_ids: Optional[set[int]] = None,
+) -> tuple[str, list]:
+    """
+    Build a CTE that unions person matches across all role-specific posting tables.
+
+    Produces a UNION ALL across actor/director/writer/producer tables, then
+    COUNT(DISTINCT term_id) to handle cross-role deduplication (same person
+    credited as both actor and director counts once).
+
+    Args:
+        cte_name: Name for the generated CTE block.
+        term_ids: Resolved term IDs to search for across all role tables.
+        use_eligible: Whether the eligible CTE exists in the query.
+        exclude_movie_ids: Optional IDs excluded from results.
+
+    Returns:
+        Tuple of (cte_sql, params) for this bucket.
+    """
+    sub_parts: list[str] = []
+    params: list = []
+
+    for table in PEOPLE_POSTING_TABLES:
+        eligibility_join = (
+            "\n                JOIN eligible e ON e.movie_id = p.movie_id"
+            if use_eligible
+            else ""
+        )
+        exclusion_clause = ""
+        sub_params: list = [term_ids]
+        if exclude_movie_ids:
+            exclusion_clause = "\n                  AND NOT (p.movie_id = ANY(%s::bigint[]))"
+            sub_params.append(list(exclude_movie_ids))
+
+        sub_parts.append(
+            f"SELECT p.movie_id, p.term_id"
+            f"\n                FROM {table.value} p{eligibility_join}"
+            f"\n                WHERE p.term_id = ANY(%s::bigint[]){exclusion_clause}"
+        )
+        params.extend(sub_params)
+
+    inner_union = "\n                UNION ALL\n                ".join(sub_parts)
+    cte_sql = f"""{cte_name} AS (
+            SELECT movie_id, COUNT(DISTINCT term_id)::int AS matched
+            FROM (
+                {inner_union}
+            ) AS combined
+            GROUP BY movie_id
+        )"""
+    return cte_sql, params
+
+
 def _build_compound_character_cte(
     *,
     query_idxs: list[int],
@@ -1162,9 +1318,8 @@ async def execute_compound_lexical_search(
         cte_params.extend(eligible_params)
 
     if people_term_ids:
-        people_cte, people_params = _build_compound_phrase_bucket_cte(
+        people_cte, people_params = _build_people_union_cte(
             cte_name="people_matches",
-            table_name=PostingTable.PERSON.value,
             term_ids=people_term_ids,
             use_eligible=use_eligible,
             exclude_movie_ids=exclude_movie_ids,

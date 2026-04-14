@@ -24,8 +24,11 @@ reranking.
   watch_offer_keys (INT[]), audio_language_ids (INT[]),
   reception_score, popularity_score, imdb_vote_count, budget_bucket
 - `lex.*` — inverted index posting tables for lexical search:
-  inv_person_postings, inv_character_postings, inv_studio_postings,
-  inv_title_token_postings. Each stores (term_id, movie_id) pairs.
+  inv_actor_postings (includes billing_position, cast_size for
+  prominence scoring), inv_director_postings, inv_writer_postings,
+  inv_producer_postings, inv_character_postings, inv_studio_postings,
+  inv_franchise_postings, inv_title_token_postings. Most store
+  (term_id, movie_id) pairs; actor table adds billing metadata.
   Dictionaries map normalized strings to term IDs.
 
 **Access pattern**: Single bulk fetch via

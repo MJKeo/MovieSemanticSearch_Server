@@ -51,7 +51,11 @@ from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_
 from db.postgres import (
     pool,
     batch_insert_title_token_postings,
-    batch_insert_person_postings,
+    batch_insert_actor_postings,
+    batch_insert_director_postings,
+    batch_insert_writer_postings,
+    batch_insert_producer_postings,
+    batch_insert_composer_postings,
     batch_insert_character_postings,
     batch_insert_studio_postings,
     batch_upsert_lexical_dictionary,
@@ -297,7 +301,13 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
         for token in movie.normalized_title_tokens()
         if (normalized_token := normalize_string(token))
     ]
-    people = list(create_people_list(movie))
+    # Build role-specific people lists (order matters for actor billing position).
+    actors = _normalize_name_list(movie.imdb_data.actors)
+    directors = _normalize_name_list(movie.imdb_data.directors)
+    writers = _normalize_name_list(movie.imdb_data.writers)
+    producers = _normalize_name_list(movie.imdb_data.producers)
+    composers = _normalize_name_list(movie.imdb_data.composers)
+    all_people = list(dict.fromkeys(actors + directors + writers + producers + composers))
 
     characters: list[str] = []
     for character in movie.imdb_data.characters:
@@ -314,7 +324,7 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
         studios.append(normalized_studio)
 
     # Phase 2: Resolve all dictionary IDs in one round-trip.
-    all_strings = list(dict.fromkeys(title_tokens + people + characters + studios))
+    all_strings = list(dict.fromkeys(title_tokens + all_people + characters + studios))
     string_id_map = await batch_upsert_lexical_dictionary(all_strings, conn=conn)
 
     # Phase 3: Build aligned ID/string arrays and posting ID lists.
@@ -328,7 +338,12 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     ]
 
     title_token_term_ids = [string_id for string_id, _ in title_token_string_pairs]
-    person_term_ids = [string_id_map[person] for person in people if person in string_id_map]
+    # Role-specific term ID lists. Actor list preserves billing order.
+    actor_term_ids = [string_id_map[a] for a in actors if a in string_id_map]
+    director_term_ids = [string_id_map[d] for d in directors if d in string_id_map]
+    writer_term_ids = [string_id_map[w] for w in writers if w in string_id_map]
+    producer_term_ids = [string_id_map[p] for p in producers if p in string_id_map]
+    composer_term_ids = [string_id_map[c] for c in composers if c in string_id_map]
     character_term_ids = [string_id for string_id, _ in character_string_pairs]
     studio_term_ids = [string_id_map[studio] for studio in studios if studio in string_id_map]
 
@@ -346,7 +361,16 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
         conn=conn,
     )
     await batch_insert_title_token_postings(list(dict.fromkeys(title_token_term_ids)), movie_id, conn=conn)
-    await batch_insert_person_postings(list(dict.fromkeys(person_term_ids)), movie_id, conn=conn)
+    # Role-specific people posting inserts. Actor dedup preserves billing order
+    # via dict.fromkeys; cast_size reflects the deduplicated actor count.
+    deduped_actor_term_ids = list(dict.fromkeys(actor_term_ids))
+    await batch_insert_actor_postings(
+        deduped_actor_term_ids, movie_id, cast_size=len(deduped_actor_term_ids), conn=conn,
+    )
+    await batch_insert_director_postings(list(dict.fromkeys(director_term_ids)), movie_id, conn=conn)
+    await batch_insert_writer_postings(list(dict.fromkeys(writer_term_ids)), movie_id, conn=conn)
+    await batch_insert_producer_postings(list(dict.fromkeys(producer_term_ids)), movie_id, conn=conn)
+    await batch_insert_composer_postings(list(dict.fromkeys(composer_term_ids)), movie_id, conn=conn)
     await batch_insert_character_postings(list(dict.fromkeys(character_term_ids)), movie_id, conn=conn)
     await batch_insert_studio_postings(list(dict.fromkeys(studio_term_ids)), movie_id, conn=conn)
 
@@ -882,22 +906,19 @@ async def create_award_ceremony_win_ids(movie: Movie) -> list[int]:
     return movie.award_ceremony_win_ids()
 
 
-def create_people_list(movie: Movie) -> set[str]:
-    raw_people_lists = [
-        movie.imdb_data.actors,
-        movie.imdb_data.directors,
-        movie.imdb_data.writers,
-        movie.imdb_data.composers,
-        movie.imdb_data.producers,
-    ]
-    people_names: set[str] = set()
-    for people_list in raw_people_lists:
-        for name in people_list:
-            normalized_name = normalize_string(str(name))
-            if normalized_name:
-                people_names.add(normalized_name)
+def _normalize_name_list(names: list[str]) -> list[str]:
+    """Normalize a list of names, preserving order and removing empties/duplicates.
 
-    return people_names
+    Order preservation is critical for actor lists where index encodes billing position.
+    """
+    result: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        normalized = normalize_string(str(name))
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
 
 
 # ================================

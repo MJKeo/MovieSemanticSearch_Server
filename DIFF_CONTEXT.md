@@ -967,3 +967,25 @@ Four follow-up cleanups to the movie_awards implementation for robustness and re
 - **`_RECEPTION_AWARD_CEREMONY_DISPLAY`** now maps `AwardCeremony` enum members (not `.value` strings) to display names. Also serves as the ordering source, replacing the deleted `_RECEPTION_AWARD_CEREMONY_ORDER` that was causing a `NameError` in `_reception_award_wins_text()`.
 - **`Movie.award_ceremony_win_ids()`** added as an instance method on `Movie`, following the pattern of `concept_tag_ids()`, `keyword_ids()`, etc. The `create_award_ceremony_win_ids()` helper in ingest_movie.py now delegates to it.
 - **`batch_upsert_movie_awards()`** now accepts `list[AwardNomination]` directly and extracts fields internally, instead of requiring pre-extracted tuples.
+
+## Split inv_person_postings into role-specific posting tables
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py, db/lexical_search.py, docs/decisions/ADR-011-data-store-architecture.md, docs/modules/db.md, docs/modules/ingestion.md
+
+### Intent
+Replace the monolithic `lex.inv_person_postings` table with 4 role-specific tables: `inv_actor_postings` (with billing_position + cast_size for prominence scoring), `inv_director_postings`, `inv_writer_postings`, `inv_producer_postings`. This is the first step toward V2 role-aware lexical search per `search_improvement_planning/v2_data_architecture.md`.
+
+### Key Decisions
+- **Only 4 tables, not 5**: Composers intentionally excluded — no posting table needed for search.
+- **Actor billing_position derived from IMDB scraper list order**: `movie.imdb_data.actors` already preserves billing order (parsers.py:491). `billing_position` = 1-based index, `cast_size` = len(deduplicated actors).
+- **Search compatibility preserved**: New `_build_people_union_cte()` unions all 4 tables for compound lexical search, maintaining the existing "people as one bucket" behavior. Role-specific routing is a future V2 change.
+- **`PEOPLE_POSTING_TABLES` constant**: Module-level list in postgres.py used by both compound search and exclusion resolution, so new role tables can be added in one place.
+- **`_normalize_name_list()` replaces `create_people_list()`**: Returns ordered list (not set) to preserve actor billing order. Deduplicates via seen-set.
+
+### Testing Notes
+- Unit tests in test_postgres.py and test_ingest_movie.py reference old function/enum names and will need updating.
+- Key areas: `batch_insert_actor_postings` parallel unnest with billing_positions array, `_build_people_union_cte` SQL generation, `_normalize_name_list` order preservation.
+
+## Add lex.inv_composer_postings support
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py
+Why: Composer data was already scraped/stored in models but excluded from posting tables. Adding enables lexical search for composers.
+Approach: Followed the identical pattern of director/writer/producer postings — same DDL, same batch insert function, same ingestion wiring. Added COMPOSER to PostingTable enum and PEOPLE_POSTING_TABLES so lexical search picks it up automatically.

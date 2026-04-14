@@ -137,15 +137,57 @@ CREATE TABLE IF NOT EXISTS lex.inv_title_token_postings (
 CREATE INDEX IF NOT EXISTS idx_title_postings_movie
   ON lex.inv_title_token_postings (movie_id);
 
--- Inverted index postings for people names.
-CREATE TABLE IF NOT EXISTS lex.inv_person_postings (
+-- Inverted index postings for actor names (with billing metadata for prominence scoring).
+CREATE TABLE IF NOT EXISTS lex.inv_actor_postings (
+  term_id          BIGINT NOT NULL,
+  movie_id         BIGINT NOT NULL,
+  billing_position INT    NOT NULL,
+  cast_size        INT    NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_actor_postings_movie
+  ON lex.inv_actor_postings (movie_id);
+
+-- Inverted index postings for director names.
+CREATE TABLE IF NOT EXISTS lex.inv_director_postings (
   term_id   BIGINT NOT NULL,
   movie_id  BIGINT NOT NULL,
   PRIMARY KEY (term_id, movie_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_person_postings_movie
-  ON lex.inv_person_postings (movie_id);
+CREATE INDEX IF NOT EXISTS idx_director_postings_movie
+  ON lex.inv_director_postings (movie_id);
+
+-- Inverted index postings for writer names.
+CREATE TABLE IF NOT EXISTS lex.inv_writer_postings (
+  term_id   BIGINT NOT NULL,
+  movie_id  BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_writer_postings_movie
+  ON lex.inv_writer_postings (movie_id);
+
+-- Inverted index postings for producer names.
+CREATE TABLE IF NOT EXISTS lex.inv_producer_postings (
+  term_id   BIGINT NOT NULL,
+  movie_id  BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_producer_postings_movie
+  ON lex.inv_producer_postings (movie_id);
+
+-- Inverted index postings for composer names.
+CREATE TABLE IF NOT EXISTS lex.inv_composer_postings (
+  term_id   BIGINT NOT NULL,
+  movie_id  BIGINT NOT NULL,
+  PRIMARY KEY (term_id, movie_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_composer_postings_movie
+  ON lex.inv_composer_postings (movie_id);
 
 -- Character names strings saving
 CREATE TABLE IF NOT EXISTS lex.character_strings (
