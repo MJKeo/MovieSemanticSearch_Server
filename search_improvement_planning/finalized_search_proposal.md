@@ -6,40 +6,38 @@ resolved.
 
 ---
 
-## High-Level Architecture: Three-Step Pipeline
+## High-Level Architecture: Pipeline Overview
 
-The V2 search system follows a three-step pipeline:
+The V2 search system follows a multi-step pipeline for the **standard flow**
+(steps 1–4). Two other flows — known-movie and reference-movie similarity —
+are routed at step 1 and bypass steps 2–4.
 
-1. **Query Understanding & Flow Routing** — A single LLM extracts the user's
-   intentions in concrete terms and first routes the query into the correct
-   major search flow before any standard decomposition happens.
-2. **Search Planning** — Per-source LLMs receive relevant portions of the
-   decomposition and translate them into concrete, executable search parameters
-   for their respective data source.
-3. **Execution & Assembly** — Candidate generation queries run first, then
-   preference/reranking queries run on the deduped candidate set. Results are
-   tiered by dealbreaker conformance and sorted within tiers by preferences.
+1. **Flow Routing** — Classify the query into the correct major search flow.
+2. **Query Understanding** — A single LLM extracts structured dealbreakers,
+   preferences, and quality priors from the user's query.
+3. **Query Translation** — Per-endpoint LLMs translate dealbreakers and
+   preferences into complete query specifications. All LLMs run in parallel.
+3.5. **Search Execution** — Dealbreaker searches execute as each step 3 LLM
+   responds; preference queries await candidate assembly, then execute
+   immediately.
+4. **Assembly & Reranking** — Assemble candidate sets, tier by dealbreaker
+   conformance, score by preference results and system priors, apply
+   exclusions, produce final ranked results.
 
 ---
 
-## Step 1: Query Understanding
+## Step 1: Flow Routing
 
-A single LLM call that does all interpretive work upfront. Downstream steps
-receive resolved, concrete instructions — they never re-assess what the query
-means.
-
-### Major Flow Routing
-
-Before standard dealbreaker/preference decomposition, step 1 first classifies
-the query into one of the major search flows:
+Classifies the query into one of three major search flows before any
+decomposition happens:
 
 - **Known movie / exact title flow** — User is clearly trying to find one
   specific movie. The system should identify it directly and then optionally
   show movies like it.
 - **Reference-movie similarity flow** — User is asking for "movies like X"
   with similarity as the primary task.
-- **Standard flow** — Everything else. This includes the main constrained
-  search pipeline described below.
+- **Standard flow** — Everything else. This is the main constrained search
+  pipeline described in steps 2-4 below.
 
 **"Movies like X but qualifiers" stays in the standard flow, not the pure
 similarity flow.** Once explicit qualifiers are present, the query is no
@@ -47,13 +45,40 @@ longer just "find nearest neighbors to X." It becomes a standard interpreted
 search, where the LLM can use its parametric knowledge of the reference movie
 as a fast way to understand the intended traits.
 
+### Interpretation Branching
+
+For standard-flow queries, step 1 may also branch the query into multiple
+plausible interpretations when the user's intent is genuinely ambiguous. Each
+branch contains only:
+
+- A rewrite of the query in concrete terms
+- A brief display phrase representing that interpretation as a whole
+
+Each branch then runs independently through steps 2-4 in parallel, and the
+client receives each branch's results as a separate list labeled by its display
+phrase.
+
+Branching is capped at **3 interpretations maximum**. The default should be a
+single interpretation, and the step 1 prompt should not subtly encourage
+producing 3 objects when ambiguity is low.
+
+Known-movie and reference-movie similarity flows handle title ambiguity within
+their own flow logic rather than through standard-flow branching.
+
+---
+
+## Step 2: Query Understanding
+
+A single LLM call that does all interpretive work upfront. Downstream steps
+receive resolved, concrete instructions — they never re-assess what the query
+means.
+
 ### Preprocessing Chain
 
-For the standard flow, the LLM follows a structured reasoning chain to produce
-its output:
+The LLM follows a structured reasoning chain to produce its output:
 
 1. **Rewrite the query** in its full concrete intentions. Make implicit
-   expectations explicit where appropriate (e.g., "dicaprio comedies" →
+   expectations explicit where appropriate (e.g., "dicaprio comedies" ->
    "movies starring Leonardo DiCaprio in the comedy genre"). This rewrite
    captures user intent only — system defaults like quality bias are NOT
    baked into the rewrite.
@@ -77,28 +102,16 @@ gracefully for most such queries. The grouping rule for V1 is narrower:
   or scoring value.
 - **Do not group** distinct entities or constraints merely because they share a
   route. "Brad Pitt" and "Tom Hanks" remain separate dealbreakers even though
-  both route to `lexical`.
+  both route to `entity`.
 
 ### Multi-Interpretation Support
 
-When a query is potentially ambiguous, step 1 can extract multiple
-interpretations. Each interpretation is a complete, independent decomposition
-that flows through steps 2 and 3 separately. Users see a brief phrase per
-interpretation and can click into the one that best fits their intent.
+Interpretation branching happens in step 1, before structured decomposition.
+Step 2 operates on one branch at a time: one rewritten query plus one display
+phrase, producing one complete decomposition for that branch.
 
-Each interpretation contains:
-- The rewritten query in concrete terms
-- A brief display phrase (for UI selection)
-- A list of dealbreakers (see below)
-- A list of preferences (see below)
-- Quality prior settings (see below)
-
-**Open question (deferred):** Exact trigger criteria for when the LLM should
-produce multiple interpretations vs one. Also worth considering: using
-multi-interpretation to handle the broad-vs-narrow tension (e.g., for "dark
-gritty marvel movies," one strict interpretation with all three as dealbreakers
-and one relaxed interpretation with marvel as dealbreaker and dark+gritty as
-preferences).
+**Open question (deferred):** Exact trigger criteria for when step 1 should
+produce multiple interpretations vs one.
 
 ### Output Structure: Dealbreakers
 
@@ -109,29 +122,57 @@ that don't meet these are excluded or tiered down.
 Each dealbreaker has:
 - **Description** — A concrete string describing the requirement (e.g., "is a
   rocky movie", "does not have a fight with a russian")
-- **Routing** — An enum value indicating which data source handles this
-  dealbreaker. One of: `lexical`, `metadata`, `keyword`, `semantic`
+- **Routing** — An enum value indicating which endpoint handles this
+  dealbreaker. One of: `entity`, `metadata`, `awards`, `franchise_structure`,
+  `keyword`, `semantic`, `trending`
 - **Direction** — Whether this is an `inclusion` (must have) or `exclusion`
   (must not have)
 
 **Routing enum definitions (surface-level, no schema details):**
 
-| Route | What it covers | LLM needs to know |
-|-------|---------------|-------------------|
-| `lexical` | Named entities: actors, directors, franchises, characters, studios | Entity types available |
-| `metadata` | Structured attributes: genre, year, runtime, rating, streaming, country, source material type, box office | Field names (not enum values) |
-| `keyword` | Concept tags and content keywords from curated vocabulary | The full 225-term keyword vocabulary + 27 concept tags (included in prompt) |
+| Route | What it covers | Step 2 LLM needs to know |
+|-------|---------------|--------------------------|
+| `entity` | Named entities: actors, directors, writers, producers, composers, characters, studios, movie titles | Entity types available |
+| `metadata` | Structured movie attributes: genre, year, runtime, rating, streaming, country, source material type, box office, budget, plus generic "award-winning" (denormalized win IDs) | Field names (not enum values) |
+| `awards` | Specific award lookups: named ceremonies, categories, outcomes, years | The 12 ceremony names |
+| `franchise_structure` | Franchise name resolution AND structural roles: sequel, prequel, remake, reboot, spinoff, crossover, launched-a-franchise | Franchise names + structural attributes available |
+| `keyword` | Concept tags and content keywords from curated vocabulary | The full 225-term keyword vocabulary + 25 concept tags (included in prompt) |
 | `semantic` | Subjective qualities, vibes, thematic concepts not covered by other sources | What the other sources DON'T cover |
+| `trending` | Currently trending / popular right now | That trending data exists |
 
 **Critical:** The LLM must understand the limitations of each source. It should
 know the keyword/concept tag vocabulary so it can make informed routing decisions
 rather than guessing that a concept like "clowns" might be a keyword when it
 isn't. When no deterministic source cleanly covers a concept, route to `semantic`.
 
-**One dealbreaker per route, but multiple dealbreakers per query may share a
-route.** For example, "Leonardo DiCaprio Rocky movies" produces two `lexical`
-dealbreakers. Each dealbreaker is executed as an independent search and produces
-its own candidate set.
+**Routing failure is accepted, not recovered from.** Endpoints overlap
+conceptually enough that most misroutes still produce reasonable results. For the
+narrow cases where a misroute would produce zero results (e.g., routing to
+`keyword` for a term not in the vocabulary), the step 2 prompt definitions must
+be precise enough to prevent this from happening. There is no retry-with-
+different-route fallback. **Implementation note:** getting the endpoint
+definitions and boundary descriptions right in the step 2 prompt is a critical
+implementation concern — misroute prevention is a prompt design problem, not an
+architectural one.
+
+**One dealbreaker per route instance, but multiple dealbreakers per query may
+share a route.** For example, "Leonardo DiCaprio Rocky movies" produces two
+`entity` dealbreakers. Each dealbreaker is executed as an independent search and
+produces its own candidate set.
+
+**Distinguishing between overlapping endpoints:** Some concepts could be handled
+by multiple endpoints. The step 2 LLM picks the best one per query based on
+surface-level signals:
+
+| Signal | Routes to |
+|--------|-----------|
+| Names a person, studio, character, or title | `entity` |
+| References a structured movie attribute (genre, year, runtime, rating, streaming, country, source material) or generic "award-winning" | `metadata` |
+| Names a specific ceremony, award category, or award year | `awards` |
+| Names a franchise OR references franchise structural role (sequel, spinoff, remake, reboot) | `franchise_structure` |
+| Matches a known keyword or concept tag from the vocabulary | `keyword` |
+| Subjective quality, vibe, or thematic concept not covered above | `semantic` |
+| Trending / currently popular / buzzing right now | `trending` |
 
 ### Output Structure: Preferences
 
@@ -141,8 +182,8 @@ dealbreakers. They do not generate candidates — they only influence ordering.
 Each preference has:
 - **Description** — A concrete string describing the quality (e.g., "dark",
   "gritty", "funny")
-- **Routing** — Same enum as dealbreakers. Determines which scoring mechanism
-  evaluates this preference.
+- **Routing** — Same enum as dealbreakers. Determines which endpoint scores
+  this preference.
 - **Direction** — `positive` (boost matches) or `negative` (downrank matches,
   e.g., "not too serious")
 - **is_primary_preference** — Optional boolean. Marks that this preference is
@@ -163,6 +204,15 @@ that lets the system distinguish between:
 If no preference is marked primary, preferences are treated as equal-weighted
 relative to each other aside from the separate system-level priors. V1 does not
 introduce general per-preference weights.
+
+**Explicit sort-order requests are preferences, not a separate mechanism.**
+"In order," "chronologically," "most recent first" are expressed as metadata
+preferences with `is_primary_preference=true`. Example: "all Fast and Furious
+movies in order" → franchise dealbreaker + metadata preference on release_date
+ascending with `is_primary_preference=true`. Without "in order," no sort
+preference is emitted and default quality ranking applies. The preference
+description carries the sort direction (e.g., "ordered by release date, earliest
+first") and the endpoint LLM translates it into the appropriate query spec.
 
 ### Output Structure: Quality / Notability Priors
 
@@ -188,81 +238,314 @@ as separate levers.**
 (e.g., "scariest movie ever"), that primary preference becomes the dominant
 ranking axis. System-level quality/notability priors remain secondary.
 
-### What Step 1 Does NOT Do
+### Reference Movies in the Standard Flow
+
+When a "movies like X but qualifiers" query enters the standard flow, step 2
+uses the LLM's parametric knowledge of the reference movie to extract concrete
+attributes — it does not resolve the movie to a `tmdb_id`. "Movies like
+Inception but in space" becomes "mind-bending action movie set in space," and
+the dealbreakers and preferences are extracted from that rewrite. If the
+reference movie is ambiguous (multiple movies share the name, or the user's
+description is vague), this is handled via step 1 interpretation branching.
+
+### What Step 2 Does NOT Do
 
 - Does not know schema details (table names, column types, enum values)
-- Does not determine exact search parameters (that's step 2's job)
-- Does not determine vector space routing (that's step 2's vector LLM)
+- Does not determine exact search parameters (that's step 3's job)
+- Does not determine vector space routing (that's step 3's semantic endpoint)
 - Does not inject system defaults into the query rewrite
+- Does not resolve reference movies to `tmdb_id`s — uses parametric knowledge
+  to extract the intended attributes instead
 
 ---
 
-## Step 2: Search Planning (Per-Source LLMs)
+## Step 3: Query Translation
 
-Each data source has its own LLM that receives:
+Each endpoint has its own LLM (or deterministic function) that receives:
 - The full rewritten query (for context)
-- Only the dealbreakers and preferences routed to its domain
+- Only the dealbreakers and preferences routed to it
 - Deep knowledge of its own schema
 
-Each per-source LLM translates the abstract dealbreaker/preference descriptions
-into concrete, executable search parameters. These are narrow, well-scoped tasks
-suitable for small, fast models.
+Each per-endpoint LLM translates the abstract dealbreaker/preference
+descriptions into **complete query specifications**. For dealbreakers, the spec
+is self-contained and ready to execute. For preferences, the spec is complete
+except for candidate IDs — a WHERE clause placeholder (or vector lookup target
+set) that gets filled once candidate assembly provides the IDs. Execution of
+these specs happens in step 3.5.
 
-**Why keep per-source LLMs instead of pushing all schema-specific work into step
-1?** Because exact enum values, metadata matching nuance, keyword definitions,
-lexical role nuance, actor prominence cues, and vector-space behavior are too
-much specialized low-level knowledge for one smaller interpretive LLM to carry
-without quality loss. The split is:
+**Why keep per-endpoint LLMs instead of pushing all schema-specific work into
+step 2?** Because exact enum values, metadata matching nuance, keyword
+definitions, lexical role nuance, actor prominence cues, and vector-space
+behavior are too much specialized low-level knowledge for one smaller
+interpretive LLM to carry without quality loss. The split is:
 
-- **Step 1** interprets user intent, consolidates concepts, and routes each item
-  to the correct source.
-- **Step 2** translates already-interpreted intent into source-specific
-  executable parameters.
+- **Step 2** interprets user intent, consolidates concepts, and routes each
+  item to the correct endpoint.
+- **Step 3** translates already-interpreted intent into endpoint-specific
+  query specifications.
 
-Step 2 LLMs are **schema translators, not re-interpreters**. They should not
-decide what the user meant; they should only decide how their source should
+Step 3 LLMs are **schema translators, not re-interpreters**. They should not
+decide what the user meant; they should only decide how their endpoint should
 execute the already-resolved intent.
 
-**Lexical LLM:** Knows posting table schemas (actor, director, franchise, etc.).
-Determines exact entity searches — which posting tables to query, what string
-values to match. Produces one independent search per dealbreaker routed to it.
-
-**Metadata LLM:** Knows movie_card columns, enum values, and filter types.
-Determines exact SQL filter parameters — which columns, what values, what
-comparison operators. Produces filter specifications per dealbreaker.
-
-**Keyword LLM:** Knows the keyword and concept tag vocabularies. Determines
-exact keyword/tag matches from the curated lists. May not be needed as a
-separate LLM if step 1 already selects from the enumerated vocabulary — this
-is an implementation detail.
-
-**Vector LLM:** Knows vector space names, what each space captures, and query
-formulation best practices. Determines which spaces to search, generates
-expanded search queries, and handles both inclusion and exclusion semantic
-operations. Also handles preference scoring setup for the execution phase.
-
-**Trending / Redis source:** Standard flow can also inject a deterministic
-candidate set from Redis for trending-oriented queries. This sits alongside
-lexical, metadata, and keyword sources as another way to produce reliable
-candidates before reranking.
-
-All per-source LLMs run in parallel since they have no dependencies on each
+All per-endpoint LLMs run in parallel since they have no dependencies on each
 other.
+
+### Endpoint 1: Entity Lookup
+
+**Data sources:** All `lex.*` posting tables — actors, directors, writers,
+producers, composers, characters, studios, titles. Fuzzy matching via trigram
+GIN indexes on title and character dictionaries; exact-after-normalization
+matching for all others. Also handles **title substring/pattern matching**
+(ILIKE) for queries like "movies with 'love' in the title" or "starts with
+'star'." Exact title identification routes to step 1's known-movie flow, so
+this endpoint only handles substring and pattern-based title queries. Franchise
+name resolution is handled entirely by the Franchise Structure endpoint, not
+here.
+
+**LLM knows:** Available entity types and their posting tables, role hints
+(routing "Nolan" to director vs. actor), actor prominence modes (top billing
+only, boost by position, binary, reverse), multi-token title intersection
+logic, fuzzy matching behavior, title substring matching via ILIKE.
+
+**Candidate generation (dealbreakers):** Each entity dealbreaker produces an
+independent candidate set of movie IDs. Entity matches are binary — a movie
+either appears in the posting table for that entity or it doesn't.
+
+**Preference scoring:** Binary presence score (is the entity associated with
+this movie?), with actor prominence as a gradient signal when applicable
+(billing_position scoring).
+
+**Example dealbreakers:** "starring Leonardo DiCaprio", "directed by Nolan",
+"Pixar movies", "character named Tyler Durden", "movies with 'love' in the
+title"
+
+**Example preferences:** "preferably starring Brad Pitt"
+
+### Endpoint 2: Movie Attributes
+
+**Data sources:** `movie_card` scalar and array columns — genre, release date,
+runtime, maturity rating, streaming availability, country of origin, source
+material type, budget bucket, box office bucket, popularity score, reception
+score, and the denormalized `award_ceremony_win_ids`.
+
+**LLM knows:** Column names and types, all enum values (27 genre IDs, 334
+language IDs, 262 country IDs, streaming provider keys + access types, 10
+source material types, 5 maturity ranks), comparison operators, gradient
+scoring behavior for soft constraints.
+
+**Candidate generation (dealbreakers):** Each metadata dealbreaker produces a
+candidate set via SQL WHERE clauses (hard filters) or GIN array overlap. For
+NLP-extracted constraints, a generous threshold determines pass/fail for
+candidate generation purposes (e.g., "80s movies" uses a generous gate of
+~1975-1994).
+
+**Preference scoring:** Gradient scoring, not binary. "Under 100 minutes" at
+101 minutes scores ~0.95, at 140 minutes scores much lower. Users are
+frequently imprecise with numeric constraints, so gradients prevent harsh
+cutoffs that miss obviously relevant results. Different attributes have
+different softness levels (see Constraint Strictness in open_questions.md).
+
+**Example dealbreakers:** "comedy", "from the 80s", "under 2 hours", "on
+Netflix", "Korean movies", "rated R", "based on a true story", "award-winning"
+(simple, no specific ceremony)
+
+**Example preferences:** "preferably recent", "family friendly", "well-reviewed",
+"big budget blockbuster"
+
+### Endpoint 3: Awards
+
+**Data sources:** `movie_awards` table — ceremony_id, award_name, category,
+outcome_id (winner/nominee), year. Indexed on
+`(ceremony_id, award_name, category, outcome_id, year)`.
+
+**LLM knows:** 12 ceremony IDs and their award structures (Academy Awards,
+Golden Globes, BAFTA, Cannes, Venice, Berlin, SAG, Critics Choice, Sundance,
+Razzie, Spirit Awards, Gotham), specific prize names within each ceremony,
+category names, winner vs. nominee distinction.
+
+**Candidate generation (dealbreakers):** Produces candidate sets via
+deterministic SQL queries on the awards table. "Oscar Best Picture winners" ->
+`ceremony=1, award_name='Oscar', category='Best Picture', outcome=1`.
+
+**Preference scoring:** Can score by award count, ceremony prestige weighting,
+or recency of awards.
+
+**Step 2 routing distinction from Movie Attributes:** "Award-winning" (generic,
+no ceremony named) -> Movie Attributes (simple `award_ceremony_win_ids` array
+check). "Oscar Best Picture" (names a ceremony + category) -> Awards (needs
+the full awards table schema). The surface-level signal is: does the query
+name a specific ceremony, category, or year?
+
+**Example dealbreakers:** "Oscar Best Picture winners", "2023 Cannes Palme
+d'Or", "Razzie winners", "nominated at Sundance"
+
+**Example preferences:** "preferably award-nominated"
+
+### Endpoint 4: Franchise Structure
+
+**Data sources:** `movie_franchise_metadata` — lineage (franchise name),
+shared_universe, recognized_subgroups, lineage_position (1=sequel, 2=prequel,
+3=remake, 4=reboot), is_spinoff, is_crossover, launched_franchise,
+launched_subgroup. This is the sole source for all franchise queries — both
+name resolution and structural filtering.
+
+**LLM knows:** The franchise table schema, fuzzy name matching behavior,
+the distinction between lineage and shared_universe, lineage_position values,
+boolean flag semantics, subgroup matching via trigram similarity.
+
+**Candidate generation (dealbreakers):** Handles two kinds of dealbreakers:
+- **Franchise name** ("Marvel movies") — fuzzy-matches the lineage/
+  shared_universe columns to produce a candidate set of movie IDs.
+- **Structural role** ("sequels", "spinoffs") — filters on lineage_position,
+  is_spinoff, is_crossover, etc.
+When both appear in the same query ("Marvel spinoffs"), this endpoint handles
+both as separate dealbreakers, and tiering handles the intersection.
+
+**Preference scoring:** Binary match on structural attributes, or gradient
+scoring if applicable (e.g., franchise recency).
+
+**Example dealbreakers:** "Marvel movies", "James Bond franchise", "sequels",
+"spinoff movies", "remakes", "movies that started a franchise"
+
+**Example preferences:** "preferably not a sequel"
+
+### Endpoint 5: Keywords & Concept Tags
+
+**Data sources:** `movie_card.keyword_ids` (225 curated OverallKeyword terms
+with definitions) + `movie_card.concept_tag_ids` (25 binary tags across 7
+categories).
+
+**LLM knows:** The full 225-term keyword vocabulary with per-keyword
+definitions, all 25 concept tag definitions grouped by category (narrative
+structure, plot archetype, setting, character, ending, experiential, content
+flag). Maps user concepts to specific IDs.
+
+**Candidate generation (dealbreakers):** Produces candidate sets via GIN array
+overlap on keyword_ids or concept_tag_ids. These are binary — a movie either
+has the keyword/tag or doesn't.
+
+**Preference scoring:** Binary match (has the keyword/tag = 1.0, doesn't =
+0.0). For dealbreaker-demoted-to-preference scenarios, this is a strong
+boosting signal.
+
+**May not require a separate LLM:** If step 2 already selects from the
+enumerated vocabulary (which is included in the step 2 prompt), the endpoint
+may be a deterministic ID lookup rather than an LLM call. This is an
+implementation detail.
+
+**Example dealbreakers:** "zombie movies", "heist", "coming-of-age", "movies
+with a twist ending", "feel-good", "haunted house"
+
+**Example preferences:** "preferably with a happy ending", "not a tearjerker"
+
+**Implementation note — dual dealbreaker + preference for centrality:** Some
+concepts map cleanly to a keyword/tag (binary: has it or doesn't) but also have
+a meaningful spectrum above that threshold. "Christmas movies" maps to the
+"Holiday" keyword for candidate generation, but Christmas-*centrality* (is
+Christmas the entire premise, or just incidental backdrop?) is a useful ranking
+signal. For these cases, the step 2 LLM should emit both a keyword dealbreaker
+AND a semantic preference for the same concept. The pipeline already supports
+this since the dealbreaker and preference target different endpoints (keyword
+vs. semantic). This is an LLM prompt design concern to address when building
+the step 2 prompt.
+
+### Endpoint 6: Semantic
+
+**Data sources:** 8 Qdrant vector spaces (OpenAI `text-embedding-3-small`,
+1536 dims) — anchor, plot_events, plot_analysis, viewer_experience,
+watch_context, narrative_techniques, production, reception.
+
+**LLM knows:** What each vector space captures, subquery formulation best
+practices per space, space selection logic, the 80/20 subquery/original blend
+ratio.
+
+**Candidate generation (dealbreakers — with demotion):** Semantic dealbreakers
+are NOT used for candidate generation in the standard flow. Any dealbreaker
+routed to `semantic` is automatically demoted to a high-weight preference for
+scoring purposes (see Semantic Dealbreaker Demotion below). Exception: in the
+pure-vibe flow (no non-semantic inclusion dealbreakers exist), vector search
+becomes the candidate generator.
+
+**Preference scoring:** Vector similarity scores against relevant spaces. The
+LLM determines which spaces are relevant, generates expanded search queries
+per space, and handles both inclusion scoring (cosine similarity, possibly
+with diminishing returns curve) and exclusion penalties (global-elbow-
+calibrated, see Exclusion Handling below).
+
+**Example dealbreakers (demoted):** "dark and gritty", "visually stunning",
+"slow burn"
+
+**Example preferences:** "funny", "thought-provoking", "cozy date night vibe",
+"similar vibe to Midsommar"
+
+### Endpoint 7: Trending
+
+**Data sources:** Redis `trending:current` hash — precomputed trending scores
+[0, 1] for all trending movies, refreshed from TMDB weekly trending API.
+
+**LLM needed?** Probably not — this is a binary/deterministic signal. Step 2
+flags "trending" intent and execution reads the Redis hash directly. This
+endpoint is likely a simple deterministic function rather than an LLM-backed
+translator.
+
+**Candidate generation (dealbreakers):** Returns all movie IDs with non-zero
+trending scores as a candidate set.
+
+**Preference scoring:** Pass-through of the precomputed trending score [0, 1].
+
+**Example dealbreakers:** "trending movies", "what's popular right now"
+
+**Example preferences:** "preferably something that's buzzing right now"
 
 ---
 
-## Step 3: Execution & Assembly
+## Step 3.5: Search Execution
 
-### Phase 3a: Candidate Generation
+LLM generation time is the major latency bottleneck — individual database and
+vector queries take only milliseconds. This step exploits that asymmetry by
+overlapping execution with translation.
 
-Execute all candidate generation queries produced by step 2. Each dealbreaker
-produces its own independent candidate set.
+All step 3 LLMs fire simultaneously. As each LLM responds with a query
+specification:
 
-- **Deterministic dealbreakers** (lexical, metadata, keyword): Each search
-  returns a set of movie IDs. These are binary — a movie is in the set or not.
+- **Dealbreaker specs** are self-contained — execute the search immediately,
+  producing a candidate set of movie IDs. No need to wait for other endpoints
+  to finish translation.
+- **Preference specs** are complete except for the candidate IDs to score.
+  They sit ready while dealbreaker searches run.
+
+Once all dealbreaker searches complete, candidate assembly (step 4a) produces
+the pool of movie IDs. Preference queries then fire immediately — the candidate
+IDs are slotted into the prepared WHERE clauses (for SQL-based endpoints) or
+used as the target set for vector lookups (for the semantic endpoint), and
+execution adds only milliseconds of query time.
+
+**Net effect:** all fetches execute in near-parallel despite the sequential
+dependency between candidate generation (dealbreakers) and candidate scoring
+(preferences). Wall-clock time is dominated by the slowest step 3 LLM call,
+not by the sum of all searches.
+
+**Semantic preference execution** follows the same pattern but with a different
+mechanism: the step 3 semantic LLM produces expanded search queries and target
+vector spaces, and execution means fetching stored vectors for the candidate
+IDs and computing cosine similarity — not issuing a SQL query.
+
+---
+
+## Step 4: Assembly & Reranking
+
+### Phase 4a: Candidate Generation Assembly
+
+Collect all candidate sets produced by dealbreaker execution in step 3.5. Each
+inclusion dealbreaker produces its own independent candidate set.
+
+- **Deterministic dealbreakers** (entity, metadata, awards, franchise_structure,
+  keyword, trending): Each search returns a set of movie IDs. These are
+  binary — a movie is in the set or not.
 - **Semantic dealbreakers are NOT used for candidate generation.** Any
   dealbreaker routed to `semantic` is demoted to a preference for scoring
-  purposes (see "Semantic Dealbreaker Demotion" below).
+  purposes (see Semantic Dealbreaker Demotion below).
 
 Union and deduplicate across all inclusion dealbreaker candidate sets. Each
 movie receives a count of how many inclusion dealbreaker sets it appeared in.
@@ -287,20 +570,28 @@ does not produce a candidate set and does not count toward the tier denominator.
 Instead, it influences ranking within tiers with elevated weight compared to
 regular preferences.
 
-**Pure-vibe queries:** When ALL dealbreakers are semantic (no deterministic
-anchors exist), the query enters the pure-vibe flow (see below). No
-dealbreakers generate candidates; instead, vector search becomes the candidate
-generator as a special case.
+**Minimum floor:** A demoted semantic dealbreaker still imposes a minimum
+relevance floor. Candidates with essentially no semantic match to the stated
+concept should not be treated as if they satisfied that user requirement. The
+exact floor calibration is deferred to implementation.
 
-### Phase 3b: Exclusion Handling
+**Pure-vibe queries:** When no non-semantic inclusion dealbreakers exist, the
+query enters the pure-vibe flow as a separate codepath (see below). This
+includes both "all dealbreakers are semantic" and "only semantic inclusions plus
+deterministic exclusions" (e.g., "good date night movies not with adam sandler"
+— date night is semantic, adam sandler is an entity exclusion). The flow control
+checkpoint happens immediately after step 2 output is inspected: if no
+deterministic inclusion dealbreaker exists, reroute to pure-vibe.
+
+### Phase 4b: Exclusion Handling
 
 Exclusions are applied after candidate generation. They do NOT count toward
 the tier denominator — tiers are based on inclusion match count only.
 
-**Deterministic exclusions** (lexical, metadata, keyword): Hard filter. If a
-movie matches the exclusion criteria, it is removed from the candidate set
-entirely. These are binary and reliable — "not starring Arnold Schwarzenegger"
-can be definitively evaluated.
+**Deterministic exclusions** (entity, metadata, awards, franchise_structure,
+keyword): Hard filter. If a movie matches the exclusion criteria, it is
+removed from the candidate set entirely. These are binary and reliable — "not
+starring Arnold Schwarzenegger" can be definitively evaluated.
 
 **Semantic exclusions:** Cannot be hard-filtered because vector similarity
 doesn't give binary results. Instead, semantic exclusions use a
@@ -314,9 +605,9 @@ global-elbow-calibrated penalty system:
 3. Apply penalties to candidates based on where they fall in the global
    distribution:
    - **Above the elbow:** High confidence this movie matches the excluded
-     concept → harsh downrank
-   - **Near the elbow:** Uncertain → softer downrank
-   - **Well below the elbow:** No meaningful match to the concept → no penalty
+     concept -> harsh downrank
+   - **Near the elbow:** Uncertain -> softer downrank
+   - **Well below the elbow:** No meaningful match to the concept -> no penalty
 
 **Why penalty-only instead of hard removal?** Even with global calibration,
 semantic similarity is still too noisy in V1 to justify full exclusion. The
@@ -337,7 +628,7 @@ dynamically per concept since different concepts have different similarity
 distributions (see threshold calibration data in `open_questions.md`). A
 hard-coded percentage of max score won't work across all concept types.
 
-### Phase 3c: Preference Scoring & Final Ranking
+### Phase 4c: Preference Scoring & Final Ranking
 
 Score all remaining candidates on preferences and system-level priors. The
 combination works as:
@@ -346,11 +637,10 @@ combination works as:
 2. **Secondary sort: preference + system-prior composite** (within each tier)
 
 **Preference scoring by route type:**
-- Deterministic preferences (metadata, keyword): Gradient scoring, not binary.
-  "Under 100 minutes" at 101 minutes scores ~0.95, at 140 minutes scores much
-  lower. Users are frequently imprecise with numeric constraints, so gradients
-  prevent harsh cutoffs that miss obviously relevant results (e.g., "Leonardo
-  DiCaprio boat movie from 2001" should not filter out Titanic at 1997).
+- Deterministic preferences (metadata, keyword, awards, franchise_structure,
+  entity, trending): Gradient scoring where applicable. "Under 100 minutes"
+  at 101 minutes scores ~0.95, at 140 minutes scores much lower. Binary
+  attributes score 1.0 or 0.0.
 - Semantic preferences: Vector similarity scores, possibly with diminishing
   returns curve.
 - If a preference is marked `is_primary_preference=true`, it becomes the
@@ -372,20 +662,22 @@ them down in ranking.
 
 ---
 
-## Pure-Vibe Flow (No Deterministic Anchors)
+## Pure-Vibe Flow (No Deterministic Inclusion Anchors)
 
-When step 1 produces no deterministic dealbreakers (all dealbreakers route to
-`semantic`), the query enters a separate flow where vector search is the
-candidate generator.
+When step 2 output contains no non-semantic inclusion dealbreakers, the query
+enters a separate codepath where vector search is the candidate generator. This
+triggers when all inclusion dealbreakers route to `semantic`, regardless of
+whether deterministic exclusions also exist. The detection is an explicit flow
+control checkpoint immediately after step 2 completes.
 
 ### How It Works
 
 1. All semantic dealbreakers become preferences (there are no dealbreakers for
    tiering since there are no deterministic anchors).
-2. The step 2 vector LLM determines relevant vector spaces and generates search
-   queries. A single LLM call handles relative importance across spaces.
+2. The step 3 semantic endpoint determines relevant vector spaces and generates
+   search queries. A single LLM call handles relative importance across spaces.
 3. **Individual searches per concept** across relevant spaces. Synonymous
-   concepts are already consolidated by step 1, so each search represents a
+   concepts are already consolidated by step 2, so each search represents a
    distinct semantic axis. Union top-N results across all searches.
 4. **Rescore each candidate** by fetching its distance in all relevant vector
    spaces (not just the space where it was initially retrieved). This catches
@@ -399,15 +691,24 @@ candidate generator.
 "Fun" and "lighthearted" as separate searches preserve the independence of each
 concept. Combining them into a single query blends the embeddings into an
 average that may not match either concept well — recreating the signal dilution
-problem at query time. The step 1 LLM already consolidates truly synonymous
+problem at query time. The step 2 LLM already consolidates truly synonymous
 concepts, so remaining distinct concepts should stay separate.
 
 ### Exclusions in Pure-Vibe Flow
 
-Same mechanism as the standard flow: semantic exclusions use the
-elbow-threshold penalty against the global distribution. The only difference
-is that the candidate set comes from vector retrieval rather than deterministic
-channels.
+Both exclusion types apply to the vector-generated candidate set:
+
+- **Deterministic exclusions** (entity, metadata, keyword, etc.) hard-filter
+  from the candidate set, same as the standard flow. "Not with adam sandler"
+  removes all movies matching the entity exclusion from the vector results.
+- **Semantic exclusions** use the elbow-threshold penalty against the global
+  distribution, same as the standard flow.
+
+**Implementation note:** investigate whether deterministic exclusion IDs can be
+excluded from the vector search itself (e.g., passed as a negative filter to
+Qdrant before execution) rather than filtered from results afterward. This
+avoids wasting retrieval slots on movies that will be removed, which matters
+more in pure-vibe flow where the candidate pool is entirely vector-generated.
 
 ---
 
@@ -417,9 +718,10 @@ channels.
 
 The most important architectural decision. Empirical testing proved semantic
 search is unreliable for candidate generation but works well for ranking.
-Deterministic channels (entity lookup, metadata filters, keyword matching)
-produce reliable, complete candidate sets. Semantic similarity is applied
-afterward to score and rank those candidates.
+Deterministic channels (entity lookup, metadata filters, keyword matching,
+awards, franchise structure, trending) produce reliable, complete candidate
+sets. Semantic similarity is applied afterward to score and rank those
+candidates.
 
 ### 2. Each dealbreaker runs independently
 
@@ -447,8 +749,8 @@ penalty, not a lower tier.
 When a concept can only be evaluated via vector similarity (no keyword, entity,
 or metadata coverage), it cannot reliably generate candidates. It is
 automatically demoted to a high-weight preference that influences ranking
-rather than candidate generation. When ALL dealbreakers are semantic, the
-query enters the pure-vibe flow.
+rather than candidate generation. When no non-semantic inclusion dealbreakers
+exist, the query enters the pure-vibe flow as a separate codepath.
 
 ### 5. System-level priors are separate, explicit dimensions
 
@@ -457,14 +759,14 @@ The design now explicitly recognizes that conventional quality and
 notability/mainstreamness are distinct dimensions. The finalized decision is to
 keep them separate conceptually; the exact field shape remains open.
 
-### 6. Step 1 interprets intent; step 2 knows schemas
+### 6. Step 2 interprets intent; step 3 knows schemas
 
-The interpretive LLM (step 1) needs surface-level awareness of data sources
+The interpretive LLM (step 2) needs surface-level awareness of endpoints
 (what each covers, keyword/concept tag vocabulary) but not schema details.
-Per-source LLMs (step 2) need deep schema knowledge but receive pre-interpreted
-intent. This split keeps each LLM's task tractable for smaller, faster models
-without asking the step 1 model to also carry every exact enum, matching rule,
-keyword definition, and low-level source-specific nuance.
+Per-endpoint LLMs (step 3) need deep schema knowledge but receive
+pre-interpreted intent. This split keeps each LLM's task tractable for smaller,
+faster models without asking the step 2 model to also carry every exact enum,
+matching rule, keyword definition, and low-level source-specific nuance.
 
 ### 7. Metadata constraints use gradients, not binary filters
 
@@ -479,8 +781,8 @@ for pass/fail; within-tier ranking uses the actual gradient score.
 
 Four scoring modes apply to different attribute types:
 
-- **Threshold + flatten** — For dealbreakers. Similarity >= threshold → 1.0
-  (passes), below → decay. Used for determining if a movie "has" an attribute.
+- **Threshold + flatten** — For dealbreakers. Similarity >= threshold -> 1.0
+  (passes), below -> decay. Used for determining if a movie "has" an attribute.
 - **Preserved similarity** — For superlatives. Raw similarity score is the
   ranking signal. "Scariest movie ever" needs to differentiate between
   "very scary" and "somewhat scary."
@@ -495,13 +797,14 @@ Four scoring modes apply to different attribute types:
 
 ## Decisions Deferred to Implementation
 
-- Exact step 1 prompt engineering (few-shot examples, chain-of-thought format)
+- Exact step 2 prompt engineering (few-shot examples, chain-of-thought format)
 - Exact elbow detection algorithm for semantic exclusion thresholds
-- Step 2 prompt design per data source
-- Specific candidate pool size limits per source type
+- Step 3 prompt design per endpoint
+- Specific candidate pool size limits per endpoint
 - Exact gradient decay functions for metadata constraint scoring
 - Tier assignment threshold calibration (how generous is "passing"?)
-- Whether the keyword LLM is a separate call or folded into step 1
-- Trim point between primary and exploratory results (currently decided as
-  top 25 or 40% score floor — may need revision in V2 context)
+- Whether the keyword endpoint LLM is a separate call or folded into step 2
+- Result pagination for long lists: return top 25 initially, cache the full
+  candidate/display list in Redis, and allow fetching additional pages via
+  pointer IDs or equivalent
 - Multi-interpretation trigger criteria
