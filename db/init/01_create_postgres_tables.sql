@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   genre_ids           INT[] NOT NULL DEFAULT '{}',
   watch_offer_keys    INT[] NOT NULL DEFAULT '{}',
   audio_language_ids  INT[] NOT NULL DEFAULT '{}',
-  country_ids         INT[] NOT NULL DEFAULT '{}',
+  country_of_origin_ids         INT[] NOT NULL DEFAULT '{}',
   source_material_type_ids INT[] NOT NULL DEFAULT '{}',
   keyword_ids         INT[] NOT NULL DEFAULT '{}',
   concept_tag_ids     INT[] NOT NULL DEFAULT '{}',
@@ -62,8 +62,8 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_watch_offer_keys
 CREATE INDEX IF NOT EXISTS idx_movie_card_audio_language_ids
   ON public.movie_card USING GIN (audio_language_ids gin__int_ops);
 
-CREATE INDEX IF NOT EXISTS idx_movie_card_country_ids
-  ON public.movie_card USING GIN (country_ids gin__int_ops);
+CREATE INDEX IF NOT EXISTS idx_movie_card_country_of_origin_ids
+  ON public.movie_card USING GIN (country_of_origin_ids gin__int_ops);
 
 CREATE INDEX IF NOT EXISTS idx_movie_card_source_material_type_ids
   ON public.movie_card USING GIN (source_material_type_ids gin__int_ops);

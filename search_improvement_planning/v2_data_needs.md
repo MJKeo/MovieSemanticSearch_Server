@@ -510,7 +510,7 @@ ALTER TABLE public.movie_card
     ADD COLUMN IF NOT EXISTS source_material_type_ids INT[] NOT NULL DEFAULT '{}',
     ADD COLUMN IF NOT EXISTS keyword_ids INT[] NOT NULL DEFAULT '{}';
 
-CREATE INDEX IF NOT EXISTS idx_movie_card_country_ids
+CREATE INDEX IF NOT EXISTS idx_movie_card_country_of_origin_ids
     ON public.movie_card USING GIN (country_of_origin_ids gin__int_ops);
 CREATE INDEX IF NOT EXISTS idx_movie_card_source_material
     ON public.movie_card USING GIN (source_material_type_ids gin__int_ops);

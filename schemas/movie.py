@@ -492,17 +492,17 @@ class Movie(BaseModel):
                 language_ids.append(language_enum.language_id)
         return language_ids
 
-    def country_ids(self) -> list[int]:
+    def country_of_origin_ids(self) -> list[int]:
         """Map IMDB country-of-origin strings to their integer country IDs."""
-        country_ids: list[int] = []
+        country_of_origin_ids: list[int] = []
         seen_ids: set[int] = set()
         for country_name in self.imdb_data.countries_of_origin:
             country = country_from_string(str(country_name))
             if country is None or country.country_id in seen_ids:
                 continue
             seen_ids.add(country.country_id)
-            country_ids.append(country.country_id)
-        return country_ids
+            country_of_origin_ids.append(country.country_id)
+        return country_of_origin_ids
 
     def source_material_type_ids(self) -> list[int]:
         """Extract source material type IDs from LLM-generated metadata."""

@@ -196,7 +196,7 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
         genre_ids = await create_genre_ids(movie)
         watch_offer_keys = await create_watch_offer_keys(movie)
         audio_language_ids = await create_audio_language_ids(movie)
-        country_ids = await create_country_ids(movie)
+        country_of_origin_ids = await create_country_of_origin_ids(movie)
         source_material_type_ids = await create_source_material_type_ids(movie)
         keyword_ids = await create_keyword_ids(movie)
         concept_tag_ids = await create_concept_tag_ids(movie)
@@ -227,7 +227,7 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
             genre_ids=genre_ids,
             watch_offer_keys=watch_offer_keys,
             audio_language_ids=audio_language_ids,
-            country_ids=country_ids,
+            country_of_origin_ids=country_of_origin_ids,
             source_material_type_ids=source_material_type_ids,
             keyword_ids=keyword_ids,
             concept_tag_ids=concept_tag_ids,
@@ -854,14 +854,14 @@ async def create_audio_language_ids(movie: Movie) -> List[int]:
     return language_ids
 
 
-async def create_country_ids(movie: Movie) -> List[int]:
+async def create_country_of_origin_ids(movie: Movie) -> List[int]:
     """
-    Return country-of-origin IDs by delegating to ``Movie.country_ids()``.
+    Return country-of-origin IDs by delegating to ``Movie.country_of_origin_ids()``.
 
     Args:
-        movie: Movie object implementing ``country_ids()``.
+        movie: Movie object implementing ``country_of_origin_ids()``.
     """
-    return movie.country_ids()
+    return movie.country_of_origin_ids()
 
 
 async def create_source_material_type_ids(movie: Movie) -> List[int]:
@@ -944,7 +944,7 @@ async def _get_eligible_tmdb_ids(
     query = """
         SELECT movie_id
         FROM public.movie_card
-        WHERE cardinality(country_ids) = 0
+        WHERE cardinality(country_of_origin_ids) = 0
         ORDER BY movie_id
     """
     params: tuple[object, ...] | None = None
@@ -1059,12 +1059,12 @@ async def cmd_ingest(
         all_tmdb_ids = await _get_eligible_tmdb_ids(tracker_db_path, max_movies)
         total = len(all_tmdb_ids)
         if not total:
-            print("No eligible movies (movie_card.country_ids is already populated). Nothing to ingest.")
+            print("No eligible movies (movie_card.country_of_origin_ids is already populated). Nothing to ingest.")
             return
 
         print(
             f"Found {total:,} eligible movies "
-            f"(movie_card rows with empty country_ids).\n"
+            f"(movie_card rows with empty country_of_origin_ids).\n"
             f"Config: batch_size={batch_size}, postgres_batch_size={postgres_batch_size}, "
             f"qdrant_batch_size={qdrant_batch_size}, vectors={'disabled' if disable_vectors else 'enabled'}"
         )

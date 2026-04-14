@@ -853,7 +853,7 @@ async def upsert_movie_card(
     genre_ids: Sequence[int],
     watch_offer_keys: Sequence[int],
     audio_language_ids: Sequence[int],
-    country_ids: Sequence[int],
+    country_of_origin_ids: Sequence[int],
     source_material_type_ids: Sequence[int],
     keyword_ids: Sequence[int],
     concept_tag_ids: Sequence[int],
@@ -878,7 +878,7 @@ async def upsert_movie_card(
         genre_ids: List of genre IDs.
         watch_offer_keys: List of watch offer keys (encoded provider+method).
         audio_language_ids: List of audio language IDs.
-        country_ids: List of country-of-origin IDs.
+        country_of_origin_ids: List of country-of-origin IDs.
         source_material_type_ids: List of source material type IDs.
         keyword_ids: List of keyword IDs.
         concept_tag_ids: List of concept tag IDs.
@@ -893,7 +893,7 @@ async def upsert_movie_card(
     query = """
     INSERT INTO public.movie_card (
         movie_id, title, poster_url, release_ts, runtime_minutes,
-        maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_ids,
+        maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_of_origin_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids, award_ceremony_win_ids,
         imdb_vote_count, reception_score, budget_bucket, box_office_bucket, title_token_count, created_at, updated_at
     )
@@ -907,7 +907,7 @@ async def upsert_movie_card(
         genre_ids = EXCLUDED.genre_ids,
         watch_offer_keys = EXCLUDED.watch_offer_keys,
         audio_language_ids = EXCLUDED.audio_language_ids,
-        country_ids = EXCLUDED.country_ids,
+        country_of_origin_ids = EXCLUDED.country_of_origin_ids,
         source_material_type_ids = EXCLUDED.source_material_type_ids,
         keyword_ids = EXCLUDED.keyword_ids,
         concept_tag_ids = EXCLUDED.concept_tag_ids,
@@ -929,7 +929,7 @@ async def upsert_movie_card(
         list(genre_ids),
         list(watch_offer_keys),
         list(audio_language_ids),
-        list(country_ids),
+        list(country_of_origin_ids),
         list(source_material_type_ids),
         list(keyword_ids),
         list(concept_tag_ids),
@@ -1571,7 +1571,7 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     Returns:
         List of dicts with keys: movie_id, title, poster_url,
         release_ts, runtime_minutes, maturity_rank, genre_ids,
-        watch_offer_keys, audio_language_ids, country_ids,
+        watch_offer_keys, audio_language_ids, country_of_origin_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids,
         imdb_vote_count, popularity_score, reception_score, budget_bucket,
         box_office_bucket.
@@ -1581,7 +1581,7 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
 
     query = """
         SELECT movie_id, title, poster_url, release_ts, runtime_minutes,
-               maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_ids,
+               maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_of_origin_ids,
                source_material_type_ids, keyword_ids, concept_tag_ids,
                imdb_vote_count, popularity_score, reception_score, budget_bucket,
                box_office_bucket
@@ -1591,7 +1591,7 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
     columns = [
         "movie_id", "title", "poster_url", "release_ts",
         "runtime_minutes", "maturity_rank", "genre_ids", "watch_offer_keys",
-        "audio_language_ids", "country_ids",
+        "audio_language_ids", "country_of_origin_ids",
         "source_material_type_ids", "keyword_ids", "concept_tag_ids",
         "imdb_vote_count", "popularity_score",
         "reception_score", "budget_bucket", "box_office_bucket",

@@ -1,6 +1,9 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Rename country_ids → country_of_origin_ids
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py, schemas/movie.py, movie_ingestion/final_ingestion/ingest_movie.py, search_improvement_planning/v2_data_needs.md | Disambiguated column/variable name to match planning docs — "country_ids" was ambiguous (could mean filming location, setting, or distribution territory). DB was recently wiped so no migration needed.
+
 ## Plot analysis vector — V2 structured-label embedding format
 Files: schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py, search_improvement_planning/v2_data_architecture.md
 
@@ -905,7 +908,7 @@ Files: db/init/01_create_postgres_tables.sql, schemas/movie.py, movie_ingestion/
 Add three new INT[] columns with GIN indexes to `movie_card` for deterministic filtering on source material types, overall keywords, and concept tags.
 
 ### Key Decisions
-- All three columns use `INT[] NOT NULL DEFAULT '{}'` with `gin__int_ops` GIN indexes, matching the existing pattern for genre_ids/country_ids/etc.
+- All three columns use `INT[] NOT NULL DEFAULT '{}'` with `gin__int_ops` GIN indexes, matching the existing pattern for genre_ids/country_of_origin_ids/etc.
 - `keyword_ids` maps from `imdb_data.overall_keywords` via the `OverallKeyword` enum (225 curated terms with stable IDs).
 - `source_material_type_ids` extracts from `source_material_v2_metadata.source_material_types` (10 types with stable IDs in `SourceMaterialType` enum).
 - `concept_tag_ids` merges both `concept_tags_metadata` and `concept_tags_run_2_metadata` generation runs via set union, then returns sorted deduplicated IDs. Uses `ConceptTagsOutput.all_concept_tag_ids()` which already filters out classification-only values (id=-1).
