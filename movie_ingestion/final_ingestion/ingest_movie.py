@@ -34,6 +34,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from typing import List
 from schemas.enums import LineagePosition
+from schemas.imdb_models import AwardNomination
 from schemas.movie import Movie
 from implementation.llms.generic_methods import generate_vector_embedding
 from implementation.classes.enums import MaturityRating, VectorName
@@ -399,7 +400,21 @@ async def ingest_movie_awards(movie: Movie, conn=None) -> None:
     # Filter out awards with unknown ceremony strings — they can't be
     # mapped to a stable integer ID so we skip them silently.
     known_awards = [a for a in movie.imdb_data.awards if a.ceremony_id is not None]
-    await batch_upsert_movie_awards(movie_id, known_awards, conn=conn)
+
+    # Deduplicate by PK fields (ceremony_id, award_name, category, year).
+    # IMDB can return multiple entries for the same category when a movie
+    # has multiple nominees (e.g. two actors in Best Actor). Since we don't
+    # store nominee names, keep only the best outcome (lowest outcome_id,
+    # i.e. winner beats nominee).
+    best_by_key: dict[tuple, AwardNomination] = {}
+    for a in known_awards:
+        key = (a.ceremony_id, a.award_name, a.category or "", a.year)
+        existing = best_by_key.get(key)
+        if existing is None or a.outcome.outcome_id < existing.outcome.outcome_id:
+            best_by_key[key] = a
+    deduped_awards = list(best_by_key.values())
+
+    await batch_upsert_movie_awards(movie_id, deduped_awards, conn=conn)
 
 
 # ================================
