@@ -404,31 +404,38 @@ Phase 0 output? A continuous `release_year_bias` (-1.0 = older, 0.0 = neutral,
 +1.0 = recent) fed into Phase 2 scoring, or a soft date range with center + decay?
 Both work; the former is simpler.
 
-### ~~When should multi-interpretation branching trigger?~~ DEFERRED TO V2
+### ~~When should multi-interpretation branching trigger?~~ DECIDED
 
-Tabled for now. The number of genuinely ambiguous movie search queries is low.
-Phase 4 exploratory results partially address alternative interpretations
-organically. If built later, pre-search disambiguation (clickable options before
-results load) is preferred over post-search grouping.
+Branching is cross-flow — a single query can produce interpretations routed
+to different major flows (e.g., exact title vs. standard flow). Triggers when
+multiple interpretations are reasonably similar in likelihood to an intelligent
+reader. The primary case is movie titles that double as natural language
+descriptions: "Scary Movie" (the film vs. scary movies), "Date Night" (the
+film vs. date night movies), "Love Story", "Not Another Teen Movie." If one
+interpretation is clearly dominant ("Frozen", "Her", "Cars"), don't branch.
+Cap at 3 interpretations. Within standard flow, multi-reference queries
+("movies like X and Y") and qualified similarity ("movies like X but Y") are
+also branching candidates when different trait extractions are equally
+reasonable.
 
-### What should the exact major-flow routing triggers be in Step 1?
+### ~~What should the exact major-flow routing triggers be in Step 1?~~ DECIDED
 
-Step 1 now routes queries into major flows before standard decomposition:
+**Exact title flow:** User provides the literal movie title. Includes
+misspellings, partial titles where the user is clearly attempting the title,
+alternate official titles, and recognized single-movie abbreviations. Franchise
+acronyms (LOTR, HP) go to standard flow. If the user explicitly states they're
+searching by title, route here even if the title is unrecognized.
+Descriptions of movies (plot, scenes, cast) always go to standard flow — even
+if the movie is easily identifiable — because the standard pipeline handles
+description-based identification better than a small routing LLM guessing
+titles. If the title isn't found in the DB, the user sees "we don't have that
+title" with no fallback.
 
-- known-movie / exact-title flow
-- reference-movie similarity flow
-- standard flow
+**Reference-movie similarity flow:** User names a specific movie and asks for
+similar movies with zero qualifiers. Anything beyond "similar to X" / "like X"
+/ "X style movies" = standard flow. Multiple reference movies = standard flow.
 
-**Open questions:**
-- When is a query confidently "known movie identification" vs just title-heavy
-  standard search?
-- When is a query pure `"movies like X"` similarity vs `"movies like X but
-  qualifiers"` standard flow?
-- What signals should cause a query to stay in standard flow even if it
-  contains a reference movie?
-
-The routing categories are decided; the exact trigger criteria still need to be
-specified and tested.
+**Standard flow:** Everything else.
 
 ### How should Step 1 handle multiple `is_primary_preference=true` outputs?
 

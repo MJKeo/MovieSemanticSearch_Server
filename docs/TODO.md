@@ -638,3 +638,16 @@ unit_tests/test_ingest_movie.py, unit_tests/test_postgres.py,
 movie_ingestion/imdb_scraping/models.py (AwardNomination.ceremony_id),
 db/postgres.py (batch_upsert_movie_awards),
 schemas/movie.py (Movie.award_ceremony_win_ids)
+
+## Finalize Step 1 output schema for all three flows
+**Context:** Step 1 flow routing decisions are fully resolved (exact title,
+reference-movie similarity, standard flow + cross-flow branching), but the
+output schema — what step 1 returns for each flow type and how branched
+interpretations are structured — was explicitly deferred to a followup
+conversation. Current doc describes outputs narratively (title string for
+exact/similarity, query rewrite + display phrase for standard) but no
+Pydantic model or formal schema exists yet.
+**When:** Before implementing step 1. This is the next design conversation
+for the V2 search pipeline.
+**See:** search_improvement_planning/finalized_search_proposal.md (Step 1
+section)

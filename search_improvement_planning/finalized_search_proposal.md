@@ -29,41 +29,226 @@ are routed at step 1 and bypass steps 2–4.
 ## Step 1: Flow Routing
 
 Classifies the query into one of three major search flows before any
-decomposition happens:
+decomposition happens. May also produce multiple interpretations when a
+query is genuinely ambiguous.
 
-- **Known movie / exact title flow** — User is clearly trying to find one
-  specific movie. The system should identify it directly and then optionally
-  show movies like it.
-- **Reference-movie similarity flow** — User is asking for "movies like X"
-  with similarity as the primary task.
-- **Standard flow** — Everything else. This is the main constrained search
-  pipeline described in steps 2-4 below.
+### Flow Definitions
 
-**"Movies like X but qualifiers" stays in the standard flow, not the pure
-similarity flow.** Once explicit qualifiers are present, the query is no
-longer just "find nearest neighbors to X." It becomes a standard interpreted
-search, where the LLM can use its parametric knowledge of the reference movie
-as a fast way to understand the intended traits.
+**Exact title flow** — The user is providing the literal title of a movie
+they want to find.
+
+Includes:
+- Exact titles: "The Shawshank Redemption", "Inception"
+- Misspellings: "Shawshank Redemtion", "Incpetion"
+- Partial titles where the user is clearly attempting the title:
+  "Shawshank Redemption" (missing "The"), "Dark Knight" (missing "The")
+- Alternate official titles: "Live Die Repeat" for "Edge of Tomorrow"
+- Recognized single-movie abbreviations: "T2" for Terminator 2
+- Title + specification (not qualification): "Good Will Hunting with Matt
+  Damon" — extract just the title, ignore the specification
+- Explicit title-search intent: if the user states they are searching by
+  title (e.g., "the movie called Xyzzy"), route here even if we don't
+  recognize the title
+
+Does NOT include — even if the movie is easily identifiable:
+- Plot descriptions: "that movie where the ship sinks"
+- Scene descriptions: "the one with the bullet dodging"
+- Cast/crew descriptions: "that Leonardo DiCaprio movie in the snow"
+- Franchise acronyms that reference multiple movies: "LOTR", "HP", "MCU"
+
+These all go to the standard flow. The standard search pipeline handles
+description-based identification better than a small routing LLM guessing
+titles from descriptions.
+
+**Output:** The extracted title string. The DB is searched for all exact
+matches. If no matches are found, the user sees a "we don't have that
+title" message — there is no fallback to standard flow.
+
+**Reference-movie similarity flow** — The user names a specific movie
+title and asks for similar movies with **zero qualifiers**.
+
+- "Movies like Inception" → similarity flow
+- "Something similar to Parasite" → similarity flow
+- "Inception style movies" → similarity flow
+- "Movies like Inception but funnier" → **standard flow** (qualifier)
+- "Scary movies like The Conjuring" → **standard flow** (qualifier)
+- "Movies like Inception set in space" → **standard flow** (qualifier)
+- "Movies like Inception and Interstellar" → **standard flow** (multiple
+  reference movies require trait extraction and merging, which is
+  interpretive work for step 2)
+
+The rule is strict: anything beyond "similar to X" / "like X" / "X style
+movies" constitutes a qualifier and routes to standard flow. Same title-
+matching rules as the exact title flow apply to the reference movie name.
+
+**Output:** The reference movie title string.
+
+**Standard flow** — Everything else. This is the main constrained search
+pipeline described in steps 2-4 below. Includes:
+- Entity lookups: "Leonardo DiCaprio movies"
+- Metadata filters: "80s comedies"
+- Semantic/vibe queries: "cozy date night movie"
+- Description-based movie identification: "that movie where the ship sinks"
+- Qualified similarity: "movies like Inception but funnier"
+- Multiple-reference queries: "movies like Inception and Interstellar"
+- Cross-channel composition: "dark gritty Marvel movies"
+- Superlatives: "scariest movie ever"
+- Discovery: "trending movies", "hidden gems"
+- Franchise searches: "Rocky movies", "all MCU films"
+
+**"Movies like X but qualifiers" stays in the standard flow.** Once
+explicit qualifiers are present, the query is no longer just "find nearest
+neighbors to X." It becomes a standard interpreted search, where the LLM
+can use its parametric knowledge of the reference movie as a fast way to
+understand the intended traits.
 
 ### Interpretation Branching
 
-For standard-flow queries, step 1 may also branch the query into multiple
-plausible interpretations when the user's intent is genuinely ambiguous. Each
-branch contains only:
+Step 1 may produce multiple interpretations when a query is genuinely
+ambiguous. Branching is **cross-flow** — a single query can produce
+interpretations that route to different major flows.
 
-- A rewrite of the query in concrete terms
-- A brief display phrase representing that interpretation as a whole
+**Branching bar:** An intelligent person would agree that the
+interpretations are reasonably similar in likelihood. If one interpretation
+is clearly more correct than the others, produce only that interpretation
+— including alternatives would just be confusing. The goal is not "find
+all possible interpretations" but "identify when there are multiple
+equally reasonable readings of the request."
 
-Each branch then runs independently through steps 2-4 in parallel, and the
-client receives each branch's results as a separate list labeled by its display
-phrase.
+**Examples where branching applies** — movie titles that double as natural
+language descriptions:
+- "Scary Movie" → exact title (the 2001 parody) OR standard flow (movies
+  that are scary)
+- "Not Another Teen Movie" → exact title (the 2001 film) OR standard flow
+  (user wants something other than a teen movie)
+- "Love Story" → exact title (the 1970 film) OR standard flow (movies
+  with a love story)
+- "Date Night" → exact title (the 2010 film) OR standard flow (movies for
+  a date night)
 
-Branching is capped at **3 interpretations maximum**. The default should be a
-single interpretation, and the step 1 prompt should not subtly encourage
-producing 3 objects when ambiguity is low.
+**Examples where branching does NOT apply** — one interpretation is
+clearly dominant:
+- "Frozen" — clearly the Disney movie in a movie search context
+- "Her" — clearly the 2013 film; no other reasonable reading
+- "Cars" — clearly the Pixar film; "movies with cars" is not a similarly
+  reasonable interpretation
+- "La La Land" — distinctive title, no ambiguity
+- "Inception (2010)" — disambiguation hint makes intent explicit
+- "action movies starring Ryan Reynolds" — clearly standard flow
 
-Known-movie and reference-movie similarity flows handle title ambiguity within
-their own flow logic rather than through standard-flow branching.
+**Other branching candidates** (within standard flow):
+- "Movies like Inception and Interstellar" — different subsets of traits
+  could be extracted from the two reference movies, producing multiple
+  reasonable standard-flow interpretations
+- "Movies like Inception but funnier" — different key traits of the
+  reference movie could be emphasized in different interpretations
+
+Branching is capped at **3 interpretations maximum**. The default should
+be a single interpretation, and the step 1 prompt should not subtly
+encourage producing multiple interpretations when ambiguity is low.
+
+### Output Structure
+
+The step 1 LLM produces a `FlowRoutingResponse` (defined in
+`schemas/flow_routing.py`). The schema is designed to follow the prompt
+authoring conventions established during metadata generation — cognitive
+scaffolding field ordering, evidence-inventory reasoning, brief
+pre-generation fields, and abstention-first framing for rare behaviors.
+
+#### Top-Level Fields
+
+**`interpretation_analysis`** (string, required) — One concise sentence
+stating whether the query has a single clear reading or multiple equally
+reasonable interpretations. When multiple, names what makes the query
+ambiguous.
+
+*Why included:* Forces the model to assess ambiguity before generating
+interpretations, following the evidence-inventory pattern. Without this
+field, the model defaults to "always produce something" and is more likely
+to manufacture branching. The abstention-first framing ("most queries have
+a single clear reading") counteracts that tendency. Kept to one sentence
+per the brief-pre-generation-fields convention — a classification, not an
+essay.
+
+**`interpretations`** (list of 1–3 `QueryInterpretation`) — The
+interpretation(s) of the query. Most queries produce exactly 1. The first
+interpretation in the list is the default that the system auto-executes.
+
+#### Per-Interpretation Fields
+
+Each `QueryInterpretation` contains, in order:
+
+**`routing_signals`** (string, required) — One short sentence citing the
+specific words or patterns in the query that determined this
+interpretation's flow classification.
+
+*Why included:* Per-interpretation evidence inventory. Forces the model to
+ground each routing decision in concrete query text rather than
+pattern-matching on vibes. Placed first so the cited evidence scaffolds
+the downstream fields (intent rewrite, flow enum, title extraction).
+
+**`intent_rewrite`** (string, required) — The user's query rewritten as a
+complete, concrete statement of what they are looking for under this
+interpretation. Makes implicit expectations explicit.
+
+*Why included:* Serves two purposes. First, it is the primary scaffolding
+field — by articulating the full concrete intention before selecting the
+flow enum, the model commits to a specific reading that constrains the
+remaining fields. Second, it feeds directly into step 2 for standard-flow
+interpretations as the input query that gets decomposed into dealbreakers
+and preferences. For exact-title and similarity flows (which skip step 2),
+the rewrite still serves as a human-readable audit trail of what the model
+understood.
+
+**`flow`** (enum: `exact_title` | `similarity` | `standard`, required) —
+Which major search flow handles this interpretation.
+
+*Why included:* The core routing decision. Placed after `routing_signals`
+and `intent_rewrite` so the model has already committed to evidence and a
+concrete reading before selecting the enum — reducing the chance of the
+enum selection driving the interpretation rather than the other way around.
+
+**`display_phrase`** (string, required, 2–8 words) — Short label for this
+interpretation as displayed in the app UI. For exact-title flows: the
+movie title. For similarity: "Movies like [title]." For standard: a brief
+summary of the search intent.
+
+*Why included:* The app needs a display label for each interpretation
+group, especially when multiple interpretations are presented for user
+selection. Always required (not nullable) because even single-
+interpretation queries benefit from a display header, and it costs the
+model almost nothing. Placed after `flow` because the flow classification
+informs what kind of label to generate.
+
+**`title`** (string, nullable) — The movie title extracted from the query,
+using the most common fully expanded English-language title form. Required
+when flow is `exact_title` or `similarity`. Null for `standard`.
+
+*Why included:* Both non-standard flows need a title string to look up in
+the database. The "most common fully expanded" instruction follows the
+exact-match convergence convention — both the LLM output and the database
+entries should converge on the same canonical form to maximize match
+probability without requiring fuzzy matching infrastructure. DB-side
+trigram matching still serves as a safety net for residual mismatches.
+Placed last because it is conditional on the flow value.
+
+#### Design Rationale: Field Ordering
+
+The field order within each interpretation follows the model's cognitive
+chain: **evidence → intent → classification → display → extraction**. This
+is deliberate:
+
+- `routing_signals` and `intent_rewrite` are open-ended generation that
+  benefits from appearing early in the token sequence (no prior commitments
+  to anchor against).
+- `flow` is a constrained enum that benefits from the rewrite having
+  already committed the model to a direction.
+- `display_phrase` and `title` are derivative fields that the model can
+  generate confidently once flow is decided.
+
+This mirrors the cognitive-scaffolding convention from metadata generation:
+concrete/extractive fields before abstract/synthetic, with reasoning
+immediately before the label it scaffolds.
 
 ---
 
@@ -108,10 +293,9 @@ gracefully for most such queries. The grouping rule for V1 is narrower:
 
 Interpretation branching happens in step 1, before structured decomposition.
 Step 2 operates on one branch at a time: one rewritten query plus one display
-phrase, producing one complete decomposition for that branch.
-
-**Open question (deferred):** Exact trigger criteria for when step 1 should
-produce multiple interpretations vs one.
+phrase, producing one complete decomposition for that branch. Note that step 2
+only runs for standard-flow branches — exact title and similarity branches
+bypass steps 2-4 entirely.
 
 ### Output Structure: Dealbreakers
 
@@ -240,13 +424,17 @@ ranking axis. System-level quality/notability priors remain secondary.
 
 ### Reference Movies in the Standard Flow
 
-When a "movies like X but qualifiers" query enters the standard flow, step 2
-uses the LLM's parametric knowledge of the reference movie to extract concrete
-attributes — it does not resolve the movie to a `tmdb_id`. "Movies like
-Inception but in space" becomes "mind-bending action movie set in space," and
-the dealbreakers and preferences are extracted from that rewrite. If the
-reference movie is ambiguous (multiple movies share the name, or the user's
-description is vague), this is handled via step 1 interpretation branching.
+When a "movies like X but qualifiers" or multi-reference query enters the
+standard flow, step 2 uses the LLM's parametric knowledge of the reference
+movie(s) to extract concrete attributes — it does not resolve the movie to a
+`tmdb_id`. "Movies like Inception but in space" becomes "mind-bending action
+movie set in space," and the dealbreakers and preferences are extracted from
+that rewrite. Multi-reference queries ("movies like Inception and
+Interstellar") require the LLM to extract and merge traits from both movies,
+which may produce multiple step 1 interpretations since different trait
+subsets could be emphasized. If the reference movie title is ambiguous
+(multiple movies share the name), step 1 extracts the title and the DB
+search for exact matches handles disambiguation downstream.
 
 ### What Step 2 Does NOT Do
 

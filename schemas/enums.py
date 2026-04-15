@@ -295,3 +295,16 @@ ALL_CONCEPT_TAGS: tuple = tuple(
     )
     if tag.concept_tag_id >= 0
 )
+
+
+# ---------------------------------------------------------------------------
+# Search V2 flow routing.
+# ---------------------------------------------------------------------------
+
+# The three major search flows that step 1 can route a query into.
+# See search_improvement_planning/finalized_search_proposal.md for
+# definitions and routing rules.
+class SearchFlow(StrEnum):
+    EXACT_TITLE = "exact_title"
+    SIMILARITY = "similarity"
+    STANDARD = "standard"

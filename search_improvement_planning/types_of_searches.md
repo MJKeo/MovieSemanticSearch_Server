@@ -17,34 +17,43 @@ Each of these has a single, clear retrieval strategy.
 
 ### 1. Known Movie Identification
 
+> **Finalized routing decision (updated):** The step 1 exact title flow is
+> restricted to literal title matches only (exact titles, misspellings, partial
+> titles, alternate official titles, single-movie abbreviations). Fragmentary
+> recall queries (plot descriptions, scene descriptions, partial cast recall)
+> route to the standard flow instead — the standard pipeline handles
+> description-based identification better than a small routing LLM inferring
+> titles from descriptions. The original broader definition below is preserved
+> for reference as a query type, but its routing has changed.
+
 User has a specific movie in mind and wants to find it. They may know the title
 exactly, approximately, or not at all — providing plot fragments, scene
 descriptions, or partial cast recall instead.
 
-**Examples:**
+**Examples (title-based — routes to exact title flow):**
 - "The Shawshank Redemption"
 - "Lemonade Mouth"
 - "Inception"
+
+**Examples (description-based — routes to standard flow):**
 - "That movie where the guy draws the woman on the ship and then it sinks"
 - "The one where Bill Murray relives the same day over and over"
 - "That Leonardo DiCaprio movie in the snow with the bear"
 
-**Behavior:** Fuzzy title match (allow for misspellings or partial recall) with
-the matched movie(s) as primary results, plus similar movies as secondary results
-below. If someone searches "High School Musical," they should see HSM first, then
-movies like Lemonade Mouth just below.
+**Behavior for title matches:** DB search for all exact matches on the
+extracted title string. If no matches, the user sees "we don't have that
+title" with no fallback to standard flow.
+
+**Behavior for description-based queries:** These enter the standard flow
+and are handled through the normal dealbreaker/preference decomposition.
+The standard pipeline's multi-channel retrieval (entity, metadata, semantic)
+is better suited to identifying movies from descriptions than a single
+routing LLM.
 
 **Routing note:** This is one of the major flows Step 1 should route into before
 the standard dealbreaker/preference decomposition. If the user's intent is
-clearly "find this one movie," the system should not force the query through
-the full standard pipeline first.
-
-For fragmentary recall queries (no title provided), match against plot
-descriptions, cast, and scene-level details simultaneously. The goal is a single
-high-confidence identification, not a ranked recommendation list. If confidence
-is high, surface the identified movie as the primary result with similar movies
-below (same presentation as title match). If ambiguous, surface the top few
-candidates for the user to confirm visually.
+clearly "find this one movie" and they provide the title, the system should not
+force the query through the full standard pipeline first.
 
 ---
 
@@ -206,11 +215,15 @@ similarity than plot_events). The hard part is correctly resolving which movie
 the user means when titles are ambiguous — multiple movies may share a title
 but the user almost certainly means the most well-known one.
 
-**Implementation priority:** This should be routed to a different search flow
+~~**Implementation priority:** This should be routed to a different search flow
 entirely and handled AFTER the initial version of search V2 is validated. The
 core V2 architecture (deal-breaker/preference decomposition, deterministic
 retrieval + semantic rescore) is the priority; similarity search is a distinct
-enough flow to build separately.
+enough flow to build separately.~~
+
+> **Updated:** Similarity search is now a first-class step 1 route, not
+> deferred. It is handled as part of the V2 step 1 flow routing alongside
+> exact title search and the standard flow.
 
 **Exception:** `"movies like <movie> but <qualifiers>"` belongs to the standard
 flow, not this pure similarity flow. Once explicit qualifiers are present, the
