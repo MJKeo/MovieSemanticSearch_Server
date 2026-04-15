@@ -308,3 +308,44 @@ class SearchFlow(StrEnum):
     EXACT_TITLE = "exact_title"
     SIMILARITY = "similarity"
     STANDARD = "standard"
+
+
+# ---------------------------------------------------------------------------
+# Search V2 query understanding (step 2).
+# ---------------------------------------------------------------------------
+
+# Which retrieval endpoint handles a dealbreaker or preference.
+# Each endpoint has its own step 3 LLM (or deterministic function)
+# that translates the description into a query specification.
+# See search_improvement_planning/finalized_search_proposal.md
+# (Step 3: Query Translation) for endpoint definitions.
+class EndpointRoute(StrEnum):
+    ENTITY = "entity"
+    METADATA = "metadata"
+    AWARDS = "awards"
+    FRANCHISE_STRUCTURE = "franchise_structure"
+    KEYWORD = "keyword"
+    SEMANTIC = "semantic"
+    TRENDING = "trending"
+
+
+# Whether a dealbreaker is an inclusion (generates candidates,
+# contributes to tier count) or exclusion (filters/penalizes
+# candidates after assembly, does not count toward tier).
+class DealbreakDirection(StrEnum):
+    INCLUSION = "inclusion"
+    EXCLUSION = "exclusion"
+
+
+# System-level prior for quality and notability dimensions.
+# Shared enum with independent semantics per dimension:
+#   enhanced  — explicitly important in the query
+#   standard  — implicit default expectation
+#   inverted  — user wants the opposite (campy/bad, hidden/obscure)
+#   suppressed — a dominant primary preference pushes this prior
+#                to the background (second-order inference)
+class SystemPrior(StrEnum):
+    ENHANCED = "enhanced"
+    STANDARD = "standard"
+    INVERTED = "inverted"
+    SUPPRESSED = "suppressed"

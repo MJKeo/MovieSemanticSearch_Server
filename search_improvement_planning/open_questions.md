@@ -370,39 +370,39 @@ with `lineage`, `shared_universe`, `recognized_subgroups`,
   a small number of franchises (Star Wars trilogies, MCU phases); correctly
   absent for most.
 
-### How should system-level priors split quality vs notability/mainstreamness?
+### ~~How should system-level priors split quality vs notability/mainstreamness?~~ DECIDED
 
-The earlier design treated these as one dial, but the revised design now
-explicitly separates them conceptually:
+Both quality and notability are 4-value enums with identical value names but
+independent semantics: `enhanced` (explicitly important), `standard` (implicit
+default expectation), `inverted` (user wants the opposite — campy/bad for
+quality, hidden/obscure for notability), `suppressed` (another preference
+dominates reranking, so this prior contributes minimally).
 
-- "so bad it's good" can invert conventional quality
-- "hidden gems" and "underrated" usually still want quality, just with lower
-  popularity or lower mainstream exposure
+`suppressed` is unique in that it's a second-order inference — it depends on
+whether a dominant primary preference exists in the decomposition, not on the
+query text alone. The LLM must assess quality/notability priors *after*
+generating dealbreakers and preferences (last fields in the output).
 
-**Open question:** What should the wire shape be in Phase 0 and Phase 2?
-Candidates include:
-- Separate fields for conventional quality and mainstream/notability bias
-- A small enum per dimension rather than one combined mode
-- A continuous dial for one dimension and enum for the other
+See finalized_search_proposal.md "Output Structure: Quality / Notability
+Priors" for the full specification.
 
-**Settled part:** The conceptual split is finalized.
-**Unsettled part:** Exact field schema, allowed values, and scoring interaction.
+### ~~How should metadata filters handle implicit temporal signals?~~ DECIDED
 
-### How should metadata filters handle implicit temporal signals?
+Temporal bias is NOT a separate system-level field. It is handled as a metadata
+preference routed to the metadata endpoint, where the step 3 LLM translates
+the soft intent into concrete date parameters with grace periods and decay.
 
-"Classics," "iconic," "legendary" carry temporal-establishment implications. Now
-subsumed by the three-tier constraint strictness model:
-
-- "Disney animated classics" → Phase 0 extracts a temporal bias (prefer older) as
-  a soft constraint with wide gate. Not a hard date filter. Award data from
-  movie_awards can supplement as a structured "cultural establishment" signal.
-- "Instant classic" → Phase 0 correctly interprets as quality + recency, outputting
-  a different temporal bias.
-
-**Remaining question:** What's the right representation for temporal bias in the
-Phase 0 output? A continuous `release_year_bias` (-1.0 = older, 0.0 = neutral,
-+1.0 = recent) fed into Phase 2 scoring, or a soft date range with center + decay?
-Both work; the former is simpler.
+- "Classic movies," "old movies" → metadata preference: "prefer older films" →
+  step 3 translates to BEFORE with a date and wide grace period for boundary
+  decay. Movies in the target range get a uniform boost; movies near the
+  boundary get a decaying boost.
+- "Recent movies" → metadata preference: "prefer recent films" → step 3
+  translates to AFTER with a recent date.
+- "Iconic," "legendary" → NOT temporal signals. These are quality/notability
+  signals (quality: enhanced, notability: enhanced) or metadata preferences
+  on reception_score.
+- "Instant classic" → quality + recency combination, handled by quality prior
+  (enhanced) plus a "prefer recent" metadata preference.
 
 ### ~~When should multi-interpretation branching trigger?~~ DECIDED
 
@@ -437,18 +437,12 @@ similar movies with zero qualifiers. Anything beyond "similar to X" / "like X"
 
 **Standard flow:** Everything else.
 
-### How should Step 1 handle multiple `is_primary_preference=true` outputs?
+### ~~How should Step 1 handle multiple `is_primary_preference=true` outputs?~~ DECIDED
 
-The finalized design adds `is_primary_preference` as the minimal mechanism for
-distinguishing one dominant ranking axis from equal-weighted preferences.
-
-**Open question:** If the model marks more than one preference as primary, what
-should code do?
-- Keep the first and demote the rest
-- Fall back to equal-weight additive preferences
-- Preserve multiple primaries and combine them in a special mode
-
-The field itself is decided. Multi-primary conflict handling is not.
+Treat all marked preferences as **co-primary** — elevated equally in weight,
+with no single axis dominating. Multiple primaries form a co-primary group that
+collectively dominates within-tier ranking. This avoids arbitrary ordering-based
+selection and preserves the signal that all flagged preferences are important.
 
 ### Should full boolean/group logic stay deferred unless query failures justify it?
 
@@ -492,10 +486,16 @@ Alternatives considered and rejected:
 — not the free-form community tagging system we assumed. 100% coverage,
 near-zero long tail, trivially enumerable.
 
-**Mapping approach:** Provide the full 225-term vocabulary as context to the
-QU LLM. The LLM selects matching terms from the provided list when the user's
-query implies a sub-genre or deal-breaker concept. No separate synonym table
-or dynamic LLM classification needed.
+**Mapping approach (revised for V2 two-step pipeline):** Step 2 (query
+understanding) receives compact **trait descriptions** covering what the keyword
+and concept tag vocabularies can match — e.g., "genre" rather than each genre
+individually, "content warnings" rather than each flag. This is enough for step
+2's routing decisions. Step 3 (the keyword endpoint LLM or deterministic lookup)
+receives the full 225-term vocabulary and resolves descriptions to specific IDs.
+
+**TODO:** The exact trait description list for step 2 needs to be developed
+before implementation. The descriptions must be specific enough about what ISN'T
+covered to prevent misrouting. This is a critical prompt design task.
 
 **`plot_keywords` excluded:** The 114K-term `plot_keywords` vocabulary is
 already consumed by the metadata generation pipeline and distilled into
@@ -633,30 +633,20 @@ something Phase 0 should output explicitly (e.g., a breadth signal per
 deal-breaker), or can the system infer it from the type of retrieval channel
 used (metadata filters → broad pool, keyword match → medium, entity → narrow)?
 
-### How should preferences interact with deal-breakers from the same attribute?
+### ~~How should preferences interact with deal-breakers from the same attribute?~~ DECIDED
 
-Some attributes can function as both a deal-breaker AND a preference
-simultaneously. "Family-friendly Christmas comedies" — "Christmas" is a
-deal-breaker (must be a Christmas movie), but among Christmas movies, degree of
-Christmas-ness could also function as a preference signal (a movie where
-Christmas is central vs. one where it's incidental backdrop).
+Resolved via the thematic centrality principle. When step 2 emits a keyword or
+concept tag dealbreaker for a **thematic** concept (zombie, heist, Christmas,
+coming-of-age), it should also include that concept's centrality in the grouped
+semantic preference description. Thematic concepts have centrality spectrums —
+"how central is Christmas to this movie?" matters for ranking within the passing
+set. Structural concepts (sequel, award-winning, based on a true story) do not
+have meaningful centrality spectrums and don't need dual emission.
 
-**Cases where this makes sense:**
-- The attribute has a clear binary threshold for deal-breaker status AND a
-  meaningful spectrum above that threshold
-- "Christmas movies" — binary pass/fail on whether it's a Christmas movie, but
-  Christmas-centrality is a useful ranking signal within the passing set
-
-**Cases where this doesn't make sense:**
-- The attribute is truly binary with no meaningful spectrum (entity presence:
-  "Brad Pitt is in it or not")
-- The deal-breaker threshold already captures the full spectrum the user cares
-  about (genre filters)
-
-**Open sub-question:** When Phase 0 identifies an attribute as a deal-breaker,
-should it also emit a preference weight for the same concept? Or should this be
-automatic — any semantic deal-breaker whose similarity score is preserved (not
-flattened) implicitly becomes a preference signal within the passing set?
+This is a guiding principle for the step 2 LLM, not an automatic system
+behavior. The prompt must ensure this instruction doesn't conflict with the
+semantic preference grouping rules. See finalized_search_proposal.md Endpoint 5
+for the full specification.
 
 ### How do we handle pure vibes-based deal-breakers?
 
