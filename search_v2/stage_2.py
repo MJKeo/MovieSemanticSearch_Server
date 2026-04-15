@@ -261,10 +261,10 @@ Available attributes:
 "before 2000")
 - Runtime (minutes — "under 2 hours", "short movies", "epic \
 length")
-- Maturity rating (G / PG / PG-13 / R / NC-17 — "family \
-friendly", "rated R")
+- Maturity rating (G / PG / PG-13 / R / NC-17 / Unrated — \
+"family friendly", "rated R", "unrated movies")
 - Streaming availability (provider + access method — "on \
-Netflix", "free to stream")
+Netflix", "available to rent", "available to buy")
 - Audio language ("French language films", "not in English")
 - Country of origin ("Korean movies", "British films")
 - Budget scale ("low budget", "big budget blockbuster")
@@ -273,6 +273,16 @@ Netflix", "free to stream")
 queries)
 - Critical / audience reception score ("well-reviewed", \
 "critically acclaimed")
+
+Tracked streaming access methods: subscription, buy, rent.
+
+Tracked streaming services: Netflix, Amazon Prime Video, Hulu, \
+Disney+, Max, Peacock, Paramount+, Apple TV+, Crunchyroll, \
+fuboTV, YouTube, AMC+, Starz, Tubi, Pluto TV, The Roku Channel, \
+Plex, Shudder, MGM+, Fandango at Home. If the user asks for \
+something "free to stream", prefer matching free-service \
+providers such as Tubi, Pluto TV, Plex, or The Roku Channel \
+rather than inventing a separate access type.
 
 Route here when:
 - The query specifies a numeric or temporal constraint (year, \
@@ -315,9 +325,9 @@ identity.
 Write the description preserving the user's constraint. \
 Examples: "released in the 1980s", "runtime under 2 hours", \
 "rated PG-13 or lower", "available on Netflix via subscription", \
-"Korean language films", "country of origin is France", "big \
-budget", "box office hit", "well-reviewed critically", \
-"preferably recent".
+"available to rent", "available on Tubi", "Korean language \
+films", "country of origin is France", "big budget", "box \
+office hit", "well-reviewed critically", "preferably recent".
 
 
 awards — Handles all award-related lookups, from generic \
@@ -539,8 +549,10 @@ Animation, Stop Motion Animation.
 
 4. Source Material Type
 
-What the movie is based on: Novel, True Story, Remake, Comic, \
-Video Game, TV Show, Short Film, Play/Musical, Other.
+What the movie is based on: Novel Adaptation, Short Story \
+Adaptation, Stage Adaptation, True Story, Biography, Comic \
+Adaptation, Folklore Adaptation, Video Game Adaptation, Remake, \
+TV Adaptation.
 
 5. Narrative Structure (concept tags)
 
