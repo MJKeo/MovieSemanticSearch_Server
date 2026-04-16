@@ -1320,22 +1320,21 @@ acclaimed" → WELL_RECEIVED here. "Award-winning" → awards endpoint.
 ### Endpoint 3: Awards
 
 **Definition:** Handles all award-related lookups — from generic "award-winning"
-to specific ceremony/category/year queries. Uses two data sources depending on
-specificity: the denormalized `award_ceremony_win_ids` array on `movie_card`
-for fast generic checks, and the full `movie_awards` table for queries that
-name a ceremony, category, outcome, or year. All award-related routing goes
-through this single endpoint.
+to specific ceremony/category/year queries. Uses two data sources: the
+denormalized `award_ceremony_win_ids` array on `movie_card` for the fast-path
+case (generic "has won anything"), and `movie_awards` for all other queries.
+All award-related routing goes through this single endpoint.
 
 **Search capabilities:**
-- Generic award-winning (`award_ceremony_win_ids` GIN overlap — binary: has
-  the movie won at any of the 12 tracked ceremonies?)
-- Ceremony-specific lookup (filter by ceremony_id: Academy Awards, Golden
-  Globes, BAFTA, Cannes, Venice, Berlin, SAG, Critics Choice, Sundance,
-  Razzie, Spirit Awards, Gotham)
-- Category-specific lookup (award_name + category: "Best Picture", "Best
-  Director", "Palme d'Or", "Golden Lion", etc.)
+- Generic award-winning (fast path: `award_ceremony_win_ids` presence check,
+  Razzie excluded)
+- Ceremony-specific lookup (Academy Awards, Golden Globes, BAFTA, Cannes,
+  Venice, Berlin, SAG, Critics Choice, Sundance, Razzie, Spirit Awards, Gotham)
+- Category-specific lookup ("Best Picture", "Best Director", "Palme d'Or", etc.)
+  — can stand alone without a ceremony filter
+- Prize name filtering (e.g., "Oscar", "Palme d'Or", "BAFTA Film Award")
 - Outcome filtering (winner vs. nominee)
-- Year filtering (award year)
+- Year range filtering
 - Compound queries (any combination of the above)
 
 **When to use:**
@@ -1361,12 +1360,64 @@ through this single endpoint.
 - "nominated at Sundance"
 - "preferably award-nominated" (preference)
 
-**Candidate generation (dealbreakers):** Produces candidate sets via
-deterministic SQL queries on the awards table, or GIN overlap on
-`award_ceremony_win_ids` for generic checks.
+**Candidate generation (dealbreakers):** Deterministic SQL on `movie_awards`
+(or `award_ceremony_win_ids` fast path). Returns one `ScoredCandidate` per
+matching movie with score in [0, 1] per the scoring model below.
 
-**Preference scoring:** Can score by award count, ceremony prestige weighting,
-or recency of awards.
+**Step 3 output schema:** `schemas/award_translation.py` — `AwardQuerySpec`.
+
+**Reasoning fields:**
+
+Two scoped reasoning fields, each placed immediately before the decisions it scaffolds:
+
+| Field | Position | Scaffolds | Purpose |
+|---|---|---|---|
+| `concept_analysis` | First | `ceremonies`, `award_names`, `categories`, `outcome`, `years` | Filter-axis evidence inventory — quotes phrases signalling ceremony, award name, category, outcome, year; explicit absence required per axis. Count/intensity language is NOT inventoried here. |
+| `scoring_shape_label` | Between `concept_analysis` and `scoring_mode` | `scoring_mode`, `scoring_mark` | Brief intensity-pattern classification. Forces explicit recognition of the scoring intent before numeric commitment. One of: `"generic award-winning"`, `"specific filter, no count"`, `"explicit count: N"`, `"superlative"`, `"qualitative plenty"`. |
+
+The two fields are deliberately scoped to different evidence types: `concept_analysis` does filter-axis detection (extractive); `scoring_shape_label` does count/intensity classification (interpretive). Mixing them into one field would make `concept_analysis` diffuse and reduce the priming effect on the scoring decisions, which are the hardest in this schema.
+
+`scoring_shape_label` follows the `value_intent_label` pattern from `MetadataTranslationOutput` — brief label (not a sentence or explanation), no consistency coupling instruction. The label primes via autoregressive attention; the model produces `scoring_mode` and `scoring_mark` values independently.
+
+**Scoring model:**
+
+Count unit is distinct prize rows in `movie_awards` (different ceremony,
+category, name, or year each count as a separate award).
+
+Two scoring modes controlled by `scoring_mode` + `scoring_mark`:
+
+| Mode | Formula | Use when |
+|------|---------|----------|
+| `FLOOR` | `1.0 if has_count >= scoring_mark else 0.0` | Specific filters or explicit count floors ("at least 3 wins") |
+| `THRESHOLD` | `min(has_count, scoring_mark) / scoring_mark` | Generic "award-winning" or superlative language ("most decorated") |
+
+LLM guidance for picking mode and mark:
+
+| Query shape | Mode | Mark |
+|---|---|---|
+| Generic "award-winning" | `THRESHOLD` | 3 |
+| Specific ceremony/category/name/year, no count language | `FLOOR` | 1 |
+| Explicit count ("at least 3 wins") | `FLOOR` | user's number |
+| Superlative ("most decorated", "most Oscar-winning") | `THRESHOLD` | 15 |
+| Qualitative plenty ("heavily decorated at Cannes") | `THRESHOLD` | 5 |
+
+**Data source dispatch (execution concern):**
+
+Fast path (`award_ceremony_win_ids` presence check, Razzie id stripped):
+only when all filter fields are null/empty, `outcome` is `WINNER` or null,
+`scoring_mode=FLOOR`, `scoring_mark=1`.
+
+All other cases: `COUNT(*) FROM movie_awards WHERE ...` with active filters.
+
+**Razzie handling:** When `ceremonies` is null/empty, Razzie is excluded from
+all counts and filters. When `AwardCeremony.RAZZIE` is explicitly present in
+`ceremonies`, it is included — the user intentionally asked for it.
+
+**Filter semantics:** All filter arrays use Cartesian OR — a row matches if
+it satisfies any value in each populated array. Filters across arrays are
+ANDed (ceremony AND category AND award_name AND outcome AND year range).
+`categories` can stand alone without `ceremonies` — execution searches across
+all non-Razzie ceremonies that carry that category.
 
 ### Endpoint 4: Franchise Structure
 

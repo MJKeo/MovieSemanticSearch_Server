@@ -42,8 +42,9 @@ from db.postgres import (
 )
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
-from schemas.endpoint_result import EndpointResult, ScoredCandidate
+from schemas.endpoint_result import EndpointResult
 from schemas.entity_translation import EntityQuerySpec
+from search_v2.stage_3.result_helpers import build_endpoint_result
 from schemas.enums import (
     ActorProminenceMode,
     EntityType,
@@ -423,36 +424,6 @@ async def _execute_title_pattern(
 # ---------------------------------------------------------------------------
 
 
-def _build_endpoint_result(
-    scores_by_movie: dict[int, float],
-    restrict_movie_ids: set[int] | None,
-) -> EndpointResult:
-    """Convert the raw score map into an EndpointResult.
-
-    Dealbreaker path (restrict is None): one ScoredCandidate per
-    naturally-matched movie, at its computed score.
-
-    Preference path (restrict provided): one ScoredCandidate per
-    supplied ID, using the matched score or 0.0 for non-matches. The
-    preference orchestrator expects a score for every candidate in
-    the pool.
-    """
-    if restrict_movie_ids is None:
-        return EndpointResult(
-            scores=[
-                ScoredCandidate(movie_id=mid, score=score)
-                for mid, score in scores_by_movie.items()
-            ]
-        )
-
-    return EndpointResult(
-        scores=[
-            ScoredCandidate(movie_id=mid, score=scores_by_movie.get(mid, 0.0))
-            for mid in restrict_movie_ids
-        ]
-    )
-
-
 async def execute_entity_query(
     spec: EntityQuerySpec,
     *,
@@ -501,4 +472,4 @@ async def execute_entity_query(
         # should fail loudly here rather than silently return empty.
         raise ValueError(f"Unhandled entity_type: {spec.entity_type}")
 
-    return _build_endpoint_result(scores_by_movie, restrict_to_movie_ids)
+    return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

@@ -414,6 +414,18 @@ class TitlePatternMatchType(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Search V2 awards endpoint (step 3).
+# ---------------------------------------------------------------------------
+
+# How the scoring_mark is interpreted when scoring award matches.
+# FLOOR: binary — score 1.0 if has_count >= scoring_mark, else 0.0.
+# THRESHOLD: gradient — min(has_count, scoring_mark) / scoring_mark.
+class AwardScoringMode(StrEnum):
+    FLOOR = "floor"
+    THRESHOLD = "threshold"
+
+
+# ---------------------------------------------------------------------------
 # Search V2 metadata endpoint (step 3).
 # ---------------------------------------------------------------------------
 

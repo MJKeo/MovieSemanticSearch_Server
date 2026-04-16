@@ -642,6 +642,19 @@ schemas/movie.py (Movie.award_ceremony_win_ids)
 ## ~~Finalize Step 1 output schema for all three flows~~ DONE
 Schema implemented in schemas/flow_routing.py.
 
+## Add canonical-family grouping metadata to unified classification registry
+**Context:** `schemas/unified_classification.py` merges OverallKeyword +
+SourceMaterialType + ConceptTag into 259 entries, but does not tag each
+entry with its canonical family from the 21 families defined in
+`search_improvement_planning/finalized_search_proposal.md` §Endpoint 5
+(Action/Combat/Heroics, Adventure/Journey/Survival, ..., Viewer Response /
+Content Sensitivity). The step 3 keyword prompt will need family-grouped
+presentation so the LLM can browse the taxonomy by section rather than as
+a flat 259-item list. Add a `family: str` field to `ClassificationEntry`
+and a family-mapping dict (or derive from the proposal's section headers).
+**When:** When writing the step 3 keyword endpoint prompt.
+**See:** schemas/unified_classification.py, search_improvement_planning/finalized_search_proposal.md §Endpoint 5 (lines ~1610-1742)
+
 ## ~~Develop keyword/concept tag trait description list for step 2 prompt~~ SUPERSEDED
 Resolved differently: the step 2 prompt includes the full enumerated keyword
 vocabulary (all ~192 genre/sub-genre keywords organized by family, 30 culture

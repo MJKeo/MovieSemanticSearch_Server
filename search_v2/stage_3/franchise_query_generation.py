@@ -1,16 +1,12 @@
 # Search V2 — Stage 3 Franchise Endpoint: Query Translation
 #
 # Translates one franchise dealbreaker or preference from step 2 into
-# a concrete FranchiseQuerySpec that execution code can run against
-# `movie_franchise_metadata` structural columns and the
-# `lex.inv_franchise_postings` fuzzy-name posting table. The LLM is a
-# schema translator, not a re-interpreter: routing and intent have
-# already been resolved upstream. Its job is to (1) inventory which
-# of the seven franchise axes the concept signals, (2) produce
-# canonical names that will exact-match the ingest-side forms after
-# shared normalization, and (3) set the structural booleans and
-# narrative-position enum consistently with the ingest-side
-# definitions.
+# a concrete FranchiseQuerySpec. The LLM is a schema translator, not a
+# re-interpreter: routing and intent have already been resolved upstream.
+# Its job is to (1) inventory which of the seven franchise axes the concept
+# signals, (2) produce canonical names that will match the ingest-side forms
+# after shared normalization, and (3) set the structural booleans and
+# narrative-position enum consistently with the ingest-side definitions.
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Step 3 → Endpoint 4: Franchise Structure) for the full design
@@ -81,10 +77,9 @@ launcher vs. subgroup).
 Trust the upstream routing. If the description looks like it might \
 fit another endpoint, still produce the best possible franchise \
 lookup for it — do not refuse, do not swap endpoints, do not \
-reinterpret. Your output drives two mechanisms: a fuzzy-name match \
-against a posting table, and boolean / enum filters on a structured \
-franchise-metadata table. Precise strings and faithful axis \
-selection matter; soft semantic rewording does not help.
+reinterpret. Precise strings and faithful axis selection are what \
+matter. Soft semantic rewording does not help — the retrieval layer \
+needs exact parameters, not paraphrases.
 
 ---
 
@@ -240,11 +235,10 @@ _NAME_CANONICALIZATION = """\
 CANONICAL NAMING
 
 Names you emit in lineage_or_universe_names and recognized_subgroups \
-are matched against an ingestion-time dictionary after a shared \
+are matched against ingestion-time stored values after a shared \
 normalization step. The two sides must converge on the same canonical \
-form. A small amount of spelling drift is tolerated by fuzzy matching, \
-but formatting mismatches on the load-bearing tokens will silently \
-return zero hits.
+form. The names you emit are the complete set of forms that will be \
+checked — any canonical form you omit will not be found.
 
 Use the following rules for every name you emit — the rules apply \
 uniformly to franchise names, shared-universe names, and subgroup \
@@ -284,8 +278,9 @@ AND "marvel" are both valid canonical forms of the brand and the \
 ingest side may have placed either one in the relevant slot. Do \
 NOT emit spelling or punctuation variants ("spider-man" vs. \
 "spiderman"; "lord of the rings" vs. "the lord of the rings") — \
-fuzzy matching already handles those, and listing them wastes \
-slots.
+these are the same canonical form under minor orthographic drift \
+and normalization treats them as identical. Only add an entry when \
+it represents a genuinely different canonical name in common use.
 
 The same standards apply to subgroups — emit subgroup labels only \
 when a studio, mainstream film criticism, or widely-used fan \

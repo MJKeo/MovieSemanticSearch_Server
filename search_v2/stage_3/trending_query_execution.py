@@ -27,36 +27,8 @@
 from __future__ import annotations
 
 from db.redis import read_trending_scores
-from schemas.endpoint_result import EndpointResult, ScoredCandidate
-
-
-def _build_endpoint_result(
-    scores_by_movie: dict[int, float],
-    restrict_movie_ids: set[int] | None,
-) -> EndpointResult:
-    """Convert the raw score map into an EndpointResult.
-
-    Dealbreaker path (restrict is None): one ScoredCandidate per
-    trending movie, at its precomputed score.
-
-    Preference path (restrict provided): one ScoredCandidate per
-    supplied ID, using the trending score or 0.0 for non-matches. An
-    empty restrict set yields an empty EndpointResult.
-    """
-    if restrict_movie_ids is None:
-        return EndpointResult(
-            scores=[
-                ScoredCandidate(movie_id=mid, score=score)
-                for mid, score in scores_by_movie.items()
-            ]
-        )
-
-    return EndpointResult(
-        scores=[
-            ScoredCandidate(movie_id=mid, score=scores_by_movie.get(mid, 0.0))
-            for mid in restrict_movie_ids
-        ]
-    )
+from schemas.endpoint_result import EndpointResult
+from search_v2.stage_3.result_helpers import build_endpoint_result
 
 
 async def execute_trending_query(
@@ -92,4 +64,4 @@ async def execute_trending_query(
         return EndpointResult(scores=[])
 
     scores_by_movie = await read_trending_scores()
-    return _build_endpoint_result(scores_by_movie, restrict_to_movie_ids)
+    return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

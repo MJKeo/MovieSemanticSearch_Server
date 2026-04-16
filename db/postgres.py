@@ -13,6 +13,7 @@ from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
+from schemas.enums import AwardCeremony
 from schemas.imdb_models import AwardNomination
 from schemas.metadata import FranchiseOutput
 
@@ -1800,3 +1801,285 @@ async def fetch_movie_ids_with_title_like(
     """
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}
+
+
+# ===============================
+#   FRANCHISE ENDPOINT HELPERS
+# ===============================
+#
+# Read helper dedicated to the step 3 franchise endpoint
+# (search_v2/stage_3/franchise_query_execution.py). All SQL for
+# movie_franchise_metadata reads lives here.
+
+
+async def fetch_franchise_movie_ids(
+    *,
+    normalized_name_variations: list[str] | None,
+    normalized_subgroup_variations: list[str] | None,
+    lineage_position_id: int | None,
+    is_spinoff: bool | None,
+    is_crossover: bool | None,
+    launched_franchise: bool | None,
+    launched_subgroup: bool | None,
+    restrict_movie_ids: set[int] | None = None,
+) -> set[int]:
+    """Query movie_franchise_metadata for movies satisfying all populated axes.
+
+    Builds a single AND-composed WHERE clause from whichever axes are non-None.
+    All populated constraints must hold simultaneously — this is the AND
+    execution policy for the franchise endpoint.
+
+    Name and subgroup variations are pre-normalized by the caller
+    (normalize_string applied in Python). Stored values were also written
+    with normalize_string applied at ingest time, so string equality is
+    sufficient — no LOWER() or further transformation needed on either side.
+
+    Args:
+        normalized_name_variations: Python-normalized canonical name forms
+            to match against lineage OR shared_universe. Any one variation
+            matching either column counts as a hit. None = axis not active.
+        normalized_subgroup_variations: Python-normalized subgroup name forms
+            to match against any element in the recognized_subgroups TEXT[].
+            Any one variation matching any array element counts as a hit.
+            None = axis not active.
+        lineage_position_id: SMALLINT ID for the desired lineage position
+            (from LineagePosition.lineage_position_id). None = not filtered.
+        is_spinoff: True = require is_spinoff = TRUE. None = not filtered.
+        is_crossover: True = require is_crossover = TRUE. None = not filtered.
+        launched_franchise: True = require launched_franchise = TRUE.
+            None = not filtered.
+        launched_subgroup: True = require launched_subgroup = TRUE.
+            None = not filtered.
+        restrict_movie_ids: Optional candidate-pool filter. When provided,
+            only movies in this set can appear in the result.
+
+    Returns:
+        Set of movie_ids that satisfy all active constraints. Empty set when
+        no conditions are provided (defensive guard) or when no movies match.
+    """
+    conditions: list[str] = []
+    params: list = []
+
+    if normalized_name_variations:
+        # Both sides are pre-normalized with normalize_string, so plain equality
+        # is correct. The same list is bound twice — once per OR branch — because
+        # psycopg does not support referencing the same parameter twice.
+        conditions.append(
+            "(lineage = ANY(%s::text[]) OR shared_universe = ANY(%s::text[]))"
+        )
+        params.extend([normalized_name_variations, normalized_name_variations])
+
+    if normalized_subgroup_variations:
+        # Unnest the stored TEXT[] and check if any element matches any search
+        # variation. EXISTS short-circuits on the first match — efficient for
+        # the typical case of small subgroup arrays (1-3 elements).
+        conditions.append(
+            "EXISTS (SELECT 1 FROM unnest(recognized_subgroups) AS sg"
+            " WHERE sg = ANY(%s::text[]))"
+        )
+        params.append(normalized_subgroup_variations)
+
+    if lineage_position_id is not None:
+        conditions.append("lineage_position = %s")
+        params.append(lineage_position_id)
+
+    if is_spinoff:
+        conditions.append("is_spinoff = TRUE")
+
+    if is_crossover:
+        conditions.append("is_crossover = TRUE")
+
+    if launched_franchise:
+        conditions.append("launched_franchise = TRUE")
+
+    if launched_subgroup:
+        conditions.append("launched_subgroup = TRUE")
+
+    # Defensive guard: the FranchiseQuerySpec validator requires at least one
+    # axis, so this branch should never be reached in normal operation.
+    if not conditions:
+        return set()
+
+    if restrict_movie_ids is not None:
+        conditions.append("movie_id = ANY(%s::bigint[])")
+        params.append(list(restrict_movie_ids))
+
+    where_clause = " AND ".join(conditions)
+    query = f"SELECT movie_id FROM public.movie_franchise_metadata WHERE {where_clause}"
+    rows = await _execute_read(query, params)
+    return {row[0] for row in rows}
+
+
+# ===============================
+#     AWARD ENDPOINT HELPERS
+# ===============================
+#
+# Read helpers dedicated to the step 3 award endpoint
+# (search_v2/stage_3/award_query_execution.py). Two paths:
+#
+#   1) Fast path via the denormalized movie_card.award_ceremony_win_ids
+#      SMALLINT[] (GIN-indexed) — a cheap "has any non-Razzie win"
+#      presence check used when the spec has no filters, outcome is
+#      WINNER, scoring_mode=FLOOR, scoring_mark=1.
+#
+#   2) Standard path via public.movie_awards — COUNT(*) grouped by
+#      movie_id, with whichever filter axes the spec populated.
+#
+# Razzie ceremony_id = 10. All string filters (award_name, category)
+# are matched as exact, un-normalized equality against stored values —
+# ingestion deliberately preserves IMDB surface forms so this
+# un-normalized comparison is correct.
+
+
+# Ceremony_id for the Razzie Awards. Stripped from the fast-path
+# index check and excluded from the standard-path COUNT whenever the
+# spec did not explicitly include it in `ceremonies`.
+_RAZZIE_CEREMONY_ID: int = AwardCeremony.RAZZIE.ceremony_id
+
+# All non-Razzie ceremony_ids. Passed to the GIN `&&` (array overlap)
+# operator for the fast path so Postgres can use idx_movie_card_
+# award_ceremony_win_ids rather than scanning. Derived from the
+# AwardCeremony enum rather than hardcoded so new ceremonies land here
+# automatically when the enum grows.
+_NON_RAZZIE_CEREMONY_IDS: list[int] = sorted(
+    c.ceremony_id for c in AwardCeremony if c is not AwardCeremony.RAZZIE
+)
+
+
+async def fetch_award_fast_path_movie_ids(
+    *,
+    restrict_movie_ids: set[int] | None = None,
+) -> set[int]:
+    """Return movie_ids with at least one non-Razzie ceremony win.
+
+    Uses the denormalized award_ceremony_win_ids SMALLINT[] on movie_card
+    (GIN-indexed). Overlap with the non-Razzie ceremony set means the
+    movie has won at least one prize at a non-Razzie ceremony. Razzie-
+    only movies — whose only wins are at ceremony_id 10 — do not match.
+
+    The `&&` operator is chosen over `cardinality(array_remove(...)) > 0`
+    because `&&` is GIN-indexable; the remove-then-cardinality form would
+    force a sequential scan.
+
+    Args:
+        restrict_movie_ids: Optional candidate-pool restriction. When
+            provided, only movies in this set may appear in the result.
+
+    Returns:
+        Set of movie_ids that have at least one non-Razzie ceremony win.
+    """
+    conditions: list[str] = ["award_ceremony_win_ids && %s::smallint[]"]
+    params: list = [_NON_RAZZIE_CEREMONY_IDS]
+
+    if restrict_movie_ids is not None:
+        conditions.append("movie_id = ANY(%s::bigint[])")
+        params.append(list(restrict_movie_ids))
+
+    where_clause = " AND ".join(conditions)
+    query = f"SELECT movie_id FROM public.movie_card WHERE {where_clause}"
+    rows = await _execute_read(query, params)
+    return {row[0] for row in rows}
+
+
+async def fetch_award_row_counts(
+    *,
+    ceremony_ids: list[int] | None,
+    award_names: list[str] | None,
+    categories: list[str] | None,
+    outcome_id: int | None,
+    year_from: int | None,
+    year_to: int | None,
+    exclude_razzie: bool,
+    restrict_movie_ids: set[int] | None = None,
+) -> dict[int, int]:
+    """Count matching movie_awards rows grouped by movie_id.
+
+    Builds a single AND-composed WHERE clause from whichever axes are
+    populated, then `GROUP BY movie_id` yields the per-movie has_count
+    the scoring formula consumes.
+
+    String filters (award_names, categories) are matched as exact,
+    un-normalized equality. Stored values on the ingest side are
+    deliberately NOT passed through normalize_string, so case-folding
+    or diacritic-stripping here would silently zero out valid matches.
+
+    Razzie exclusion policy:
+      - When ceremony_ids is None and exclude_razzie is True, add
+        `ceremony_id <> 10`. This is the default (null/empty ceremonies
+        filter on the spec side) — Razzie is excluded unless the user
+        explicitly asked for it.
+      - When ceremony_ids is provided, the caller has already decided
+        whether to include Razzie (id=10 is either in the list or not).
+        No default exclusion is added — respect the user's explicit set.
+
+    Args:
+        ceremony_ids: List of AwardCeremony.ceremony_id values the row
+            must match (ANY). None = no ceremony filter.
+        award_names: List of exact award_name strings (ANY). None/empty
+            = no filter on award_name.
+        categories: List of exact category strings (ANY). None/empty =
+            no filter on category.
+        outcome_id: AwardOutcome.outcome_id (1=winner, 2=nominee). None =
+            match either outcome.
+        year_from: Inclusive lower bound of the year filter. None = no
+            lower bound.
+        year_to: Inclusive upper bound of the year filter. None = no
+            upper bound.
+        exclude_razzie: When True and ceremony_ids is None, add a
+            `ceremony_id <> 10` guard. Ignored when ceremony_ids is set.
+        restrict_movie_ids: Optional candidate-pool restriction pushed
+            into the WHERE so the aggregation only touches relevant rows.
+
+    Returns:
+        Mapping of movie_id → row_count. Movies with zero matching rows
+        are absent from the map (GROUP BY omits them).
+    """
+    conditions: list[str] = []
+    params: list = []
+
+    if ceremony_ids:
+        conditions.append("ceremony_id = ANY(%s::smallint[])")
+        params.append(ceremony_ids)
+    elif exclude_razzie:
+        # Default Razzie exclusion — only applied when the caller did
+        # not provide an explicit ceremony_ids list.
+        conditions.append("ceremony_id <> %s")
+        params.append(_RAZZIE_CEREMONY_ID)
+
+    if award_names:
+        # Exact equality per ingest convention — do NOT normalize here.
+        conditions.append("award_name = ANY(%s::text[])")
+        params.append(award_names)
+
+    if categories:
+        # Same un-normalized equality contract as award_names.
+        conditions.append("category = ANY(%s::text[])")
+        params.append(categories)
+
+    if outcome_id is not None:
+        conditions.append("outcome_id = %s")
+        params.append(outcome_id)
+
+    if year_from is not None and year_to is not None:
+        # Inclusive range; single-year specs arrive with year_from == year_to.
+        conditions.append("year BETWEEN %s AND %s")
+        params.extend([year_from, year_to])
+
+    if restrict_movie_ids is not None:
+        conditions.append("movie_id = ANY(%s::bigint[])")
+        params.append(list(restrict_movie_ids))
+
+    # Fallback WHERE clause for the degenerate "no filters, no Razzie
+    # exclusion" call — would count every row in movie_awards. Execution
+    # should never reach that configuration (the standard path is only
+    # entered when some filter is active or exclude_razzie is True), but
+    # a TRUE fallback keeps the SQL syntactically valid either way.
+    where_clause = " AND ".join(conditions) if conditions else "TRUE"
+    query = f"""
+        SELECT movie_id, COUNT(*) AS row_count
+        FROM public.movie_awards
+        WHERE {where_clause}
+        GROUP BY movie_id
+    """
+    rows = await _execute_read(query, params)
+    return {row[0]: row[1] for row in rows}

@@ -1,6 +1,87 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Keyword endpoint: unified classification registry
+Files: schemas/unified_classification.py (new), unit_tests/test_unified_classification.py (new)
+
+### Intent
+Provide the single type the step 3 keyword LLM selects from. Merges OverallKeyword (225), SourceMaterialType (10), and the seven ConceptTag category enums aggregated via ALL_CONCEPT_TAGS (25) into one `UnifiedClassification` StrEnum + a `CLASSIFICATION_ENTRIES` registry mapping each name to `(display, definition, source, source_id)`. Execution code calls `entry_for(member)` to get the backing movie_card array column (`keyword_ids` / `source_material_type_ids` / `concept_tag_ids`) and the source-specific ID for a GIN `&&` overlap query.
+
+### Key Decisions
+- **OverallKeyword precedence on name collisions.** Iterate OverallKeyword first; any SourceMaterialType or ConceptTag member whose name already exists in the registry is skipped. OverallKeyword has broader coverage and is the stronger retrieval signal. In the current vocabulary the only real collision is BIOGRAPHY — the step 3 keyword LLM sees BIOGRAPHY as a keyword, not a source material. Tradeoff: 1 entry dropped, no disambiguation suffixes on 259 other members. Genre enum was confirmed fully subsumed by OverallKeyword (all 27 TMDB genres present as keyword terms) and deliberately excluded to avoid a fourth redundant source. The Genre enum itself is untouched — only excluded from the step 3 LLM surface.
+- **Dynamically built StrEnum.** Rather than a hand-written 4th enum duplicating 260 members from three source enums, `UnifiedClassification` is constructed at import time from the registry. Keeps OverallKeyword / SourceMaterialType / ConceptTag as the single source of truth for definitions and IDs; nothing to keep in sync by hand. Tradeoff: loses IDE jump-to-definition on members (e.g. `UnifiedClassification.ACTION`). Accepted — the alternative duplication cost is higher.
+- **Hand-written display + definition for SourceMaterialType.** SourceMaterialType enum members carry no display label or definition. A `(display, definition)` tuple per member is hand-written in `_SOURCE_MATERIAL_METADATA` so the prompt can render "TV Adaptation" (not "Tv Adaptation" from naive `.title()`) and so the LLM can disambiguate semantically similar entries (TRUE_STORY vs the keyword-side BIOGRAPHY). Build-time fail-fast if SourceMaterialType grows a member without a metadata entry.
+- **ConceptTag definitions come from the enum's `description` attribute.** No hand-writing needed. Display is `.name.replace("_", " ").title()` — safe because no concept tag names contain acronyms.
+- **No `family` grouping metadata in this commit.** The 21 canonical concept families from finalized_search_proposal.md Endpoint 5 are useful for prompt grouping but not strictly required to make the registry functional. Can be added later when the step 3 keyword prompt is written.
+
+### Planning Context
+Session established the step 3 keyword endpoint design: single LLM call, single ID output, LLM always picks (no "none of these fit" option), no candidate pool cap. Step 3's job is pure semantic best-fit over the full vocabulary with definitions — step 2 already handled routing. See search_improvement_planning/finalized_search_proposal.md §Endpoint 5 and the open_questions entries marked DECIDED for keyword vocab mapping.
+
+### Testing Notes
+`unit_tests/test_unified_classification.py` parametrizes over every member of OverallKeyword, SourceMaterialType, and ALL_CONCEPT_TAGS. For each it asserts name, display, source, source_id, and backing_column; shadowed members (COLLISIONS) must resolve to the higher-precedence source. Also verifies total count, UnifiedClassification matches registry keys, `entry_for()` round-trips every member, and `(source, source_id)` pairs are globally unique. Definition content is not asserted — only that it is a non-empty string — per the explicit test scope.
+
+## Award endpoint: post-review fixes (today date + Oscar scope discipline)
+Files: search_v2/stage_3/award_query_generation.py
+Why: Two issues surfaced in review. (1) `award_names` guidance for "Oscar-winning" queries told the model to emit both ceremony AND prize-name filters, which adds specificity the user didn't ask for and could miss Technical/Honorary Academy Awards stored under different award_name values. (2) The module had no `today` parameter, so relative year terms ("recent", "this decade") fell back to the LLM's training-time knowledge — inconsistent with the metadata module pattern.
+Approach: Rewrote the Oscar note as a principle ("only emit an award name when the user is specifically distinguishing one prize object from others at the same ceremony") rather than a keyword rule. Added `today: date` parameter to `generate_award_query()` mirroring `generate_metadata_query()`, injected `today: {iso}` into the user prompt, and updated the YEARS section to resolve relative terms against the supplied date rather than intent_rewrite context. `_TASK` section now lists `today` as an explicit input.
+
+## Award endpoint: query generation module + system prompt
+Files: search_v2/stage_3/award_query_generation.py, schemas/award_translation.py
+
+### Intent
+Implements the LLM translation layer for the award endpoint. Takes a step-2 description + routing_rationale and produces an `AwardQuerySpec` by calling the shared LLM router.
+
+### Key Decisions
+- **6-section prompt structure**: task → positive-presence invariant → scoring shape (modes + five patterns) → filter axes (ceremonies, award_names, categories, outcome, years) → Razzie handling → output guidance. Parallel to franchise's 6-section structure.
+- **Ceremony name mapping in prompt**: teaches the LLM to map user-facing names ("Oscar", "Cannes", "SAG") to exact stored string values ("Academy Awards, USA", "Cannes Film Festival", "Actor Awards"). Critical because `use_enum_values=True` on the schema means the LLM emits string values not Python enum names.
+- **Scoring patterns as principle-based categories**: five named patterns with mode + mark guidance defined by what each pattern IS (not keyword shortcuts). "Oscar-winning" is explicitly taught as specific-filter-no-count (not generic award-winning) because the ceremony filter is present.
+- **Razzie explicit-opt-in**: default exclusion taught as a named rule with explicit signal examples. "Worst movies" queries are explicitly redirected away from Razzie inference.
+- **Schema comment cleanup**: stripped LLM-facing guidance from `#` comments in `award_translation.py`. All guidance now lives in the system prompt. Kept brief developer notes: data type info, null semantics, and the scoring formulas.
+
+### Testing Notes
+No tests added (per test-boundaries rule). Smoke calls to verify:
+- "award-winning films" → scoring_shape_label="generic award-winning", mode=threshold, mark=3, all filters null
+- "Oscar Best Picture winners" → ceremonies=["Academy Awards, USA"], award_names=["Oscar"], categories=["Best Picture"], outcome=winner, mode=floor, mark=1
+- "most decorated films at Cannes" → ceremonies=["Cannes Film Festival"], scoring_shape_label="superlative", mode=threshold, mark=15
+- "nominated at Sundance 2023" → ceremonies=["Sundance Film Festival"], outcome=nominee, years(2023,2023), mode=floor, mark=1
+- "Razzie winners" → ceremonies=["Razzie Awards"], outcome=winner, mode=floor, mark=1
+- "heavily decorated" → scoring_shape_label="qualitative plenty", mode=threshold, mark=5, all filters null
+- "won at least 3 awards" → scoring_shape_label="explicit count: 3", mode=floor, mark=3, all filters null
+
+## Franchise endpoint: query execution layer
+Files: search_v2/stage_3/franchise_query_execution.py, db/postgres.py
+
+### Intent
+Implements the execution side of the franchise endpoint (step 3). Takes a `FranchiseQuerySpec` from the franchise LLM and produces binary-scored `EndpointResult` objects.
+
+### Key Decisions
+- **Sole data source**: `movie_franchise_metadata` only. `lex.inv_franchise_postings` no longer exists in the live DB.
+- **Name/subgroup matching**: exact after `normalize_string()` in Python; SQL uses `LOWER()` on stored values as a safety net. Multi-variation arrays — any single variation matching counts as an axis hit.
+- **Subgroup SQL**: `EXISTS (SELECT 1 FROM unnest(recognized_subgroups) AS sg WHERE LOWER(sg) = ANY($variations))` — handles the `TEXT[]` column without per-element expansion in Python.
+- **AND semantics**: all axes combined in a single SQL WHERE clause; early exit is implicit (empty SQL result = empty EndpointResult).
+- **No execution-side validation**: step 2 task decomposition is trusted; subgroup without a name axis is a valid search.
+- **Binary scoring**: 1.0 for match, 0.0 for non-match (no gradient needed — franchise criteria are categorical).
+- **Retry**: one retry on transient DB error; second failure returns empty result (soft failure, consistent with other stage 3 executors).
+- **lineage_position**: `use_enum_values=True` on spec means the field is a string; resolved to SMALLINT ID via `LineagePosition(value).lineage_position_id` before SQL.
+
+### Testing Notes
+- Test normalized_name_variations against both `lineage` and `shared_universe` columns.
+- Test subgroup match with variations that partially overlap the stored array.
+- Test retry path: mock fetch to raise on first call, succeed on second; and raise on both.
+- Test preference path: verify 0.0 entries for non-matching restrict_to_movie_ids.
+
+## Award endpoint: added scoring_shape_label reasoning field
+Files: schemas/award_translation.py, search_improvement_planning/finalized_search_proposal.md
+Why: `concept_analysis` was doing double duty — inventorying both filter-axis signals (ceremony, category, outcome, year) and count/intensity signals (scoring shape). These are different evidence types scaffolding different decisions. The scoring shape decision (mode + mark) is the hardest in the schema: small models default to FLOOR/1 for everything, missing gradient intent. Separating the two forces the model to explicitly classify the intensity pattern before committing to numeric values.
+Approach: Added `scoring_shape_label: str` between `concept_analysis` and `scoring_mode`. Brief classification from five fixed labels — follows the `value_intent_label` pattern in MetadataTranslationOutput (brief label, no consistency coupling instruction, primes via attention not by explicit constraint). Tightened `concept_analysis` comment to clarify it inventories filter axes only, not count/intensity language. Updated proposal with a reasoning-fields table documenting both fields, their positions, what they scaffold, and the rationale for the two-field split.
+
+## Award endpoint: output schema + planning doc update
+Files: schemas/award_translation.py, schemas/enums.py, search_improvement_planning/finalized_search_proposal.md
+Why: Endpoint 3 (Awards) had a high-level prose spec but no output schema and several open design questions around scoring, data source dispatch, and Razzie handling.
+Approach: Designed `AwardQuerySpec` with a unified flat shape — no mode discriminator at the outer level, scoring controlled by `scoring_mode` (FLOOR | THRESHOLD) + `scoring_mark`. Count unit is distinct prize rows in `movie_awards` (different ceremony, category, name, or year each count separately). Filters are Cartesian-ORed within an array, ANDed across arrays. `AwardYearFilter` sub-model handles single years (year_from == year_to) and ranges; gracefully swaps transposed values rather than erroring. `outcome` is a single nullable enum (None = both winners and nominees count). Added `AwardScoringMode` StrEnum to schemas/enums.py in the awards section alongside existing AwardCeremony / AwardOutcome. Razzie exclusion is a hardcoded execution concern — stripped from any count whose `ceremonies` field is null/empty; present in `ceremonies` = user explicitly asked for it. Fast path (award_ceremony_win_ids presence check) only when all filters null, outcome WINNER or null, FLOOR, mark=1. Updated finalized_search_proposal.md Endpoint 3 with the full scoring model, data source dispatch rules, and filter semantics.
+Key decisions: count = prize rows not distinct ceremonies (prize rows match natural language like "won 11 Oscars"); ceiling mode dropped (no real use case, don't let schema shape hold back design); superlatives → THRESHOLD with high mark rather than a fourth uncapped mode; categories can stand alone without ceremonies. See conversation trail for rationale on each.
+Testing notes: No tests added (per test-boundaries rule). Schema validation edge cases to watch: transposed year values (validator swaps), scoring_mark=0 (Field ge=1 rejects), stray False values are not coerced on this model (no boolean axes). Execution smoke: (1) fast path triggers only on the exact combination above; (2) Razzie present in ceremonies → included in COUNT; (3) categories-only query hits movie_awards across all non-Razzie ceremonies.
+
 ## Step 3 trending endpoint: execution module
 Files: search_v2/stage_3/trending_query_execution.py
 Why: Endpoint 7 (Trending) was the last step-3 endpoint without an execution module. It has no LLM-translation counterpart because step 2 flags the intent and execution is pure pass-through over precomputed Redis scores (concave-decay curve lives in `db/trending_movies.py`'s refresh job, not in the search path).
@@ -562,3 +643,28 @@ Why: The step 3 entity LLM already emits EntityQuerySpec; step 3.5 needs the det
 
 ### Testing Notes
 Unit coverage should exercise: zone cutoffs at small/medium/large casts, each of the 4 prominence modes at zone boundaries and bottom positions, broad_person merge with and without primary_category, character with no alternatives vs multiple, title pattern contains vs starts_with with wildcard-containing inputs, restrict path returning exact supplied IDs with 0.0 non-match fill, empty entity_name and empty dictionary lookups both returning empty EndpointResult. Integration coverage needs a Postgres fixture with seeded lex.* tables since all real paths hit the DB. Smoke-tested pure-function paths at build time — zone cutoffs match the proposal's reference table exactly, and validator coercions fire on actor/broad_person persons.
+
+## Award endpoint prompt: canonical surface-form guidance
+Files: search_v2/stage_3/award_query_generation.py
+Why: award_names and categories are matched as exact, un-normalized strings against stored `movie_awards` rows. The existing prompt only showed a few category exemplars and told the LLM to "use the most common form," leaving it to guess between diverging ceremony-specific surface forms (Oscars `Best Actor in a Leading Role` vs. Globes `Best Performance by an Actor in a Motion Picture - Drama` vs. generic `Best Actor`). Data inspection of the live `movie_awards` table also showed only `Palme d'Or` was listed for Cannes while `Grand Jury Prize`, `Un Certain Regard Award`, `Jury Prize`, `FIPRESCI Prize` are common and distinct strings the LLM had no anchor for.
+Approach: Added a new `_SURFACE_FORMS` module-level string inserted between `_FILTER_AXES` and `_RAZZIE_HANDLING` in the SYSTEM_PROMPT concatenation. The section instructs the LLM to emit the official IMDB surface form for the specific ceremony in play (ceremony-specific, case/punctuation/word-order sensitive), anchored by a compact per-ceremony table and explicitly gated by three rules: (1) use parametric IMDB knowledge for anything not in the table — do not fall back to generic labels; (2) do not restrict output to table entries; (3) do not pattern-match a user's phrase onto a similar-looking row when the user clearly named a different award (e.g., "Cannes Jury Prize" → `Jury Prize`, not `Palme d'Or`). Reinforced at `_OUTPUT` for the `award_names` and `categories` field guidance with one sentence each. Also updated the module header's Structure comment to list the new section.
+Design context: Table is principle-based (3-6 exemplars per ceremony chosen to teach surface-form conventions) rather than exhaustive, keeping with the prompt's existing "principle-based constraints, not failure catalogs" authoring convention called out at the top of the file. Plan file at ~/.claude/plans/sounds-good-let-s-just-happy-hamster.md.
+Testing notes: Behavioral — spot-check `generate_award_query` on "Oscar Best Actor winners" (expect `Best Actor in a Leading Role`), "Golden Globe Best Director films" (expect `Best Director - Motion Picture`), "Cannes Jury Prize winners" (expect `Jury Prize`, NOT `Palme d'Or`), "Razzie Worst Picture" (expect `Worst Picture`), and "BAFTA-winning films" with no category (expect ceremony-only, null category/award_names). Regression check that the five-pattern scoring classification and filter-axis inventory reasoning remain unchanged — the new section is additive. Import-time sanity check confirmed SYSTEM_PROMPT builds and section ordering is task → direction → scoring → filter axes → surface forms → razzie → output.
+
+## Award endpoint execution layer
+Files: search_v2/stage_3/award_query_execution.py, db/postgres.py
+Why: AwardQuerySpec is produced by the stage-3 award LLM; step 3.5 needs the deterministic companion that turns that spec into an EndpointResult. This change lands that execution layer, matching the dual-mode (dealbreaker / preference) restrict_to_movie_ids contract used by the franchise, entity, and trending executors.
+Approach: New execute_award_query in search_v2/stage_3/award_query_execution.py dispatches between two data-source paths. Fast path hits movie_card.award_ceremony_win_ids via the GIN `&&` operator (non-Razzie ceremony id set) — triggers only when the spec reduces to a "has any non-Razzie win" presence check. Standard path runs COUNT(*) GROUP BY movie_id on public.movie_awards with whichever axes the spec populated, then applies the FLOOR or THRESHOLD scoring formula. DB helpers (fetch_award_fast_path_movie_ids, fetch_award_row_counts) added to db/postgres.py under a new AWARD ENDPOINT HELPERS section, matching the franchise-helpers pattern.
+
+### Key Decisions
+- **Fast path excludes outcome=null.** The proposal permits fast path for outcome ∈ {WINNER, null}, but award_ceremony_win_ids stores wins only, so firing the fast path on null would silently drop nomination-only movies (null semantic is "wins OR nominations"). Option 2 chosen: fast path fires only when outcome=WINNER; null is routed through movie_awards. Perf cost is negligible because the reachable fast-path surface is already small (LLM five-pattern table rarely emits FLOOR/1 + outcome=null + no filters). Divergence from the literal proposal text is called out in the module header.
+- **No normalization on award_name / category.** Per user instruction and ingestion convention, these columns preserve raw IMDB surface form. _dedupe_nonempty strips wrapping whitespace and drops empties/duplicates but never calls normalize_string; fetch_award_row_counts uses exact `= ANY(...)` equality.
+- **Razzie exclusion policy split by ceremony presence.** When spec.ceremonies is null/empty, the DB helper adds `ceremony_id <> 10` as a default guard. When the spec names ceremonies explicitly, no default exclusion is added — whatever the caller put in the list is respected verbatim (so `[ACADEMY_AWARDS, RAZZIE]` includes Razzie, `[ACADEMY_AWARDS]` excludes it naturally).
+- **GIN-indexable overlap for the fast path.** `award_ceremony_win_ids && ARRAY[1..9,11,12]::smallint[]` is used instead of `cardinality(array_remove(...)) > 0` because only `&&` / `@>` / `<@` are GIN-indexable on an int-array column — the remove-then-cardinality form would force a seq scan.
+- **FLOOR 0.0 scores dropped before build_endpoint_result.** Movies that fall below the scoring_mark on FLOOR yield 0.0; these are filtered out so the dealbreaker path omits them cleanly and the preference path falls back to the 0.0 default that build_endpoint_result already provides. Avoids emitting duplicate zero entries.
+- **Retry-once contract matches franchise/entity executors.** Transient DB errors retry once; second failure returns an empty EndpointResult so the orchestrator can continue rather than hard-fail. Consistent with the soft-failure policy used across stage 3.
+
+### Testing Notes
+- Pure-function coverage was smoke-tested at build time: _dedupe_nonempty (None/empty/whitespace/dupe), _resolve_ceremony_ids (null/empty/single/with-Razzie), _resolve_outcome_id, _score_from_count (FLOOR and THRESHOLD at boundaries including saturation), and _qualifies_for_fast_path (confirmed outcome=null is NOT eligible — this is the option-2 behavior).
+- Real coverage needs a stage-3 eval harness driving representative award items through the LLM + execution against seeded movie_awards data: generic "award-winning" (THRESHOLD/3 standard path), "Oscar Best Picture winners" (FLOOR/1 standard path), "won 5 Oscars" (FLOOR/5 standard path), "Razzie winners" (explicit-include path), "most decorated" (THRESHOLD/15), and a nomination-only sanity check to verify outcome=null routes to movie_awards rather than fast path.
+- Integration coverage should seed movie_awards with a movie holding only nominations (outcome_id=2) and confirm: (a) outcome=null FLOOR/1 returns the movie, (b) same spec with outcome=WINNER does not, (c) empty award_ceremony_win_ids + non-empty movie_awards is handled correctly.
