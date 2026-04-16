@@ -1911,6 +1911,70 @@ async def fetch_franchise_movie_ids(
 
 
 # ===============================
+#    KEYWORD ENDPOINT HELPERS
+# ===============================
+#
+# Read helper for the step 3 keyword endpoint
+# (search_v2/stage_3/keyword_query_execution.py). The endpoint selects
+# exactly one UnifiedClassification member, which resolves to a single
+# (backing_column, source_id) pair. Execution is one GIN `&&` overlap
+# against that single column — no cross-column unions, no dual-backing.
+
+
+# Whitelist of columns the keyword executor is allowed to target. The
+# executor must pass one of these via `backing_column`; any other value
+# raises rather than being interpolated into SQL, because the column
+# name goes into the query string directly (psycopg cannot parameterize
+# identifiers). Source of truth is schemas/unified_classification.py.
+_KEYWORD_ALLOWED_COLUMNS: frozenset[str] = frozenset(
+    {"keyword_ids", "source_material_type_ids", "concept_tag_ids"}
+)
+
+
+async def fetch_keyword_matched_movie_ids(
+    *,
+    backing_column: str,
+    source_id: int,
+    restrict_movie_ids: set[int] | None = None,
+) -> set[int]:
+    """Return movie_ids whose `backing_column` array contains `source_id`.
+
+    Single-column GIN `&&` overlap against movie_card. `backing_column`
+    is validated against a whitelist because it is interpolated into
+    the SQL text (column names cannot be parameterized); `source_id`
+    is bound as a parameter.
+
+    Args:
+        backing_column: One of "keyword_ids", "source_material_type_ids",
+            "concept_tag_ids". Resolved by the caller via
+            entry_for(member).backing_column.
+        source_id: The ID to look for inside that array column.
+        restrict_movie_ids: Optional candidate-pool filter. When
+            provided, only movies in this set can appear in the result.
+
+    Returns:
+        Set of movie_ids that have `source_id` in `backing_column`.
+    """
+    if backing_column not in _KEYWORD_ALLOWED_COLUMNS:
+        raise ValueError(
+            f"fetch_keyword_matched_movie_ids: unsupported backing_column "
+            f"{backing_column!r}; allowed: {sorted(_KEYWORD_ALLOWED_COLUMNS)}"
+        )
+
+    conditions: list[str] = [f"{backing_column} && %s::int[]"]
+    params: list = [[source_id]]
+
+    if restrict_movie_ids is not None:
+        conditions.append("movie_id = ANY(%s::bigint[])")
+        params.append(list(restrict_movie_ids))
+
+    where_clause = " AND ".join(conditions)
+    query = f"SELECT movie_id FROM public.movie_card WHERE {where_clause}"
+    rows = await _execute_read(query, params)
+    return {row[0] for row in rows}
+
+
+# ===============================
 #     AWARD ENDPOINT HELPERS
 # ===============================
 #

@@ -1419,6 +1419,35 @@ ANDed (ceremony AND category AND award_name AND outcome AND year range).
 `categories` can stand alone without `ceremonies` — execution searches across
 all non-Razzie ceremonies that carry that category.
 
+**Scope discipline (prize names):** `award_names` is only emitted when the
+user is specifically distinguishing one prize object from others at the same
+ceremony. Ceremony-implied prize names ("Oscar-winning", "won an Oscar",
+"Palme d'Or winners", "Cannes winners") are routed to `ceremonies` only —
+the prize is implied by the ceremony, and adding `award_names` creates a
+redundant AND filter that would miss legitimate wins stored under sibling
+award-name values (Technical Awards, Honorary Academy Awards, etc.).
+`award_names` is reserved for cases where the prize is explicitly being
+distinguished (e.g., a statuette award vs. an honorary award at the same
+ceremony — rare). This is principle-based scope discipline, not a keyword
+rule: the stage-3 prompt teaches the boundary rather than enumerating
+phrases.
+
+**Relative year resolution:** The stage-3 LLM has today's date injected
+into its prompt (same pattern as the metadata endpoint). Relative terms
+— "recent award winners", "this decade", "this year's Oscars" — are
+resolved against the injected date, not against training-time knowledge.
+Year filters always use calendar years, not award-ceremony season numbers.
+
+**Stage-3 implementation:** `search_v2/stage_3/award_query_generation.py`.
+Six-section system prompt: TASK, DIRECTION_AGNOSTIC (positive-presence
+invariant), SCORING_SHAPE (five canonical patterns), FILTER_AXES
+(ceremony-name mapping table, scope discipline, years), RAZZIE_HANDLING
+(default-exclusion with explicit opt-in), OUTPUT. All LLM-facing guidance
+lives in the prompt; the `AwardQuerySpec` schema carries only brief
+developer comments (no `Field(description=...)` entries, since the schema
+is passed as `response_format` and descriptions would leak into the
+prompt surface without the structured prose context).
+
 ### Endpoint 4: Franchise Structure
 
 **Definition:** Resolves franchise names and evaluates franchise structural
@@ -1587,25 +1616,37 @@ separate user-facing worlds.
 
 **Data sources:** `movie_card.keyword_ids` (225 curated `OverallKeyword` terms
 with definitions) + `movie_card.concept_tag_ids` (25 binary tags across 7
-categories) + `movie_card.genre_ids` (27 TMDB genre IDs) +
-`movie_card.source_material_type_ids` (10 source material types). All four are
-GIN-indexed array columns on `movie_card`.
+categories) + `movie_card.source_material_type_ids` (10 source material types).
+All three are GIN-indexed array columns on `movie_card`. The `Genre` enum /
+`genre_ids` column is intentionally **excluded** from this endpoint entirely —
+all 27 TMDB genres are already represented as members of `OverallKeyword` with
+identical labels, so keeping `genre_ids` in the mix would be purely redundant
+and force a union across columns for no new coverage.
 
-**Overlap rule:** Some user concepts are backed by more than one deterministic
-store. Step 2 treats these as **one concept**. Step 3 may resolve that single
-concept to one or more backing IDs or fields. Broad labels like `Action`,
+**Overlap rule:** Some user concepts map to multiple enums in principle (e.g.
+`Biography` is both an `OverallKeyword` and a `SourceMaterialType`). Step 2
+treats these as **one concept**. Step 3 picks exactly one best-fit entry from
+the unified classification registry (see "Unified Classification Registry"
+below); the registry entry carries its originating source, which determines
+the single backing `movie_card` column at execution time. Each
+`UnifiedClassification` member resolves to exactly one (column, id) pair, so
+execution is always a single-column lookup. Broad labels like `Action`,
 `Horror`, `Documentary`, `Short`, `Film Noir`, `News`, `Biography`, and
-`Remake` are multi-backed. Do not split them into separate dealbreakers just
-because storage overlaps.
+`Remake` resolve to a single registry entry each; do not split them into
+separate dealbreakers just because multiple enums could in theory back them.
 
 **Step 2 LLM knows:** The canonical concept-family taxonomy below, the overlap
 rule, and the main boundary cases that distinguish keyword from metadata,
 franchise_structure, and semantic routing.
 
-**Step 3 LLM knows:** The full 225-term `OverallKeyword` vocabulary with
-definitions, all 25 concept tag definitions, all genre IDs, and all source
-material type IDs. It maps one routed concept to specific IDs and may emit
-multi-store resolution when appropriate.
+**Step 3 LLM knows:** The full unified classification registry (259 entries
+across `OverallKeyword`, `SourceMaterialType`, and `ConceptTag` — see
+"Unified Classification Registry" below) with per-entry definitions, presented
+grouped by the 21 canonical concept families. It picks exactly one registry
+entry per dealbreaker and cannot abstain — routing already happened upstream,
+so the endpoint's job is "choose the best fit" even when the match is
+imperfect. Output is a single enum member (the unified registry name), not a
+list and not multi-store.
 
 #### Canonical Concept Families
 
@@ -1822,19 +1863,60 @@ feel_good, tearjerker, animal_death
 13. **"Award-winning comedy"** → comedy routes here; award-winning routes to
     `awards`. Two separate items, two endpoints.
 
+#### Unified Classification Registry
+
+Step 3 selects from a single `UnifiedClassification` `StrEnum` built at import
+time from three source enums:
+
+- `OverallKeyword` (225 terms, backing column `keyword_ids`)
+- `SourceMaterialType` (10 terms, backing column `source_material_type_ids`)
+- `ConceptTag` (25 storable tags across 7 category enums, backing column
+  `concept_tag_ids`)
+
+`Genre` (27 terms) is excluded from the LLM surface because every genre is
+already present in `OverallKeyword` with an identical label — redundant on
+the selection surface. Total unified members: 259 after collision dropping
+(see below).
+
+**Collision rule:** When a member name appears in more than one source enum,
+the `OverallKeyword` entry wins and the others are dropped. `OverallKeyword`
+has broader coverage and is the stronger retrieval signal. In the current
+vocabulary the only real collision is `BIOGRAPHY` — present as both an
+`OverallKeyword` term and a `SourceMaterialType`; the LLM sees it as a
+keyword.
+
+**Registry entry fields:** `name`, `display`, `definition` (LLM-facing label
+used in the step 3 prompt), `source` (`keyword` | `source_material` |
+`concept_tag`), `source_id` (ID within the source's backing column), and
+`backing_column` (derived from `source`). Execution code calls
+`entry_for(member)` to unpack these.
+
+Implementation: `schemas/unified_classification.py`. Unit tests in
+`unit_tests/test_unified_classification.py` parametrize over every source
+enum member and verify registration, display, source, and source ID.
+
 #### Execution Details
 
-**Candidate generation (dealbreakers):** Produces candidate sets via GIN array
-overlap on `keyword_ids`, `concept_tag_ids`, `genre_ids`, or
-`source_material_type_ids`. These are binary — a movie either has the
-classification or doesn't.
+**Candidate generation (dealbreakers):** The LLM's selected registry entry
+maps to exactly one `movie_card` array column and one ID. Candidate generation
+issues a single GIN `&&` overlap query against that column (e.g., `keyword_ids
+&& ARRAY[96]` for `HORROR`, `source_material_type_ids && ARRAY[9]` for
+`REMAKE`, `concept_tag_ids && ARRAY[1]` for `PLOT_TWIST`). Binary — a movie
+either has the ID or doesn't. No union across columns, no dual-backing into
+`genre_ids` or any other column: the single `(backing_column, source_id)`
+pair resolved from the chosen `UnifiedClassification` member is the entire
+query.
 
 **Preference scoring:** Binary match by default (has the classification = 1.0,
 doesn't = 0.0).
 
-**Step 3 mapping may be deterministic:** Because step 2 now receives the full
-canonical taxonomy, step 3 may be implemented as deterministic ID resolution
-rather than a separate LLM call. This is an implementation detail.
+**Step 3 is an LLM call, not deterministic.** Although step 2 already routes
+the concept, the LLM is retained at step 3 because step 2 does not carry the
+full per-entry definitions needed to disambiguate close-but-distinct members
+of the 259-term registry (e.g., `FEEL_GOOD_ROMANCE` keyword vs. `FEEL_GOOD`
+concept tag, or `TRUE_STORY` vs. `BIOGRAPHY`). The step 3 LLM receives the
+registry grouped by canonical concept family, each entry with its definition,
+and selects the single best fit.
 
 **Thematic centrality — dual dealbreaker + preference:** Some keyword/concept
 tag dealbreakers have a meaningful centrality spectrum above the binary
@@ -2509,7 +2591,9 @@ regular), not by the endpoint type:
 - Step 3 output schemas per endpoint (metadata endpoint complete:
   `schemas/metadata_translation.py`; entity endpoint complete:
   `schemas/entity_translation.py`; franchise endpoint complete:
-  `schemas/franchise_translation.py`; remaining endpoints pending)
+  `schemas/franchise_translation.py`; keyword endpoint classification
+  registry complete: `schemas/unified_classification.py` — final
+  per-call spec wrapper still pending; remaining endpoints pending)
 - Specific candidate pool size limits per endpoint (entity endpoint: no
   limit; franchise endpoint: no limit)
 - Exact gradient decay functions per metadata attribute (date ranges, runtime,
@@ -2524,7 +2608,6 @@ regular), not by the endpoint type:
   LEAD_SCALE=0.6, SUPP_SCALE=1.0, per-mode zone score ranges)
 - Studio name matching brittleness — currently exact-only after normalization;
   may need LIKE substring or alias table if too many misses in practice
-- Whether the keyword endpoint LLM is a separate call or folded into step 2
 - Result pagination for long lists: return top 25 initially, cache the full
   candidate/display list in Redis, and allow fetching additional pages via
   pointer IDs or equivalent

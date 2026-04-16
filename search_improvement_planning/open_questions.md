@@ -487,11 +487,16 @@ Alternatives considered and rejected:
 near-zero long tail, trivially enumerable.
 
 **Mapping approach (current V2 design):** Step 2 receives the canonical
-concept-family taxonomy for the keyword endpoint, including the overlap rule
-that one user concept may resolve to multiple deterministic backends
-(`genre_ids`, `keyword_ids`, `source_material_type_ids`, `concept_tag_ids`).
-Step 3 receives the full enum/tag vocabularies and maps routed concepts to the
-exact IDs or fields to query.
+concept-family taxonomy for the keyword endpoint. Step 3 is an LLM call that
+selects exactly one entry from a unified classification registry merging
+`OverallKeyword` (225) + `SourceMaterialType` (10) + `ConceptTag` (25) into
+259 members. `Genre` / `genre_ids` is excluded from this endpoint entirely
+because all 27 TMDB genres are already members of `OverallKeyword` with
+identical labels — the keyword column alone is sufficient, no dual-backing
+into `genre_ids`. `OverallKeyword` wins any name collision (only `BIOGRAPHY`
+in current vocabulary). See `schemas/unified_classification.py` and
+`finalized_search_proposal.md` §Endpoint 5 "Unified Classification Registry"
+for the full design.
 
 **`plot_keywords` excluded:** The 114K-term `plot_keywords` vocabulary is
 already consumed by the metadata generation pipeline and distilled into
@@ -500,6 +505,32 @@ separately.
 
 See [keyword_vocabulary_audit.md](keyword_vocabulary_audit.md) for the full
 report including concept→keyword mappings across all deal-breaker categories.
+
+### ~~Step 3 keyword endpoint: LLM call or deterministic?~~ DECIDED
+
+**Answer: LLM call.** Step 2 does not carry full per-entry definitions for
+the 259-term unified registry, which are required to disambiguate close
+members (e.g., `FEEL_GOOD_ROMANCE` keyword vs. `FEEL_GOOD` concept tag,
+`TRUE_STORY` vs. `BIOGRAPHY`). The step 3 LLM receives the registry grouped
+by canonical family with each entry's definition and selects the single
+best fit. It cannot abstain — routing already happened, so the endpoint
+always picks the best available member even when the match is imperfect.
+
+### ~~Step 3 keyword: single ID or multi-store resolution?~~ DECIDED
+
+**Answer: Single ID, single column.** The LLM picks exactly one registry
+entry. The entry's `source` determines which `movie_card` array column to
+query (`keyword_ids` / `source_material_type_ids` / `concept_tag_ids`), and
+execution issues a single GIN `&&` overlap against that one column with the
+one `source_id`. No cross-column union, no dual-backing into `genre_ids` or
+any other column — one chosen classification, one search.
+
+### ~~Step 3 keyword: candidate pool cap?~~ DECIDED
+
+**Answer: No limit.** Matches the entity and franchise endpoint decisions.
+Downstream scoring handles broad result sets (e.g., the `DRAMA` keyword can
+return 50K+ candidates — the scoring formula and preferences narrow from
+there).
 
 ### ~~What does source_of_inspiration re-generation look like?~~ DEFERRED
 
