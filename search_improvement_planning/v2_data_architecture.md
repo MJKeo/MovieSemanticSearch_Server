@@ -314,7 +314,15 @@ Postgres before Qdrant, not in Qdrant payload:
 Preferences extracted from natural language by the query understanding LLM.
 Scored as weighted average against movie_card data. Range [0,1] per candidate.
 
-### Preference weights
+**V2 schema:** `schemas/metadata_translation.py` — `MetadataTranslationOutput`.
+Replaces the V1 `MetadataPreferencesResponse` with a per-attribute translation
+model. Key V2 changes: inclusion-only framing (no exclusion lists), country of
+origin with position-gradient scoring, PopularityMode (POPULAR/NICHE) replacing
+boolean, ReceptionMode (WELL_RECEIVED/POORLY_RECEIVED) replacing ternary with
+NO_PREFERENCE. Genres, keywords, and source material type are NOT in this
+endpoint — they route to the keyword endpoint in V2.
+
+### V1 preference weights (reference — `db/metadata_scoring.py`)
 
 | Preference | Weight | LLM Fields | Score Logic |
 |------------|--------|------------|-------------|
@@ -360,8 +368,8 @@ Scored as weighted average against movie_card data. Range [0,1] per candidate.
 | `DateMatchOperation` | EXACT, BEFORE, AFTER, BETWEEN | string-valued |
 | `NumericalMatchOperation` | EXACT, BETWEEN, LESS_THAN, GREATER_THAN | string-valued |
 | `RatingMatchOperation` | EXACT, GT, LT, GTE, LTE | string-valued |
-| `ReceptionType` | CRITICALLY_ACCLAIMED, POORLY_RECEIVED, NO_PREFERENCE | string-valued |
-| `BudgetSize` | SMALL, LARGE, NO_PREFERENCE | string-valued |
+| `ReceptionType` | CRITICALLY_ACCLAIMED, POORLY_RECEIVED, NO_PREFERENCE | string-valued | V1 only — V2 metadata endpoint uses `ReceptionMode` instead |
+| `BudgetSize` | SMALL, LARGE | string-valued | Moved to `schemas/enums.py` in V2; NO_PREFERENCE removed (null = no preference) |
 
 ### New (V2)
 
@@ -381,6 +389,8 @@ Scored as weighted average against movie_card data. Range [0,1] per candidate.
 | `ExperientialTag` | 2 values | `concept_tag_id: int` | |
 | `ContentFlagTag` | 1 value | `concept_tag_id: int` | |
 | `OverallKeyword` | 225 values (implemented in `implementation/classes/overall_keywords.py`) | `keyword_id: int` | Curated IMDB keyword taxonomy. Each member carries a `definition` string for LLM context and participates in the keyword endpoint's concept-family mapping. |
+| `PopularityMode` | POPULAR, NICHE | string-valued | V2 metadata endpoint scoring direction. POPULAR = pass-through, NICHE = inverted. Replaces V1 `prefers_popular_movies` boolean. Implemented in `schemas/enums.py`. |
+| `ReceptionMode` | WELL_RECEIVED, POORLY_RECEIVED | string-valued | V2 metadata endpoint scoring direction. Replaces V1 `ReceptionType` ternary. Implemented in `schemas/enums.py`. |
 
 ---
 

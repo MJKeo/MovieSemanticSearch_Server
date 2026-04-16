@@ -229,7 +229,7 @@ the 2000s" clearly means Titanic (1997).
 | Date/era | Soft — generous ±5 years | Users imprecise about decades; cultural eras don't align to calendar decades |
 | Genre | Somewhat soft — include adjacent genres | "Action movie" could include action-thriller, action-comedy |
 | Certification/rating | Somewhat soft — include adjacent ratings | "PG-13" shouldn't exclude a perfect PG match |
-| Country of origin | Hard | A movie is from Korea or it isn't |
+| Country of origin | Position-graded | GIN overlap is pass/fail, but scoring uses position gradient (pos 1 = 1.0, pos 2 ≈ 0.7-0.8, pos 3+ = decay) |
 | Named entities | Hard on presence | Brad Pitt is in the movie or not. Prominence is the spectrum, not presence. |
 | Streaming platform | Hard | It's on Netflix or it isn't |
 | Source material type | Hard | It's an adaptation or it isn't |
@@ -610,24 +610,12 @@ The structured-label embedding hypothesis is the highest-priority fix.
 
 ## Retrieval & Scoring Questions (New)
 
-### Should retrieval depth vary based on deal-breaker specificity?
+### ~~Should retrieval depth vary based on deal-breaker specificity?~~ DECIDED
 
-Broad or vague deal-breakers may need a larger candidate pool from vector search
-than specific ones. "Christmas" is relatively binary and tight — a few hundred
-candidates probably covers the relevant set. "Family friendly" is much broader and
-fuzzier — the relevant movies span thousands.
-
-**Possible approach for broad deal-breakers:** Start with a deterministic filter
-that provides a generous superset (e.g., maturity rating ≤ PG-13 with buffer),
-then use semantic scoring to evaluate how well each candidate actually adheres to
-the broader label ("family friendly" means more than just not-R-rated). This
-converts a vague vector deal-breaker into a deterministic-retrieval + semantic-
-rescore pattern, which is the architecture's strength.
-
-**Open sub-question:** How do we classify deal-breaker specificity? Is this
-something Phase 0 should output explicitly (e.g., a breadth signal per
-deal-breaker), or can the system infer it from the type of retrieval channel
-used (metadata filters → broad pool, keyword match → medium, entity → narrow)?
+Always include some level of buffer in candidate generation and trust the full
+pipeline (scoring, preferences, priors) to narrow down to the right movies.
+No explicit breadth signal per dealbreaker is needed — the pipeline's multi-stage
+scoring handles broad vs. narrow dealbreakers naturally.
 
 ### ~~How should preferences interact with deal-breakers from the same attribute?~~ DECIDED
 
@@ -687,22 +675,18 @@ than the limited granularity of large/medium/small.
   weighted sum), which may make this less critical than in V1
 - Worth testing whether finer granularity actually improves results
 
-### What does "best" mean — critically acclaimed, popular, or both?
+### ~~What does "best" mean — critically acclaimed, popular, or both?~~ DECIDED
 
-When a user says "best comedies," "best horror movies," or just "best movies,"
-what does "best" map to?
+**"Best" maps to `quality_prior: enhanced`, not a separate mechanism.** When
+step 2 sees "best", it sets `quality_prior: enhanced` (weight 1.5 on the
+`reception_score + popularity_score` composite). This means "best" doesn't
+need special handling in the metadata endpoint — it's already handled by the
+prior system in step 4 scoring.
 
-**Options:**
-- Critically acclaimed only (`reception_score`)
-- Popular only (`popularity_score`)
-- Weighted combination (e.g., `0.6 * reception + 0.4 * popularity`)
-- Context-dependent: "best" in "best horror movies" might lean popular, while
-  "best films of 2024" might lean critical
-
-**Note:** The default quality composite (`0.6 * reception + 0.4 * popularity`)
-already addresses this for the null-sorting-criteria case. The question is
-whether "best" as an explicit sorting criterion should use the same composite,
-lean harder toward one signal, or be context-dependent based on the query.
+Edge case: "best and scariest horror movies" — the quality prior (enhanced)
+and the superlative preference (scariest = primary) naturally coexist since
+"best" is a prior signal, not a preference. Confirmed via testing that
+this combination works correctly.
 
 ### Reception vector embedding: scraped vs generated summary?
 
@@ -742,16 +726,17 @@ The search pipeline has multiple stages. Need to identify:
 - Phase 0 query understanding fails entirely (no structured output)
 - Database connection failures
 
-**Graceful failures (skip and still return results):**
+**Graceful failures (return empty candidate set for that endpoint):**
 - One vector space query times out → score without that space
 - Cross-space rescoring fails for one concept → score as if concept not evaluated
 - Keyword matching returns zero results → fall back to other channels
 - Trending data unavailable → skip trending injection
+- Any endpoint failure → return empty candidate set, handled the same as
+  finding no matches
 
-**Open question:** Where is the line? If the deal-breaker with the most weight
-fails to evaluate, should we return results with a warning, or fail the query?
-The user would rather see imperfect results than an error page, but showing
-results where the primary deal-breaker wasn't evaluated could be misleading.
+**Decided:** On endpoint failure, return an empty candidate set so it gets
+handled the same way as finding no matches. Retry once for transient issues
+(network timeouts, temporary DB unavailability) before returning empty.
 
 ### What keywords are available and useful beyond current metadata filters?
 

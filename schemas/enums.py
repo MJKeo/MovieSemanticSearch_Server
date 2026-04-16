@@ -74,6 +74,23 @@ class BoxOfficeStatus(StrEnum):
     FLOP = "flop"
 
 
+class BudgetSize(StrEnum):
+    SMALL = "small"
+    LARGE = "large"
+
+
+# Popularity scoring direction for the metadata endpoint.
+class PopularityMode(StrEnum):
+    POPULAR = "popular"
+    NICHE = "niche"
+
+
+# Reception scoring direction for the metadata endpoint.
+class ReceptionMode(StrEnum):
+    WELL_RECEIVED = "well_received"
+    POORLY_RECEIVED = "poorly_received"
+
+
 # Narrative-position axis of franchise classification. Mutually
 # exclusive: a film carries at most one value, or null. Null covers
 # first-entry and standalone films. Orthogonal to the is_crossover
@@ -349,3 +366,76 @@ class SystemPrior(StrEnum):
     STANDARD = "standard"
     INVERTED = "inverted"
     SUPPRESSED = "suppressed"
+
+
+# ---------------------------------------------------------------------------
+# Search V2 entity endpoint (step 3).
+# ---------------------------------------------------------------------------
+
+# What kind of entity the lookup targets. Determines which posting
+# table(s) are searched and which type-specific fields are populated
+# in the EntityQuerySpec output.
+class EntityType(StrEnum):
+    PERSON = "person"
+    CHARACTER = "character"
+    STUDIO = "studio"
+    TITLE_PATTERN = "title_pattern"
+
+
+# Which role table(s) to search for a person entity. Specific roles
+# search a single posting table; broad_person searches all 5 tables
+# with cross-posting score consolidation via primary_category.
+class PersonCategory(StrEnum):
+    ACTOR = "actor"
+    DIRECTOR = "director"
+    WRITER = "writer"
+    PRODUCER = "producer"
+    COMPOSER = "composer"
+    BROAD_PERSON = "broad_person"
+
+
+# How to score actor billing position using the zone-based adaptive
+# threshold system. Only meaningful when actor results are in play
+# (person_category is actor or broad_person). See finalized search
+# proposal "Actor Prominence Scoring" for zone definitions and
+# per-mode score tables.
+class ActorProminenceMode(StrEnum):
+    DEFAULT = "default"
+    LEAD = "lead"
+    SUPPORTING = "supporting"
+    MINOR = "minor"
+
+
+# How to match a title pattern against movie title strings.
+# contains = LIKE '%pattern%', starts_with = LIKE 'pattern%'.
+class TitlePatternMatchType(StrEnum):
+    CONTAINS = "contains"
+    STARTS_WITH = "starts_with"
+
+
+# ---------------------------------------------------------------------------
+# Search V2 metadata endpoint (step 3).
+# ---------------------------------------------------------------------------
+
+# Which single metadata attribute is the primary target for this
+# dealbreaker or preference. The step 3 metadata LLM selects the
+# one column that best represents the step 2 description, and
+# execution code queries ONLY that column. The LLM may still
+# populate other attribute fields in the output for context, but
+# only the column identified here drives candidate generation
+# (dealbreakers) and scoring (preferences).
+#
+# This simplifies the execution layer: one metadata item = one
+# column query = one [0, 1] score. No within-dealbreaker multi-
+# attribute combination logic needed.
+class MetadataAttribute(StrEnum):
+    RELEASE_DATE = "release_date"
+    RUNTIME = "runtime"
+    MATURITY_RATING = "maturity_rating"
+    STREAMING = "streaming"
+    AUDIO_LANGUAGE = "audio_language"
+    COUNTRY_OF_ORIGIN = "country_of_origin"
+    BUDGET_SCALE = "budget_scale"
+    BOX_OFFICE = "box_office"
+    POPULARITY = "popularity"
+    RECEPTION = "reception"

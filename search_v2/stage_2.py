@@ -206,9 +206,9 @@ Entity types supported:
 - Writers / screenwriters
 - Producers
 - Composers / musicians
-- Characters (partial or complete name matching — names can be \
-specific like "The Joker" or generic like "doctor" or "police \
-officer")
+- Characters (specific named characters only — "The Joker", \
+"Hannibal Lecter", "Batman". Generic character types like \
+"doctor" or "police officer" route to keyword or semantic)
 - Studios / production companies
 
 Separately, this endpoint also handles title pattern matching — \
@@ -218,8 +218,8 @@ lookup, which is handled by flow routing before this step.
 
 Route here when:
 - The query names a real person in any film crew role
-- The query names a fictional character, whether by specific \
-name or generic role
+- The query names a specific fictional character by name \
+("movies featuring The Joker", "Hannibal Lecter movies")
 - The query names a production company or studio ("movies made \
 by Marvel Studios", "A24 films", "Pixar movies")
 - The query describes a title pattern
@@ -236,15 +236,18 @@ movies" routes to franchise_structure.
 - Structured movie attributes (genre, year, runtime, rating, \
 streaming, country, source material) — route to metadata or \
 keyword
+- Generic character type queries ("movies with a cop", "vampire \
+characters", "doctor character") — route to keyword or semantic. \
+Character posting tables contain credited character names, not \
+role descriptions.
 - Subjective or thematic concepts ("funny", "dark", "zombie") — \
 route to keyword or semantic
 
 Write the description as a natural-language lookup preserving \
 all user-specified qualifiers. Examples: "includes Brad Pitt in \
 actors", "has Arnold Schwarzenegger in a lead role", "has a \
-character named The Joker", "movies with police officer \
-characters", "directed by Christopher Nolan", "title contains \
-the word 'love'", "not starring Adam Sandler".
+character named The Joker", "directed by Christopher Nolan", \
+"title contains the word 'love'", "not starring Adam Sandler".
 
 
 metadata — Evaluates structured, quantitative movie attributes — \
@@ -685,9 +688,11 @@ known keyword or tag, route here. If it is a loose thematic \
 description, route to semantic.
 
 "Female lead" routes here (character type classification). \
-"Movies with a doctor character" routes to entity (generic \
-in-story role lookup). Character-type classifications and \
-character/entity lookups are different.
+"Movies with a doctor character" routes to semantic (generic \
+in-story role — character posting tables store credited names \
+like "Dr. Smith", not role descriptions like "doctor"). Only \
+specific named characters ("The Joker", "Batman") route to \
+entity.
 
 "Sequel" and "prequel" do NOT route here. They always route to \
 franchise_structure. Only broad source-material or real-world- \

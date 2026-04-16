@@ -280,6 +280,18 @@ semantic inclusion dealbreaker (elbow-calibrated [0,1]), then subtract
 A 0.5 match costs a full dealbreaker's worth of score; a 0.9 match is
 devastating; a 0.0 match costs nothing.
 
+## Actor prominence scoring: zone-based adaptive thresholds
+Files: search_improvement_planning/finalized_search_proposal.md
+Why: Resolved actor prominence scoring — the last open entity endpoint question.
+Approach: Zone-based system using `max(floor, round(scale * sqrt(cast_size)))`
+to define LEAD/SUPPORTING/MINOR zones that adapt to cast size. Four scoring
+modes (DEFAULT, LEAD, SUPPORTING, MINOR) each assign zone-based scores with
+within-zone gradients. DEFAULT gives leads 1.0 with floor 0.5 for lowest
+minor. LEAD mode is harsh (0.2 floor) for "starring" queries. SUPPORTING
+peaks at the supporting zone. MINOR inverts — deeper billing scores higher.
+Updated "Decisions Deferred" to remove old actor billing reference, added
+character/title scoring details as deferred items.
+
 ## Entity endpoint step 3/4 design decisions
 Files: search_improvement_planning/finalized_search_proposal.md
 Why: Resolved entity endpoint design questions from planning discussion.
@@ -304,6 +316,61 @@ Approach:
   implementation.
 - **Actor prominence scoring** — modes and formulas still under discussion.
 Testing notes: Doc-only changes, no code modified.
+
+## Entity endpoint step 3 output schema and per-sub-type specifications
+Files: schemas/entity_translation.py (new), schemas/enums.py, search_improvement_planning/finalized_search_proposal.md
+
+### Intent
+Define the structured output schema for the step 3 entity endpoint LLM and
+document the per-sub-type search mechanics, scoring, and execution logic in
+the finalized proposal.
+
+### Key Decisions
+- **Flat model with nullable type-specific fields.** `EntityQuerySpec` has
+  `entity_name` (always required — the corrected/normalized search key) and
+  `entity_type` (enum discriminator), plus nullable fields per type. Matches
+  the metadata endpoint pattern of one flat object rather than discriminated
+  unions.
+- **4 new enums** added to `schemas/enums.py`: `EntityType` (person/character/
+  studio/title_pattern), `PersonCategory` (actor/director/writer/producer/
+  composer/broad_person), `ActorProminenceMode` (default/lead/supporting/
+  minor), `TitlePatternMatchType` (contains/starts_with).
+- **`broad_person` replaces multi-table array.** Instead of `search_categories`
+  as a list, the LLM outputs a single `person_category` enum. `broad_person`
+  means search all 5 role tables; any specific value means single-table search.
+  `primary_category` (renamed from primary_anchor) controls cross-posting
+  score consolidation for broad_person searches.
+- **Character search is exact-only.** No fuzzy/token matching. The LLM
+  generates the standard credited form(s) of the character name (`entity_name`
+  + `character_alternative_names`). Each variation is exact-matched. Score is
+  binary 1.0. Generic character type queries ("movies with a cop") are routed
+  to keyword/semantic instead — character posting tables contain credited names,
+  not role descriptions.
+- **Studio search is exact-only.** Same normalization rules as person names.
+  If too brittle in practice, LIKE substring or alias table deferred to
+  implementation.
+- **Title pattern search uses LIKE, no fuzziness.** `contains` → `LIKE
+  '%pattern%'`, `starts_with` → `LIKE 'pattern%'`. Binary 1.0 scoring.
+- **All non-actor sub-types use binary scoring.** Only actors have
+  prominence-based gradients. Characters, studios, directors, writers,
+  producers, composers, and title patterns are all 1.0 or 0.0.
+- **Name normalization follows V1 lexical prompt rules.** Fix typos, complete
+  unambiguous partial names, capitalize — but never add suffixes or infer
+  names not typed.
+
+### Planning Context
+Per-sub-type specifications drawn from existing lexical search code (exact
+matching for people/studios via `lex.lexical_dictionary`, LIKE substring for
+characters/titles via trigram GIN), IMDB character data format (credited
+character names, not role descriptions), and V1 `lexical_prompts.py`
+normalization rules. Character fuzzy matching and title pattern coverage
+scoring (previously deferred) resolved as unnecessary — binary scoring with
+good LLM-generated search terms is sufficient.
+
+## Entity endpoint review fixes: validator, list constraint, prompt alignment
+Files: schemas/entity_translation.py, search_v2/stage_2.py
+Why: Code review found three issues — no enforcement of primary_category != broad_person, unvalidated character_alternative_names list items, and step 2 prompt still routing generic character types to entity.
+Approach: (1) Added model_validator that coerces primary_category=broad_person to null. (2) Changed character_alternative_names from `list[str]` to `conlist(constr(..., min_length=1), min_length=0)` to reject empty strings. (3) Updated entity endpoint definition in stage_2.py: character types narrowed to specific named characters only, generic character types ("doctor", "police officer") explicitly listed in Do NOT route section, description examples updated, keyword boundary section reversed doctor routing from entity to semantic with explanation of why character posting tables can't serve generic role lookups.
 
 ## Reorganized keyword classification dimensions for step 2 routing
 Files: search_v2/stage_2.py, search_improvement_planning/finalized_search_proposal.md
@@ -343,9 +410,67 @@ Prompt-only changes. Verify with representative step 2 queries that routing
 still correctly assigns keywords to the keyword endpoint and doesn't misroute
 format/audience keywords to semantic.
 
+## Metadata endpoint planning decisions
+Files: search_improvement_planning/finalized_search_proposal.md, search_improvement_planning/open_questions.md
+Why: Resolved open questions and clarified important considerations for the metadata endpoint before step 3/4 implementation.
+Approach: Resolved 4 open questions: (1) LLM translator does NOT soften constraints — faithful literal translation only, code applies softening using existing `db/metadata_scoring.py` patterns. (2) "Best" maps to `quality_prior: enhanced`, not a separate mechanism. (3) Always include buffer in candidate generation, trust the pipeline to narrow down. (4) Endpoint failure returns empty candidate set (retry once for transient issues). Added country-of-origin position-based gradient scoring (position 1 = 1.0, position 2 = ~0.7-0.8, position 3+ = rapid decay) to the metadata endpoint spec and deferred decisions list, with a note to verify TMDB/IMDB array ordering empirically. Added pipeline failure handling note to the endpoint spec.
+
+## Metadata endpoint step 3 output schema and per-attribute specifications
+Files: schemas/metadata_translation.py (new), schemas/enums.py, search_improvement_planning/finalized_search_proposal.md, search_improvement_planning/open_questions.md, search_improvement_planning/v2_data_architecture.md
+
+### Intent
+Finalize all 10 metadata attributes with concrete LLM output parameters,
+scoring functions, candidate generation strategies, and edge case handling.
+Implement the step 3 output schema and update planning docs.
+
+### Key Decisions
+- **Inclusion-only framing across all attributes.** No exclusion lists anywhere
+  in the step 3 output. Exclusion dealbreakers from step 2 are handled by step 4
+  scoring code. This aligns with the direction-agnostic step 3 principle.
+- **New enums:** `PopularityMode` (POPULAR/NICHE) and `ReceptionMode`
+  (WELL_RECEIVED/POORLY_RECEIVED) added to `schemas/enums.py`. `BudgetSize`
+  moved from `implementation/classes/enums.py` to `schemas/enums.py` with
+  NO_PREFERENCE removed (null = no preference).
+- **Popularity supports inverse scoring.** NICHE mode scores
+  `1.0 - popularity_score`, enabling "hidden gems" as NICHE + WELL_RECEIVED.
+  Replaces the old boolean `prefers_popular_movies`.
+- **Reception simplified to directional enum.** WELL_RECEIVED/POORLY_RECEIVED
+  with null for no preference. Replaces the ternary `ReceptionType` with its
+  NO_PREFERENCE value.
+- **Audio language is explicit-mention-only.** Never inferred. "French films" →
+  country of origin. "Foreign films" → country of origin (broad non-US set).
+  Only "movies with French audio" or "dubbed in Spanish" triggers this attribute.
+- **Country of origin supports multi-country lists.** LLM uses parametric
+  knowledge to expand region terms ("European movies"). Score = max across all
+  requested countries (no summing). IMDB array ordering confirmed as order of
+  relevance — position gradient constants still need tuning.
+- **UNRATED exclusion rule:** Any maturity query targeting a rated value
+  (anything other than EXACT UNRATED) excludes UNRATED movies from both scoring
+  and candidate generation.
+- **Null data handling:** Movies with null data score 0.0 for that attribute
+  (no boost) but are NOT excluded from the candidate set. For exclusion
+  dealbreakers, null = did not match exclusion, so no penalty.
+- **Vague terms left to LLM judgment.** No special defaults for "epic length",
+  "long movie", etc. The LLM infers reasonable concrete values. Only "recent"
+  gets a guideline (≈ last 3 years) since the LLM needs today's date injected.
+- **Budget and box office remain binary.** Match = 1.0, no match = 0.0. No
+  gradient — already bucketed classifications.
+
+### Planning Context
+Per-attribute specifications drawn from existing `db/metadata_scoring.py`
+V1 patterns, `v2_data_architecture.md` data inventory, and discussion
+resolving 10 attribute-level questions plus 3 cross-cutting questions.
+Constraint strictness table in `open_questions.md` updated to reflect
+country-of-origin position-graded scoring (was previously marked "Hard").
+
 ## Canonical keyword taxonomy rewrite across prompt and planning docs
 Files: search_v2/stage_2.py, search_improvement_planning/finalized_search_proposal.md, search_improvement_planning/open_questions.md, search_improvement_planning/new_system_brainstorm.md, search_improvement_planning/full_search_capabilities.md, search_improvement_planning/v2_data_architecture.md
 Why: The repo had drift between the new `OverallKeyword` definitions, the step 2 routing prompt, and the search-planning docs. The old presentation still described the keyword endpoint as 13 overlapping dimensions, still referenced obsolete source-material concepts, and still mixed cultural identity, country, runtime, and short-form classification in inconsistent ways.
 Approach: Replaced the old keyword-endpoint framing with a canonical concept-family taxonomy backed by multiple deterministic stores (`genre_ids`, `keyword_ids`, `source_material_type_ids`, `concept_tag_ids`). The prompt and finalized proposal now use the same concept-first taxonomy, explicit overlap rule, and aligned boundary examples for `Short`, `Biography`, `French` vs audio, `Bollywood` vs Hindi audio, `Remakes`, `Scary movies`, `Feel-good`, and `Coming-of-Age`. Supporting planning docs were updated to remove stale “trait descriptions only” wording, replace the obsolete source-material list with the actual enum values, stop routing broad genres as a separate conceptual `genre_ids` surface, and rename `overall_keywords` as a broader keyword taxonomy rather than just a genre/sub-genre taxonomy.
 Design context: Intent and category placements follow the new `OverallKeyword` definitions in `implementation/classes/overall_keywords.py`, the shared enums in `schemas/enums.py`, and the user-approved concept-family taxonomy. `Biography` is canonical under Source Material / Adaptation / Real-World Basis; `Short` is canonical as a short-form classification while pure runtime remains metadata; `News` is canonical under Nonfiction / Documentary / Real-World Media; `Adult Animation` is canonical under Animation / Anime Form / Technique.
 Testing notes: Verified by grep that the stale phrases (`13 classification dimensions`, obsolete source-material values, old trait-description wording, `short movies` as runtime shorthand, and `genre/sub-genre taxonomy`) were removed from the active prompt/docs set. Also ran a local normalization check against `OverallKeyword`, `Genre`, `SourceMaterialType`, and stored concept tags: the new family taxonomy covers the full keyword-endpoint concept surface exactly once with 259 concepts, 0 missing, and 0 duplicate assignments.
+
+## Metadata endpoint: single-column targeting via target_attribute
+Files: schemas/enums.py, schemas/metadata_translation.py, search_improvement_planning/finalized_search_proposal.md
+Why: Step 2 already decomposes multi-attribute concepts into separate items (e.g., "hidden gems" → niche popularity + well-received reception). The metadata endpoint should honor that by querying exactly one column per item, not combining scores across columns within a single dealbreaker/preference.
+Approach: Added `MetadataAttribute` enum (10 values matching the 10 attribute fields) to `schemas/enums.py`. Added `target_attribute` as the first field in `MetadataTranslationOutput` — the LLM identifies which column best represents the step 2 description before populating attribute fields. Execution code queries ONLY that column. Updated the finalized proposal's Endpoint 2 output schema section to document the single-column targeting design, the rationale (step 2 handles decomposition, step 3 handles single-column translation), and the guarantee (one metadata item = one column query = one [0,1] score).

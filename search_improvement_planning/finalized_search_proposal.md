@@ -839,20 +839,25 @@ matching the entity) and exclusion (movies NOT matching the entity).
 - Writers / screenwriters
 - Producers
 - Composers / musicians
-- Characters (exact name or substring/pattern matching for generic roles)
+- Characters (specific named characters only — generic character types like
+  "police officer" are better served by keyword or semantic endpoints)
 - Studios / production companies
 - Title patterns (substring, prefix — NOT exact title lookup, which is
   handled by flow routing)
 
 **When to use:**
 - The query names a real person in any film crew role
-- The query names a fictional character (specific name or generic role
-  description like "police officers")
+- The query names a specific fictional character by name ("The Joker",
+  "Hannibal Lecter", "Batman")
 - The query names a production company or studio
 - The query describes a title pattern (contains a word, starts with a phrase)
 - The query asks to exclude a specific person, character, or studio
 
 **When NOT to use:**
+- Generic character type queries ("movies with a cop", "vampire characters")
+  — route to `keyword` or `semantic` (character posting tables contain
+  credited character names, not role descriptions — a police officer main
+  character will be credited by name, not as "cop")
 - Franchise name lookup ("Marvel movies", "James Bond franchise") — route to
   `franchise_structure`
 - Award lookups of any kind — route to `awards` or `metadata`
@@ -869,7 +874,6 @@ Examples:
 - "includes Brad Pitt in actors"
 - "has Arnold Schwarzenegger in a lead role"
 - "has a character named The Joker"
-- "movies with police officer characters"
 - "directed by Christopher Nolan"
 - "title contains the word 'love'"
 - "includes Adam Sandler in actors" (even when direction=exclusion — step 3
@@ -886,70 +890,212 @@ independent candidate set of movie IDs. **No pool size limit** — the full
 result set is the candidate pool. Worst case is ~7K candidates for a major
 studio, which is manageable for downstream scoring.
 
-**No-match is a valid result.** When fuzzy matching finds no candidates above
-the similarity threshold (e.g., a character name that doesn't exist in the
-database), the endpoint returns an empty candidate set. There is no fallback
-to the closest fuzzy match — an empty set is the honest answer and the
-pipeline handles it accordingly.
+**No-match is a valid result.** When exact matching finds no candidates (e.g.,
+a character name that doesn't exist in the database), the endpoint returns an
+empty candidate set. There is no fallback to the closest match — an empty set
+is the honest answer and the pipeline handles it accordingly.
 
-**Dealbreaker scoring:** Scoring varies by entity sub-type:
+**Step 3 output schema:** `schemas/entity_translation.py` — `EntityQuerySpec`.
+One flat object with `entity_name` (always required), `entity_type` (enum
+discriminator), and nullable type-specific fields. Only fields relevant to
+the entity type are populated; all others remain null. The LLM's primary job
+is name/term generation — producing the correct search strings so that simple
+exact or substring matching finds the right movies.
 
-- **Person lookups** — See Cross-Posting Table Search and Actor Prominence
-  Scoring below.
-- **Character lookups** — May produce non-binary scores via fuzzy/token
-  matching similarity. The match quality score reflects how well the searched
-  name matches the stored character name. Exact matches score 1.0; fuzzy
-  matches score proportionally to similarity. Scoring details to be finalized
-  before implementation.
-- **Studio lookups** — Binary (1.0 or 0.0).
-- **Title pattern lookups** — May produce non-binary scores based on match
-  coverage (how much of the title matched the pattern). Scoring details to
-  be finalized before implementation.
+**Dealbreaker scoring:** All sub-types use binary scoring (1.0 or 0.0) except
+actors, which use zone-based prominence scoring:
+
+- **Person lookups (non-actor roles)** — Binary 1.0 if the person has a credit
+  in that role. See Cross-Posting Table Search below for multi-table behavior.
+- **Person lookups (actor role)** — Prominence-scored using billing position.
+  See Actor Prominence Scoring below.
+- **Character lookups** — Binary 1.0. The LLM generates the standard, most
+  common credited form(s) of the character name. Each name variation
+  (`entity_name` + `character_alternative_names`) is exact-matched against
+  `lex.character_strings`. A match on any variation scores 1.0.
+- **Studio lookups** — Binary 1.0. Exact match against
+  `lex.lexical_dictionary`.
+- **Title pattern lookups** — Binary 1.0. Substring (`LIKE '%pattern%'`) or
+  prefix (`LIKE 'pattern%'`) match against movie title strings. No fuzziness.
 
 **Preference scoring:** Same scoring behavior as dealbreakers per sub-type.
 
+#### Per-Sub-Type Search and LLM Output
+
+**Person lookups:** The LLM outputs `entity_name` (corrected/normalized
+person name), `person_category` (which role table to search), and optionally
+`primary_category` and `actor_prominence_mode`.
+
+Name normalization follows the same rules as the current V1 lexical prompt:
+fix spelling errors ("Johny Dep" → "Johnny Depp"), capitalize properly,
+complete unambiguous partial names ("Scorsese" → "Martin Scorsese"), but
+never add corporate suffixes or infer names not typed by the user. The
+normalized name is exact-matched against `lex.lexical_dictionary` after
+`normalize_string()` processing.
+
+When `person_category` is a specific role (`actor`, `director`, `writer`,
+`producer`, `composer`), only that role's posting table is searched. When
+`person_category` is `broad_person`, all 5 role tables are searched with
+cross-posting score consolidation (see below). The LLM uses `broad_person`
+when it cannot confidently assign a single role from the description and
+routing rationale.
+
+**Character lookups:** The LLM outputs `entity_name` (the primary credited
+form of the character name) and optionally `character_alternative_names`
+(additional credited name variations). Only specific named characters are
+routed here — generic character types ("police officer", "vampire") go to
+keyword or semantic endpoints instead.
+
+The LLM generates the standard, most common way the character name appears
+in movie credits. If the character is genuinely known by multiple credited
+forms, multiple variations are listed:
+- "The Joker" → `entity_name="The Joker"`,
+  `character_alternative_names=["Joker"]`
+- "Batman" → `entity_name="Batman"`,
+  `character_alternative_names=["Bruce Wayne"]`
+- "Hannibal Lecter" → `entity_name="Hannibal Lecter"`,
+  `character_alternative_names=[]`
+- "T-800" → `entity_name="T-800"`,
+  `character_alternative_names=["The Terminator", "Terminator"]`
+
+Fix obvious misspellings only when clearly a misspelling — don't guess if the
+name is ambiguous. Each name is normalized then exact-matched against
+`lex.character_strings`. A match on any variation returns that movie with a
+score of 1.0.
+
+**Studio lookups:** The LLM outputs `entity_name` (corrected/normalized
+studio name). Same normalization rules as person names: fix typos, capitalize,
+but don't add corporate suffixes ("Disney" stays "Disney", not "Walt Disney
+Pictures"). Exact match against `lex.lexical_dictionary`.
+
+**Title pattern lookups:** The LLM outputs `entity_name` (the search pattern
+text, no SQL wildcards) and `title_pattern_match_type` (`contains` or
+`starts_with`). Execution code normalizes the pattern and constructs the
+appropriate `LIKE` query: `LIKE '%pattern%'` for contains, `LIKE 'pattern%'`
+for starts_with. Matched against `lex.title_token_strings` using the trigram
+GIN index for acceleration. No fuzziness — the LIKE match is the entire
+determination.
+
 #### Cross-Posting Table Search
 
-The step 3 output includes which category/categories to search (actor,
-director, writer, producer, composer, or all) and which category serves as
-the **primary anchor** (nullable).
+When `person_category` is `broad_person`, the system searches all 5 role
+posting tables and deduplicates movie IDs across them. The `primary_category`
+field controls score consolidation.
 
-**When to search a single table:** If the LLM is confident about the
-person's role — from an explicit role mention in the description or a
-high-confidence routing_rationale — it searches only that role-specific
-posting table. No cross-posting occurs. "Directed by Christopher Nolan"
-searches only `inv_director_postings`. This is the common case.
+**When to use a specific category (single table):** When the LLM is confident
+about the person's role — from an explicit role mention in the description or
+a high-confidence routing_rationale. "Directed by Christopher Nolan" →
+`person_category="director"`. This is the common case. No cross-posting.
 
-**When to search multiple tables:** If confidence is low (ambiguous role,
-generic "person" reference), the system searches multiple posting tables and
-deduplicates movie IDs across them. Only set a primary anchor when there is
-high confidence about what the person is predominantly known for. When
-unsure, leave the anchor null — all tables contribute equally.
+**When to use `broad_person` (all tables):** When the role is ambiguous or
+generic ("person" reference, no explicit role). "Christopher Nolan movies"
+→ `person_category="broad_person"`. Set `primary_category` to the role the
+person is predominantly known for when the LLM is confident about that; leave
+null when unsure (all tables contribute equally).
 
 **Cross-posting score consolidation (max-based, no summing):**
 
-- **With a primary anchor:** The primary table's match gets full credit
-  (1.0 or the table's match_score). Non-primary table matches get
-  `0.5 × match_score`. The movie's final entity score is the **max** across
-  all individual table scores.
-- **Without a primary anchor:** All table matches get full credit (1.0 or
-  match_score). The movie's final entity score is the **max** across all
-  tables.
+- **With a primary_category set:** The primary table's match gets full credit
+  (1.0 for non-actor, or prominence score for actor). Non-primary table
+  matches get `0.5 × match_score`. The movie's final entity score is the
+  **max** across all individual table scores.
+- **Without a primary_category (null):** All table matches get full credit.
+  The movie's final entity score is the **max** across all tables.
 
 This means a movie appearing in multiple tables never gets more than 1.0 for
 a single entity dealbreaker. The max operation ensures no score inflation
 from multi-role credits, while the 0.5 discount on non-primary matches
 reflects that a non-primary role match is relevant but less on-target.
 
+**Actor table in broad_person searches:** When `broad_person` includes the
+actor table, actor results are prominence-scored using `actor_prominence_mode`
+(null defaults to DEFAULT). This score flows into cross-posting consolidation
+like any other table's score — if actor is the primary_category, it gets full
+prominence score; if non-primary, it gets `0.5 × prominence_score`.
+
 #### Actor Prominence Scoring
 
-*Modes and scoring formulas currently under discussion — see open questions.*
-
 The actor posting table includes `billing_position` and `cast_size` per
-movie-actor pair, enabling prominence-based scoring. Multiple scoring modes
-handle different query intents (e.g., "starring X" vs "X movies" vs "X in a
-cameo"). The step 3 LLM determines the appropriate mode based on the
-description and query context.
+movie-actor pair, enabling prominence-based scoring. The step 3 LLM
+determines the appropriate mode based on the description and query context.
+
+**Zone-based thresholds (adaptive to cast size):**
+
+Actor positions are classified into three zones — LEAD, SUPPORTING, MINOR —
+using cutoff functions that adapt to cast size via `sqrt` with minimum count
+floors. This solves the cast-size adaptation problem: percentage thresholds
+fail for small casts (top 10% of 5 = 0.5 actors), and fixed counts fail for
+large casts (top 3 in a 200-person cast is too restrictive). `sqrt` gives
+sub-linear growth: the number of leads grows with cast size, but slowly.
+
+```
+lead_cutoff    = min(cast_size, max(LEAD_FLOOR, round(LEAD_SCALE * sqrt(cast_size))))
+supporting_cutoff = min(cast_size, max(lead_cutoff + 1, round(SUPP_SCALE * sqrt(cast_size))))
+```
+
+Starting constants: `LEAD_FLOOR=2, LEAD_SCALE=0.6, SUPP_SCALE=1.0`. All
+subject to empirical tuning.
+
+| cast_size | lead_cutoff | supp_cutoff | leads | supporting | minor |
+|-----------|-------------|-------------|-------|------------|-------|
+| 5 | 2 | 3 | 2 | 1 | 2 |
+| 10 | 2 | 3 | 2 | 1 | 7 |
+| 20 | 3 | 4 | 3 | 1 | 16 |
+| 50 | 4 | 7 | 4 | 3 | 43 |
+| 100 | 6 | 10 | 6 | 4 | 90 |
+| 200 | 8 | 14 | 8 | 6 | 186 |
+
+**Four scoring modes:**
+
+Each mode defines a base score per zone with a within-zone gradient using
+zone-relative position (`zp` = 0.0 at top of zone, 1.0 at bottom).
+
+**DEFAULT** — No prominence signal ("Brad Pitt movies", "movies with Brad
+Pitt", "movies featuring Brad Pitt", "Brad Pitt action movies"). Leads get
+full credit, smooth gradient through supporting and minor.
+
+| Zone | Score | Formula |
+|------|-------|---------|
+| LEAD | 1.0 (flat) | `1.0` |
+| SUPPORTING | 0.85 → 0.7 | `0.85 - 0.15 * zp` |
+| MINOR | 0.7 → 0.5 | `0.7 - 0.2 * zp` |
+
+**LEAD** — Explicit "starring" or "lead role" language ("movies starring
+Brad Pitt", "Brad Pitt in a lead role"). Lead zone gets full credit, steep
+drop outside.
+
+| Zone | Score | Formula |
+|------|-------|---------|
+| LEAD | 1.0 (flat) | `1.0` |
+| SUPPORTING | 0.6 → 0.4 | `0.6 - 0.2 * zp` |
+| MINOR | 0.4 → 0.2 | `0.4 - 0.2 * zp` |
+
+**SUPPORTING** — Explicit "supporting role" language ("Brad Pitt in a
+supporting role"). Supporting zone gets full credit, others reduced.
+
+| Zone | Score | Formula |
+|------|-------|---------|
+| LEAD | 0.7 → 0.6 | `0.7 - 0.1 * zp` |
+| SUPPORTING | 1.0 (flat) | `1.0` |
+| MINOR | 0.6 → 0.35 | `0.6 - 0.25 * zp` |
+
+**MINOR** — Explicit "cameo" or "minor role" language ("Brad Pitt cameo
+movies"). Minor zone ramps up — deeper billing = higher score.
+
+| Zone | Score | Formula |
+|------|-------|---------|
+| LEAD | 0.35 → 0.25 | `0.35 - 0.1 * zp` |
+| SUPPORTING | 0.5 → 0.35 | `0.5 - 0.15 * zp` |
+| MINOR | 0.7 → 1.0 | `0.7 + 0.3 * zp` |
+
+**Interaction with the scoring formula:** In DEFAULT mode, the 0.5 gap
+between a lead (1.0) and the lowest minor is meaningful — more than half of
+P_CAP (0.9). In a single-dealbreaker query, leads always outrank minors. In
+multi-dealbreaker queries, preferences CAN bridge the gap: a great action
+movie where Brad Pitt has a small role can outrank a bad one where he stars.
+In LEAD mode, the 0.8 gap (1.0 vs 0.2) is nearly a full dealbreaker miss —
+preferences can barely compensate, matching the user's strong "starring"
+intent. All zone score values are tunable starting points.
 
 ### Endpoint 2: Movie Attributes
 
@@ -967,8 +1113,9 @@ data — each of those has a dedicated endpoint.
 - Maturity rating (G / PG / PG-13 / R / NC-17 — "family friendly", "rated R")
 - Streaming availability (provider + access method — "on Netflix", "free to
   stream")
-- Audio language ("French language films", "not in English")
-- Country of origin ("produced in South Korea", "country of origin is the UK")
+- Audio language ("movies with French audio", "dubbed in Spanish")
+- Country of origin ("French films", "produced in South Korea", "European
+  movies")
 - Budget scale ("low budget", "big budget blockbuster")
 - Box office performance ("box office hit", "commercial flop")
 - Popularity / mainstream recognition (for notability-driven queries)
@@ -979,7 +1126,9 @@ data — each of those has a dedicated endpoint.
 - The query specifies a numeric or temporal constraint (year, decade, runtime,
   rating level)
 - The query references streaming availability or where to watch
-- The query references country of origin or audio language
+- The query references country of origin or cultural-geographic film identity
+  ("French films", "European movies", "foreign films")
+- The query explicitly mentions audio language, dubbing, or audio tracks
 - The query references budget scale or box office performance
 - The query references general quality or reception ("well-reviewed", "best
   movies") without naming a specific award
@@ -1003,24 +1152,170 @@ preserving the user's constraint. Examples:
 - "runtime under 2 hours"
 - "rated PG-13 or lower"
 - "available on Netflix via subscription"
-- "Korean language films"
+- "movies with French audio"
 - "country of origin is France"
+- "European movies"
 - "big budget"
 - "box office hit"
 - "well-reviewed critically"
 - "preferably recent" (preference)
 
+**Step 3 LLM translation principle:** The step 3 metadata LLM translates
+the user's request as faithfully as possible — it does NOT soften
+constraints. "80s movies" translates to a literal date range of
+1980-01-01 to 1989-12-31. Deterministic code in the execution layer then
+applies softening: generous gates for candidate generation and gradient
+decay for scoring. This separation keeps the LLM task simple (faithful
+translation) and the softening behavior consistent, tunable, and
+reusable across attributes. The existing `db/metadata_scoring.py` gradient
+shapes serve as the primary reference for these decay functions.
+
+**Step 3 output schema:** `schemas/metadata_translation.py` —
+`MetadataTranslationOutput`. The first field is `target_attribute`
+(`MetadataAttribute` enum) — the LLM identifies which single column best
+represents the step 2 description before populating any attribute fields.
+Execution code queries ONLY the column identified by `target_attribute`
+for candidate generation (dealbreakers) and scoring (preferences). This
+guarantees one metadata item = one column query = one [0, 1] score, with
+no within-dealbreaker multi-attribute combination logic needed.
+
+The remaining 10 nullable attribute fields follow. Complex attributes
+(release date, runtime, maturity, streaming, audio language, country of
+origin) have sub-objects; simple attributes (budget, box office,
+popularity, reception) are direct enum values. The LLM should focus on
+populating the field matching `target_attribute`; it may populate
+additional fields for context, but only `target_attribute` drives the
+query. Only fields matching step 2 descriptions are populated; all others
+remain null. Inclusion-only framing — no exclusion lists on any attribute.
+Exclusion dealbreakers from step 2 are handled by step 4 scoring code,
+not by this endpoint's translation.
+
+**Why single-column targeting:** Step 2 already decomposes multi-attribute
+concepts into separate dealbreakers/preferences (e.g., "hidden gems"
+becomes a NICHE popularity item and a WELL_RECEIVED reception item). Each
+metadata item arriving at this endpoint represents one attribute
+constraint. The `target_attribute` field makes this explicit and gives
+execution code a clean dispatch key. Compound concepts that span multiple
+columns (blockbuster = budget + box office + popularity) are step 2's
+responsibility to decompose, not step 3's to handle in one shot.
+
 **Candidate generation (dealbreakers):** Each metadata dealbreaker produces a
-candidate set via SQL WHERE clauses (hard filters) or GIN array overlap. For
-NLP-extracted constraints, a generous threshold determines pass/fail for
-candidate generation purposes (e.g., "80s movies" uses a generous gate of
-~1975-1994).
+candidate set via SQL WHERE clauses (hard filters) or GIN array overlap.
+For NLP-extracted constraints, deterministic code applies a generous gate
+around the LLM's literal translation for candidate generation purposes
+(e.g., "80s movies" → LLM produces 1980-1989, code widens to ~1975-1994).
+All dealbreakers include a buffer to ensure the candidate pool is generous
+enough for downstream scoring to work effectively.
+
+**Null data handling:** Movies with null data for a dealbreaker attribute
+score 0.0 for that dealbreaker — they don't get a valuable boost but are
+NOT excluded from the candidate set. For exclusion dealbreakers, null data
+means the movie did not match the exclusion condition, so it is not
+penalized.
 
 **Preference scoring:** Gradient scoring, not binary. "Under 100 minutes" at
 101 minutes scores ~0.95, at 140 minutes scores much lower. Users are
 frequently imprecise with numeric constraints, so gradients prevent harsh
 cutoffs that miss obviously relevant results. Different attributes have
 different softness levels (see Constraint Strictness in open_questions.md).
+
+**Pipeline failure handling:** On endpoint failure (timeout, transient DB
+error), retry once. If the retry also fails, return an empty candidate
+set — handled the same way as finding no matches. No special error
+surfacing needed; the scoring pipeline naturally degrades when one
+endpoint contributes nothing.
+
+#### Per-attribute specifications
+
+**Release date** — `movie_card.release_ts` (Unix timestamp, BIGINT, nullable).
+LLM outputs: `first_date` (YYYY-MM-DD), `match_operation` (EXACT / BEFORE /
+AFTER / BETWEEN), `second_date` (only for BETWEEN). Scoring: linear decay
+from range boundary. Grace periods: BETWEEN = max(1yr, min(range_width×0.5,
+5yr)); AFTER/BEFORE = 3yr; EXACT = 2yr. Inside range → 1.0, outside →
+max(0, 1 - distance_days/grace_days). Candidate generation widens the
+literal range by the grace period. The LLM has today's date injected into
+its prompt for resolving relative terms ("recent" ≈ last 3 years, "new" ≈
+last 1-2 years). Vague terms like "classic" are left to LLM judgment if
+step 2 routes them here.
+
+**Runtime** — `movie_card.runtime_minutes` (INT, nullable). LLM outputs:
+`first_value` (minutes), `match_operation` (EXACT / BETWEEN / LESS_THAN /
+GREATER_THAN), `second_value` (only for BETWEEN). Scoring: linear decay
+with 30-minute grace. Inside range → 1.0, outside → max(0, 1 -
+distance/30). Candidate generation widens by 30 minutes. Vague terms
+("epic length", "long movie") are left to LLM judgment — no special
+default guidance.
+
+**Maturity rating** — `movie_card.maturity_rank` (SMALLINT ordinal: G=1,
+PG=2, PG-13=3, R=4, NC-17=5, UNRATED=999, nullable). LLM outputs:
+`rating` (MaturityRating), `match_operation` (EXACT / GT / LT / GTE / LTE).
+Scoring: ordinal distance on the 1-5 scale. In range → 1.0, one rank
+away → 0.5, two+ ranks → 0.0. **UNRATED rule:** any query targeting a
+rated value (anything other than EXACT UNRATED) excludes UNRATED movies
+entirely — score 0.0 AND excluded from candidate generation gate. EXACT
+UNRATED matches only UNRATED movies.
+
+**Streaming availability** — `movie_card.watch_offer_keys` (INT[], GIN-indexed,
+encoded provider+method keys). LLM outputs: `services` (list of
+StreamingService — 20 tracked services), `preferred_access_type`
+(SUBSCRIPTION / BUY / RENT, nullable). At least one must be populated.
+Inclusion-only — no exclusion list. Scoring: both services and access_type
+→ desired method match = 1.0, any method match = 0.5; services only → any
+match = 1.0; access_type only → any key with that method = 1.0.
+Candidate generation: GIN array overlap. "Free to stream" → services =
+[TUBI, PLUTO, PLEX, ROKU], no access_type.
+
+**Audio language** — `movie_card.audio_language_ids` (INT[], GIN-indexed,
+334 Language enum values). LLM outputs: `languages` (list of Language,
+non-empty). Scoring: any included language present → 1.0, none → 0.0.
+Candidate generation: GIN array overlap. **Critical routing rule:** this
+attribute is ONLY used when the user explicitly mentions audio, language,
+or dubbing. There is no case where language is inferred. "French films" →
+country of origin, NOT audio language. "Foreign films" → country of origin
+(broad set of non-US countries), NOT "exclude English audio." "Bollywood
+movies" → keyword endpoint (cultural tradition), NOT audio language.
+"Movies with French audio" or "dubbed in Spanish" → audio language (here).
+
+**Country of origin** — `movie_card.country_of_origin_ids` (INT[], GIN-indexed,
+262 Country enum values, array ordering reflects IMDB's order of relevance).
+LLM outputs: `countries` (list of Country, non-empty). Supports both single
+countries and region-level expansions — the LLM uses parametric knowledge to
+enumerate countries for terms like "European movies." Scoring: position-based
+gradient per country — position 1 = 1.0, position 2 = ~0.7-0.8, position 3+
+= rapid decay toward 0.0. When multiple countries are requested, the movie's
+score is `max(score_per_country)` (best score wins, no summing). Candidate
+generation: GIN array overlap across all requested country IDs (generous gate),
+then scoring applies position gradient. This is the correct endpoint for
+cultural-geographic film identity: "French films", "European movies", "foreign
+films" all route here via country of origin, not audio language.
+
+**Budget scale** — `movie_card.budget_bucket` (TEXT, nullable: "small" /
+"large" / NULL). LLM outputs: `budget_scale` (BudgetSize: SMALL / LARGE).
+Scoring: binary match → 1.0, no match → 0.0. NULL = 0.0 (mid-range or
+unknown). Candidate generation: SQL WHERE budget_bucket = value.
+
+**Box office performance** — `movie_card.box_office_bucket` (TEXT, nullable:
+"hit" / "flop" / NULL, movies < 75 days old always NULL). LLM outputs:
+`box_office` (BoxOfficeStatus: HIT / FLOP). Scoring: binary match → 1.0,
+no match → 0.0. New movies naturally excluded from box office queries — this
+is just the nature of the data, no special handling needed.
+
+**Popularity** — `movie_card.popularity_score` (FLOAT [0,1], sigmoid-normalized
+vote count percentile). LLM outputs: `popularity` (PopularityMode: POPULAR /
+NICHE, nullable — null when no popularity signal). Scoring: POPULAR =
+pass-through of popularity_score; NICHE = 1.0 - popularity_score (inverted).
+This replaces the old PopularTrendingPreference boolean — trending is handled
+by the separate trending endpoint. "Popular" without temporal signal → here.
+"Trending right now" → trending endpoint. "Hidden gems" = NICHE popularity +
+WELL_RECEIVED reception.
+
+**Reception score** — `movie_card.reception_score` (FLOAT 0-100, composite:
+40% IMDB scaled + 60% Metacritic, nullable). LLM outputs: `reception`
+(ReceptionMode: WELL_RECEIVED / POORLY_RECEIVED, nullable — null when no
+reception signal). Scoring: WELL_RECEIVED = max(0, min(1, (score-55)/40));
+POORLY_RECEIVED = max(0, min(1, (50-score)/40)). "Best movies" maps to
+quality_prior: enhanced (step 2 prior), NOT to reception. "Critically
+acclaimed" → WELL_RECEIVED here. "Award-winning" → awards endpoint.
 
 ### Endpoint 3: Awards
 
@@ -2044,14 +2339,22 @@ regular), not by the endpoint type:
   exclusion thresholds, with fallback percentage-of-max when elbow detection
   fails
 - Step 3 prompt design per endpoint
-- Step 3 output schemas per endpoint
-- Specific candidate pool size limits per endpoint
+- Step 3 output schemas per endpoint (metadata endpoint complete:
+  `schemas/metadata_translation.py`; entity endpoint complete:
+  `schemas/entity_translation.py`; remaining endpoints pending)
+- Specific candidate pool size limits per endpoint (entity endpoint: no limit)
 - Exact gradient decay functions per metadata attribute (date ranges, runtime,
-  maturity, etc.), taking heavy inspiration from existing `db/metadata_scoring.py`
+  maturity, etc.), taking heavy inspiration from existing `db/metadata_scoring.py`.
+  Includes country-of-origin position gradient (position 1 = 1.0, position 2 =
+  ~0.7-0.8, position 3+ = rapid decay) — IMDB array ordering confirmed as
+  order of relevance; gradient constants still need empirical tuning
 - P_CAP empirical tuning (starting at 0.9)
 - E_MULT empirical tuning (semantic exclusion multiplier, starting at 2.0)
 - Preference weight values (W_PRIMARY = 3.0, W_PRIOR values) empirical tuning
-- Actor billing-position gradient calibration (top 15% threshold, 0.8 floor)
+- Actor prominence zone constants empirical tuning (LEAD_FLOOR=2,
+  LEAD_SCALE=0.6, SUPP_SCALE=1.0, per-mode zone score ranges)
+- Studio name matching brittleness — currently exact-only after normalization;
+  may need LIKE substring or alias table if too many misses in practice
 - Whether the keyword endpoint LLM is a separate call or folded into step 2
 - Result pagination for long lists: return top 25 initially, cache the full
   candidate/display list in Redis, and allow fetching additional pages via
