@@ -147,7 +147,8 @@ is or isn't, with no meaningful spectrum.
 When you emit a keyword dealbreaker for a thematic concept, \
 include that concept's centrality in the grouped semantic \
 preference description. Examples:
-- "scary movies" → keyword dealbreaker (Horror genre) + include \
+- "scary movies" → keyword dealbreaker (horror-compatible \
+classification) + include \
 "scary" in the semantic preference
 - "Christmas movies" → keyword dealbreaker (Holiday) + include \
 "Christmas is central to the story, not just incidental backdrop" \
@@ -259,14 +260,15 @@ endpoint.
 Available attributes:
 - Release date (year, decade, range, relative — "80s", "recent", \
 "before 2000")
-- Runtime (minutes — "under 2 hours", "short movies", "epic \
+- Runtime (minutes — "under 2 hours", "under 90 minutes", "epic \
 length")
 - Maturity rating (G / PG / PG-13 / R / NC-17 / Unrated — \
 "family friendly", "rated R", "unrated movies")
 - Streaming availability (provider + access method — "on \
 Netflix", "available to rent", "available to buy")
 - Audio language ("French language films", "not in English")
-- Country of origin ("Korean movies", "British films")
+- Country of origin ("produced in South Korea", "country of \
+origin is the UK")
 - Budget scale ("low budget", "big budget blockbuster")
 - Box office performance ("box office hit", "commercial flop")
 - Popularity / mainstream recognition (for notability-driven \
@@ -442,98 +444,124 @@ keyword — Evaluates categorical movie classifications from \
 curated, enumerated vocabularies. A movie either has a \
 classification or it doesn't — these are binary, deterministic \
 labels. This endpoint answers "what kind of movie is this?" \
-through categorical tags across 11 classification dimensions.
+through a canonical concept-family taxonomy backed by multiple \
+deterministic stores.
 
 You must understand what these vocabularies cover so you can make \
 informed routing decisions. When a concept is covered by one of \
 these classifications, route here. When a concept falls outside \
 these vocabularies, route to semantic instead.
 
-1. Genre & Sub-genre
+Some concepts are backed by more than one deterministic store. \
+Treat them as ONE concept when routing. Step 3 may resolve that \
+single concept to one or more backing IDs or fields. Broad labels \
+like Action, Horror, Documentary, Short, Film Noir, News, \
+Biography, and Remake can be multi-backed. Do not split them into \
+separate dealbreakers just because the storage overlaps.
 
-What type of movie/story this is. Ranges from broad genres \
-through specific sub-genres to niche classifications.
+The canonical concept families are:
 
-Action & Combat: Action, Action Epic, B-Action, Car Action, Gun \
-Fu, Kung Fu, Martial Arts, One-Person Army Action
+1. Action / Combat / Heroics
 
-Adventure: Adventure, Adventure Epic, Animal Adventure, Desert \
-Adventure, Dinosaur Adventure, Disaster, Globetrotting Adventure, \
-Jungle Adventure, Mountain Adventure, Quest, Road Trip, Sea \
-Adventure, Survival, Urban Adventure
+Action, Action Epic, B-Action, Car Action, Gun Fu, Kung Fu, \
+Martial Arts, One-Person Army Action, Samurai, Superhero, Sword \
+& Sandal, Wuxia
 
-Anime & East Asian Traditions: Anime, Isekai, Iyashikei, Josei, \
-Kaiju, Mecha, Samurai, Seinen, Shojo, Shonen, Wuxia
+2. Adventure / Journey / Survival
 
-Comedy: Body Swap Comedy, Buddy Comedy, Comedy, Dark Comedy, \
-Farce, High-Concept Comedy, Mockumentary, Parody, Quirky Comedy, \
-Raunchy Comedy, Romantic Comedy, Satire, Screwball Comedy, \
-Sketch Comedy, Slapstick, Stand-Up, Stoner Comedy
+Adventure, Adventure Epic, Animal Adventure, Desert Adventure, \
+Dinosaur Adventure, Disaster, Globetrotting Adventure, Jungle \
+Adventure, Mountain Adventure, Quest, Road Trip, Sea Adventure, \
+Survival, Swashbuckler, Urban Adventure
 
-Crime & Mystery: Buddy Cop, Bumbling Detective, Caper, Cozy \
-Mystery, Crime, Drug Crime, Film Noir, Gangster, Hard-boiled \
-Detective, Heist, Mystery, Police Procedural, Serial Killer, \
-Suspense Mystery, True Crime, Whodunnit
+3. Crime / Mystery / Suspense / Espionage
 
-Documentary: Crime Documentary, Docudrama, Documentary, Faith & \
-Spirituality Documentary, Food Documentary, History Documentary, \
-Military Documentary, Music Documentary, Nature Documentary, \
-Political Documentary, Science & Technology Documentary, Sports \
-Documentary, Travel Documentary
+Buddy Cop, Bumbling Detective, Caper, Conspiracy Thriller, Cozy \
+Mystery, Crime, Cyber Thriller, Drug Crime, Erotic Thriller, \
+Film Noir, Gangster, Hard-boiled Detective, Heist, Legal \
+Thriller, Mystery, Police Procedural, Political Thriller, \
+Psychological Thriller, Serial Killer, Spy, Suspense Mystery, \
+Thriller, Whodunnit
 
-Drama: Biography, Cop Drama, Costume Drama, Drama, Epic, \
-Financial Drama, Historical Epic, Legal Drama, Medical Drama, \
-Period Drama, Political Drama, Prison Drama, Psychological \
-Drama, Showbiz Drama, Workplace Drama
+4. Comedy / Satire / Comic Tone
 
-Fantasy & Sci-Fi: Alien Invasion, Artificial Intelligence, \
-Cyberpunk, Dark Fantasy, Dystopian Sci-Fi, Fairy Tale, Fantasy, \
-Fantasy Epic, Sci-Fi, Sci-Fi Epic, Space Sci-Fi, Steampunk, \
-Superhero, Supernatural Fantasy, Sword & Sorcery, Time Travel
+Body Swap Comedy, Buddy Comedy, Comedy, Dark Comedy, Farce, \
+High-Concept Comedy, Parody, Quirky Comedy, Raunchy Comedy, \
+Romantic Comedy, Satire, Screwball Comedy, Slapstick, Stoner \
+Comedy
 
-Holiday: Holiday, Holiday Animation, Holiday Comedy, Holiday \
-Family, Holiday Romance
+5. Drama / History / Institutions
 
-Horror: B-Horror, Body Horror, Folk Horror, Found Footage \
-Horror, Giallo, Horror, Monster Horror, Psychological Horror, \
-Slasher Horror, Splatter Horror, Supernatural Horror, Vampire \
-Horror, Werewolf Horror, Witch Horror, Zombie Horror
+Cop Drama, Costume Drama, Drama, Epic, Financial Drama, \
+Historical Epic, History, Legal Drama, Medical Drama, Period \
+Drama, Political Drama, Prison Drama, Psychological Drama, \
+Showbiz Drama, Tragedy, Workplace Drama
 
-Music & Musical: Classic Musical, Concert, Jukebox Musical, \
-Music, Musical, Pop Musical, Rock Musical
+6. Horror / Macabre / Creature
 
-Romance: Dark Romance, Feel-Good Romance, Romance, Romantic \
-Epic, Steamy Romance, Tragic Romance
+B-Horror, Body Horror, Folk Horror, Found Footage Horror, \
+Giallo, Horror, Monster Horror, Psychological Horror, Slasher \
+Horror, Splatter Horror, Supernatural Horror, Vampire Horror, \
+Werewolf Horror, Witch Horror, Zombie Horror
 
-Sports: Baseball, Basketball, Boxing, Extreme Sport, Football, \
+7. Fantasy / Sci-Fi / Speculative
+
+Alien Invasion, Artificial Intelligence, Cyberpunk, Dark \
+Fantasy, Dystopian Sci-Fi, Fairy Tale, Fantasy, Fantasy Epic, \
+Kaiju, Mecha, Sci-Fi, Sci-Fi Epic, Space Sci-Fi, Steampunk, \
+Supernatural Fantasy, Sword & Sorcery, Time Travel
+
+8. Romance / Relationship
+
+Dark Romance, Feel-Good Romance, Romance, Romantic Epic, Steamy \
+Romance, Tragic Romance
+
+9. War / Western / Frontier
+
+War, War Epic, Western, Classical Western, Contemporary Western, \
+Spaghetti Western, Western Epic
+
+10. Music / Musical / Performance
+
+Classic Musical, Concert, Jukebox Musical, Music, Musical, Pop \
+Musical, Rock Musical
+
+11. Sports / Competitive Activity
+
+Baseball, Basketball, Boxing, Extreme Sport, Football, \
 Motorsport, Soccer, Sport, Water Sport
 
-Teen & Coming-of-Age: Adult Animation, Coming-of-Age, Teen \
-Adventure, Teen Comedy, Teen Drama, Teen Fantasy, Teen Horror, \
-Teen Romance
+12. Audience / Age / Life Stage
 
-Thriller & Suspense: Conspiracy Thriller, Cyber Thriller, \
-Erotic Thriller, Legal Thriller, Political Thriller, \
-Psychological Thriller, Spy, Thriller
+Family, Coming-of-Age, Teen Adventure, Teen Comedy, Teen Drama, \
+Teen Fantasy, Teen Horror, Teen Romance
 
-War, Western & Historical: Classical Western, Contemporary \
-Western, Spaghetti Western, Swashbuckler, Sword & Sandal, War, \
-War Epic, Western, Western Epic
+13. Animation / Anime Form / Technique
 
-Other: Animation, Family, History, News, Short, Slice of Life, \
-Tragedy
+Adult Animation, Animation, Anime, Computer Animation, \
+Hand-Drawn Animation, Isekai, Iyashikei, Josei, Seinen, Shojo, \
+Shonen, Slice of Life, Stop Motion Animation
 
-Format / Presentation: Business Reality TV, Cooking Competition, \
-Game Show, Paranormal Reality TV, Reality TV, Sitcom, Soap \
-Opera, Talk Show
+14. Seasonal / Holiday
 
-2. Culture
+Holiday, Holiday Animation, Holiday Comedy, Holiday Family, \
+Holiday Romance
 
-The primary cultural/language tradition of the film. "French" \
-means this is a French-language film in the cultural sense, not \
-merely that French audio exists. "Hindi" includes Bollywood-style \
-Indian cinema as a cultural-film tradition, not merely movies \
-with Hindi audio.
+15. Nonfiction / Documentary / Real-World Media
+
+Crime Documentary, Docudrama, Documentary, Faith & Spirituality \
+Documentary, Food Documentary, History Documentary, Military \
+Documentary, Music Documentary, Nature Documentary, News, \
+Political Documentary, Science & Technology Documentary, Sports \
+Documentary, Travel Documentary, True Crime
+
+16. Program / Presentation / Form Factor
+
+Business Reality TV, Cooking Competition, Game Show, \
+Mockumentary, Paranormal Reality TV, Reality TV, Short, Sitcom, \
+Sketch Comedy, Soap Opera, Stand-Up, Talk Show
+
+17. Cultural / National Cinema Tradition
 
 Arabic, Bengali, Cantonese, Danish, Dutch, Filipino, Finnish, \
 French, German, Greek, Hindi, Italian, Japanese, Kannada, \
@@ -541,76 +569,55 @@ Korean, Malayalam, Mandarin, Marathi, Norwegian, Persian, \
 Portuguese, Punjabi, Russian, Spanish, Swedish, Tamil, Telugu, \
 Thai, Turkish, Urdu
 
-3. Animation Technique
+18. Source Material / Adaptation / Real-World Basis
 
-How the animation was physically produced (distinct from \
-"Animation" as a genre): Computer Animation, Hand-Drawn \
-Animation, Stop Motion Animation.
+Novel Adaptation, Short Story Adaptation, Stage Adaptation, \
+True Story, Biography, Comic Adaptation, Folklore Adaptation, \
+Video Game Adaptation, Remake, TV Adaptation
 
-4. Source Material Type
+Biography is canonical here even though it may also be backed by \
+genre or keyword storage. Treat "biography" / "biopic" as one \
+real-world-basis classification concept, not as separate \
+competing routes.
 
-What the movie is based on: Novel Adaptation, Short Story \
-Adaptation, Stage Adaptation, True Story, Biography, Comic \
-Adaptation, Folklore Adaptation, Video Game Adaptation, Remake, \
-TV Adaptation.
+19. Narrative Mechanics / Endings
 
-5. Narrative Structure (concept tags)
+plot twist, twist villain, time loop, nonlinear timeline, \
+unreliable narrator, open ending, single location, breaking \
+fourth wall, cliffhanger ending, happy ending, sad ending, \
+bittersweet ending
 
-Storytelling techniques and structural devices: plot twist, \
-twist villain, time loop, nonlinear timeline, unreliable \
-narrator, open ending, single location, breaking fourth wall, \
-cliffhanger ending.
+20. Story Engine / Setting / Character Archetype
 
-6. Plot Archetype (concept tags)
+revenge, underdog, kidnapping, con artist, post-apocalyptic, \
+haunted location, small town, female lead, ensemble cast, \
+anti-hero
 
-Story pattern the movie follows: revenge, underdog, kidnapping, \
-con artist.
+21. Viewer Response / Content Sensitivity
 
-7. Setting (concept tags)
-
-Defining setting characteristics: post-apocalyptic, haunted \
-location, small town.
-
-8. Character Type (concept tags)
-
-Protagonist or cast structure: female lead, ensemble cast, \
-anti-hero.
-
-9. Ending Type (concept tags)
-
-Emotional resolution: happy ending, sad ending, bittersweet \
-ending.
-
-10. Viewer Experience (concept tags)
-
-How the movie makes you feel: feel-good, tearjerker.
-
-11. Content Warning (concept tag)
-
-Content flags: animal death.
+feel-good, tearjerker, animal death
 
 Route here when:
-- The query names a genre or sub-genre ("horror", "romantic \
-comedy", "film noir", "spaghetti western")
-- The query references a cultural/language film tradition \
-("Korean movies", "Hindi films", "French cinema", "Bollywood \
-movies" via Hindi)
-- The query references source material ("based on a true story", \
-"book adaptation", "remakes" broadly)
-- The query references animation technique ("stop motion", \
-"hand-drawn")
-- The query matches a concept tag — narrative structure, plot \
-archetype, setting type, character type, ending type, viewer \
-experience, or content warning ("movies with a twist ending", \
-"feel-good movies", "does the dog die?")
-- The query references a sub-genre keyword that exists in the \
-vocabulary ("heist movies", "kaiju", "road trip movies")
-- The query names a character-type classification like "female \
-lead", "ensemble cast", or "anti-hero"
+- The query names a concept in one of the families above, \
+including broad genres, sub-genres, form-factor labels, source \
+material classifications, cultural traditions, and concept tags
+- The query references a cultural-film tradition ("French \
+cinema", "Hindi films", "Bollywood movies" via Hindi)
+- The query references source material or real-world basis \
+("based on a true story", "biopics", "book adaptation", \
+"remakes" broadly)
+- The query references animation/anime form or technique ("stop \
+motion", "hand-drawn", "anime", "adult animation")
+- The query references short-form classification ("short films", \
+"shorts")
+- The query matches a concept tag or closely named keyword-family \
+classification ("movies with a twist ending", "feel-good \
+movies", "coming-of-age", "does the dog die?")
 
 Do NOT route here:
 - Quantitative attributes (year, runtime, rating, streaming, \
-budget, box office, reception) — route to metadata
+budget, box office, reception) — route to metadata. "Under 90 \
+minutes" is metadata; "short films" is keyword.
 - Named entities (people, characters, studios) — route to entity
 - Franchise names or franchise-specific structural roles — route \
 to franchise_structure
@@ -618,21 +625,20 @@ to franchise_structure
 - Subjective experiential qualifiers that describe HOW the movie \
 feels rather than WHAT kind of movie it is ("funny", "dark", \
 "cozy", "slow-burn", "intense") — route to semantic
-- Thematic concepts NOT covered by any keyword, concept tag, or \
-genre listed above ("clowns", "trains", "female empowerment", \
-"capitalism") — route to semantic
+- Thematic concepts NOT covered by any classification above \
+("clowns", "trains", "female empowerment", "capitalism") — \
+route to semantic
 
-Only use keyword when a specific listed vocabulary item clearly \
-matches the requirement. Do NOT route here based on loose \
+Only use keyword when a specific concept in the taxonomy above \
+clearly matches the requirement. Do NOT route here based on loose \
 resemblance or a vague thematic overlap. If you cannot point to a \
-concrete genre, culture, animation technique, source material \
-type, or concept tag that fits strongly, do not use keyword.
+concrete concept-family fit, do not use keyword.
 
 Tricky boundaries:
 
 "Zombie movies" routes here (Zombie Horror exists). "Clown \
-movies" routes to semantic (no clown keyword exists). You must \
-check whether a concept appears in the vocabularies above before \
+movies" routes to semantic (no clown classification exists). You \
+must check whether a concept appears in the taxonomy above before \
 routing here.
 
 "Funny horror movies" — "horror" is a keyword dealbreaker, but \
@@ -641,14 +647,27 @@ genre classification). Dark Comedy exists as a specific genre, \
 but that is a classification label — "funny" as a qualifier is \
 different.
 
-"French movies" routes here (culture keyword: French). "Movies \
-with French audio" routes to metadata (audio language attribute). \
-The keyword captures cultural identity; metadata captures audio \
-track availability.
+"Scary movies" — route the horror-compatible classification to \
+keyword, and capture the desired scariness / horror centrality in \
+a semantic preference. "Scariest movies ever" is primarily a \
+semantic ranking query, not just a binary classification request.
+
+"Short films" / "shorts" route here as a form-factor \
+classification. "Under 90 minutes" routes to metadata because it \
+is a runtime constraint.
+
+"French movies" routes here (cultural tradition: French). \
+"Movies with French audio" routes to metadata (audio language \
+attribute). The keyword endpoint captures film identity; metadata \
+captures audio-track availability.
 
 "Bollywood movies" routes here via Hindi culture. "Movies with \
 Hindi audio" routes to metadata. Cultural identity/tradition and \
 audio-track availability are different requirements.
+
+"Biographies" / "biopics" route here as a real-world-basis \
+classification even though Biography may also be backed by other \
+stores internally. Treat it as one concept.
 
 "Remakes" (broadly) routes here (source material type). "Batman \
 remakes" routes to franchise_structure (structural role within a \
@@ -671,8 +690,9 @@ in-story role lookup). Character-type classifications and \
 character/entity lookups are different.
 
 "Sequel" and "prequel" do NOT route here. They always route to \
-franchise_structure. Only broad source-material retelling \
-concepts such as "remakes" or "based on a true story" route here.
+franchise_structure. Only broad source-material or real-world- \
+basis concepts such as "remakes," "based on a true story," or \
+"biographies" route here.
 
 "Critically acclaimed horror" — "horror" routes here (keyword), \
 "critically acclaimed" routes to metadata (reception). Two \
@@ -685,8 +705,9 @@ endpoints.
 Write the description using the vocabulary's own terminology \
 when possible. Examples: "is a horror movie", "is a French \
 film", "is based on a true story", "is stop motion animated", \
-"has a plot twist", "is a revenge movie", "has a happy ending", \
-"is a feel-good movie", "is a heist movie".
+"is a short film", "has a plot twist", "is a revenge movie", \
+"has a happy ending", "is a feel-good movie", "is a heist \
+movie".
 
 
 semantic — Evaluates subjective, thematic, and experiential \
@@ -721,7 +742,7 @@ reception, specific praised/criticized qualities.
 
 Route here as a dealbreaker only when no deterministic endpoint \
 can evaluate the concept:
-- Thematic concepts absent from the keyword vocabulary \
+- Thematic concepts absent from the keyword taxonomy \
 ("clowns", "trains", "capitalism", "female empowerment")
 - Any distinct defining trait the user treats as a hard \
 requirement that no other endpoint covers
@@ -743,8 +764,8 @@ cinematography", "controversial films critics hated but \
 audiences loved")
 
 Do NOT route here as a dealbreaker when:
-- The concept exists as a genre, keyword, or concept tag — \
-route dealbreaker to keyword
+- The concept exists as a keyword-taxonomy classification, source \
+material type, or concept tag — route dealbreaker to keyword
 - The concept is a named entity — route to entity
 - The concept is a franchise name or structural role — route to \
 franchise_structure
@@ -759,9 +780,9 @@ deterministic endpoint fits well.
 Tricky boundaries:
 
 "Scary movies" — "scary" is a subjective qualifier (semantic \
-preference), but "Horror" is a keyword genre. The user probably \
-wants Horror as a keyword dealbreaker PLUS scary as a semantic \
-preference for ranking within the horror results.
+preference), but the user usually also wants a horror-compatible \
+keyword classification. The likely pattern is keyword \
+dealbreaker + semantic scare-intensity preference.
 
 "Movies about revenge" — revenge is a concept tag (keyword \
 endpoint). But "movies exploring the psychological toll of \
@@ -906,14 +927,14 @@ routing_rationale — A brief concept-type classification label \
 citing why this endpoint handles this concept. This should name \
 what KIND of thing the described concept is. Examples: "named \
 person (actor)", "genre classification", "thematic concept \
-absent from keyword vocabulary", "franchise structural role", \
+absent from keyword taxonomy", "franchise structural role", \
 "quantitative temporal constraint". This is a label, not an \
 explanation — a few words that ground the routing decision in \
 the concept's nature. For keyword items, name the concrete \
-vocabulary fit when possible, such as "keyword genre: horror", \
-"keyword concept tag: revenge", or "keyword source material: \
-true story". Do not use keyword unless you can identify a strong \
-concrete fit.
+taxonomy fit when possible, such as "keyword family: horror", \
+"keyword concept tag: revenge", "keyword source material: true \
+story", or "keyword form-factor: short". Do not use keyword \
+unless you can identify a strong concrete fit.
 
 route — Which endpoint handles this dealbreaker. Choose the \
 endpoint that genuinely and cleanly evaluates the requirement.

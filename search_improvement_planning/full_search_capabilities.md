@@ -20,7 +20,7 @@ sort-based ranking.
 | `title` | TEXT | Display title. | Display only — title *search* is handled by the lexical schema (§3). |
 | `poster_url` | TEXT? | Poster image URL. | Display only. |
 | `release_ts` | BIGINT? | Unix timestamp of release date. | **Hard filter** (range) or **soft preference** (linear decay from target date, 1-5yr grace window). Enables "80s movies", "movies from 2020", "recent movies". |
-| `runtime_minutes` | INT? | Duration in minutes. | **Hard filter** (range) or **soft preference** (linear decay, 30min grace). Enables "short movies", "under 2 hours", "epic runtime". |
+| `runtime_minutes` | INT? | Duration in minutes. | **Hard filter** (range) or **soft preference** (linear decay, 30min grace). Enables "under 90 minutes", "under 2 hours", "epic runtime". |
 | `maturity_rank` | SMALLINT? | Ordinal 1-5: G(1) / PG(2) / PG-13(3) / R(4) / NC-17(5). NULL = unrated. | **Hard filter** (range) or **soft preference** (1 rank away = 0.5). Enables "family friendly", "rated R". |
 | `imdb_vote_count` | INT | Raw IMDB vote count. | Proxy for notability. Not directly exposed as a filter, but feeds `popularity_score`. |
 | `popularity_score` | FLOAT | Sigmoid-normalized percentile from vote count, range [0, 1]. | **Soft preference** (pass-through when user prefers popular movies). Also feeds the default quality composite (`0.4 × popularity`). |
@@ -39,9 +39,9 @@ All use `gin__int_ops` for efficient `&&` (overlap) queries.
 | `genre_ids` | INT[] | Genre (27 values) | TMDB genre IDs (Action, Drama, Horror, etc.) | **Hard filter** or **soft preference** with include/exclude. Enables "action movies", "not horror". Most common filter. |
 | `watch_offer_keys` | INT[] | Composite `(provider_id << 2 \| method_id)` | Where to watch + how (subscription/buy/rent). | **Hard filter** or **soft preference** (desired method = 1.0, any method = 0.5). Enables "on Netflix", "free to stream". |
 | `audio_language_ids` | INT[] | Language (334 values) | Languages the movie has audio in. | **Hard filter** or **soft preference** with include/exclude. Enables "French language films", "not English". |
-| `country_of_origin_ids` | INT[] | Country (262 values) | Country of origin. | **Hard filter** (Postgres-only, not in Qdrant payload). Enables "Korean movies", "British films". |
+| `country_of_origin_ids` | INT[] | Country (262 values) | Country of origin. | **Hard filter** (Postgres-only, not in Qdrant payload). Enables production-country queries like "movies from South Korea" or "country of origin is the UK". |
 | `source_material_type_ids` | INT[] | SourceMaterialType (10 values) | What the movie is based on: novel, true story, remake, comic, etc. Empty = original screenplay. | **Hard filter** or **soft preference**. Enables "based on a true story", "book adaptations", "remakes". |
-| `keyword_ids` | INT[] | OverallKeyword (225 values) | Curated IMDB genre/sub-genre taxonomy with definitions. | **Deal-breaker boost** (not hard pre-filter). Enables "zombie movies", "heist", "coming-of-age". More specific than genres but deterministic — avoids vector search noise for well-defined sub-genres. |
+| `keyword_ids` | INT[] | OverallKeyword (225 values) | Curated IMDB keyword taxonomy with definitions, spanning sub-genres, cultures, nonfiction types, form factors, and more. | **Deal-breaker boost** (not hard pre-filter). Enables "zombie movies", "heist", "coming-of-age". Can participate in multi-map resolution alongside genres/source-material when one user concept has overlapping deterministic backing. |
 | `concept_tag_ids` | INT[] | 7 category enums (25 tags total) | Binary classification tags across narrative structure, plot archetype, setting, character, ending, experiential, content flags. | **Deal-breaker filter** or **preference boost**. Each tag is a yes/no signal. See §1.3 for the full tag list. |
 | `award_ceremony_win_ids` | SMALLINT[] | AwardCeremony (12 values) | Which major ceremonies the movie has won at (denormalized from movie_awards). | **Hard filter** or **soft preference**. Enables "Oscar winners", "Cannes winners", "award-winning". Fast check without joining movie_awards. |
 
@@ -428,9 +428,10 @@ Cached in Redis (`qu:v{N}:{hash}`) keyed by normalized query text.
 The `OverallKeyword` enum (225 members in `implementation/classes/overall_keywords.py`)
 carries a per-keyword `definition` string designed for LLM context. Each
 definition clarifies what the keyword means and when it should apply. These
-definitions can be passed to the query understanding LLM to help it accurately
-map natural language queries to keyword IDs (e.g., understanding that "zombie
-movies" maps to a specific keyword ID rather than requiring vector search).
+definitions feed the keyword endpoint's canonical concept-family taxonomy. At
+query time, they help the LLM map natural-language requests to deterministic
+keyword concepts (for example, understanding that "zombie movies" maps to a
+specific keyword classification rather than requiring pure vector search).
 
 ### 10.2 Concept tag definitions
 

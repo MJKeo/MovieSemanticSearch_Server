@@ -948,7 +948,7 @@ Most queries use mode 2. Mode 3 is the fallback.
 
 | Field | Type | Source | Purpose |
 |-------|------|--------|---------|
-| `country_of_origin_ids` | INT[] | IMDB countries_of_origin | Hard filter for "Korean movies" etc. In Postgres only, NOT Qdrant payload. Pre-filter in Postgres, then pass IDs to Qdrant. |
+| `country_of_origin_ids` | INT[] | IMDB countries_of_origin | Hard filter for production-country queries like "movies from South Korea." In Postgres only, NOT Qdrant payload. Pre-filter in Postgres, then pass IDs to Qdrant. |
 | `box_office_bucket` | TEXT | TMDB revenue + era adjustment | "hit" / "flop" / null. Same era-adjusted pattern as budget_bucket. |
 | `source_material_types` | INT[] (enum) | LLM source_of_inspiration (re-generated with enum constraints) | Array because movies can have multiple sources (e.g., novel adaptation + based on true story). |
 
@@ -1046,7 +1046,7 @@ lexical-matchable entities.
 **Updated after vocabulary audit** — findings are summarized below and
 the full `OverallKeyword` enum is in `implementation/classes/overall_keywords.py`.
 
-IMDB's `overall_keywords` is a curated genre/sub-genre taxonomy of exactly
+IMDB's `overall_keywords` is a curated keyword taxonomy of exactly
 225 terms with 100% movie coverage. It is NOT a free-form tagging system —
 it's disjoint from `plot_keywords` (zero overlap). The vocabulary is compact
 enough for pure static mapping; no LLM translation needed.
@@ -1203,75 +1203,45 @@ about who the villain is. For search routing:
   terms mentioning reveals near resolution)
 - "movies with a twist villain" → filter by `TWIST_VILLAIN` tag
 
-### Route to `overall_keywords` (225-term keyword taxonomy)
+### Route through the keyword endpoint (concept-first, multi-map)
 
-Phase 0 emits the corresponding `overall_keywords` term(s) for keyword-based
-retrieval via `keyword_ids`.
+Phase 0 should reason in terms of canonical concept families first. The keyword
+endpoint is one conceptual taxonomy backed by multiple deterministic stores.
+Broad concepts may resolve to `keyword_ids`, `genre_ids`,
+`source_material_type_ids`, and/or `concept_tag_ids` together.
 
-| User concept | Route to keyword(s) | Notes |
-|-------------|---------------------|-------|
-| "conspiracy movies" | `Conspiracy Thriller` (384) | Also consider `Political Thriller` (321), `Political Drama` (459). |
-| "heist movies" | `Heist` (346), `Caper` (192) | CON_ARTIST concept tag covers non-heist con/scam space. |
-| "survival movies" | `Survival` (319) | |
-| "road trip movies" | `Road Trip` (269) | |
-| "time travel movies" | `Time Travel` (224) | TIME_LOOP concept tag covers the distinct time-loop sub-concept. |
-| "coming of age movies" | `Coming-of-Age` (1,252) | |
-| "superhero movies" | `Superhero` (839) | |
-| "film noir" | `Film Noir` (926) | |
-| "spy movies" | `Spy` (366) | |
-| "disaster movies" | `Disaster` (247) | |
-| "whodunit / murder mystery" | `Whodunnit` (693) | |
-| "serial killer movies" | `Serial Killer` (281) | |
-| "zombie movies" | `Zombie Horror` (333) | Horror-specific; non-horror zombies may need vector fallback. |
-| "vampire movies" | `Vampire Horror` (239) | Horror-specific; vampire romance/drama may need vector fallback. |
-| "found footage movies" | `Found Footage Horror` (309) | Horror-specific; non-horror found footage (~50 movies) uses vector fallback. |
-| "Christmas / holiday movies" | `Holiday` (804) + sub-types | |
-| "mockumentary" | `Mockumentary` (80) | |
-| "gangster movies" | `Gangster` (383) | |
-| "true crime" | `True Crime` (832) | |
-| "body swap movies" | `Body Swap Comedy` (69) | |
-| "prison movies" | `Prison Drama` (180) | Drama-specific; other genres use vector fallback or genre + keyword combo. |
-| "one-man army / action hero" | `One-Person Army Action` (533) | |
-| "martial arts movies" | `Martial Arts` (991) + sub-types | |
-| "car chase movies" | `Car Action` (137) | |
+| User concept | Canonical family | Likely step-3 resolution | Notes |
+|-------------|------------------|--------------------------|-------|
+| "conspiracy movies" | Crime / Mystery / Suspense / Espionage | `Conspiracy Thriller`; sometimes also `Political Thriller` / `Political Drama` | One concept, possibly multi-keyword resolution. |
+| "heist movies" | Crime / Mystery / Suspense / Espionage | `Heist`, optionally `Caper` | `CON_ARTIST` covers adjacent non-heist scam space. |
+| "coming of age movies" | Audience / Age / Life Stage | `Coming-of-Age` | If phrased loosely ("growing up"), may need semantic fallback. |
+| "superhero movies" | Action / Combat / Heroics | `Superhero` and often genre-style action backing | Multi-map is allowed. |
+| "film noir" | Crime / Mystery / Suspense / Espionage | `Film Noir` plus any overlapping genre backing | Treat as one concept. |
+| "time travel movies" | Fantasy / Sci-Fi / Speculative | `Time Travel` | `TIME_LOOP` stays the distinct structural sub-concept. |
+| "Christmas / holiday movies" | Seasonal / Holiday | `Holiday` and holiday sub-types | Centrality still belongs in semantic ranking. |
+| "true crime" | Nonfiction / Documentary / Real-World Media | `True Crime` | Canonical here, not under crime fiction. |
+| "mockumentary" | Program / Presentation / Form Factor | `Mockumentary` | Presentation/form concept, not a generic documentary request. |
+| "documentaries" | Nonfiction / Documentary / Real-World Media | `Documentary`, sometimes overlapping broad genre backing | One concept, potentially multi-store. |
+| "biographies / biopics" | Source Material / Adaptation / Real-World Basis | `Biography`, possibly overlapping genre/keyword backing | Canonical family is real-world basis. |
+| "remakes" | Source Material / Adaptation / Real-World Basis | `REMAKE` source-material type and/or overlapping keyword backing | Franchise-specific remakes route elsewhere. |
+| "short films / shorts" | Program / Presentation / Form Factor | `Short` | Categorical short-form classification, not runtime. |
+| "female lead" | Story Engine / Setting / Character Archetype | `female_lead` | Character classification, not entity lookup. |
+| "movies with a twist ending" | Narrative Mechanics / Endings | `plot_twist` plus ending-aware downstream ranking | Structural classification with semantic/rerank nuance. |
 
-### Route to `source_material_type_ids`
+### Route to other deterministic fields
 
-| User concept | Route to enum value(s) |
-|-------------|----------------------|
-| "based on a true story" | `TRUE_STORY`, `BIOGRAPHY` |
-| "book adaptations" | `NOVEL_ADAPTATION`, `SHORT_STORY_ADAPTATION` |
-| "comic book movies" | `COMIC_ADAPTATION` |
-| "remakes" | `REMAKE` |
-| "video game movies" | `VIDEO_GAME_ADAPTATION` |
-| "based on a play" | `STAGE_ADAPTATION` |
-| "folklore / fairy tale movies" | `FOLKLORE_ADAPTATION` |
-| "original screenplays" | empty `source_material_type_ids` array (`= '{}'`) |
-
-### Route to `genre_ids`
-
-| User concept | Route to genre(s) |
-|-------------|-------------------|
-| "documentaries" | `DOCUMENTARY` |
-| "biographies / biopics" | `BIOGRAPHY` |
-| "musicals" | `MUSICAL` |
-| "war movies" | `WAR` |
-| "westerns" | `WESTERN` |
-
-### Route to other structured fields
-
-| User concept | Route to field |
-|-------------|---------------|
-| "award-winning movies" | `movie_awards` table — filter by ceremony + outcome |
-| "movies from [country]" | `country_of_origin_ids` + `audio_language_ids` + language/nationality keywords |
-| "movies on Netflix" | `watch_offer_keys` |
-| "movies from the 80s" | `release_ts` soft constraint |
-| "short movies" | `runtime_minutes` |
-| "R-rated movies" | `maturity_rank` |
-| "big budget movies" | `budget_bucket` |
-| "box office hits" | `box_office_bucket` |
-| "[franchise] movies" | `movie_franchise_metadata` table |
-| "[actor/director] movies" | Role-specific posting tables |
+| User concept | Route to field | Notes |
+|-------------|---------------|-------|
+| "award-winning movies" | `movie_awards` table | Awards are their own endpoint. |
+| "movies from [country]" | `country_of_origin_ids` + `audio_language_ids` + culture keywords when appropriate | Separate production country from cultural tradition. |
+| "movies on Netflix" | `watch_offer_keys` | Availability/logistics. |
+| "movies from the 80s" | `release_ts` | Temporal metadata constraint. |
+| "under 90 minutes" | `runtime_minutes` | Runtime metadata constraint. |
+| "R-rated movies" | `maturity_rank` | Rating metadata constraint. |
+| "big budget movies" | `budget_bucket` | Quantitative metadata. |
+| "box office hits" | `box_office_bucket` | Quantitative metadata. |
+| "[franchise] movies" | `movie_franchise_metadata` | Named franchise / lineage. |
+| "[actor/director] movies" | Role-specific posting tables | Named entity lookup. |
 
 ### Route to vector similarity (spectrum concepts)
 
@@ -1280,7 +1250,7 @@ threshold+flatten handles the binary aspect; raw similarity handles ranking.
 
 | User concept | Route to vector space(s) | Notes |
 |-------------|-------------------------|-------|
-| "scary movies" | `viewer_experience` (tension_adrenaline, disturbance_profile) | Degree matters — "scariest ever" is a ranking query. |
+| "scary movies" | `viewer_experience` (tension_adrenaline, disturbance_profile) | Use semantic scoring for scariness degree, but pair with keyword-compatible horror classification when the query is asking for horror movies broadly. |
 | "funny [genre] movies" | `viewer_experience` (tone_self_seriousness) | "Funny horror" needs semantic scoring, not binary tagging. |
 | "dark / bleak movies" | `viewer_experience` (emotional_palette, tone_self_seriousness) | Spectrum from "slightly dark" to "nihilistic." |
 | "intense / tense movies" | `viewer_experience` (tension_adrenaline) | Degree of intensity is the ranking signal. |

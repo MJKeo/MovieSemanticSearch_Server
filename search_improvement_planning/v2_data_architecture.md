@@ -35,7 +35,7 @@ and hard filtering via GIN-indexed array overlap.
 
 | Column | Type | Source | Description |
 |--------|------|--------|-------------|
-| `country_of_origin_ids` | `INT[]` | IMDB `countries_of_origin` mapped to `Country` enum (262 values in `implementation/classes/countries.py`) | GIN index. Postgres-only, NOT in Qdrant payload. Hard filter for "Korean movies" etc. |
+| `country_of_origin_ids` | `INT[]` | IMDB `countries_of_origin` mapped to `Country` enum (262 values in `implementation/classes/countries.py`) | GIN index. Postgres-only, NOT in Qdrant payload. Hard filter for production-country queries like "movies from South Korea." |
 | `box_office_bucket` | `TEXT?` | IMDB box office + era adjustment | `"hit"` / `"flop"` / `NULL`. Same pattern as budget_bucket. Movies < 75 days old always `NULL` (too early to judge). Source: IMDB GraphQL `lifetimeGross(boxOfficeArea: DOMESTIC)` and `lifetimeGross(boxOfficeArea: WORLDWIDE)`. Worldwide is inclusive of domestic. |
 | `source_material_type_ids` | `INT[]` | LLM source_of_inspiration (re-generated with enum) | `SourceMaterialType` enum IDs (10 values, implemented in `schemas/enums.py`). Array because movies can have multiple (e.g. Schindler's List = NOVEL_ADAPTATION + TRUE_STORY). Empty array = original screenplay (no explicit enum value for originals). GIN index. |
 | `keyword_ids` | `INT[]` | IMDB `overall_keywords` mapped to `OverallKeyword` enum IDs | GIN index. Used for keyword-based deal-breaker boost. Only `overall_keywords`, NOT `plot_keywords`. See `implementation/classes/overall_keywords.py` for the 225-term enum. |
@@ -380,7 +380,7 @@ Scored as weighted average against movie_card data. Range [0,1] per candidate.
 | `EndingTag` | 3 values + NO_CLEAR_CHOICE (classification-only) | `concept_tag_id: int` | |
 | `ExperientialTag` | 2 values | `concept_tag_id: int` | |
 | `ContentFlagTag` | 1 value | `concept_tag_id: int` | |
-| `OverallKeyword` | 225 values (implemented in `implementation/classes/overall_keywords.py`) | `keyword_id: int` | Curated IMDB genre/sub-genre taxonomy. Each member carries a `definition` string for LLM context. |
+| `OverallKeyword` | 225 values (implemented in `implementation/classes/overall_keywords.py`) | `keyword_id: int` | Curated IMDB keyword taxonomy. Each member carries a `definition` string for LLM context and participates in the keyword endpoint's concept-family mapping. |
 
 ---
 

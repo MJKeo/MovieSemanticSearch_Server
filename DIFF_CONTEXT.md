@@ -227,3 +227,125 @@ Why: A follow-up prompt audit found that some small deterministic vocabularies w
 Approach: Replaced the source-material list with the exact enum-backed value set (`Novel Adaptation`, `Short Story Adaptation`, `Stage Adaptation`, `True Story`, `Biography`, `Comic Adaptation`, `Folklore Adaptation`, `Video Game Adaptation`, `Remake`, `TV Adaptation`). Expanded metadata guidance to include `Unrated` in maturity coverage, explicitly listed the three access-type values (`subscription`, `buy`, `rent`), and enumerated the tracked streaming services. Also reframed "free to stream" as provider-level free-service availability (for example Tubi / Pluto / Plex / Roku Channel) rather than a separate access-type enum value that does not exist.
 Design context: Keeps the stage 2 prompt aligned with the actual enum-backed deterministic search surface instead of relying on lossy shorthand that can drift from implementation.
 Testing notes: Prompt-only follow-up; did not run tests.
+
+## Step 3 input specification and continuous scoring model
+Files: search_improvement_planning/finalized_search_proposal.md
+
+### Intent
+Define step 3 endpoint inputs and replace strict tier-based reranking with a
+continuous scoring model where dealbreakers produce [0,1] scores and preferences
+are capped below one full dealbreaker.
+
+### Key Decisions
+- **Per-item endpoint calls** — each dealbreaker/preference gets its own
+  independent LLM call (not one call per endpoint type). Inputs: `intent_rewrite`
+  + one item's `description`, `routing_rationale`, and `direction` (dealbreakers
+  only). Excluded: `route`, `is_primary_preference`, priors, other items.
+- **Gradient logic is deterministic code** — step 3 LLMs produce literal
+  translations ("1980-1989"). Execution code wraps with gradient decay functions.
+  Same for semantic: LLM picks vector spaces and queries, code applies
+  elbow-calibrated scoring.
+- **Continuous scoring replaces strict tiers** — `final_score = dealbreaker_sum +
+  preference_contribution - exclusion_penalties`. Each dealbreaker scored [0,1];
+  preferences capped at P_CAP=0.9. Preferences can overcome partial matches but
+  never a full dealbreaker miss.
+- **Semantic dealbreakers score, don't demote** — contribute to dealbreaker_sum
+  via elbow-calibrated cosine similarity (1.0 above elbow, decay below, 0.0
+  below floor). Still cannot generate candidates.
+- **Preference weighting formula** — weighted average scaled by P_CAP. Weights:
+  regular=1.0, primary=3.0, quality/notability priors weighted by enum value
+  (enhanced=1.5, standard=0.75, inverted=1.5 with flipped score, suppressed=0).
+- **Actor billing-position gradient** — default 1.0 for top 15% billing, floor
+  of 0.8 for cameos. Steepens when user specifies prominence.
+- **Elbow fallback** — percentage-of-max threshold when elbow detection fails.
+
+### Planning Context
+Tier system was challenged: metadata gradients and semantic similarity don't
+naturally produce binary pass/fail, forcing arbitrary cliff edges. The user
+proposed continuous scoring where `P_CAP < 1.0` preserves the guarantee that
+full dealbreaker matches dominate while allowing preferences to separate
+near-matches. Existing `db/metadata_scoring.py` gradient patterns inform the
+per-attribute decay functions.
+
+## Scoring refinements: inverted priors and semantic exclusion penalties
+Files: search_improvement_planning/finalized_search_proposal.md
+Why: Two corrections to the scoring model from review.
+Approach: (1) Inverted quality/notability priors are handled at the endpoint
+query/scoring level — the endpoint queries for poor reception or obscurity
+directly, producing a high score for niche/bad movies. No `1.0 - score`
+inversion in the formula. (2) Semantic exclusion penalties use a
+match-then-subtract model: score the excluded concept the same way as a
+semantic inclusion dealbreaker (elbow-calibrated [0,1]), then subtract
+`E_MULT × match_score` from the final score. E_MULT starts at 2.0 (tunable).
+A 0.5 match costs a full dealbreaker's worth of score; a 0.9 match is
+devastating; a 0.0 match costs nothing.
+
+## Entity endpoint step 3/4 design decisions
+Files: search_improvement_planning/finalized_search_proposal.md
+Why: Resolved entity endpoint design questions from planning discussion.
+Approach:
+- **Direction-agnostic framing (new design principle #10):** Step 3 LLMs
+  always search for positive presence of an attribute. `direction` field
+  moved from step 3 inputs to excluded inputs — consumed only by step 4
+  code. Step 2 `description` field now always uses positive-presence form
+  ("involves clowns" not "does not involve clowns"). Added as a dedicated
+  subsection in Step 3 and as design principle #10. This is architecturally
+  critical — prevents double-negation confusion and keeps each LLM's task
+  clean.
+- **No pool size limit** for entity candidates (~7K worst case is fine).
+- **No-match = valid empty result** — no fallback to closest fuzzy match.
+- **No re-routing responsibility** — step 3 trusts upstream routing.
+- **Cross-posting table search:** Single-table when role is confident.
+  Multi-table with primary anchor (nullable): primary gets full credit,
+  non-primary gets 0.5 × match_score, max across tables (no summing).
+  Without primary, all tables get full credit, still max-based.
+- **Non-binary scoring** for character lookups (fuzzy similarity) and title
+  pattern lookups (match coverage) — details to be finalized before
+  implementation.
+- **Actor prominence scoring** — modes and formulas still under discussion.
+Testing notes: Doc-only changes, no code modified.
+
+## Reorganized keyword classification dimensions for step 2 routing
+Files: search_v2/stage_2.py, search_improvement_planning/finalized_search_proposal.md
+
+### Intent
+Fix misrepresentations and improve conceptual coherence of keyword
+categories that the step 2 LLM uses for routing decisions.
+
+### Key Decisions
+- **5 misrepresentations fixed:** Adult Animation removed from Teen &
+  Coming-of-Age; Slice of Life moved from Other to Anime Genres; Swashbuckler
+  moved from War/Western/Historical to Adventure; News and Short moved from
+  Other to Format & Presentation.
+- **"Anime & East Asian Traditions" renamed to "Anime Genres"** and narrowed
+  to only anime-specific classifications. Samurai and Wuxia moved to Action &
+  Combat (live-action martial arts traditions). Kaiju and Mecha moved to
+  Fantasy & Science Fiction (speculative fiction genres spanning anime and
+  live-action).
+- **"Other" catch-all dissolved:** History and Tragedy moved to Drama; Animation
+  and Family moved to new Audience & Medium dimension; News and Short moved to
+  Format & Presentation.
+- **"War, Western & Historical" split** into War (2) and Western (5) as
+  separate genre families.
+- **2 new classification dimensions added:** Audience & Medium (Adult Animation,
+  Animation, Family — cross-cut genres by who/what medium) and Format &
+  Presentation (Mockumentary, Sketch Comedy, Stand-Up, News, Short, plus
+  existing reality/talk/game show keywords — describe how content is delivered).
+- **Dimension count: 11 → 13.** Genre sub-categories: 18 → 17 (fewer
+  catch-alls, cleaner splits).
+- Comedy trimmed: Mockumentary, Sketch Comedy, Stand-Up moved to Format &
+  Presentation (describe presentation format, not comedy narrative type).
+- Documentary renamed to Documentary & Nonfiction. Fantasy & Sci-Fi renamed to
+  Fantasy & Science Fiction.
+
+### Testing Notes
+Prompt-only changes. Verify with representative step 2 queries that routing
+still correctly assigns keywords to the keyword endpoint and doesn't misroute
+format/audience keywords to semantic.
+
+## Canonical keyword taxonomy rewrite across prompt and planning docs
+Files: search_v2/stage_2.py, search_improvement_planning/finalized_search_proposal.md, search_improvement_planning/open_questions.md, search_improvement_planning/new_system_brainstorm.md, search_improvement_planning/full_search_capabilities.md, search_improvement_planning/v2_data_architecture.md
+Why: The repo had drift between the new `OverallKeyword` definitions, the step 2 routing prompt, and the search-planning docs. The old presentation still described the keyword endpoint as 13 overlapping dimensions, still referenced obsolete source-material concepts, and still mixed cultural identity, country, runtime, and short-form classification in inconsistent ways.
+Approach: Replaced the old keyword-endpoint framing with a canonical concept-family taxonomy backed by multiple deterministic stores (`genre_ids`, `keyword_ids`, `source_material_type_ids`, `concept_tag_ids`). The prompt and finalized proposal now use the same concept-first taxonomy, explicit overlap rule, and aligned boundary examples for `Short`, `Biography`, `French` vs audio, `Bollywood` vs Hindi audio, `Remakes`, `Scary movies`, `Feel-good`, and `Coming-of-Age`. Supporting planning docs were updated to remove stale “trait descriptions only” wording, replace the obsolete source-material list with the actual enum values, stop routing broad genres as a separate conceptual `genre_ids` surface, and rename `overall_keywords` as a broader keyword taxonomy rather than just a genre/sub-genre taxonomy.
+Design context: Intent and category placements follow the new `OverallKeyword` definitions in `implementation/classes/overall_keywords.py`, the shared enums in `schemas/enums.py`, and the user-approved concept-family taxonomy. `Biography` is canonical under Source Material / Adaptation / Real-World Basis; `Short` is canonical as a short-form classification while pure runtime remains metadata; `News` is canonical under Nonfiction / Documentary / Real-World Media; `Adult Animation` is canonical under Animation / Anime Form / Technique.
+Testing notes: Verified by grep that the stale phrases (`13 classification dimensions`, obsolete source-material values, old trait-description wording, `short movies` as runtime shorthand, and `genre/sub-genre taxonomy`) were removed from the active prompt/docs set. Also ran a local normalization check against `OverallKeyword`, `Genre`, `SourceMaterialType`, and stored concept tags: the new family taxonomy covers the full keyword-endpoint concept surface exactly once with 259 concepts, 0 missing, and 0 duplicate assignments.

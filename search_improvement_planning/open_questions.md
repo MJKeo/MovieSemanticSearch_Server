@@ -482,20 +482,16 @@ Alternatives considered and rejected:
 
 **Answer: Pure static mapping.** The keyword vocabulary audit
 ([keyword_vocabulary_audit.md](keyword_vocabulary_audit.md)) revealed that
-`overall_keywords` is a compact curated genre taxonomy of exactly 225 terms
+`overall_keywords` is a compact curated taxonomy of exactly 225 terms
 — not the free-form community tagging system we assumed. 100% coverage,
 near-zero long tail, trivially enumerable.
 
-**Mapping approach (revised for V2 two-step pipeline):** Step 2 (query
-understanding) receives compact **trait descriptions** covering what the keyword
-and concept tag vocabularies can match — e.g., "genre" rather than each genre
-individually, "content warnings" rather than each flag. This is enough for step
-2's routing decisions. Step 3 (the keyword endpoint LLM or deterministic lookup)
-receives the full 225-term vocabulary and resolves descriptions to specific IDs.
-
-**TODO:** The exact trait description list for step 2 needs to be developed
-before implementation. The descriptions must be specific enough about what ISN'T
-covered to prevent misrouting. This is a critical prompt design task.
+**Mapping approach (current V2 design):** Step 2 receives the canonical
+concept-family taxonomy for the keyword endpoint, including the overlap rule
+that one user concept may resolve to multiple deterministic backends
+(`genre_ids`, `keyword_ids`, `source_material_type_ids`, `concept_tag_ids`).
+Step 3 receives the full enum/tag vocabularies and maps routed concepts to the
+exact IDs or fields to query.
 
 **`plot_keywords` excluded:** The 114K-term `plot_keywords` vocabulary is
 already consumed by the metadata generation pipeline and distilled into

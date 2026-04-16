@@ -20,8 +20,8 @@ are routed at step 1 and bypass steps 2–4.
 3.5. **Search Execution** — Dealbreaker searches execute as each step 3 LLM
    responds; preference queries await candidate assembly, then execute
    immediately.
-4. **Assembly & Reranking** — Assemble candidate sets, tier by dealbreaker
-   conformance, score by preference results and system priors, apply
+4. **Assembly & Reranking** — Assemble candidate sets, score each movie by
+   dealbreaker match quality + preference fit + system priors, apply
    exclusions, produce final ranked results.
 
 ---
@@ -307,7 +307,7 @@ Exceptions to semantic preference grouping:
 
 **V1 intentionally does NOT model full boolean/group logic.** Explicit OR-style
 clause handling would improve a subset of edge cases, but the added complexity
-is not justified yet because simple match-count tiering already degrades
+is not justified yet because the continuous scoring model already degrades
 gracefully for most such queries. Whether this simplification holds up will be
 evaluated once the system is running against real queries.
 
@@ -410,29 +410,33 @@ before committing to the classification.
 Each `Dealbreaker` contains, in order:
 
 **`description`** (string, required) — A concrete string describing the
-requirement (e.g., "includes Brad Pitt in actors", "is a horror movie",
-"does not involve clowns").
+attribute to search for, always in positive-presence form (e.g., "includes
+Brad Pitt in actors", "is a horror movie", "involves clowns"). Even for
+exclusion dealbreakers, the description states what to find — the `direction`
+field separately controls whether the result is included or excluded.
 
 *Why included:* The core functional output consumed by step 3 endpoint LLMs as
 their task specification. Placed first because it is the most
 concrete/extractive field — the model articulates what the requirement IS
-before making any classifications about it.
+before making any classifications about it. Positive-presence framing ensures
+step 3 LLMs always receive a clear "find movies WITH X" instruction,
+supporting the direction-agnostic framing principle (see Step 3).
 
 **`direction`** (enum: `inclusion` | `exclusion`, required) — Whether this
-dealbreaker generates candidates and contributes to tier count (inclusion) or
-filters/penalizes candidates after assembly (exclusion).
+dealbreaker generates candidates and contributes to the dealbreaker score sum
+(inclusion) or filters/penalizes candidates after assembly (exclusion).
 
 *Why included:* The pipeline uses this to determine how the resulting candidate
-set is applied. Inclusion dealbreakers contribute +1 to tier count; exclusion
-dealbreakers hard-filter (deterministic) or penalize (semantic) after
-candidate assembly without counting toward the tier denominator. Placed
-second because it is still extractive — usually obvious from query text
-markers ("not", "without", "no" → exclusion; everything else → inclusion).
+set is applied. Inclusion dealbreakers contribute a [0, 1] score to the
+dealbreaker sum; exclusion dealbreakers hard-filter (deterministic) or penalize
+(semantic) after candidate assembly without contributing to the dealbreaker
+sum. Placed second because it is still extractive — usually obvious from query
+text markers ("not", "without", "no" → exclusion; everything else → inclusion).
 
 **`routing_rationale`** (string, required) — A brief concept-type
 classification label citing why this endpoint handles this concept. Examples:
 "named person (actor)", "genre classification", "thematic concept absent from
-keyword vocabulary", "franchise structural role."
+keyword taxonomy", "franchise structural role."
 
 *Thought process:* The model identifies what KIND of thing the described
 concept is — a named entity, a genre classification, an award reference, a
@@ -557,7 +561,7 @@ defines the output shape; this section defines the content.
 
 Dealbreakers represent the foundational attributes around which the rest of the
 query revolves. They are the criteria used for candidate generation — movies
-that don't meet these are excluded or tiered down.
+that don't meet these are excluded or scored lower.
 
 **Routing enum definitions (surface-level, no schema details):**
 
@@ -567,13 +571,13 @@ that don't meet these are excluded or tiered down.
 | `metadata` | Quantitative movie attributes: year, runtime, rating, streaming, language, country, box office, budget, popularity, reception | Field names (not enum values) |
 | `awards` | All award lookups: generic "award-winning" through specific ceremony/category/year queries | The 12 ceremony names |
 | `franchise_structure` | Franchise name resolution AND structural roles: sequel, prequel, remake, reboot, spinoff, crossover, launched-a-franchise | Franchise names + structural attributes available |
-| `keyword` | Categorical classification: genres, source material types, concept tags, and content keywords from curated vocabulary | Trait descriptions covering what the vocabulary can match (not the full enumerated list — see Endpoint 5) |
+| `keyword` | Categorical classification: concept families backed by genres, source material types, concept tags, and curated keywords | The canonical concept-family taxonomy, overlap rules, and representative classifications it can resolve |
 | `semantic` | Distinct thematic traits the user treats as defining requirements where no deterministic source can evaluate them (e.g., "zombie," "clown," "female empowerment," "car chase") | What the other sources DON'T cover |
 | `trending` | Currently trending / popular right now | That trending data exists |
 
 **Critical:** The LLM must understand the limitations of each source. It should
-know what the keyword/concept tag vocabulary covers (via trait descriptions, not
-the full enumerated list — see Endpoint 5 below) so it can make informed routing
+know what the keyword taxonomy covers via the canonical concept families and
+their overlap rules (see Endpoint 5 below) so it can make informed routing
 decisions rather than guessing that a concept like "clowns" might be a keyword
 when it isn't. When no deterministic source cleanly covers a concept, route to
 `semantic`.
@@ -723,17 +727,14 @@ search for exact matches handles disambiguation downstream.
 
 ## Step 3: Query Translation
 
-Each endpoint has its own LLM (or deterministic function) that receives:
-- Step 1's `intent_rewrite` (for full query context)
-- Only the dealbreakers and preferences routed to it
-- Deep knowledge of its own schema
-
-Each per-endpoint LLM translates the abstract dealbreaker/preference
-descriptions into **complete query specifications**. For dealbreakers, the spec
-is self-contained and ready to execute. For preferences, the spec is complete
-except for candidate IDs — a WHERE clause placeholder (or vector lookup target
-set) that gets filled once candidate assembly provides the IDs. Execution of
-these specs happens in step 3.5.
+Each dealbreaker and preference is translated by its own independent LLM call
+(or deterministic function). All calls run in parallel. Each per-endpoint LLM
+translates one abstract dealbreaker or preference description into a
+**complete query specification**. For dealbreakers, the spec is self-contained
+and ready to execute. For preferences, the spec is complete except for
+candidate IDs — a WHERE clause placeholder (or vector lookup target set) that
+gets filled once candidate assembly provides the IDs. Execution of these specs
+happens in step 3.5.
 
 **Why keep per-endpoint LLMs instead of pushing all schema-specific work into
 step 2?** Because exact enum values, metadata matching nuance, keyword
@@ -750,8 +751,76 @@ Step 3 LLMs are **schema translators, not re-interpreters**. They should not
 decide what the user meant; they should only decide how their endpoint should
 execute the already-resolved intent.
 
-All per-endpoint LLMs run in parallel since they have no dependencies on each
-other.
+### Inputs Per Endpoint Call
+
+Each call receives exactly:
+
+1. **`intent_rewrite`** (from step 1) — The full concrete statement of what
+   the user is looking for. Provides disambiguation context for the item being
+   translated. "Preferably recent" means different things in different query
+   contexts; the intent_rewrite lets the endpoint LLM calibrate.
+
+2. **One dealbreaker or preference item:**
+   - `description` — What to translate into a query specification.
+   - `routing_rationale` — Concept-type classification label (e.g., "named
+     person (actor)", "keyword family: horror"). Helps the endpoint LLM
+     identify the correct sub-lookup type without re-interpreting the
+     description from scratch.
+
+**Excluded from endpoint inputs:** `direction` (consumed by step 4 execution
+code, not by step 3 — see Direction-Agnostic Framing below), `route`
+(code-level dispatch flag, not contextual for query formulation),
+`is_primary_preference` (affects scoring weights in step 4, not query
+formulation), system priors, decomposition analysis, items routed to other
+endpoints, the original user query string (redundant with intent_rewrite).
+
+### Direction-Agnostic Framing
+
+**Step 3 LLMs always search for the positive presence of an attribute,
+regardless of whether the result will be used for inclusion or exclusion.**
+The `direction` field from step 2 is NOT passed to step 3 LLMs — it is
+consumed exclusively by step 4 execution code to determine how to apply the
+resulting candidate set (include or exclude).
+
+This is a critical architectural invariant. The step 3 LLM's sole job is to
+find movies that HAVE the specified attribute. Finding movies that DON'T have
+an attribute is never useful — it would return ~150K results and the
+inclusion/exclusion logic is a deterministic code concern, not an LLM
+concern.
+
+**How this works end-to-end:**
+- "action movies not starring Arnold Schwarzenegger" → step 2 emits
+  description: "includes Arnold Schwarzenegger in actors", direction:
+  exclusion → step 3 receives only the description → searches for movies
+  WITH Arnold → step 4 code removes those movies from the candidate set
+- "80s action blockbusters except for the ones that don't feature Arnold" →
+  step 2 emits description: "includes Arnold Schwarzenegger in actors",
+  direction: inclusion → step 3 receives only the description → searches for
+  movies WITH Arnold → step 4 code includes those movies
+
+The step 2 `description` field is always written in positive-presence form
+("includes X", "involves Y", "is a Z") regardless of the `direction` value.
+The description says what to search FOR; the direction says what to do with
+the results. This prevents double-negation confusion and keeps each LLM's
+task clean.
+
+### Gradient Logic Is Deterministic Code, Not LLM Output
+
+Step 3 endpoint LLMs produce faithful, literal translations of the
+requirement. "80s movies" translates to a date range of 1980-01-01 to
+1989-12-31. "Under 2 hours" translates to runtime < 120 minutes.
+
+Deterministic code in the execution layer then wraps these literal values
+with gradient functions that add graceful decay for near-miss scoring. The
+LLM does not know about or produce gradient parameters — it just translates
+the intent into the tightest correct specification. This separation keeps
+the LLM task simple and the gradient behavior consistent and tunable without
+prompt changes.
+
+The same principle applies to semantic scoring: the step 3 semantic LLM
+produces vector space selections and expanded search queries. The execution
+layer scores candidates using elbow-calibrated thresholds and decay functions
+that the LLM has no knowledge of.
 
 ### Endpoint 1: Entity Lookup
 
@@ -793,22 +862,94 @@ matching the entity) and exclusion (movies NOT matching the entity).
   or `semantic`
 
 **Description format:** The step 2 LLM writes a natural-language description
-preserving all qualifiers the user specified. Examples:
+preserving all qualifiers the user specified. Descriptions are always in
+positive-presence form — they describe what to search FOR, even when the
+dealbreaker direction is exclusion (see Direction-Agnostic Framing in Step 3).
+Examples:
 - "includes Brad Pitt in actors"
 - "has Arnold Schwarzenegger in a lead role"
 - "has a character named The Joker"
 - "movies with police officer characters"
 - "directed by Christopher Nolan"
 - "title contains the word 'love'"
-- "not starring Adam Sandler" (exclusion)
+- "includes Adam Sandler in actors" (even when direction=exclusion — step 3
+  finds movies WITH Adam Sandler, step 4 code handles the exclusion)
+
+**No re-routing responsibility:** The step 3 entity LLM trusts that routing
+was done correctly upstream. If it receives a description that seems like it
+might better fit another endpoint (e.g., a franchise name), it still performs
+the best possible entity lookup for that description. It does not re-route
+or refuse.
 
 **Candidate generation (dealbreakers):** Each entity dealbreaker produces an
-independent candidate set of movie IDs. Entity matches are binary — a movie
-either appears in the posting table for that entity or it doesn't.
+independent candidate set of movie IDs. **No pool size limit** — the full
+result set is the candidate pool. Worst case is ~7K candidates for a major
+studio, which is manageable for downstream scoring.
 
-**Preference scoring:** Binary presence score (is the entity associated with
-this movie?), with actor prominence as a gradient signal when applicable
-(billing_position scoring).
+**No-match is a valid result.** When fuzzy matching finds no candidates above
+the similarity threshold (e.g., a character name that doesn't exist in the
+database), the endpoint returns an empty candidate set. There is no fallback
+to the closest fuzzy match — an empty set is the honest answer and the
+pipeline handles it accordingly.
+
+**Dealbreaker scoring:** Scoring varies by entity sub-type:
+
+- **Person lookups** — See Cross-Posting Table Search and Actor Prominence
+  Scoring below.
+- **Character lookups** — May produce non-binary scores via fuzzy/token
+  matching similarity. The match quality score reflects how well the searched
+  name matches the stored character name. Exact matches score 1.0; fuzzy
+  matches score proportionally to similarity. Scoring details to be finalized
+  before implementation.
+- **Studio lookups** — Binary (1.0 or 0.0).
+- **Title pattern lookups** — May produce non-binary scores based on match
+  coverage (how much of the title matched the pattern). Scoring details to
+  be finalized before implementation.
+
+**Preference scoring:** Same scoring behavior as dealbreakers per sub-type.
+
+#### Cross-Posting Table Search
+
+The step 3 output includes which category/categories to search (actor,
+director, writer, producer, composer, or all) and which category serves as
+the **primary anchor** (nullable).
+
+**When to search a single table:** If the LLM is confident about the
+person's role — from an explicit role mention in the description or a
+high-confidence routing_rationale — it searches only that role-specific
+posting table. No cross-posting occurs. "Directed by Christopher Nolan"
+searches only `inv_director_postings`. This is the common case.
+
+**When to search multiple tables:** If confidence is low (ambiguous role,
+generic "person" reference), the system searches multiple posting tables and
+deduplicates movie IDs across them. Only set a primary anchor when there is
+high confidence about what the person is predominantly known for. When
+unsure, leave the anchor null — all tables contribute equally.
+
+**Cross-posting score consolidation (max-based, no summing):**
+
+- **With a primary anchor:** The primary table's match gets full credit
+  (1.0 or the table's match_score). Non-primary table matches get
+  `0.5 × match_score`. The movie's final entity score is the **max** across
+  all individual table scores.
+- **Without a primary anchor:** All table matches get full credit (1.0 or
+  match_score). The movie's final entity score is the **max** across all
+  tables.
+
+This means a movie appearing in multiple tables never gets more than 1.0 for
+a single entity dealbreaker. The max operation ensures no score inflation
+from multi-role credits, while the 0.5 discount on non-primary matches
+reflects that a non-primary role match is relevant but less on-target.
+
+#### Actor Prominence Scoring
+
+*Modes and scoring formulas currently under discussion — see open questions.*
+
+The actor posting table includes `billing_position` and `cast_size` per
+movie-actor pair, enabling prominence-based scoring. Multiple scoring modes
+handle different query intents (e.g., "starring X" vs "X movies" vs "X in a
+cameo"). The step 3 LLM determines the appropriate mode based on the
+description and query context.
 
 ### Endpoint 2: Movie Attributes
 
@@ -822,12 +963,12 @@ data — each of those has a dedicated endpoint.
 
 **Available attributes:**
 - Release date (year, decade, range, relative — "80s", "recent", "before 2000")
-- Runtime (minutes — "under 2 hours", "short movies", "epic length")
+- Runtime (minutes — "under 2 hours", "under 90 minutes", "epic length")
 - Maturity rating (G / PG / PG-13 / R / NC-17 — "family friendly", "rated R")
 - Streaming availability (provider + access method — "on Netflix", "free to
   stream")
 - Audio language ("French language films", "not in English")
-- Country of origin ("Korean movies", "British films")
+- Country of origin ("produced in South Korea", "country of origin is the UK")
 - Budget scale ("low budget", "big budget blockbuster")
 - Box office performance ("box office hit", "commercial flop")
 - Popularity / mainstream recognition (for notability-driven queries)
@@ -993,182 +1134,197 @@ matching.
 - **Structural role** — filters on lineage_position, is_spinoff, is_crossover,
   etc.
 When both appear in the same query ("Marvel spinoffs"), this endpoint handles
-both as separate dealbreakers, and tiering handles the intersection.
+both as separate dealbreakers, and the continuous scoring model handles the
+intersection (a movie matching both gets higher dealbreaker sum).
 
 **Preference scoring:** Binary match on structural attributes, or gradient
 scoring if applicable (e.g., franchise recency).
 
 ### Endpoint 5: Keywords & Concept Tags
 
-**Definition:** Evaluates categorical movie classifications — genres, sub-genres,
-cultural/language traditions, animation techniques, source material types,
-curated content keywords, and binary concept tags. These are all deterministic,
-enumerated vocabularies where a movie either has the classification or it
-doesn't. This endpoint answers "what kind of movie is this?" through
-categorical labels.
+**Definition:** Evaluates categorical movie classifications through a canonical
+concept-family taxonomy backed by deterministic stores. A movie either has the
+classification or it doesn't. This endpoint answers "what kind of movie is
+this?" through one conceptual taxonomy rather than treating `genre_ids`,
+`keyword_ids`, `source_material_type_ids`, and `concept_tag_ids` as four
+separate user-facing worlds.
 
-**Data sources:** `movie_card.keyword_ids` (225 curated OverallKeyword terms
+**Data sources:** `movie_card.keyword_ids` (225 curated `OverallKeyword` terms
 with definitions) + `movie_card.concept_tag_ids` (25 binary tags across 7
-categories) + `movie_card.genre_ids` (27 TMDB genre IDs, moved here from Movie
-Attributes — genre is a categorical classification, not a quantitative
-attribute) + `movie_card.source_material_type_ids` (10 source material types,
-moved here from Movie Attributes — source material is a categorical tag, not
-a quantitative attribute). All four are GIN-indexed array columns on
-`movie_card`.
+categories) + `movie_card.genre_ids` (27 TMDB genre IDs) +
+`movie_card.source_material_type_ids` (10 source material types). All four are
+GIN-indexed array columns on `movie_card`.
 
-**Step 2 LLM knows:** The full list of classification dimensions, category
-descriptions, and all individual tags/keywords so it can make accurate routing
-decisions about what this endpoint covers and — critically — what it doesn't
-cover. The 11 classification dimensions are listed below.
+**Overlap rule:** Some user concepts are backed by more than one deterministic
+store. Step 2 treats these as **one concept**. Step 3 may resolve that single
+concept to one or more backing IDs or fields. Broad labels like `Action`,
+`Horror`, `Documentary`, `Short`, `Film Noir`, `News`, `Biography`, and
+`Remake` are multi-backed. Do not split them into separate dealbreakers just
+because storage overlaps.
 
-**Step 3 LLM knows:** The full 225-term keyword vocabulary with per-keyword
+**Step 2 LLM knows:** The canonical concept-family taxonomy below, the overlap
+rule, and the main boundary cases that distinguish keyword from metadata,
+franchise_structure, and semantic routing.
+
+**Step 3 LLM knows:** The full 225-term `OverallKeyword` vocabulary with
 definitions, all 25 concept tag definitions, all genre IDs, and all source
-material type IDs. Maps user concepts to specific IDs.
+material type IDs. It maps one routed concept to specific IDs and may emit
+multi-store resolution when appropriate.
 
-#### Classification Dimensions
+#### Canonical Concept Families
 
-**1. Genre & Sub-genre** (~192 keywords + 27 TMDB genre_ids)
+**1. Action / Combat / Heroics**
 
-What type of movie/story this is. Ranges from broad genres (Action, Comedy,
-Horror) through specific sub-genres (Slasher Horror, Screwball Comedy,
-Spaghetti Western) to niche classifications (Giallo, Iyashikei, Gun Fu).
+Action, Action Epic, B-Action, Car Action, Gun Fu, Kung Fu, Martial Arts,
+One-Person Army Action, Samurai, Superhero, Sword & Sandal, Wuxia
 
-*Action & Combat:* Action, Action Epic, B-Action, Car Action, Gun Fu, Kung Fu,
-Martial Arts, One-Person Army Action
+**2. Adventure / Journey / Survival**
 
-*Adventure:* Adventure, Adventure Epic, Animal Adventure, Desert Adventure,
-Dinosaur Adventure, Disaster, Globetrotting Adventure, Jungle Adventure,
-Mountain Adventure, Quest, Road Trip, Sea Adventure, Survival, Urban Adventure
+Adventure, Adventure Epic, Animal Adventure, Desert Adventure, Dinosaur
+Adventure, Disaster, Globetrotting Adventure, Jungle Adventure, Mountain
+Adventure, Quest, Road Trip, Sea Adventure, Survival, Swashbuckler, Urban
+Adventure
 
-*Anime & East Asian Traditions:* Anime, Isekai, Iyashikei, Josei, Kaiju, Mecha,
-Samurai, Seinen, Shojo, Shonen, Wuxia
+**3. Crime / Mystery / Suspense / Espionage**
 
-*Comedy:* Body Swap Comedy, Buddy Comedy, Comedy, Dark Comedy, Farce,
-High-Concept Comedy, Mockumentary, Parody, Quirky Comedy, Raunchy Comedy,
-Romantic Comedy, Satire, Screwball Comedy, Sketch Comedy, Slapstick, Stand-Up,
-Stoner Comedy
+Buddy Cop, Bumbling Detective, Caper, Conspiracy Thriller, Cozy Mystery, Crime,
+Cyber Thriller, Drug Crime, Erotic Thriller, Film Noir, Gangster, Hard-boiled
+Detective, Heist, Legal Thriller, Mystery, Police Procedural, Political
+Thriller, Psychological Thriller, Serial Killer, Spy, Suspense Mystery,
+Thriller, Whodunnit
 
-*Crime & Mystery:* Buddy Cop, Bumbling Detective, Caper, Cozy Mystery, Crime,
-Drug Crime, Film Noir, Gangster, Hard-boiled Detective, Heist, Mystery, Police
-Procedural, Serial Killer, Suspense Mystery, True Crime, Whodunnit
+**4. Comedy / Satire / Comic Tone**
 
-*Documentary:* Crime Documentary, Docudrama, Documentary, Faith & Spirituality
-Documentary, Food Documentary, History Documentary, Military Documentary, Music
-Documentary, Nature Documentary, Political Documentary, Science & Technology
-Documentary, Sports Documentary, Travel Documentary
+Body Swap Comedy, Buddy Comedy, Comedy, Dark Comedy, Farce, High-Concept
+Comedy, Parody, Quirky Comedy, Raunchy Comedy, Romantic Comedy, Satire,
+Screwball Comedy, Slapstick, Stoner Comedy
 
-*Drama:* Biography, Cop Drama, Costume Drama, Drama, Epic, Financial Drama,
-Historical Epic, Legal Drama, Medical Drama, Period Drama, Political Drama,
-Prison Drama, Psychological Drama, Showbiz Drama, Workplace Drama
+**5. Drama / History / Institutions**
 
-*Fantasy & Sci-Fi:* Alien Invasion, Artificial Intelligence, Cyberpunk, Dark
-Fantasy, Dystopian Sci-Fi, Fairy Tale, Fantasy, Fantasy Epic, Sci-Fi, Sci-Fi
-Epic, Space Sci-Fi, Steampunk, Superhero, Supernatural Fantasy, Sword &
-Sorcery, Time Travel
+Cop Drama, Costume Drama, Drama, Epic, Financial Drama, Historical Epic,
+History, Legal Drama, Medical Drama, Period Drama, Political Drama, Prison
+Drama, Psychological Drama, Showbiz Drama, Tragedy, Workplace Drama
 
-*Holiday:* Holiday, Holiday Animation, Holiday Comedy, Holiday Family, Holiday
-Romance
+**6. Horror / Macabre / Creature**
 
-*Horror:* B-Horror, Body Horror, Folk Horror, Found Footage Horror, Giallo,
-Horror, Monster Horror, Psychological Horror, Slasher Horror, Splatter Horror,
+B-Horror, Body Horror, Folk Horror, Found Footage Horror, Giallo, Horror,
+Monster Horror, Psychological Horror, Slasher Horror, Splatter Horror,
 Supernatural Horror, Vampire Horror, Werewolf Horror, Witch Horror, Zombie
 Horror
 
-*Music & Musical:* Classic Musical, Concert, Jukebox Musical, Music, Musical,
-Pop Musical, Rock Musical
+**7. Fantasy / Sci-Fi / Speculative**
 
-*Romance:* Dark Romance, Feel-Good Romance, Romance, Romantic Epic, Steamy
-Romance, Tragic Romance
+Alien Invasion, Artificial Intelligence, Cyberpunk, Dark Fantasy, Dystopian
+Sci-Fi, Fairy Tale, Fantasy, Fantasy Epic, Kaiju, Mecha, Sci-Fi, Sci-Fi Epic,
+Space Sci-Fi, Steampunk, Supernatural Fantasy, Sword & Sorcery, Time Travel
 
-*Sports:* Baseball, Basketball, Boxing, Extreme Sport, Football, Motorsport,
-Soccer, Sport, Water Sport
+**8. Romance / Relationship**
 
-*Teen & Coming-of-Age:* Adult Animation, Coming-of-Age, Teen Adventure, Teen
-Comedy, Teen Drama, Teen Fantasy, Teen Horror, Teen Romance
+Dark Romance, Feel-Good Romance, Romance, Romantic Epic, Steamy Romance, Tragic
+Romance
 
-*Thriller & Suspense:* Conspiracy Thriller, Cyber Thriller, Erotic Thriller,
-Legal Thriller, Political Thriller, Psychological Thriller, Spy, Thriller
+**9. War / Western / Frontier**
 
-*War, Western & Historical:* Classical Western, Contemporary Western, Spaghetti
-Western, Swashbuckler, Sword & Sandal, War, War Epic, Western, Western Epic
+War, War Epic, Western, Classical Western, Contemporary Western, Spaghetti
+Western, Western Epic
 
-*Other genre-level:* Animation, Family, History, News, Short, Slice of Life,
-Tragedy
+**10. Music / Musical / Performance**
 
-*Format / Presentation:* Business Reality TV, Cooking Competition, Game Show,
-Paranormal Reality TV, Reality TV, Sitcom, Soap Opera, Talk Show
+Classic Musical, Concert, Jukebox Musical, Music, Musical, Pop Musical, Rock
+Musical
 
-**2. Culture** (~30 keywords)
+**11. Sports / Competitive Activity**
 
-The primary cultural/language tradition of the film. "French" means this is a
-French-language film in the cultural sense, not merely that French audio exists.
+Baseball, Basketball, Boxing, Extreme Sport, Football, Motorsport, Soccer,
+Sport, Water Sport
+
+**12. Audience / Age / Life Stage**
+
+Family, Coming-of-Age, Teen Adventure, Teen Comedy, Teen Drama, Teen Fantasy,
+Teen Horror, Teen Romance
+
+**13. Animation / Anime Form / Technique**
+
+Adult Animation, Animation, Anime, Computer Animation, Hand-Drawn Animation,
+Isekai, Iyashikei, Josei, Seinen, Shojo, Shonen, Slice of Life, Stop Motion
+Animation
+
+**14. Seasonal / Holiday**
+
+Holiday, Holiday Animation, Holiday Comedy, Holiday Family, Holiday Romance
+
+**15. Nonfiction / Documentary / Real-World Media**
+
+Crime Documentary, Docudrama, Documentary, Faith & Spirituality Documentary,
+Food Documentary, History Documentary, Military Documentary, Music Documentary,
+Nature Documentary, News, Political Documentary, Science & Technology
+Documentary, Sports Documentary, Travel Documentary, True Crime
+
+`News` is canonical here, not under presentation/form. Treat it as
+real-world-media classification.
+
+**16. Program / Presentation / Form Factor**
+
+Business Reality TV, Cooking Competition, Game Show, Mockumentary, Paranormal
+Reality TV, Reality TV, Short, Sitcom, Sketch Comedy, Soap Opera, Stand-Up,
+Talk Show
+
+`Short` is canonical here as a categorical short-film / short-form
+classification. Pure runtime requests stay in metadata.
+
+**17. Cultural / National Cinema Tradition**
 
 Arabic, Bengali, Cantonese, Danish, Dutch, Filipino, Finnish, French, German,
-Greek, Hindi, Italian, Japanese, Kannada, Korean, Malayalam, Mandarin, Marathi,
-Norwegian, Persian, Portuguese, Punjabi, Russian, Spanish, Swedish, Tamil,
-Telugu, Thai, Turkish, Urdu
+Greek, Hindi, Italian, Japanese, Kannada, Korean, Malayalam, Mandarin,
+Marathi, Norwegian, Persian, Portuguese, Punjabi, Russian, Spanish, Swedish,
+Tamil, Telugu, Thai, Turkish, Urdu
 
-**3. Animation Technique** (3 keywords)
+**18. Source Material / Adaptation / Real-World Basis**
 
-How the animation was physically produced (distinct from "Animation" as a
-genre): Computer Animation, Hand-Drawn Animation, Stop Motion Animation.
+Novel Adaptation, Short Story Adaptation, Stage Adaptation, True Story,
+Biography, Comic Adaptation, Folklore Adaptation, Video Game Adaptation,
+Remake, TV Adaptation
 
-**4. Source Material Type** (10 values)
+`Biography` is canonical here even though it may also be backed by genre or
+keyword storage. Treat "biography" / "biopic" as one real-world-basis
+classification concept.
 
-What the movie is based on: Novel, True Story, Remake, Comic, Video Game, TV
-Show, Short Film, Play/Musical, Sequel (non-franchise), Other.
+**19. Narrative Mechanics / Endings**
 
-**5. Narrative Structure** (9 concept tags)
+plot_twist, twist_villain, time_loop, nonlinear_timeline, unreliable_narrator,
+open_ending, single_location, breaking_fourth_wall, cliffhanger_ending,
+happy_ending, sad_ending, bittersweet_ending
 
-Storytelling techniques and structural devices: plot_twist, twist_villain,
-time_loop, nonlinear_timeline, unreliable_narrator, open_ending,
-single_location, breaking_fourth_wall, cliffhanger_ending.
+**20. Story Engine / Setting / Character Archetype**
 
-**6. Plot Archetype** (4 concept tags)
+revenge, underdog, kidnapping, con_artist, post_apocalyptic,
+haunted_location, small_town, female_lead, ensemble_cast, anti_hero
 
-Story pattern the movie follows: revenge, underdog, kidnapping, con_artist.
+**21. Viewer Response / Content Sensitivity**
 
-**7. Setting** (3 concept tags)
-
-Defining setting characteristics: post_apocalyptic, haunted_location,
-small_town.
-
-**8. Character Type** (3 concept tags)
-
-Protagonist or cast structure: female_lead, ensemble_cast, anti_hero.
-
-**9. Ending Type** (3 concept tags)
-
-Emotional resolution: happy_ending, sad_ending, bittersweet_ending.
-
-**10. Viewer Experience** (2 concept tags)
-
-How the movie makes you feel: feel_good, tearjerker.
-
-**11. Content Warning** (1 concept tag)
-
-Content flags: animal_death.
+feel_good, tearjerker, animal_death
 
 #### Routing Guidance
 
 **When to use:**
-- The query names a genre or sub-genre ("horror", "romantic comedy", "film
-  noir", "spaghetti western")
-- The query references a cultural/language film tradition ("Korean movies",
-  "Bollywood", "French cinema")
-- The query references source material ("based on a true story", "book
-  adaptation", "remakes" broadly)
-- The query references animation technique ("stop motion", "hand-drawn")
-- The query matches a concept tag — narrative structure, plot archetype,
-  setting type, character type, ending type, viewer experience, or content
-  warning ("movies with a twist ending", "feel-good movies", "does the dog
-  die?")
-- The query references a sub-genre keyword that exists in the vocabulary
-  ("heist movies", "kaiju", "road trip movies")
+- The query names a concept in one of the families above, including broad
+  genres, sub-genres, form-factor labels, source material classifications,
+  cultural traditions, and concept tags
+- The query references a cultural-film tradition ("French cinema", "Hindi
+  films", "Bollywood" via Hindi)
+- The query references source material or real-world basis ("based on a true
+  story", "biopics", "book adaptation", "remakes" broadly)
+- The query references animation/anime form or technique ("stop motion",
+  "hand-drawn", "anime", "adult animation")
+- The query references short-form classification ("short films", "shorts")
+- The query matches a concept tag or closely named keyword-family
+  classification ("movies with a twist ending", "feel-good movies",
+  "coming-of-age", "does the dog die?")
 
 **When NOT to use:**
 - Quantitative attributes (year, runtime, rating, streaming, budget, box
-  office, reception) — route to `metadata`
+  office, reception) — route to `metadata`. `"Under 90 minutes"` is metadata;
+  `"short films"` is keyword.
 - Named entities (people, characters, studios) — route to `entity`
 - Franchise names or franchise-specific structural roles — route to
   `franchise_structure`
@@ -1176,84 +1332,89 @@ Content flags: animal_death.
 - Subjective experiential qualifiers that describe HOW the movie feels rather
   than WHAT kind of movie it is ("funny", "dark", "cozy", "slow-burn",
   "intense") — route to `semantic`
-- Thematic concepts NOT covered by any keyword, concept tag, or genre
-  ("clowns", "trains", "female empowerment", "capitalism") — route to
-  `semantic`
+- Thematic concepts NOT covered by any classification above ("clowns",
+  "trains", "female empowerment", "capitalism") — route to `semantic`
 
 **Tricky boundary cases:**
 
 1. **"Zombie movies"** → keyword (Zombie Horror exists). **"Clown movies"** →
-   semantic (no clown keyword). The step 2 LLM must know the vocabulary to
-   make this distinction.
+   semantic (no clown classification exists). The model must check whether the
+   concept appears in the taxonomy before routing here.
 
-2. **"Funny horror movies"** → "horror" is a keyword dealbreaker, but "funny"
-   is a semantic preference (subjective qualifier, not a genre). Dark Comedy
-   exists but is a specific genre, not a qualifier.
+2. **"Funny horror movies"** → horror is a keyword dealbreaker; funny is a
+   semantic preference. Dark Comedy exists, but it is a classification label,
+   not a general-purpose funny qualifier.
 
-3. **"French movies"** → keyword (culture: French). **"Movies with French
-   audio"** → metadata (audio_language_ids). The keyword captures cultural
-   identity; metadata captures audio track availability.
+3. **"Scary movies"** → route the horror-compatible classification to keyword
+   and also capture scariness / horror centrality in the semantic preference.
+   **"Scariest movies ever"** is primarily a semantic ranking request.
 
-4. **"Remakes"** (broadly) → keyword (source material type). **"Batman
-   remakes"** → franchise_structure (lineage_position within a franchise).
-   Generic remakes route here; franchise-specific remakes route to
-   franchise_structure.
+4. **"Short films" / "shorts"** → keyword (form-factor classification).
+   **"Under 90 minutes"** → metadata (runtime constraint).
 
-5. **"Feel-good movies"** → keyword (concept tag: feel_good). **"Something
-   uplifting and warm"** → semantic (subjective experiential description). The
-   concept tag is a binary classification; the semantic query is a vibe.
+5. **"French movies"** → keyword (cultural tradition: French). **"Movies with
+   French audio"** → metadata (`audio_language_ids`). The keyword captures
+   film identity; metadata captures audio-track availability.
 
-6. **"Coming-of-age"** → keyword (Coming-of-Age keyword exists). **"Movies
-   about growing up"** → could go either way. If the phrasing maps clearly to
-   a known keyword/tag, route here. If it's a loose thematic description,
-   route to semantic.
+6. **"Bollywood movies"** → keyword via Hindi cultural tradition. **"Movies
+   with Hindi audio"** → metadata. Cultural identity and audio-track
+   availability are different requirements.
 
-7. **"Sequel"** without franchise context → keyword (source material type).
-   **"Marvel sequels"** → franchise_structure (lineage_position). The presence
-   of a franchise name changes the route.
+7. **"Biographies" / "biopics"** → keyword (real-world basis) even though the
+   backend may resolve Biography across multiple stores. Treat it as one
+   concept.
 
-8. **"Revenge movie"** → keyword (concept tag: revenge). **"Movies about
-   getting revenge on a bully"** → the "revenge" aspect routes here as a
-   dealbreaker, but the specificity "on a bully" adds nothing to the
-   deterministic tag and can be included in a semantic preference if relevant.
+8. **"Remakes"** (broadly) → keyword (source material / retelling
+   classification). **"Batman remakes"** → `franchise_structure`
+   (`lineage_position` within a franchise). Generic remakes route here;
+   franchise-specific remakes route to `franchise_structure`.
 
-9. **"Critically acclaimed horror"** → "horror" routes here (keyword),
-   "critically acclaimed" routes to metadata (reception_score). Two separate
-   items, two endpoints.
+9. **"Feel-good movies"** → keyword (concept tag: `feel_good`). **"Something
+   uplifting and warm"** → semantic (subjective experiential description).
 
-10. **"Award-winning comedy"** → "comedy" routes here (keyword),
-    "award-winning" routes to awards. Two separate dealbreakers, two endpoints.
+10. **"Coming-of-age"** → keyword (known classification). **"Movies about
+    growing up"** → route to keyword only if the phrasing clearly maps to the
+    known concept; otherwise semantic.
+
+11. **"Sequel"** does **not** route here. Sequels and prequels always route to
+    `franchise_structure`. Broad real-world-basis concepts such as remakes,
+    biographies, and true-story movies stay here.
+
+12. **"Critically acclaimed horror"** → horror routes here; critically
+    acclaimed routes to `metadata`. Two separate items, two endpoints.
+
+13. **"Award-winning comedy"** → comedy routes here; award-winning routes to
+    `awards`. Two separate items, two endpoints.
 
 #### Execution Details
 
 **Candidate generation (dealbreakers):** Produces candidate sets via GIN array
-overlap on keyword_ids, concept_tag_ids, genre_ids, or source_material_type_ids.
-These are binary — a movie either has the classification or doesn't.
+overlap on `keyword_ids`, `concept_tag_ids`, `genre_ids`, or
+`source_material_type_ids`. These are binary — a movie either has the
+classification or doesn't.
 
-**Preference scoring:** Binary match (has the keyword/tag = 1.0, doesn't =
-0.0). For dealbreaker-demoted-to-preference scenarios, this is a strong
-boosting signal.
+**Preference scoring:** Binary match by default (has the classification = 1.0,
+doesn't = 0.0).
 
-**May not require a separate step 3 LLM:** Since step 2 receives the full
-vocabulary, the step 3 translation may be a deterministic ID lookup rather
-than an LLM call. This is an implementation detail.
+**Step 3 mapping may be deterministic:** Because step 2 now receives the full
+canonical taxonomy, step 3 may be implemented as deterministic ID resolution
+rather than a separate LLM call. This is an implementation detail.
 
 **Thematic centrality — dual dealbreaker + preference:** Some keyword/concept
 tag dealbreakers have a meaningful centrality spectrum above the binary
-threshold. "Christmas movies" maps to the "Holiday" keyword for candidate
-generation, but Christmas-*centrality* (is Christmas the entire premise, or
-just incidental backdrop?) is a useful ranking signal within the passing set.
+threshold. "Christmas movies" maps to the `Holiday` classification for
+candidate generation, but Christmas-centrality (is Christmas the whole premise
+or incidental backdrop?) is a useful ranking signal within the passing set.
 
-The guiding principle: **thematic concepts have centrality spectrums; structural
-concepts don't.** "Zombie," "heist," "Christmas," "coming-of-age" are thematic
-— how central the concept is to the movie matters for ranking. "Sequel,"
-"based on a true story," "award-winning" are structural — there's no meaningful
-spectrum. When step 2 emits a keyword/concept tag dealbreaker for a thematic
-concept, it should also include that concept's centrality in the grouped
-semantic preference description. The pipeline supports this naturally since the
-dealbreaker and preference target different endpoints (keyword vs. semantic).
-The step 2 prompt must ensure this thematic centrality guidance doesn't conflict
-with the semantic preference grouping instructions.
+The guiding principle: **thematic concepts have centrality spectrums;
+structural concepts don't.** "Zombie," "heist," "Christmas," and
+"coming-of-age" are thematic — how central the concept is to the movie matters
+for ranking. "Remake," "based on a true story," and "award-winning" are
+structural — there's no meaningful spectrum. When step 2 emits a keyword /
+concept-tag dealbreaker for a thematic concept, it should also include that
+concept's centrality in the grouped semantic preference description. The
+pipeline supports this naturally because the dealbreaker and preference target
+different endpoints.
 
 ### Endpoint 6: Semantic
 
@@ -1270,10 +1431,10 @@ used for dealbreakers when no other endpoint can properly handle the concept.
 
 Semantic is freely used for **preferences** (ranking/scoring) even when other
 endpoints handle the same concept as a dealbreaker. For example, "horror
-movies" produces a keyword dealbreaker (Horror genre) AND the "scary" qualifier
-can be a semantic preference for ranking within the horror results. The
-dealbreaker generates candidates deterministically; the preference scores them
-via vector similarity.
+movies" produces a keyword dealbreaker (horror-compatible classification) AND
+the "scary" qualifier can be a semantic preference for ranking within the
+horror results. The dealbreaker generates candidates deterministically; the
+preference scores them via vector similarity.
 
 **Data sources:** 8 Qdrant vector spaces (OpenAI `text-embedding-3-small`,
 1536 dims):
@@ -1310,7 +1471,7 @@ ratio.
 **When to use:**
 - **As a dealbreaker:** Only when no deterministic endpoint can evaluate the
   concept ("clowns", "trains", "capitalism", "female empowerment" — thematic
-  concepts absent from the keyword vocabulary)
+  concepts absent from the keyword taxonomy)
 - **As a preference:** Freely, for subjective experiential qualifiers ("funny",
   "dark", "cozy", "intense", "slow-burn"), viewing occasion/context ("date
   night", "background movie"), thematic centrality scoring for keyword
@@ -1330,9 +1491,9 @@ ratio.
 **Tricky boundary cases:**
 
 1. **"Scary movies"** → "scary" is a subjective qualifier (semantic
-   preference), but "Horror" is a keyword genre. If the user says "scary"
-   they probably want Horror as a keyword dealbreaker PLUS scary as a semantic
-   preference for ranking within horror results.
+   preference), but the user usually also wants a horror-compatible keyword
+   classification. The likely pattern is keyword dealbreaker + semantic
+   scare-intensity preference.
 
 2. **"Movies about revenge"** → revenge is a concept tag (keyword endpoint).
    But "movies exploring the psychological toll of revenge" has thematic depth
@@ -1351,25 +1512,41 @@ ratio.
    qualifiers). The genre label and the experiential qualifiers are different
    things — one is a classification, the other is a vibe.
 
-**Candidate generation (dealbreakers — with demotion):** Semantic dealbreakers
-are NOT used for candidate generation in the standard flow. Any dealbreaker
-routed to `semantic` is automatically demoted to a high-weight preference for
-scoring purposes (see Semantic Dealbreaker Demotion below). Exception: in the
-pure-vibe flow (no non-semantic inclusion dealbreakers exist), vector search
-becomes the candidate generator.
+**Candidate generation:** Semantic dealbreakers are NOT used for candidate
+generation in the standard flow. Deterministic endpoints generate the
+candidate pool; semantic dealbreakers score those candidates. Exception: in
+the pure-vibe flow (no non-semantic inclusion dealbreakers exist), vector
+search becomes the candidate generator.
+
+**Dealbreaker scoring:** Semantic dealbreakers produce a continuous score in
+[0, 1] for each candidate, contributing to the dealbreaker sum alongside
+deterministic dealbreaker scores (see Phase 4c). The scoring uses
+elbow-calibrated thresholds against the global corpus distribution:
+
+- **Above the elbow:** Score = 1.0 (high confidence the movie genuinely has
+  this trait).
+- **Between elbow and floor:** Gradual decay from 1.0 toward 0.0, calibrated
+  by the gap between the maximum similarity score and the elbow value.
+- **Below the floor:** Score = 0.0 (no meaningful match — does not contribute
+  to the dealbreaker sum).
+
+The elbow is determined dynamically per concept via global corpus search.
+If elbow detection fails, a fallback percentage-of-max threshold is used.
 
 **Preference scoring:** Vector similarity scores against relevant spaces. The
 LLM determines which spaces are relevant and generates expanded search queries
 per space. All preferences (including grouped semantic preferences) are scored
-via cosine similarity, possibly with a diminishing returns curve. Semantic
-exclusion *dealbreakers* use global-elbow-calibrated penalties (see Exclusion
-Handling below). The grouped semantic preference can be decomposed into
+via cosine similarity. For regular preferences, a diminishing-returns curve is
+applied (marginal gains decrease at high similarity). For primary preferences,
+raw similarity is preserved (full spectrum matters for ranking). Semantic
+exclusion dealbreakers use global-elbow-calibrated penalties (see Exclusion
+Handling in Phase 4b). The grouped semantic preference can be decomposed into
 per-space queries by the step 3 LLM even though it arrives as a single
 preference item from step 2.
 
-**Example dealbreakers (demoted):** "centers around zombies", "involves female
+**Example dealbreakers:** "centers around zombies", "involves female
 empowerment themes", "contains car chases" (distinct traits that define what
-kind of movie the user wants — binary-ish, evaluated via vector thresholding)
+kind of movie the user wants — scored via elbow-calibrated similarity)
 
 **Example preferences (grouped):** "funny, dark, and thought-provoking with a
 cozy date night vibe" (qualifiers on the desired experience, consolidated into
@@ -1449,56 +1626,25 @@ IDs and computing cosine similarity — not issuing a SQL query.
 
 ### Phase 4a: Candidate Generation Assembly
 
-Collect all candidate sets produced by dealbreaker execution in step 3.5. Each
-inclusion dealbreaker produces its own independent candidate set.
+Collect all candidate sets produced by inclusion dealbreaker execution in
+step 3.5. Deterministic endpoints (entity, metadata, awards,
+franchise_structure, keyword, trending) each return a set of movie IDs.
+Semantic dealbreakers do NOT generate candidates — deterministic endpoints
+are the sole source of candidate IDs.
 
-- **Deterministic dealbreakers** (entity, metadata, awards, franchise_structure,
-  keyword, trending): Each search returns a set of movie IDs. These are
-  binary — a movie is in the set or not.
-- **Semantic dealbreakers are NOT used for candidate generation.** Any
-  dealbreaker routed to `semantic` is demoted to a preference for scoring
-  purposes (see Semantic Dealbreaker Demotion below).
+Union and deduplicate across all inclusion dealbreaker candidate sets to
+produce the full candidate pool.
 
-Union and deduplicate across all inclusion dealbreaker candidate sets. Each
-movie receives a count of how many inclusion dealbreaker sets it appeared in.
-This count determines its tier.
-
-**Tiering rule:** A movie that matches N inclusion dealbreakers can never rank
-above a movie that matches N+1 inclusion dealbreakers, regardless of preference
-scores. Tiers are strict partitions.
-
-### Semantic Dealbreaker Demotion
-
-**Rationale:** Empirical testing confirmed that semantic (vector) search is
-unreliable as a candidate generator. The Sixth Sense scores only 82% of max
-for "twist ending" in narrative_techniques — not appearing in the top 1000.
-"Funny horror" has zero intersection between vector candidate sets. Semantic
-search works well for scoring/ranking but poorly for generating complete
-candidate sets.
-
-**Rule:** When a dealbreaker is routed to `semantic`, it is automatically
-treated as a high-weight preference rather than a candidate generator. It
-does not produce a candidate set and does not count toward the tier denominator.
-Instead, it influences ranking within tiers with elevated weight compared to
-regular preferences.
-
-**Minimum floor:** A demoted semantic dealbreaker still imposes a minimum
-relevance floor. Candidates with essentially no semantic match to the stated
-concept should not be treated as if they satisfied that user requirement. The
-exact floor calibration is deferred to implementation.
-
-**Pure-vibe queries:** When no non-semantic inclusion dealbreakers exist, the
-query enters the pure-vibe flow as a separate codepath (see below). This
-includes both "all dealbreakers are semantic" and "only semantic inclusions plus
-deterministic exclusions" (e.g., "good date night movies not with adam sandler"
-— date night is semantic, adam sandler is an entity exclusion). The flow control
-checkpoint happens immediately after step 2 output is inspected: if no
-deterministic inclusion dealbreaker exists, reroute to pure-vibe.
+**Pure-vibe checkpoint:** If no deterministic inclusion dealbreaker exists
+(all inclusion dealbreakers route to semantic), reroute to the pure-vibe flow
+(see below). This includes "only semantic inclusions plus deterministic
+exclusions" (e.g., "good date night movies not with adam sandler" — date night
+is semantic, adam sandler is an entity exclusion).
 
 ### Phase 4b: Exclusion Handling
 
-Exclusions are applied after candidate generation. They do NOT count toward
-the tier denominator — tiers are based on inclusion match count only.
+Exclusions are applied after candidate generation. They do NOT contribute to
+the dealbreaker sum — they filter or penalize candidates.
 
 **Deterministic exclusions** (entity, metadata, awards, franchise_structure,
 keyword): Hard filter. If a movie matches the exclusion criteria, it is
@@ -1507,74 +1653,179 @@ starring Arnold Schwarzenegger" can be definitively evaluated.
 
 **Semantic exclusions:** Cannot be hard-filtered because vector similarity
 doesn't give binary results. Instead, semantic exclusions use a
-global-elbow-calibrated penalty system:
+match-then-penalize approach:
 
-1. Run a vector search against the full movie corpus for the exclusion concept
-   (e.g., "clowns").
-2. Analyze the score distribution to find the elbow — the point where
-   similarity drops off sharply, separating movies that genuinely match the
-   concept from those that are merely adjacent.
-3. Apply penalties to candidates based on where they fall in the global
-   distribution:
-   - **Above the elbow:** High confidence this movie matches the excluded
-     concept -> harsh downrank
-   - **Near the elbow:** Uncertain -> softer downrank
-   - **Well below the elbow:** No meaningful match to the concept -> no penalty
+1. Run a semantic query for the excluded concept (e.g., "clowns") — searching
+   for movies where that attribute IS present and relevant, same as if it were
+   an inclusion dealbreaker.
+2. Score each candidate using the same elbow-calibrated scoring as semantic
+   inclusion dealbreakers: 1.0 above the elbow, gradual decay between elbow
+   and floor, 0.0 below the floor. This produces a `match_score` in [0, 1]
+   representing how strongly the movie matches the excluded concept.
+3. Subtract `E_MULT × match_score` from the movie's final score, where
+   **E_MULT** (exclusion multiplier) is initially set to **2.0**, subject to
+   empirical tuning.
 
-**Why penalty-only instead of hard removal?** Even with global calibration,
-semantic similarity is still too noisy in V1 to justify full exclusion. The
-global distribution is still the right reference frame, but the action taken
-should match the uncertainty of the signal: penalize heavily when confidence is
-high, taper the penalty near the elbow, and apply nothing once similarity is
-safely below the concept boundary.
+**Example:** "80s action hits not involving clowns." A movie scoring 0.9 on
+"clowns" (highly clown-centric) loses 1.8 points from its final score — a
+devastating penalty that pushes it well below movies with clean scores. A
+movie scoring 0.2 (tangentially related — maybe a circus scene) loses only
+0.4 points — noticeable but not fatal if it otherwise matches well. A movie
+scoring 0.0 (below the elbow floor) loses nothing.
 
-**Why global distribution, not candidate-relative:** If none of the candidates
-actually contain clowns, a candidate-relative approach would still penalize
-whichever candidate is most "clown-adjacent" (maybe a circus-themed movie with
-no actual clowns). The global search calibrates against what "actually has
-clowns" looks like across the full corpus, preventing false penalties.
+**Why penalty instead of hard removal?** Semantic similarity is too noisy to
+justify full exclusion. The multiplied penalty strongly discourages matches
+without creating binary cliff edges. The 2.0 multiplier means even a moderate
+match (0.5) costs a full dealbreaker's worth of score, making exclusions
+meaningful.
 
-**Open question:** The exact elbow detection method and penalty curve need
-empirical testing before full implementation. The elbow should be determined
-dynamically per concept since different concepts have different similarity
-distributions (see threshold calibration data in `open_questions.md`). A
-hard-coded percentage of max score won't work across all concept types.
+**Why global corpus for elbow calibration, not candidate-relative:** If none
+of the candidates actually contain clowns, a candidate-relative approach
+would still penalize whichever candidate is most "clown-adjacent." The global
+search calibrates against what "actually has clowns" looks like across the
+full corpus, preventing false penalties.
 
-### Phase 4c: Preference Scoring & Final Ranking
+### Phase 4c: Continuous Scoring & Final Ranking
 
-Score all remaining candidates on preferences and system-level priors. The
-combination works as:
+#### Scoring Model
 
-1. **Primary sort: tier** (inclusion dealbreaker match count, descending)
-2. **Secondary sort: preference + system-prior composite** (within each tier)
+The V2 scoring system uses a continuous model instead of strict tier
+partitioning. Every movie receives a single final score:
 
-**Preference scoring by route type:**
-- Deterministic preferences (metadata, keyword, awards, franchise_structure,
-  entity, trending): Gradient scoring where applicable. "Under 100 minutes"
-  at 101 minutes scores ~0.95, at 140 minutes scores much lower. Binary
-  attributes score 1.0 or 0.0.
-- Semantic preferences: Vector similarity scores, possibly with diminishing
-  returns curve.
-- If a preference is marked `is_primary_preference=true`, it becomes the
-  dominant within-tier ranking axis rather than one equal additive component.
+```
+final_score = dealbreaker_sum + preference_contribution - exclusion_penalties
+```
 
-**Tier assignment for metadata dealbreakers also uses gradients:** A generous
-threshold determines pass/fail for tier purposes (e.g., 101 minutes "passes"
-the "under 100 minutes" dealbreaker for tier credit), but the actual gradient
-score is used for within-tier ranking.
+Where:
+- `dealbreaker_sum` = sum of individual inclusion dealbreaker scores, each
+  in [0, 1]
+- `preference_contribution` = weighted average of all preference scores and
+  system priors, scaled by P_CAP (a constant < 1.0)
+- `exclusion_penalties` = sum of `E_MULT × match_score` for each semantic
+  exclusion dealbreaker (deterministic exclusions already hard-filtered in
+  Phase 4b). E_MULT is initially 2.0.
 
-**System-prior application:** Quality and notability priors are applied as
-separate within-tier signals using the 4-value enum
-(`enhanced`/`standard`/`inverted`/`suppressed`). When a strong primary
-preference exists and the priors are `suppressed`, they contribute minimally
-to within-tier ranking.
+**The key guarantee:** Since `preference_contribution` is capped below 1.0 and
+each dealbreaker contributes up to 1.0, preferences alone can never overcome
+one full dealbreaker miss. A movie matching all N dealbreakers fully will
+always outscore a movie missing one dealbreaker entirely, regardless of
+preference scores. But preferences CAN overcome partial dealbreaker misses,
+allowing near-matches with strong preference fit to rank above exact matches
+with weak preference fit.
+
+**P_CAP** is initially set to **0.9**, subject to empirical tuning.
+
+**Why continuous instead of tiers:** Strict tier partitioning requires a binary
+pass/fail decision for every dealbreaker. This works for naturally binary
+endpoints (entity, keyword, franchise, awards) but forces arbitrary threshold
+cliffs on metadata dealbreakers (what year stops counting as "the 80s"?) and
+made semantic dealbreakers impossible to tier (requiring demotion to
+preferences). The continuous model handles all endpoint types uniformly — binary
+endpoints produce 0.0 or 1.0, gradient endpoints produce continuous scores, and
+the formula handles both without special-casing.
+
+#### Dealbreaker Scoring by Endpoint
+
+Each inclusion dealbreaker produces a score in [0, 1]. The step 3 LLM produces
+a faithful literal translation of the requirement; deterministic code in the
+execution layer wraps the result with gradient functions for near-miss scoring.
+
+| Endpoint | Scoring behavior |
+|----------|-----------------|
+| **Entity** | Default binary (1.0/0.0). For actors without a user-specified prominence level, a billing-position gradient: 1.0 for top 15% billing (adjusted by cast size), decaying to floor of 0.8. When prominence is specified, gradient steepens. |
+| **Metadata** | Gradient. LLM produces a literal range (e.g., 1980-1989). Code wraps with attribute-specific decay: 1.0 within range, gradual decay outside. Gradient shapes follow the patterns in the existing `db/metadata_scoring.py`. |
+| **Awards** | Binary: movie has the specified award/ceremony/outcome or not. |
+| **Franchise** | Binary: movie matches the franchise name and/or structural role or not. |
+| **Keyword** | Binary: movie has the genre/keyword/concept-tag ID or not. |
+| **Semantic** | Continuous [0, 1] via elbow-calibrated cosine similarity. 1.0 above elbow, gradual decay between elbow and floor (calibrated by gap between max similarity and elbow), 0.0 below floor. Cannot generate candidates. |
+| **Trending** | Pass-through of precomputed trending score [0, 1]. |
+
+#### Preference Weighting Formula
+
+All preferences and system priors combine into a single preference
+contribution via weighted average, then scaled by P_CAP:
+
+```
+preference_contribution = P_CAP × ( Σ(w_i × score_i) / Σ(w_i) )
+```
+
+When no preferences or priors are active (denominator = 0),
+`preference_contribution` = 0.
+
+**Weight assignment:**
+
+| Signal type | Weight | Score source |
+|-------------|--------|--------------|
+| Regular preference | 1.0 | Endpoint-specific score in [0, 1] |
+| Primary preference | 3.0 | Same score, elevated weight dominates the average |
+| Quality prior (enhanced) | 1.5 | `reception_score` + `popularity_score` composite — high quality scores high |
+| Quality prior (standard) | 0.75 | Same composite, reduced influence |
+| Quality prior (inverted) | 1.5 | Endpoint queries/scores for poor reception — poorly received scores high |
+| Quality prior (suppressed) | 0.0 | Drops out entirely |
+| Notability prior (enhanced) | 1.5 | `popularity_score` — well-known scores high |
+| Notability prior (standard) | 0.75 | Same score, reduced influence |
+| Notability prior (inverted) | 1.5 | Endpoint queries/scores for obscurity — niche/unknown scores high |
+| Notability prior (suppressed) | 0.0 | Drops out entirely |
+
+All weight values are initial starting points subject to empirical tuning.
+
+**Multi-primary handling:** When multiple preferences are marked
+`is_primary_preference=true`, they all receive the primary weight (3.0) and
+share the elevated influence equally — co-primary, no tiebreaking by list
+order.
+
+**Behavior under different query types:**
+
+- **Pure constraint ("80s horror"):** No explicit preferences. Only system
+  priors participate (both standard by default). Preference contribution is
+  modest — well-known, well-reviewed movies get a small edge within each
+  dealbreaker score band.
+- **Constraint + vibes ("dark gritty 80s horror"):** Semantic preference for
+  "dark gritty" participates alongside standard priors. Movies that are both
+  well-reviewed AND dark/gritty score highest within each dealbreaker band.
+- **Superlative ("scariest movie ever"):** Primary preference dominates the
+  weighted average (weight 3.0 vs regular 1.0). Both priors suppressed
+  (weight 0). Ranking is driven almost entirely by the scare-factor score.
+- **Multiple primary ("best and scariest"):** Co-primary preferences share
+  elevated weight equally. Both contribute strongly to the average.
+- **Hidden gems ("underrated horror"):** Notability prior inverted — the
+  endpoint scores for obscurity (niche/unknown movies score high) rather than
+  popularity. Quality prior remains standard or enhanced.
+- **No preferences, both priors suppressed:** `preference_contribution` = 0.
+  Ranking is entirely by dealbreaker scores.
+
+#### Preference Scoring by Endpoint
+
+Each preference produces a raw score in [0, 1] for each candidate:
+
+| Endpoint | Scoring behavior |
+|----------|-----------------|
+| **Entity** | Binary presence (1.0/0.0), with billing-position gradient for actor preferences. |
+| **Metadata** | Gradient scoring per attribute type, same decay functions as metadata dealbreakers. |
+| **Awards** | Binary match, or count-based for "preferably award-nominated." |
+| **Franchise** | Binary match on structural attributes. |
+| **Keyword** | Binary (1.0 or 0.0). |
+| **Semantic** | Cosine similarity. Diminishing-returns curve for regular preferences; raw preserved similarity for primary preferences. |
+| **Trending** | Pass-through of precomputed trending score [0, 1]. |
+
+**Scoring modes applied to raw scores:**
+
+- **Preserved similarity** — For primary preferences. Raw score is the
+  ranking signal. "Scariest ever" needs full-spectrum differentiation.
+- **Diminishing returns** — For regular semantic preferences. Marginal gains
+  decrease at high similarity. Being "somewhat funny" matters more than the
+  gap between "very funny" and "extremely funny."
+- **Pass-through** — For deterministic preferences (binary or gradient scores
+  used as-is).
+- **Sort-by** — For explicit sort preferences ("chronological", "most recent
+  first"). Expressed as a primary preference with the structured value as the
+  dominant ranking signal.
 
 **All preferences are positive (traits to promote).** Negative user intent is
 reframed: "not recent" becomes a preference for older films, "not scary"
 becomes a preference matching "not scary" in vector space. Anything conceptual
 enough to be a hard exclusion ("not zombie," "not with clowns") is a
-dealbreaker, not a preference. This eliminates the need for a direction field
-on preferences.
+dealbreaker, not a preference.
 
 ---
 
@@ -1588,10 +1839,10 @@ control checkpoint immediately after step 2 completes.
 
 ### How It Works
 
-1. All semantic dealbreakers become preferences (there are no dealbreakers for
-   tiering since there are no deterministic anchors).
+1. Vector search generates the candidate pool (since no deterministic endpoints
+   can). Each semantic dealbreaker gets its own step 3 LLM call as usual.
 2. The step 3 semantic endpoint determines relevant vector spaces and generates
-   search queries. A single LLM call handles relative importance across spaces.
+   search queries per dealbreaker/preference item.
 3. **Individual searches per concept** across relevant spaces. Synonymous
    concepts are already consolidated by step 2, so each search represents a
    distinct semantic axis. Union top-N results across all searches.
@@ -1600,7 +1851,11 @@ control checkpoint immediately after step 2 completes.
    movies that are near-misses in one space but strong in others.
 5. Apply a **minimum similarity threshold per space** to avoid noise. A movie
    with 0.15 similarity to "lighthearted" shouldn't get credit for that score.
-6. Combine scores across spaces and apply system-level priors.
+6. Apply the standard scoring formula: `dealbreaker_sum +
+   preference_contribution - exclusion_penalties`. Semantic dealbreaker scores
+   contribute to `dealbreaker_sum` using elbow-calibrated scoring (same as the
+   standard flow). Preferences and priors contribute to
+   `preference_contribution` (same formula, same P_CAP).
 
 ### Why Individual Searches, Not Combined
 
@@ -1639,79 +1894,81 @@ awards, franchise structure, trending) produce reliable, complete candidate
 sets. Semantic similarity is applied afterward to score and rank those
 candidates.
 
-### 2. Each dealbreaker runs independently
+### 2. Each dealbreaker runs and scores independently
 
 A query can have multiple dealbreakers, and each produces its own candidate
-set. Movies are tiered by how many dealbreaker sets they appeared in. This
-means the system naturally handles partial matches — when no movie meets all
-dealbreakers, the best partial matches surface first.
+set and its own [0, 1] score. The sum of dealbreaker scores is the primary
+ranking signal. This naturally handles partial matches — when no movie meets
+all dealbreakers perfectly, the best partial matches surface first based on
+their total dealbreaker scores.
 
 **Intentional simplification:** V1 does not add explicit boolean clause/group
-logic on top of this. For the kinds of OR-style queries currently expected,
-match-count tiering is considered good enough, and the extra logic is deferred
-unless real query failures prove it necessary.
+logic. For OR-style queries, the continuous scoring model degrades gracefully
+— a movie matching either branch gets partial credit. Explicit boolean logic
+is deferred unless real query failures prove it necessary.
 
 ### 3. Exclusions are separate from inclusions
 
-Inclusion dealbreakers generate candidates and determine tier placement.
-Exclusion dealbreakers filter or penalize candidates after generation.
-Exclusions do not count toward the tier denominator. A movie that passes 2/2
-inclusions but fails an exclusion is handled differently than a movie that
-passes 1/2 inclusions — the exclusion failure results in removal or harsh
-penalty, not a lower tier.
+Inclusion dealbreakers generate candidates and contribute to the dealbreaker
+sum. Exclusion dealbreakers filter or penalize candidates after generation.
+Exclusions do not contribute to the dealbreaker sum. A movie that passes all
+inclusions but fails an exclusion is hard-removed (deterministic) or
+penalized (semantic) — a different treatment than simply missing an inclusion
+dealbreaker.
 
-### 4. Semantic dealbreakers demote to preferences
+### 4. Semantic dealbreakers score but don't generate candidates
 
 When a concept can only be evaluated via vector similarity (no keyword, entity,
-or metadata coverage), it cannot reliably generate candidates. It is
-automatically demoted to a high-weight preference that influences ranking
-rather than candidate generation. When no non-semantic inclusion dealbreakers
-exist, the query enters the pure-vibe flow as a separate codepath.
+or metadata coverage), it cannot reliably generate candidates. Semantic
+dealbreakers still produce a continuous [0, 1] score (via elbow-calibrated
+cosine similarity) that contributes to the dealbreaker sum, but they do not
+generate candidate sets. The operational distinction is candidate generation
+only — for scoring purposes, semantic dealbreakers participate fully alongside
+deterministic dealbreaker scores. When no non-semantic inclusion dealbreakers
+exist, the query enters the pure-vibe flow where vector search generates
+candidates.
 
 ### 5. A single requirement can produce both a dealbreaker and a preference
 
 Some user requirements are best satisfied by querying two different endpoints
 in two different roles — a deterministic dealbreaker for candidate generation
-(+1 tier) and a semantic preference for within-tier ranking. This is not
-double-counting: the dealbreaker and preference serve structurally different
-purposes (binary membership vs. degree/centrality scoring) and target
-different endpoints.
+and scoring, plus a semantic preference for degree/centrality ranking. This is
+not double-counting: the dealbreaker and preference serve structurally
+different purposes (binary membership vs. degree scoring) and target different
+endpoints.
 
 **Examples:**
-- "Scary movies" → keyword dealbreaker (Horror genre, candidate generation) +
-  semantic preference ("scary," ranks by how scary within the horror set)
+- "Scary movies" → keyword dealbreaker (horror-compatible classification,
+  candidate generation +
+  1.0 in dealbreaker sum) + semantic preference ("scary," ranks by how scary)
 - "Revenge on a bully" → keyword dealbreaker (concept_tag: revenge, candidate
   generation) + semantic preference ("revenge on a bully," ranks by
-  specificity within the revenge set)
+  specificity)
 - "Christmas movies" → keyword dealbreaker (Holiday keyword, candidate
-  generation) + semantic preference (Christmas centrality, ranks by how
-  central Christmas is to the movie)
+  generation) + semantic preference (Christmas centrality scoring)
 
 The general pattern: the deterministic endpoint answers "does this movie have
-this trait?" (membership), and the semantic endpoint answers "how much?"
-(degree). The dealbreaker contributes +1 to tiering; the preference
-influences ranking within tiers. No tier inflation occurs because only the
-dealbreaker counts toward the tier denominator.
-
-This pattern is a superset of the thematic centrality pattern described under
-Endpoint 5 — thematic centrality is one instance, but the pattern also
-covers cases where the preference captures specificity or nuance beyond
-what the binary tag can express.
+this trait?" (membership + dealbreaker score), and the semantic endpoint
+answers "how much?" (degree, in the preference contribution). No score
+inflation occurs because the dealbreaker and preference feed different parts
+of the scoring formula.
 
 **Compound dealbreakers were considered and deferred.** We evaluated whether a
 single requirement should ever produce dealbreakers across multiple endpoints
 (e.g., "remakes" spanning both source_material_type and
 franchise_structure.lineage_position). The genuine cases are narrow enough
 that V1 does not introduce a compound-dealbreaker or group_id mechanism.
-If real queries expose tier inflation from a single concept hitting multiple
+If real queries expose score inflation from a single concept hitting multiple
 dealbreaker endpoints, this can be revisited.
 
 ### 6. System-level priors are separate, explicit dimensions
 
-Quality bias is not baked into the query rewrite or treated as a preference.
-The design now explicitly recognizes that conventional quality and
-notability/mainstreamness are distinct dimensions. The finalized decision is to
-keep them separate conceptually; the exact field shape remains open.
+Quality and notability biases are not baked into the query rewrite. They are
+independent dimensions that participate in the preference composite with their
+own weight schedules (enhanced/standard/inverted/suppressed). Quality uses a
+`reception_score` + `popularity_score` composite; notability uses
+`popularity_score`. Both contribute to the weighted average in the preference
+contribution formula alongside explicit preferences.
 
 ### 7. Step 2 interprets intent; step 3 knows schemas
 
@@ -1722,41 +1979,79 @@ pre-interpreted intent. This split keeps each LLM's task tractable for smaller,
 faster models without asking the step 2 model to also carry every exact enum,
 matching rule, keyword definition, and low-level source-specific nuance.
 
-### 8. Metadata constraints use gradients, not binary filters
+### 8. Gradients are deterministic code, not LLM output
 
 NLP-extracted numeric and temporal constraints use gradient scoring rather than
 hard cutoffs. This prevents missing obviously relevant results when users are
-imprecise (which they frequently are). Tier assignment uses a generous threshold
-for pass/fail; within-tier ranking uses the actual gradient score.
+imprecise (which they frequently are). The gradient logic lives in
+deterministic execution code, not in the LLM output — the step 3 LLM produces
+a faithful literal translation (e.g., 1980-1989), and execution code wraps it
+with per-attribute decay functions. This separation keeps LLM tasks simple and
+gradient behavior consistent and tunable without prompt changes.
+
+### 9. Preferences can overcome partial matches, never full matches
+
+The preference contribution is capped below 1.0 (P_CAP = 0.9). Since each
+dealbreaker contributes up to 1.0, preferences can never overcome one full
+dealbreaker miss. But they CAN overcome partial dealbreaker misses — a movie
+from 1990 with great preference fit can outscore a movie from 1985 with weak
+preference fit when both are evaluated against an "80s movies" dealbreaker.
+This makes the system responsive to overall fit rather than rigidly
+partitioning by dealbreaker match count.
+
+### 10. Step 3 LLMs are direction-agnostic
+
+Step 3 LLMs always search for the positive presence of an attribute. They do
+not receive the `direction` field and have no knowledge of whether their
+results will be used for inclusion or exclusion. The step 2 `description`
+field is always written in positive-presence form. Inclusion/exclusion logic
+is handled entirely by deterministic code in step 4. This prevents
+double-negation confusion, keeps each LLM's task clean, and ensures the
+system always searches for "movies WITH X" rather than the logically useless
+"movies WITHOUT X" (~150K results). See Direction-Agnostic Framing in Step 3
+for the full specification.
 
 ---
 
-## Scoring Function Modes (from prior planning, unchanged)
+## Scoring Function Modes
 
-Four scoring modes apply to different attribute types:
+Four scoring modes apply to raw scores produced by endpoints. The mode is
+determined by the item's role (dealbreaker vs. preference, primary vs.
+regular), not by the endpoint type:
 
-- **Threshold + flatten** — For dealbreakers. Similarity >= threshold -> 1.0
-  (passes), below -> decay. Used for determining if a movie "has" an attribute.
-- **Preserved similarity** — For superlatives. Raw similarity score is the
+- **Threshold + flatten** — For semantic dealbreaker scoring. Similarity
+  above the elbow → 1.0, below → decay toward 0.0 calibrated by the gap
+  between max similarity and elbow. Below floor → 0.0. Used for determining
+  if a movie genuinely has a semantic trait.
+- **Preserved similarity** — For primary preferences. Raw score is the
   ranking signal. "Scariest movie ever" needs to differentiate between
   "very scary" and "somewhat scary."
-- **Diminishing returns** — For preferences. Marginal gains decrease as
-  similarity increases. Being "somewhat funny" matters more than the difference
-  between "very funny" and "extremely funny."
-- **Sort-by** — For explicit ranking axes like "critically acclaimed" or
-  "chronological." A structured signal (reception score, release date) is the
-  primary sort key.
+- **Diminishing returns** — For regular semantic preferences. Marginal gains
+  decrease as similarity increases. Being "somewhat funny" matters more than
+  the gap between "very funny" and "extremely funny."
+- **Pass-through** — For deterministic endpoint scores (binary or gradient).
+  Used as-is since the gradient logic already lives in the execution layer.
+- **Sort-by** — For explicit sort preferences ("chronological", "most recent
+  first"). Expressed as a primary preference where the structured value
+  (release date, reception score) is the dominant ranking signal.
 
 ---
 
 ## Decisions Deferred to Implementation
 
 - Exact step 2 prompt engineering (few-shot examples, chain-of-thought format)
-- Exact elbow detection algorithm for semantic exclusion thresholds
+- Exact elbow detection algorithm for semantic dealbreaker scoring and
+  exclusion thresholds, with fallback percentage-of-max when elbow detection
+  fails
 - Step 3 prompt design per endpoint
+- Step 3 output schemas per endpoint
 - Specific candidate pool size limits per endpoint
-- Exact gradient decay functions for metadata constraint scoring
-- Tier assignment threshold calibration (how generous is "passing"?)
+- Exact gradient decay functions per metadata attribute (date ranges, runtime,
+  maturity, etc.), taking heavy inspiration from existing `db/metadata_scoring.py`
+- P_CAP empirical tuning (starting at 0.9)
+- E_MULT empirical tuning (semantic exclusion multiplier, starting at 2.0)
+- Preference weight values (W_PRIMARY = 3.0, W_PRIOR values) empirical tuning
+- Actor billing-position gradient calibration (top 15% threshold, 0.8 floor)
 - Whether the keyword endpoint LLM is a separate call or folded into step 2
 - Result pagination for long lists: return top 25 initially, cache the full
   candidate/display list in Redis, and allow fetching additional pages via
