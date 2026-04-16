@@ -1682,3 +1682,121 @@ async def fetch_movie_ids_by_term_ids(
     """
     search_results = await _execute_read(query, (term_ids,))
     return {row[0] for row in search_results}
+
+
+# ===============================
+#     ENTITY ENDPOINT HELPERS
+# ===============================
+#
+# Read helpers dedicated to the step 3 entity endpoint
+# (search_v2/stage_3/entity_query_execution.py). Kept here so SQL for
+# the lexical schema lives in one place.
+
+
+async def fetch_character_strings_exact(phrases: list[str]) -> dict[str, int]:
+    """Exact-match normalized character phrases against lex.character_strings.
+
+    The entity endpoint treats each character name variation as an
+    exact-string lookup (the LLM is prompted to produce the most common
+    credited form). Caller must normalize phrases with normalize_string()
+    before passing them in — matching policy is exact-string equality
+    after that shared normalization.
+
+    Args:
+        phrases: Normalized character phrase strings.
+
+    Returns:
+        Mapping of norm_str → string_id for every phrase that exists.
+        Phrases absent from the dictionary are silently omitted.
+    """
+    if not phrases:
+        return {}
+
+    query = """
+        SELECT norm_str, string_id
+        FROM lex.character_strings
+        WHERE norm_str = ANY(%s::text[])
+    """
+    rows = await _execute_read(query, (phrases,))
+    return {row[0]: row[1] for row in rows}
+
+
+async def fetch_actor_billing_rows(
+    term_ids: list[int],
+    restrict_movie_ids: Optional[set[int]] = None,
+) -> list[tuple[int, int, int]]:
+    """Fetch (movie_id, billing_position, cast_size) for actor term_ids.
+
+    Used by the entity endpoint's actor prominence scoring. Unlike
+    fetch_movie_ids_by_term_ids, this returns per-row billing data so
+    the caller can compute zone-based prominence scores.
+
+    Args:
+        term_ids: Resolved string IDs for actor names.
+        restrict_movie_ids: Optional candidate-pool filter (used by
+            preference execution to narrow the scan to the pool).
+
+    Returns:
+        List of (movie_id, billing_position, cast_size) tuples. Rows
+        with NULL billing_position or cast_size are filtered out (they
+        carry no prominence signal).
+    """
+    if not term_ids:
+        return []
+
+    params: list = [term_ids]
+    restrict_clause = ""
+    if restrict_movie_ids:
+        restrict_clause = " AND movie_id = ANY(%s::bigint[])"
+        params.append(list(restrict_movie_ids))
+
+    # billing_position and cast_size are NOT NULL on the schema, but the
+    # IS NOT NULL gates defend against any future schema drift where a
+    # legacy upsert path leaves them unset — per the entity endpoint's
+    # "skip rows with missing billing data" execution rule.
+    query = f"""
+        SELECT movie_id, billing_position, cast_size
+        FROM lex.inv_actor_postings
+        WHERE term_id = ANY(%s::bigint[]){restrict_clause}
+          AND billing_position IS NOT NULL
+          AND cast_size IS NOT NULL
+          AND cast_size > 0
+    """
+    rows = await _execute_read(query, params)
+    return [(row[0], row[1], row[2]) for row in rows]
+
+
+async def fetch_movie_ids_with_title_like(
+    like_pattern: str,
+    restrict_movie_ids: Optional[set[int]] = None,
+) -> set[int]:
+    """Case-insensitive LIKE match of a title pattern against public.movie_card.title.
+
+    The entity endpoint title_pattern sub-type routes here. The caller
+    is responsible for preparing the LIKE pattern: (1) normalize the
+    raw user pattern with normalize_string, (2) escape LIKE wildcards
+    via escape_like, (3) wrap with '%' on both sides for contains or
+    suffix '%' for starts_with.
+
+    Args:
+        like_pattern: Fully formed LIKE pattern (e.g. "%love%", "the %").
+        restrict_movie_ids: Optional candidate-pool filter used by
+            preference execution. Pushed to the DB to avoid pulling
+            back every match for high-cardinality patterns.
+
+    Returns:
+        Set of movie IDs whose title matches the pattern.
+    """
+    params: list = [like_pattern]
+    restrict_clause = ""
+    if restrict_movie_ids:
+        restrict_clause = " AND movie_id = ANY(%s::bigint[])"
+        params.append(list(restrict_movie_ids))
+
+    query = f"""
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE title ILIKE %s{restrict_clause}
+    """
+    rows = await _execute_read(query, params)
+    return {row[0] for row in rows}

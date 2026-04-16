@@ -1423,17 +1423,107 @@ matching.
 - "movies that started a franchise" (launcher)
 - "preferably not a sequel" (preference)
 
-**Candidate generation (dealbreakers):** Handles two kinds of dealbreakers:
-- **Franchise name** — fuzzy-matches the lineage/shared_universe columns to
-  produce a candidate set of movie IDs.
-- **Structural role** — filters on lineage_position, is_spinoff, is_crossover,
-  etc.
-When both appear in the same query ("Marvel spinoffs"), this endpoint handles
-both as separate dealbreakers, and the continuous scoring model handles the
-intersection (a movie matching both gets higher dealbreaker sum).
+**Step 3 output schema:** `schemas/franchise_translation.py` —
+`FranchiseQuerySpec`. Flat model with nullable per-axis fields, preceded
+by two scoped reasoning fields that scaffold the high-stakes decisions
+(which axes to populate, and how many canonical name variations to
+emit). Seven searchable axes, any combination of which may be populated:
 
-**Preference scoring:** Binary match on structural attributes, or gradient
-scoring if applicable (e.g., franchise recency).
+1. `lineage_or_universe_names` — up to 3 canonical name variations, always
+   searched against both `lineage` and `shared_universe` columns via
+   `lex.inv_franchise_postings`. Both columns are searched together because
+   the ingest LLM can legitimately place the same brand in either slot
+   (Shrek vs. Puss in Boots). Variations cover genuinely different canonical
+   names in common use (e.g., "Marvel Cinematic Universe" vs. "Marvel";
+   "The Lord of the Rings" vs. "Middle-earth"); trigram fuzzy match already
+   handles spelling/punctuation drift so spelling variants are not added.
+2. `recognized_subgroups` — up to 3 canonical subgroup-name variations,
+   applied as trigram similarity on the normalized subgroup labels of the
+   post-lookup result set (3-30 movies). Only valid when
+   `lineage_or_universe_names` is populated.
+3. `lineage_position` — `LineagePosition` enum (SEQUEL / PREQUEL / REMAKE /
+   REBOOT). REMAKE is retained in the enum for ingest fidelity but is not
+   typically consumed at search time — generic remake queries route to the
+   keyword endpoint via `source_material_type`.
+4. `is_spinoff`, `is_crossover`, `launched_franchise`, `launched_subgroup`
+   — boolean filters. Direction-agnostic: only `True` or `None` are
+   meaningful; `False` is never emitted (exclusion is a step 4 concern).
+
+**Reasoning fields (cognitive scaffolding):** Two scoped reasoning
+fields precede the decisions they ground, following the entity and
+metadata endpoint pattern:
+
+1. `concept_analysis` (required, emitted FIRST) — evidence-inventory
+   trace that quotes signal phrases from `description` and
+   `intent_rewrite` and pairs each with the specific axis it
+   implicates (franchise name phrase → `lineage_or_universe_names`,
+   "sequel/prequel/reboot" → `lineage_position`, "spinoff" →
+   `is_spinoff`, "crossover/team-up" → `is_crossover`, "started/
+   launched a franchise" → `launched_franchise`, "started/launched a
+   phase/saga" → `launched_subgroup`, named sub-series/phase label →
+   `recognized_subgroups`). Explicit-absence paths are required —
+   "no signal for lineage_position" is a valid trace. Grounds
+   axis presence/absence in cited text rather than pattern matching
+   on the franchise word. Also surfaces ambiguity ("started the
+   MCU" — launcher of franchise vs. subgroup?) so the boolean
+   choice is deliberate.
+
+2. `name_resolution_notes` (nullable, emitted BEFORE
+   `lineage_or_universe_names`) — brief parametric-knowledge
+   inventory of alternate canonical forms of the IP identified in
+   `concept_analysis`. Telegraphic form ("Marvel Cinematic Universe;
+   Marvel" / "Star Wars" / sentinel "not applicable — purely
+   structural"). Scaffolds list length (1 vs. 2 vs. 3) for both
+   `lineage_or_universe_names` and `recognized_subgroups` by
+   forcing the model to enumerate alternates before committing.
+   Excludes spelling/punctuation variants (trigram on the posting
+   table handles those). Sentinel-nullable when the query is
+   purely structural.
+
+No per-boolean reasoning fields — the step 3 franchise LLM translates
+an already-classified query rather than classifying a movie from source
+data (unlike the ingest-side `FranchiseOutput`, which has six reasoning
+fields). Once `concept_analysis` has cited signal phrases, the
+boolean/enum axes follow near-mechanically; adding per-axis traces would
+inflate output tokens on simple queries and steal cognitive budget from
+the actually-hard decision (canonical-name expansion).
+
+**Prompt reuse:** The step 3 franchise prompt must inherit the
+canonical-naming rule, subgroup definition, spinoff/crossover definitions,
+and `launched_franchise` four-part test from the ingest-side generator
+(`movie_ingestion/metadata_generation/prompts/franchise.py`) so the search
+LLM and ingest LLM write into the same slots. Factor shared guidelines
+into a common snippet if practical.
+
+**Candidate generation (dealbreakers):** Step 2 sends one distinct concept
+per call. If that concept populates multiple axes (e.g., "Marvel spinoffs"
+populates both `lineage_or_universe_names` and `is_spinoff`), execution
+treats them as **AND** — the movie must match every populated axis.
+Compound concepts that span genuinely separate concerns (franchise name AND
+a structural role described independently in the query) arrive as separate
+dealbreakers from step 2; the continuous scoring model handles the
+intersection via the dealbreaker sum.
+
+**Fallback for zero-result franchise names:** No separate fallback — if
+none of the 1-3 `lineage_or_universe_names` variations match the posting
+table, the dealbreaker produces zero candidates and the continuous scoring
+model naturally degrades. The multiple-variation strategy above is the
+primary mitigation; obscure franchises that miss anyway are accepted.
+
+**Candidate pool size limit:** None. Franchise result sets are naturally
+small (3-30 movies per franchise); no cap needed.
+
+**Scoring (dealbreakers and preferences): binary — 1.0 if the movie
+matches every populated axis, 0.0 otherwise.** Every franchise axis is
+categorical membership (in the posting-table result set or not; has the
+`LineagePosition` enum value or not; boolean is true or not), with no
+underlying spectrum. This puts the endpoint alongside awards and keyword
+rather than entity or metadata, which have gradients only because their
+underlying signals (billing position, release date, runtime) are
+genuinely continuous. Multiple name variations under
+`lineage_or_universe_names` are alternate attempts at the same concept,
+not independent signals — any variation matching scores full credit. A
+franchise-recency gradient was considered and dropped for V1.
 
 ### Endpoint 5: Keywords & Concept Tags
 
@@ -1915,6 +2005,28 @@ mechanism: the step 3 semantic LLM produces expanded search queries and target
 vector spaces, and execution means fetching stored vectors for the candidate
 IDs and computing cosine similarity — not issuing a SQL query.
 
+### Endpoint Return Shape
+
+Every endpoint execution function — for both dealbreakers and preferences,
+across all endpoint types — returns the same shape: an `EndpointResult`
+containing a list of `ScoredCandidate` objects, each a `(movie_id, score)`
+pair with `score ∈ [0, 1]`. The schema lives in `schemas/endpoint_result.py`.
+
+The endpoint function is intentionally thin: it runs its query and emits raw
+per-movie scores. All role-specific interpretation — direction (inclusion vs.
+exclusion), exclusion mode (hard-filter vs. semantic penalty with E_MULT),
+preference weighting (regular 1.0 vs. primary 3.0 vs. prior weights), and
+scoring mode (preserved similarity vs. diminishing returns vs. pass-through)
+— is handled by the orchestrator when it wraps the returned scores with the
+metadata from the originating step 2 item. This keeps endpoint code uniform
+and keeps scoring policy in one place.
+
+For deterministic inclusion dealbreakers, the returned `scores` list also
+defines that dealbreaker's contribution to the candidate pool in Phase 4a.
+For semantic dealbreakers and all preferences, the orchestrator supplies the
+assembled candidate IDs as an execution input and the endpoint returns one
+entry per supplied ID (non-matches at score 0.0).
+
 ---
 
 ## Step 4: Assembly & Reranking
@@ -2341,8 +2453,10 @@ regular), not by the endpoint type:
 - Step 3 prompt design per endpoint
 - Step 3 output schemas per endpoint (metadata endpoint complete:
   `schemas/metadata_translation.py`; entity endpoint complete:
-  `schemas/entity_translation.py`; remaining endpoints pending)
-- Specific candidate pool size limits per endpoint (entity endpoint: no limit)
+  `schemas/entity_translation.py`; franchise endpoint complete:
+  `schemas/franchise_translation.py`; remaining endpoints pending)
+- Specific candidate pool size limits per endpoint (entity endpoint: no
+  limit; franchise endpoint: no limit)
 - Exact gradient decay functions per metadata attribute (date ranges, runtime,
   maturity, etc.), taking heavy inspiration from existing `db/metadata_scoring.py`.
   Includes country-of-origin position gradient (position 1 = 1.0, position 2 =

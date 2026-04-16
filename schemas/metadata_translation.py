@@ -177,14 +177,17 @@ class CountryOfOriginTranslation(BaseModel):
 # fields matching the step 2 descriptions it receives; all others
 # remain null.
 #
-# target_attribute is the first field — the LLM identifies which
-# single column best represents the step 2 description BEFORE
-# populating any attribute fields. Execution code queries ONLY the
-# column identified by target_attribute for candidate generation
-# (dealbreakers) and scoring (preferences). The LLM may still
-# populate other attribute fields for context, but only the
-# target drives the query. This guarantees one metadata item =
-# one column query = one [0, 1] score.
+# Field ordering follows cognitive-scaffolding progression:
+#   1. constraint_phrases  — evidence inventory (grounds routing)
+#   2. target_attribute    — single-column routing decision
+#   3. value_intent_label  — brief literal-meaning label (primes sub-object)
+#   4. attribute sub-objects (only the target one is populated)
+#
+# Execution code queries ONLY the column identified by
+# target_attribute for candidate generation (dealbreakers) and
+# scoring (preferences). The LLM may still populate other attribute
+# fields for context, but only the target drives the query. This
+# guarantees one metadata item = one column query = one [0, 1] score.
 #
 # The dealbreaker/preference classification is not repeated here —
 # it flows through from step 2's Dealbreaker.direction and
@@ -193,7 +196,20 @@ class CountryOfOriginTranslation(BaseModel):
 class MetadataTranslationOutput(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
+    # Evidence inventory. Populated BEFORE target_attribute so that
+    # routing is grounded in actual input text rather than pattern
+    # matching. Distinguishes near-collisions like "French films"
+    # (country signal) vs "French audio" (language signal).
+    constraint_phrases: list[str] = Field(default=[])
+
     target_attribute: MetadataAttribute = Field(...)
+
+    # Brief literal-meaning label. Populated BETWEEN target_attribute
+    # and the sub-objects to prime match_operation direction, numeric
+    # boundary choice, and list-expansion completeness for the sub-
+    # object that follows. Label form only — not a sentence, not a
+    # justification, not a restatement of sub-object values.
+    value_intent_label: str = Field(..., max_length=80)
 
     release_date: Optional[ReleaseDateTranslation] = Field(default=None)
     runtime: Optional[RuntimeTranslation] = Field(default=None)

@@ -23,6 +23,13 @@ from schemas.enums import (
     TitlePatternMatchType,
 )
 
+# Which person_category values cause the actor posting table to
+# participate in the search. broad_person unions all five role tables
+# (including actor); actor targets the actor table directly.
+_ACTOR_TABLE_CATEGORIES: frozenset[PersonCategory] = frozenset(
+    {PersonCategory.ACTOR, PersonCategory.BROAD_PERSON}
+)
+
 
 # Step 3 entity endpoint output.
 #
@@ -30,16 +37,28 @@ from schemas.enums import (
 # entity_name and entity_type for all lookups, then fills only the
 # fields relevant to that entity type (others null).
 #
+# Two scoped reasoning fields precede the decisions they scaffold:
+#   entity_analysis      → scaffolds entity_name, entity_type,
+#                          and person_category
+#   prominence_evidence  → scaffolds actor_prominence_mode
+#
 # Field ordering:
+#   entity_analysis — evidence inventory for identity + canonical name
 #   entity_name — the primary search key, always required
 #   entity_type — classifies which sub-type logic applies
 #   person_category — narrows person searches to specific role tables
 #   primary_category — cross-posting anchor for broad_person searches
+#   prominence_evidence — evidence inventory for prominence language
 #   actor_prominence_mode — billing-position scoring for actor results
 #   title_pattern_match_type — contains vs starts_with for title searches
 #   character_alternative_names — additional credited name variations
 class EntityQuerySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    # Evidence-inventory reasoning that scaffolds entity_name,
+    # entity_type, and (for persons) person_category. Must be emitted
+    # BEFORE those fields. Guidance lives in the system prompt.
+    entity_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
 
     # The corrected, normalized name or pattern to search for.
     # Person: "Christopher Nolan". Character: "The Joker".
@@ -62,6 +81,16 @@ class EntityQuerySpec(BaseModel):
     # role value — broad_person is silently coerced to null by the
     # validator below.
     primary_category: PersonCategory | None = Field(default=None)
+
+    # Evidence-inventory reasoning that scaffolds actor_prominence_mode.
+    # Only populated when the entity search touches the actor table
+    # (entity_type == person AND person_category in {actor,
+    # broad_person}); otherwise null (or the string "not applicable",
+    # per the abstention path defined in the system prompt). Must be
+    # emitted BEFORE actor_prominence_mode.
+    prominence_evidence: constr(strip_whitespace=True, min_length=1) | None = Field(
+        default=None,
+    )
 
     # How to score actor billing position. Only meaningful when
     # person_category is actor or broad_person (determines how the
@@ -87,11 +116,26 @@ class EntityQuerySpec(BaseModel):
 
     # --- Validators ---
 
-    # broad_person is not a valid anchor — it means "search all
-    # tables", which is the person_category's job. Coerce to null
-    # so execution code doesn't need to handle this case.
+    # Two structural coercions applied post-parse so execution code
+    # does not need to re-implement the same defaults:
+    #   (1) primary_category cannot be broad_person — that value means
+    #       "search all tables", which is already the person_category's
+    #       responsibility. Coerce to null.
+    #   (2) actor_prominence_mode defaults to DEFAULT whenever the
+    #       actor posting table is part of the search (entity_type is
+    #       person AND person_category is actor or broad_person) and
+    #       the LLM left it null. Matches the execution-layer default
+    #       described in the finalized proposal.
     @model_validator(mode="after")
-    def coerce_broad_person_primary(self) -> "EntityQuerySpec":
+    def _normalize_person_fields(self) -> "EntityQuerySpec":
         if self.primary_category == PersonCategory.BROAD_PERSON:
             self.primary_category = None
+
+        if (
+            self.entity_type == EntityType.PERSON
+            and self.person_category in _ACTOR_TABLE_CATEGORIES
+            and self.actor_prominence_mode is None
+        ):
+            self.actor_prominence_mode = ActorProminenceMode.DEFAULT
+
         return self
