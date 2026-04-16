@@ -1963,8 +1963,12 @@ flags "trending" intent and execution reads the Redis hash directly.
   (box_office_bucket)
 - Award buzz ("Oscar frontrunners this year") — route to `awards`
 
-**Candidate generation (dealbreakers):** Returns all movie IDs with non-zero
-trending scores as a candidate set.
+**Candidate generation (dealbreakers):** Returns every movie ID present in
+the trending hash as a candidate set (typically the full TMDB top-500,
+however many the refresh job wrote). The tail of the hash naturally sits at
+score 0.0 from the concave-decay formula — those movies still enter the
+candidate pool but contribute 0.0 to `dealbreaker_sum`, so they rank below
+every other dealbreaker-admitted movie. No non-zero filter is applied.
 
 **Preference scoring:** Pass-through of the precomputed trending score [0, 1].
 
