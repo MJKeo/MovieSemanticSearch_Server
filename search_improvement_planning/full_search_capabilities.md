@@ -189,7 +189,7 @@ etc. on the `movie_franchise_metadata` table.
 
 ## 5. Qdrant: 8 Named Vector Spaces
 
-Each movie has up to 8 vectors (OpenAI `text-embedding-3-small`, 1536 dims).
+Each movie has up to 8 vectors (OpenAI `text-embedding-3-large`, 3072 dims).
 Searched via cosine similarity. Each space targets a specific semantic dimension.
 
 Subqueries are LLM-generated reformulations of the user query, tailored to
@@ -408,10 +408,10 @@ trending data — if the refresh job hasn't run, trending scores are empty.
 
 ### 9.2 OpenAI Embedding API
 
-The user's query text is embedded at search time via `text-embedding-3-small`
-(1536 dims) to produce the query vector used for Qdrant similarity search.
-Cached in Redis (`emb:{model}:{hash}`) to avoid redundant calls for repeated
-queries.
+The user's query text is embedded at search time via `text-embedding-3-large`
+(3072 dims) to produce the query vector used for Qdrant similarity search.
+An embedding cache at `_embed_body` is a known hook-point for a future
+Redis-backed store (not present in the current implementation).
 
 ### 9.3 Query Understanding LLM
 

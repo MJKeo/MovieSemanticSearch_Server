@@ -77,7 +77,7 @@ COLLECTION_ALIAS = os.getenv("QDRANT_COLLECTION_ALIAS", None)
 #     source (~5-7s per query). The small accuracy loss from int8 quantization
 #     is negligible given 8 redundant vector spaces and exponential decay
 #     normalization in the scoring pipeline.
-_QDRANT_SEARCH_PARAMS = SearchParams(
+QDRANT_SEARCH_PARAMS = SearchParams(
     hnsw_ef=128,
     quantization=QuantizationSearchParams(
         rescore=False,
@@ -801,7 +801,7 @@ async def run_vector_search(
                 qdrant_filter=qdrant_filter,
                 qdrant_client=qdrant_client,
                 candidates=candidates,
-                search_params=_QDRANT_SEARCH_PARAMS,
+                search_params=QDRANT_SEARCH_PARAMS,
                 limit=candidate_limit_anchor,
             ),
             name="coord_anchor_original",
@@ -827,7 +827,7 @@ async def run_vector_search(
                     qdrant_filter=qdrant_filter,
                     qdrant_client=qdrant_client,
                     candidates=candidates,
-                    search_params=_QDRANT_SEARCH_PARAMS,
+                    search_params=QDRANT_SEARCH_PARAMS,
                     limit=candidate_limit_original,
                 ),
                 name=f"coord_{collection_name.value}_original",
@@ -853,7 +853,7 @@ async def run_vector_search(
                     qdrant_filter=qdrant_filter,
                     qdrant_client=qdrant_client,
                     candidates=candidates,
-                    search_params=_QDRANT_SEARCH_PARAMS,
+                    search_params=QDRANT_SEARCH_PARAMS,
                     limit=candidate_limit_subquery,
                 ),
                 name=f"coord_{collection_name.value}_subquery",

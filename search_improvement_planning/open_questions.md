@@ -472,7 +472,7 @@ a dedicated vector space.
 Originally decided as max-across-spaces. Retired by the finalized design:
 dealbreakers pick exactly 1 space (no combining needed), and preferences
 use weighted-sum cosine across selected spaces with categorical weights
-(`primary`=2, `contributing`=1). See `finalized_search_proposal.md`
+(`central`=2, `supporting`=1). See `finalized_search_proposal.md`
 Endpoint 6 and the Semantic Endpoint Finalized Decisions section.
 
 ### ~~How should keyword vocabulary mapping work?~~ DECIDED
@@ -740,9 +740,9 @@ P_CAP. `dealbreaker_sum = 0`.
 ### ~~Is there a better model than t-shirt sizing for relative vector space weighting?~~ DECIDED
 
 **Two-level categorical scale, `minor` option removed.** Preferences select
-1+ spaces and assign each one `primary` (maps to 2) or `contributing` (maps
+1+ spaces and assign each one `central` (maps to 2) or `supporting` (maps
 to 1). There is no `minor` / `not_relevant` weight — if a space's signal
-isn't at least contributing meaningfully, don't select it.
+isn't at least supporting meaningfully, don't select it.
 
 **Reasoning:**
 - Small models handle categorical Likert scales better than free-form
@@ -757,7 +757,7 @@ isn't at least contributing meaningfully, don't select it.
   per preference, two levels is plenty of expressiveness.
 
 Revisit only if evaluation shows the model systematically collapsing to one
-level (everything `primary` or everything `contributing`).
+level (everything `central` or everything `supporting`).
 
 ### ~~What does "best" mean — critically acclaimed, popular, or both?~~ DECIDED
 

@@ -1407,6 +1407,19 @@ wheels = [
 ]
 
 [[package]]
+name = "kneed"
+version = "0.8.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/72/64/4bb8f8a7a4627b585a66d5bec0c9b30ae5b39a4caea1775c8bfb3fb3f4cf/kneed-0.8.6.tar.gz", hash = "sha256:65b22727c623661701f15edf057f2e6c73e2b1ad4e68cd9ca4291675c318b5ef", size = 13161, upload-time = "2026-03-20T21:01:51.966Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/cd/23c89d53c36028bccb39f55aa5dd24c4bdaab76c4d556ad43dc8cf026918/kneed-0.8.6-py3-none-any.whl", hash = "sha256:3412e7b70bce07717386d24fab37f0f985968d1b85ea0c749a6b98caccaf65ec", size = 10797, upload-time = "2026-03-20T21:01:50.87Z" },
+]
+
+[[package]]
 name = "kubernetes"
 version = "35.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1750,6 +1763,7 @@ dependencies = [
     { name = "grpcio" },
     { name = "httpx" },
     { name = "ipykernel" },
+    { name = "kneed" },
     { name = "langchain" },
     { name = "matplotlib" },
     { name = "nbformat" },
@@ -1792,6 +1806,7 @@ requires-dist = [
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "ipykernel", specifier = ">=6.30.1" },
+    { name = "kneed", specifier = ">=0.8" },
     { name = "langchain", specifier = ">=1.2.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "nbformat", specifier = ">=4.2.0" },

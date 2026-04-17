@@ -1,6 +1,38 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Stage-3 semantic endpoint: query execution
+Files: search_v2/stage_3/semantic_query_execution.py (new), pyproject.toml
+
+### Intent
+Complete the Stage-3 semantic endpoint by adding the executor that takes the step-3 semantic LLM's `SemanticDealbreakerSpec` / `SemanticPreferenceSpec` output, runs the corresponding vector search against Qdrant, and returns an `EndpointResult`. Generation was already in place (`semantic_query_generation.py`); this closes the loop.
+
+### Key Decisions
+- **Two public entry functions, not one.** `execute_semantic_dealbreaker_query` and `execute_semantic_preference_query` because the spec types are disjoint and the scoring math (threshold-plus-flatten vs raw weighted-sum cosine) shares only low-level primitives. Forcing one entry point would require an isinstance fork at the top for no readability win.
+- **`restrict_to_movie_ids` discriminates four scenarios.** `None` → D2/P2 (candidate-generating); `set[int]` → D1/P1 (score-only); empty set → short-circuit to `EndpointResult()`. Matches the sibling-executor contract and keeps the orchestrator-visible surface identical.
+- **D2 uses a single Qdrant call.** The top-2000 probe doubles as both the elbow/floor calibration distribution AND the candidate pool — same query, same space, same limit. Departure from a naive reading of the proposal which described them as two distinct steps.
+- **D2 does not cross-score against other dealbreakers' candidates** per user's explicit correction during planning. Each semantic dealbreaker scores only the movies it retrieved; missing dealbreakers contribute 0 to `dealbreaker_sum`, matching how deterministic dealbreakers already behave.
+- **Movie_id is the Qdrant point ID.** Confirmed at `ingest_movie.py:671` (`PointStruct(id=movie_id, ...)`). Filtered-score lookups use `HasIdCondition(has_id=[...])`, not a payload `FieldCondition` — which would silently miss since no such payload field exists.
+- **Pathology check uses range, not max|diff|.** The proposal's `max(y_diff) < 0.05` threshold was ambiguous against raw cosines — applying it to the EWMA-smoothed curve fires on ordinary distributions because per-step diffs are tiny (~0.003). Replaced with `max_sim − min_sim < 0.05`, which preserves the 0.05 threshold's operational meaning ("distribution is truly flat") and actually only fires when there is no signal.
+- **Floor ratio raised to 0.65** per user direction (was 0.50 in the proposal's pathology fallback). Applied both in code and plan.
+- **No elbow cache.** Deferred per user direction; every dealbreaker invocation pays for one unfiltered top-2000 query. Hook-point for a future Redis cache is `_detect_elbow_floor`'s callsite.
+- **P2 fills cross-space cosines with targeted HasId lookups.** After unioning per-space top-N probes, each space's cosine map is re-checked for union members it missed and filled via one filtered Qdrant call per space (parallelized). Preference scoring combines every selected space for every candidate; cross-space fill is intrinsic to the preference design (unlike D2's cross-dealbreaker scoring, which is forbidden).
+- **Embedding model is `text-embedding-3-large`** (matches `ingest_movie.py:86`). CLAUDE.md's reference to `text-embedding-3-small` is stale.
+- **Retry contract mirrors siblings.** Scenario-level retry loop (1 retry); second failure logs at ERROR and returns empty `EndpointResult()` rather than raising.
+
+### Planning Context
+Plan file: `/Users/michaelkeohane/.claude/plans/3-whatever-it-s-such-noble-zephyr.md`. Design grounded in `search_improvement_planning/finalized_search_proposal.md` §Endpoint 6 (Semantic) and the Semantic Endpoint Finalized Implementation Decisions section. Preference weights reflect the recent rename from `primary`/`contributing` to `central`/`supporting` (weights unchanged: 2.0 / 1.0).
+
+### Dependencies
+Added `kneed>=0.8` to `pyproject.toml` for Kneedle elbow detection per the proposal's algorithm specification (`curve='convex', direction='decreasing', S=1, online=True`). Implementing Kneedle from scratch is ~60 lines with well-known pitfalls around the S-sensitivity; the library is MIT, pure-Python, and pulled `numpy` + `scipy` which were already present.
+
+### Testing Notes
+- `_detect_elbow_floor`, `_threshold_flatten`, `_weighted_cosine_score`, `_ewma` are pure and merit unit tests with fabricated distributions (sharp knee, bimodal, flat pathology, early-knee outlier triggering rank-10 safeguard, empty input).
+- Scenario helpers should be tested with mocked `qdrant_client` and `generate_vector_embedding` per the pattern in `unit_tests/test_vector_search_timing.py`.
+- End-to-end: run a D2 zombie dealbreaker against the live collection in `search_v2/test_stage_3.ipynb` and eyeball whether top-scored movies are zombie-centric. Then re-run as D1 with `restrict_to_movie_ids={known_zombie, known_non_zombie, ...}` and confirm scores go ~1.0 vs ~0.0.
+- Failure path: pass a closed `qdrant_client` and confirm retry fires once, ERROR logs, and `EndpointResult(scores=[])` returns without raising.
+- Edge: empty `restrict_to_movie_ids` short-circuits without any Qdrant or OpenAI call.
+
 ## Award category tag taxonomy (Stage-3 awards endpoint)
 Files: schemas/award_category_tags.py (new), backfill_award_category_tags.py (new, temporary), db/init/01_create_postgres_tables.sql, db/postgres.py, schemas/award_translation.py, search_v2/stage_3/award_query_execution.py, search_v2/stage_3/award_query_generation.py, search_improvement_planning/finalized_search_proposal.md, search_improvement_planning/full_search_capabilities.md
 

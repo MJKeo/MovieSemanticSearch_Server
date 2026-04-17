@@ -17,19 +17,6 @@ phase.
 pipeline, or as part of the broader V2 rollout.
 **See:** schemas/metadata.py (PlotAnalysisOutput.embedding_text), movie_ingestion/final_ingestion/vector_text.py (create_plot_analysis_vector_text), search_improvement_planning/v2_data_architecture.md §8.3
 
-## Include imdb_vote_count in search reranking quality boost
-**Context:** The search reranking process should use `imdb_vote_count` as
-a signal in its automatic quality and relevance booster. This likely
-requires adding `imdb_vote_count` as a column in the ingested movie
-database (Postgres) so it's available at reranking time. Movies with
-higher IMDB vote counts are generally better-known and more relevant
-results, so this signal can help break ties and boost well-established
-films in the final ranking.
-**When:** When building or refining the reranking/quality-boost stage of
-the search pipeline.
-**See:** db/vector_scoring.py, movie_ingestion/final_ingestion/ingest_movie.py, movie_ingestion/imdb_scraping/models.py
-
-
 ## Verify model IDs for playground notebook providers
 **Context:** The metadata generation playground notebook (Cell 2) uses several model IDs that were specified
 speculatively and may not be accurate. IDs to verify against each provider's current docs:

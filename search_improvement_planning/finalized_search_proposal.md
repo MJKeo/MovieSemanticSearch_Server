@@ -1964,8 +1964,8 @@ the "scary" qualifier can be a semantic preference for ranking within the
 horror results. The dealbreaker generates candidates deterministically; the
 preference scores them via vector similarity.
 
-**Data sources:** 8 Qdrant vector spaces (OpenAI `text-embedding-3-small`,
-1536 dims). Dealbreakers draw from the 7 non-anchor spaces only; preferences
+**Data sources:** 8 Qdrant vector spaces (OpenAI `text-embedding-3-large`,
+3072 dims). Dealbreakers draw from the 7 non-anchor spaces only; preferences
 may use all 8 for scoring. Every space (including anchor when used for
 preference scoring) is searched with a generated query tailored to that space's
 structured-label shape — the original user query is never used directly for
@@ -2062,15 +2062,15 @@ preference scenario based on what step 2 emitted.
 
 | Scenario | Trigger | Candidate generation | Similarity source | Score transform | Reranking role |
 |----------|---------|----------------------|-------------------|-----------------|----------------|
-| **D1: Score-only** | ≥1 non-semantic inclusion dealbreaker exists | N/A — candidates come from non-semantic endpoints | Qdrant `retrieve()` for each candidate ID on the selected space | Global calibration probe → elbow/floor → threshold-plus-flatten applied to candidate cosines | Contributes to `dealbreaker_sum` (each item ∈ [0, 1]) |
-| **D2: Candidate-generating** | Zero non-semantic inclusion dealbreakers, ≥1 semantic inclusion dealbreaker | Each semantic dealbreaker independently runs top-N per (dealbreaker, space) against the full corpus; union = candidate pool | Candidate pool's own cosines from the generating search, plus Qdrant `retrieve()` for cross-dealbreaker scoring | Global calibration probe → elbow/floor → threshold-plus-flatten applied to each candidate's cosine for each dealbreaker's space | Contributes to `dealbreaker_sum` (each item ∈ [0, 1]) |
+| **D1: Score-only** | ≥1 non-semantic inclusion dealbreaker exists | N/A — candidates come from non-semantic endpoints | Single Qdrant `query_points` call on the selected space with a `HasIdCondition` filter over the full candidate list (movie_id is the point ID) | Global calibration probe → elbow/floor → threshold-plus-flatten applied to candidate cosines | Contributes to `dealbreaker_sum` (each item ∈ [0, 1]) |
+| **D2: Candidate-generating** | Zero non-semantic inclusion dealbreakers, ≥1 semantic inclusion dealbreaker | Each semantic dealbreaker independently runs top-N per (dealbreaker, space) against the full corpus; union = candidate pool | Candidate pool's own cosines from the generating search (the top-N probe serves as both calibration sample and candidate pool — one Qdrant call, not two). **No cross-dealbreaker scoring** — each dealbreaker scores only the movies it retrieved | Global calibration probe → elbow/floor → threshold-plus-flatten applied to each candidate's cosine for its own dealbreaker's space | Contributes to `dealbreaker_sum` (each item ∈ [0, 1]) |
 
 **Preference-side scenarios** (applies when ≥1 semantic preference group exists):
 
 | Scenario | Trigger | Candidate generation | Similarity source | Score transform | Reranking role |
 |----------|---------|----------------------|-------------------|-----------------|----------------|
-| **P1: Score-only** | ≥1 inclusion dealbreaker exists (semantic or non-semantic) | N/A — candidates already assembled | Qdrant `retrieve()` for each candidate ID on each selected space | Raw weighted-sum cosine across selected spaces, normalized by Σw (no elbow, no pool normalization) | Contributes to `preference_contribution`, scaled by P_CAP |
-| **P2: Candidate-generating** | Zero inclusion dealbreakers, ≥1 semantic preference | Each selected space in the grouped preference runs top-N against the full corpus; union across spaces = candidate pool | Candidate pool's own cosines from the generating search, plus Qdrant `retrieve()` for cross-space scoring | Same as P1 — raw weighted-sum cosine normalized by Σw | Contributes to `preference_contribution`, scaled by P_CAP. `dealbreaker_sum = 0` |
+| **P1: Score-only** | ≥1 inclusion dealbreaker exists (semantic or non-semantic) | N/A — candidates already assembled | One `query_points` call per selected space with a `HasIdCondition` filter over the candidate list; calls run in parallel | Raw weighted-sum cosine across selected spaces, normalized by Σw (no elbow, no pool normalization) | Contributes to `preference_contribution`, scaled by P_CAP |
+| **P2: Candidate-generating** | Zero inclusion dealbreakers, ≥1 semantic preference | Each selected space in the grouped preference runs top-N against the full corpus; union across spaces = candidate pool | Per-space cosines seed from each space's own top-N probe; remaining union members missing from a given space are filled via one `HasIdCondition` `query_points` call on that space (only non-empty fills fire) | Same as P1 — raw weighted-sum cosine normalized by Σw | Contributes to `preference_contribution`, scaled by P_CAP. `dealbreaker_sum = 0` |
 
 **Edge case (exclusion-only):** zero inclusion dealbreakers AND zero
 preferences (only exclusion dealbreakers). Falls back to browse-style
@@ -2086,6 +2086,18 @@ coexist. Global calibration against the full corpus is the only invariant
 available — candidate-relative calibration would systematically underrate
 dealbreakers when the candidate pool is already concept-rich, and overrate
 them when the pool is thin.
+
+**Why D2 does not cross-score across dealbreakers:** If three semantic
+inclusion dealbreakers coexist, each one runs its own top-N probe and
+scores only the movies that probe retrieved. Movies retrieved by dealbreaker
+A but not by B contribute their A-score and 0 for B — the same asymmetry
+deterministic dealbreakers already have (a movie matching "Marvel" but not
+"80s" contributes full credit for Marvel and a graded score for 80s).
+Cross-scoring would silently elevate D2 toward "every candidate gets every
+dealbreaker's score" semantics and blur what step 2 classified as
+independent requirements. If additional reranking across semantic concepts
+is desired, step 2 should emit a semantic preference in addition to the
+dealbreaker, and the preference carries the cross-space scoring via P1/P2.
 
 **Why P2 keeps preference semantics (not dealbreaker semantics):** Step 2
 deliberately classified these items as preferences — they are ranking
@@ -2151,13 +2163,15 @@ corpus distribution. For each dealbreaker:
    - `sim ≤ floor` → score = 0.0
 4. Score contributes full value to `dealbreaker_sum` (not capped by P_CAP).
 
-**Elbow caching.** Elbow/floor values are keyed by
-`hash(query_text, space_name, embedding_model_version,
-space_prompt_version, corpus_version)` with a 24h TTL. Reused across
-requests. Invalidated on corpus rebuilds. Concepts like "zombies" or
-"scary" that recur across queries pay the global-search cost once per day.
-Version components are explicit so an embedding-model swap, a space-prompt
-revision, or a corpus regeneration cannot silently reuse stale calibration.
+**Elbow caching — deferred.** The current implementation does not cache
+elbow/floor; every dealbreaker invocation pays for one unfiltered top-N
+probe. A future Redis cache keyed by `(query_text, space_name,
+embedding_model_version, space_prompt_version, corpus_version)` with a 24h
+TTL and invalidation on corpus rebuilds drops in at the call to
+`_detect_elbow_floor` in `semantic_query_execution.py` without
+restructuring the executor. Version components are enumerated now so an
+embedding-model swap, a space-prompt revision, or a corpus regeneration
+cannot silently reuse stale calibration once the cache does land.
 
 **Preference scoring:** Multi-space weighted cosine. The LLM picks 1+ spaces,
 generates one query per selected space (no per-concept decomposition — a
@@ -2336,6 +2350,11 @@ entry per supplied ID (non-matches at score 0.0).
 
 ## Step 4: Assembly & Reranking
 
+For finer Step-4-specific implementation detail, clarified edge cases, and the
+current outstanding questions for this stage, see
+`search_improvement_planning/step_4_planning.md`. Treat that file as the
+detailed companion for this step when this section stays high-level.
+
 ### Phase 4a: Candidate Generation Assembly
 
 Collect all candidate sets produced by inclusion dealbreaker execution in
@@ -2361,16 +2380,18 @@ pool. This covers:
 
 **Zero-inclusion-dealbreaker, preferences-exist checkpoint (preference
 scenario P2):** If no inclusion dealbreaker exists at all **but at least
-one semantic preference exists**, the semantic preference takes on
-candidate generation. See "Zero-Dealbreakers, Preference-Driven Retrieval"
-below. Candidates are scored as preferences (not dealbreakers) and
-contribute to `preference_contribution`.
+one preference exists**, preferences take on candidate generation. See
+"Zero-Dealbreakers, Preference-Driven Retrieval" below and
+`step_4_planning.md` for the finalized Step-4 treatment. Candidates are
+scored as preferences (not dealbreakers) and contribute to
+`preference_contribution`.
 
 **Zero-inclusion, zero-preference checkpoint (exclusion-only):** If no
 inclusion dealbreaker AND no preferences exist (for example
 "movies not starring Tom Cruise"), handle via the browse-style fallback —
-top-K by the default quality composite, apply exclusions, rank by the same
-composite. See "Exclusion-Only Edge Case" below.
+top-K from `movie_card` ordered by the effective prior-based browse score,
+then apply exclusions. See "Exclusion-Only Edge Case" below and
+`step_4_planning.md`.
 
 ### Phase 4b: Exclusion Handling
 
@@ -2571,13 +2592,14 @@ still coexist. The detection is an explicit flow control checkpoint
 immediately after step 2 completes.
 
 A closely related but distinct variant — **scenario P2**, where zero
-inclusion dealbreakers exist but at least one semantic preference does —
-also uses vector search as the candidate generator, but the generated
-candidates are scored as preferences (not dealbreakers). That variant is
-documented in "Zero-Dealbreakers, Preference-Driven Retrieval" below. The
-shared mechanics are identical: one LLM call, per-space queries, top-N
-union. The difference is which step-2 items drive the search and how the
-resulting scores contribute to `final_score`.
+inclusion dealbreakers exist but preferences provide the only positive
+signal — also uses preference-driven candidate generation, but the generated
+candidates are scored as preferences (not dealbreakers). The semantic
+preference version is documented in "Zero-Dealbreakers, Preference-Driven
+Retrieval" below; see `step_4_planning.md` for the broader finalized Step-4
+rule covering zero-inclusion preference flows more generally. The difference
+is which step-2 items drive the search and how the resulting scores
+contribute to `final_score`.
 
 ### How It Works
 
@@ -2618,8 +2640,8 @@ resulting scores contribute to `final_score`.
 
 ### Zero-Dealbreakers, Preference-Driven Retrieval (Scenario P2)
 
-When step 2 emits zero inclusion dealbreakers but at least one semantic
-preference exists, the semantic preference takes on candidate generation.
+When step 2 emits zero inclusion dealbreakers but at least one preference
+exists, preferences take on candidate generation.
 This is scenario **P2** in the Execution Scenarios table.
 
 **How it works:**
@@ -2670,16 +2692,18 @@ clowns, something cozy" — use scenario P2 instead; the semantic
 preference drives candidate generation and exclusions apply as
 penalties/filters in Phase 4b.)
 
-Generate candidates as the top-K movies by the default quality composite
-(`0.6 × reception_score + 0.4 × popularity_score`, matching the
-system-default ordering used elsewhere when no explicit ranking criteria are
-stated). Apply exclusions normally in Phase 4b. Rank the surviving set by the
-same default composite plus any active quality/notability priors, since
-`dealbreaker_sum` is zero and no preferences exist.
+Generate candidates as the top-K movies from `movie_card`, ordered by the
+effective browse score implied by `quality_prior` and `notability_prior`.
+Apply exclusions normally in Phase 4b. `dealbreaker_sum` remains zero for all
+seeded candidates; the browse ordering is only a seed heuristic, not
+dealbreaker credit. Rank the surviving set by the resulting prior
+contribution minus any exclusion penalties. See `step_4_planning.md` for the
+Step-4-specific details and implementation considerations.
 
 **Why this shape:** This mirrors what a librarian would do when asked
-"a movie, but not that one" — return well-known, well-regarded movies
-minus the excluded set. The quality composite is the only honest answer
+"a movie, but not that one" — return a prior-driven browse set minus the
+excluded movies. The browse seed is only a candidate-generation heuristic
+when the user gave no positive signal at all.
 when the user expressed no positive intent at all. No new flow control
 path is introduced beyond the fallback rule.
 
@@ -2920,7 +2944,11 @@ evaluation evidence.
   - **D2 (candidate-generating):** no non-semantic inclusion dealbreaker
     but ≥1 semantic inclusion dealbreaker → each semantic dealbreaker
     generates top-N per (dealbreaker, space); union = pool. Same
-    elbow-calibrated scoring. Contributes to `dealbreaker_sum`.
+    elbow-calibrated scoring. The top-N probe doubles as both
+    calibration sample and candidate pool — one Qdrant call, not two.
+    Dealbreakers do **not** cross-score across each other's candidate
+    sets; each scores only the movies its own probe retrieved.
+    Contributes to `dealbreaker_sum`.
   - **P1 (score-only):** ≥1 inclusion dealbreaker exists (semantic or
     not) → semantic preferences score the pre-built pool via raw
     weighted-sum cosine (`central`=2 / `supporting`=1), normalized by
@@ -2955,36 +2983,59 @@ evaluation evidence.
 - **Elbow/floor detection for dealbreaker and semantic-exclusion scoring.**
   Applies to semantic dealbreaker scoring (D1 + D2) and semantic exclusion
   scoring. Does NOT apply to preference scoring, which uses raw weighted-sum
-  cosine with no elbow calibration. Procedure, run once per
-  `(query_text, space, embedding_model_version, space_prompt_version,
-  corpus_version)`:
+  cosine with no elbow calibration. Implemented in
+  `search_v2/stage_3/semantic_query_execution.py::_detect_elbow_floor`.
+  No result caching — every invocation pays for one unfiltered top-N probe
+  (a future Redis cache keyed by `(query_text, space, embedding_model,
+  space_prompt_version, corpus_version)` is a known hook-point but deferred).
+
+  Procedure:
   1. **Collect distribution.** Pull top-N cosine similarities from the full
      corpus for the LLM-generated query against the selected space, sorted
-     descending. N = 2000 as a working default.
-  2. **Smooth.** EWMA over the sorted array, span = `max(5, N / 100)`.
-     Reduces local noise without distorting global shape.
-  3. **Detect elbows with Kneedle.** Parameters: `curve='convex',
-     direction='decreasing', S=1, online=True, all_knees=True`. Returns the
-     list of detected knee ranks, ordered by rank ascending.
-  4. **Pathology check — "is there any elbow at all?"** Compute
-     `max(y_diff)` on the normalized difference curve. If `max(y_diff) <
-     0.05`, treat the distribution as flat: no meaningful elbow exists.
-     Fall back to `elbow = max_sim × 0.85`, `floor = max_sim × 0.50`, log
-     the concept + space for calibration auditing, and skip steps 5–6.
-  5. **Elbow selection — first knee, with early-rank safeguard.** Start
+     descending. N = 2000 as a working default. In D2 this probe doubles
+     as the candidate pool — the same call serves both roles.
+  2. **Short-probe guard.** If fewer than 20 similarities returned, skip
+     Kneedle and use the pathology fallback.
+  3. **Pathology check — "is there any elbow at all?"** If the probe's
+     top-to-bottom range (`max_sim − min_sim`) falls below 0.05, treat the
+     distribution as flat: no discriminable structure exists. Fall back to
+     `elbow = max_sim × 0.85`, `floor = max_sim × 0.65`, log at INFO for
+     calibration audit, and skip the remaining steps. (The earlier
+     formulation of this check as "max |diff| of the smoothed curve < 0.05"
+     fired spuriously on ordinary distributions because per-step diffs of
+     realistic knees sit around 0.003 — range is the operationally
+     meaningful quantity.)
+  4. **Smooth.** EWMA over the sorted array, span = `max(5, N // 100)`.
+     Smoothing is used only to stabilize Kneedle's knee-rank detection —
+     the returned `elbow_sim` and `floor_sim` are the **raw** similarities
+     at the detected ranks, not smoothed values. (On a descending sequence
+     EWMA lags — `smoothed[i] > raw[i]` — so reporting smoothed y-values
+     would inflate the threshold and silently shrink the pass zone when
+     the orchestrator compares raw Qdrant scores against it.)
+  5. **Detect elbows with Kneedle.** Parameters: `curve='convex',
+     direction='decreasing', S=1, online=True`, then canonicalize
+     `sorted(set(locator.all_knees))` to handle version-to-version shape
+     changes (set vs. list). If zero knees detected → pathology fallback.
+  6. **Elbow selection — first knee, with early-rank safeguard.** Start
      with the first detected knee (smallest rank). If its rank < 10 AND at
      least one additional knee exists, skip forward to the next knee
      (guards against a handful of outliers pinching the 1.0 boundary too
      tightly). If the first knee is the only knee, use it as-is — don't
      invent a later elbow that doesn't exist in the data. Never pick the
      "largest bulge" knee; always prefer the earliest qualifying knee.
-  6. **Floor selection.** If two or more knees were detected, use the
-     second knee as the floor (natural bimodal signal — e.g., Christmas
-     distributions). Otherwise compute `floor = max(elbow_sim − 2 ×
-     (max_sim − elbow_sim), 0.0)` — a gap-proportional floor that widens
-     the decay zone for sharp elbows and narrows it for compressed
-     distributions.
-  7. **Scoring transform** applied to each candidate's cosine similarity:
+     `elbow_sim = similarities[elbow_rank]`.
+  7. **Floor selection.** If two or more knees were detected AND we used
+     the first knee as elbow, use the second knee as floor (natural
+     bimodal signal — e.g., Christmas distributions). If we skipped to the
+     second knee as elbow and a third exists, use the third as floor.
+     Otherwise compute `floor_sim = max(elbow_sim − 2 × (max_sim −
+     elbow_sim), 0.0)` — a gap-proportional floor that widens the decay
+     zone for sharp elbows and narrows it for compressed distributions.
+     Rank-based floors use `similarities[floor_rank]`.
+  8. **Clamp invariant.** `floor_sim = max(0, min(floor_sim, elbow_sim −
+     1e-9))`, `elbow_sim ∈ [0, 1]`. Guarantees `0 ≤ floor < elbow ≤ 1` for
+     the downstream transform.
+  9. **Scoring transform** applied to each candidate's cosine similarity:
      `score = 1.0` if `sim ≥ elbow_sim`; `score = (sim − floor) /
      (elbow_sim − floor)` if `floor < sim < elbow_sim`; `score = 0.0` if
      `sim ≤ floor`. Linear decay is the default; non-linear exponents
@@ -2998,23 +3049,31 @@ evaluation evidence.
   credit. The rank-10 safeguard exists solely to skip past outlier-driven
   early knees when a more substantive elbow is available.
 
+  **Floor ratio 0.65, not 0.50.** The proposal originally called for
+  `floor = max_sim × 0.50`; raised to 0.65 during implementation so the
+  pathology fallback produces a narrower decay zone. Real matches
+  typically sit above 0.5 of max; decaying all the way to that point
+  awards too much score to distant candidates.
+
 ---
 
 ## Decisions Deferred to Implementation
 
 - Exact step 2 prompt engineering (few-shot examples, chain-of-thought format)
 - ~~Exact elbow and floor detection algorithm for semantic dealbreaker
-  scoring and exclusion thresholds.~~ **RESOLVED** — see "Elbow/floor
-  detection for dealbreaker and semantic-exclusion scoring" in the
-  Finalized Implementation Decisions section above. Remaining tuning
-  deferred to eval: non-linear decay exponent (γ), top-N corpus probe
-  size (working default 2000), EWMA span constants, rank-10 safeguard
-  threshold, and pathology-check `max(y_diff) < 0.05` cutoff.
-- Semantic endpoint elbow/floor cache: keyed by
-  `hash(query_text, space_name, embedding_model_version,
-  space_prompt_version, corpus_version)`, 24h TTL, invalidated on corpus
-  rebuilds. Concrete cache backend (Redis vs. in-process) and eviction
-  policy still pending
+  scoring and exclusion thresholds.~~ **RESOLVED AND IMPLEMENTED** — see
+  "Elbow/floor detection for dealbreaker and semantic-exclusion scoring"
+  above and `search_v2/stage_3/semantic_query_execution.py::_detect_elbow_floor`.
+  Remaining tuning deferred to eval: non-linear decay exponent (γ), top-N
+  corpus probe size (working default 2000), EWMA span constants, rank-10
+  safeguard threshold, pathology-check range cutoff (0.05), and floor
+  ratio (0.65).
+- ~~Semantic endpoint elbow/floor cache.~~ **DEFERRED** — no cache in the
+  current implementation; every dealbreaker invocation pays for one
+  unfiltered top-N probe. Hook-point is the call to `_detect_elbow_floor`
+  in `semantic_query_execution.py`. If latency becomes a concern, a
+  Redis cache keyed by `(query_text, space, embedding_model_version,
+  space_prompt_version, corpus_version)` drops in without restructuring.
 - **Evaluation test — zero-dealbreaker browse fallback quality.** The
   current design routes zero-inclusion-dealbreaker queries to a browse-style
   top-K default-quality pool, then applies preference scoring on top. Open

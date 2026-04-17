@@ -36,6 +36,7 @@ dependencies = [
     "anthropic>=0.85.0",
     "authlib>=1.6.9",
     "tiktoken>=0.12.0",
+    "kneed>=0.8",
 ]
 
 [dependency-groups]

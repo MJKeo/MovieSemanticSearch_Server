@@ -1087,7 +1087,7 @@ async def cmd_ingest(
 
         print(
             f"Found {total:,} eligible movies "
-            f"(movie_card rows with empty country_of_origin_ids).\n"
+            f"(movie_card rows do not exist).\n"
             f"Config: batch_size={batch_size}, postgres_batch_size={postgres_batch_size}, "
             f"qdrant_batch_size={qdrant_batch_size}, vectors={'disabled' if disable_vectors else 'enabled'}"
         )

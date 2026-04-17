@@ -396,7 +396,7 @@ endpoint — they route to the keyword endpoint in V2.
 
 ## 8. Vector Spaces
 
-V2 has 8 spaces, with anchor retained in reduced form. OpenAI `text-embedding-3-small`, 1536 dims,
+V2 has 8 spaces, with anchor retained in reduced form. OpenAI `text-embedding-3-large`, 3072 dims,
 8191 token limit. Stored in Qdrant with scalar quantization + memmap.
 
 ### V2 embedding format change (applies to all spaces)
