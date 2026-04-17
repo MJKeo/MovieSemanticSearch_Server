@@ -410,6 +410,15 @@ class PersonCategory(StrEnum):
     BROAD_PERSON = "broad_person"
 
 
+# Specific-role subset used where broad_person would be invalid.
+class SpecificPersonCategory(StrEnum):
+    ACTOR = "actor"
+    DIRECTOR = "director"
+    WRITER = "writer"
+    PRODUCER = "producer"
+    COMPOSER = "composer"
+
+
 # How to score actor billing position using the zone-based adaptive
 # threshold system. Only meaningful when actor results are in play
 # (person_category is actor or broad_person). See finalized search

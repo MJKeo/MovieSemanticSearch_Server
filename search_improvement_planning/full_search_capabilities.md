@@ -89,14 +89,23 @@ award specification, find matching movies).
 | `movie_id` | BIGINT FK | Movie this award belongs to. |
 | `ceremony_id` | SMALLINT | AwardCeremony enum ID (1-12). |
 | `award_name` | TEXT | Specific prize name: "Oscar", "Palme d'Or", "Golden Lion", etc. |
-| `category` | TEXT? | Category within the prize: "Best Picture", "Best Director". NULL for festival grand prizes where the award name IS the category. |
+| `category` | TEXT | Raw IMDB category text, preserved verbatim ("Best Picture", "Best Performance by an Actor in a Motion Picture - Drama", etc.). Defaults to empty string for festival grand prizes where the award name IS the category. |
+| `category_tag_ids` | INT[] | Concept-tag ids derived from `category` via `consolidate_award_categories.py` and the 3-level taxonomy in `schemas/award_category_tags.py`. Stores the leaf tag plus every ancestor (mid, group). GIN-indexed (`gin__int_ops`); query with `category_tag_ids && ARRAY[...]`. |
 | `outcome_id` | SMALLINT | 1 = winner, 2 = nominee. |
 | `year` | SMALLINT | Award year. |
 
 **Search utility:** Deterministic lookup for specific award queries. Indexed on
-`(ceremony_id, award_name, category, outcome_id, year)` for queries like:
-- "Oscar Best Picture winners" → ceremony=1, award_name="Oscar", category="Best Picture", outcome=1
+`(ceremony_id, award_name, category, outcome_id, year)` for the original
+exact-match path and on `category_tag_ids` (GIN) for concept-tag overlap.
+The Stage-3 award LLM emits `category_tags` as enum values (any of the
+three taxonomy levels — leaf / mid / group), execution maps them to integer
+ids and runs a single `&&` overlap query against the GIN index.
+
+Example queries:
+- "Oscar Best Picture winners" → ceremony=1, award_name="Oscar", category_tag_ids && [16] (best-picture leaf)
 - "Cannes Palme d'Or nominees" → ceremony=4, award_name="Palme d'Or", outcome=2
+- "Best Actor or Best Actress winners at the Oscars" → ceremony=1, category_tag_ids && [100] (lead-acting mid)
+- "Movies that won any acting award" → category_tag_ids && [10000] (acting group)
 - "2023 Oscar nominees" → ceremony=1, year=2023
 - "Movies that won at Sundance" → ceremony=9, outcome=1
 

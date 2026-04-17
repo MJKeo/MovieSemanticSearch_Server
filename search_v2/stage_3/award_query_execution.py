@@ -21,12 +21,15 @@
 # excluded from both paths by default. When AwardCeremony.RAZZIE appears in
 # spec.ceremonies, it is included — the user explicitly asked for it.
 #
-# String matching policy: award_name and category are compared to stored
-# rows with un-normalized exact equality. The ingestion pipeline deliberately
-# preserves IMDB surface forms on these columns, so any case-folding or
-# diacritic-stripping here would silently zero out valid matches. This is
-# enforced both in this module (no normalize_string call on these axes) and
-# in fetch_award_row_counts.
+# Filter axis encoding:
+#   award_name is compared to stored rows with un-normalized exact equality.
+#     The ingest pipeline preserves IMDB surface forms; case-folding or
+#     diacritic-stripping here would silently zero out valid matches.
+#   category_tags (CategoryTag enum members) are converted to integer
+#     tag ids and matched against the GIN-indexed `category_tag_ids INT[]`
+#     column via array overlap (`&&`). The 3-level taxonomy
+#     (schemas/award_category_tags.py) lets the LLM pick at any specificity
+#     and the row's tag list contains every ancestor of its leaf concept.
 #
 # Retry contract: transient DB errors are retried once. A second failure
 # yields an empty EndpointResult so the orchestrator can continue rather
@@ -42,6 +45,7 @@ from __future__ import annotations
 import logging
 
 from db.postgres import fetch_award_fast_path_movie_ids, fetch_award_row_counts
+from schemas.award_category_tags import RAZZIE_TAG_IDS, TAG_BY_SLUG
 from schemas.award_translation import AwardQuerySpec
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import AwardCeremony, AwardOutcome, AwardScoringMode
@@ -58,10 +62,10 @@ logger = logging.getLogger(__name__)
 def _dedupe_nonempty(values: list[str] | None) -> list[str] | None:
     """Remove duplicates and empty strings from a spec list, preserving order.
 
-    Applied to award_names and categories only. Does NOT normalize — stored
-    values keep their raw IMDB surface form and the comparison must be
-    exact. No case-folding, no diacritic stripping, no whitespace trimming:
-    any of those could silently mask a real stored/query mismatch. Only
+    Applied to award_names only. Does NOT normalize — stored values keep
+    their raw IMDB surface form and the comparison must be exact. No
+    case-folding, no diacritic stripping, no whitespace trimming: any of
+    those could silently mask a real stored/query mismatch. Only
     duplicates and strictly-empty strings are filtered out.
 
     Returns None when the input is None or every entry is empty, signaling
@@ -76,6 +80,33 @@ def _dedupe_nonempty(values: list[str] | None) -> list[str] | None:
             continue
         seen.add(item)
         result.append(item)
+    return result if result else None
+
+
+def _resolve_category_tag_ids(
+    spec_category_tags: list[str] | None,
+) -> list[int] | None:
+    """Convert spec category_tags (raw enum string values from
+    use_enum_values=True) to integer tag ids for the SQL filter.
+
+    Deduplicates while preserving order and silently drops any unknown slugs
+    (defensive — shouldn't happen because the Pydantic enum field validates
+    against CategoryTag at parse time, but a stale enum/db disagreement
+    shouldn't crash execution).
+
+    Returns None when the input is None/empty so the caller skips applying
+    a category filter entirely.
+    """
+    if not spec_category_tags:
+        return None
+    seen: set[int] = set()
+    result: list[int] = []
+    for slug in spec_category_tags:
+        tag = TAG_BY_SLUG.get(slug)
+        if tag is None or tag.tag_id in seen:
+            continue
+        seen.add(tag.tag_id)
+        result.append(tag.tag_id)
     return result if result else None
 
 
@@ -132,7 +163,7 @@ def _qualifies_for_fast_path(spec: AwardQuerySpec) -> bool:
         return False
     if spec.award_names:
         return False
-    if spec.categories:
+    if spec.category_tags:
         return False
     if spec.years is not None:
         return False
@@ -232,9 +263,25 @@ async def execute_award_query(
     ceremony_ids, exclude_razzie = _resolve_ceremony_ids(spec.ceremonies)
     outcome_id = _resolve_outcome_id(spec.outcome)
     award_names = _dedupe_nonempty(spec.award_names)
-    categories = _dedupe_nonempty(spec.categories)
+    category_tag_ids = _resolve_category_tag_ids(spec.category_tags)
     year_from = spec.years.year_from if spec.years is not None else None
     year_to = spec.years.year_to if spec.years is not None else None
+
+    # The default Razzie exclusion was originally gated only on the
+    # ceremonies axis (the only axis that could express Razzie intent
+    # back when categories were free-text strings). The category_tags
+    # axis can now express Razzie intent on its own — every "worst-*"
+    # category lives exclusively on ceremony_id=10, so a tag like
+    # WORST_PICTURE or the RAZZIE group is an unambiguous opt-in.
+    # If we left exclude_razzie=True in those cases, the
+    # `ceremony_id <> 10` filter would AND-conjunct with the tag
+    # overlap and silently zero out the result. Treat any Razzie tag
+    # in the resolved list as equivalent to naming Razzie in the
+    # ceremonies axis.
+    if exclude_razzie and category_tag_ids and any(
+        tid in RAZZIE_TAG_IDS for tid in category_tag_ids
+    ):
+        exclude_razzie = False
 
     counts: dict[int, int] = {}
     for attempt in range(2):
@@ -242,7 +289,7 @@ async def execute_award_query(
             counts = await fetch_award_row_counts(
                 ceremony_ids=ceremony_ids,
                 award_names=award_names,
-                categories=categories,
+                category_tag_ids=category_tag_ids,
                 outcome_id=outcome_id,
                 year_from=year_from,
                 year_to=year_to,

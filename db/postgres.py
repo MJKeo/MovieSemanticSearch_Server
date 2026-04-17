@@ -13,6 +13,7 @@ from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
+from schemas.award_category_tags import tags_for_category
 from schemas.enums import AwardCeremony
 from schemas.imdb_models import AwardNomination
 from schemas.metadata import FranchiseOutput
@@ -969,20 +970,37 @@ async def batch_upsert_movie_awards(
     delete_query = "DELETE FROM public.movie_awards WHERE movie_id = %s"
     await _execute_on_conn(conn, delete_query, (movie_id,))
 
-    # Extract fields from each AwardNomination into parallel arrays
-    # for unnest-based bulk insert.
-    ceremony_ids = [a.ceremony_id for a in awards]
-    award_names = [a.award_name for a in awards]
-    categories = [a.category or "" for a in awards]
-    outcome_ids = [a.outcome.outcome_id for a in awards]
-    years = [a.year for a in awards]
+    # Build one row tuple per award. Each row carries its own variable-
+    # length category_tag_ids list (leaf + ancestor ids — see
+    # schemas/award_category_tags.py). The previous unnest(text[])
+    # approach can't model variable-length per-row arrays because
+    # Postgres requires 2-D arrays to be rectangular; a single VALUES
+    # clause with one tuple per row sidesteps that and keeps the insert
+    # to a single round trip. ~50 awards per movie at most, so the
+    # parameter count stays modest.
+    rows: list[tuple] = []
+    for a in awards:
+        category = a.category or ""
+        rows.append((
+            movie_id,
+            a.ceremony_id,
+            a.award_name,
+            category,
+            tags_for_category(category),
+            a.outcome.outcome_id,
+            a.year,
+        ))
 
-    insert_query = """
-    INSERT INTO public.movie_awards (movie_id, ceremony_id, award_name, category, outcome_id, year)
-    SELECT %s, unnest(%s::smallint[]), unnest(%s::text[]), unnest(%s::text[]), unnest(%s::smallint[]), unnest(%s::smallint[])
+    values_template = ", ".join(["(%s, %s, %s, %s, %s, %s, %s)"] * len(rows))
+    insert_query = f"""
+    INSERT INTO public.movie_awards
+        (movie_id, ceremony_id, award_name, category, category_tag_ids, outcome_id, year)
+    VALUES {values_template}
     """
-    params = (movie_id, ceremony_ids, award_names, categories, outcome_ids, years)
-    await _execute_on_conn(conn, insert_query, params)
+    flat_params: list = []
+    for row in rows:
+        flat_params.extend(row)
+    await _execute_on_conn(conn, insert_query, flat_params)
 
 # ===============================
 #        SEARCH METHODS
@@ -2049,7 +2067,7 @@ async def fetch_award_row_counts(
     *,
     ceremony_ids: list[int] | None,
     award_names: list[str] | None,
-    categories: list[str] | None,
+    category_tag_ids: list[int] | None,
     outcome_id: int | None,
     year_from: int | None,
     year_to: int | None,
@@ -2062,10 +2080,16 @@ async def fetch_award_row_counts(
     populated, then `GROUP BY movie_id` yields the per-movie has_count
     the scoring formula consumes.
 
-    String filters (award_names, categories) are matched as exact,
-    un-normalized equality. Stored values on the ingest side are
-    deliberately NOT passed through normalize_string, so case-folding
-    or diacritic-stripping here would silently zero out valid matches.
+    String filter (award_names) is matched as exact, un-normalized
+    equality. Stored values on the ingest side are deliberately NOT
+    passed through normalize_string, so case-folding or diacritic-
+    stripping here would silently zero out valid matches.
+
+    Category filter uses the ingestion-derived `category_tag_ids` INT[]
+    column (see schemas/award_category_tags.py) and an array-overlap
+    (`&&`) test against the GIN index. The LLM emits tag ids at any
+    of the three levels (leaf / mid / group); a single overlap query
+    handles every specificity.
 
     Razzie exclusion policy:
       - When ceremony_ids is None and exclude_razzie is True, add
@@ -2081,8 +2105,9 @@ async def fetch_award_row_counts(
             must match (ANY). None = no ceremony filter.
         award_names: List of exact award_name strings (ANY). None/empty
             = no filter on award_name.
-        categories: List of exact category strings (ANY). None/empty =
-            no filter on category.
+        category_tag_ids: List of CategoryTag.tag_id values the row's
+            category_tag_ids array must overlap with (ANY). None/empty
+            = no filter on category.
         outcome_id: AwardOutcome.outcome_id (1=winner, 2=nominee). None =
             match either outcome.
         year_from: Inclusive lower bound of the year filter. None = no
@@ -2115,10 +2140,11 @@ async def fetch_award_row_counts(
         conditions.append("award_name = ANY(%s::text[])")
         params.append(award_names)
 
-    if categories:
-        # Same un-normalized equality contract as award_names.
-        conditions.append("category = ANY(%s::text[])")
-        params.append(categories)
+    if category_tag_ids:
+        # Array overlap against the GIN-indexed category_tag_ids column.
+        # Hits whichever tag level(s) the LLM picked.
+        conditions.append("category_tag_ids && %s::int[]")
+        params.append(category_tag_ids)
 
     if outcome_id is not None:
         conditions.append("outcome_id = %s")

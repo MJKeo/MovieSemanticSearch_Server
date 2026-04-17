@@ -5,8 +5,8 @@
 # lexical posting tables. The LLM is a schema translator, not a
 # re-interpreter: routing and intent have already been resolved
 # upstream. Its job is to (1) identify what kind of entity the
-# description names, (2) produce the canonical, exact-matchable form
-# of the name, (3) pick the correct role table for persons, and
+# description names, (2) produce the correct literal search text,
+# (3) pick the correct role table for persons, and
 # (4) set the actor prominence mode when actor-table search is in play.
 #
 # See search_improvement_planning/finalized_search_proposal.md
@@ -25,11 +25,12 @@ from schemas.entity_translation import EntityQuerySpec
 # canonicalization → output field guidance.
 #
 # Prompt authoring conventions applied:
-# - Evidence-inventory reasoning (entity_analysis is an inventory,
-#   prominence_evidence quotes input language)
-# - Brief pre-generation fields (no multi-paragraph reasoning)
-# - Abstention-first for prominence_evidence (not applicable path
-#   stated before extraction rules)
+# - Evidence-inventory reasoning (entity_type_evidence inventories
+#   the lookup type / role signal, prominence_evidence quotes input language)
+# - Brief pre-generation fields (name_resolution_notes is a short label,
+#   not a paragraph)
+# - Abstention-first for prominence_evidence (null path stated before
+#   extraction rules)
 # - Principle-based constraints, not failure catalogs
 # - Evaluation guidance over outcome shortcuts (boundaries explained,
 #   no keyword-matching rules like "if 'starring' appears → LEAD")
@@ -44,7 +45,7 @@ specification. You receive a single entity requirement that has \
 already been interpreted, routed, and framed as a positive-presence \
 lookup. Your job is not to decide what the user meant — that is \
 already done. Your job is to produce the exact search parameters \
-the retrieval layer needs: the canonical name, the entity type, and \
+the retrieval layer needs: the resolved search text, the entity type, and \
 the role-specific scoring knobs.
 
 Inputs you receive:
@@ -63,9 +64,10 @@ you are dealing with.
 Trust the upstream routing. If the description looks like it might \
 fit another endpoint, still produce the best possible entity \
 lookup for it — do not refuse, do not swap endpoints, do not \
-reinterpret. Your output feeds an exact-match lookup against \
-inverted-index posting tables; soft semantic understanding does \
-not help, precise strings do.
+reinterpret. Most entity types are literal string lookups after \
+shared normalization; title patterns are literal substring or \
+prefix matches against movie titles. Soft semantic understanding \
+does not help here — precise strings do.
 
 ---
 
@@ -108,10 +110,10 @@ Pick exactly one entity type. The choice determines which \
 sub-fields you populate and which posting tables execution code \
 searches.
 
-person — Any real individual in a film crew role: actors, \
+person — Any real individual in film credits: actors, \
 directors, writers / screenwriters, producers, composers / \
 musicians. A name you would find on a credits block. If the \
-description identifies a real person in any production role, this \
+description identifies a real credited person connected to the film, this \
 is a person lookup.
 
 character — A specific fictional character identified by their \
@@ -167,6 +169,13 @@ and the person could plausibly be credited in more than one way. \
 acts, and the user probably wants all of it. "Christopher Nolan \
 movies" is also broad_person even though he is best known for \
 directing, because the phrasing does not specify.
+
+Evidence precedence for person-role decisions:
+- description is authoritative for the requested role or prominence
+- routing_rationale is a coarse type hint that can break close ties
+- intent_rewrite is disambiguation context
+- parametric knowledge is last-resort support for primary_category \
+  and name resolution, not a reason to override explicit phrasing
 
 When you choose broad_person, set primary_category to the single \
 role the person is predominantly known for when you are confident \
@@ -234,28 +243,31 @@ actor_prominence_mode null.
 """
 
 # ---------------------------------------------------------------------------
-# Name canonicalization: the exact-match convergence rules. This is
-# the single most load-bearing part of the output — the returned
-# string must equal the one stored in the lexical dictionary after
-# shared normalization. Rules are principle-based.
+# Name canonicalization: the literal-search-text rules. For people,
+# characters, and studios the returned string must equal the stored
+# lexical form after shared normalization; title_pattern is literal
+# substring/prefix text instead. Rules are principle-based.
 # ---------------------------------------------------------------------------
 
 _NAME_CANONICALIZATION = """\
 NAME CANONICALIZATION
 
-The entity_name you produce is matched by exact string equality \
-against an ingestion-time dictionary, after a shared normalization \
-step that handles casing, diacritics, and whitespace. A one- \
-character difference in anything else — missing initial, wrong \
-spelling, added or dropped suffix — means zero matches. Produce \
-the most common, fully expanded credited form.
+The lookup_text you produce is matched literally by the retrieval \
+layer. For people, characters, and studios, it is resolved by \
+exact string equality against an ingestion-time dictionary after a \
+shared normalization step. A one-character difference in anything \
+else — missing initial, wrong spelling, added or dropped suffix — \
+means zero matches. Produce the most common, fully expanded \
+credited form.
 
 Persons — Use the full, conventional credited name. Correct \
 obvious typos ("Johny Dep" → "Johnny Depp"). Expand unambiguous \
 partial names where the surrounding context nails down the \
 referent ("Scorsese" in a query about film directors → "Martin \
-Scorsese"). Never add corporate suffixes. Never invent middle \
-names that the user did not type. If a partial name is genuinely \
+Scorsese"). Never add honorifics, titles, or extra name parts the \
+user did not give you unless the form is the common credited full \
+name. Never invent middle names that the user did not type. If a \
+partial name is genuinely \
 ambiguous and intent_rewrite does not pin it down, use the form \
 the user typed — the lookup will either find the right person or \
 return empty, which is an honest signal.
@@ -278,13 +290,14 @@ typos and capitalize properly. Do not add corporate suffixes: \
 "A24", not "A24 Films LLC". If the user's form is already the \
 recognizable short form, use it as-is.
 
-Title patterns — Emit the substring exactly as it should appear \
-inside the title, with no SQL wildcards and no quotation marks. \
-"love" for "title contains the word love"; "The" for "titles \
-starting with The". Pick title_pattern_match_type = contains when \
-the description asks for the pattern anywhere in the title, \
-starts_with when the description specifies the beginning of the \
-title.
+Title patterns — Emit the literal text fragment that should be \
+matched inside the title, with no SQL wildcards and no quotation \
+marks. "love" for "title contains the word love"; "The" for \
+"titles starting with The". Pick title_pattern_match_type = \
+contains when the description asks for the pattern anywhere in the \
+title, starts_with when the description specifies the beginning of \
+the title. This is a literal pattern match, not canonical-name \
+resolution.
 
 ---
 
@@ -303,30 +316,26 @@ Generate fields in the schema's order. Each reasoning field \
 scaffolds the decisions that follow it — surface evidence first, \
 commit to values after.
 
-entity_analysis — Before any structured decision, write 1-3 \
-concise sentences that inventory the evidence for three things, \
-in order:
-(1) What kind of entity the description names — person, character, \
-studio, or title_pattern — and what in the description or \
-routing_rationale signals it.
-(2) The canonical, fully expanded credited form of the name, \
-calling out any normalization you are applying (typo fix, \
-partial-name expansion, no added corporate suffixes, removal of \
-scene-quote embellishment).
-(3) For persons only — whether the description explicitly names a \
-specific crew role and which one, or state plainly that no \
-specific role is stated.
+entity_type_evidence — One short sentence that inventories what \
+kind of lookup this is — person, character, studio, or \
+title_pattern — and what in the description or routing_rationale \
+signals that. For persons, include whether a specific role is \
+explicitly named or whether no specific role is stated. This is an \
+evidence inventory, not a justification.
 
-This is an evidence inventory, not a justification. Cite the \
-phrases in the input; do not argue for a preferred output. For \
-non-person entities, omit item (3) entirely.
+name_resolution_notes — A short telegraphic note describing how you \
+resolved the search text. Examples of the kind of content this note \
+should carry: "exact user form", "typo fix to common credited \
+name", "surname expanded from context", "literal title fragment, \
+no canonicalization". Keep it brief — a label or clause, not a \
+paragraph.
 
-entity_name — The canonical string per the Name Canonicalization \
-section. This is the exact-match search key. No quotation marks, \
-no SQL wildcards, no trailing descriptors.
+lookup_text — The canonical string or literal pattern per the Name \
+Canonicalization section. This is the search key. No quotation \
+marks, no SQL wildcards, no trailing descriptors.
 
 entity_type — One of person, character, studio, title_pattern. \
-Must match the type you identified in entity_analysis.
+Must match the type you identified in entity_type_evidence.
 
 person_category — Populated only when entity_type is person. Pick \
 a specific role (actor, director, writer, producer, composer) \
@@ -339,15 +348,13 @@ primary_category — Populated only when person_category is \
 broad_person. Set to the single role the person is predominantly \
 known for, when you are confident about that. Leave null when \
 person_category is anything other than broad_person, or when the \
-person is genuinely equally known across multiple roles. Do not \
-set it to broad_person — only specific-role values are valid here.
+person is genuinely equally known across multiple roles.
 
 prominence_evidence — A single short sentence. FIRST: determine \
 whether prominence reasoning applies at all. Prominence reasoning \
 applies only when the entity is a person AND person_category is \
-actor or broad_person. If either condition fails, write "not \
-applicable" and stop — do not invent prominence language, do not \
-try to justify an inclusion. Otherwise, quote or paraphrase the \
+actor or broad_person. If either condition fails, leave this field \
+null. Otherwise, quote or paraphrase the \
 specific language in the description that signals role prominence \
 ("starring", "in a lead role", "supporting role", "cameo", "minor \
 role"); if no such language is present, state "no prominence \
@@ -358,12 +365,12 @@ actor_prominence_mode — Populated only when prominence_evidence \
 applies. Pick default when prominence_evidence reports "no \
 prominence signal"; pick lead, supporting, or minor only when \
 prominence_evidence has quoted explicit language for that mode. \
-Leave null when prominence_evidence is "not applicable".
+Leave null when prominence_evidence is null.
 
 title_pattern_match_type — Populated only when entity_type is \
-title_pattern. contains for substring-anywhere matches, \
-starts_with for title-prefix matches. Leave null for all other \
-entity types.
+title_pattern. contains for literal substring-anywhere matches, \
+starts_with for literal title-prefix matches. Leave null for all \
+other entity types.
 
 character_alternative_names — Populated only when entity_type is \
 character. An empty list is valid and common — only add entries \

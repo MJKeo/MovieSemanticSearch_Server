@@ -20,6 +20,7 @@ from schemas.enums import (
     ActorProminenceMode,
     EntityType,
     PersonCategory,
+    SpecificPersonCategory,
     TitlePatternMatchType,
 )
 
@@ -34,17 +35,18 @@ _ACTOR_TABLE_CATEGORIES: frozenset[PersonCategory] = frozenset(
 # Step 3 entity endpoint output.
 #
 # Flat model with nullable type-specific fields. The LLM populates
-# entity_name and entity_type for all lookups, then fills only the
+# lookup_text and entity_type for all lookups, then fills only the
 # fields relevant to that entity type (others null).
 #
-# Two scoped reasoning fields precede the decisions they scaffold:
-#   entity_analysis      → scaffolds entity_name, entity_type,
-#                          and person_category
+# Three scoped reasoning fields precede the decisions they scaffold:
+#   entity_type_evidence → scaffolds entity_type and person_category
+#   name_resolution_notes → scaffolds lookup_text
 #   prominence_evidence  → scaffolds actor_prominence_mode
 #
 # Field ordering:
-#   entity_analysis — evidence inventory for identity + canonical name
-#   entity_name — the primary search key, always required
+#   entity_type_evidence — evidence inventory for lookup type + role signal
+#   name_resolution_notes — brief canonicalization / literal-pattern note
+#   lookup_text — the primary search key, always required
 #   entity_type — classifies which sub-type logic applies
 #   person_category — narrows person searches to specific role tables
 #   primary_category — cross-posting anchor for broad_person searches
@@ -55,15 +57,19 @@ _ACTOR_TABLE_CATEGORIES: frozenset[PersonCategory] = frozenset(
 class EntityQuerySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Evidence-inventory reasoning that scaffolds entity_name,
-    # entity_type, and (for persons) person_category. Must be emitted
-    # BEFORE those fields. Guidance lives in the system prompt.
-    entity_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
+    # Evidence-inventory reasoning that scaffolds entity_type and
+    # (for persons) person_category. Must be emitted BEFORE those
+    # fields. Guidance lives in the system prompt.
+    entity_type_evidence: constr(strip_whitespace=True, min_length=1) = Field(...)
+
+    # Brief canonicalization / literal-pattern note emitted before the
+    # search key. Guidance lives in the system prompt.
+    name_resolution_notes: constr(strip_whitespace=True, min_length=1) = Field(...)
 
     # The corrected, normalized name or pattern to search for.
     # Person: "Christopher Nolan". Character: "The Joker".
     # Studio: "Pixar". Title pattern: "love".
-    entity_name: constr(strip_whitespace=True, min_length=1) = Field(...)
+    lookup_text: constr(strip_whitespace=True, min_length=1) = Field(...)
 
     entity_type: EntityType = Field(...)
 
@@ -77,17 +83,14 @@ class EntityQuerySpec(BaseModel):
     # specific role the person is predominantly known for — that
     # table gets full credit, others get 0.5x. Null = all tables
     # contribute equally. Ignored when person_category is a specific
-    # role (single-table search, no cross-posting). Must be a specific
-    # role value — broad_person is silently coerced to null by the
-    # validator below.
-    primary_category: PersonCategory | None = Field(default=None)
+    # role (single-table search, no cross-posting).
+    primary_category: SpecificPersonCategory | None = Field(default=None)
 
     # Evidence-inventory reasoning that scaffolds actor_prominence_mode.
     # Only populated when the entity search touches the actor table
     # (entity_type == person AND person_category in {actor,
-    # broad_person}); otherwise null (or the string "not applicable",
-    # per the abstention path defined in the system prompt). Must be
-    # emitted BEFORE actor_prominence_mode.
+    # broad_person}); otherwise null. Must be emitted BEFORE
+    # actor_prominence_mode.
     prominence_evidence: constr(strip_whitespace=True, min_length=1) | None = Field(
         default=None,
     )
@@ -100,42 +103,51 @@ class EntityQuerySpec(BaseModel):
 
     # --- Title pattern fields (entity_type == "title_pattern") ---
 
-    # Whether entity_name appears anywhere in the title (contains)
+    # Whether lookup_text appears anywhere in the title (contains)
     # or must be at the start (starts_with).
     title_pattern_match_type: TitlePatternMatchType | None = Field(default=None)
 
     # --- Character fields (entity_type == "character") ---
 
-    # Additional credited name variations beyond entity_name for
-    # exact matching. Empty list when entity_name is the only known
+    # Additional credited name variations beyond lookup_text for
+    # exact matching. Empty list when lookup_text is the only known
     # form. Each variation is searched independently; a match on any
-    # (including entity_name itself) scores 1.0.
+    # (including lookup_text itself) scores 1.0.
     character_alternative_names: conlist(
         constr(strip_whitespace=True, min_length=1), min_length=0
     ) | None = Field(default=None)
 
     # --- Validators ---
 
-    # Two structural coercions applied post-parse so execution code
+    # Structural coercions applied post-parse so execution code
     # does not need to re-implement the same defaults:
-    #   (1) primary_category cannot be broad_person — that value means
-    #       "search all tables", which is already the person_category's
-    #       responsibility. Coerce to null.
-    #   (2) actor_prominence_mode defaults to DEFAULT whenever the
+    #   (1) the abstention sentinel "not applicable" on
+    #       prominence_evidence is normalized back to null.
+    #   (2) prominence_evidence defaults to "no prominence signal"
+    #       whenever the actor table participates and the LLM left it
+    #       null, so actor-applicable specs don't silently lose that
+    #       field.
+    #   (3) actor_prominence_mode defaults to DEFAULT whenever the
     #       actor posting table is part of the search (entity_type is
     #       person AND person_category is actor or broad_person) and
     #       the LLM left it null. Matches the execution-layer default
     #       described in the finalized proposal.
     @model_validator(mode="after")
     def _normalize_person_fields(self) -> "EntityQuerySpec":
-        if self.primary_category == PersonCategory.BROAD_PERSON:
-            self.primary_category = None
+        if (
+            self.prominence_evidence is not None
+            and self.prominence_evidence.strip().lower() == "not applicable"
+        ):
+            self.prominence_evidence = None
 
         if (
             self.entity_type == EntityType.PERSON
             and self.person_category in _ACTOR_TABLE_CATEGORIES
-            and self.actor_prominence_mode is None
         ):
-            self.actor_prominence_mode = ActorProminenceMode.DEFAULT
+            if self.prominence_evidence is None:
+                self.prominence_evidence = "no prominence signal"
+
+            if self.actor_prominence_mode is None:
+                self.actor_prominence_mode = ActorProminenceMode.DEFAULT
 
         return self

@@ -901,11 +901,23 @@ empty candidate set. There is no fallback to the closest match — an empty set
 is the honest answer and the pipeline handles it accordingly.
 
 **Step 3 output schema:** `schemas/entity_translation.py` — `EntityQuerySpec`.
-One flat object with `entity_name` (always required), `entity_type` (enum
-discriminator), and nullable type-specific fields. Only fields relevant to
-the entity type are populated; all others remain null. The LLM's primary job
-is name/term generation — producing the correct search strings so that simple
-exact or substring matching finds the right movies.
+One flat object with shared fields followed by nullable type-specific fields.
+The current field order is:
+- `entity_type_evidence` — brief evidence inventory grounding the lookup type
+  and, for person lookups, whether a specific role is explicitly named
+- `name_resolution_notes` — brief note on how the search text was resolved
+  (exact user form, typo fix, surname expansion, literal title fragment, etc.)
+- `lookup_text` — always required; the canonical string or literal title
+  fragment to search for
+- `entity_type` — enum discriminator
+- `person_category`, `primary_category`, `prominence_evidence`,
+  `actor_prominence_mode`, `title_pattern_match_type`,
+  `character_alternative_names` — nullable type-specific fields
+
+The LLM's primary job is still search-text generation — producing the correct
+literal strings so exact or literal-pattern matching finds the right movies.
+The brief pre-generation fields exist to help small models reason before
+committing to `lookup_text` and the role/prominence settings.
 
 **Dealbreaker scoring:** All sub-types use binary scoring (1.0 or 0.0) except
 actors, which use zone-based prominence scoring:
@@ -916,7 +928,7 @@ actors, which use zone-based prominence scoring:
   See Actor Prominence Scoring below.
 - **Character lookups** — Binary 1.0. The LLM generates the standard, most
   common credited form(s) of the character name. Each name variation
-  (`entity_name` + `character_alternative_names`) is exact-matched against
+  (`lookup_text` + `character_alternative_names`) is exact-matched against
   `lex.character_strings`. A match on any variation scores 1.0.
 - **Studio lookups** — Binary 1.0. Exact match against
   `lex.lexical_dictionary`.
@@ -927,14 +939,15 @@ actors, which use zone-based prominence scoring:
 
 #### Per-Sub-Type Search and LLM Output
 
-**Person lookups:** The LLM outputs `entity_name` (corrected/normalized
+**Person lookups:** The LLM outputs `lookup_text` (corrected/normalized
 person name), `person_category` (which role table to search), and optionally
 `primary_category` and `actor_prominence_mode`.
 
 Name normalization follows the same rules as the current V1 lexical prompt:
 fix spelling errors ("Johny Dep" → "Johnny Depp"), capitalize properly,
 complete unambiguous partial names ("Scorsese" → "Martin Scorsese"), but
-never add corporate suffixes or infer names not typed by the user. The
+never add extra name parts not supported by the query/context or infer
+entirely different names not typed by the user. The
 normalized name is exact-matched against `lex.lexical_dictionary` after
 `normalize_string()` processing.
 
@@ -945,7 +958,7 @@ cross-posting score consolidation (see below). The LLM uses `broad_person`
 when it cannot confidently assign a single role from the description and
 routing rationale.
 
-**Character lookups:** The LLM outputs `entity_name` (the primary credited
+**Character lookups:** The LLM outputs `lookup_text` (the primary credited
 form of the character name) and optionally `character_alternative_names`
 (additional credited name variations). Only specific named characters are
 routed here — generic character types ("police officer", "vampire") go to
@@ -954,13 +967,13 @@ keyword or semantic endpoints instead.
 The LLM generates the standard, most common way the character name appears
 in movie credits. If the character is genuinely known by multiple credited
 forms, multiple variations are listed:
-- "The Joker" → `entity_name="The Joker"`,
+- "The Joker" → `lookup_text="The Joker"`,
   `character_alternative_names=["Joker"]`
-- "Batman" → `entity_name="Batman"`,
+- "Batman" → `lookup_text="Batman"`,
   `character_alternative_names=["Bruce Wayne"]`
-- "Hannibal Lecter" → `entity_name="Hannibal Lecter"`,
+- "Hannibal Lecter" → `lookup_text="Hannibal Lecter"`,
   `character_alternative_names=[]`
-- "T-800" → `entity_name="T-800"`,
+- "T-800" → `lookup_text="T-800"`,
   `character_alternative_names=["The Terminator", "Terminator"]`
 
 Fix obvious misspellings only when clearly a misspelling — don't guess if the
@@ -968,18 +981,18 @@ name is ambiguous. Each name is normalized then exact-matched against
 `lex.character_strings`. A match on any variation returns that movie with a
 score of 1.0.
 
-**Studio lookups:** The LLM outputs `entity_name` (corrected/normalized
+**Studio lookups:** The LLM outputs `lookup_text` (corrected/normalized
 studio name). Same normalization rules as person names: fix typos, capitalize,
 but don't add corporate suffixes ("Disney" stays "Disney", not "Walt Disney
 Pictures"). Exact match against `lex.lexical_dictionary`.
 
-**Title pattern lookups:** The LLM outputs `entity_name` (the search pattern
+**Title pattern lookups:** The LLM outputs `lookup_text` (the search pattern
 text, no SQL wildcards) and `title_pattern_match_type` (`contains` or
 `starts_with`). Execution code normalizes the pattern and constructs the
-appropriate `LIKE` query: `LIKE '%pattern%'` for contains, `LIKE 'pattern%'`
-for starts_with. Matched against `lex.title_token_strings` using the trigram
-GIN index for acceleration. No fuzziness — the LIKE match is the entire
-determination.
+appropriate `ILIKE` pattern against the full title string: `'%pattern%'`
+for contains, `'pattern%'` for starts_with. This is a literal pattern
+match, not exact dictionary resolution. Current implementation is case-
+insensitive but not diacritic-insensitive.
 
 #### Cross-Posting Table Search
 
@@ -1336,8 +1349,14 @@ All award-related routing goes through this single endpoint.
   Razzie excluded)
 - Ceremony-specific lookup (Academy Awards, Golden Globes, BAFTA, Cannes,
   Venice, Berlin, SAG, Critics Choice, Sundance, Razzie, Spirit Awards, Gotham)
-- Category-specific lookup ("Best Picture", "Best Director", "Palme d'Or", etc.)
-  — can stand alone without a ceremony filter
+- Category-concept lookup via the 3-level CategoryTag taxonomy
+  (`schemas/award_category_tags.py`): pick at the leaf level for a specific
+  concept ("Best Actor" → `lead-actor`), at the mid level for a meaningful
+  rollup ("Best Actor or Best Actress" → `lead-acting`), or at the group
+  level for whole-bucket queries ("any acting award" → `acting`). Backed
+  by the GIN-indexed `movie_awards.category_tag_ids INT[]` column whose
+  per-row entries store every ancestor of the row's leaf concept, so a
+  single `&&` overlap query handles every specificity.
 - Prize name filtering (e.g., "Oscar", "Palme d'Or", "BAFTA Film Award")
 - Outcome filtering (winner vs. nominee)
 - Year range filtering
@@ -1378,7 +1397,7 @@ Two scoped reasoning fields, each placed immediately before the decisions it sca
 
 | Field | Position | Scaffolds | Purpose |
 |---|---|---|---|
-| `concept_analysis` | First | `ceremonies`, `award_names`, `categories`, `outcome`, `years` | Filter-axis evidence inventory — quotes phrases signalling ceremony, award name, category, outcome, year; explicit absence required per axis. Count/intensity language is NOT inventoried here. |
+| `concept_analysis` | First | `ceremonies`, `award_names`, `category_tags`, `outcome`, `years` | Filter-axis evidence inventory — quotes phrases signalling ceremony, award name, category, outcome, year; explicit absence required per axis. Count/intensity language is NOT inventoried here. |
 | `scoring_shape_label` | Between `concept_analysis` and `scoring_mode` | `scoring_mode`, `scoring_mark` | Brief intensity-pattern classification. Forces explicit recognition of the scoring intent before numeric commitment. One of: `"generic award-winning"`, `"specific filter, no count"`, `"explicit count: N"`, `"superlative"`, `"qualitative plenty"`. |
 
 The two fields are deliberately scoped to different evidence types: `concept_analysis` does filter-axis detection (extractive); `scoring_shape_label` does count/intensity classification (interpretive). Mixing them into one field would make `concept_analysis` diffuse and reduce the priming effect on the scoring decisions, which are the hardest in this schema.

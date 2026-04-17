@@ -49,6 +49,7 @@ from schemas.enums import (
     ActorProminenceMode,
     EntityType,
     PersonCategory,
+    SpecificPersonCategory,
     TitlePatternMatchType,
 )
 
@@ -243,7 +244,7 @@ async def _execute_person_specific_role(
     # function fails loudly instead of KeyError-ing inside _ROLE_TO_TABLE.
     assert spec.person_category is not None and spec.person_category != PersonCategory.BROAD_PERSON
 
-    norm = normalize_string(spec.entity_name)
+    norm = normalize_string(spec.lookup_text)
     if not norm:
         return {}
 
@@ -277,12 +278,12 @@ _ROLE_TO_TABLE: dict[PersonCategory, PostingTable] = {
 # Map every people-posting table to the PersonCategory that anchors
 # broad_person consolidation. Used to apply the primary_category
 # weighting during cross-posting merge.
-_TABLE_TO_ROLE: dict[PostingTable, PersonCategory] = {
-    PostingTable.ACTOR: PersonCategory.ACTOR,
-    PostingTable.DIRECTOR: PersonCategory.DIRECTOR,
-    PostingTable.WRITER: PersonCategory.WRITER,
-    PostingTable.PRODUCER: PersonCategory.PRODUCER,
-    PostingTable.COMPOSER: PersonCategory.COMPOSER,
+_TABLE_TO_ROLE: dict[PostingTable, SpecificPersonCategory] = {
+    PostingTable.ACTOR: SpecificPersonCategory.ACTOR,
+    PostingTable.DIRECTOR: SpecificPersonCategory.DIRECTOR,
+    PostingTable.WRITER: SpecificPersonCategory.WRITER,
+    PostingTable.PRODUCER: SpecificPersonCategory.PRODUCER,
+    PostingTable.COMPOSER: SpecificPersonCategory.COMPOSER,
 }
 
 
@@ -293,7 +294,7 @@ async def _execute_person_broad(
     """broad_person — search all five role tables in parallel, then
     merge per-table scores via max (with primary-category weighting).
     """
-    norm = normalize_string(spec.entity_name)
+    norm = normalize_string(spec.lookup_text)
     if not norm:
         return {}
 
@@ -340,12 +341,12 @@ async def _execute_character(
     spec: EntityQuerySpec,
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """Character lookup — exact match entity_name plus every alternative
+    """Character lookup — exact match lookup_text plus every alternative
     credited form against lex.character_strings. A match on any variant
     scores 1.0."""
     # Build the full list of name variants, normalize each, dedupe
     # while preserving order.
-    variants = [spec.entity_name]
+    variants = [spec.lookup_text]
     if spec.character_alternative_names:
         variants.extend(spec.character_alternative_names)
     seen: set[str] = set()
@@ -376,7 +377,7 @@ async def _execute_studio(
     """Studio lookup — exact match normalized studio name against the
     lexical dictionary, then query the studio posting table. Binary
     1.0 scoring."""
-    norm = normalize_string(spec.entity_name)
+    norm = normalize_string(spec.lookup_text)
     if not norm:
         return {}
 
@@ -397,7 +398,7 @@ async def _execute_title_pattern(
     """Title pattern lookup — normalized LIKE match against the full
     title column on public.movie_card. Binary 1.0 scoring for every
     matching movie."""
-    norm = normalize_string(spec.entity_name)
+    norm = normalize_string(spec.lookup_text)
     if not norm:
         return {}
 

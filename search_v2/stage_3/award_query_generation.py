@@ -37,6 +37,7 @@
 from datetime import date
 
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
+from schemas.award_category_tags import render_taxonomy_for_prompt
 from schemas.award_translation import AwardQuerySpec
 
 # ---------------------------------------------------------------------------
@@ -255,24 +256,48 @@ for. Reserve award_names for cases where the prize is explicitly \
 being distinguished (e.g., a user comparing a statuette award to \
 an honorary award at the same ceremony, which is uncommon).
 
-CATEGORIES
+CATEGORY TAGS
 
-The specific award category as stored in the award database (e.g., \
-"Best Picture", "Best Director", "Best Actor", "Best Actress", \
-"Best Animated Feature", "Best International Feature Film"). \
-Categories can stand alone without a ceremony — execution searches \
-all non-Razzie ceremonies that carry that category name.
+The award category axis is a closed enum of concept tags drawn from \
+a 3-level taxonomy (leaf → mid → group). The taxonomy is listed in \
+the CATEGORY TAG TAXONOMY section below. Pick tags at whatever \
+specificity matches the requirement:
 
-Emit multiple variations when the category name has changed over \
-time and the user's intent spans both eras. For example: "Best \
-Foreign Language Film" was renamed "Best International Feature \
-Film" by the Academy in 2020 — emit both when the user asks for \
-that category without restricting to a specific year range.
+  leaf level (e.g. lead-actor, best-picture-drama, worst-screenplay) — \
+    a single, specific concept. Use when the user names the exact \
+    category, including its narrow form ("Best Actor", "Best \
+    Adapted Screenplay", "Best Animated Short Film").
 
-Use the most common form of the category name as used by the \
-specific ceremony, or the broadly recognized cross-ceremony label \
-when no ceremony is specified. Leave null when no category was \
-named.
+  mid level (e.g. lead-acting, music, short, worst-acting) — \
+    a meaningful intermediate rollup that spans multiple leaves \
+    without spanning the whole group. Use when the requirement is \
+    deliberately broader than a leaf but narrower than the group, \
+    typically when it's gender-neutral, format-neutral, or \
+    medium-neutral. "Won Best Actor or Best Actress" → lead-acting. \
+    "Won any sound award" → sound-any. "Any short film award" → short.
+
+  group level (acting, directing, writing, picture, craft, razzie, \
+    festival-or-tribute) — the whole bucket. Use when the requirement \
+    is generic to the bucket. "Won an acting award" → acting. \
+    "Recognized for craft work" → craft.
+
+Emit multiple tags when the requirement covers concepts that don't \
+share an ancestor below the group level, e.g. "won Best Director or \
+Best Screenplay" → [director, screenplay-any]. Within an axis a row \
+matches if it overlaps with ANY of the supplied tags. The retrieval \
+layer uses the row's stored ancestor list, so emitting a group-level \
+tag automatically picks up every leaf and mid under that group — do \
+NOT enumerate the descendants of a tag you've already emitted.
+
+Tag selection is ceremony-agnostic. The same leaf tag (e.g. \
+lead-actor) covers "Best Actor" at the Oscars, "Best Performance by \
+an Actor in a Motion Picture - Drama" at the Globes, "Best Leading \
+Actor" at BAFTA, and dozens of other phrasings. You no longer need \
+to emit ceremony-specific surface forms for the category axis.
+
+Leave category_tags null when the requirement names no category at \
+all (a pure ceremony query like "Cannes winners" should leave \
+category_tags null and rely on the ceremony filter).
 
 OUTCOME
 
@@ -303,103 +328,67 @@ award-ceremony season numbers.
 """
 
 # ---------------------------------------------------------------------------
-# Canonical surface forms: award_names and categories are matched as
-# exact, un-normalized strings against the stored award rows. The LLM
-# must emit the official IMDB surface form for the specific ceremony
-# in play. The table anchors common cases; the LLM relies on its
-# parametric knowledge of IMDB nomenclature for anything else.
+# Award-name canonical surface forms. Categories are now expressed via the
+# closed CategoryTag enum (see CATEGORY TAG TAXONOMY below) and no longer
+# require ceremony-specific surface forms; this section covers only the
+# award_names axis where exact stored strings are still required.
 # ---------------------------------------------------------------------------
 
 _SURFACE_FORMS = """\
-CANONICAL SURFACE FORMS
+AWARD NAME SURFACE FORMS
 
-The retrieval layer matches award_names and categories as exact, \
-un-normalized strings against stored award rows. A one-character \
-difference produces zero matches. You must emit the official \
-surface form as catalogued on IMDB for the specific ceremony in \
-play — matching capitalization, punctuation, word order, and \
-apostrophe style. The correct form is ceremony-specific: the same \
-concept ("best lead actor") has a different canonical string at \
-each ceremony. Do not invent, shorten, paraphrase, or assume a \
-generic form works across ceremonies.
-
-Use your parametric knowledge of IMDB award nomenclature to produce \
-the official form. The table below anchors the most common ones. \
-For any award or category not in the table, recall the exact IMDB \
-form for the specific ceremony named — do not fall back to a \
-generic label just because the ceremony-specific form is not listed.
+The retrieval layer matches award_names as exact, un-normalized \
+strings against stored award rows. A one-character difference \
+produces zero matches. When the user names a specific prize, you \
+must emit the official IMDB surface form for that prize — matching \
+capitalization, punctuation, and apostrophe style. Use your \
+parametric knowledge of IMDB award nomenclature; the table below \
+anchors the most common cases.
 
 The table is not a closed vocabulary. Do NOT restrict output to \
 table entries. Do NOT pattern-match a user's phrase onto a \
 similar-looking table entry when the user clearly named a different \
 specific award. For example, a user asking for "Cannes Jury Prize" \
-must emit "Jury Prize", not "Palme d'Or", even though only \
-"Palme d'Or" appears in the Cannes row. The sole case where the \
-table is authoritative is when the user names the exact entity a \
-row refers to — then emit that row's string verbatim.
+must emit "Jury Prize", not "Palme d'Or".
 
-Academy Awards, USA
-  prize name: Oscar
-  category conventions: acting categories use "... in a Leading \
-Role" / "... in a Supporting Role" (e.g., "Best Actor in a \
-Leading Role", "Best Actress in a Supporting Role"). Top film is \
-"Best Picture". Foreign-film category is "Best Foreign Language \
-Film" pre-2020 and "Best International Feature Film" 2020+.
-
-Golden Globes, USA
-  prize name: Golden Globe
-  category conventions: acting categories use the long form \
-"Best Performance by an Actor/Actress in a Motion Picture - \
-Drama" / "... - Comedy or Musical" / "... in a Supporting Role \
-in a Motion Picture". Top film: "Best Motion Picture - Drama" / \
-"Best Motion Picture - Comedy or Musical". Other common: \
-"Best Director - Motion Picture", "Best Screenplay - Motion \
-Picture", "Best Original Score - Motion Picture", "Best Original \
-Song - Motion Picture".
-
-BAFTA Awards
-  prize name: BAFTA Film Award
-  common categories: "Best Film", "Best Direction", "Best Leading \
-Actor", "Best Leading Actress", "Best Film from any Source".
-
-Cannes Film Festival
-  prize names: "Palme d'Or", "Grand Jury Prize", "Un Certain \
-Regard Award", "Jury Prize", "FIPRESCI Prize", "Directors' \
-Fortnight".
-
-Venice Film Festival
-  prize names: "Golden Lion", "Grand Jury Prize", "Silver Lion".
-
-Berlin International Film Festival
-  prize names: "Golden Berlin Bear", "Silver Berlin Bear", "Teddy".
-
-Sundance Film Festival
-  category conventions (often stand alone without a prize name): \
-"Dramatic", "Documentary", "World Cinema - Dramatic", "World \
-Cinema - Documentary", "Audience Award".
-
-Razzie Awards
-  prize name: Razzie Award
-  category conventions: "Worst ..." (e.g., "Worst Picture", \
-"Worst Actor", "Worst Actress", "Worst Director", "Worst \
-Screenplay", "Worst Supporting Actor", "Worst Supporting Actress").
-
-Critics Choice Awards
-  prize name: Critics Choice Award
-
-Film Independent Spirit Awards
-  prize name: Independent Spirit Award
-  common categories: "Best Feature", "Best First Feature".
-
-Gotham Awards
-  prize name: Gotham Independent Film Award
-
-Screen Actors Guild (stored under ceremony "Actor Awards")
-  prize name: Actor
+Academy Awards, USA — prize name: Oscar
+Golden Globes, USA — prize name: Golden Globe
+BAFTA Awards — prize name: BAFTA Film Award
+Cannes Film Festival — prize names: "Palme d'Or", "Grand Jury \
+Prize", "Un Certain Regard Award", "Jury Prize", "FIPRESCI Prize"
+Venice Film Festival — prize names: "Golden Lion", "Grand Jury \
+Prize", "Silver Lion"
+Berlin International Film Festival — prize names: "Golden Berlin \
+Bear", "Silver Berlin Bear", "Teddy"
+Razzie Awards — prize name: Razzie Award
+Critics Choice Awards — prize name: Critics Choice Award
+Film Independent Spirit Awards — prize name: Independent Spirit Award
+Gotham Awards — prize name: Gotham Independent Film Award
+Screen Actors Guild (stored under ceremony "Actor Awards") — \
+prize name: Actor
+Sundance Film Festival — typically no prize-name distinction; \
+category tags carry the signal.
 
 ---
 
 """
+
+# ---------------------------------------------------------------------------
+# Tag taxonomy: rendered programmatically from schemas/award_category_tags.py
+# so the prompt and the schema cannot drift. Each tag is listed under its
+# group with a short description and (for leaves) its mid-level parents.
+# ---------------------------------------------------------------------------
+
+_TAG_TAXONOMY = (
+    "CATEGORY TAG TAXONOMY\n\n"
+    "The closed enum of category_tags values, organized by top-level \n"
+    "group. Each leaf row also lists its rollup parents in [under: ...]; \n"
+    "use a parent slug instead of a leaf when you want to match every \n"
+    "concept under it (the row's stored tag list contains every ancestor, \n"
+    "so a single ancestor tag covers all its descendants).\n\n"
+    + render_taxonomy_for_prompt()
+    + "\n\n---\n\n"
+)
 
 # ---------------------------------------------------------------------------
 # Razzie handling: default exclusion + explicit opt-in. This is a
@@ -418,8 +407,13 @@ user's sense.
 
 Razzies are included ONLY when the user explicitly names them. \
 Clear signals: "Razzie winners", "Razzie-nominated", "won a \
-Razzie", "Golden Raspberry Award". When you see these, emit \
-"Razzie Awards" in the ceremonies list. You may combine Razzies \
+Razzie", "Golden Raspberry Award", or any "Worst …" category \
+("Worst Picture", "Worst Actor"). When you see these, emit \
+"Razzie Awards" in the ceremonies list AND, if a worst-category \
+was named, the corresponding worst-* tag in category_tags. Either \
+signal alone is sufficient to opt in (the executor recognizes \
+Razzie intent on either axis), but emitting both when both are \
+present makes the spec self-documenting. You may combine Razzies \
 with other ceremonies when the query covers both ("Oscar and \
 Razzie winners").
 
@@ -503,14 +497,20 @@ relevant ceremony; do not approximate to a similar-looking table \
 entry. Emit multiple when the same prize has been known by \
 different names over time.
 
-categories — Null when concept_analysis found no category signal. \
-Emit the official ceremony-specific IMDB form (Oscars: "Best Actor \
-in a Leading Role"; Golden Globes: "Best Performance by an Actor \
-in a Motion Picture - Drama"; Razzies: "Worst Picture"). Do not \
-default to the shortest generic form unless the user named no \
-ceremony and the generic form is itself the IMDB convention. Emit \
-multiple variations when the category name has changed over time \
-and the intent spans both eras.
+category_tags — Null when concept_analysis found no category signal. \
+Otherwise emit one or more tags from the closed CategoryTag enum at \
+whatever specificity the requirement implies (see CATEGORY TAGS in \
+FILTER AXES and the CATEGORY TAG TAXONOMY for the full enum). \
+Prefer the broadest tag that exactly captures the requirement: if \
+the user said "Best Actor", emit lead-actor (leaf), not lead-acting \
+(mid). If they said "won Best Actor or Best Actress", emit \
+lead-acting (mid), not both leaves. If they said "won an acting \
+award", emit acting (group), not every acting tag. Do not enumerate \
+descendants of a tag you've already emitted — the row's stored tag \
+list contains every ancestor, so an ancestor tag automatically picks \
+up its descendants. You may emit multiple tags only when the \
+concepts don't share an ancestor below the group level (e.g. \
+"Best Director or Best Screenplay" → [director, screenplay-any]).
 
 outcome — Null when concept_analysis found no explicit outcome \
 signal. Emit winner or nominee only when outcome language was \
@@ -527,6 +527,7 @@ SYSTEM_PROMPT = (
     + _SCORING_SHAPE
     + _FILTER_AXES
     + _SURFACE_FORMS
+    + _TAG_TAXONOMY
     + _RAZZIE_HANDLING
     + _OUTPUT
 )

@@ -255,7 +255,10 @@ Write the description as a natural-language lookup preserving \
 all user-specified qualifiers. Examples: "includes Brad Pitt in \
 actors", "has Arnold Schwarzenegger in a lead role", "has a \
 character named The Joker", "directed by Christopher Nolan", \
-"title contains the word 'love'", "not starring Adam Sandler".
+"title contains the word 'love'", "includes Adam Sandler in \
+actors". If the original query is exclusionary, keep the \
+description in positive-presence form and let direction carry the \
+exclusion.
 
 
 metadata — Evaluates structured, quantitative movie attributes — \
@@ -926,8 +929,11 @@ For each dealbreaker, generate these fields in order:
 
 description — A concrete string describing the requirement. \
 Examples: "includes Brad Pitt in actors", "is a horror movie", \
-"released in the 1980s", "does not involve clowns". Use natural \
-language that preserves all user-specified qualifiers.
+"released in the 1980s", "involves clowns". Always write the \
+description in positive-presence form, even for exclusions. The \
+description says what to search FOR; direction says whether the \
+user wants to include it or avoid it. Use natural language that \
+preserves all user-specified qualifiers.
 
 direction — Whether this dealbreaker is an inclusion (generates \
 candidates) or exclusion (filters/penalizes candidates after \

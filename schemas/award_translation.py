@@ -27,6 +27,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from schemas.award_category_tags import CategoryTag
 from schemas.enums import AwardCeremony, AwardOutcome, AwardScoringMode
 
 
@@ -60,7 +61,8 @@ class AwardYearFilter(BaseModel):
 #   scoring_mark        — the count value that determines scoring shape
 #   ceremonies          — filter to specific ceremonies (enum strings)
 #   award_names         — filter to specific prize names
-#   categories          — filter to specific award categories
+#   category_tags       — filter to specific award categories via the
+#                         3-level tag taxonomy (leaf / mid / group)
 #   outcome             — WINNER | NOMINEE | None (both)
 #   years               — optional year range or single year
 #
@@ -101,8 +103,12 @@ class AwardQuerySpec(BaseModel):
     # Prize names as stored in movie_awards.award_name. Null when not specified.
     award_names: list[str] | None = None
 
-    # Category strings as stored in movie_awards.category. Null when not specified.
-    categories: list[str] | None = None
+    # Category-concept tags. Members may come from any of the three tag
+    # levels (leaf / mid / group) — the LLM picks at whatever specificity
+    # the requirement implies. Execution converts members to their integer
+    # tag ids and runs `category_tag_ids && ARRAY[...]` against the
+    # GIN-indexed column. Null when not specified.
+    category_tags: list[CategoryTag] | None = None
 
     # WINNER | NOMINEE | None (both outcomes count).
     outcome: AwardOutcome | None = None

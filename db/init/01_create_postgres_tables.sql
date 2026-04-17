@@ -81,12 +81,18 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_award_ceremony_win_ids
 -- Structured award nominations and wins for deterministic lookup.
 -- Queried by ceremony_id + award_name + category + outcome_id, optionally filtered by year.
 CREATE TABLE IF NOT EXISTS public.movie_awards (
-  movie_id      BIGINT NOT NULL REFERENCES public.movie_card ON DELETE CASCADE,
-  ceremony_id   SMALLINT NOT NULL,
-  award_name    TEXT NOT NULL,
-  category      TEXT NOT NULL DEFAULT '',
-  outcome_id    SMALLINT NOT NULL,
-  year          SMALLINT NOT NULL,
+  movie_id          BIGINT NOT NULL REFERENCES public.movie_card ON DELETE CASCADE,
+  ceremony_id       SMALLINT NOT NULL,
+  award_name        TEXT NOT NULL,
+  category          TEXT NOT NULL DEFAULT '',
+  -- Concept-tag ids derived from `category` via consolidate_award_categories.py
+  -- and the 3-level taxonomy in schemas/award_category_tags.py. Stores the leaf
+  -- tag plus every ancestor (mid, group), so a single GIN-indexed && lookup
+  -- handles queries at any specificity ("any acting award" via the group id,
+  -- "Best Actor" via the leaf id, etc.).
+  category_tag_ids  INT[] NOT NULL DEFAULT '{}',
+  outcome_id        SMALLINT NOT NULL,
+  year              SMALLINT NOT NULL,
   PRIMARY KEY (movie_id, ceremony_id, award_name, category, year)
 );
 
@@ -97,6 +103,12 @@ CREATE INDEX IF NOT EXISTS idx_awards_lookup
 -- Reverse lookup: given a movie, find all its awards (for display / card rendering)
 CREATE INDEX IF NOT EXISTS idx_awards_movie
   ON public.movie_awards (movie_id);
+
+-- Concept-tag overlap filter for the Stage-3 awards endpoint.
+-- Lets queries like "any acting award" (tag id 10000) or "Best Actor"
+-- (tag id 1) hit a single indexed && lookup regardless of specificity.
+CREATE INDEX IF NOT EXISTS idx_awards_category_tag_ids
+  ON public.movie_awards USING GIN (category_tag_ids gin__int_ops);
 
 -- Structured franchise metadata for search-time franchise retrieval/filtering.
 CREATE TABLE IF NOT EXISTS public.movie_franchise_metadata (
