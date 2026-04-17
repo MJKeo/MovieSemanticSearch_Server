@@ -1444,18 +1444,16 @@ ANDed (ceremony AND category AND award_name AND outcome AND year range).
 `categories` can stand alone without `ceremonies` — execution searches across
 all non-Razzie ceremonies that carry that category.
 
-**Scope discipline (prize names):** `award_names` is only emitted when the
-user is specifically distinguishing one prize object from others at the same
-ceremony. Ceremony-implied prize names ("Oscar-winning", "won an Oscar",
-"Palme d'Or winners", "Cannes winners") are routed to `ceremonies` only —
-the prize is implied by the ceremony, and adding `award_names` creates a
-redundant AND filter that would miss legitimate wins stored under sibling
-award-name values (Technical Awards, Honorary Academy Awards, etc.).
-`award_names` is reserved for cases where the prize is explicitly being
-distinguished (e.g., a statuette award vs. an honorary award at the same
-ceremony — rare). This is principle-based scope discipline, not a keyword
-rule: the stage-3 prompt teaches the boundary rather than enumerating
-phrases.
+**Scope discipline (prize names):** `award_names` represents named prize
+objects directly. If the user says "Oscar-winning", "won an Oscar",
+"Palme d'Or winners", or "Golden Lion winner", the stage-3 LLM emits the
+canonical stored prize name in `award_names` and does **not** automatically
+add the related ceremony. This keeps the spec aligned with the user's phrasing
+instead of broadening it to a parent event. `ceremonies` is reserved for
+event/festival/awards-body wording such as "at Cannes", "nominated at
+Sundance", or "Academy Awards ceremony". Emit both axes only when the query
+explicitly names both levels ("Cannes Palme d'Or winners"). The prompt teaches
+this as a representation rule, not as a keyword shortcut list.
 
 **Relative year resolution:** The stage-3 LLM has today's date injected
 into its prompt (same pattern as the metadata endpoint). Relative terms
@@ -1464,14 +1462,18 @@ resolved against the injected date, not against training-time knowledge.
 Year filters always use calendar years, not award-ceremony season numbers.
 
 **Stage-3 implementation:** `search_v2/stage_3/award_query_generation.py`.
-Six-section system prompt: TASK, DIRECTION_AGNOSTIC (positive-presence
+System prompt sections: TASK, DIRECTION_AGNOSTIC (positive-presence
 invariant), SCORING_SHAPE (five canonical patterns), FILTER_AXES
-(ceremony-name mapping table, scope discipline, years), RAZZIE_HANDLING
-(default-exclusion with explicit opt-in), OUTPUT. All LLM-facing guidance
-lives in the prompt; the `AwardQuerySpec` schema carries only brief
-developer comments (no `Field(description=...)` entries, since the schema
-is passed as `response_format` and descriptions would leak into the
-prompt surface without the structured prose context).
+(representation rules for prize names vs ceremonies, years), generated
+AWARD_NAME_SURFACE_FORMS, generated CATEGORY TAG TAXONOMY,
+RAZZIE_HANDLING (default-exclusion with explicit opt-in), and OUTPUT.
+The prompt receives `routing_hint` (renamed on the prompt surface from
+step 2's `routing_rationale`) and explicitly treats it as contextual
+background rather than evidence. All LLM-facing guidance lives in the prompt;
+the `AwardQuerySpec` schema carries only brief developer comments (no
+`Field(description=...)` entries, since the schema is passed as
+`response_format` and descriptions would leak into the prompt surface without
+the structured prose context).
 
 ### Endpoint 4: Franchise Structure
 

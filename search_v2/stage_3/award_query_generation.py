@@ -38,6 +38,10 @@ from datetime import date
 
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from schemas.award_category_tags import render_taxonomy_for_prompt
+from schemas.award_surface_forms import (
+    render_award_name_surface_forms_for_prompt,
+    render_ceremony_mappings_for_prompt,
+)
 from schemas.award_translation import AwardQuerySpec
 
 # ---------------------------------------------------------------------------
@@ -46,7 +50,7 @@ from schemas.award_translation import AwardQuerySpec
 # Structure: task → positive-presence invariant → scoring shape
 # (modes + five canonical patterns) → filter axes (ceremonies,
 # award_names, categories, outcome, years) → canonical surface
-# forms (official IMDB naming per ceremony) → Razzie handling →
+# forms (generated from the prize registry) → Razzie handling →
 # output field guidance.
 # ---------------------------------------------------------------------------
 
@@ -69,13 +73,18 @@ see the surrounding query context).
 always written in positive-presence form ("is award-winning", \
 "won the Oscar for Best Picture", "nominated at Cannes", \
 "preferably multiple award wins").
-- routing_rationale — a concept-type label explaining why this \
-requirement was routed to this endpoint. It narrows which aspect \
-of award data is in play.
+- routing_hint — a brief concept-type hint derived from upstream \
+routing. It can help with borderline ambiguity, but it is \
+background context rather than evidence.
 - today — the current date in YYYY-MM-DD. Use it whenever the \
 description or intent_rewrite references a relative year term \
 ("recent award winners", "this decade", "this year's Oscars"). Do \
 not rely on outside knowledge of the current date.
+
+Use description as the primary evidence for what to translate. \
+intent_rewrite provides broader query context. routing_hint is a \
+lightweight contextual cue, not a definition — do not let it \
+override the actual request text.
 
 Trust the upstream routing. If the description looks like it might \
 fit another endpoint, still produce the best possible award \
@@ -143,12 +152,12 @@ wants more award wins to produce a higher score up to a saturation \
 point: generic "award-winning" queries, superlative language, or \
 qualitative-intensity language.
 
-The key distinction: a generic award concept with no ceremony or \
-category filter calls for threshold — more wins should produce a \
-higher score, because a film with one win is less "award-winning" \
-than a film with ten. A specific filter ("Oscar Best Picture \
-winner") calls for floor — the user wants binary presence, not \
-a gradient.
+The key distinction: a generic award concept with no ceremony, \
+prize-name, or category filter calls for threshold — more wins \
+should produce a higher score, because a film with one win is less \
+"award-winning" than a film with ten. A specific filter ("Oscar \
+Best Picture winner") calls for floor — the user wants binary \
+presence, not a gradient.
 
 FIVE CANONICAL PATTERNS
 
@@ -162,8 +171,8 @@ name is present. Language like "award-winning", "award-winning \
 films", "critically decorated", "won awards". Use threshold / 3. \
 The gradient rewards films with more wins; 3 is the saturation \
 point for a generically well-decorated film. Important: "Oscar- \
-winning" is NOT this pattern — a ceremony filter is present, so \
-it is specific-filter-no-count.
+winning" is NOT this pattern — a specific prize filter is present, \
+so it is specific-filter-no-count.
 
 specific filter, no count — A ceremony, category, or prize name \
 is present, but no count language. "Oscar-winning", "won the \
@@ -199,7 +208,8 @@ superlative.
 # and the prize-name / category conventions.
 # ---------------------------------------------------------------------------
 
-_FILTER_AXES = """\
+_FILTER_AXES = (
+    """\
 FILTER AXES
 
 Five filter axes are available. Populate only the ones the \
@@ -215,22 +225,18 @@ a ceremony is named in the requirement, emit its stored string \
 exactly as shown below. The stored strings are exact — a \
 one-character difference produces zero matches.
 
-  "Oscar" / "Academy Award(s)" → Academy Awards, USA
-  "Golden Globe(s)"             → Golden Globes, USA
-  "BAFTA"                       → BAFTA Awards
-  "Cannes"                      → Cannes Film Festival
-  "Venice" / "Golden Lion"      → Venice Film Festival
-  "Berlin" / "Berlinale"        → Berlin International Film Festival
-  "SAG" / "Screen Actors Guild" → Actor Awards
-  "Critics Choice"              → Critics Choice Awards
-  "Sundance"                    → Sundance Film Festival
-  "Razzie" / "Golden Raspberry" → Razzie Awards
-  "Spirit Awards" / "Independent Spirit" → Film Independent Spirit Awards
-  "Gotham"                      → Gotham Awards
+"""
+    + render_ceremony_mappings_for_prompt()
+    + """
 
 Emit multiple entries when more than one ceremony is named. Leave \
 null when no ceremony is named — null means all non-Razzie \
 ceremonies apply (see Razzie Handling).
+
+Use ceremonies for event/festival/awards-body wording such as \
+"at Cannes", "nominated at Sundance", or "Academy Awards \
+ceremony". Do not use ceremonies as a proxy for a named prize \
+object.
 
 AWARD NAMES
 
@@ -240,21 +246,19 @@ individual award object granted at that event. Common prize names: \
 "Oscar", "Palme d'Or", "Golden Globe", "BAFTA Film Award", "Golden \
 Lion", "Golden Bear", "Silver Bear", "Jury Prize".
 
-Emit when the user names the specific prize object, not just the \
-ceremony. Emit multiple when the same concept has been known by \
-different names over time. Leave null when no prize name was \
-specified — a ceremony mention alone does not imply a prize name.
+Emit when the user names the specific prize object, even if that \
+prize implies a ceremony. Represent what the user actually asked \
+for at the most direct level. "Oscar-winning", "won an Oscar", \
+"Palme d'Or winners", "Golden Lion winner", and "won a Golden \
+Globe" should populate award_names. Do NOT automatically add the \
+related ceremony just because the prize belongs to one.
 
-Scope discipline: only emit an award name when the user is \
-specifically distinguishing one prize object from others at the \
-same ceremony. Do not emit a prize name just because one is \
-associated with the ceremony. "Oscar-winning films", "won an \
-Oscar", "Palme d'Or winners", "Cannes winners" are all ceremony \
-signals — the prize name is implied by the ceremony, and emitting \
-it as an additional filter adds specificity the user did not ask \
-for. Reserve award_names for cases where the prize is explicitly \
-being distinguished (e.g., a user comparing a statuette award to \
-an honorary award at the same ceremony, which is uncommon).
+Use both award_names and ceremonies only when the query explicitly \
+contains both levels or clearly needs both to represent the wording \
+faithfully. Example: "Cannes Palme d'Or winners" can emit both \
+because the query names both the festival and the prize. A ceremony \
+mention alone does not imply a prize name, and a prize name alone \
+does not imply a ceremony filter.
 
 CATEGORY TAGS
 
@@ -326,24 +330,25 @@ award-ceremony season numbers.
 ---
 
 """
+)
 
 # ---------------------------------------------------------------------------
-# Award-name canonical surface forms. Categories are now expressed via the
-# closed CategoryTag enum (see CATEGORY TAG TAXONOMY below) and no longer
-# require ceremony-specific surface forms; this section covers only the
-# award_names axis where exact stored strings are still required.
+# Award-name canonical surface forms. Categories are expressed via the
+# closed CategoryTag enum; this section covers only the award_names axis,
+# where exact stored strings are still required. Rendered programmatically
+# so the prompt cannot drift from the canonical registry.
 # ---------------------------------------------------------------------------
 
-_SURFACE_FORMS = """\
+_SURFACE_FORMS = (
+    """\
 AWARD NAME SURFACE FORMS
 
 The retrieval layer matches award_names as exact, un-normalized \
 strings against stored award rows. A one-character difference \
-produces zero matches. When the user names a specific prize, you \
-must emit the official IMDB surface form for that prize — matching \
-capitalization, punctuation, and apostrophe style. Use your \
-parametric knowledge of IMDB award nomenclature; the table below \
-anchors the most common cases.
+produces zero matches. When the user names a specific prize, emit \
+the official IMDB surface form for that prize — matching \
+capitalization, punctuation, and apostrophe style. The table below \
+anchors common canonical forms.
 
 The table is not a closed vocabulary. Do NOT restrict output to \
 table entries. Do NOT pattern-match a user's phrase onto a \
@@ -351,27 +356,14 @@ similar-looking table entry when the user clearly named a different \
 specific award. For example, a user asking for "Cannes Jury Prize" \
 must emit "Jury Prize", not "Palme d'Or".
 
-Academy Awards, USA — prize name: Oscar
-Golden Globes, USA — prize name: Golden Globe
-BAFTA Awards — prize name: BAFTA Film Award
-Cannes Film Festival — prize names: "Palme d'Or", "Grand Jury \
-Prize", "Un Certain Regard Award", "Jury Prize", "FIPRESCI Prize"
-Venice Film Festival — prize names: "Golden Lion", "Grand Jury \
-Prize", "Silver Lion"
-Berlin International Film Festival — prize names: "Golden Berlin \
-Bear", "Silver Berlin Bear", "Teddy"
-Razzie Awards — prize name: Razzie Award
-Critics Choice Awards — prize name: Critics Choice Award
-Film Independent Spirit Awards — prize name: Independent Spirit Award
-Gotham Awards — prize name: Gotham Independent Film Award
-Screen Actors Guild (stored under ceremony "Actor Awards") — \
-prize name: Actor
-Sundance Film Festival — typically no prize-name distinction; \
-category tags carry the signal.
+"""
+    + render_award_name_surface_forms_for_prompt()
+    + """
 
 ---
 
 """
+)
 
 # ---------------------------------------------------------------------------
 # Tag taxonomy: rendered programmatically from schemas/award_category_tags.py
@@ -444,9 +436,12 @@ commit to literal values.
 
 concept_analysis — FIRST field. A filter-axis evidence inventory. \
 For each of the five filter axes (ceremony, award name, category, \
-outcome, year), quote the phrase from description and intent_rewrite \
-that signals it, or state explicitly that no signal is present \
-for that axis ("no ceremony signal", "no category signal"). \
+outcome, year), quote the phrase from description that signals it. \
+Use intent_rewrite only when description is ambiguous and the \
+broader context genuinely clarifies the axis. For every axis, either \
+cite evidence or state explicitly that no signal is present \
+("no ceremony signal", "no category signal"). \
+Never cite routing_hint here.
 Explicit absence is required — it prevents over-assignment and \
 calibrates you against populating axes that have no evidence.
 
@@ -490,12 +485,13 @@ named. Prefer null over an empty list.
 
 award_names — Null when concept_analysis found no prize-name \
 signal. Emit the official IMDB surface form of the prize (e.g., \
-"Palme d'Or", "Golden Lion", "BAFTA Film Award") when a specific \
-prize was named — see CANONICAL SURFACE FORMS. When the prize is \
-not in that table, use your knowledge of IMDB nomenclature for the \
-relevant ceremony; do not approximate to a similar-looking table \
-entry. Emit multiple when the same prize has been known by \
-different names over time.
+"Oscar", "Palme d'Or", "Golden Lion", "BAFTA Film Award") when a \
+specific prize was named — see AWARD NAME SURFACE FORMS. When the \
+prize is not in that table, use your knowledge of IMDB nomenclature \
+for the relevant ceremony; do not approximate to a similar-looking \
+table entry. Do not automatically add a ceremony filter just because \
+the prize belongs to one. Emit multiple when the same prize has \
+been known by different names over time.
 
 category_tags — Null when concept_analysis found no category signal. \
 Otherwise emit one or more tags from the closed CategoryTag enum at \
@@ -545,8 +541,8 @@ async def generate_award_query(
     """Translate one award dealbreaker or preference into an AwardQuerySpec.
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
-    context), one step 2 item's description plus routing_rationale, and
-    today's date (for resolving relative year terms). It produces the
+        context), one step 2 item's description plus routing_rationale, and
+        today's date (for resolving relative year terms). It produces the
     exact award filter parameters and scoring shape the execution layer
     needs.
 
@@ -556,7 +552,9 @@ async def generate_award_query(
         description: The positive-presence statement of the award
             requirement to translate (from a Dealbreaker or Preference).
         routing_rationale: The concept-type label from step 2 explaining
-            why this item was routed to the awards endpoint.
+            why this item was routed to the awards endpoint. Exposed to
+            the prompt as routing_hint to reinforce that it is
+            background context rather than evidence.
         today: The current date. Passed explicitly so callers control
             what "today" means (production uses date.today(); offline
             analysis can pin a fixed date for reproducibility).
@@ -577,12 +575,12 @@ async def generate_award_query(
     # them here. See entity_query_generation.py for the same note.
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    routing_hint = routing_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
+    if not routing_hint:
         raise ValueError("routing_rationale must be a non-empty string.")
 
     # All four inputs are required. Present as labeled sections so the
@@ -591,7 +589,7 @@ async def generate_award_query(
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_rationale: {routing_rationale}\n"
+        f"routing_hint: {routing_hint}\n"
         f"today: {today.isoformat()}"
     )
 

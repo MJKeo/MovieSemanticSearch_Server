@@ -5,7 +5,7 @@
 # movie_awards (or the award_ceremony_win_ids fast path on movie_card).
 #
 # Receives: intent_rewrite (step 1) + one item's description and
-# routing_rationale (step 2).
+# routing hint from step 2.
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Endpoint 3: Awards) for the full design rationale.
@@ -17,7 +17,7 @@
 # Data sources:
 #   - Fast path: award_ceremony_win_ids GIN array on movie_card.
 #     Used only when: all filter fields are null/empty, outcome is
-#     WINNER or null, scoring_mode=FLOOR, scoring_mark=1.
+#     WINNER, scoring_mode=FLOOR, scoring_mark=1.
 #     Razzie id stripped unless AwardCeremony.RAZZIE is in ceremonies.
 #   - Standard path: COUNT(*) on movie_awards with active filters.
 #     Used for all other specs.
@@ -50,9 +50,9 @@ class AwardYearFilter(BaseModel):
 # Step 3 awards endpoint output.
 #
 # All filter fields are optional — null/empty means no restriction on
-# that axis. The minimal valid spec (all filters null, FLOOR, mark=1)
-# means "has won any non-Razzie award," which is the canonical form
-# for a generic "award-winning" dealbreaker.
+# that axis. Generic "award-winning" is currently represented as
+# THRESHOLD / 3 with all filters null. FLOOR / 1 with all filters null
+# is the generic binary "has at least one non-Razzie win" shape.
 #
 # Field ordering:
 #   concept_analysis    — filter-axis evidence inventory, emitted first
