@@ -303,7 +303,11 @@ def _precompute_runtime_window(
         return min(first_value, second_value), max(first_value, second_value)
     if op == NumericalMatchOperation.GREATER_THAN:
         return first_value, float("inf")
+    if op == NumericalMatchOperation.GREATER_THAN_OR_EQUAL:
+        return first_value, float("inf")
     if op == NumericalMatchOperation.LESS_THAN:
+        return float("-inf"), first_value
+    if op == NumericalMatchOperation.LESS_THAN_OR_EQUAL:
         return float("-inf"), first_value
     # EXACT
     return first_value, first_value

@@ -757,15 +757,20 @@ Each call receives exactly:
 
 1. **`intent_rewrite`** (from step 1) — The full concrete statement of what
    the user is looking for. Provides disambiguation context for the item being
-   translated. "Preferably recent" means different things in different query
-   contexts; the intent_rewrite lets the endpoint LLM calibrate.
+   translated. It is contextual, not authoritative: the step 3 endpoint should
+   use it to clarify a vague description, not to add new constraints that the
+   item itself did not ask for. "Preferably recent" means different things in
+   different query contexts; the intent_rewrite lets the endpoint LLM
+   calibrate.
 
 2. **One dealbreaker or preference item:**
-   - `description` — What to translate into a query specification.
+   - `description` — What to translate into a query specification. This is the
+     authoritative statement of the item being translated.
    - `routing_rationale` — Concept-type classification label (e.g., "named
-     person (actor)", "keyword family: horror"). Helps the endpoint LLM
-     identify the correct sub-lookup type without re-interpreting the
-     description from scratch.
+     person (actor)", "keyword family: horror"). This is a hint, not
+     evidence. It helps the endpoint LLM identify the intended sub-lookup type
+     without re-interpreting the description from scratch, but it should not
+     override the actual evidence in the description.
 
 **Excluded from endpoint inputs:** `direction` (consumed by step 4 execution
 code, not by step 3 — see Direction-Agnostic Framing below), `route`
@@ -1240,8 +1245,9 @@ step 2 routes them here.
 
 **Runtime** — `movie_card.runtime_minutes` (INT, nullable). LLM outputs:
 `first_value` (minutes), `match_operation` (EXACT / BETWEEN / LESS_THAN /
-GREATER_THAN), `second_value` (only for BETWEEN). Scoring: linear decay
-with 30-minute grace. Inside range → 1.0, outside → max(0, 1 -
+LESS_THAN_OR_EQUAL / GREATER_THAN / GREATER_THAN_OR_EQUAL), `second_value`
+(only for BETWEEN). Scoring: linear decay with 30-minute grace. Inside
+range → 1.0, outside → max(0, 1 -
 distance/30). Candidate generation widens by 30 minutes. Vague terms
 ("epic length", "long movie") are left to LLM judgment — no special
 default guidance.
@@ -1453,22 +1459,23 @@ prompt surface without the structured prose context).
 **Definition:** Resolves franchise names and evaluates franchise structural
 roles. This is the sole source for anything franchise-related — both "which
 franchise is this movie in?" (name resolution) and "what role does this movie
-play in its franchise?" (structural filtering). Uses `movie_franchise_metadata`
-for structured attributes and `lex.inv_franchise_postings` for fuzzy name
-matching.
+play in its franchise?" (structural filtering). Uses
+`movie_franchise_metadata` only. Name and subgroup matching are exact on the
+shared normalized stored strings, so the step 3 LLM emits 1–3 alternate
+canonical stored-form attempts when more than one real canonical form is
+plausible.
 
 **Search capabilities:**
-- Franchise name resolution (fuzzy-matches against `lineage` and
-  `shared_universe` columns via `inv_franchise_postings`)
+- Franchise name resolution (exact match against normalized `lineage` and
+  `shared_universe` values; multiple alternate canonical forms may be emitted)
 - Shared universe lookup (distinguishes `lineage` from `shared_universe` —
   MCU is a shared universe, Iron Man is a lineage within it)
-- Subgroup matching (`recognized_subgroups` via trigram similarity — "The
-  Avengers movies within the MCU")
+- Subgroup matching (exact match against normalized `recognized_subgroups`
+  labels — "The Avengers movies within the MCU")
 - Lineage position filtering (sequel, prequel, remake, reboot)
-- Spinoff filtering (`is_spinoff` boolean)
-- Crossover filtering (`is_crossover` boolean)
-- Franchise launcher filtering (`launched_franchise` boolean)
-- Subgroup launcher filtering (`launched_subgroup` boolean)
+- Structural-flag filtering (`structural_flags` contains `spinoff` and/or
+  `crossover`)
+- Launcher filtering (`launch_scope=franchise` or `launch_scope=subgroup`)
 
 **When to use:**
 - The query names a franchise ("Marvel movies", "James Bond", "Star Wars")
@@ -1501,72 +1508,53 @@ matching.
 - "is a sequel" (structural role)
 - "spinoff movies" (structural role)
 - "movies that started a franchise" (launcher)
-- "preferably not a sequel" (preference)
+- "launched a subgroup" (launcher)
 
 **Step 3 output schema:** `schemas/franchise_translation.py` —
-`FranchiseQuerySpec`. Flat model with nullable per-axis fields, preceded
-by two scoped reasoning fields that scaffold the high-stakes decisions
-(which axes to populate, and how many canonical name variations to
-emit). Seven searchable axes, any combination of which may be populated:
+`FranchiseQuerySpec`. Flat model with nullable per-axis fields,
+preceded by one scoped reasoning field that scaffolds the high-stakes
+decision of which axes to populate. Five searchable axes, any
+combination of which may be populated:
 
-1. `lineage_or_universe_names` — up to 3 canonical name variations, always
-   searched against both `lineage` and `shared_universe` columns via
-   `lex.inv_franchise_postings`. Both columns are searched together because
-   the ingest LLM can legitimately place the same brand in either slot
-   (Shrek vs. Puss in Boots). Variations cover genuinely different canonical
-   names in common use (e.g., "Marvel Cinematic Universe" vs. "Marvel";
-   "The Lord of the Rings" vs. "Middle-earth"); trigram fuzzy match already
-   handles spelling/punctuation drift so spelling variants are not added.
+1. `lineage_or_universe_names` — up to 3 canonical name variations,
+   searched against both `lineage` and `shared_universe` after shared
+   normalization. These are alternate exact stored-form attempts for the
+   same IP, not fuzzy variants. Additional entries are added only when a
+   genuinely different canonical form is in common use (e.g., "Marvel
+   Cinematic Universe" vs. "Marvel"; "The Lord of the Rings" vs.
+   "Middle-earth").
 2. `recognized_subgroups` — up to 3 canonical subgroup-name variations,
-   applied as trigram similarity on the normalized subgroup labels of the
-   post-lookup result set (3-30 movies). Only valid when
+   matched exactly after shared normalization. Only valid when
    `lineage_or_universe_names` is populated.
-3. `lineage_position` — `LineagePosition` enum (SEQUEL / PREQUEL / REMAKE /
-   REBOOT). REMAKE is retained in the enum for ingest fidelity but is not
-   typically consumed at search time — generic remake queries route to the
-   keyword endpoint via `source_material_type`.
-4. `is_spinoff`, `is_crossover`, `launched_franchise`, `launched_subgroup`
-   — boolean filters. Direction-agnostic: only `True` or `None` are
-   meaningful; `False` is never emitted (exclusion is a step 4 concern).
+3. `lineage_position` — `LineagePosition` enum (SEQUEL / PREQUEL /
+   REMAKE / REBOOT). REMAKE is retained in the enum for ingest fidelity
+   but is not typically consumed at search time — generic remake queries
+   route to the keyword endpoint via `source_material_type`.
+4. `structural_flags` — optional list containing `spinoff` and/or
+   `crossover`. A single concept may populate neither, one, or both.
+5. `launch_scope` — nullable enum: `franchise` or `subgroup`. This
+   replaces separate booleans and captures mutually exclusive launcher
+   intent directly. `launch_scope=subgroup` does not require a named
+   subgroup; if the user asks for "movies that launched a subgroup," the
+   launcher intent is still actionable even when `recognized_subgroups`
+   remains null.
 
-**Reasoning fields (cognitive scaffolding):** Two scoped reasoning
-fields precede the decisions they ground, following the entity and
-metadata endpoint pattern:
+**Reasoning field (cognitive scaffolding):**
 
 1. `concept_analysis` (required, emitted FIRST) — evidence-inventory
-   trace that quotes signal phrases from `description` and
-   `intent_rewrite` and pairs each with the specific axis it
-   implicates (franchise name phrase → `lineage_or_universe_names`,
-   "sequel/prequel/reboot" → `lineage_position`, "spinoff" →
-   `is_spinoff`, "crossover/team-up" → `is_crossover`, "started/
-   launched a franchise" → `launched_franchise`, "started/launched a
-   phase/saga" → `launched_subgroup`, named sub-series/phase label →
-   `recognized_subgroups`). Explicit-absence paths are required —
-   "no signal for lineage_position" is a valid trace. Grounds
-   axis presence/absence in cited text rather than pattern matching
-   on the franchise word. Also surfaces ambiguity ("started the
-   MCU" — launcher of franchise vs. subgroup?) so the boolean
-   choice is deliberate.
-
-2. `name_resolution_notes` (nullable, emitted BEFORE
-   `lineage_or_universe_names`) — brief parametric-knowledge
-   inventory of alternate canonical forms of the IP identified in
-   `concept_analysis`. Telegraphic form ("Marvel Cinematic Universe;
-   Marvel" / "Star Wars" / sentinel "not applicable — purely
-   structural"). Scaffolds list length (1 vs. 2 vs. 3) for both
-   `lineage_or_universe_names` and `recognized_subgroups` by
-   forcing the model to enumerate alternates before committing.
-   Excludes spelling/punctuation variants (trigram on the posting
-   table handles those). Sentinel-nullable when the query is
-   purely structural.
-
-No per-boolean reasoning fields — the step 3 franchise LLM translates
-an already-classified query rather than classifying a movie from source
-data (unlike the ingest-side `FranchiseOutput`, which has six reasoning
-fields). Once `concept_analysis` has cited signal phrases, the
-boolean/enum axes follow near-mechanically; adding per-axis traces would
-inflate output tokens on simple queries and steal cognitive budget from
-the actually-hard decision (canonical-name expansion).
+   trace that quotes signal phrases from `description` and uses
+   `intent_rewrite` only when needed to clarify a vague reference.
+   `routing_rationale` is a hint, not evidence. The trace pairs each
+   signal with the specific axis it implicates (franchise name phrase →
+   `lineage_or_universe_names`, named sub-series/phase label →
+   `recognized_subgroups`, "sequel/prequel/reboot" →
+   `lineage_position`, "spinoff" / "crossover/team-up" →
+   `structural_flags`, "started/launched a franchise" →
+   `launch_scope=franchise`, "started/launched a subgroup/phase/saga" →
+   `launch_scope=subgroup`). Explicit-absence paths are required —
+   "no signal for lineage_position" is a valid trace. Grounds axis
+   presence/absence in cited text rather than pattern matching on the
+   franchise word.
 
 **Prompt reuse:** The step 3 franchise prompt must inherit the
 canonical-naming rule, subgroup definition, spinoff/crossover definitions,
@@ -1585,10 +1573,11 @@ dealbreakers from step 2; the continuous scoring model handles the
 intersection via the dealbreaker sum.
 
 **Fallback for zero-result franchise names:** No separate fallback — if
-none of the 1-3 `lineage_or_universe_names` variations match the posting
-table, the dealbreaker produces zero candidates and the continuous scoring
-model naturally degrades. The multiple-variation strategy above is the
-primary mitigation; obscure franchises that miss anyway are accepted.
+none of the 1-3 `lineage_or_universe_names` variations match the stored
+normalized franchise strings, the dealbreaker produces zero candidates and
+the continuous scoring model naturally degrades. The multiple-variation
+strategy above is the primary mitigation; obscure franchises that miss
+anyway are accepted.
 
 **Candidate pool size limit:** None. Franchise result sets are naturally
 small (3-30 movies per franchise); no cap needed.

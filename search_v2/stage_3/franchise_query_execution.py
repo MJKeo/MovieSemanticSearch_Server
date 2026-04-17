@@ -3,7 +3,7 @@
 # Takes the LLM's FranchiseQuerySpec output and runs a single AND-composed
 # query against public.movie_franchise_metadata, producing binary-scored
 # EndpointResult objects. movie_franchise_metadata is the sole source of
-# truth for franchise data — lex.inv_franchise_postings is not used.
+# truth for franchise data in the current exact-match design.
 #
 # Scoring: binary 1.0 for any movie that satisfies all populated axes, 0.0
 # otherwise. AND semantics mean an empty intermediate result on the
@@ -24,7 +24,11 @@ import logging
 from db.postgres import fetch_franchise_movie_ids
 from implementation.misc.helpers import normalize_string
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import LineagePosition
+from schemas.enums import (
+    FranchiseLaunchScope,
+    FranchiseStructuralFlag,
+    LineagePosition,
+)
 from schemas.franchise_translation import FranchiseQuerySpec
 from search_v2.stage_3.result_helpers import build_endpoint_result
 
@@ -95,6 +99,7 @@ async def execute_franchise_query(
     """
     # Normalize name and subgroup variation lists in Python so the DB
     # comparison uses the same canonical form produced by the ingest LLM.
+    # Execution does exact equality on these normalized values.
     normalized_names = _normalize_variations(spec.lineage_or_universe_names)
     normalized_subgroups = _normalize_variations(spec.recognized_subgroups)
 
@@ -105,6 +110,13 @@ async def execute_franchise_query(
     if spec.lineage_position is not None:
         lineage_position_id = LineagePosition(spec.lineage_position).lineage_position_id
 
+    structural_flags = set(spec.structural_flags or [])
+    is_spinoff = FranchiseStructuralFlag.SPINOFF in structural_flags
+    is_crossover = FranchiseStructuralFlag.CROSSOVER in structural_flags
+
+    launched_franchise = spec.launch_scope == FranchiseLaunchScope.FRANCHISE
+    launched_subgroup = spec.launch_scope == FranchiseLaunchScope.SUBGROUP
+
     matched_ids: set[int] = set()
     for attempt in range(2):
         try:
@@ -112,10 +124,10 @@ async def execute_franchise_query(
                 normalized_name_variations=normalized_names,
                 normalized_subgroup_variations=normalized_subgroups,
                 lineage_position_id=lineage_position_id,
-                is_spinoff=spec.is_spinoff,
-                is_crossover=spec.is_crossover,
-                launched_franchise=spec.launched_franchise,
-                launched_subgroup=spec.launched_subgroup,
+                is_spinoff=is_spinoff,
+                is_crossover=is_crossover,
+                launched_franchise=launched_franchise,
+                launched_subgroup=launched_subgroup,
                 restrict_movie_ids=restrict_to_movie_ids,
             )
             break

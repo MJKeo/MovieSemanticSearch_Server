@@ -8,8 +8,16 @@
 # See search_improvement_planning/finalized_search_proposal.md
 # (Step 2: Query Understanding) for the full design rationale.
 
+from implementation.classes.watch_providers import (
+    STREAMING_SERVICE_DISPLAY_NAMES,
+    StreamingService,
+)
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from schemas.query_understanding import QueryUnderstandingResponse
+
+_TRACKED_STREAMING_SERVICE_NAMES = ", ".join(
+    STREAMING_SERVICE_DISPLAY_NAMES[service] for service in StreamingService
+)
 
 # ---------------------------------------------------------------------------
 # System prompt — modular sections concatenated at module level.
@@ -188,7 +196,7 @@ executed as an independent search.
 # do not route here → tricky boundaries → description format.
 # ---------------------------------------------------------------------------
 
-_ENDPOINTS = """\
+_ENDPOINTS = f"""\
 RETRIEVAL ENDPOINTS
 
 Each dealbreaker and preference is routed to one of these seven \
@@ -281,10 +289,7 @@ queries)
 
 Tracked streaming access methods: subscription, buy, rent.
 
-Tracked streaming services: Netflix, Amazon Prime Video, Hulu, \
-Disney+, Max, Peacock, Paramount+, Apple TV+, Crunchyroll, \
-fuboTV, YouTube, AMC+, Starz, Tubi, Pluto TV, The Roku Channel, \
-Plex, Shudder, MGM+, Fandango at Home. If the user asks for \
+Tracked streaming services: {_TRACKED_STREAMING_SERVICE_NAMES}. If the user asks for \
 something "free to stream", prefer matching free-service \
 providers such as Tubi, Pluto TV, Plex, or The Roku Channel \
 rather than inventing a separate access type.
@@ -436,11 +441,13 @@ for the lineage position.
 specific named franchise lineage, not remake-as-source-material \
 in the abstract.
 
-Write the description preserving the user's specificity. \
-Examples: "is a Marvel movie", "is in the James Bond franchise", \
-"all MCU films", "Avengers movies", "is a sequel", "spinoff \
-movies", "movies that started a franchise", "preferably not a \
-sequel".
+Write the description preserving the user's specificity and always \
+in positive-identification form. Examples: "is a Marvel movie", \
+"is in the James Bond franchise", "all MCU films", "Avengers \
+movies", "is a sequel", "spinoff movies", "movies that started a \
+franchise", "launched a subgroup". If the original query is \
+negative ("not a sequel"), keep the description in positive form \
+("is a sequel") and let direction carry the exclusion.
 
 
 keyword — Evaluates categorical movie classifications from \

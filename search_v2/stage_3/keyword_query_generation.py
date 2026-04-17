@@ -224,7 +224,7 @@ def _build_classification_registry_section() -> str:
     """Render the 21-family classification registry with full definitions.
 
     Walks _FAMILIES in order; for each member, looks up the registry
-    entry and emits `NAME — definition` one per line. Runs a
+    entry and emits `NAME: definition` one per line. Runs a
     consistency check against CLASSIFICATION_ENTRIES so adding a new
     member to the underlying enums without placing it in a family
     fails loudly at import time.
@@ -264,7 +264,7 @@ def _build_classification_registry_section() -> str:
                 )
             listed.add(name)
             entry = entry_for(UnifiedClassification(name))
-            lines.append(f"{entry.name} — {entry.definition}")
+            lines.append(f"{entry.name}: {entry.definition}")
         lines.append("")
 
     missing = set(CLASSIFICATION_ENTRIES) - listed
@@ -290,7 +290,8 @@ def _build_classification_registry_section() -> str:
 #
 # Prompt authoring conventions applied:
 # - Evidence-inventory reasoning (concept_analysis quotes signal
-#   phrases with concept-type angles; candidate_shortlist cites the
+#   phrases and ties them to the relevant family/boundary from the
+#   registry list above; candidate_shortlist cites the
 #   discriminating test from each candidate's definition rather than
 #   justifying the final pick)
 # - Brief pre-generation fields (both reasoning fields are
@@ -331,11 +332,11 @@ resolve when the surrounding query context is visible).
 translating, always written in positive-presence form ("is a horror \
 movie", "is a feel-good movie", "is a French film", "has a twist \
 ending").
-- routing_rationale — a concept-type label explaining why this \
-requirement was routed to this endpoint. Use it as context for what \
-kind of classification the concept represents. Do NOT treat it as \
-the evidence itself — the signal phrases live in description and \
-intent_rewrite.
+- routing_hint — a brief concept-type hint explaining why this \
+requirement was routed to this endpoint. Use it only as lightweight \
+context for what kind of classification may be in play. Do NOT treat \
+it as evidence or as a command to prefer one family — the signal \
+phrases live in description and intent_rewrite.
 
 Trust the upstream routing. If the description looks like it might \
 fit another endpoint, still produce the best possible classification \
@@ -380,6 +381,37 @@ requirement.
 _CLASSIFICATION_FAMILIES = _build_classification_registry_section()
 
 # ---------------------------------------------------------------------------
+# Alias / surface-form guidance: user phrasing often paraphrases the
+# canonical registry labels. Teach a few representative mappings so
+# the model checks definitions rather than waiting for an exact label
+# echo from the query text.
+# ---------------------------------------------------------------------------
+
+_ALIASES = """\
+SURFACE FORMS AND ALIASES
+
+The query text will often describe a concept without using the exact \
+registry label. Match by meaning, not by label overlap.
+
+Representative examples:
+- "Bollywood" usually maps to HINDI, because the concept is the Hindi \
+  film tradition rather than the audio track.
+- "Biopic" usually maps to BIOGRAPHY.
+- "Does the dog die?" or "animal death" usually maps to ANIMAL_DEATH.
+- "Short films" or "shorts" usually maps to SHORT when the idea is \
+  the form-factor classification rather than a runtime cutoff.
+- "Twist ending" usually maps to PLOT_TWIST unless the phrasing \
+  clearly names a specific ending type instead.
+
+Do not force these examples mechanically. They are reminders that the \
+right match may be definitionally clear even when the user's wording \
+does not literally echo the registry label.
+
+---
+
+"""
+
+# ---------------------------------------------------------------------------
 # Near-collision disambiguation: this is where the endpoint is most
 # likely to silently misfire. The prompt teaches comparative
 # discrimination principles rather than enumerated bad pairs, per the
@@ -390,8 +422,9 @@ _DISAMBIGUATION = """\
 NEAR-COLLISION DISAMBIGUATION
 
 Within a family, several members often cover overlapping territory. \
-The final selection is almost always a choice between two or three \
-members whose definitions disagree on one specific feature. Four \
+The final selection is often a choice between a small number of \
+plausible members whose definitions disagree on one specific feature. \
+Four \
 comparison principles decide those choices:
 
 Breadth vs. specificity — Prefer the broader member when the query \
@@ -429,11 +462,12 @@ feel-good; "a movie with an unexpected ending" points to plot twist \
 rather than any ending-type value. Cite the query phrase that \
 names the effect, not your own summary.
 
-When in doubt between two candidates, include BOTH in the \
-candidate_shortlist with the test that decides them, even if one \
-looks obvious. The explicit comparison is what prevents the \
-first-strong-match-wins failure mode — silently skipping it lets a \
-surface-word match on the wrong family starve the correct member.
+When there is a genuine near-collision, surface the competing \
+candidates explicitly in candidate_shortlist with the test that \
+decides them. The explicit comparison is what prevents the \
+first-strong-match-wins failure mode. When the evidence clearly \
+supports one member and no real competitor is definitionally close, \
+do not invent extra candidates just to pad the shortlist.
 
 ---
 
@@ -452,19 +486,18 @@ Your output is exactly one member of the classification registry. \
 You do not abstain. You do not invent new classifications. You do \
 not emit a list.
 
-If no registry member is a clean fit, pick the best of the \
-shortlisted candidates anyway — the broader family member is \
-usually the right fallback because it has the widest coverage \
-and does not require a specific premise signal the query lacks. \
-Routing has already committed this item to the keyword endpoint; \
-an empty or refused output breaks the pipeline. A best-available \
-fit is always preferable.
+If no registry member is a clean fit, pick the closest \
+definitionally supported member anyway. Routing has already \
+committed this item to the keyword endpoint; an empty or refused \
+output breaks the pipeline. A closest-supported fit is always \
+preferable to forcing a broader label that the definition does not \
+really support.
 
-Do not let the routing_rationale bias you toward over-specificity. \
-It is a concept-type label, not a definition — the actual evidence \
-is in description and intent_rewrite. If the routing_rationale \
-suggests one angle (e.g., "genre classification") and the \
-description's phrasing clearly points elsewhere (e.g., a story \
+Do not let the routing_hint bias you toward over-specificity. It is \
+a hint, not a definition — the actual evidence is in description and \
+intent_rewrite. If the routing_hint suggests one angle (e.g., "genre \
+classification") and the description's phrasing clearly points \
+elsewhere (e.g., a story \
 engine rather than a genre), trust the description.
 
 ---
@@ -487,25 +520,19 @@ Inventory the signals, compare the candidates, then commit.
 
 concept_analysis — FIRST field. An evidence inventory that grounds \
 the selection. For each signal phrase you see in description and \
-intent_rewrite, quote it verbatim and pair it with the concept-type \
-angle it implies. The angles correspond to the twenty-one families \
-above; use one of these labels:
-- genre-like / sub-genre
-- cultural or national cinema tradition
-- source material or real-world basis
-- form factor or presentation
-- audience tier, age, or life stage
-- narrative device or ending type
-- story engine, setting, or character archetype
-- viewer-response tag or content sensitivity
+intent_rewrite, quote it verbatim and pair it with the family or \
+boundary it implicates from the classification list above. You do not \
+need to force the phrase into a separate coarse label set — allude to \
+the relevant family or the genuine boundary under consideration.
 
 Telegraphic form. Semicolon-separated phrase → angle pairs. \
 Examples of the form:
-- "\\"scary\\" → genre-like; horror-family"
+- "\\"scary\\" → Horror family"
 - "\\"Bollywood\\" → cultural tradition (Hindi)"
-- "\\"twist ending\\" → narrative device"
-- "\\"growing up\\" → audience tier / story engine (ambiguous \
-between coming-of-age and teen drama)"
+- "\\"twist ending\\" → Narrative Mechanics / Endings family"
+- "\\"growing up\\" → boundary between COMING_OF_AGE and TEEN_DRAMA"
+- "\\"French\\" → cultural tradition family, not audio-language availability"
+- "\\"short films\\" → SHORT form-factor classification, not runtime cutoff"
 
 If the phrasing is genuinely ambiguous between two angles, surface \
 the ambiguity in one short clause (as in the last example) so the \
@@ -513,21 +540,23 @@ candidate_shortlist below is deliberate rather than a default pick. \
 Do not hedge by listing every possible angle — just the ones the \
 query text actually signals.
 
-Ignore routing_rationale when extracting signal phrases. It is an \
-already-interpreted label and anchoring on it re-introduces routing \
+Ignore routing_hint when extracting signal phrases. It is an \
+already-interpreted hint and anchoring on it re-introduces routing \
 bias. Use it only as background context, not as evidence.
 
 One to three phrase → angle pairs is typical. Do not pad.
 
 candidate_shortlist — SECOND field, placed immediately before the \
-final selection. Two or three candidate registry members (by exact \
-UnifiedClassification member name), each annotated with the one \
-test from its definition that decides fit. Bar-separated. Label \
-form, not sentences.
+final selection. Identify the reasonable candidate set: one member \
+when the evidence clearly supports a superior choice, otherwise the \
+small set of genuinely plausible competitors. Use exact \
+UnifiedClassification member names, each annotated with the one test \
+from its definition that decides fit. Bar-separated. Label form, not \
+sentences.
 
 Format: `MEMBER_NAME: discriminator — present/absent`. Examples of \
 the form:
-- "HORROR: broad horror-genre match | PSYCHOLOGICAL_HORROR: \
+- "HORROR: broad horror-genre match — present | PSYCHOLOGICAL_HORROR: \
 requires mental-unraveling premise — absent | SLASHER_HORROR: \
 requires stalker/killer premise — absent"
 - "TRUE_STORY: real events dramatization — present | BIOGRAPHY: \
@@ -536,12 +565,13 @@ focused on one person's life — no person named"
 FEEL_GOOD: emotional-uplift tag, broader — present"
 - "COMING_OF_AGE: growing-up as the axis — present | TEEN_DRAMA: \
 teen-audience drama — query emphasizes theme, not audience tier"
+- "FRENCH: film-identity tradition — present"
+- "SHORT: short-form classification — present"
 
 Procedure:
-1. Using the concept-type angle(s) from concept_analysis, identify \
-two to three plausible registry members that could cover the \
-concept. Prefer candidates in the same family; cross-family \
-candidates belong in the shortlist only when concept_analysis \
+1. Using the family/boundary cues from concept_analysis, identify the \
+reasonable candidate set. Prefer candidates in the same family; \
+cross-family candidates belong in the shortlist only when concept_analysis \
 surfaced cross-family ambiguity.
 2. For each candidate, cite the ONE distinguishing test from its \
 definition — the premise, scope, or feature that separates it from \
@@ -550,24 +580,26 @@ present or absent.
 3. Apply the breadth-vs-specificity rule: absent specific premise \
 signals, the broader member wins. Apply the cross-family proximity \
 rule when the shortlist spans families.
-4. ALWAYS include the near-collision candidate even when one member \
-looks obvious. The explicit comparison is the anti-shortcut \
-mechanism — skipping it invites surface-word matching.
+4. Include a competing candidate only when it is genuinely \
+definitionally plausible. Do not manufacture extra options for \
+obvious cases.
 
 Do NOT write a sentence arguing for the final pick. The \
 discriminator-plus-present/absent form is the reasoning; the \
 selection follows from it.
 
 classification — The UnifiedClassification registry member you \
-commit to. Exactly one member. This must be one of the candidates \
-you named in candidate_shortlist — the shortlist is not ornamental, \
-it is the set you chose from.
+commit to. Exactly one member. It will usually be one of the \
+candidates you named in candidate_shortlist, but if your shortlist \
+was incomplete, still choose the closest definitionally supported \
+member rather than forcing consistency with an earlier omission.
 """
 
 SYSTEM_PROMPT = (
     _TASK
     + _DIRECTION_AGNOSTIC
     + _CLASSIFICATION_FAMILIES
+    + _ALIASES
     + _DISAMBIGUATION
     + _SCOPE_DISCIPLINE
     + _OUTPUT
@@ -585,9 +617,10 @@ async def generate_keyword_query(
     """Translate one keyword dealbreaker or preference into a KeywordQuerySpec.
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
-    context) and one step 2 item's description plus routing_rationale.
-    It produces exactly one UnifiedClassification registry selection,
-    preceded by the two reasoning fields that scaffold the choice.
+    context) and one step 2 item's description plus a routing hint
+    derived from step 2's routing_rationale field. It produces
+    exactly one UnifiedClassification registry selection, preceded by
+    the two reasoning fields that scaffold the choice.
 
     Args:
         intent_rewrite: The full concrete statement of what the user is
@@ -596,7 +629,9 @@ async def generate_keyword_query(
             classification requirement to translate (from a Dealbreaker
             or Preference).
         routing_rationale: The concept-type label from step 2 explaining
-            why this item was routed to the keyword endpoint.
+            why this item was routed to the keyword endpoint. This is
+            passed to the prompt as a lightweight routing hint rather
+            than as evidence.
         provider: Which LLM backend to use. No default — callers must
             choose explicitly so call sites are self-documenting and
             we can A/B test providers.
@@ -611,19 +646,19 @@ async def generate_keyword_query(
     """
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    routing_hint = routing_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
+    if not routing_hint:
         raise ValueError("routing_rationale must be a non-empty string.")
 
     # Three labeled sections so the model can keep inputs distinct.
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_rationale: {routing_rationale}"
+        f"routing_hint: {routing_hint}"
     )
 
     response, input_tokens, output_tokens = await generate_llm_response_async(

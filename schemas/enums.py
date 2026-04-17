@@ -123,6 +123,22 @@ class LineagePosition(str, Enum):
     REBOOT = ("reboot", 4)
 
 
+# Step 3 franchise endpoint structural flags. Stored as plain strings
+# in the structured-output schema so the LLM can emit either or both
+# when a single concept combines them.
+class FranchiseStructuralFlag(StrEnum):
+    SPINOFF = "spinoff"
+    CROSSOVER = "crossover"
+
+
+# Step 3 franchise endpoint launcher scope. Mutually exclusive: a
+# query can ask for movies that launched a franchise OR launched a
+# subgroup, or neither.
+class FranchiseLaunchScope(StrEnum):
+    FRANCHISE = "franchise"
+    SUBGROUP = "subgroup"
+
+
 # Source material classification for movies.
 #
 # Each member carries a string value (for Pydantic JSON schema enum

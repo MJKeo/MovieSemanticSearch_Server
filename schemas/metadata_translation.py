@@ -1,10 +1,10 @@
 # Step 3 metadata endpoint LLM structured output models.
 #
 # Translates natural-language metadata descriptions from step 2 into
-# structured query parameters. Each attribute field is populated only
-# when the step 2 output routed a dealbreaker or preference to the
-# metadata endpoint that targets that attribute. All other fields
-# remain null.
+# structured query parameters. The field matching target_attribute
+# should carry the primary executable payload. Other attribute fields
+# usually remain null, but execution ignores them if they are
+# populated.
 #
 # This is a pure translation layer — the LLM converts descriptions
 # into structured parameters as faithfully as possible. No softening,
@@ -173,15 +173,16 @@ class CountryOfOriginTranslation(BaseModel):
 
 
 # Complete step 3 metadata endpoint output. Each field corresponds
-# to one searchable metadata attribute. The LLM populates only the
-# fields matching the step 2 descriptions it receives; all others
-# remain null.
+# to one searchable metadata attribute. The LLM identifies one
+# primary target_attribute and should populate that field first.
+# Other fields usually remain null, but execution ignores them if
+# they are present.
 #
 # Field ordering follows cognitive-scaffolding progression:
 #   1. constraint_phrases  — evidence inventory (grounds routing)
 #   2. target_attribute    — single-column routing decision
 #   3. value_intent_label  — brief literal-meaning label (primes sub-object)
-#   4. attribute sub-objects (only the target one is populated)
+#   4. attribute sub-objects (target one first; extras ignored)
 #
 # Execution code queries ONLY the column identified by
 # target_attribute for candidate generation (dealbreakers) and

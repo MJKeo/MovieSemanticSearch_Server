@@ -285,7 +285,11 @@ def _precompute_duration(first_value: float, match_operation: NumericalMatchOper
         return min(first_value, second_value), max(first_value, second_value)
     elif match_operation == NumericalMatchOperation.GREATER_THAN:
         return first_value, float("inf")
+    elif match_operation == NumericalMatchOperation.GREATER_THAN_OR_EQUAL:
+        return first_value, float("inf")
     elif match_operation == NumericalMatchOperation.LESS_THAN:
+        return float("-inf"), first_value
+    elif match_operation == NumericalMatchOperation.LESS_THAN_OR_EQUAL:
         return float("-inf"), first_value
     else:  # EXACT
         return first_value, first_value

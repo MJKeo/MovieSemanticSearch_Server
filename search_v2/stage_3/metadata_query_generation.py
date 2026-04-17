@@ -18,15 +18,32 @@
 
 from datetime import date
 
+from implementation.classes.watch_providers import (
+    STREAMING_SERVICE_DISPLAY_NAMES,
+    StreamingService,
+)
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from schemas.metadata_translation import MetadataTranslationOutput
+
+_TRACKED_STREAMING_SERVICE_NAMES = ", ".join(
+    STREAMING_SERVICE_DISPLAY_NAMES[service] for service in StreamingService
+)
+_FREE_STREAMING_SERVICE_NAMES = ", ".join(
+    STREAMING_SERVICE_DISPLAY_NAMES[service]
+    for service in (
+        StreamingService.TUBI,
+        StreamingService.PLUTO,
+        StreamingService.PLEX,
+        StreamingService.ROKU,
+    )
+)
 
 # ---------------------------------------------------------------------------
 # System prompt — modular sections concatenated at module level.
 #
 # Structure: task → direction-agnostic framing → literal-translation
 # separation → target attributes (the 10 columns) → sub-object
-# translation rules → no-extra-fields discipline → output field
+# translation rules → target-field focus → output field
 # guidance (reasoning fields first, then schema fields in order).
 #
 # Prompt authoring conventions applied:
@@ -65,13 +82,18 @@ alone is ambiguous.
 written in positive-presence form ("released in the 1980s", \
 "runtime under 2 hours", "country of origin is France", \
 "preferably recent").
-- routing_rationale — a concept-type label explaining why this \
-requirement was routed to this endpoint. It narrows which kind of \
-attribute is in play.
+- routing_hint — a brief concept-type hint derived from upstream \
+routing. It can help contextualize borderline cases, but it is \
+background context rather than evidence.
 - today — the current date in YYYY-MM-DD. Use it whenever the \
 description or intent_rewrite contains a relative temporal term \
 ("recent", "new", "lately", "this year"). Do not rely on outside \
 knowledge of the current date.
+
+Use description as the primary evidence for what to translate. \
+intent_rewrite provides broader query context. routing_hint is a \
+lightweight contextual cue, not a definition — do not let it \
+override the actual request text.
 
 Trust the upstream routing. If the description looks like it might \
 fit another endpoint, still produce the best possible structured- \
@@ -182,11 +204,9 @@ flags and concept tags, which have their own endpoint.
 reception — Critical and audience reception as a scalar. Signals \
 include "well-reviewed", "critically acclaimed", "poorly \
 received", "panned". Distinct from awards (a separate endpoint \
-that handles any award reference, including generic "award- \
-winning") and from popularity (how well-known, not how well- \
-liked). If an award reference somehow reaches you here, treat it \
-as the closest reception equivalent — WELL_RECEIVED for positive \
-award language, POORLY_RECEIVED for Razzie-style language.
+that handles any award reference, including generic "award-\
+winning") and from popularity (how well-known, not how well-\
+liked).
 
 popularity — Mainstream recognition as a scalar (how well-known, \
 not currently-trending). Signals include "popular", "mainstream", \
@@ -241,7 +261,7 @@ language from film identity.
 # based, no lookup tables.
 # ---------------------------------------------------------------------------
 
-_SUB_OBJECT_TRANSLATION = """\
+_SUB_OBJECT_TRANSLATION = f"""\
 SUB-OBJECT TRANSLATION
 
 Once the target attribute is fixed, populate that attribute's \
@@ -249,7 +269,7 @@ sub-object with the literal values below.
 
 Release date — Output two dates (first_date and, when applicable, \
 second_date) in YYYY-MM-DD form and one match_operation from \
-{exact, before, after, between}.
+{{exact, before, after, between}}.
 - A decade becomes between the first day of the first year and \
 the last day of the last year (e.g., the 1980s becomes between \
 1980-01-01 and 1989-12-31).
@@ -267,20 +287,20 @@ judgment — pick a plausible window and commit.
 ascending if you pass them reversed.
 
 Runtime — Output first_value (and second_value for between) in \
-minutes and one match_operation from {exact, between, less_than, \
-greater_than}.
+minutes and one match_operation from {{exact, between, less_than, \
+less_than_or_equal, greater_than, greater_than_or_equal}}.
 - "Under 2 hours" becomes less_than 120. "Over 2 hours" becomes \
-greater_than 120. "At least 90 minutes" becomes greater_than 89 \
-or between 90 and a plausible upper edge — prefer less_than / \
-greater_than for single-sided cutoffs.
+greater_than 120. "At least 90 minutes" becomes \
+greater_than_or_equal 90. "90 minutes or less" becomes \
+less_than_or_equal 90.
 - A range becomes between. Convert hours to minutes cleanly.
 - Vague length terms ("epic length", "short", "long movie") are \
 best-judgment literal guesses — pick a plausible threshold and \
 commit rather than producing a default.
 
-Maturity rating — Output one rating from {g, pg, pg-13, r, nc-17, \
-unrated} and one match_operation from {exact, greater_than, \
-less_than, greater_than_or_equal, less_than_or_equal}.
+Maturity rating — Output one rating from {{g, pg, pg-13, r, nc-17, \
+unrated}} and one match_operation from {{exact, greater_than, \
+less_than, greater_than_or_equal, less_than_or_equal}}.
 - "Rated R" with no direction becomes exact R.
 - "PG-13 or lower", "no higher than PG-13", "at most PG-13" \
 becomes less_than_or_equal PG-13.
@@ -296,19 +316,16 @@ operation the user asked for.
 
 Streaming — Output a list of services from the tracked set \
 (possibly empty) and an optional preferred_access_type from \
-{subscription, buy, rent}. At least one of services or \
+{{subscription, buy, rent}}. At least one of services or \
 preferred_access_type must be populated.
-- Tracked services: Netflix, Amazon Prime Video, Hulu, Disney+, \
-Max, Peacock, Paramount+, Apple TV+, Crunchyroll, fuboTV, \
-YouTube, AMC+, Starz, Tubi, Pluto TV, The Roku Channel, Plex, \
-Shudder, MGM+, Fandango at Home.
+- Tracked services: {_TRACKED_STREAMING_SERVICE_NAMES}.
 - "On Netflix" becomes services=[Netflix], access type null.
 - "Available to rent" becomes services=[] (no service preference) \
 and access_type=rent.
 - "Netflix subscription" becomes services=[Netflix], \
 access_type=subscription.
-- "Free to stream" becomes the free-service subset (Tubi, Pluto \
-TV, Plex, The Roku Channel), no access_type — do not invent a \
+- "Free to stream" becomes the free-service subset \
+({_FREE_STREAMING_SERVICE_NAMES}), no access_type — do not invent a \
 "free" access type that the schema does not have.
 
 Audio language — Output a non-empty list of languages. Each \
@@ -319,9 +336,8 @@ from country or cultural identity.
 Country of origin — Output a non-empty list of countries. A \
 single-country phrase produces a single-element list. A region \
 phrase ("European movies", "Scandinavian films") produces the \
-countries you judge to belong to that region using general \
-knowledge — include the major members, not an exhaustive \
-dictionary. When user phrasing suggests a priority ordering \
+reasonable concrete country lists you judge to fit that region \
+using general knowledge. When user phrasing suggests a priority ordering \
 ("mainly French, maybe also Italian"), put the primary country \
 first; otherwise ordering is your best judgment.
 
@@ -342,19 +358,20 @@ poorly-received signals.
 """
 
 # ---------------------------------------------------------------------------
-# No-extra-fields discipline: only the one chosen sub-object is
-# populated. Leaving every other sub-object null is the normal case.
+# Target-field focus: the chosen sub-object should carry the
+# primary executable payload. Extra populated fields are ignored by
+# execution, so the model should not spend effort on them.
 # ---------------------------------------------------------------------------
 
 _NO_EXTRA_FIELDS = """\
-ONE SUB-OBJECT, NOT MANY
+TARGET FIELD FOCUS
 
-Populate exactly the one sub-object whose attribute matches \
-target_attribute. Every other sub-object stays null. Do not fill \
-additional sub-objects "for context" — downstream execution code \
-reads only the column identified by target_attribute, so any \
-extra population is silently discarded and only costs you \
-generation tokens.
+Prioritize the sub-object whose attribute matches \
+target_attribute. That is the only field execution code reads. \
+Other attribute fields usually stay null; if you populate extra \
+fields, they will be ignored. Do not spend effort filling them \
+"for context" unless they help you reach the best target \
+translation.
 
 ---
 
@@ -384,6 +401,9 @@ signal ("audio", "dubbed"), the reception word ("well-reviewed", \
 "acclaimed"), the popularity word ("hidden gems", "mainstream"). \
 This is an evidence inventory, not a justification — cite what \
 the input says, do not argue for a preferred attribute.
+
+Do not quote routing_hint here. It is contextual background, not \
+evidence.
 
 The list may be empty only when no constraint-bearing phrase \
 appears in either input. An empty list does not mandate an empty \
@@ -469,7 +489,8 @@ async def generate_metadata_query(
     """Translate one metadata dealbreaker or preference into a MetadataTranslationOutput.
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
-    context), one step 2 item's description plus routing_rationale,
+    context), one step 2 item's description plus a routing hint
+    derived from step 2's routing_rationale field,
     and today's date (for resolving relative temporal terms). It
     produces the exact single-column query parameters the metadata
     endpoint needs to execute the lookup.
@@ -480,7 +501,9 @@ async def generate_metadata_query(
         description: The positive-presence statement of the metadata
             requirement to translate (from a Dealbreaker or Preference).
         routing_rationale: The concept-type label from step 2 explaining
-            why this item was routed to the metadata endpoint.
+            why this item was routed to the metadata endpoint. This is
+            passed to the prompt as a lightweight routing hint rather
+            than as evidence.
         today: The current date. Passed explicitly so callers control
             what "today" means (production uses date.today(); offline
             analysis can pin a fixed date for reproducibility).
@@ -498,12 +521,12 @@ async def generate_metadata_query(
     """
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    routing_hint = routing_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
+    if not routing_hint:
         raise ValueError("routing_rationale must be a non-empty string.")
 
     # All four inputs are required. Present as labeled sections so
@@ -512,7 +535,7 @@ async def generate_metadata_query(
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_rationale: {routing_rationale}\n"
+        f"routing_hint: {routing_hint}\n"
         f"today: {today.isoformat()}"
     )
 
