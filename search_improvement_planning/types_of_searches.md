@@ -664,11 +664,12 @@ the full keyword vocabulary is included in the step 1 prompt.
 
 ---
 
-### 17. Concept Without Deterministic Anchor (Dealbreaker Demotion)
+### 17. Concept Without Deterministic Anchor
 
 User states a requirement as a dealbreaker, but the concept only exists in
-the semantic domain. The system must demote it to a preference since semantic
-search is unreliable for candidate generation.
+the semantic domain. The system does **not** demote it to a preference by
+default. Instead, behavior depends on whether there are any non-semantic
+inclusion dealbreakers alongside it.
 
 **Examples:**
 - "Movies with car chases" — no "car chase" keyword; becomes pure-vibe query
@@ -677,16 +678,21 @@ search is unreliable for candidate generation.
 - "Movies about artificial intelligence" — if no AI keyword exists, semantic
   only
 
-**Behavior:** When a dealbreaker routes to `semantic`, it is automatically
-demoted to a high-weight preference. If this was the only dealbreaker, the
-query becomes a pure-vibe query (type #15). If other deterministic dealbreakers
-exist, the semantic concept becomes a preference that strongly influences
-ranking within the tiers established by deterministic dealbreakers.
+**Behavior:**
+- If other deterministic inclusion dealbreakers exist, the semantic concept
+  remains a semantic dealbreaker but scores only within the deterministically
+  generated candidate pool.
+- If all inclusion dealbreakers are semantic, the query becomes a pure-vibe
+  query (type #15) and semantic dealbreakers generate the candidate pool.
+- If there are zero inclusion dealbreakers (preferences only, or exclusions
+  plus preferences), this does **not** trigger pure-vibe retrieval; candidate
+  generation falls back to a browse-style top-K default-quality pool.
 
 **Key insight:** The routing decision itself determines the confidence level.
 Deterministic sources give binary, reliable results. Semantic sources give
-fuzzy similarity scores. The system matches the strength of its action (hard
-filter vs soft ranking) to the confidence of its data.
+fuzzy similarity scores. The system therefore lets semantic concepts score in
+anchored flows, and only lets them generate candidates when the user's actual
+inclusion dealbreakers are all semantic.
 
 **Note:** This is a signal for where to expand the keyword vocabulary over
 time. Every query where the LLM falls back to semantic for a concept that

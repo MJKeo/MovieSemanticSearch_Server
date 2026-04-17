@@ -665,3 +665,19 @@ go to semantic. The trait-description approach was abandoned in favor of the
 full list because the LLM needs to check whether specific concepts exist in
 the vocabulary (e.g., "zombie" exists but "clown" doesn't).
 **See:** search_v2/stage_2.py (keyword endpoint section in _ENDPOINTS)
+
+
+## Factor ingestion-side `*Output.embedding_text()` through query-side `*Body` classes
+**Context:** `schemas/semantic_bodies.py` duplicates the `embedding_text()` logic that lives on the ingestion-side `PlotEventsOutput`, `PlotAnalysisOutput`, `ViewerExperienceOutput`, `WatchContextOutput`, `NarrativeTechniquesOutput`, `ProductionTechniquesOutput`, and `ReceptionOutput` classes, plus `create_anchor_vector_text` / `create_production_vector_text`. Duplication was deliberate (makes drift visible in code review) but a cleaner long-term move is to have the ingestion `*Output` classes hold a `*Body` sub-model and delegate `embedding_text()` to it, so both sides share a single source of truth for the format.
+**When:** When the next opportunity to touch ingestion-side schemas arises, or as a dedicated refactor once the step 3 semantic endpoint is in production and the format has proven stable.
+**See:** schemas/semantic_bodies.py, schemas/metadata.py, movie_ingestion/final_ingestion/vector_text.py
+
+## Author system prompt for step 3 semantic endpoint query generation
+**Context:** `SemanticDealbreakerSpec` and `SemanticPreferenceSpec` in [schemas/semantic_translation.py](schemas/semantic_translation.py) are shape-only. The LLM-facing guidance — how to pick a space, how to map concepts to structured sub-fields within a space, how to decide primary vs. contributing weights, how to populate `signal_inventory` and `target_fields_label` — still needs to be written.
+**When:** When implementing the step 3 semantic endpoint module.
+**See:** search_improvement_planning/finalized_search_proposal.md (Endpoint 6: Semantic), schemas/semantic_translation.py, search_v2/stage_3/keyword_query_generation.py (prompt authoring pattern to follow)
+
+## Implement step 3 semantic endpoint execution module
+**Context:** `search_v2/stage_3/` needs `semantic_query_generation.py` + `semantic_query_execution.py` matching the pattern of the existing six endpoints. Execution must dispatch on the composition of step 2's output into D1 / D2 / P1 / P2 scenarios, run Qdrant `retrieve()` for score-only cases and top-N searches for candidate-generating cases, apply global elbow calibration for dealbreakers, and emit per-candidate scores to `dealbreaker_sum` / `preference_contribution`.
+**When:** After the semantic system prompt is authored.
+**See:** search_improvement_planning/finalized_search_proposal.md (Endpoint 6: Semantic → Execution Scenarios), schemas/semantic_translation.py, schemas/semantic_bodies.py

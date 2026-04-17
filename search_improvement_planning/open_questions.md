@@ -467,16 +467,13 @@ broad or variable for keyword matching, such as "movies filmed in Ireland" or
 "first person perspective filming." The tightened scope justifies keeping it as
 a dedicated vector space.
 
-### ~~How should multi-vector scores combine for a single semantic concept?~~ DECIDED
+### ~~How should multi-vector scores combine for a single semantic concept?~~ SUPERSEDED
 
-**Max.** When a concept like "twist ending" targets multiple vector spaces
-(narrative_techniques, viewer_experience, reception), threshold each space
-separately and take the best score. Simple, permissive — if the signal comes
-through strongly in any one space, the concept is satisfied.
-
-Alternatives considered and rejected:
-- Average of above-threshold spaces (penalizes concentrated signal)
-- Max for pass/fail + average for partial (unnecessary complexity)
+Originally decided as max-across-spaces. Retired by the finalized design:
+dealbreakers pick exactly 1 space (no combining needed), and preferences
+use weighted-sum cosine across selected spaces with categorical weights
+(`primary`=2, `contributing`=1). See `finalized_search_proposal.md`
+Endpoint 6 and the Semantic Endpoint Finalized Decisions section.
 
 ### ~~How should keyword vocabulary mapping work?~~ DECIDED
 
@@ -663,48 +660,104 @@ behavior. The prompt must ensure this instruction doesn't conflict with the
 semantic preference grouping rules. See finalized_search_proposal.md Endpoint 5
 for the full specification.
 
-### How do we handle pure vibes-based deal-breakers?
+### ~~How do we handle pure vibes-based deal-breakers?~~ DECIDED
 
-Some deal-breakers are purely vibes-based — "cozy," "feel-good," "intense" —
-with no deterministic anchor, no keyword mapping, and no concept tag. These are
-user-intent deal-breakers that can only be evaluated via vector similarity, but
-empirical testing showed vector retrieval is unreliable as a candidate generator.
+Resolved via the four-scenario execution model in
+`finalized_search_proposal.md` (see Endpoint 6 → Execution Scenarios and
+Pure-Vibe Flow). Summary:
 
-This is a gap in the current architecture: the deterministic-retrieval-then-
-semantic-rescore model assumes at least one deterministic anchor exists. When the
-ONLY deal-breaker is a pure vibe, there's nothing to generate candidates from
-except vector search (the fallback acknowledged for pure-vibe queries).
+- **D2 (pure-vibe dealbreaker flow):** When every inclusion dealbreaker
+  routes to `semantic` (≥1 semantic inclusion, zero non-semantic
+  inclusion), each semantic dealbreaker independently generates top-N
+  per (dealbreaker, space); union = pool. Scored with global-elbow
+  calibration; contributes to `dealbreaker_sum`.
+- **P2 (preference-driven retrieval):** When zero inclusion dealbreakers
+  exist but a semantic preference does, the preference generates
+  candidates (top-N per selected space, union). Scored as a preference
+  (raw weighted-sum cosine); contributes to `preference_contribution`.
+- **Exclusion-only (neither dealbreakers nor preferences):** browse
+  fallback via the default quality composite; no vector candidate
+  generation at all.
 
-**Related to the "spectrum deal-breaker problem" above** — pure vibes-based
-deal-breakers are the hardest case of that problem because there's no
-deterministic fallback at all.
+Proxy-deterministic mapping was considered and rejected as unnecessary
+complexity given the four-scenario model handles it cleanly.
 
-**Possible approaches:**
-- Accept vector retrieval as the candidate generator for these cases (current
-  plan for pure-vibe queries) and invest in embedding quality improvements
-- Try to map vibes to proxy deterministic signals (e.g., "cozy" → genre filter
-  for drama/comedy + maturity ≤ PG-13 + keyword matches for "family" or
-  "holiday") as a generous superset, then rescore semantically
-- Combine both: proxy deterministic retrieval UNION vector retrieval, deduplicate
+### ~~Exclusion-only queries: what generates candidates?~~ DECIDED
 
-### Is there a better model than t-shirt sizing for relative vector space weighting?
+When step 2 emits zero inclusion dealbreakers AND zero preferences —
+only exclusion dealbreakers ("movies not starring Tom Cruise," "movies
+not about clowns") — route to the browse fallback:
 
-The current approach uses t-shirt sizes (large=3, medium=2, small=1,
-not_relevant=0) for vector space weights. This is simple but coarse.
+1. Generate candidates as top-K by the default quality composite
+   (`0.6 × reception_score + 0.4 × popularity_score`).
+2. Apply exclusions normally in Phase 4b.
+3. Rank by the same composite plus any active priors.
 
-**Alternative: points-based allocation.** Give the LLM a fixed budget of points
-(e.g., 10 or 100) to distribute across vector spaces. This allows finer-grained
-relative weighting — a space could get 45% of the budget vs 35% vs 20%, rather
-than the limited granularity of large/medium/small.
+**Rationale:** When the user expressed no positive intent at all, the
+quality composite is the only honest candidate-generation signal. The
+browse fallback mirrors what a librarian would do when asked "a movie,
+but not that one" — return well-known, well-regarded movies minus the
+excluded set. Options considered and rejected: inverse-generating via
+the exclusion itself ("not clowns" has no positive signal to search
+against), asking the user for clarification (breaks the pipeline's
+always-return-something contract).
 
-**Considerations:**
-- Points-based may be harder for the LLM to calibrate consistently
-- T-shirt sizing's simplicity may be a feature if the LLM struggles with
-  fine-grained allocation
-- The new architecture reduces reliance on vector space weighting (semantic
-  concepts are scored per-space via cross-space rescoring, not blended via
-  weighted sum), which may make this less critical than in V1
-- Worth testing whether finer granularity actually improves results
+**Note:** If preferences exist alongside exclusions ("not clowns,
+something cozy"), use scenario P2 instead — the semantic preference
+drives candidate generation, and exclusions apply as hard filters
+(deterministic) or penalties (semantic) afterward.
+
+### ~~No-dealbreaker preference-only queries: what generates candidates?~~ DECIDED
+
+**Option B: preferences generate candidates.** When step 2 emits zero
+inclusion dealbreakers but at least one semantic preference, the
+preference takes on candidate generation (scenario **P2** in the
+Execution Scenarios table). Each selected space runs top-N against the
+full corpus; union = candidate pool.
+
+**Scoring stays as preferences, not dealbreakers.** Raw weighted-sum
+cosine normalized by Σw (same as P1 where preferences score a
+pre-built pool), contributing to `preference_contribution` scaled by
+P_CAP. `dealbreaker_sum = 0`.
+
+**Rationale:**
+- Step 2 classified these items as preferences deliberately. The
+  candidate-generation mechanism is orthogonal to the final-ranking
+  role — who produces candidate IDs is not a reason to change what the
+  items mean.
+- Scoring stays consistent with P1: same function, same normalization,
+  regardless of whether the preference generated candidates or scored
+  a pre-built pool.
+- The alternative (Option A: browse fallback on quality composite for
+  any zero-dealbreaker query) throws away the user's positive intent.
+  "Cozy date night movie" with every item classified as a preference
+  should still do vector retrieval for "cozy," not degenerate into a
+  popularity-ranked browse.
+- Final scores are bounded above by P_CAP in P2 (since `dealbreaker_sum
+  = 0`), but this is fine — within-query ranking is what matters, and
+  cross-query score comparability is not a goal of the system.
+
+### ~~Is there a better model than t-shirt sizing for relative vector space weighting?~~ DECIDED
+
+**Two-level categorical scale, `minor` option removed.** Preferences select
+1+ spaces and assign each one `primary` (maps to 2) or `contributing` (maps
+to 1). There is no `minor` / `not_relevant` weight — if a space's signal
+isn't at least contributing meaningfully, don't select it.
+
+**Reasoning:**
+- Small models handle categorical Likert scales better than free-form
+  numerics or point-budget allocations (they collapse to round numbers or
+  uniform splits under uncertainty).
+- Dropping `minor` prevents weight dilution across many marginal spaces and
+  removes the model's ability to hedge by tagging everything as tangentially
+  relevant.
+- A `not_relevant` option is redundant with not selecting the space at all —
+  creates a decision-theoretic ambiguity and adds no signal.
+- With one query per selected space (not per concept) and 1–3 spaces typical
+  per preference, two levels is plenty of expressiveness.
+
+Revisit only if evaluation shows the model systematically collapsing to one
+level (everything `primary` or everything `contributing`).
 
 ### ~~What does "best" mean — critically acclaimed, popular, or both?~~ DECIDED
 
@@ -733,21 +786,28 @@ summary?
 - Could use both: LLM-generated for structured labels, scraped for supplementary
   natural-language signal
 
-### What's the most efficient way to generate metadata structures at search time?
+### ~~What's the most efficient way to generate metadata structures at search time?~~ DECIDED
 
-The design calls for generating the same metadata structures used at ingestion
-time (e.g., NarrativeTechniquesOutput shape) as search queries. This ensures
-query and document embeddings occupy the same semantic space.
+**One query per selected space, absorbing all concepts routed to that
+space.** Not per-concept-per-space (which would reintroduce retrieval
+averaging). The LLM composes the combined query in that space's native
+vocabulary — "scary but funny" routed to `viewer_experience` becomes
+`emotional_palette: darkly funny, gallows humor` +
+`tension_adrenaline: unsettling, creeping dread` rather than two separate
+queries unioned.
 
-**Efficiency question:** Generating a full Pydantic model output per vector space
-per query adds LLM latency. Options:
-- Generate all space-specific structures in a single LLM call (current Phase 0
-  approach, but with structured output per space)
-- Generate only for spaces identified as relevant by Phase 0
-- Cache common query patterns (e.g., "christmas" always maps to the same
-  watch_context structure)
-- Use a smaller/faster model for search-time metadata generation since it's
-  less critical than ingestion-time generation
+**Source of truth for the per-space shape.** Any vector space whose
+embedded text is assembled from more than one metadata object (anchor,
+plot_events, production, reception at minimum) gets a dedicated Pydantic
+model defining the embedded shape. These models serve both ingest-side
+embedding text generation and search-side query generation — keeping the
+two in lockstep structurally. Spaces whose embedded text maps 1:1 to an
+existing generator output (`plot_analysis`, `viewer_experience`,
+`watch_context`, `narrative_techniques`) reuse those models.
+
+**Space-identification and query generation** happen inside a single step
+3 semantic LLM call per item (standard flow) or one batched call for all
+items (pure-vibe flow). No separate Phase 0 metadata-generation step.
 
 ### Which pipeline failure points should be fatal vs graceful?
 
@@ -821,12 +881,13 @@ dealbreakers (strict) and another treats marvel as dealbreaker with dark+gritty
 as preferences (relaxed). This gives users strict results AND a broader fallback
 without separate fallback logic. Worth exploring post-MVP.
 
-### Should step 1 display semantic dealbreaker demotion to the user?
+### Should step 1 display when a semantic dealbreaker is score-only?
 
-When a dealbreaker is routed to `semantic` and demoted to a preference, the
-user's stated requirement is being treated as a ranking signal rather than a
-hard filter. If results are good, users won't notice. But if a non-matching
-movie appears mid-results, users might be confused.
+When a dealbreaker is routed to `semantic` in a deterministically anchored
+query, the user's stated requirement is being enforced via scoring rather than
+candidate generation. If results are good, users won't notice. But if a
+mid-ranked movie only partially satisfies the semantic requirement, users
+might be confused.
 
 Options:
 - Don't surface it — let result quality speak for itself
@@ -837,19 +898,15 @@ Options:
 Likely a presentation concern to address during UI work, not an architectural
 decision.
 
-### How should the step 2 vector LLM handle semantic exclusion queries?
+### ~~How should the step 2 vector LLM handle semantic exclusion queries?~~ DEPRIORITIZED
 
-The vector LLM needs to know it's formulating a query for a NEGATIVE semantic
-signal (exclusion), not a positive one. The search itself is the same (find
-movies similar to "clowns"), but the downstream scoring inverts the signal.
-The LLM should formulate the query to maximize recall of genuinely matching
-movies so the elbow detection has clean data.
-
-Open: should the query formulation differ for exclusions vs inclusions? An
-inclusion query might benefit from expansion ("car chases" → "car chases,
-vehicle pursuits, high-speed driving") while an exclusion query might need
-precision ("clowns" should stay focused to avoid penalizing circus-adjacent
-movies that don't actually have clowns).
+Exclusions are match-then-penalize, not hard-filter — a false positive
+costs score weight, not removal. Originally flagged as higher-stakes than
+inclusion query formulation; downgraded given the penalty-based scoring.
+Per the direction-agnostic framing principle, the step 3 LLM doesn't even
+know the query's direction; it always formulates "find movies WITH X" and
+the orchestrator applies the exclusion multiplier. Revisit only if
+evaluation shows systemically unfair exclusion penalties.
 
 ---
 

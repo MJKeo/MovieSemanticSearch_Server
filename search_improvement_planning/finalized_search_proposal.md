@@ -1965,11 +1965,15 @@ horror results. The dealbreaker generates candidates deterministically; the
 preference scores them via vector similarity.
 
 **Data sources:** 8 Qdrant vector spaces (OpenAI `text-embedding-3-small`,
-1536 dims):
+1536 dims). Dealbreakers draw from the 7 non-anchor spaces only; preferences
+may use all 8 for scoring. Every space (including anchor when used for
+preference scoring) is searched with a generated query tailored to that space's
+structured-label shape — the original user query is never used directly for
+retrieval.
 - **Anchor** (`dense_anchor_vectors`) — Holistic movie fingerprint. Broad
-  "movies like X" similarity, general vibes. No subquery — always searched
-  with original query. Best for queries that don't emphasize any single
-  dimension.
+  "movies like X" similarity, general vibes. Dealbreakers never select this
+  space — it is intentionally too diffuse for a single-dimension pass/fail
+  judgment. Best for preferences that don't emphasize any single dimension.
 - **Plot Events** (`plot_events_vectors`) — What literally happens.
   Chronological narrative. "Movie where a guy wakes up in a different body",
   "the one with the heist on a train."
@@ -1992,9 +1996,10 @@ preference scores them via vector similarity.
   audience reception. "Praised for cinematography", "controversial films
   critics hated but audiences loved."
 
-**LLM knows:** What each vector space captures, subquery formulation best
-practices per space, space selection logic, the 80/20 subquery/original blend
-ratio.
+**LLM knows:** What each vector space captures (via the per-space taxonomy
+documented in §Preliminary Step below), per-space query formulation best
+practices in the matching structured-label shape, space selection logic, and
+the two-level space weight scale for preferences (`central` / `supporting`).
 
 **When to use:**
 - **As a dealbreaker:** Only when no deterministic endpoint can evaluate the
@@ -2046,31 +2051,141 @@ candidate pool; semantic dealbreakers score those candidates. Exception: in
 the pure-vibe flow (no non-semantic inclusion dealbreakers exist), vector
 search becomes the candidate generator.
 
-**Dealbreaker scoring:** Semantic dealbreakers produce a continuous score in
-[0, 1] for each candidate, contributing to the dealbreaker sum alongside
-deterministic dealbreaker scores (see Phase 4c). The scoring uses
-elbow-calibrated thresholds against the global corpus distribution:
+#### Execution Scenarios
 
-- **Above the elbow:** Score = 1.0 (high confidence the movie genuinely has
-  this trait).
-- **Between elbow and floor:** Gradual decay from 1.0 toward 0.0, calibrated
-  by the gap between the maximum similarity score and the elbow value.
-- **Below the floor:** Score = 0.0 (no meaningful match — does not contribute
-  to the dealbreaker sum).
+Four scenarios govern how the semantic endpoint executes, keyed on the
+composition of step 2's output. Dealbreaker-side and preference-side logic
+compose independently — a query picks one dealbreaker scenario AND one
+preference scenario based on what step 2 emitted.
 
-The elbow is determined dynamically per concept via global corpus search.
-If elbow detection fails, a fallback percentage-of-max threshold is used.
+**Dealbreaker-side scenarios** (applies when ≥1 semantic dealbreaker exists):
 
-**Preference scoring:** Vector similarity scores against relevant spaces. The
-LLM determines which spaces are relevant and generates expanded search queries
-per space. All preferences (including grouped semantic preferences) are scored
-via cosine similarity. For regular preferences, a diminishing-returns curve is
-applied (marginal gains decrease at high similarity). For primary preferences,
-raw similarity is preserved (full spectrum matters for ranking). Semantic
-exclusion dealbreakers use global-elbow-calibrated penalties (see Exclusion
-Handling in Phase 4b). The grouped semantic preference can be decomposed into
-per-space queries by the step 3 LLM even though it arrives as a single
-preference item from step 2.
+| Scenario | Trigger | Candidate generation | Similarity source | Score transform | Reranking role |
+|----------|---------|----------------------|-------------------|-----------------|----------------|
+| **D1: Score-only** | ≥1 non-semantic inclusion dealbreaker exists | N/A — candidates come from non-semantic endpoints | Qdrant `retrieve()` for each candidate ID on the selected space | Global calibration probe → elbow/floor → threshold-plus-flatten applied to candidate cosines | Contributes to `dealbreaker_sum` (each item ∈ [0, 1]) |
+| **D2: Candidate-generating** | Zero non-semantic inclusion dealbreakers, ≥1 semantic inclusion dealbreaker | Each semantic dealbreaker independently runs top-N per (dealbreaker, space) against the full corpus; union = candidate pool | Candidate pool's own cosines from the generating search, plus Qdrant `retrieve()` for cross-dealbreaker scoring | Global calibration probe → elbow/floor → threshold-plus-flatten applied to each candidate's cosine for each dealbreaker's space | Contributes to `dealbreaker_sum` (each item ∈ [0, 1]) |
+
+**Preference-side scenarios** (applies when ≥1 semantic preference group exists):
+
+| Scenario | Trigger | Candidate generation | Similarity source | Score transform | Reranking role |
+|----------|---------|----------------------|-------------------|-----------------|----------------|
+| **P1: Score-only** | ≥1 inclusion dealbreaker exists (semantic or non-semantic) | N/A — candidates already assembled | Qdrant `retrieve()` for each candidate ID on each selected space | Raw weighted-sum cosine across selected spaces, normalized by Σw (no elbow, no pool normalization) | Contributes to `preference_contribution`, scaled by P_CAP |
+| **P2: Candidate-generating** | Zero inclusion dealbreakers, ≥1 semantic preference | Each selected space in the grouped preference runs top-N against the full corpus; union across spaces = candidate pool | Candidate pool's own cosines from the generating search, plus Qdrant `retrieve()` for cross-space scoring | Same as P1 — raw weighted-sum cosine normalized by Σw | Contributes to `preference_contribution`, scaled by P_CAP. `dealbreaker_sum = 0` |
+
+**Edge case (exclusion-only):** zero inclusion dealbreakers AND zero
+preferences (only exclusion dealbreakers). Falls back to browse-style
+candidate generation (top-K by `0.6 × reception_score + 0.4 ×
+popularity_score`), apply exclusions in Phase 4b, rank by the same quality
+composite. See "Exclusion-Only Edge Case" below.
+
+**Why D1 and D2 both use global elbow calibration:** The scoring function
+must stay identical regardless of whether the dealbreaker also generated
+candidates. Otherwise the same semantic dealbreaker would score differently
+across queries depending on whether a keyword dealbreaker happened to
+coexist. Global calibration against the full corpus is the only invariant
+available — candidate-relative calibration would systematically underrate
+dealbreakers when the candidate pool is already concept-rich, and overrate
+them when the pool is thin.
+
+**Why P2 keeps preference semantics (not dealbreaker semantics):** Step 2
+deliberately classified these items as preferences — they are ranking
+signals, not pass/fail requirements. Changing the final-ranking role based
+on the candidate-generation mechanism would silently override step 2's
+classification. Preferences stay preferences end-to-end; the only thing
+that shifts in P2 is who produces the candidate IDs.
+
+**Preliminary step: space identification (always first).** Every step 3
+semantic call starts by identifying which vector space(s) the concept actually
+lives in, using a canonical space taxonomy embedded in the prompt. The
+taxonomy is authored as a module-level docstring on each `create_*_vector_text`
+function in `movie_ingestion/final_ingestion/vector_text.py` and imported
+verbatim into the step 3 prompt at build time. This is a convention, not code
+generation. Each space's entry contains four parts:
+
+1. **Purpose** — one sentence on what the space captures.
+2. **What's embedded** — the structured labels actually present in the
+   embedded text (e.g., for `narrative_techniques`: `narrative_archetype`,
+   `narrative_delivery`, `pov_perspective`, `information_control`,
+   `characterization_methods`, `character_arcs`, `audience_character_perception`,
+   `conflict_stakes_design`, `additional_narrative_devices`). Grounds the
+   model in the exact shape it should generate queries in.
+3. **Boundary** — an explicit *not-this* line (e.g., "HOW the story is told,
+   NOT what happens"). Misroute prevention.
+4. **2–3 canonical example queries** that belong in this space.
+
+Re-audit this convention whenever vector text generation logic changes. This
+replaces V1's "ask every space to rewrite the query for itself" pattern, which
+invited the LLM to fabricate signal in spaces that don't carry it (flaw #15).
+
+Space selection rules:
+
+- **Dealbreakers:** strictly 1 space from the 7 non-anchor spaces. If the
+  LLM is genuinely split between two spaces, that's a signal the concept
+  isn't a clean dealbreaker and should have gone to another endpoint. Always
+  require at least one pick — zero-space output is not allowed; pick the best
+  option even if imperfect.
+- **Grouped preferences:** 1+ spaces chosen from all 8 (anchor allowed).
+  Each selected space receives a two-level categorical weight
+  (`central` → 2, `supporting` → 1). There is no `minor` option — if a
+  space's signal isn't at least supporting meaningfully, don't select it.
+  This prevents diluting preference scores by spreading weight across many
+  marginal spaces. Anchor fits naturally for broad-vibe qualifiers ("cozy,"
+  "funny and lighthearted") where anchor's thematic summary carries real
+  signal.
+- **Semantic exclusions:** same rule as dealbreakers — strictly 1 space from
+  the 7 non-anchor spaces.
+
+**Dealbreaker scoring:** Single-space, elbow-calibrated against the global
+corpus distribution. For each dealbreaker:
+
+1. LLM picks 1 space from the 7 non-anchor spaces and generates a query
+   tailored to that space's structured-label shape. This is the only query
+   — no merging with the original user query.
+2. **Global calibration search:** run the query against the full corpus
+   (no filters), top-N, against the selected space only. Detect the elbow
+   (1.0 mark) and floor (0.0 mark) from the sorted similarity distribution.
+3. **Candidate scoring:** for each candidate generated by deterministic
+   endpoints, fetch cosine similarity in that space. Transform:
+   - `sim ≥ elbow` → score = 1.0
+   - `floor < sim < elbow` → linear decay from 1.0 to 0.0
+   - `sim ≤ floor` → score = 0.0
+4. Score contributes full value to `dealbreaker_sum` (not capped by P_CAP).
+
+**Elbow caching.** Elbow/floor values are keyed by
+`hash(query_text, space_name, embedding_model_version,
+space_prompt_version, corpus_version)` with a 24h TTL. Reused across
+requests. Invalidated on corpus rebuilds. Concepts like "zombies" or
+"scary" that recur across queries pay the global-search cost once per day.
+Version components are explicit so an embedding-model swap, a space-prompt
+revision, or a corpus regeneration cannot silently reuse stale calibration.
+
+**Preference scoring:** Multi-space weighted cosine. The LLM picks 1+ spaces,
+generates one query per selected space (no per-concept decomposition — a
+single query per space that absorbs all concepts routed to it and phrases
+them in that space's native vocabulary), and assigns each selected space a
+categorical weight of `central` (maps to 2) or `supporting` (maps to 1).
+For each candidate:
+
+```
+pref_score = Σ(w_space × cosine_space) / Σ(w_space)
+```
+
+**No pool normalization, no diminishing-returns curve.** Raw weighted cosine
+is the ranking signal. This is deliberate: pool normalization would falsely
+promote the best-in-a-bad-pool candidate to 1.0, erasing the "nobody here
+actually matches" signal. Example: if candidates score 0.20–0.25 on
+"clown-ness" while true clown movies elsewhere in the corpus score 0.75+,
+raw cosines correctly produce low preference contributions; normalization
+would misleadingly rank a 0.25 as a "perfect clown match."
+
+This replaces the V1 diminishing-returns curve for regular preferences and
+the "preserved similarity for primary" variant — `is_primary_preference` now
+only affects Phase 4c weighting (3.0 vs 1.0), not the score shape in step 3.
+
+**Semantic exclusions** use the dealbreaker scoring path identically
+(single space, global elbow calibration, [0,1] score). The resulting match
+score is multiplied by E_MULT and subtracted from the final score in
+Phase 4b.
 
 **Example dealbreakers:** "centers around zombies", "involves female
 empowerment themes", "contains car chases" (distinct traits that define what
@@ -2081,6 +2196,49 @@ cozy date night vibe" (qualifiers on the desired experience, consolidated into
 one rich description). Also: thematic centrality qualifiers from keyword
 dealbreakers (e.g., "Christmas is central to the story, not just backdrop")
 are included in the grouped semantic preference.
+
+**Step 3 output schemas:** `schemas/semantic_translation.py` —
+`SemanticDealbreakerSpec` (one call per semantic dealbreaker or exclusion;
+covers D1 + D2) and `SemanticPreferenceSpec` (one call per grouped semantic
+preference; covers P1 + P2). Both emit concrete per-space `*Body` objects
+(`schemas/semantic_bodies.py`) via discriminated unions keyed on `space`, so
+query-side vectors embed into the same structured-label format as document-
+side vectors. No free-form `query_text` strings.
+
+**Reasoning fields:**
+
+Two reasoning fields per spec — one top-level evidence inventory, one brief
+label placed immediately before the decisions it primes. Rationalization-
+after-the-fact fields are deliberately avoided; every reasoning field exists
+only to ground a specific downstream commit in cited evidence or prime the
+body shape.
+
+*`SemanticDealbreakerSpec`:*
+
+| Field | Position | Scaffolds | Purpose |
+|---|---|---|---|
+| `signal_inventory` | First | `body.space` (discriminator commit) | Evidence inventory — cite concrete phrases from the description and, per phrase, note which of the 7 non-anchor spaces it genuinely implicates. Explicit empty-evidence path required ("no phrase implicates production" is a valid trace, not a signal to fabricate). Guards against surface-pattern misrouting — "female empowerment" looking like `viewer_experience` because the words feel emotional, when it is really `plot_analysis`. |
+| `target_fields_label` | Between `signal_inventory` and `body` | Sub-fields populated inside `body.content` | Brief label form (2–6 words, not a sentence). Names which structured sub-fields within the likely-chosen space the concept will surface in (e.g., for zombies in plot_analysis: `"conflict_type, thematic_concepts"`; for "filmed in New Zealand" in production: `"filming_locations"`). Primes selective sub-field population so the body does not fabricate signal into sub-fields the concept does not cover. Brief-label form per the "brief pre-generation fields, no consistency coupling" convention — sentence-form rationales dominate attention and template the body's language. |
+
+No separate `space` reasoning field beyond `signal_inventory`. Adding one
+would be the rationalization-after-the-fact failure mode the conventions
+caution against — the space commit is already grounded by cited evidence.
+
+*`SemanticPreferenceSpec`:*
+
+| Field | Position | Scaffolds | Purpose |
+|---|---|---|---|
+| `qualifier_inventory` | First, before `space_queries` | Every entry in `space_queries` | Evidence inventory — decompose the grouped description into individual qualifiers; per qualifier, cite the phrase and note which space(s) it implicates. Explicit empty-evidence path: a qualifier that doesn't clearly map to any space is flagged, not force-routed. Prevents the dominant preference failure — "blob handling" where the grouped description is treated as one undifferentiated concept and collapsed onto a single space (usually `anchor` or `viewer_experience`). Per-qualifier decomposition with cited phrases is the only scaffolding that forces separation up front. |
+| Per-entry `carries_qualifiers` | First field inside each `PreferenceSpaceEntry`, before `space` / `weight` / `content` | `space`, `weight`, and `content` for that entry | Brief label form naming which qualifiers from `qualifier_inventory` land in this space (e.g., `"carries: dark, slow-burn"`, `"carries: date night, cozy"`). One label primes three downstream decisions at once: the space commit (why this entry exists), the weight enum (count and centrality of carried qualifiers informs `central` vs `supporting`), and the body content (which concepts the structured labels must express). Brief-label form is mandatory — sentence-form per-entry rationales become consistency templates for the body that follows. |
+
+**Explicitly excluded:** no top-level `space_plan` / holistic-plan field.
+`qualifier_inventory` already names qualifier→space mappings, and per-entry
+`carries_qualifiers` handles weight priming per space. A sentence-form plan
+would consistency-couple subsequent entries to the plan ("write the body
+that matches the plan I just committed to"), which is the exact failure
+mode the "brief pre-generation fields, no consistency coupling" convention
+exists to prevent. Weight calibration is inherently per-entry and better
+served by local scaffolding than a cross-entry narrative.
 
 ### Endpoint 7: Trending
 
@@ -2189,11 +2347,30 @@ are the sole source of candidate IDs.
 Union and deduplicate across all inclusion dealbreaker candidate sets to
 produce the full candidate pool.
 
-**Pure-vibe checkpoint:** If no deterministic inclusion dealbreaker exists
-(all inclusion dealbreakers route to semantic), reroute to the pure-vibe flow
-(see below). This includes "only semantic inclusions plus deterministic
-exclusions" (e.g., "good date night movies not with adam sandler" — date night
-is semantic, adam sandler is an entity exclusion).
+**Semantic-only inclusion checkpoint (dealbreaker scenario D2):** If no
+deterministic inclusion dealbreaker exists **and at least one semantic
+inclusion dealbreaker exists**, reroute to the pure-vibe dealbreaker flow
+(see below). Each semantic inclusion dealbreaker independently generates
+top-N per (dealbreaker, space) against the full corpus; union = candidate
+pool. This covers:
+
+- All inclusion dealbreakers route to `semantic` ("cozy date night movie")
+- Only semantic inclusions plus deterministic exclusions ("good date night
+  movies not with adam sandler" — date night is semantic, adam sandler is
+  an entity exclusion)
+
+**Zero-inclusion-dealbreaker, preferences-exist checkpoint (preference
+scenario P2):** If no inclusion dealbreaker exists at all **but at least
+one semantic preference exists**, the semantic preference takes on
+candidate generation. See "Zero-Dealbreakers, Preference-Driven Retrieval"
+below. Candidates are scored as preferences (not dealbreakers) and
+contribute to `preference_contribution`.
+
+**Zero-inclusion, zero-preference checkpoint (exclusion-only):** If no
+inclusion dealbreaker AND no preferences exist (for example
+"movies not starring Tom Cruise"), handle via the browse-style fallback —
+top-K by the default quality composite, apply exclusions, rank by the same
+composite. See "Exclusion-Only Edge Case" below.
 
 ### Phase 4b: Exclusion Handling
 
@@ -2359,16 +2536,16 @@ Each preference produces a raw score in [0, 1] for each candidate:
 | **Awards** | Binary match, or count-based for "preferably award-nominated." |
 | **Franchise** | Binary match on structural attributes. |
 | **Keyword** | Binary (1.0 or 0.0). |
-| **Semantic** | Cosine similarity. Diminishing-returns curve for regular preferences; raw preserved similarity for primary preferences. |
+| **Semantic** | Raw weighted-sum cosine across LLM-selected spaces. No pool normalization, no diminishing-returns curve — preserves the "nobody matches well" signal. `is_primary_preference` affects the Phase 4c weight (3.0 vs 1.0), not the score shape. |
 | **Trending** | Pass-through of precomputed trending score [0, 1]. |
 
 **Scoring modes applied to raw scores:**
 
-- **Preserved similarity** — For primary preferences. Raw score is the
-  ranking signal. "Scariest ever" needs full-spectrum differentiation.
-- **Diminishing returns** — For regular semantic preferences. Marginal gains
-  decrease at high similarity. Being "somewhat funny" matters more than the
-  gap between "very funny" and "extremely funny."
+- **Raw semantic** — For all semantic preferences (primary and regular
+  alike). Weighted-sum cosine across LLM-selected spaces. No pool
+  normalization, no diminishing-returns curve. Primary vs. regular is
+  expressed purely through the Phase 4c weight (3.0 vs. 1.0), not through
+  score shape.
 - **Pass-through** — For deterministic preferences (binary or gradient scores
   used as-is).
 - **Sort-by** — For explicit sort preferences ("chronological", "most recent
@@ -2385,39 +2562,147 @@ dealbreaker, not a preference.
 
 ## Pure-Vibe Flow (No Deterministic Inclusion Anchors)
 
-When step 2 output contains no non-semantic inclusion dealbreakers, the query
-enters a separate codepath where vector search is the candidate generator. This
-triggers when all inclusion dealbreakers route to `semantic`, regardless of
-whether deterministic exclusions also exist. The detection is an explicit flow
-control checkpoint immediately after step 2 completes.
+When step 2 output contains one or more inclusion dealbreakers and all of them
+route to `semantic`, the query enters a separate codepath where vector search
+is the candidate generator. This is **scenario D2** in the Endpoint 6
+Execution Scenarios table. This includes the case where there are multiple
+inclusion dealbreakers and every one is semantic. Deterministic exclusions may
+still coexist. The detection is an explicit flow control checkpoint
+immediately after step 2 completes.
+
+A closely related but distinct variant — **scenario P2**, where zero
+inclusion dealbreakers exist but at least one semantic preference does —
+also uses vector search as the candidate generator, but the generated
+candidates are scored as preferences (not dealbreakers). That variant is
+documented in "Zero-Dealbreakers, Preference-Driven Retrieval" below. The
+shared mechanics are identical: one LLM call, per-space queries, top-N
+union. The difference is which step-2 items drive the search and how the
+resulting scores contribute to `final_score`.
 
 ### How It Works
 
-1. Vector search generates the candidate pool (since no deterministic endpoints
-   can). Each semantic dealbreaker gets its own step 3 LLM call as usual.
-2. The step 3 semantic endpoint determines relevant vector spaces and generates
-   search queries per dealbreaker/preference item.
-3. **Individual searches per concept** across relevant spaces. Synonymous
-   concepts are already consolidated by step 2, so each search represents a
-   distinct semantic axis. Union top-N results across all searches.
-4. **Rescore each candidate** by fetching its distance in all relevant vector
-   spaces (not just the space where it was initially retrieved). This catches
-   movies that are near-misses in one space but strong in others.
-5. Apply a **minimum similarity threshold per space** to avoid noise. A movie
-   with 0.15 similarity to "lighthearted" shouldn't get credit for that score.
-6. Apply the standard scoring formula: `dealbreaker_sum +
-   preference_contribution - exclusion_penalties`. Semantic dealbreaker scores
-   contribute to `dealbreaker_sum` using elbow-calibrated scoring (same as the
-   standard flow). Preferences and priors contribute to
-   `preference_contribution` (same formula, same P_CAP).
+1. **Single LLM call** consumes all semantic dealbreakers AND preferences at
+   once. Output shape mirrors the standard-flow per-item shape but batched:
+   per-dealbreaker → 1 selected space (from the 7 non-anchor spaces) + one
+   query tailored to that space's shape; per-preference → 1+ selected spaces
+   (anchor allowed) each with a categorical weight (`central` / `supporting`)
+   and one query per selected space. This replaces the per-item LLM calls
+   used in the standard flow — the reduction in LLM wall-clock time is the
+   reason pure-vibe is typically faster than a standard flow with many items,
+   not slower. Per-space queries absorb all concepts routed to that space
+   (one query per space, not per concept) so embedding-level combination is
+   intentional and shaped by the LLM, not blended via embedding averaging
+   — see "Why Per-Space, Not Per-Concept" below.
+2. **In D2, candidate generation is dealbreaker-only.** Because step 2
+   emitted at least one semantic inclusion dealbreaker, that dealbreaker
+   is the source of positive intent. Each inclusion dealbreaker runs
+   against the full corpus (no filters), top-N per (dealbreaker, space).
+   Union across all dealbreaker searches = candidate pool. Preferences
+   do not participate in candidate generation in D2 — letting them would
+   silently override step 2's dealbreaker-vs-preference classification.
+   (When step 2 emits no inclusion dealbreakers at all, the query routes
+   to P2, where the semantic preference drives candidate generation
+   instead. See "Zero-Dealbreakers, Preference-Driven Retrieval" below.)
+3. **Anchor remains out of pure-vibe candidate generation.** Pure-vibe
+   dealbreakers still draw only from the 7 non-anchor spaces. Preferences
+   may select anchor for scoring, but anchor does not generate candidates.
+4. **Scoring after candidate assembly:**
+   - Dealbreakers: elbow-calibrated scoring (global calibration probe →
+     threshold-plus-flatten) against each candidate, contributing to
+     `dealbreaker_sum` (same formula as the standard flow).
+   - Preferences: raw weighted-sum cosine across selected spaces with
+     `central`=2 / `supporting`=1 weights, contributing to
+     `preference_contribution` (same formula, same P_CAP).
+5. Deterministic exclusions hard-filter the candidate pool; semantic
+   exclusions use the match-then-penalize path (same as Phase 4b).
 
-### Why Individual Searches, Not Combined
+### Zero-Dealbreakers, Preference-Driven Retrieval (Scenario P2)
 
-"Fun" and "lighthearted" as separate searches preserve the independence of each
-concept. Combining them into a single query blends the embeddings into an
-average that may not match either concept well — recreating the signal dilution
-problem at query time. The step 2 LLM already consolidates truly synonymous
-concepts, so remaining distinct concepts should stay separate.
+When step 2 emits zero inclusion dealbreakers but at least one semantic
+preference exists, the semantic preference takes on candidate generation.
+This is scenario **P2** in the Execution Scenarios table.
+
+**How it works:**
+
+1. Step 2 produces the grouped semantic preference with its selected spaces
+   and per-space queries (no per-concept decomposition — one query per
+   selected space).
+2. **Each selected space runs top-N against the full corpus** (no filters
+   beyond any active UI filters; if UI filters are active, run a
+   preliminary unfiltered probe to collect similarity distributions, then
+   rerun with filters applied to produce the final candidate IDs). Union
+   across spaces = candidate pool.
+3. **Scoring:** raw weighted-sum cosine across the selected spaces,
+   normalized by Σw (same as P1). Per-space weights: `central` = 2,
+   `supporting` = 1.
+4. **Final ranking role:** contributes to `preference_contribution`,
+   scaled by P_CAP. `dealbreaker_sum` is zero because no inclusion
+   dealbreakers were emitted.
+5. Deterministic exclusions hard-filter the candidate pool; semantic
+   exclusions use the match-then-penalize path (same as Phase 4b).
+
+**Why preferences keep preference semantics here (not dealbreaker
+semantics):** Step 2 classified these items as preferences deliberately.
+The candidate-generation mechanism is orthogonal to the final-ranking
+role — what shifts in P2 is who produces candidate IDs, not what the
+items mean. Elevating them to dealbreakers here would silently override
+step 2's classification and make the scoring inconsistent with P1 (where
+the same preferences already run as raw weighted-sum cosine on a
+pre-built candidate pool).
+
+**Caveat:** Final scores in P2 are bounded above by P_CAP since
+`dealbreaker_sum = 0`. This is fine — within-query ranking is what
+matters, and all candidates share the same ceiling. Cross-query score
+comparability is not a goal of the system.
+
+### Exclusion-Only Edge Case
+
+A query can emit zero inclusion dealbreakers AND zero preferences while
+still being well-formed: "movies not starring Tom Cruise," "movies not
+about clowns." Every dealbreaker in the output is an exclusion, and step
+2 did not emit a preference either. The standard flow has no inclusion
+signal to generate candidates from, and the P2 preference-driven path
+doesn't apply because there's no preference to drive it.
+
+**Rule:** Handle this as a browse-style fallback, not as pure-vibe
+retrieval. (If a preference exists alongside exclusions — e.g., "not
+clowns, something cozy" — use scenario P2 instead; the semantic
+preference drives candidate generation and exclusions apply as
+penalties/filters in Phase 4b.)
+
+Generate candidates as the top-K movies by the default quality composite
+(`0.6 × reception_score + 0.4 × popularity_score`, matching the
+system-default ordering used elsewhere when no explicit ranking criteria are
+stated). Apply exclusions normally in Phase 4b. Rank the surviving set by the
+same default composite plus any active quality/notability priors, since
+`dealbreaker_sum` is zero and no preferences exist.
+
+**Why this shape:** This mirrors what a librarian would do when asked
+"a movie, but not that one" — return well-known, well-regarded movies
+minus the excluded set. The quality composite is the only honest answer
+when the user expressed no positive intent at all. No new flow control
+path is introduced beyond the fallback rule.
+
+### Why Per-Space, Not Per-Concept
+
+Concepts that route to *different* spaces always stay in separate searches —
+running "fun" against `viewer_experience` and "heist" against
+`plot_analysis` as independent retrievals preserves the independence of each
+signal.
+
+Concepts that route to the *same* space are absorbed into a single
+LLM-authored query for that space rather than N per-concept queries unioned
+together. The LLM composes the combined query in that space's native
+vocabulary: "scary" + "funny" in `viewer_experience` becomes something like
+`emotional_palette: darkly funny, gallows humor` plus
+`tension_adrenaline: unsettling, creeping dread` — the LLM explicitly
+captures the conjunction rather than hoping two independent retrievals
+happen to intersect. This matches the structured-label embedding format
+and lets the LLM shape the query's semantic combination instead of the
+retrieval averaging out two unrelated embedded vectors.
+
+The earlier (concept, space, subquery, role) tuple format is retired:
+one query per selected space, absorbing all concepts, period.
 
 ### Exclusions in Pure-Vibe Flow
 
@@ -2573,16 +2858,16 @@ Four scoring modes apply to raw scores produced by endpoints. The mode is
 determined by the item's role (dealbreaker vs. preference, primary vs.
 regular), not by the endpoint type:
 
-- **Threshold + flatten** — For semantic dealbreaker scoring. Similarity
-  above the elbow → 1.0, below → decay toward 0.0 calibrated by the gap
-  between max similarity and elbow. Below floor → 0.0. Used for determining
-  if a movie genuinely has a semantic trait.
-- **Preserved similarity** — For primary preferences. Raw score is the
-  ranking signal. "Scariest movie ever" needs to differentiate between
-  "very scary" and "somewhat scary."
-- **Diminishing returns** — For regular semantic preferences. Marginal gains
-  decrease as similarity increases. Being "somewhat funny" matters more than
-  the gap between "very funny" and "extremely funny."
+- **Threshold + flatten** — For semantic dealbreaker scoring and semantic
+  exclusion scoring. Similarity above the elbow → 1.0, below → linear decay
+  to 0.0 at the floor. Below floor → 0.0. Used for determining if a movie
+  genuinely has a semantic trait.
+- **Raw weighted-sum cosine** — For all semantic preferences (primary and
+  regular alike). `Σ(w × cosine) / Σ(w)` across selected spaces with
+  `central`=2 / `supporting`=1 weights. No pool normalization, no
+  diminishing-returns curve — preserves the "nobody matches well" signal.
+  `is_primary_preference` affects only the Phase 4c weight (3.0 vs 1.0),
+  not the score shape.
 - **Pass-through** — For deterministic endpoint scores (binary or gradient).
   Used as-is since the gradient logic already lives in the execution layer.
 - **Sort-by** — For explicit sort preferences ("chronological", "most recent
@@ -2591,12 +2876,167 @@ regular), not by the endpoint type:
 
 ---
 
+## Semantic Endpoint — Finalized Implementation Decisions
+
+Resolved during step 3 semantic endpoint planning. These are load-bearing
+for the endpoint implementation and should not be re-litigated without
+evaluation evidence.
+
+- **Query model.** Every vector search (dealbreaker or preference, standard
+  or pure-vibe) uses a single LLM-generated query per selected space,
+  tailored to that space's structured-label shape. The original user query
+  is never used directly for retrieval — the V1 "80/20 subquery/original
+  blend" is retired. The anchor space is no exception: when anchor is used
+  (preferences or pure-vibe candidate generation), it gets its own generated
+  query like every other space.
+- **Space availability.** Dealbreakers and semantic exclusions draw from
+  the 7 non-anchor spaces only. Preferences may use all 8 (anchor allowed
+  for scoring), but pure-vibe candidate generation remains non-anchor-only
+  because it is driven by semantic dealbreakers.
+- **Space selection granularity.** Two-level categorical weights for
+  preferences: `central` → 2, `supporting` → 1. No `minor` option — if a
+  space's signal isn't at least supporting meaningfully, don't select it.
+  This prevents weight dilution across marginal spaces. Dealbreakers and
+  exclusions select exactly one space.
+- **Per-space query scope.** One query per selected space, absorbing all
+  concepts routed to that space, phrased in that space's native vocabulary
+  (e.g., "scary but funny" in `viewer_experience` becomes
+  `emotional_palette: darkly funny, gallows humor` +
+  `tension_adrenaline: unsettling, creeping dread`). The per-concept
+  `(concept, space, subquery, role)` tuple format is retired.
+- **Space taxonomy source of truth.** Each `create_*_vector_text` function
+  in `movie_ingestion/final_ingestion/vector_text.py` carries a module-level
+  docstring with four sections — Purpose, What's Embedded (the structured
+  labels actually present), Boundary (what the space is *not* for), 2–3
+  canonical example queries. Step 3 prompt imports these verbatim at build
+  time. Convention, not code-gen. Re-audit when vector text generation
+  changes.
+- **Four execution scenarios.** Dealbreaker-side logic composes with
+  preference-side logic based on step 2's output. Summary:
+  - **D1 (score-only):** ≥1 non-semantic inclusion dealbreaker exists →
+    semantic dealbreakers score the pre-built candidate pool via global
+    elbow calibration + threshold-plus-flatten applied to candidate
+    cosines. Contributes to `dealbreaker_sum`.
+  - **D2 (candidate-generating):** no non-semantic inclusion dealbreaker
+    but ≥1 semantic inclusion dealbreaker → each semantic dealbreaker
+    generates top-N per (dealbreaker, space); union = pool. Same
+    elbow-calibrated scoring. Contributes to `dealbreaker_sum`.
+  - **P1 (score-only):** ≥1 inclusion dealbreaker exists (semantic or
+    not) → semantic preferences score the pre-built pool via raw
+    weighted-sum cosine (`central`=2 / `supporting`=1), normalized by
+    Σw. Contributes to `preference_contribution`.
+  - **P2 (candidate-generating):** zero inclusion dealbreakers, ≥1
+    semantic preference → semantic preference generates candidates
+    (top-N per selected space, union). Same raw weighted-sum cosine
+    scoring as P1. Contributes to `preference_contribution`.
+  Global elbow calibration is used in D1 and D2 so scoring is invariant
+  to whether the dealbreaker also generated candidates. P2 keeps
+  preference semantics (not dealbreaker semantics) because step 2's
+  dealbreaker-vs-preference classification is binding regardless of who
+  produces candidate IDs.
+- **Exclusion-only edge case.** When step 2 emits zero inclusion
+  dealbreakers AND zero preferences (only exclusion dealbreakers),
+  do not enter pure-vibe retrieval or P2. Generate candidates as top-K
+  by the default quality composite (`0.6 × reception_score + 0.4 ×
+  popularity_score`), then apply exclusions normally in Phase 4b.
+- **New Pydantic models for multi-source vector spaces.** Any vector space
+  whose embedded text is assembled from more than one metadata object
+  (anchor, plot_events, production, reception at minimum) gets a dedicated
+  Pydantic model that defines the embedded shape. These models become the
+  templating surface for both ingest-side embedding text generation and
+  search-side per-space query generation, keeping the two in lockstep.
+- **Transient failure handling.** Retry once on transient errors; on
+  persistent failure, return an empty result set so the orchestrator
+  handles it the same as a no-match.
+- **Max-across-spaces combining is retired.** The old plan to threshold
+  each relevant space separately and take the max is superseded by the
+  single-space-per-dealbreaker rule plus the weighted-sum preference
+  formula.
+- **Elbow/floor detection for dealbreaker and semantic-exclusion scoring.**
+  Applies to semantic dealbreaker scoring (D1 + D2) and semantic exclusion
+  scoring. Does NOT apply to preference scoring, which uses raw weighted-sum
+  cosine with no elbow calibration. Procedure, run once per
+  `(query_text, space, embedding_model_version, space_prompt_version,
+  corpus_version)`:
+  1. **Collect distribution.** Pull top-N cosine similarities from the full
+     corpus for the LLM-generated query against the selected space, sorted
+     descending. N = 2000 as a working default.
+  2. **Smooth.** EWMA over the sorted array, span = `max(5, N / 100)`.
+     Reduces local noise without distorting global shape.
+  3. **Detect elbows with Kneedle.** Parameters: `curve='convex',
+     direction='decreasing', S=1, online=True, all_knees=True`. Returns the
+     list of detected knee ranks, ordered by rank ascending.
+  4. **Pathology check — "is there any elbow at all?"** Compute
+     `max(y_diff)` on the normalized difference curve. If `max(y_diff) <
+     0.05`, treat the distribution as flat: no meaningful elbow exists.
+     Fall back to `elbow = max_sim × 0.85`, `floor = max_sim × 0.50`, log
+     the concept + space for calibration auditing, and skip steps 5–6.
+  5. **Elbow selection — first knee, with early-rank safeguard.** Start
+     with the first detected knee (smallest rank). If its rank < 10 AND at
+     least one additional knee exists, skip forward to the next knee
+     (guards against a handful of outliers pinching the 1.0 boundary too
+     tightly). If the first knee is the only knee, use it as-is — don't
+     invent a later elbow that doesn't exist in the data. Never pick the
+     "largest bulge" knee; always prefer the earliest qualifying knee.
+  6. **Floor selection.** If two or more knees were detected, use the
+     second knee as the floor (natural bimodal signal — e.g., Christmas
+     distributions). Otherwise compute `floor = max(elbow_sim − 2 ×
+     (max_sim − elbow_sim), 0.0)` — a gap-proportional floor that widens
+     the decay zone for sharp elbows and narrows it for compressed
+     distributions.
+  7. **Scoring transform** applied to each candidate's cosine similarity:
+     `score = 1.0` if `sim ≥ elbow_sim`; `score = (sim − floor) /
+     (elbow_sim − floor)` if `floor < sim < elbow_sim`; `score = 0.0` if
+     `sim ≤ floor`. Linear decay is the default; non-linear exponents
+     remain deferred pending eval evidence.
+
+  **Why first-knee instead of largest-bulge:** the first knee marks the
+  earliest transition from "clearly the concept" to "less clearly the
+  concept," which is exactly the semantics the 1.0 boundary needs. The
+  largest bulge may sit further down the tail (e.g., the second knee in a
+  bimodal distribution) and would over-admit borderline matches to full
+  credit. The rank-10 safeguard exists solely to skip past outlier-driven
+  early knees when a more substantive elbow is available.
+
+---
+
 ## Decisions Deferred to Implementation
 
 - Exact step 2 prompt engineering (few-shot examples, chain-of-thought format)
-- Exact elbow detection algorithm for semantic dealbreaker scoring and
-  exclusion thresholds, with fallback percentage-of-max when elbow detection
-  fails
+- ~~Exact elbow and floor detection algorithm for semantic dealbreaker
+  scoring and exclusion thresholds.~~ **RESOLVED** — see "Elbow/floor
+  detection for dealbreaker and semantic-exclusion scoring" in the
+  Finalized Implementation Decisions section above. Remaining tuning
+  deferred to eval: non-linear decay exponent (γ), top-N corpus probe
+  size (working default 2000), EWMA span constants, rank-10 safeguard
+  threshold, and pathology-check `max(y_diff) < 0.05` cutoff.
+- Semantic endpoint elbow/floor cache: keyed by
+  `hash(query_text, space_name, embedding_model_version,
+  space_prompt_version, corpus_version)`, 24h TTL, invalidated on corpus
+  rebuilds. Concrete cache backend (Redis vs. in-process) and eviction
+  policy still pending
+- **Evaluation test — zero-dealbreaker browse fallback quality.** The
+  current design routes zero-inclusion-dealbreaker queries to a browse-style
+  top-K default-quality pool, then applies preference scoring on top. Open
+  question: does this produce strong enough results for preference-only
+  queries, or is a more semantic-first fallback needed? Measure top-K result
+  quality on zero-dealbreaker queries before revisiting.
+- **Evaluation test — cross-space cosine comparability in preference
+  scoring.** `pref_score = Σ(w_space × cosine_space) / Σ(w_space)` assumes
+  raw cosines are comparable across spaces. Different spaces may have
+  different natural score bands (e.g., `production_vectors` vs
+  `plot_analysis_vectors` may run at different cosine distributions),
+  which would systematically over-weight hotter spaces. If evaluation
+  shows skew, add a global per-space calibration layer (percentile mapping
+  or floor/ceiling normalization against the corpus, computed offline)
+  before the weighted sum. Within-pool normalization is still rejected —
+  this is a per-space global transform, not a per-query one.
+- **Semantic exclusion prompt tightness — deferred.** Originally flagged
+  because exclusion false positives are more expensive than inclusion
+  false positives. Deprioritized now that exclusions are match-then-penalize
+  rather than hard-filter — a false positive costs score weight, not
+  removal. Revisit if evaluation shows systemically unfair exclusion
+  penalties.
 - Step 3 prompt design per endpoint
 - Step 3 output schemas per endpoint (metadata endpoint complete:
   `schemas/metadata_translation.py`; entity endpoint complete:
