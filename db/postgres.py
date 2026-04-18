@@ -1673,6 +1673,70 @@ async def fetch_reception_scores(movie_ids: list[int]) -> dict[int, float | None
     return {row[0]: row[1] for row in rows}
 
 
+async def fetch_browse_seed_ids(
+    quality_inverted: bool,
+    notability_inverted: bool,
+    *,
+    limit: int,
+) -> list[int]:
+    """Top `limit` movie_ids ordered by the Stage-4 browse composite.
+
+    Composite mirrors
+    ``search_v2.stage_4.priors.browse_composite`` exactly — keep the
+    two in sync when formulas change. Structure:
+
+        quality    = 0.7 * reception_ramp + 0.3 * popularity_ramp
+        notability = popularity_ramp
+        composite  = 0.5 * quality + 0.5 * notability
+
+    Each ramp switches on the corresponding prior mode:
+      * not inverted (enhanced / standard / suppressed) — "high" ramps
+          reception:  (reception_score - 55) / 40, clamped [0, 1]
+          popularity: popularity_score, clamped [0, 1]
+      * inverted — "low" ramps
+          reception:  (50 - reception_score) / 40, clamped [0, 1]
+          popularity: 1 - popularity_score, clamped [0, 1]
+
+    NULL-handling: COALESCE(col, 0) before the arithmetic. Postgres's
+    GREATEST / LEAST ignore NULL args rather than propagating them
+    (``LEAST(1, NULL)`` → 1), which would otherwise let a
+    null-reception movie score a perfect 1.0 by accident.
+
+    Callers should pre-collapse SUPPRESSED to the "high" branch before
+    calling — the helper does not interpret SystemPrior itself, only
+    the inversion bit, because browse seeding treats suppressed-as-
+    standard by design (see ``browse_composite``).
+    """
+    query = """
+        SELECT movie_id
+        FROM (
+            SELECT movie_id,
+                0.5 * (
+                    0.7 * CASE
+                        WHEN %s THEN GREATEST(0.0, LEAST(1.0, (50.0 - COALESCE(reception_score, 0.0)) / 40.0))
+                        ELSE GREATEST(0.0, LEAST(1.0, (COALESCE(reception_score, 0.0) - 55.0) / 40.0))
+                    END
+                    + 0.3 * CASE
+                        WHEN %s THEN GREATEST(0.0, LEAST(1.0, 1.0 - COALESCE(popularity_score, 0.0)))
+                        ELSE GREATEST(0.0, LEAST(1.0, COALESCE(popularity_score, 0.0)))
+                    END
+                )
+                + 0.5 * CASE
+                    WHEN %s THEN GREATEST(0.0, LEAST(1.0, 1.0 - COALESCE(popularity_score, 0.0)))
+                    ELSE GREATEST(0.0, LEAST(1.0, COALESCE(popularity_score, 0.0)))
+                END AS composite
+            FROM public.movie_card
+        ) AS scored
+        ORDER BY composite DESC
+        LIMIT %s
+    """
+    # Quality composite's popularity term uses quality_mode (not
+    # notability_mode); hence quality_inverted is bound twice.
+    params = (quality_inverted, quality_inverted, notability_inverted, limit)
+    rows = await _execute_read(query, params)
+    return [row[0] for row in rows]
+
+
 async def fetch_movie_ids_by_term_ids(
     table: PostingTable,
     term_ids: list[int],
