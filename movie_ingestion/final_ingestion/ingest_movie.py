@@ -32,7 +32,7 @@ from pathlib import Path
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
-from typing import List
+from typing import List, Sequence
 from schemas.enums import LineagePosition
 from schemas.imdb_models import AwardNomination
 from schemas.movie import Movie
@@ -49,7 +49,12 @@ from .vector_text import (
     create_reception_vector_text,
 )
 from implementation.misc.helpers import normalize_string
+from implementation.misc.production_company_text import (
+    normalize_company_string,
+    tokenize_company_string,
+)
 from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_failures, batch_log_filter, PipelineStage
+from .brand_resolver import resolve_brands_for_movie
 from db.postgres import (
     pool,
     batch_insert_title_token_postings,
@@ -59,7 +64,9 @@ from db.postgres import (
     batch_insert_producer_postings,
     batch_insert_composer_postings,
     batch_insert_character_postings,
-    batch_insert_studio_postings,
+    batch_insert_brand_postings,
+    batch_insert_studio_tokens,
+    batch_upsert_production_companies,
     batch_upsert_lexical_dictionary,
     batch_upsert_title_token_strings,
     batch_upsert_character_strings,
@@ -146,7 +153,21 @@ async def ingest_movie(movie: Movie) -> None:
     """
     async with pool.connection() as conn:
         try:
-            await ingest_movie_card(movie, conn=conn)
+            # Production data runs first — it upserts lex.production_company
+            # and returns the final production_company_ids, which
+            # ingest_movie_card then includes in its single upsert. This
+            # avoids a wasteful "card with [] then UPDATE restores it" pair
+            # of writes and keeps the movie_card row correct even if a
+            # later step of the pipeline is ever re-ordered. The resolve
+            # itself touches lex.production_company + lex.studio_token +
+            # lex.inv_production_brand_postings, all of which are
+            # movie_card-independent (no FK), so the ordering is safe.
+            production_company_ids = await ingest_production_data(movie, conn=conn)
+            await ingest_movie_card(
+                movie,
+                production_company_ids=production_company_ids,
+                conn=conn,
+            )
             await ingest_movie_awards(movie, conn=conn)
             await ingest_movie_franchise_metadata(movie, conn=conn)
             await ingest_lexical_data(movie, conn=conn)
@@ -160,12 +181,21 @@ async def ingest_movie(movie: Movie) -> None:
 #       POSTGRES INGESTION
 # ================================
 
-async def ingest_movie_card(movie: Movie, conn=None) -> None:
+async def ingest_movie_card(
+    movie: Movie,
+    production_company_ids: Sequence[int] = (),
+    conn=None,
+) -> None:
     """
     Extract fields from a Movie and upsert the canonical movie_card row.
 
     Args:
         movie: Movie object to ingest.
+        production_company_ids: IDs from the freeform path's production_company
+            upsert. Must be resolved *before* this call so the card gets the
+            final array in its single upsert (no wasteful post-write UPDATE).
+            Callers that don't have companies resolved yet can pass ``()`` and
+            patch the column later via update_movie_card_production_company_ids.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     try:
@@ -240,6 +270,7 @@ async def ingest_movie_card(movie: Movie, conn=None) -> None:
             title_token_count=title_token_count,
             budget_bucket=budget_bucket,
             box_office_bucket=box_office_bucket,
+            production_company_ids=production_company_ids,
             conn=conn,
         )
     except MissingRequiredAttributeError:
@@ -287,7 +318,10 @@ async def ingest_movie_franchise_metadata(movie: Movie, conn=None) -> None:
 
 async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     """
-    Ingest all lexical posting data (title tokens, people, characters, studios) for a movie.
+    Ingest all lexical posting data (title tokens, people, characters) for a movie.
+
+    Studios are no longer handled here — see ``ingest_production_data`` for the
+    brand + production-company paths that replaced ``lex.inv_studio_postings``.
 
     Args:
         movie: Movie object to ingest lexical data for.
@@ -319,15 +353,8 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
             continue
         characters.append(normalized_character)
 
-    studios: list[str] = []
-    for studio in movie.imdb_data.production_companies:
-        normalized_studio = normalize_string(str(studio))
-        if not normalized_studio:
-            continue
-        studios.append(normalized_studio)
-
     # Phase 2: Resolve all dictionary IDs in one round-trip.
-    all_strings = list(dict.fromkeys(title_tokens + all_people + characters + studios))
+    all_strings = list(dict.fromkeys(title_tokens + all_people + characters))
     string_id_map = await batch_upsert_lexical_dictionary(all_strings, conn=conn)
 
     # Phase 3: Build aligned ID/string arrays and posting ID lists.
@@ -348,7 +375,6 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     producer_term_ids = [string_id_map[p] for p in producers if p in string_id_map]
     composer_term_ids = [string_id_map[c] for c in composers if c in string_id_map]
     character_term_ids = [string_id for string_id, _ in character_string_pairs]
-    studio_term_ids = [string_id_map[studio] for studio in studios if studio in string_id_map]
 
     # Phase 4: Sequential batch writes to lexical sub-tables and posting tables.
     # Sequential (not asyncio.gather) because a shared psycopg AsyncConnection
@@ -375,7 +401,110 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     await batch_insert_producer_postings(list(dict.fromkeys(producer_term_ids)), movie_id, conn=conn)
     await batch_insert_composer_postings(list(dict.fromkeys(composer_term_ids)), movie_id, conn=conn)
     await batch_insert_character_postings(list(dict.fromkeys(character_term_ids)), movie_id, conn=conn)
-    await batch_insert_studio_postings(list(dict.fromkeys(studio_term_ids)), movie_id, conn=conn)
+
+
+async def write_production_data(
+    movie_id: int,
+    production_companies: list[str],
+    release_year: int | None,
+    conn=None,
+) -> list[int]:
+    """
+    Core brand + production-company writer. Decoupled from the ``Movie``
+    object so the backfill script can call it with raw tracker data.
+
+    Writes every table tied to production data EXCEPT ``movie_card`` — the
+    caller stamps ``production_company_ids`` onto the card via whichever
+    path fits its flow (``upsert_movie_card`` at ingest time, or
+    ``update_movie_card_production_company_ids`` at backfill time). Returns
+    the sorted, deduplicated list of ``production_company_id`` values so the
+    caller can pass them on directly.
+
+    Two coordinated paths replace the old ``lex.inv_studio_postings`` write:
+      1. **Brand path** — resolve_brands_for_movie maps the production-
+         company list to time-bounded ProductionBrand tags. Tags are written
+         to lex.inv_production_brand_postings with first_matching_index (the
+         position of the brand's first matching company in the IMDB list)
+         and total_brand_count so the lexical scorer can weight prominence.
+      2. **Freeform path** — every distinct normalized company string is
+         upserted into lex.production_company (yielding a stable
+         production_company_id), tokenized via tokenize_company_string, and
+         recorded in lex.studio_token so the freeform query-time path can
+         intersect tokens → companies → movies. See
+         search_improvement_planning/v2_search_data_improvements.md.
+
+    Idempotent: brand postings are replaced wholesale for the movie; company
+    and token tables use ON CONFLICT DO NOTHING. Safe to re-run after a
+    registry change or re-ingest.
+    """
+    # --- Brand path -------------------------------------------------------
+    brand_tags = resolve_brands_for_movie(production_companies, release_year)
+    brand_rows = [(tag.brand_id, tag.first_matching_index) for tag in brand_tags]
+    await batch_insert_brand_postings(movie_id, brand_rows, conn=conn)
+
+    # --- Freeform company path -------------------------------------------
+    # Build (canonical, normalized) pairs, dropping any that normalize to
+    # empty (punctuation-only inputs, etc.). Preserve the first canonical
+    # form we see for each unique normalized string — downstream display
+    # pulls canonical_string from the table.
+    pairs: list[tuple[str, str]] = []
+    for raw in production_companies:
+        normalized = normalize_company_string(raw)
+        if not normalized:
+            continue
+        pairs.append((raw, normalized))
+
+    company_id_map = await batch_upsert_production_companies(pairs, conn=conn)
+
+    # Emit every (token, company_id) pair. Tokenize from the already-
+    # normalized form via already_normalized=True to skip a redundant
+    # normalize_string pass. Dedup across the movie so we don't insert
+    # identical pairs multiple times when two raw variants produce the
+    # same normalized form.
+    token_rows: set[tuple[str, int]] = set()
+    for _, normalized in pairs:
+        cid = company_id_map.get(normalized)
+        if cid is None:
+            continue
+        for token in tokenize_company_string(normalized, already_normalized=True):
+            token_rows.add((token, cid))
+    await batch_insert_studio_tokens(list(token_rows), conn=conn)
+
+    # Return the company-id set for the caller to stamp on movie_card.
+    # Sorted for stable diffs and deterministic array contents.
+    return sorted({cid for cid in company_id_map.values()})
+
+
+async def ingest_production_data(movie: Movie, conn=None) -> list[int]:
+    """
+    Ingest brand and production-company data for one ``Movie``.
+
+    Thin adapter over ``write_production_data`` that extracts
+    production_companies and release_year from the Movie object. Returns the
+    ``production_company_ids`` for the caller to pass to ``ingest_movie_card``.
+    """
+    movie_id = movie.tmdb_data.tmdb_id
+    if movie_id is None:
+        raise ValueError("Production ingestion failed: ID is required but not found.")
+    movie_id = int(movie_id)
+
+    raw_strings: list[str] = []
+    if movie.imdb_data and movie.imdb_data.production_companies:
+        raw_strings = [str(s) for s in movie.imdb_data.production_companies]
+
+    # Derive release_year for the brand resolver's window check. YYYY-MM-DD
+    # is the TMDB convention; accept partial/malformed values by returning
+    # None rather than raising (the resolver drops any windowed membership
+    # when release_year is None).
+    release_year: int | None = None
+    release_date = movie.tmdb_data.release_date
+    if release_date:
+        try:
+            release_year = int(str(release_date)[:4])
+        except (ValueError, TypeError):
+            release_year = None
+
+    return await write_production_data(movie_id, raw_strings, release_year, conn=conn)
 
 
 async def ingest_movie_awards(movie: Movie, conn=None) -> None:
@@ -471,12 +600,37 @@ async def ingest_movies_to_postgres_batched(
                     card_error: str | None = None
                     franchise_error: str | None = None
                     lex_error: str | None = None
+                    production_error: str | None = None
+
+                    # --- production data step (runs before card) ---
+                    # Upserts lex.production_company, writes brand postings
+                    # + studio_token rows, and returns production_company_ids
+                    # for the card step to stamp in its single upsert. If
+                    # this fails we pass an empty id list to ingest_movie_card
+                    # so the card step can still run independently; the
+                    # outer savepoint rolls back at the end anyway when any
+                    # step errors out.
+                    production_company_ids: list[int] = []
+                    inner_sp_production = f"sp_{tmdb_id}_production"
+                    await conn.execute(f"SAVEPOINT {inner_sp_production}")
+                    try:
+                        production_company_ids = await ingest_production_data(
+                            movie, conn=conn
+                        )
+                        await conn.execute(f"RELEASE SAVEPOINT {inner_sp_production}")
+                    except Exception as e:
+                        production_error = str(e)
+                        await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_production}")
 
                     # --- movie_card step ---
                     inner_sp_card = f"sp_{tmdb_id}_card"
                     await conn.execute(f"SAVEPOINT {inner_sp_card}")
                     try:
-                        await ingest_movie_card(movie, conn=conn)
+                        await ingest_movie_card(
+                            movie,
+                            production_company_ids=production_company_ids,
+                            conn=conn,
+                        )
                         await conn.execute(f"RELEASE SAVEPOINT {inner_sp_card}")
                     except MissingRequiredAttributeError as e:
                         # Missing required attribute — permanent data issue.
@@ -522,7 +676,7 @@ async def ingest_movies_to_postgres_batched(
                         lex_error = str(e)
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {inner_sp_lex}")
 
-                    if card_error or awards_error or franchise_error or lex_error:
+                    if card_error or awards_error or franchise_error or lex_error or production_error:
                         # Roll back the outer savepoint so neither partial
                         # result persists for this movie.
                         await conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
@@ -539,6 +693,9 @@ async def ingest_movies_to_postgres_batched(
                         if lex_error:
                             print(f"Postgres lexical failed for {tmdb_id}: {lex_error}")
                             errors.append(IngestionError(tmdb_id, f"Postgres lexical: {lex_error}"))
+                        if production_error:
+                            print(f"Postgres production failed for {tmdb_id}: {production_error}")
+                            errors.append(IngestionError(tmdb_id, f"Postgres production: {production_error}"))
                     else:
                         await conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
                         succeeded_ids.add(tmdb_id)

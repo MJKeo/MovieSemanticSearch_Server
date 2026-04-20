@@ -654,23 +654,182 @@ async def batch_insert_character_postings(term_ids: list[int], movie_id: int, co
     await _execute_on_conn(conn, query, (term_ids, movie_id))
 
 
-async def batch_insert_studio_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
+async def batch_upsert_production_companies(
+    pairs: Sequence[tuple[str, str]],
+    conn=None,
+) -> dict[str, int]:
     """
-    Insert studio postings for one movie in a single round-trip.
+    Upsert normalized production-company strings into lex.production_company.
 
-    Args:
-        term_ids: Studio term IDs to insert.
-        movie_id: Movie ID that owns all postings.
-        conn: Optional existing async connection for caller-managed transaction scope.
+    Each input pair is (canonical_string, normalized_string). The normalized
+    form is the unique key; the canonical form is stored for display only
+    and only applied on first insert (existing rows keep whatever canonical
+    they had).
+
+    Dedup-and-sort by normalized_string before issuing the query so that all
+    concurrent transactions acquire the UNIQUE-index locks in the same order
+    — same deadlock-avoidance pattern used by batch_upsert_lexical_dictionary.
+
+    Returns a ``{normalized_string: production_company_id}`` mapping covering
+    every unique normalized string in the input.
     """
-    if not term_ids:
-        return
+    if not pairs:
+        return {}
+
+    # Collapse duplicates by normalized_string; the first canonical form wins
+    # (insertion-order dict dedup). Then sort lexicographically by normalized
+    # to keep lock-acquisition order deterministic across concurrent writers.
+    unique_by_norm: dict[str, str] = {}
+    for canonical, normalized in pairs:
+        if normalized and normalized not in unique_by_norm:
+            unique_by_norm[normalized] = canonical
+    if not unique_by_norm:
+        return {}
+    norm_list = sorted(unique_by_norm.keys())
+    canonical_list = [unique_by_norm[n] for n in norm_list]
+
+    # Insert any new rows; then re-select all requested normalized strings
+    # (whether newly inserted or pre-existing) so every caller input maps to
+    # an id. Mirrors the CTE pattern in batch_upsert_lexical_dictionary.
     query = """
-    INSERT INTO lex.inv_studio_postings (term_id, movie_id)
-    SELECT unnest(%s::bigint[]), %s
-    ON CONFLICT (term_id, movie_id) DO NOTHING;
+    WITH input_rows AS (
+        SELECT unnest(%s::text[]) AS canonical_string,
+               unnest(%s::text[]) AS normalized_string
+    ),
+    inserted AS (
+        INSERT INTO lex.production_company (canonical_string, normalized_string)
+        SELECT canonical_string, normalized_string FROM input_rows
+        ON CONFLICT (normalized_string) DO NOTHING
+        RETURNING production_company_id, normalized_string
+    )
+    SELECT normalized_string, production_company_id FROM inserted
+    UNION ALL
+    SELECT p.normalized_string, p.production_company_id
+    FROM lex.production_company p
+    JOIN input_rows i ON i.normalized_string = p.normalized_string
+    WHERE NOT EXISTS (
+        SELECT 1 FROM inserted ins
+        WHERE ins.normalized_string = p.normalized_string
+    );
     """
-    await _execute_on_conn(conn, query, (term_ids, movie_id))
+    rows = await _execute_on_conn(conn, query, (canonical_list, norm_list), fetch=True) or []
+    return {str(norm): int(pid) for norm, pid in rows}
+
+
+async def batch_insert_studio_tokens(
+    pairs: Sequence[tuple[str, int]],
+    conn=None,
+) -> None:
+    """
+    Insert (token, production_company_id) rows into lex.studio_token.
+
+    Idempotent via ``ON CONFLICT DO NOTHING``. Every unique pair is inserted
+    once regardless of how many times it appears in the input; callers are
+    free to pass duplicates.
+    """
+    if not pairs:
+        return
+    # Deduplicate in Python to keep the unnest arrays small on wide inputs.
+    unique = list({(token, cid) for token, cid in pairs if token})
+    if not unique:
+        return
+    tokens = [t for t, _ in unique]
+    company_ids = [c for _, c in unique]
+    query = """
+    INSERT INTO lex.studio_token (token, production_company_id)
+    SELECT unnest(%s::text[]), unnest(%s::bigint[])
+    ON CONFLICT (token, production_company_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (tokens, company_ids))
+
+
+async def batch_insert_brand_postings(
+    movie_id: int,
+    rows: Sequence[tuple[int, int]],
+    conn=None,
+) -> None:
+    """
+    Replace all brand postings for one movie with the provided rows.
+
+    Each row is ``(brand_id, first_matching_index)``; total_brand_count is
+    derived as ``len(rows)`` and stamped on every row so the lexical scorer
+    has a per-movie normalizer available without a second query.
+
+    Uses delete-then-insert inside the caller's transaction, mirroring how
+    batch_upsert_movie_awards handles its "always a complete set" semantics.
+    This keeps brand membership consistent when a movie is re-ingested with
+    a different production_companies list or when the brand registry
+    changes.
+    """
+    # Always clear existing postings first so stale brand rows never linger
+    # after a registry change.
+    delete_query = "DELETE FROM lex.inv_production_brand_postings WHERE movie_id = %s"
+    await _execute_on_conn(conn, delete_query, (movie_id,))
+
+    if not rows:
+        return
+
+    brand_ids = [bid for bid, _ in rows]
+    first_indices = [idx for _, idx in rows]
+    total = len(rows)
+    # DELETE just above cleared all rows for this movie, so no ON CONFLICT
+    # clause is needed — every (brand_id, movie_id) we insert is guaranteed
+    # unique within the statement because `batch_insert_brand_postings`
+    # callers dedup by brand_id before passing rows (resolve_brands_for_movie
+    # returns one BrandTag per brand). Matches the delete-then-insert
+    # semantics of batch_upsert_movie_awards.
+    query = """
+    INSERT INTO lex.inv_production_brand_postings
+        (brand_id, movie_id, first_matching_index, total_brand_count)
+    SELECT unnest(%s::smallint[]), %s, unnest(%s::smallint[]), %s;
+    """
+    await _execute_on_conn(conn, query, (brand_ids, movie_id, first_indices, total))
+
+
+async def update_movie_card_production_company_ids(
+    movie_id: int,
+    production_company_ids: Sequence[int],
+    conn=None,
+) -> None:
+    """
+    Stamp the freeform-path company-id array on movie_card.
+
+    Exists as a standalone helper so the backfill script can set the column
+    without rewriting every movie_card field. Ingest-time callers pass the
+    list directly to ``upsert_movie_card`` and do not need this function.
+
+    Raises ``ValueError`` if no movie_card row exists for ``movie_id``.
+    Without this guard the UPDATE would silently no-op, hiding upstream
+    ordering bugs where the card hasn't been written yet.
+    """
+    query = """
+    UPDATE public.movie_card
+    SET production_company_ids = %s,
+        updated_at = now()
+    WHERE movie_id = %s
+    """
+    params = (list(production_company_ids), movie_id)
+
+    # _execute_on_conn doesn't surface rowcount, so run the cursor directly
+    # here. The branching mirrors that helper: honor a caller-supplied conn
+    # for transaction scope, or acquire+commit one locally when None.
+    if conn is not None:
+        async with conn.cursor() as cur:
+            await cur.execute(query, params)
+            rowcount = cur.rowcount
+    else:
+        async with pool.connection() as fallback_conn:
+            async with fallback_conn.cursor() as cur:
+                await cur.execute(query, params)
+                rowcount = cur.rowcount
+            await fallback_conn.commit()
+
+    if rowcount == 0:
+        raise ValueError(
+            f"update_movie_card_production_company_ids: no movie_card row "
+            f"for movie_id={movie_id}. The card must be upserted before the "
+            f"production_company_ids column can be stamped."
+        )
 
 
 async def batch_insert_franchise_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
@@ -865,6 +1024,7 @@ async def upsert_movie_card(
     title_token_count: int,
     budget_bucket: Optional[str] = None,
     box_office_bucket: Optional[str] = None,
+    production_company_ids: Sequence[int] = (),
     conn=None,
 ) -> None:
     """
@@ -890,6 +1050,8 @@ async def upsert_movie_card(
         title_token_count: Number of tokens in the title.
         budget_bucket: Era-adjusted budget classification ('small', 'large', or None for mid-range/unknown).
         box_office_bucket: Box office classification ('hit', 'flop', or None for ambiguous/unknown).
+        production_company_ids: lex.production_company IDs this movie credits.
+            Empty sequence is allowed (movies with no IMDB production_companies).
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
@@ -897,9 +1059,10 @@ async def upsert_movie_card(
         movie_id, title, poster_url, release_ts, runtime_minutes,
         maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_of_origin_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids, award_ceremony_win_ids,
-        imdb_vote_count, reception_score, budget_bucket, box_office_bucket, title_token_count, created_at, updated_at
+        imdb_vote_count, reception_score, budget_bucket, box_office_bucket, title_token_count,
+        production_company_ids, created_at, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
         poster_url = EXCLUDED.poster_url,
@@ -919,6 +1082,7 @@ async def upsert_movie_card(
         budget_bucket = EXCLUDED.budget_bucket,
         box_office_bucket = EXCLUDED.box_office_bucket,
         title_token_count = EXCLUDED.title_token_count,
+        production_company_ids = EXCLUDED.production_company_ids,
         updated_at = now();
     """
     params = (
@@ -941,6 +1105,7 @@ async def upsert_movie_card(
         budget_bucket,
         box_office_bucket,
         title_token_count,
+        list(production_company_ids),
     )
     await _execute_on_conn(conn, query, params)
 

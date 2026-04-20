@@ -102,7 +102,7 @@ def normalize_string(text: str) -> str:
     return normalized
 
 
-def tokenize_title_phrase(text: str) -> list[str]:
+def tokenize_title_phrase(text: str, *, already_normalized: bool = False) -> list[str]:
     """
     Normalize and tokenize a title phrase with hyphen expansion.
 
@@ -113,12 +113,18 @@ def tokenize_title_phrase(text: str) -> list[str]:
 
     Args:
         text: Raw title phrase. This can be unnormalized user/LLM input.
+        already_normalized: If True, skip normalize_string() and treat `text`
+            as already-normalized output. Used by callers that apply an
+            extension to normalize_string (e.g., the ordinal number-to-word
+            rule in normalize_company_string) before tokenization so the
+            tokenizer's split rules stay reusable without re-normalizing and
+            undoing the extension.
 
     Returns:
         A deduplicated list of normalized tokens, preserving first-seen order.
         Returns an empty list if the input normalizes to an empty string.
     """
-    normalized = normalize_string(text)
+    normalized = text if already_normalized else normalize_string(text)
     if not normalized:
         return []
 

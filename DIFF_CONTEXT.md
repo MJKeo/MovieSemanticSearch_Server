@@ -218,6 +218,20 @@ Files: search_improvement_planning/finalized_search_proposal.md, search_improvem
 Why: Captured all finalized decisions from design conversation into the official V2 proposal document.
 Approach: finalized_search_proposal.md contains the full three-step pipeline architecture (query understanding → per-source search planning → execution & assembly), including semantic dealbreaker demotion, exclusion handling via elbow-threshold penalties, pure-vibe flow, quality prior as separate dimension, and gradient metadata scoring. open_questions.md updated with 4 new V2 pipeline questions (elbow detection method, multi-interpretation triggers, semantic demotion display, exclusion query formulation). types_of_searches.md updated with 3 new V2 edge case categories (#15 pure-vibe, #16 semantic exclusion on non-tagged attributes, #17 dealbreaker demotion).
 
+## Align production-brand tests with tier-spec intent
+Files: unit_tests/test_brand_resolver.py, unit_tests/test_production_brands.py
+Why: The new brand resolver tests needed to assert the desired behavior from `search_improvement_planning/production_company_tiers.md`, not simply mirror the current registry and resolver implementation.
+Approach: Tightened resolver assertions to exact ordered outputs where ordering is part of the contract, renamed misleading tests/docstrings, and added missing edge coverage for inclusive year boundaries, multi-brand overlap windows, exact-string matching, and first-index behavior when an earlier candidate is year-gated out. Added registry spot-checks for Miramax, Dimension Films, Walt Disney Productions, Searchlight, Republic Pictures, and exact-string matching semantics.
+Design context: Used the per-brand member tables plus explicit per-brand notes in `search_improvement_planning/production_company_tiers.md` as the source of truth when surrounding prose conflicted. Miramax follows the PARAMOUNT section's explicit exclusion note.
+Testing notes: Ran `pytest unit_tests/test_brand_resolver.py unit_tests/test_production_brands.py -v`. Result: 62 passed, 1 failed. The failing assertion is `test_walt_disney_productions_is_gated_to_1929_1986_for_both_brands`, which exposed registry drift: `WALT_DISNEY_ANIMATION` currently encodes `Walt Disney Productions` as `(None, 1986)` instead of the spec-driven `(1929, 1986)`.
+
+## Exhaustive production-brand date-spec coverage
+Files: unit_tests/production_brand_spec_dates.py (new), unit_tests/test_production_brands.py, unit_tests/test_brand_resolver.py
+Why: The selective spot-checks were missing broad classes of date drift. The user asked for comprehensive date coverage where all expected windows come from the production-brand tier spec rather than the current registry implementation.
+Approach: Added a shared static fixture of date-bearing production-company expectations, grouped by `(brand, start, end)` and derived from `search_improvement_planning/production_company_tiers.md`. Replaced registry spot-checks with an exhaustive parametrized reverse-index assertion over every date-bearing string in the current schema. Replaced most single-string resolver date examples with a generated boundary harness that checks `None`, boundary years, and just-outside-window years against the same shared fixture, while keeping separate hand-written tests for index-minimization and sort-order mechanics.
+Design context: Primary authority is the tier doc's per-brand member tables and surface-form tables. Cross-brand additions are only encoded where the spec intends umbrella overlap. For low-volume variants where the surface-form table names a variant not repeated in the member table, the fixture follows the nearest explicit spec lineage rather than the current registry's unconditional fallback.
+Testing notes: Ran `pytest unit_tests/test_brand_resolver.py unit_tests/test_production_brands.py -q`. Result: 923 passed, 194 failed. The failures are overwhelmingly spec-vs-registry drift surfaced by the new exhaustive fixture, including the previously-seen Walt Disney Animation starts plus broader unconditional/self-brand windows, missing/incorrect start dates, and multiple umbrella-overlap mismatches across Columbia, Focus Features, DreamWorks Animation, Pixar, Lucasfilm, Marvel Studios, New Line, MGM/Amazon MGM, United Artists, and Walt Disney Animation surfaces.
+
 ## Restructured V2 pipeline to 4 steps with 7 named endpoints
 Files: search_improvement_planning/finalized_search_proposal.md
 Why: Fleshed out the search execution layer with concrete, individually-addressable data endpoints. Each endpoint represents a single conceptual data domain with its own LLM (or deterministic function) for translating abstract intent into executable queries.
@@ -1009,3 +1023,123 @@ Why: Existing notebooks cover stages 1+2 (test_stage_1_2) and each stage-3 endpo
 Approach: Drives stages 1-4 manually in the notebook rather than calling `run_stage_4`, because `Stage4Debug` does not preserve the stage-3 LLM specs the user wants to inspect. Reuses the building blocks `run_stage_4` uses (`detect_flow`, `tag_items`, `translate_item`, `execute_item`, `assemble_pool`, `apply_deterministic_exclusions`, `score_pool`, `build_display_payload`) so there is no behavior drift. Six cells: setup+imports, config, stage 1, stage 2 (picks first STANDARD interpretation), stage 3 (translate all items → execute pool-independent → print per-endpoint LLM spec + results + consolidated stats), stage 4 (execute pool-dependent restricted to pool → score → top-K with per-id breakdowns + optional overviews via `load_movie_input_data` from the ingestion tracker).
 Design context: BROWSE flow intentionally unsupported (would need `fetch_browse_seed_ids` + prior scoring) — notebook raises with a clear message. Only the first STANDARD interpretation is exercised to keep control flow simple; selector is a one-line change.
 Testing notes: JSON-validated and per-cell syntax-checked; every import resolves; function signatures match. Live execution requires Postgres/Redis/Qdrant services + `ingestion_data/tracker.db` for overviews.
+
+## Studio brand registry — Workstream B (DB surface-form enumeration)
+Files: search_improvement_planning/production_company_tiers.md
+
+### Intent
+Populate every Tier 1/2/3 brand section in `production_company_tiers.md` with the concrete distinct IMDB `production_companies` strings that refer to its members, with tag counts and flagged collisions. Follows Workstream A's ownership graph and closes the loop so the `brand_member_company` seeding table can be derived from this one document.
+
+### Approach
+Built a single shared enumeration first (`/tmp/company_strings.tsv`: 181,871 distinct strings across 361,866 movies, 710,491 tag occurrences), then dispatched 48 parallel per-brand subagents — one per brand in the registry — each reading its brand's subsection for the member list, grepping the shared index, and writing `/tmp/ws_b_results/{BRAND_ID}.json`. Aggregator script (`/tmp/normalize_v2.py`) tolerates the schema drift observed across agents (bare strings in `members`, flat one-row-per-surface dicts, field renames `canonical`/`canonical_name`/`company_name`, `string`/`s`/`name`/`value`, `count`/`tsv_count`/`credit_count`, `surface_strings`/`strings`/`variants`/`surface_forms`) and emits strict `{canonical, start_year, end_year, surface_strings:[{s,count}]}` entries. 379 verbatim DB strings enumerated; every string verified to exist in the TSV with exact count.
+
+### Key Decisions
+- **Single shared index instead of 48 DB scans.** Avoids 48× redundant SQLite reads of the 361K-row `imdb_data` table; also lets agents focus on judgment rather than DB mechanics.
+- **Tolerant aggregator, not re-prompt.** When agents returned non-canonical schemas, normalized post-hoc rather than re-dispatching. Counts are recovered by TSV lookup when missing, so information loss is zero.
+- **Surface-form section inserted per-brand, not as a separate appendix.** Each brand now reads as a single self-contained unit: members table → rename history → curation notes → surface forms → flagged collisions → surface-form notes. Curator will work brand-by-brand so this layout matches the consumption pattern.
+- **Collisions preserved as flagged entries, not discarded.** Every agent-flagged collision (unrelated token-sharing companies, TV-only divisions, pre-acquisition eras, home-video arms) is captured in the inserted subsection so the curator has the rejections in context with the keeps.
+
+### Open items handed to curator
+The 7 open curation choices at the bottom of the file are unchanged. New evidence surfaced: HBO Max Films has zero TSV hits (curation #7 answered — drop); Canal+ has 3,949 tag count (curation #3 confirmed — exclude from brand_member); `DC Comics` pre-2009 production credits exist in the TSV (curation #4 confirmed — keep the member row). Amazon Studios vs Amazon MGM Studios boundary (curation #5) remains unresolved because surface strings alone can't disambiguate the 2022-2023 rename window.
+
+### Testing Notes
+Not code — no tests. But curator should spot-check at least one brand where a flagged collision looks wrong (e.g. verify "Castle Entertainment" really is unrelated to Castle Rock).
+
+## Studio brand registry — MVP trim (31 brands) with Wikidata + DB verification
+Files: search_improvement_planning/production_company_tiers.md
+
+### Intent
+Narrow the 48-brand registry to a hand-curated MVP cut of 31 brands, validated against Wikidata ownership timelines and IMDB DB evidence, so `brand_member_company` seeding can proceed from this single source of truth without further research rounds.
+
+### Approach
+Two verification passes, then destructive edit of the tier list:
+1. **DB evidence floor** (`/tmp/db_floor_check.py`) — scored every member of every kept brand against the WS-B TSV. Classified members as OK (max count ≥ 5), WEAK (max 1–4), or DROP (zero strings present). 3 DROP members removed; 17 WEAK members kept because Wikidata confirms them as real sub-entities with thin IMDB mass (not an accuracy issue).
+2. **Wikidata date validation** — delegated the 31 date-bearing member assertions to a research agent with the Wikidata `owned by` + `inception` + `dissolved` property set. 29 OK, 2 corrected inline.
+
+Edits: the 17 cut brand sections removed (7 from old Tier 2 + all 10 from Tier 3); the Tier 3 header deleted; the surviving Tier 2 re-labelled "still in MVP (7 brands)"; cross-brand membership table pruned to 18 edges; new "Deferred from MVP" subsection added under "Excluded on purpose" listing the 17 cuts. File dropped from 160,143 → 112,580 bytes (30%).
+
+### Key Decisions
+- **IMDB's 8-studio filter is too coarse to emulate.** It's a homepage browse aid keyed on US-corporate-entity credit strings; copying it would regress intent coverage for A24/Ghibli/Netflix/Blumhouse and lose umbrella pull-through for Pixar/Marvel/Searchlight under "Disney". 31 is the middle ground — IMDB's 8 under-scopes, the research's 48 slightly over-scopes in niche enthusiast territory.
+- **Drop criterion: freeform token match handles it losslessly OR near-zero DB mass.** LAIKA/AARDMAN/AMBLIN have distinctive unique tokens — freeform path covers them with no recall loss. HBO_FILMS had near-zero mass on the specific "HBO Films" credit. All 10 Tier 3 brands deferred as enthusiast-only until query logs justify.
+- **Borderline TRISTAR / TOUCHSTONE / UNITED_ARTISTS kept.** Each has a distinctive token + real catalog mass + sub-brand-as-member-of-parent umbrella role. Keeping them costs 3 rows in the enum but preserves the sub-brand intent users have for '80s–'90s catalogs.
+- **Weak-evidence members kept.** 17 members with max count < 5 are Wikidata-verifiable real sub-entities. Keeping them is accurate; dropping would gain only LLM-prompt-token savings while losing a long-tail recall edge. Accuracy (the user's explicit criterion) took precedence over token frugality.
+- **Dropped brands' `production_company` strings still ingest.** Only the `BrandEnum` row and `brand_member_company` umbrella edges are deferred; the raw strings remain discoverable via the freeform token-match path per the v2 studio-resolver design (`v2_search_data_improvements.md`).
+
+### Verification artifacts (uncommitted, in /tmp)
+- `/tmp/ws_b_results/*.json` — 48 original per-brand agent outputs, untouched
+- `/tmp/company_strings.tsv` — shared 181,871-string index with tag counts
+- `/tmp/db_floor_check.py`, `/tmp/db_floor_report.json` — DB evidence floor pass
+- `/tmp/date_assertions.json` — 31 date-bearing member assertions fed to Wikidata agent
+
+### Open items still on the curator
+The "Open Curation Choices" section was trimmed from 5 to 2 items (DC Comics pre-2009 publisher credit; Amazon Studios vs Amazon MGM Studios year-gating). StudioCanal/Canal+ and HBO Max Films questions resolved by dropping those brands from MVP.
+
+### Testing Notes
+Not code — no tests. Structural validation script run post-edit: 31 brand sections confirmed, Tier 3 header removed, Wikidata corrections landed, zero-evidence members purged. Curator should still spot-check collision flags on kept brands before `brand_member_company` seeding.
+
+## Brand-tagging registry + resolver (not yet wired into ingest)
+Files: schemas/production_brands.py (new), movie_ingestion/final_ingestion/brand_resolver.py (new), unit_tests/test_production_brands.py (new), unit_tests/test_brand_resolver.py (new)
+
+### Intent
+Encode the 31-brand MVP registry from `search_improvement_planning/production_company_tiers.md` as a machine-readable enum and provide a pure function that, given a movie's IMDB production_companies list + release year, returns its brand tags. Ingestion-side wiring into `ingest_movie.py` is intentionally deferred — this changeset only lands the building blocks.
+
+### Key Decisions
+- **Slug-backed str Enum with dataclass companies**, mirroring `schemas/award_category_tags.py` pattern for attribute attachment via `__new__`. `brand_id: int`, `display_name: str`, `companies: tuple[BrandCompany, ...]` are attached per member. Alternatives considered: int-backed enum (chosen against — slug values help debugging/logging). `BrandCompany` is `@dataclass(frozen=True)` so the registry is immutable post-import.
+- **Year-window semantics are inclusive**, with `None` meaning "no bound on that side". `(None, None)` = "always applicable". The `year_matches` predicate enforces the user-directed rule that a `release_year=None` movie matches ONLY unconditional memberships — any windowed row is dropped.
+- **Standalone self-memberships use (None, None)** per user's resolved plan-time question. Affects A24, PIXAR, NEON, STUDIO_GHIBLI, MARVEL_STUDIOS, LUCASFILM, etc. Umbrella-acquired sub-brands carry their acquisition window (e.g. Pixar under DISNEY = 2006-, Twentieth Century Fox under DISNEY = 2019-2020).
+- **MGM/UA legacy self-memberships stay open-ended** per user's resolved question — post-2022 MGM films carry BOTH the MGM and AMAZON_MGM tags (additive, not migration). Implemented by adding MGM's full string set under AMAZON_MGM with `start=2022` and UA's set with `start=2024`.
+- **Reverse index built at import**. `_STRING_TO_MEMBERSHIPS: dict[str, list[tuple[brand, start, end]]]`. Same surface string can appear under multiple brands with different windows; all are stored and the resolver emits every brand that passes the year check.
+- **Resolver output is `list[tuple[brand_id, first_matching_index]]`** sorted by min-index asc with brand_id asc as deterministic tiebreak. `first_matching_index` is the 0-based position within the input `production_companies` list at which the brand first matched — preserves prominence signal for downstream ranking.
+- **String match is exact** (case + whitespace sensitive) per the user's guidance ("we can normalize later"). Normalization layer deferred.
+- **Republic Pictures is year-gated to 2023+** under PARAMOUNT — the same IMDB string covers the 1935-1967 legacy company, which must NOT tag pre-2023 films. Tested explicitly.
+
+### Design Context
+Plan file: `/Users/michaelkeohane/.claude/plans/reflective-popping-candle.md`. Tier-doc data: `search_improvement_planning/production_company_tiers.md` (surface-form tables + Cross-Brand Membership Summary).
+
+### Testing Notes
+50 tests, all passing on first run. Split:
+- `test_production_brands.py` — registry invariants (31 brands, unique ids/slugs, non-empty strings, sane year ranges, no duplicate strings within a brand, reverse-index completeness) + `year_matches` behavior (open-ended, bounded, release-year-None rule, boundary inclusivity) + spot-check tier-doc intent (Miramax / MGM / UA / Pixar / Republic Pictures multi-brand cases).
+- `test_brand_resolver.py` — behavioral tests using real registry strings (not mocks) so a regression in either the data or the function fails a test. Covers: degenerate inputs, year gating (umbrella pre/post acquisition, Miramax window close, MGM/UA Amazon overlap, Republic Pictures legacy rejection), dedup + min-index tracking, sort order + tiebreak, real-catalog scenarios (Marvel MCU, pre-1935 Fox, Searchlight rebrand bridge, mixed-credit lists).
+
+## Wire brand resolver + production-company paths into ingestion
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py, implementation/misc/helpers.py, implementation/misc/production_company_text.py (new), movie_ingestion/final_ingestion/ingest_movie.py, backfill_production_brands_and_companies.py (new)
+
+### Intent
+Wire the orphaned `resolve_brands_for_movie` helper into Stage-8 ingestion and introduce the v2 freeform production-company path from `search_improvement_planning/v2_search_data_improvements.md`. Each ingested movie now lands brand postings (with prominence) plus a curated, tokenized company registry — the data substrate the v2 stage-3 studio resolver will consume once the query side catches up.
+
+### Key Decisions
+- **Ordinal rule scoped to production-company strings, not the global normalizer.** `normalize_company_string` wraps `normalize_string` with a `\b\d+(st|nd|rd|th)\b` → word regex (1-30 covered). Global `normalize_string` is untouched so existing `lex.lexical_dictionary` / title postings / character postings don't need a rebuild. Trade-off: a second normalizer exists, but title-tokenizer `already_normalized` flag lets us call the existing split logic without re-normalizing and undoing the ordinal conversion.
+- **Three new lex tables** (`lex.production_company`, `lex.studio_token`, `lex.inv_production_brand_postings`) plus one new column (`movie_card.production_company_ids BIGINT[]` GIN-indexed). `production_company_ids` on the card prevents the cross-company token false-positive ("a b c" query matching a movie with three separate single-token companies) that the plain postings-only model would have.
+- **`lex.inv_studio_postings` is kept as a frozen snapshot** — stop writing, don't drop. The v1 compound-lexical search path and v2 stage-3 entity lookup still read from it and replacing them is out of scope. Table and v1/v2 read paths remain intact; the backfill does not drop. This is a deviation from the approved plan (which called for a DROP) made to preserve query functionality until the stage-3 cutover.
+- **`ingest_production_data` split from `ingest_lexical_data`.** Brand/company work is a distinct concern from the lexical dictionary + postings flow. Splitting also lets the batched ingest path wrap production writes in their own savepoint so a brand-registry mismatch can't nuke the movie's other writes.
+- **`write_production_data` exposes the core as a `Movie`-free API** so the backfill can feed it raw inputs from the tracker without reconstructing full Movie objects. `ingest_production_data` is now a thin adapter that extracts inputs from `movie.tmdb_data.release_date` / `movie.imdb_data.production_companies` and delegates.
+- **Backfill reads production_companies from the SQLite tracker, not Postgres.** `movie_card` never persists the raw company list, so the tracker's `imdb_data.production_companies` JSON column is the on-disk source. Batched async commits every 200 movies so idle-in-transaction timeouts can't kill long runs.
+- **DF ceiling deliberately deferred.** Ingest stores every token with no stoplist. A future query-time filter will drop tokens whose DF exceeds a dataset-size percentage — out of scope here.
+- **`upsert_movie_card` gained a `production_company_ids` parameter with default `()`** so other callers don't break. Ingest path uses the dedicated `update_movie_card_production_company_ids` (UPDATE-only) because production resolution runs after `ingest_movie_card` — within the same transaction, so reruns still converge.
+
+### Testing Notes
+- Smoke-tested `normalize_company_string` / `tokenize_company_string` — `20th Century Fox` and `Twentieth Century Fox` both normalize to `twentieth century fox`; `21st Century Fox` → `twenty-first century fox`; `Metro-Goldwyn-Mayer (MGM)` tokenizes to `{metro-goldwyn-mayer, metro, goldwyn, mayer, mgm}`.
+- Syntax-validated all modified Python files via `ast.parse`.
+- Not run: the existing unit tests that reference `batch_insert_studio_postings` (test_postgres.py, test_ingest_movie.py) will fail — expected per the test-boundaries rule. Test updates are a separate phase.
+- End-to-end smoke on real movies (Star Wars 1977 vs Force Awakens 2015, A24 indie, long-tail studio, no-imdb edge case) documented in the plan file's Verification section; not run yet.
+
+## Review pass on production-brand / production-company ingestion
+Files: db/postgres.py, implementation/misc/production_company_text.py, movie_ingestion/final_ingestion/ingest_movie.py, backfill_production_brands_and_companies.py
+
+### Intent
+Apply fixes from the review of the previous entry: one critical bug (backfill pool lifecycle would have failed immediately) plus four correctness/hygiene items. Test files intentionally left alone per the test-boundaries rule.
+
+### Fixes applied
+- **Critical — backfill pool lifecycle.** Moved `await pool.open()` into `_run_backfill` and `await pool.close()` into its `finally` block, both on the same event loop. Removed the dead second `asyncio.run(_close())` attempt that would have raised because `AsyncConnectionPool` maintenance tasks bind to the creating loop.
+- **Production ids resolved before movie_card.** `write_production_data` now returns `list[int]` instead of calling `update_movie_card_production_company_ids`. `ingest_movie` runs `ingest_production_data` first and threads the returned ids through to `ingest_movie_card → upsert_movie_card`, so the card row gets its final `production_company_ids` in a single upsert instead of the previous "write empty, later UPDATE" pair. Matching reorder in `ingest_movies_to_postgres_batched` — new `sp_{tmdb_id}_production` savepoint precedes `sp_{tmdb_id}_card`, with the returned ids passed into the card call. `update_movie_card_production_company_ids` is kept exported for the backfill path where `movie_card` already exists and we just want to patch the column.
+- **`already_normalized` on `tokenize_company_string`.** Added a flag analogous to the one I already plumbed into `tokenize_title_phrase`, and the hot ingest loop in `write_production_data` now passes `already_normalized=True` to avoid a redundant `normalize_string + ordinal regex` pass on every (already-normalized) company string.
+- **Dead `ON CONFLICT` removed.** `batch_insert_brand_postings` DELETEs for the movie_id before INSERT, and `resolve_brands_for_movie` dedups by brand_id, so `ON CONFLICT (brand_id, movie_id) DO NOTHING` could never fire. Removed for clarity; comment points to the `batch_upsert_movie_awards` precedent that also uses delete-then-insert without ON CONFLICT.
+- **Rowcount check in `update_movie_card_production_company_ids`.** Inlined a direct cursor path (rather than `_execute_on_conn`, which discards `rowcount`) and raises `ValueError` when the UPDATE affects 0 rows. Prevents silent no-ops if the card wasn't upserted first.
+
+### Deferred
+- Suggestion #6 (backfill's `missing_tracker` branch erasing pre-existing production data) explicitly deferred by the user. No change to that branch.
+
+### Testing notes
+- Re-ran `ast.parse` across all modified files.
+- Smoke-tested `tokenize_company_string('20th Century Fox')` vs `tokenize_company_string('twentieth century fox', already_normalized=True)` — identical output, confirming the short-circuit path is safe.
+- Unit tests still unrun per the rule; the three existing test references to `batch_insert_studio_postings` remain as pending test-update work.
