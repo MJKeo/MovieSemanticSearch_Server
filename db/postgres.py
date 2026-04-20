@@ -27,8 +27,6 @@ class PostingTable(Enum):
     PRODUCER = "lex.inv_producer_postings"
     COMPOSER = "lex.inv_composer_postings"
     CHARACTER = "lex.inv_character_postings"
-    STUDIO = "lex.inv_studio_postings"
-    FRANCHISE = "lex.inv_franchise_postings"
     TITLE_TOKEN = "lex.inv_title_token_postings"
 
 
@@ -73,12 +71,10 @@ class CompoundLexicalResult:
 
     Args:
         people_scores: Matched people counts keyed by movie_id.
-        studio_scores: Matched studio counts keyed by movie_id.
         character_by_query: Character matched counts keyed by query_idx then movie_id.
         title_scores_by_search: Title scores keyed by title search index then movie_id.
     """
     people_scores: dict[int, int]
-    studio_scores: dict[int, int]
     character_by_query: dict[int, dict[int, int]]
     title_scores_by_search: dict[int, dict[int, float]]
 
@@ -832,25 +828,6 @@ async def update_movie_card_production_company_ids(
         )
 
 
-async def batch_insert_franchise_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
-    """
-    Insert franchise postings for one movie in a single round-trip.
-
-    Args:
-        term_ids: Franchise term IDs to insert.
-        movie_id: Movie ID that owns all postings.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    if not term_ids:
-        return
-    query = """
-    INSERT INTO lex.inv_franchise_postings (term_id, movie_id)
-    SELECT unnest(%s::bigint[]), %s
-    ON CONFLICT (term_id, movie_id) DO NOTHING;
-    """
-    await _execute_on_conn(conn, query, (term_ids, movie_id))
-
-
 async def refresh_title_token_doc_frequency() -> None:
     """
     Refresh the lex.title_token_doc_frequency materialized view concurrently.
@@ -877,6 +854,158 @@ async def refresh_studio_token_doc_frequency() -> None:
     await _execute_write(
         "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.studio_token_doc_frequency;"
     )
+
+
+async def refresh_franchise_token_doc_frequency() -> None:
+    """
+    Refresh the lex.franchise_token_doc_frequency materialized view concurrently.
+
+    Called after each bulk ingest so DF-ceiling stop-word filtering on the
+    franchise path reflects the latest (token, franchise_entry_id) rows.
+    CONCURRENTLY avoids blocking reads during rebuild (requires the unique
+    index idx_franchise_token_df_token on the view).
+    """
+    await _execute_write(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.franchise_token_doc_frequency;"
+    )
+
+
+async def batch_upsert_franchise_entries(
+    pairs: Sequence[tuple[str, str]],
+    conn=None,
+) -> dict[str, int]:
+    """
+    Upsert normalized franchise strings into lex.franchise_entry.
+
+    Each input pair is (canonical_string, normalized_string), covering
+    lineage, shared_universe, and every element of recognized_subgroups.
+    The normalized form is the unique key; the canonical form is stored for
+    display only and only applied on first insert (existing rows keep
+    whatever canonical they had).
+
+    Dedup-and-sort by normalized_string before issuing the query so that all
+    concurrent transactions acquire the UNIQUE-index locks in the same order
+    — same deadlock-avoidance pattern used by batch_upsert_production_companies.
+
+    Returns a ``{normalized_string: franchise_entry_id}`` mapping covering
+    every unique normalized string in the input.
+    """
+    if not pairs:
+        return {}
+
+    unique_by_norm: dict[str, str] = {}
+    for canonical, normalized in pairs:
+        if normalized and normalized not in unique_by_norm:
+            unique_by_norm[normalized] = canonical
+    if not unique_by_norm:
+        return {}
+    norm_list = sorted(unique_by_norm.keys())
+    canonical_list = [unique_by_norm[n] for n in norm_list]
+
+    # Insert any new rows; then re-select all requested normalized strings
+    # so every caller input maps to an id. Mirrors the CTE pattern in
+    # batch_upsert_production_companies.
+    query = """
+    WITH input_rows AS (
+        SELECT unnest(%s::text[]) AS canonical_string,
+               unnest(%s::text[]) AS normalized_string
+    ),
+    inserted AS (
+        INSERT INTO lex.franchise_entry (canonical_string, normalized_string)
+        SELECT canonical_string, normalized_string FROM input_rows
+        ON CONFLICT (normalized_string) DO NOTHING
+        RETURNING franchise_entry_id, normalized_string
+    )
+    SELECT normalized_string, franchise_entry_id FROM inserted
+    UNION ALL
+    SELECT f.normalized_string, f.franchise_entry_id
+    FROM lex.franchise_entry f
+    JOIN input_rows i ON i.normalized_string = f.normalized_string
+    WHERE NOT EXISTS (
+        SELECT 1 FROM inserted ins
+        WHERE ins.normalized_string = f.normalized_string
+    );
+    """
+    rows = await _execute_on_conn(conn, query, (canonical_list, norm_list), fetch=True) or []
+    return {str(norm): int(fid) for norm, fid in rows}
+
+
+async def batch_insert_franchise_tokens(
+    pairs: Sequence[tuple[str, int]],
+    conn=None,
+) -> None:
+    """
+    Insert (token, franchise_entry_id) rows into lex.franchise_token.
+
+    Idempotent via ``ON CONFLICT DO NOTHING``. Every unique pair is inserted
+    once regardless of how many times it appears in the input; callers are
+    free to pass duplicates.
+    """
+    if not pairs:
+        return
+    unique = list({(token, fid) for token, fid in pairs if token})
+    if not unique:
+        return
+    tokens = [t for t, _ in unique]
+    entry_ids = [f for _, f in unique]
+    query = """
+    INSERT INTO lex.franchise_token (token, franchise_entry_id)
+    SELECT unnest(%s::text[]), unnest(%s::bigint[])
+    ON CONFLICT (token, franchise_entry_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (tokens, entry_ids))
+
+
+async def update_movie_card_franchise_ids(
+    movie_id: int,
+    franchise_name_entry_ids: Sequence[int],
+    subgroup_entry_ids: Sequence[int],
+    conn=None,
+) -> None:
+    """
+    Stamp the franchise entry-id arrays on movie_card.
+
+    Exists as a standalone helper so the backfill script can set both
+    columns without rewriting every movie_card field. Ingest-time callers
+    pass the arrays directly to ``upsert_movie_card`` and do not need this
+    function.
+
+    Raises ``ValueError`` if no movie_card row exists for ``movie_id``.
+    Without this guard the UPDATE would silently no-op, hiding upstream
+    ordering bugs where the card hasn't been written yet.
+    """
+    query = """
+    UPDATE public.movie_card
+    SET franchise_name_entry_ids = %s,
+        subgroup_entry_ids = %s,
+        updated_at = now()
+    WHERE movie_id = %s
+    """
+    params = (
+        list(franchise_name_entry_ids),
+        list(subgroup_entry_ids),
+        movie_id,
+    )
+
+    # _execute_on_conn doesn't surface rowcount, so run the cursor directly
+    # here. The branching mirrors update_movie_card_production_company_ids.
+    if conn is not None:
+        async with conn.cursor() as cur:
+            await cur.execute(query, params)
+            rowcount = cur.rowcount
+    else:
+        async with pool.connection() as fallback_conn:
+            async with fallback_conn.cursor() as cur:
+                await cur.execute(query, params)
+                rowcount = cur.rowcount
+            await fallback_conn.commit()
+
+    if rowcount == 0:
+        raise ValueError(
+            f"update_movie_card_franchise_ids: no movie_card row for "
+            f"movie_id={movie_id}. The card must be upserted before the "
+            f"franchise_name_entry_ids / subgroup_entry_ids columns can be stamped."
+        )
 
 
 async def refresh_movie_popularity_scores(
@@ -991,31 +1120,19 @@ async def upsert_movie_franchise_metadata(
 
 async def delete_movie_franchise_metadata(movie_id: int, conn=None) -> None:
     """
-    Delete all franchise metadata and franchise postings for one movie.
+    Delete franchise metadata for one movie.
+
+    The franchise_name_entry_ids / subgroup_entry_ids columns on movie_card
+    are rewritten by upsert_movie_card on next ingest, so they need no
+    separate clear here; and lex.franchise_entry / lex.franchise_token are
+    registry-wide (not movie-scoped), so nothing else to delete.
 
     Args:
         movie_id: Target movie ID.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
-    delete_postings_query = "DELETE FROM lex.inv_franchise_postings WHERE movie_id = %s"
     delete_metadata_query = "DELETE FROM public.movie_franchise_metadata WHERE movie_id = %s"
-    await _execute_on_conn(conn, delete_postings_query, (movie_id,))
     await _execute_on_conn(conn, delete_metadata_query, (movie_id,))
-
-
-async def replace_movie_franchise_postings(movie_id: int, term_ids: list[int], conn=None) -> None:
-    """
-    Replace franchise postings for one movie within the caller transaction.
-
-    Args:
-        movie_id: Target movie ID.
-        term_ids: Resolved franchise term IDs for lineage/shared_universe.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    delete_query = "DELETE FROM lex.inv_franchise_postings WHERE movie_id = %s"
-    await _execute_on_conn(conn, delete_query, (movie_id,))
-    deduped_term_ids = list(dict.fromkeys(term_ids))
-    await batch_insert_franchise_postings(deduped_term_ids, movie_id, conn=conn)
 
 
 async def upsert_movie_card(
@@ -1039,6 +1156,8 @@ async def upsert_movie_card(
     budget_bucket: Optional[str] = None,
     box_office_bucket: Optional[str] = None,
     production_company_ids: Sequence[int] = (),
+    franchise_name_entry_ids: Sequence[int] = (),
+    subgroup_entry_ids: Sequence[int] = (),
     conn=None,
 ) -> None:
     """
@@ -1066,6 +1185,11 @@ async def upsert_movie_card(
         box_office_bucket: Box office classification ('hit', 'flop', or None for ambiguous/unknown).
         production_company_ids: lex.production_company IDs this movie credits.
             Empty sequence is allowed (movies with no IMDB production_companies).
+        franchise_name_entry_ids: lex.franchise_entry IDs resolved from the
+            movie's lineage + shared_universe strings (union, 0-2 elements).
+            Empty sequence when the movie has no franchise metadata.
+        subgroup_entry_ids: lex.franchise_entry IDs resolved from each element
+            of recognized_subgroups. Empty sequence when there are no subgroups.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     query = """
@@ -1074,9 +1198,10 @@ async def upsert_movie_card(
         maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_of_origin_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids, award_ceremony_win_ids,
         imdb_vote_count, reception_score, budget_bucket, box_office_bucket, title_token_count,
-        production_company_ids, created_at, updated_at
+        production_company_ids, franchise_name_entry_ids, subgroup_entry_ids,
+        created_at, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
         poster_url = EXCLUDED.poster_url,
@@ -1097,6 +1222,8 @@ async def upsert_movie_card(
         box_office_bucket = EXCLUDED.box_office_bucket,
         title_token_count = EXCLUDED.title_token_count,
         production_company_ids = EXCLUDED.production_company_ids,
+        franchise_name_entry_ids = EXCLUDED.franchise_name_entry_ids,
+        subgroup_entry_ids = EXCLUDED.subgroup_entry_ids,
         updated_at = now();
     """
     params = (
@@ -1120,6 +1247,8 @@ async def upsert_movie_card(
         box_office_bucket,
         title_token_count,
         list(production_company_ids),
+        list(franchise_name_entry_ids),
+        list(subgroup_entry_ids),
     )
     await _execute_on_conn(conn, query, params)
 
@@ -1462,7 +1591,6 @@ def _build_compound_title_ctes(
 async def execute_compound_lexical_search(
     *,
     people_term_ids: list[int],
-    studio_term_ids: list[int],
     character_query_idxs: list[int],
     character_term_ids: list[int],
     title_searches: list[TitleSearchInput],
@@ -1477,7 +1605,6 @@ async def execute_compound_lexical_search(
 
     Args:
         people_term_ids: Resolved INCLUDE people term IDs.
-        studio_term_ids: Resolved INCLUDE studio term IDs.
         character_query_idxs: Character query indices aligned with character_term_ids.
         character_term_ids: Resolved character term IDs aligned with query indices.
         title_searches: Title-space searches to score in this request.
@@ -1490,14 +1617,12 @@ async def execute_compound_lexical_search(
     has_any_title = any(search.term_ids for search in title_searches)
     has_any_bucket = bool(
         people_term_ids
-        or studio_term_ids
         or character_term_ids
         or has_any_title
     )
     if not has_any_bucket:
         return CompoundLexicalResult(
             people_scores={},
-            studio_scores={},
             character_by_query={},
             title_scores_by_search={},
         )
@@ -1528,21 +1653,6 @@ async def execute_compound_lexical_search(
         union_parts.append(
             "SELECT 'people' AS bucket, -1 AS query_idx, movie_id, matched::double precision AS score "
             "FROM people_matches"
-        )
-
-    if studio_term_ids:
-        studio_cte, studio_params = _build_compound_phrase_bucket_cte(
-            cte_name="studio_matches",
-            table_name=PostingTable.STUDIO.value,
-            term_ids=studio_term_ids,
-            use_eligible=use_eligible,
-            exclude_movie_ids=exclude_movie_ids,
-        )
-        cte_parts.append(studio_cte)
-        cte_params.extend(studio_params)
-        union_parts.append(
-            "SELECT 'studio' AS bucket, -1 AS query_idx, movie_id, matched::double precision AS score "
-            "FROM studio_matches"
         )
 
     if character_term_ids:
@@ -1576,7 +1686,6 @@ async def execute_compound_lexical_search(
     if not union_parts:
         return CompoundLexicalResult(
             people_scores={},
-            studio_scores={},
             character_by_query={},
             title_scores_by_search={},
         )
@@ -1590,16 +1699,12 @@ async def execute_compound_lexical_search(
     rows = await _execute_read(query, params)
 
     people_scores: dict[int, int] = {}
-    studio_scores: dict[int, int] = {}
     character_by_query: dict[int, dict[int, int]] = {}
     title_scores_by_search: dict[int, dict[int, float]] = {}
 
     for bucket, query_idx, movie_id, score in rows:
         if bucket == "people":
             people_scores[movie_id] = int(score)
-            continue
-        if bucket == "studio":
-            studio_scores[movie_id] = int(score)
             continue
         if bucket == "character":
             character_by_query.setdefault(int(query_idx), {})[movie_id] = int(score)
@@ -1610,7 +1715,6 @@ async def execute_compound_lexical_search(
 
     return CompoundLexicalResult(
         people_scores=people_scores,
-        studio_scores=studio_scores,
         character_by_query=character_by_query,
         title_scores_by_search=title_scores_by_search,
     )
@@ -1944,6 +2048,145 @@ async def fetch_movie_ids_by_term_ids(
     """
     search_results = await _execute_read(query, (term_ids,))
     return {row[0] for row in search_results}
+
+
+# ===============================
+#     STUDIO ENDPOINT HELPERS
+# ===============================
+#
+# Read helpers dedicated to the step 3 studio endpoint
+# (search_v2/stage_3/studio_query_execution.py). Two paths:
+#   - Brand path: direct lookup by brand_id on lex.inv_production_brand_postings.
+#   - Freeform path: DF-filtered token → production_company_id intersection
+#     over lex.studio_token, then GIN && join against movie_card.production_company_ids.
+
+
+async def fetch_movie_ids_by_brand(
+    brand_id: int,
+    restrict_movie_ids: Optional[set[int]] = None,
+) -> set[int]:
+    """
+    Resolve a ProductionBrand enum brand_id to the set of stamped movie IDs.
+
+    Reads lex.inv_production_brand_postings. The brand-path score is flat 1.0
+    per matched movie (the prominence column `first_matching_index` is stored
+    but deliberately NOT used — see the studio endpoint design notes for why
+    IMDB ordering is unreliable across regions).
+
+    Args:
+        brand_id: ProductionBrand.brand_id (SMALLINT). Caller passes the int,
+            not the enum, so this helper stays pure SQL-layer.
+        restrict_movie_ids: Optional candidate-pool restriction for the
+            preference / restrict-set path. Applied server-side.
+
+    Returns:
+        Set of movie IDs stamped with the given brand at ingest. Empty when
+        the brand has no postings (should be rare for registry brands).
+    """
+    if restrict_movie_ids is not None:
+        if not restrict_movie_ids:
+            return set()
+        query = """
+            SELECT movie_id
+            FROM lex.inv_production_brand_postings
+            WHERE brand_id = %s AND movie_id = ANY(%s::bigint[])
+        """
+        rows = await _execute_read(query, (brand_id, list(restrict_movie_ids)))
+    else:
+        query = """
+            SELECT movie_id
+            FROM lex.inv_production_brand_postings
+            WHERE brand_id = %s
+        """
+        rows = await _execute_read(query, (brand_id,))
+    return {row[0] for row in rows}
+
+
+async def fetch_company_ids_for_tokens(
+    tokens: list[str],
+    df_ceiling: int,
+) -> dict[str, set[int]]:
+    """
+    Resolve freeform-path tokens to production_company_ids, DF-filtered.
+
+    One query joins lex.studio_token against the materialized DF view,
+    drops tokens whose doc_frequency exceeds the ceiling, and returns the
+    (token → company_ids) mapping the executor uses for per-name
+    intersection. Tokens absent from the input map entirely (DF-dropped or
+    never seen) are omitted — the executor must treat "missing key" as
+    "name fails intersection" rather than "name matches everything".
+
+    Args:
+        tokens: Normalized + hyphen-split tokens from one freeform_name.
+            May repeat across names; caller can dedupe or pass as-is.
+        df_ceiling: Inclusive upper bound on `doc_frequency`. Tokens above
+            this are too common to discriminate (empirically tuned to 323
+            by the studio endpoint; re-derive when the catalog grows).
+
+    Returns:
+        Mapping `{token: {production_company_id, ...}}` covering only
+        tokens that passed the DF filter and had at least one posting.
+    """
+    if not tokens:
+        return {}
+
+    query = """
+        SELECT st.token, st.production_company_id
+        FROM lex.studio_token st
+        JOIN lex.studio_token_doc_frequency df ON df.token = st.token
+        WHERE st.token = ANY(%s::text[])
+          AND df.doc_frequency <= %s
+    """
+    rows = await _execute_read(query, (tokens, df_ceiling))
+    out: dict[str, set[int]] = {}
+    for token, company_id in rows:
+        out.setdefault(token, set()).add(company_id)
+    return out
+
+
+async def fetch_movie_ids_by_production_company_ids(
+    production_company_ids: set[int],
+    restrict_movie_ids: Optional[set[int]] = None,
+) -> set[int]:
+    """
+    Resolve a set of production_company_ids to the movies they appear on.
+
+    Uses the GIN index on public.movie_card.production_company_ids with the
+    `&&` (overlap) operator — a movie qualifies when any of its stamped
+    company ids is in the input set. This prevents the cross-company token
+    false-positive (see plan for details): three single-token unrelated
+    companies won't collapse into a "matched" result.
+
+    Args:
+        production_company_ids: Company ids produced by per-name token
+            intersection in the freeform path.
+        restrict_movie_ids: Optional candidate-pool restriction.
+
+    Returns:
+        Set of movie IDs whose `production_company_ids` overlaps the input.
+    """
+    if not production_company_ids:
+        return set()
+
+    id_list = list(production_company_ids)
+    if restrict_movie_ids is not None:
+        if not restrict_movie_ids:
+            return set()
+        query = """
+            SELECT movie_id
+            FROM public.movie_card
+            WHERE production_company_ids && %s::bigint[]
+              AND movie_id = ANY(%s::bigint[])
+        """
+        rows = await _execute_read(query, (id_list, list(restrict_movie_ids)))
+    else:
+        query = """
+            SELECT movie_id
+            FROM public.movie_card
+            WHERE production_company_ids && %s::bigint[]
+        """
+        rows = await _execute_read(query, (id_list,))
+    return {row[0] for row in rows}
 
 
 # ===============================

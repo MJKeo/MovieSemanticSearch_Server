@@ -97,10 +97,11 @@ the entity, period.
 """
 
 # ---------------------------------------------------------------------------
-# Entity types: the four kinds of lookup this endpoint supports.
+# Entity types: the three kinds of lookup this endpoint supports.
 # Ordered from most common to least common. Each entry explains what
 # the type covers, what signals it from the description, and what
-# would be a mis-route.
+# would be a mis-route. Studio / production-company lookups have
+# their own dedicated stage-3 endpoint and never reach this one.
 # ---------------------------------------------------------------------------
 
 _ENTITY_TYPES = """\
@@ -127,18 +128,18 @@ detective"), upstream routing has already sent that to a different \
 endpoint — but if it still reaches you, still produce the closest \
 character lookup you can from the description as written.
 
-studio — A production company, studio, or label that produces \
-films: Pixar, A24, Marvel Studios, Blumhouse, Ghibli. Not a \
-franchise name — "Marvel Studios" (studio) is distinct from "MCU" \
-or "Marvel Cinematic Universe" (franchise). If the description \
-names the entity that made the film, it is a studio lookup.
-
 title_pattern — A substring or prefix search against movie titles, \
 not an exact title lookup. Use when the description asks for a \
 word or phrase that should appear in the title — "title contains \
 the word 'love'", "movies with 'night' in the title", "titles \
 starting with 'The'". Exact title lookup ("find the movie 'Heat'") \
 is handled elsewhere and should not reach this endpoint.
+
+Note: production companies, studios, and labels (Pixar, A24, Marvel \
+Studios, Disney, Ghibli, etc.) are NOT handled by this endpoint. \
+They route to the dedicated studio endpoint upstream. If a studio \
+description somehow reaches you here, treat it as misrouted and \
+produce the closest lookup you can from the remaining types.
 
 ---
 
@@ -243,9 +244,9 @@ actor_prominence_mode null.
 """
 
 # ---------------------------------------------------------------------------
-# Name canonicalization: the literal-search-text rules. For people,
-# characters, and studios the returned string must equal the stored
-# lexical form after shared normalization; title_pattern is literal
+# Name canonicalization: the literal-search-text rules. For people
+# and characters the returned string must equal the stored lexical
+# form after shared normalization; title_pattern is literal
 # substring/prefix text instead. Rules are principle-based.
 # ---------------------------------------------------------------------------
 
@@ -253,12 +254,12 @@ _NAME_CANONICALIZATION = """\
 NAME CANONICALIZATION
 
 The lookup_text you produce is matched literally by the retrieval \
-layer. For people, characters, and studios, it is resolved by \
-exact string equality against an ingestion-time dictionary after a \
-shared normalization step. A one-character difference in anything \
-else — missing initial, wrong spelling, added or dropped suffix — \
-means zero matches. Produce the most common, fully expanded \
-credited form.
+layer. For people and characters, it is resolved by exact string \
+equality against an ingestion-time dictionary after a shared \
+normalization step. A one-character difference in anything else — \
+missing initial, wrong spelling, added or dropped suffix — means \
+zero matches. Produce the most common, fully expanded credited \
+form.
 
 Persons — Use the full, conventional credited name. Correct \
 obvious typos ("Johny Dep" → "Johnny Depp"). Expand unambiguous \
@@ -283,12 +284,6 @@ is an independent exact match against the character string \
 dictionary, and one match scores. Do not pad the list with \
 descriptions or scene quotes; every entry must be a form that \
 actually appears in credits.
-
-Studios — Use the common, recognizable studio name. Correct \
-typos and capitalize properly. Do not add corporate suffixes: \
-"Disney" stays "Disney", not "Walt Disney Pictures"; "A24" stays \
-"A24", not "A24 Films LLC". If the user's form is already the \
-recognizable short form, use it as-is.
 
 Title patterns — Emit the literal text fragment that should be \
 matched inside the title, with no SQL wildcards and no quotation \
@@ -317,11 +312,11 @@ scaffolds the decisions that follow it — surface evidence first, \
 commit to values after.
 
 entity_type_evidence — One short sentence that inventories what \
-kind of lookup this is — person, character, studio, or \
-title_pattern — and what in the description or routing_rationale \
-signals that. For persons, include whether a specific role is \
-explicitly named or whether no specific role is stated. This is an \
-evidence inventory, not a justification.
+kind of lookup this is — person, character, or title_pattern — and \
+what in the description or routing_rationale signals that. For \
+persons, include whether a specific role is explicitly named or \
+whether no specific role is stated. This is an evidence inventory, \
+not a justification.
 
 name_resolution_notes — A short telegraphic note describing how you \
 resolved the search text. Examples of the kind of content this note \
@@ -334,8 +329,8 @@ lookup_text — The canonical string or literal pattern per the Name \
 Canonicalization section. This is the search key. No quotation \
 marks, no SQL wildcards, no trailing descriptors.
 
-entity_type — One of person, character, studio, title_pattern. \
-Must match the type you identified in entity_type_evidence.
+entity_type — One of person, character, title_pattern. Must match \
+the type you identified in entity_type_evidence.
 
 person_category — Populated only when entity_type is person. Pick \
 a specific role (actor, director, writer, producer, composer) \

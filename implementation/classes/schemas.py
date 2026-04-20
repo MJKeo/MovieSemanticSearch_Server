@@ -771,7 +771,6 @@ class LexicalCandidate:
     movie_id: int
     matched_people_count: int = 0
     matched_character_count: int = 0
-    matched_studio_count: int = 0
     title_score_sum: float = 0.0
     franchise_score_sum: float = 0.0
     normalized_lexical_score: float = 0.0

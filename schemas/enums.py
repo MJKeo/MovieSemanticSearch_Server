@@ -354,6 +354,7 @@ class SearchFlow(StrEnum):
 # (Step 3: Query Translation) for endpoint definitions.
 class EndpointRoute(StrEnum):
     ENTITY = "entity"
+    STUDIO = "studio"
     METADATA = "metadata"
     AWARDS = "awards"
     FRANCHISE_STRUCTURE = "franchise_structure"
@@ -394,7 +395,6 @@ class SystemPrior(StrEnum):
 class EntityType(StrEnum):
     PERSON = "person"
     CHARACTER = "character"
-    STUDIO = "studio"
     TITLE_PATTERN = "title_pattern"
 
 

@@ -199,14 +199,15 @@ executed as an independent search.
 _ENDPOINTS = f"""\
 RETRIEVAL ENDPOINTS
 
-Each dealbreaker and preference is routed to one of these seven \
+Each dealbreaker and preference is routed to one of these eight \
 endpoints. Each endpoint specializes in a different kind of movie \
 attribute. Accurate routing is critical — the endpoint must be \
 capable of evaluating the concept you send it.
 
 
 entity — Looks up named entities: real people, fictional \
-characters, production companies, and title patterns.
+characters, and title patterns. Studios and production companies \
+have their own dedicated endpoint — they do NOT route here.
 
 Entity types supported:
 - Actors
@@ -217,7 +218,6 @@ Entity types supported:
 - Characters (specific named characters only — "The Joker", \
 "Hannibal Lecter", "Batman". Generic character types like \
 "doctor" or "police officer" route to keyword or semantic)
-- Studios / production companies
 
 Separately, this endpoint also handles title pattern matching — \
 substring or prefix searches against movie titles (e.g., "title \
@@ -228,18 +228,19 @@ Route here when:
 - The query names a real person in any film crew role
 - The query names a specific fictional character by name \
 ("movies featuring The Joker", "Hannibal Lecter movies")
-- The query names a production company or studio ("movies made \
-by Marvel Studios", "A24 films", "Pixar movies")
 - The query describes a title pattern
-- The query asks to exclude a specific person, character, or \
-studio
+- The query asks to exclude a specific person or character
 
 Do NOT route here:
+- Studio or production-company names ("Marvel Studios", "Pixar", \
+"A24", "Disney", "Ghibli") — route to studio. The studio \
+endpoint covers umbrella brands via a curated registry AND \
+long-tail / sub-label companies via freeform surface-form matching.
 - Franchise names ("MCU movies", "James Bond franchise") — route \
 to franchise_structure. "MCU" identifies a story lineage across \
 many studios; "Marvel Studios" identifies who produced the film. \
-A query like "movies made by Marvel Studios" routes here; "MCU \
-movies" routes to franchise_structure.
+A query like "movies made by Marvel Studios" routes to studio; \
+"MCU movies" routes to franchise_structure.
 - Award lookups of any kind — route to awards
 - Structured movie attributes (genre, year, runtime, rating, \
 streaming, country, source material) — route to metadata or \
@@ -259,6 +260,76 @@ character named The Joker", "directed by Christopher Nolan", \
 actors". If the original query is exclusionary, keep the \
 description in positive-presence form and let direction carry the \
 exclusion.
+
+
+studio — Looks up production companies, studios, and labels that \
+made films. Covers the full range from umbrella parent brands \
+("Disney", "Warner Bros.", "A24") through specific sub-labels \
+("Walt Disney Animation", "HBO Documentary Films") to long-tail \
+or niche studios ("Villealfa Filmproductions", "Toho"). This is \
+distinct from a FRANCHISE, which is the fictional universe or \
+story lineage — Marvel Studios (studio) made Avengers films within \
+the MCU (franchise).
+
+Route here when:
+- The query names a major studio or parent brand ("Disney \
+movies", "Warner Bros. films", "A24 indies", "MGM catalog", \
+"Ghibli")
+- The query names a specific sub-label ("Walt Disney Animation", \
+"HBO Documentary", "Fox Searchlight", "Sony Pictures Classics")
+- The query names a long-tail / foreign / niche studio \
+("Villealfa Filmproductions", "Cannon Films", "Toho")
+- The query names a streamer AS A PRODUCER — "Netflix originals", \
+"Netflix produced", "Apple original films", "Prime Video \
+originals", "Amazon MGM movies". The cue is intent: *who made the \
+movie*, not *where to watch it*.
+- The query asks to exclude a specific studio or production \
+company
+
+Do NOT route here:
+- Streaming availability or platform access ("movies on Netflix", \
+"streaming on Apple TV+", "what's on Prime", "available on Max") \
+— route to metadata (watch_providers). The cue: the user wants to \
+know where to watch, not who produced. For Netflix / Apple / \
+Amazon, if there is no clear "originals" / "produced by" / \
+"made by" language and the phrasing is just "on Netflix" or \
+"streaming on", default to metadata — studio routing requires an \
+explicit production-intent cue.
+- Franchise names ("MCU", "James Bond", "Star Wars") — route to \
+franchise_structure. The studio made the film; the franchise is \
+the shared fictional universe.
+- Named people ("movies by Christopher Nolan") — route to entity. \
+A person's production shingle named after them is one exception: \
+"Syncopy movies" is a studio query; "Christopher Nolan movies" \
+is an entity query.
+- Award lookups, genres, themes — route to their own endpoints.
+
+Tricky boundaries:
+
+"Marvel movies" is ambiguous — could mean Marvel Studios the \
+producer or the MCU the shared universe. Trust the phrasing: \
+"Marvel Studios films" or "produced by Marvel" → studio; \
+"Marvel movies" / "MCU movies" / "Marvel Cinematic Universe" → \
+franchise_structure.
+
+"Pixar movies" routes to studio. Pixar is a production company \
+in the registry (both as its own brand and as a Disney \
+subsidiary). It is not a franchise.
+
+"DC movies" is DC Films / DC Extended Universe — usually \
+franchise_structure (the shared universe) unless the user \
+specifically names "DC" as the producer.
+
+"20th Century Fox movies" — route to studio. The registry covers \
+both the pre-2020 Twentieth Century Fox name and the post-rename \
+20th Century Studios via the same brand.
+
+Write the description using natural language that identifies the \
+studio. Examples: "includes A24 as a production company", \
+"produced by Marvel Studios", "made by Ghibli", "Netflix \
+original production", "includes Walt Disney Animation Studios". \
+If the original query is exclusionary, keep the description in \
+positive-presence form and let direction carry the exclusion.
 
 
 metadata — Evaluates structured, quantitative movie attributes — \
@@ -319,7 +390,8 @@ adaptation") — route to keyword
 to awards
 - Franchise names or franchise structural roles ("sequel", \
 "spinoff") — route to franchise_structure
-- Named entities (people, characters, studios) — route to entity
+- Named entities (people or characters) — route to entity; \
+studios route to studio
 - Thematic or experiential concepts ("funny", "dark", "cozy") — \
 route to keyword or semantic
 
@@ -420,7 +492,7 @@ franchise")
 Do NOT route here:
 - Studio or production company names, even when closely \
 associated with a franchise ("Pixar movies", "Marvel Studios \
-films") — route to entity. The franchise is "Toy Story" or \
+films") — route to studio. The franchise is "Toy Story" or \
 "MCU"; the studio is "Pixar" or "Marvel Studios."
 - Generic "remakes" or "based on a true story" without naming a \
 franchise — route to keyword. This endpoint's remake/reboot \
@@ -631,7 +703,8 @@ Do NOT route here:
 - Quantitative attributes (year, runtime, rating, streaming, \
 budget, box office, reception) — route to metadata. "Under 90 \
 minutes" is metadata; "short films" is keyword.
-- Named entities (people, characters, studios) — route to entity
+- Named entities (people or characters) — route to entity; \
+studios route to studio
 - Franchise names or franchise-specific structural roles — route \
 to franchise_structure
 - Awards of any kind — route to awards

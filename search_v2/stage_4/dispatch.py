@@ -50,6 +50,8 @@ from search_v2.stage_3.semantic_query_generation import (
     generate_semantic_dealbreaker_query,
     generate_semantic_preference_query,
 )
+from search_v2.stage_3.studio_query_execution import execute_studio_query
+from search_v2.stage_3.studio_query_generation import generate_studio_query
 from search_v2.stage_3.trending_query_execution import execute_trending_query
 from search_v2.stage_4.types import OutcomeStatus, TaggedItem
 
@@ -131,6 +133,10 @@ def _build_generator_call(
     endpoint = item.endpoint
     if endpoint == EndpointRoute.ENTITY:
         return generate_entity_query(
+            intent_rewrite, description, routing_rationale, provider, model
+        )
+    if endpoint == EndpointRoute.STUDIO:
+        return generate_studio_query(
             intent_rewrite, description, routing_rationale, provider, model
         )
     if endpoint == EndpointRoute.FRANCHISE_STRUCTURE:
@@ -242,6 +248,10 @@ def _build_executor_call(
     # Semantic needs the Qdrant client; nothing else does.
     if endpoint == EndpointRoute.ENTITY:
         return execute_entity_query(
+            spec, restrict_to_movie_ids=restrict_to_movie_ids
+        )
+    if endpoint == EndpointRoute.STUDIO:
+        return execute_studio_query(
             spec, restrict_to_movie_ids=restrict_to_movie_ids
         )
     if endpoint == EndpointRoute.FRANCHISE_STRUCTURE:

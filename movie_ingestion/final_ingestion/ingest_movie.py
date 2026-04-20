@@ -53,6 +53,10 @@ from implementation.misc.production_company_text import (
     normalize_company_string,
     tokenize_company_string,
 )
+from implementation.misc.franchise_text import (
+    normalize_franchise_string,
+    tokenize_franchise_string,
+)
 from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_failures, batch_log_filter, PipelineStage
 from .brand_resolver import resolve_brands_for_movie
 from db.postgres import (
@@ -66,17 +70,19 @@ from db.postgres import (
     batch_insert_character_postings,
     batch_insert_brand_postings,
     batch_insert_studio_tokens,
+    batch_insert_franchise_tokens,
     batch_upsert_production_companies,
+    batch_upsert_franchise_entries,
     batch_upsert_lexical_dictionary,
     batch_upsert_title_token_strings,
     batch_upsert_character_strings,
     delete_movie_franchise_metadata,
-    replace_movie_franchise_postings,
     upsert_movie_franchise_metadata,
     upsert_movie_card,
     batch_upsert_movie_awards,
     refresh_title_token_doc_frequency,
     refresh_studio_token_doc_frequency,
+    refresh_franchise_token_doc_frequency,
     refresh_movie_popularity_scores,
     fetch_movie_ids_missing_card,
 )
@@ -154,19 +160,23 @@ async def ingest_movie(movie: Movie) -> None:
     """
     async with pool.connection() as conn:
         try:
-            # Production data runs first — it upserts lex.production_company
-            # and returns the final production_company_ids, which
-            # ingest_movie_card then includes in its single upsert. This
+            # Production and franchise data both run BEFORE the card upsert
+            # and return the id arrays that ingest_movie_card stamps on the
+            # card row in its single INSERT. Same reason in both cases:
             # avoids a wasteful "card with [] then UPDATE restores it" pair
-            # of writes and keeps the movie_card row correct even if a
-            # later step of the pipeline is ever re-ordered. The resolve
-            # itself touches lex.production_company + lex.studio_token +
-            # lex.inv_production_brand_postings, all of which are
-            # movie_card-independent (no FK), so the ordering is safe.
+            # of writes. The lex tables they touch (lex.production_company,
+            # lex.studio_token, lex.inv_production_brand_postings,
+            # lex.franchise_entry, lex.franchise_token) have no FK into
+            # movie_card, so running them before the card upsert is safe.
             production_company_ids = await ingest_production_data(movie, conn=conn)
+            franchise_name_entry_ids, subgroup_entry_ids = await ingest_franchise_data(
+                movie, conn=conn
+            )
             await ingest_movie_card(
                 movie,
                 production_company_ids=production_company_ids,
+                franchise_name_entry_ids=franchise_name_entry_ids,
+                subgroup_entry_ids=subgroup_entry_ids,
                 conn=conn,
             )
             await ingest_movie_awards(movie, conn=conn)
@@ -185,6 +195,8 @@ async def ingest_movie(movie: Movie) -> None:
 async def ingest_movie_card(
     movie: Movie,
     production_company_ids: Sequence[int] = (),
+    franchise_name_entry_ids: Sequence[int] = (),
+    subgroup_entry_ids: Sequence[int] = (),
     conn=None,
 ) -> None:
     """
@@ -197,6 +209,11 @@ async def ingest_movie_card(
             final array in its single upsert (no wasteful post-write UPDATE).
             Callers that don't have companies resolved yet can pass ``()`` and
             patch the column later via update_movie_card_production_company_ids.
+        franchise_name_entry_ids: IDs from the lineage + shared_universe side
+            of the franchise resolver (up to 2 elements). Resolved before this
+            call for the same single-upsert reason.
+        subgroup_entry_ids: IDs from the recognized_subgroups side of the
+            franchise resolver (one per subgroup). Resolved before this call.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     try:
@@ -272,6 +289,8 @@ async def ingest_movie_card(
             budget_bucket=budget_bucket,
             box_office_bucket=box_office_bucket,
             production_company_ids=production_company_ids,
+            franchise_name_entry_ids=franchise_name_entry_ids,
+            subgroup_entry_ids=subgroup_entry_ids,
             conn=conn,
         )
     except MissingRequiredAttributeError:
@@ -284,10 +303,19 @@ async def ingest_movie_card(
 
 async def ingest_movie_franchise_metadata(movie: Movie, conn=None) -> None:
     """
-    Ingest structured franchise metadata and franchise postings for one movie.
+    Upsert the raw TEXT-column franchise projection for one movie.
 
-    When tracker franchise metadata is absent, any existing Postgres franchise
-    state for the movie is deleted so reruns can remove stale records.
+    Token-space resolution (lex.franchise_entry / lex.franchise_token and
+    the movie_card.franchise_name_entry_ids / subgroup_entry_ids arrays) now
+    runs earlier in ``ingest_movie`` via ``write_franchise_data`` so the card
+    upsert can stamp those arrays in a single INSERT. This function is
+    responsible ONLY for the raw lineage / shared_universe /
+    recognized_subgroups / structural-flag columns on
+    ``public.movie_franchise_metadata``, which survive as the debug /
+    display / structural-flag backing.
+
+    When the movie has no franchise metadata, any existing row is deleted so
+    reruns can remove stale records.
     """
     movie_id = movie.tmdb_data.tmdb_id
     if movie_id is None:
@@ -304,17 +332,6 @@ async def ingest_movie_franchise_metadata(movie: Movie, conn=None) -> None:
         franchise_metadata,
         conn=conn,
     )
-
-    franchise_strings = []
-    if franchise_metadata.lineage:
-        franchise_strings.append(franchise_metadata.lineage)
-    if franchise_metadata.shared_universe:
-        franchise_strings.append(franchise_metadata.shared_universe)
-    franchise_strings = list(dict.fromkeys(franchise_strings))
-
-    string_id_map = await batch_upsert_lexical_dictionary(franchise_strings, conn=conn)
-    term_ids = [string_id_map[value] for value in franchise_strings if value in string_id_map]
-    await replace_movie_franchise_postings(movie_id, term_ids, conn=conn)
 
 
 async def ingest_lexical_data(movie: Movie, conn=None) -> None:
@@ -506,6 +523,130 @@ async def ingest_production_data(movie: Movie, conn=None) -> list[int]:
             release_year = None
 
     return await write_production_data(movie_id, raw_strings, release_year, conn=conn)
+
+
+async def write_franchise_data(
+    lineage: str | None,
+    shared_universe: str | None,
+    recognized_subgroups: Sequence[str],
+    conn=None,
+) -> tuple[list[int], list[int]]:
+    """
+    Core franchise writer. Decoupled from the ``Movie`` object so the
+    backfill script can call it with raw Postgres rows.
+
+    Resolves lineage + shared_universe + recognized_subgroups to
+    ``lex.franchise_entry`` rows via normalize_franchise_string, tokenizes
+    every normalized string, and records ``(token, franchise_entry_id)``
+    pairs in ``lex.franchise_token`` for the query-side token intersection.
+    Returns the two sorted, deduplicated id arrays so the caller can stamp
+    them on ``movie_card`` in its single upsert.
+
+    See search_improvement_planning/v2_search_data_improvements.md,
+    "Franchise Resolution".
+
+    Idempotent: all writes are ON CONFLICT DO NOTHING against unique
+    constraints, and the returned arrays are deterministic given identical
+    input. Safe to re-run after a normalizer change or re-ingest. Takes no
+    ``movie_id`` because franchise registry tables are movie-scope-free —
+    the caller stamps the returned ids onto ``movie_card``.
+
+    Args:
+        lineage: Raw lineage string from movie_franchise_metadata.lineage
+            (or None).
+        shared_universe: Raw shared_universe string (or None).
+        recognized_subgroups: Raw subgroup strings. Empty sequence when there
+            are no subgroups.
+        conn: Optional existing async connection for caller-managed
+            transaction scope.
+
+    Returns:
+        ``(franchise_name_entry_ids, subgroup_entry_ids)`` — both sorted and
+        deduplicated. ``franchise_name_entry_ids`` has 0–2 elements (at most
+        one each from lineage and shared_universe, deduplicated if they
+        normalize identically). ``subgroup_entry_ids`` has one element per
+        unique normalized subgroup.
+    """
+    # Build (canonical, normalized) pairs for every string that came in.
+    # Tracking which input group each pair came from (names vs subgroups)
+    # is done on the side so a single batch upsert covers all of them in
+    # one round trip while still letting us reconstruct the two return
+    # arrays afterwards.
+    name_pairs: list[tuple[str, str]] = []
+    for raw in (lineage, shared_universe):
+        if not raw:
+            continue
+        normalized = normalize_franchise_string(raw)
+        if not normalized:
+            continue
+        name_pairs.append((raw, normalized))
+
+    subgroup_pairs: list[tuple[str, str]] = []
+    for raw in recognized_subgroups:
+        if not raw:
+            continue
+        normalized = normalize_franchise_string(raw)
+        if not normalized:
+            continue
+        subgroup_pairs.append((raw, normalized))
+
+    all_pairs = name_pairs + subgroup_pairs
+    if not all_pairs:
+        return ([], [])
+
+    entry_id_map = await batch_upsert_franchise_entries(all_pairs, conn=conn)
+
+    # Emit (token, franchise_entry_id) for every token of every normalized
+    # string. Dedup across the movie so we don't insert the same pair
+    # multiple times when two inputs share tokens or when the same string
+    # appears under both lineage and shared_universe.
+    token_rows: set[tuple[str, int]] = set()
+    for _, normalized in all_pairs:
+        fid = entry_id_map.get(normalized)
+        if fid is None:
+            continue
+        for token in tokenize_franchise_string(normalized, already_normalized=True):
+            token_rows.add((token, fid))
+    await batch_insert_franchise_tokens(list(token_rows), conn=conn)
+
+    # Reconstruct the two return arrays. Lineage and shared_universe can
+    # resolve to the same normalized string (and thus the same id), which
+    # is exactly the "unified search space" behavior we want — set dedup
+    # handles it.
+    franchise_name_entry_ids = sorted({
+        entry_id_map[n] for _, n in name_pairs if n in entry_id_map
+    })
+    subgroup_entry_ids = sorted({
+        entry_id_map[n] for _, n in subgroup_pairs if n in entry_id_map
+    })
+    return (franchise_name_entry_ids, subgroup_entry_ids)
+
+
+async def ingest_franchise_data(
+    movie: Movie, conn=None
+) -> tuple[list[int], list[int]]:
+    """
+    Ingest franchise-entry and franchise-token data for one ``Movie``.
+
+    Thin adapter over ``write_franchise_data`` that extracts lineage /
+    shared_universe / recognized_subgroups from the Movie's
+    ``franchise_metadata``. When franchise_metadata is absent the movie
+    contributes no rows — returns ``([], [])`` and ``ingest_movie_card``
+    stamps empty arrays, which is the correct stateless default.
+
+    Returns the two entry-id arrays for ``ingest_movie_card`` to stamp on
+    the card row in its single upsert.
+    """
+    franchise_metadata = movie.franchise_metadata
+    if franchise_metadata is None:
+        return ([], [])
+
+    return await write_franchise_data(
+        franchise_metadata.lineage,
+        franchise_metadata.shared_universe,
+        franchise_metadata.recognized_subgroups,
+        conn=conn,
+    )
 
 
 async def ingest_movie_awards(movie: Movie, conn=None) -> None:
@@ -1337,6 +1478,7 @@ async def cmd_ingest(
             print("\nRefreshing materialized views...")
             await refresh_title_token_doc_frequency()
             await refresh_studio_token_doc_frequency()
+            await refresh_franchise_token_doc_frequency()
             await refresh_movie_popularity_scores()
             print("Materialized views refreshed.")
 

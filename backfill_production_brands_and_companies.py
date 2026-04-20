@@ -142,6 +142,14 @@ def _apply_schema_migrations() -> None:
                 """
             )
 
+            # Retire lex.inv_studio_postings. The v1 compound lexical search
+            # studio branch and the v2 stage-3 entity-type=STUDIO path that
+            # used to read this table are both removed; the new v2 studio
+            # endpoint reads lex.inv_production_brand_postings and
+            # lex.studio_token instead. DROP IF EXISTS so this is a no-op
+            # on fresh-init DBs that never had the table.
+            cur.execute("DROP TABLE IF EXISTS lex.inv_studio_postings CASCADE")
+
 
 def _load_tracker_rows() -> dict[int, tuple[list[str], int | None]]:
     """

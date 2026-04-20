@@ -81,9 +81,23 @@ studio_token
   production_company_id FK
   PRIMARY KEY (token, production_company_id)
 
--- Per-movie stamp (on the movie row):
-movie.brand_ids INT[]   -- empty when no brand membership applies
+-- Per-movie stamp (postings table, not an array on the movie row):
+lex.inv_production_brand_postings
+  brand_id             SMALLINT NOT NULL
+  movie_id             BIGINT   NOT NULL
+  first_matching_index SMALLINT NOT NULL  -- earliest position the brand appears
+  total_brand_count    SMALLINT NOT NULL  -- how many brand-member strings hit
+  PRIMARY KEY (brand_id, movie_id)
 ```
+
+**Implementation note:** earlier drafts of this doc called for an
+`INT[]` array column on the movie row. The implemented form is a
+postings table with `first_matching_index` and `total_brand_count`
+columns so prospective prominence-scoring signals are available, even
+though the query-side implementation chose **flat 1.0 scoring** for
+brand matches (IMDB ordering is unreliable across non-Anglophone
+catalogs — see `.claude/plans/ok-this-all-sounds-elegant-melody.md`
+for the full rationale). The columns are kept as future features.
 
 **brand** — closed registry of ~50 rows. Seeded from Wikidata's
 `film production company` class plus manual additions. Curation
@@ -111,11 +125,16 @@ filtering. Tokenization splits on whitespace AND hyphens. GIN
 index on `token` for fast posting-list lookup. Secondary index
 on `production_company_id` for debugging.
 
-**movie.brand_ids** — the ingest-time stamp. Set once per movie
-at ingest by resolving each `production_companies` string to a
-`production_company_id`, looking up `brand_member_company` rows
-where the movie's release year falls within `[start_year,
-end_year]`, and unioning the resulting brand IDs. GIN-indexed.
+**lex.inv_production_brand_postings** — the ingest-time stamp. One
+row per (brand, movie) pair. Set at ingest by resolving each
+`production_companies` string to a `production_company_id`, looking
+up `brand_member_company` rows where the movie's release year falls
+within `[start_year, end_year]`, and writing one posting per
+matched brand. `first_matching_index` is the earliest position in
+the movie's raw `production_companies` list where a brand-member
+string appears; `total_brand_count` is how many such strings hit.
+Indexed on (brand_id, movie_id) PK plus secondary on movie_id for
+reverse lookup.
 
 ## Ingestion Pipeline
 
@@ -175,7 +194,9 @@ For each movie:
 2. For each production_company_id, find `brand_member_company`
    rows where `movie.release_year BETWEEN start_year AND end_year`
    (nulls interpreted as unbounded).
-3. Write the union of matched brand_ids to `movie.brand_ids`.
+3. Write one row per matched brand into
+   `lex.inv_production_brand_postings`, carrying the movie_id,
+   brand_id, first_matching_index, and total_brand_count.
 
 Runs at movie-ingest time (one-shot per movie). Re-computed only
 when the brand registry changes, and only for affected movies.
@@ -240,8 +261,13 @@ a reasoning preface improves downstream field quality.
 ### Step 2a — Brand Path
 
 ```sql
-SELECT movie_id FROM movie WHERE brand_ids && ARRAY[:brand_id]
+SELECT movie_id
+FROM lex.inv_production_brand_postings
+WHERE brand_id = :brand_id
 ```
+
+Flat 1.0 per matched movie — see the "Scoring" note in the
+Implementation Note above.
 
 Returns movies time-accurately stamped with that brand at ingest.
 Star Wars 1977 (Lucasfilm pre-Disney) does not match
@@ -492,7 +518,8 @@ LLM output:
              in the closed registry. Umbrella scope."
   brand_id: DISNEY
   freeform_names: []
-Brand path: movie.brand_ids && ARRAY[DISNEY]
+Brand path: SELECT movie_id FROM lex.inv_production_brand_postings
+            WHERE brand_id = DISNEY
 Result: all movies stamped with DISNEY at release year —
         Walt Disney Pictures titles, plus Pixar post-2006,
         Marvel Studios post-2009, Lucasfilm post-2012, Touchstone
@@ -509,7 +536,8 @@ LLM output:
   thinking: "MGM is a closed-registry brand. Umbrella scope."
   brand_id: MGM
   freeform_names: []
-Brand path: movie.brand_ids && ARRAY[MGM]
+Brand path: SELECT movie_id FROM lex.inv_production_brand_postings
+            WHERE brand_id = MGM
 Result: all MGM-stamped movies including Metro-Goldwyn-Mayer
         Cartoon Studios and British Studios variants.
 ```
@@ -546,7 +574,8 @@ LLM output:
   thinking: "A24 is a closed-registry brand, standalone studio."
   brand_id: A24
   freeform_names: []
-Brand path: movie.brand_ids && ARRAY[A24]
+Brand path: SELECT movie_id FROM lex.inv_production_brand_postings
+            WHERE brand_id = A24
 ```
 
 ### Example 5 — "Fox movies"
@@ -691,8 +720,9 @@ condensed list below is the commitment.
   - "Instruct both sides to use the most common form" — LLM
     emits common surface forms; code normalizes and resolves.
   - "GIN arrays for enums, posting tables for text entities" —
-    `movie.brand_ids INT[]` is a GIN array; token index is a
-    posting table.
+    brand memberships use a dedicated posting table
+    (`lex.inv_production_brand_postings`); the token index is a
+    posting table too.
   - "Don't ask LLMs to do what code can derive" — ownership
     structure lives in `brand_member_company`, not the LLM.
   - "Closed enum for freeform axes" — matches the
@@ -1027,10 +1057,11 @@ The fix ports the freeform half of the studio resolver —
 symmetric normalization + a token-inverted index + within-name
 intersection / across-name union — without the registry /
 brand-path overhead. The ceremony axis is already a closed enum
-(`AwardCeremony`); scoping posting-list lookups by ceremony is
-enough to kill cross-festival homonyms ("Grand Jury Prize" at both
-Cannes and Sundance) that a brand-style registry would otherwise
-be needed for.
+(`AwardCeremony`) and `movie_awards.ceremony_id` is applied as a
+row-level filter alongside the entry-id resolution, which kills
+cross-festival homonyms ("Grand Jury Prize" at both Cannes and
+Sundance) without needing to partition the entry table by
+ceremony.
 
 Data shape (empirical):
 
@@ -1049,10 +1080,13 @@ Data shape (empirical):
    and query tokenize the same way and drop the same stopwords.
    The LLM emits the *official* form of the prize, not the exact
    IMDB string.
-2. **Ceremony scoping replaces deterministic brand routing.**
-   When the ceremony channel has resolved a `ceremony_id`, the
-   award token lookup is intersected with entries from that
-   ceremony. Homonymous prize names across festivals can't leak.
+2. **Ceremony scoping happens at the row level, not the entry
+   level.** The entry table is keyed purely on the normalized
+   string, so apostrophe/punctuation variants collapse to a
+   single entry. `movie_awards.ceremony_id` — already filtered by
+   the ceremony channel in the final SQL — handles cross-festival
+   homonyms on its own. Partitioning entries by ceremony would
+   duplicate data without adding retrieval precision.
 3. **Specificity comes from the user, not the LLM.** The prompt
    instructs the LLM to emit the base prize name (`"palme d'or"`)
    NOT overly specific sub-variants (`"palme d'or - best short
@@ -1066,32 +1100,46 @@ Data shape (empirical):
 
 ## Data Model
 
-```
-award_name_entry
-  id            PK
-  raw_name      TEXT        -- exact IMDB surface form
-  normalized    TEXT        -- after normalize_string
-  ceremony_id   SMALLINT    -- which ceremony uses this string
-  UNIQUE (raw_name, ceremony_id)
+```sql
+CREATE TABLE award_name_entry (
+  id          SERIAL PRIMARY KEY,
+  normalized  TEXT NOT NULL UNIQUE  -- output of normalize_string
+);
 
-award_name_token
-  token                   TEXT
-  award_name_entry_id     INT FK
+CREATE TABLE award_name_token (
+  token                TEXT NOT NULL,
+  award_name_entry_id  INT  NOT NULL REFERENCES award_name_entry(id),
   PRIMARY KEY (token, award_name_entry_id)
+);
+
+-- Btree on token drives the posting-list lookup.
+-- Secondary index on entry_id supports reverse lookups / debugging.
+CREATE INDEX idx_award_name_token_token ON award_name_token (token);
+CREATE INDEX idx_award_name_token_entry ON award_name_token (award_name_entry_id);
 
 -- movie_awards keeps its raw award_name column; a new
 -- award_name_entry_id FK is added for deterministic join-back
 -- after token resolution.
 ALTER TABLE movie_awards
   ADD COLUMN award_name_entry_id INT REFERENCES award_name_entry(id);
+
+CREATE INDEX idx_movie_awards_entry ON movie_awards (award_name_entry_id);
 ```
 
-**award_name_entry** — one row per distinct `(raw_name,
-ceremony_id)` pair. Ceremony is part of the key because the same
-string ("Grand Jury Prize", "Jury Prize") is legitimately
-different at different festivals.
+**award_name_entry** — one row per distinct normalized string.
+Raw IMDB surface forms that collapse to the same normalized form
+(straight vs curly apostrophe, `Critics Week` vs `Critics' Week`,
+case differences, diacritic differences) merge into a single
+entry. The raw form is still available on `movie_awards.award_name`
+for display or debugging, but the entry table does not duplicate
+it.
 
-**award_name_token** — inverted index. GIN index on `token`.
+Ceremony is **not** part of the entry key. Cross-festival
+homonyms are handled by the existing row-level
+`movie_awards.ceremony_id` filter, not by partitioning entries.
+
+**award_name_token** — inverted index from token → entry_id. Plain
+btree on `token` is sufficient for exact-token equality lookups.
 
 **movie_awards.award_name_entry_id** — foreign key onto the entry
 table, written once at ingest. Retrieval runs `token → entry_ids
@@ -1102,15 +1150,19 @@ around.
 
 ### Stage A — Populate `award_name_entry`
 
-Sweep distinct `(award_name, ceremony_id)` pairs from
-`movie_awards`. Insert one row per pair. Apply `normalize_string`
-(same rules used at query time) to produce `normalized`. Upsert
-semantics so re-running adds new strings without disturbing
-existing rows.
+Sweep distinct `award_name` values from `movie_awards`. Apply
+`normalize_string` (same rules used at query time) to each.
+Upsert one row per **distinct normalized value** into
+`award_name_entry`. Multiple raw strings that collapse to the
+same normalized form share one entry row — this is the point of
+the normalization.
 
-Backfill `award_name_entry_id` on every row in `movie_awards` via
-the `(raw_name, ceremony_id)` key. One-time backfill; subsequent
-ingests resolve new rows against the entry table directly.
+Backfill `award_name_entry_id` on every row in `movie_awards` by
+joining on `normalize_string(movie_awards.award_name) =
+award_name_entry.normalized`. One-time backfill; subsequent
+ingests resolve new rows against the entry table by the same
+normalized-string key. Idempotent — re-running adds only the
+newly-seen normalized strings.
 
 ### Stage B — Tokenize
 
@@ -1132,8 +1184,12 @@ Determination, deferred to post-ingestion.
 
 ### Stage C — Index
 
-GIN index on `award_name_token.token`. Secondary btree on
-`award_name_entry_id` for reverse lookups / debugging.
+Btree on `award_name_token.token` (drives posting-list lookups,
+exact-token equality only — GIN not needed unless we later add
+fuzzy or prefix matching). Secondary btree on
+`award_name_token.award_name_entry_id` for reverse lookups /
+debugging. Btree on `movie_awards.award_name_entry_id` for the
+final movie-id resolution step.
 
 ## Query-Time Resolution
 
@@ -1176,10 +1232,10 @@ For each surviving token, fetch posting list from
 `award_name_token`. **Intersect posting lists within the name**
 → `award_name_entry_id` set.
 
-If the parallel ceremony channel has resolved `ceremony_id`
-values, filter each entry set to entries whose `ceremony_id` is
-in the resolved set. Kills Cannes-vs-Sundance homonyms without
-any extra rules.
+No ceremony filtering happens at the entry level — the entry
+table is ceremony-agnostic. Ceremony disambiguation is applied
+in Step 4 via the `movie_awards.ceremony_id` filter the award
+endpoint already emits.
 
 ### Step 3 — Union across names
 
@@ -1190,11 +1246,17 @@ Across `award_names`, union the per-name entry-id sets.
 ```sql
 SELECT movie_id FROM movie_awards
 WHERE award_name_entry_id = ANY(:entry_ids)
+  AND ceremony_id         = ANY(:ceremony_ids)      -- if resolved
+  AND category_tag_ids   && :category_tag_ids       -- if resolved
+  AND outcome_id          = ANY(:outcome_ids)       -- if resolved
+  AND year BETWEEN :year_lo AND :year_hi            -- if resolved
 ```
 
-Combined with the existing filters on `ceremony_id`,
-`category_tag_ids`, `outcome_id`, and `year` that the rest of the
-award endpoint already emits.
+The entry-id filter plus the existing row-level filters on
+`ceremony_id`, `category_tag_ids`, `outcome_id`, and `year` (all
+already emitted by the rest of the award endpoint) together
+narrow to the correct rows. Cross-festival homonyms like
+`Grand Jury Prize` get segregated here, not in Step 2.
 
 ### Step 5 — No further fallbacks
 
@@ -1203,12 +1265,15 @@ nothing. Vector and metadata channels carry the search.
 
 ## Normalization Rules
 
-Applied symmetrically at ingest and query. **This supersedes the
-"deliberately do not normalize" comment in
-`award_query_execution.py`** — the risk that comment calls out
-(silent coercion of mismatched pairs) is real but the current
-cost (no case-fold, no apostrophe fold, no diacritic strip) is
-strictly worse.
+Applied symmetrically at ingest and query. **The "deliberately
+do not normalize" comment in
+[award_query_execution.py:62-83](search_v2/stage_3/award_query_execution.py#L62-L83)
+must be removed as part of this change.** The risk that comment
+called out (silent coercion of mismatched pairs) is real in
+theory, but the current cost — no case-fold, no apostrophe fold,
+no diacritic strip — is strictly worse in practice. Symmetric
+normalization at both ingest and query is the replacement
+invariant.
 
 1. Lowercase.
 2. Diacritic-fold (NFKD → strip combining marks) — handles
@@ -1251,17 +1316,22 @@ drop) intersect to only the short-film entry.
 ### Apostrophe / punctuation variant
 
 `Critics Week Grand Prize` (44) vs `Critics' Week Grand Prize`
-(39) normalize identically to `critics week grand prize`. Two
-separate `award_name_entry` rows (raw strings differ) but
-identical token posting lists, so any "Critics Week Grand Prize"
-query retrieves both.
+(39) normalize identically to `critics week grand prize`. They
+collapse to a **single** `award_name_entry` row. `movie_awards`
+rows with either raw form both point at the same
+`award_name_entry_id`, so any query for either phrasing
+retrieves the full union transparently.
 
 ### Cross-festival homonym (Grand Jury Prize)
 
 Cannes has `Jury Prize` (66); Sundance has `Grand Jury Prize`
-(1,276). When the ceremony channel resolves
-`ceremony_id=SUNDANCE`, posting-list lookups filter to Sundance
-entries only.
+(1,276). These normalize to different strings and live in
+different entry rows, so there's no homonym collision in the
+entry table at all. If two ceremonies ever did share a byte-
+identical normalized string, the `movie_awards.ceremony_id`
+filter in Step 4 (applied whenever the ceremony channel has
+resolved a ceremony) keeps the wrong-festival rows from
+surfacing.
 
 ### Long-tail festival prize
 
@@ -1309,8 +1379,8 @@ without curation.
 thinking: "Single flagship ceremony prize; Oscar is the base form."
 award_names: ["oscar"]
 → tokens {oscar}
-→ entries (ceremony=OSCAR): {Oscar, Oscars Cheer Moment,
-                             Oscars Fan Favorite}
+→ entries: {Oscar, Oscars Cheer Moment, Oscars Fan Favorite}
+→ Step 4: entry_id IN (...) AND ceremony_id = OSCAR
 → all Oscar-tagged movie_awards rows.
 ```
 
@@ -1320,8 +1390,9 @@ award_names: ["oscar"]
 thinking: "Cannes flagship prize; base form is Palme d'Or."
 award_names: ["palme d'or"]
 → normalize "palme dor" → tokens {palme, dor}
-→ entries (ceremony=CANNES): {Palme d'Or, Palme d'Or - Best Short
-                               Film, Palme d'Or Spéciale}
+→ entries: {Palme d'Or, Palme d'Or - Best Short Film,
+            Palme d'Or Spéciale}
+→ Step 4: entry_id IN (...) AND ceremony_id = CANNES
 → 1262 + 44 + 1 = 1307 award rows.
 ```
 
@@ -1331,9 +1402,11 @@ award_names: ["palme d'or"]
 thinking: "Sundance's top prize; ceremony resolved separately."
 award_names: ["grand jury prize"]
 → tokens {grand, jury} (prize in stoplist)
-→ entries (ceremony=SUNDANCE): {Grand Jury Prize, Short Film Grand
-                                 Jury Prize, World Cinema Grand
-                                 Jury Prize}
+→ entries: {Grand Jury Prize, Short Film Grand Jury Prize,
+            World Cinema Grand Jury Prize}
+→ Step 4: entry_id IN (...) AND ceremony_id = SUNDANCE
+  — the Sundance row-level filter excludes any Cannes
+  "Jury Prize" rows that might otherwise leak via homonym.
 ```
 
 ### Example 4 — "Critics Week Grand Prize"
@@ -1342,9 +1415,11 @@ award_names: ["grand jury prize"]
 thinking: "Cannes Critics' Week top prize."
 award_names: ["critics week grand prize"]
 → tokens {critics, week, grand}
-→ entries (ceremony=CANNES): {Critics Week Grand Prize,
-                               Critics' Week Grand Prize}
-Both sides of the apostrophe split covered.
+→ entries: {critics week grand prize}  -- single merged entry
+→ Step 4: entry_id IN (...) AND ceremony_id = CANNES
+  — movie_awards rows with either raw form share the
+  same entry_id, so the apostrophe split is handled at
+  ingest, not query time.
 ```
 
 ### Example 5 — User asked for a specific sub-variant
@@ -1354,7 +1429,8 @@ User: "Best Short Film at Cannes"
 thinking: "User named the short-film sub-variant explicitly."
 award_names: ["palme d'or best short film"]
 → tokens {palme, dor, short} (best/film in stoplist)
-→ entries (ceremony=CANNES): {Palme d'Or - Best Short Film}
+→ entries: {Palme d'Or - Best Short Film}
+→ Step 4: entry_id IN (...) AND ceremony_id = CANNES
 Specificity preserved — main Palme d'Or correctly excluded.
 ```
 
@@ -1368,10 +1444,13 @@ Specificity preserved — main Palme d'Or correctly excluded.
 2. **Stoplist evolution.** Start with the list above; extend
    empirically after the first bucket review. Watch for
    non-English residuals in Venice / Cannes / Berlin prize names.
-3. **Ceremony-scoping precedence.** Proposed as a hard filter when
-   the ceremony channel has resolved one. If that channel returns
-   empty, fall through to unscoped token lookup. Confirm after
-   evaluation whether this is the right default.
+3. **Ceremony filter precedence.** Resolved: ceremony scoping is
+   applied only as a row-level filter on `movie_awards.ceremony_id`
+   in Step 4. The entry table is ceremony-agnostic. If the
+   ceremony channel returns empty, the ceremony filter is simply
+   omitted and token resolution runs unscoped — the same behavior
+   the rest of the award endpoint already uses for its other
+   optional filters.
 
 ---
 
@@ -2049,8 +2128,9 @@ Subsidiary membership changes over time:
   Warner after.
 
 Solved by `brand_member_company.start_year` / `end_year` bounds,
-applied at ingest when stamping `movie.brand_ids`. Star Wars
-1977 is not a Disney movie; Force Awakens 2015 is.
+applied at ingest when writing rows to
+`lex.inv_production_brand_postings`. Star Wars 1977 is not a Disney
+movie; Force Awakens 2015 is.
 
 ## D9 — Institutional non-studio entries in production_companies
 

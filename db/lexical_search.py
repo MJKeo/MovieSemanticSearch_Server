@@ -273,19 +273,22 @@ async def lexical_search(
     
     include_people: list[str] = []
     include_characters: list[str] = []
-    include_studios: list[str] = []
     include_title_searches: list[list[str]] = []
     include_franchise_phrases: list[str] = []
     include_franchise_title_searches: list[list[str]] = []
 
     exclude_people: list[str] = []
     exclude_characters: list[str] = []
-    exclude_studios: list[str] = []
     exclude_title_tokens: list[str] = []
     exclude_franchise_phrases: list[str] = []
     exclude_franchise_title_tokens: list[str] = []
 
     # STEP 1 - Build include / exclude lists
+    # Note: STUDIO category is no longer handled by this v1 path — studio
+    # lookups are routed through the v2 stage-3 studio endpoint
+    # (search_v2/stage_3/studio_query_{generation,execution}.py), which reads
+    # the brand registry and freeform token index that replaced
+    # lex.inv_studio_postings.
     for entity in entities.entity_candidates:
         source = entity.corrected_and_normalized_entity or entity.candidate_entity_phrase
         category = entity.most_likely_category
@@ -312,7 +315,12 @@ async def lexical_search(
                 include_franchise_phrases.append(franchise_phrase)
             continue
 
-        # If we reach here then that means the category is CHARACTER, PERSON, or STUDIO
+        # Studio entities are dropped here — the v1 path cannot resolve them
+        # anymore. Callers that need studio coverage must use the v2 pipeline.
+        if category == EntityCategory.STUDIO.value:
+            continue
+
+        # If we reach here then that means the category is CHARACTER or PERSON.
         phrase = normalize_string(source)
         if not phrase:
             continue
@@ -321,13 +329,10 @@ async def lexical_search(
             (exclude_people if should_exclude else include_people).append(phrase)
         elif category == EntityCategory.CHARACTER.value:
             (exclude_characters if should_exclude else include_characters).append(phrase)
-        elif category == EntityCategory.STUDIO.value:
-            (exclude_studios if should_exclude else include_studios).append(phrase)
 
     # STEP 2 - Deduplicate lists
     include_people = _dedupe_preserve_order(include_people)
     include_characters = _dedupe_preserve_order(include_characters)
-    include_studios = _dedupe_preserve_order(include_studios)
     include_franchise_phrases = _dedupe_preserve_order(include_franchise_phrases)
     include_franchise_title_searches = [
         tokenize_title_phrase(phrase) for phrase in include_franchise_phrases
@@ -338,7 +343,6 @@ async def lexical_search(
 
     exclude_people = _dedupe_preserve_order(exclude_people)
     exclude_characters = _dedupe_preserve_order(exclude_characters)
-    exclude_studios = _dedupe_preserve_order(exclude_studios)
     exclude_title_tokens = _dedupe_preserve_order(exclude_title_tokens)
     exclude_franchise_phrases = _dedupe_preserve_order(exclude_franchise_phrases)
     exclude_franchise_title_tokens = _dedupe_preserve_order(exclude_franchise_title_tokens)
@@ -347,7 +351,6 @@ async def lexical_search(
     max_possible = (
         len(include_people)
         + len(include_characters)
-        + len(include_studios)
         + len(include_title_searches)
         + len(include_franchise_phrases)
     )
@@ -374,9 +377,7 @@ async def lexical_search(
     franchise_char_end = include_char_end + len(include_franchise_phrases)
     all_exact_phrases = _dedupe_preserve_order(
         include_people
-        + include_studios
         + exclude_people
-        + exclude_studios
     )
     all_exclude_title_tokens = _dedupe_preserve_order(
         exclude_title_tokens + exclude_franchise_title_tokens
@@ -405,9 +406,7 @@ async def lexical_search(
     franchise_title_token_maps = all_title_token_maps[regular_title_count:]
 
     people_term_ids = [phrase_id_map[p] for p in include_people if p in phrase_id_map]
-    studio_term_ids = [phrase_id_map[s] for s in include_studios if s in phrase_id_map]
     exclude_people_ids = [phrase_id_map[p] for p in exclude_people if p in phrase_id_map]
-    exclude_studio_ids = [phrase_id_map[s] for s in exclude_studios if s in phrase_id_map]
     exclude_character_term_ids = list({
         term_id
         for idx in range(franchise_char_end, len(all_character_phrases))
@@ -423,10 +422,6 @@ async def lexical_search(
             exclusion_resolution_tasks.append(
                 fetch_movie_ids_by_term_ids(table, exclude_people_ids)
             )
-    if exclude_studio_ids:
-        exclusion_resolution_tasks.append(
-            fetch_movie_ids_by_term_ids(PostingTable.STUDIO, exclude_studio_ids)
-        )
     if exclude_character_term_ids:
         exclusion_resolution_tasks.append(
             fetch_movie_ids_by_term_ids(PostingTable.CHARACTER, exclude_character_term_ids)
@@ -458,7 +453,6 @@ async def lexical_search(
     ]
     compound_result = await execute_compound_lexical_search(
         people_term_ids=people_term_ids,
-        studio_term_ids=studio_term_ids,
         character_query_idxs=character_query_idxs,
         character_term_ids=character_term_ids,
         title_searches=combined_title_searches,
@@ -467,7 +461,6 @@ async def lexical_search(
     )
 
     people_scores: dict[int, int] = compound_result.people_scores
-    studio_scores: dict[int, int] = compound_result.studio_scores
     character_scores: dict[int, int] = {}
     for query_idx in range(len(include_characters)):
         query_map = compound_result.character_by_query.get(query_idx, {})
@@ -517,20 +510,17 @@ async def lexical_search(
     all_movie_ids: set[int] = set()
     all_movie_ids.update(people_scores.keys())
     all_movie_ids.update(character_scores.keys())
-    all_movie_ids.update(studio_scores.keys())
     all_movie_ids.update(title_score_sums.keys())
     all_movie_ids.update(franchise_score_sums.keys())
     candidates: list[LexicalCandidate] = []
     for movie_id in all_movie_ids:
         matched_people = people_scores.get(movie_id, 0)
         matched_characters = character_scores.get(movie_id, 0)
-        matched_studios = studio_scores.get(movie_id, 0)
         title_sum = title_score_sums.get(movie_id, 0.0)
         franchise_sum = franchise_score_sums.get(movie_id, 0.0)
         raw_score = (
             float(matched_people)
             + float(matched_characters)
-            + float(matched_studios)
             + title_sum
             + franchise_sum
         )
@@ -540,7 +530,6 @@ async def lexical_search(
                 movie_id=movie_id,
                 matched_people_count=matched_people,
                 matched_character_count=matched_characters,
-                matched_studio_count=matched_studios,
                 title_score_sum=title_sum,
                 franchise_score_sum=franchise_sum,
                 normalized_lexical_score=raw_score / float(max_possible),

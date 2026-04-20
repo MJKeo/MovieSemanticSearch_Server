@@ -118,6 +118,27 @@ def _cardinal_sub(match: re.Match[str]) -> str:
     return word if word is not None else match.group(0)
 
 
+def apply_digit_word_substitution(base: str) -> str:
+    """Apply ordinal + cardinal number-to-word rewrites to an already-normalized string.
+
+    Shared helper for modules (production-company, franchise) that need the
+    same digit/word collapsing behavior on top of the base `normalize_string`
+    rules. Runs ordinal substitution (`20th` → `twentieth`) BEFORE cardinal
+    substitution (`8` → `eight`, `20` → `twenty`) so the digit portion of
+    `20th` is consumed by the ordinal rule and never seen by the cardinal
+    rule. Cardinals are bounded to [0, 99] so year-like tokens (`2000`) stay
+    in digit form.
+
+    Input must already be lowercased / punctuation-stripped (i.e. the output
+    of `normalize_string`) — `_ORDINAL_RE` only matches lowercase suffixes
+    and both regexes rely on word boundaries established by the base
+    normalization.
+    """
+    base = _ORDINAL_RE.sub(_ordinal_sub, base)
+    base = _CARDINAL_RE.sub(_cardinal_sub, base)
+    return base
+
+
 def normalize_company_string(raw: str) -> str:
     """Normalize an IMDB `production_companies` string for dictionary lookup.
 
@@ -128,17 +149,11 @@ def normalize_company_string(raw: str) -> str:
     collapse digit/word variants like `20th Century Fox` / `Twentieth Century
     Fox` and `Section 8 Productions` / `Section Eight Productions` into the
     same normalized key (and the same token set for the freeform path).
-
-    Ordinal substitution runs before cardinal substitution so the digit
-    portion of `20th` is consumed by the ordinal rule and never seen by the
-    cardinal rule.
     """
     base = normalize_string(raw)
     if not base:
         return ""
-    base = _ORDINAL_RE.sub(_ordinal_sub, base)
-    base = _CARDINAL_RE.sub(_cardinal_sub, base)
-    return base
+    return apply_digit_word_substitution(base)
 
 
 def tokenize_company_string(raw: str, *, already_normalized: bool = False) -> list[str]:

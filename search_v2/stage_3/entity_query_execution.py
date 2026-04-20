@@ -14,13 +14,15 @@
 # job is: spec in → raw [0, 1] per-movie scores out.
 #
 # Scoring criteria reference — finalized_search_proposal.md §Endpoint 1:
-#   - Non-actor persons / studios / characters / title patterns →
+#   - Non-actor persons / characters / title patterns →
 #     binary 1.0 match.
 #   - Actor persons → zone-based prominence via billing_position +
 #     cast_size, one of four modes (DEFAULT / LEAD / SUPPORTING /
 #     MINOR) selected by the LLM.
 #   - broad_person → per-table scores merged with max; non-primary
 #     tables discounted to 0.5× when primary_category is set.
+# Studio lookups have their own stage-3 endpoint
+# (search_v2/stage_3/studio_query_execution.py) and are not handled here.
 #
 # The scoring constants (LEAD_FLOOR, LEAD_SCALE, SUPP_SCALE, plus
 # per-mode curves) are all tunable starting points from the proposal.
@@ -219,11 +221,11 @@ async def _fetch_binary_role_scores(
     term_ids: list[int],
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """Binary 1.0 scoring for non-actor role tables, studios, and
-    characters. Post-filters by restrict in Python — the matched set
-    size for a single person/studio/character is small enough that
-    pulling it back and intersecting is cheaper than extending every
-    posting helper to support a server-side restrict."""
+    """Binary 1.0 scoring for non-actor role tables and characters.
+    Post-filters by restrict in Python — the matched set size for a
+    single person/character is small enough that pulling it back and
+    intersecting is cheaper than extending every posting helper to
+    support a server-side restrict."""
     movie_ids = await fetch_movie_ids_by_term_ids(table, term_ids)
     if restrict_movie_ids is not None:
         movie_ids = movie_ids & restrict_movie_ids
@@ -370,27 +372,6 @@ async def _execute_character(
     )
 
 
-async def _execute_studio(
-    spec: EntityQuerySpec,
-    restrict_movie_ids: set[int] | None,
-) -> dict[int, float]:
-    """Studio lookup — exact match normalized studio name against the
-    lexical dictionary, then query the studio posting table. Binary
-    1.0 scoring."""
-    norm = normalize_string(spec.lookup_text)
-    if not norm:
-        return {}
-
-    phrase_to_id = await fetch_phrase_term_ids([norm])
-    term_id = phrase_to_id.get(norm)
-    if term_id is None:
-        return {}
-
-    return await _fetch_binary_role_scores(
-        PostingTable.STUDIO, [term_id], restrict_movie_ids
-    )
-
-
 async def _execute_title_pattern(
     spec: EntityQuerySpec,
     restrict_movie_ids: set[int] | None,
@@ -464,12 +445,10 @@ async def execute_entity_query(
             scores_by_movie = await _execute_person_specific_role(spec, restrict_to_movie_ids)
     elif spec.entity_type == EntityType.CHARACTER:
         scores_by_movie = await _execute_character(spec, restrict_to_movie_ids)
-    elif spec.entity_type == EntityType.STUDIO:
-        scores_by_movie = await _execute_studio(spec, restrict_to_movie_ids)
     elif spec.entity_type == EntityType.TITLE_PATTERN:
         scores_by_movie = await _execute_title_pattern(spec, restrict_to_movie_ids)
     else:
-        # Exhaustive — EntityType has four values. Any future addition
+        # Exhaustive — EntityType has three values. Any future addition
         # should fail loudly here rather than silently return empty.
         raise ValueError(f"Unhandled entity_type: {spec.entity_type}")
 
