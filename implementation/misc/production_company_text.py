@@ -1,11 +1,19 @@
 """Production-company-specific text normalization and tokenization.
 
 Wraps the shared `normalize_string` and `tokenize_title_phrase` helpers with
-the "ordinal number-to-word" rule called for by the v2 studio spec (D2 in
-search_improvement_planning/v2_search_data_improvements.md). The rule rewrites
-tokens like `20th` → `twentieth` and `21st` → `twenty-first` so the numeric
-and worded variants of `20th Century Fox` / `Twentieth Century Fox` collide
-to the same normalized key and the same token set.
+two digit-to-word rules called for by the v2 studio spec (D2 in
+search_improvement_planning/v2_search_data_improvements.md):
+
+- **Ordinal** number-to-word (`20th` → `twentieth`, `21st` → `twenty-first`)
+  so `20th Century Fox` / `Twentieth Century Fox` collide to the same key.
+- **Cardinal** number-to-word for pure-numeric tokens in [0, 99]
+  (`Section 8 Productions` → `section eight productions`, `Studio 01` →
+  `studio one`) so small numbers that users plausibly type either form match
+  either way. Numbers ≥ 100 stay in digit form since year-like numbers
+  (`Fox 2000`, `Studio 100`) are never spelled out by users.
+
+Also drops lone-hyphen tokens (from names shaped like `X - Y Productions`)
+during tokenization — a bare `-` carries no matching signal.
 
 Applied at both ingest time (when stamping `lex.production_company` rows) and
 query time (when resolving the freeform studio path), preserving the
@@ -56,20 +64,81 @@ def _ordinal_sub(match: re.Match[str]) -> str:
     return word if word is not None else match.group(0)
 
 
+# Cardinal word forms for 0–19. Tens (20, 30, ...) and their compounds
+# (21 = `twenty-one`, etc.) are derived from `_CARDINAL_TENS`. We cap at
+# 99 because: (a) users rarely type three-digit numbers as words, and
+# (b) year-like numbers (`1984`, `2000`) embedded in company names should
+# stay in digit form — converting `Fox 2000` to `Fox two thousand` adds
+# unnatural tokens that query-side users would never produce.
+_CARDINAL_ONES: dict[int, str] = {
+    0: "zero",       1: "one",        2: "two",        3: "three",
+    4: "four",       5: "five",       6: "six",        7: "seven",
+    8: "eight",      9: "nine",       10: "ten",       11: "eleven",
+    12: "twelve",    13: "thirteen",  14: "fourteen",  15: "fifteen",
+    16: "sixteen",   17: "seventeen", 18: "eighteen",  19: "nineteen",
+}
+_CARDINAL_TENS: dict[int, str] = {
+    2: "twenty", 3: "thirty",  4: "forty",  5: "fifty",
+    6: "sixty",  7: "seventy", 8: "eighty", 9: "ninety",
+}
+
+# Match any purely-numeric run bounded by non-word characters. Leading
+# zeros (`01`) are captured by `\d+` and collapsed to the integer value
+# before lookup, so `Studio 01` and `Studio 1` both resolve to `one`.
+# Cardinal substitution runs AFTER ordinal substitution, so `20th` has
+# already become `twentieth` by the time this regex runs and will not
+# match its leftover digits here.
+_CARDINAL_RE = re.compile(r"\b(\d+)\b")
+
+
+def _cardinal_to_word(n: int) -> str | None:
+    """Return the English word form for cardinal `n` in [0, 99], else None.
+
+    Compounds use hyphens (`twenty-one`), matching the ordinal dict's
+    convention. The tokenizer later splits on hyphens, so `twenty-one`
+    contributes `{twenty-one, twenty, one}` to the token set — maximizing
+    matching against both hyphenated and space-separated query variants.
+    """
+    if n < 0 or n > 99:
+        return None
+    if n < 20:
+        return _CARDINAL_ONES[n]
+    tens, ones = divmod(n, 10)
+    if ones == 0:
+        return _CARDINAL_TENS[tens]
+    return f"{_CARDINAL_TENS[tens]}-{_CARDINAL_ONES[ones]}"
+
+
+def _cardinal_sub(match: re.Match[str]) -> str:
+    """Regex replacement: map a pure-numeric token to its word form when in
+    range, else leave it unchanged so large numbers (years, quantities) keep
+    their digit form."""
+    number = int(match.group(1))
+    word = _cardinal_to_word(number)
+    return word if word is not None else match.group(0)
+
+
 def normalize_company_string(raw: str) -> str:
     """Normalize an IMDB `production_companies` string for dictionary lookup.
 
     Applies the shared `normalize_string` rules (lowercase, diacritic fold,
-    punctuation strip, whitespace collapse; preserves hyphens) and then
-    rewrites every ordinal like `20th` to its word form (`twentieth`). This
-    ensures `20th Century Fox` and `Twentieth Century Fox` normalize to the
-    same key and therefore collapse into a single `lex.production_company`
-    row.
+    punctuation strip, whitespace collapse; preserves hyphens), then
+    rewrites ordinals (`20th` → `twentieth`) and pure-numeric cardinals in
+    [0, 99] (`8` → `eight`, `01` → `one`, `20` → `twenty`). Together these
+    collapse digit/word variants like `20th Century Fox` / `Twentieth Century
+    Fox` and `Section 8 Productions` / `Section Eight Productions` into the
+    same normalized key (and the same token set for the freeform path).
+
+    Ordinal substitution runs before cardinal substitution so the digit
+    portion of `20th` is consumed by the ordinal rule and never seen by the
+    cardinal rule.
     """
     base = normalize_string(raw)
     if not base:
         return ""
-    return _ORDINAL_RE.sub(_ordinal_sub, base)
+    base = _ORDINAL_RE.sub(_ordinal_sub, base)
+    base = _CARDINAL_RE.sub(_cardinal_sub, base)
+    return base
 
 
 def tokenize_company_string(raw: str, *, already_normalized: bool = False) -> list[str]:
@@ -91,4 +160,10 @@ def tokenize_company_string(raw: str, *, already_normalized: bool = False) -> li
     normalized = raw if already_normalized else normalize_company_string(raw)
     if not normalized:
         return []
-    return tokenize_title_phrase(normalized, already_normalized=True)
+    tokens = tokenize_title_phrase(normalized, already_normalized=True)
+    # Guard against lone-hyphen tokens from names like ``X - Y Productions``,
+    # where normalize_string preserves ``-`` as a character and the ``- ``
+    # between words survives whitespace-splitting as a standalone ``-`` token.
+    # A bare hyphen carries no matching signal; dropping it keeps studio_token
+    # clean without altering the shared title tokenizer's behavior.
+    return [t for t in tokens if t.replace("-", "")]

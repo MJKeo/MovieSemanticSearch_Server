@@ -76,6 +76,7 @@ from db.postgres import (
     upsert_movie_card,
     batch_upsert_movie_awards,
     refresh_title_token_doc_frequency,
+    refresh_studio_token_doc_frequency,
     refresh_movie_popularity_scores,
     fetch_movie_ids_missing_card,
 )
@@ -1335,6 +1336,7 @@ async def cmd_ingest(
         if cumulative_ingested > 0:
             print("\nRefreshing materialized views...")
             await refresh_title_token_doc_frequency()
+            await refresh_studio_token_doc_frequency()
             await refresh_movie_popularity_scores()
             print("Materialized views refreshed.")
 

@@ -865,6 +865,20 @@ async def refresh_title_token_doc_frequency() -> None:
     )
 
 
+async def refresh_studio_token_doc_frequency() -> None:
+    """
+    Refresh the lex.studio_token_doc_frequency materialized view concurrently.
+
+    Called after each bulk ingest so DF-ceiling stop-word filtering on the
+    freeform studio path reflects the latest (token, production_company_id)
+    rows. CONCURRENTLY avoids blocking reads during rebuild (requires the
+    unique index idx_studio_token_df_token on the view).
+    """
+    await _execute_write(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.studio_token_doc_frequency;"
+    )
+
+
 async def refresh_movie_popularity_scores(
     *,
     threshold: float = 0.70,

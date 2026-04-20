@@ -295,6 +295,26 @@ Applied symmetrically at ingest and query time:
    `twenty-first`, `1st` → `first`, `2nd` → `second`, ... This
    makes `20th Century Fox` (19 tags) match `Twentieth Century
    Fox` (1,361 tags), the dominant form in IMDB.
+6. **Cardinal number-to-word** for pure-numeric tokens with
+   integer value in [0, 99]: `Section 8 Productions` →
+   `section eight productions`, `Studio 01` → `studio one`,
+   `Unit 9` → `unit nine`. Leading-zero variants are collapsed
+   (`01` and `1` both resolve to `one`) by parsing to int before
+   lookup. Numbers ≥ 100 and non-pure-numeric tokens (`20mm`,
+   `A24`, `se7en`) are left untouched — year-like numbers in
+   names (`Fox 2000 Pictures`, `Studio 100`) stay in digit form
+   because users never spell them out, and converting them would
+   produce unnatural tokens that only hurt recall. Ordinal
+   substitution runs first so the digit portion of `20th` is
+   consumed before the cardinal rule sees it. Compound cardinals
+   use hyphens (`twenty-one`), matching the ordinal convention;
+   the tokenizer splits on hyphens so `twenty-one` contributes
+   `{twenty-one, twenty, one}` to the token set.
+
+   **Shared rule.** The same ordinal + cardinal (0–99,
+   pure-numeric) normalization is used for awards and for
+   franchise lineage / shared-universe / subgroup names — see
+   those sections' Normalization Rules blocks.
 
 **Tokenization splits on whitespace AND hyphens.** This differs
 from any title-side tokenizer that does not hyphen-split — flag
@@ -302,12 +322,14 @@ to keep in mind when auditing normalization symmetry.
 `Metro-Goldwyn-Mayer` tokenizes to `{metro, goldwyn, mayer}`,
 which lets a user typing "metro goldwyn mayer" match
 `Metro-Goldwyn-Mayer Cartoon Studios` (a variant that has no
-embedded "mgm" token).
+embedded "mgm" token). Bare lone-hyphen tokens that survive
+whitespace-splitting from names shaped like `X - Y Productions`
+are dropped — a standalone `-` carries no matching signal.
 
 **Out of scope:** Roman numerals (no major studio uses them
 in a way that affects retrieval), compound-word splitting
 (IMDB is consistent one-word on `DreamWorks`, etc.),
-abbreviation expansion beyond ordinals.
+abbreviation expansion beyond ordinals and cardinals 0–99.
 
 ## DF Ceiling Determination
 
@@ -964,20 +986,906 @@ token-index fallback.
 
 ## Summary Comparison
 
-| Endpoint | Axis | Current state | Closed-enum equivalent? |
-|----------|------|---------------|--------------------------|
-| Studio | production_company | Brand registry + time-bounded membership + token index (this doc) | ✓ solved |
-| Franchise | lineage / shared_universe / subgroups | Freeform text, exact match after normalize_string | None — still at risk |
-| Awards | ceremony | Closed enum (AwardCeremony), registry-driven prompt | ✓ solved |
-| Awards | category | Closed 3-level taxonomy (CategoryTag), GIN overlap | ✓ solved |
-| Awards | award_name | Raw IMDB surface form, exact match, no normalize | None — still at risk |
+| Endpoint | Axis | Current state | Resolution plan |
+|----------|------|---------------|------------------|
+| Studio | production_company | Brand registry + time-bounded membership + token index | `Studio Entity Resolution` above |
+| Franchise | lineage / shared_universe / subgroups | Freeform text, exact match after `normalize_string` | `Franchise Resolution` below — combined-column entry-id arrays + token index |
+| Awards | ceremony | Closed enum (AwardCeremony), registry-driven prompt | ✓ already solved |
+| Awards | category | Closed 3-level taxonomy (CategoryTag), GIN overlap | ✓ already solved |
+| Awards | award_name | Raw IMDB surface form, exact match, no normalize | `Award Name Resolution` below — symmetric normalization + token index + ceremony scoping |
 
-Franchise and award_name are the two remaining stage-3 axes where
-the query side is expected to guess a string the ingest side
-wrote. Both warrant the same treatment that studios, award
-categories, and award ceremonies have already received: move the
-canonical form into data, not into two prompts' independent best
-guesses.
+Franchise and award_name are the two remaining stage-3 axes with
+the query-side-guesses-what-ingest-wrote problem. Both are
+addressed below by the same token-index pattern the studio
+resolver uses, simplified for each endpoint's structure. Neither
+uses a registry: award_name leans on the already-closed
+ceremony enum for disambiguation, and franchise's open-vocabulary
+space is too large to maintain as a closed enum — the ingest-side
+canonical-naming rules plus token intersection carry the
+retrieval.
+
+---
+
+# Award Name Resolution
+
+## Context
+
+`public.movie_awards.award_name` currently stores the raw IMDB
+surface form (`.strip()` only), and stage-3 retrieval uses exact
+string equality — see
+[award_query_execution.py:62-83](search_v2/stage_3/award_query_execution.py#L62-L83).
+This fails every time the query-side LLM emits a surface form that
+doesn't match what IMDB stored: straight-vs-curly apostrophes on
+`Palme d'Or`, `Critics Week Grand Prize` vs `Critics' Week Grand
+Prize`, `BAFTA Award` vs `BAFTA Film Award`, etc. The 12-entry
+surface-form registry in
+[schemas/award_surface_forms.py](schemas/award_surface_forms.py)
+covers flagship prizes only; everything outside it relies on the
+LLM reproducing IMDB's exact string from memory.
+
+The fix ports the freeform half of the studio resolver —
+symmetric normalization + a token-inverted index + within-name
+intersection / across-name union — without the registry /
+brand-path overhead. The ceremony axis is already a closed enum
+(`AwardCeremony`); scoping posting-list lookups by ceremony is
+enough to kill cross-festival homonyms ("Grand Jury Prize" at both
+Cannes and Sundance) that a brand-style registry would otherwise
+be needed for.
+
+Data shape (empirical):
+
+- 588 distinct `award_name` strings across 12 ceremonies.
+- 7 ceremonies have ≤7 distinct names (Oscar, Golden Globe, SAG
+  Actor, Razzie, Indie Spirit, Gotham, BAFTA-TV-adjacent) —
+  trivial for the LLM to get right.
+- 4 festival ceremonies (Cannes, Venice, Berlin, Sundance) have
+  130–260 distinct names each — this is where surface-form drift
+  lives and where the token index earns its keep.
+- 174 singletons in the long tail.
+
+## Design Principles
+
+1. **Symmetric normalization replaces the registry.** Both ingest
+   and query tokenize the same way and drop the same stopwords.
+   The LLM emits the *official* form of the prize, not the exact
+   IMDB string.
+2. **Ceremony scoping replaces deterministic brand routing.**
+   When the ceremony channel has resolved a `ceremony_id`, the
+   award token lookup is intersected with entries from that
+   ceremony. Homonymous prize names across festivals can't leak.
+3. **Specificity comes from the user, not the LLM.** The prompt
+   instructs the LLM to emit the base prize name (`"palme d'or"`)
+   NOT overly specific sub-variants (`"palme d'or - best short
+   film"`) unless the user asked for the sub-variant. Token
+   intersection then greedily matches all sibling variants of a
+   prize family, which is the right default for umbrella queries.
+4. **No registry, no alias table, no per-ceremony curation.** The
+   token index is auto-built from the existing 588 distinct
+   `award_name` strings. New prize names picked up on future
+   scrapes enter the index on the next ingest.
+
+## Data Model
+
+```
+award_name_entry
+  id            PK
+  raw_name      TEXT        -- exact IMDB surface form
+  normalized    TEXT        -- after normalize_string
+  ceremony_id   SMALLINT    -- which ceremony uses this string
+  UNIQUE (raw_name, ceremony_id)
+
+award_name_token
+  token                   TEXT
+  award_name_entry_id     INT FK
+  PRIMARY KEY (token, award_name_entry_id)
+
+-- movie_awards keeps its raw award_name column; a new
+-- award_name_entry_id FK is added for deterministic join-back
+-- after token resolution.
+ALTER TABLE movie_awards
+  ADD COLUMN award_name_entry_id INT REFERENCES award_name_entry(id);
+```
+
+**award_name_entry** — one row per distinct `(raw_name,
+ceremony_id)` pair. Ceremony is part of the key because the same
+string ("Grand Jury Prize", "Jury Prize") is legitimately
+different at different festivals.
+
+**award_name_token** — inverted index. GIN index on `token`.
+
+**movie_awards.award_name_entry_id** — foreign key onto the entry
+table, written once at ingest. Retrieval runs `token → entry_ids
+→ movies` in two indexed steps rather than dragging raw strings
+around.
+
+## Ingestion Pipeline
+
+### Stage A — Populate `award_name_entry`
+
+Sweep distinct `(award_name, ceremony_id)` pairs from
+`movie_awards`. Insert one row per pair. Apply `normalize_string`
+(same rules used at query time) to produce `normalized`. Upsert
+semantics so re-running adds new strings without disturbing
+existing rows.
+
+Backfill `award_name_entry_id` on every row in `movie_awards` via
+the `(raw_name, ceremony_id)` key. One-time backfill; subsequent
+ingests resolve new rows against the entry table directly.
+
+### Stage B — Tokenize
+
+For every `award_name_entry`:
+
+1. Tokenize `normalized` on whitespace AND hyphens (same rule as
+   studio and title).
+2. Drop tokens in the award-domain stoplist:
+   `{award, awards, prize, prizes, film, films, best, for, of, the,
+     a, an, and, special, honorary}`
+   (refine empirically after the first full ingest).
+3. Write surviving `(token, award_name_entry_id)` pairs to
+   `award_name_token`. DF floor 1.
+
+No DF ceiling applied yet. Bucket distribution will be inspected
+after the full ingest and a ceiling (if any) picked empirically
+— same decision procedure as the studio DF Ceiling
+Determination, deferred to post-ingestion.
+
+### Stage C — Index
+
+GIN index on `award_name_token.token`. Secondary btree on
+`award_name_entry_id` for reverse lookups / debugging.
+
+## Query-Time Resolution
+
+The stage-3 award translator emits:
+
+```python
+class AwardQuerySpec(BaseModel):
+    thinking: str                 # scope reasoning
+    award_names: list[str]        # up to 3 official forms
+    # ceremony_id, outcome, year handled by existing fields
+```
+
+**Prompt contract:**
+
+- Emit the **official base form** of the prize — `"Palme d'Or"`,
+  `"Oscar"`, `"Golden Lion"`, `"Grand Jury Prize"`. Lowercase,
+  diacritics, and punctuation don't matter — normalization will
+  handle them.
+- Do NOT emit overly specific sub-variants (`"Palme d'Or - Best
+  Short Film"`, `"Silver Berlin Bear - Honorable Mention"`)
+  unless the user explicitly asked for the sub-variant. Token
+  intersection will sweep sibling variants naturally for umbrella
+  queries.
+- Emit multiple `award_names` only when the user genuinely named
+  different prizes ("Oscar or Golden Globe winners") or when IMDB
+  uses meaningfully different forms that don't share tokens after
+  stoplist filtering.
+- `thinking` field comes first and must commit scope (umbrella
+  prize vs specific sub-variant) before `award_names` is filled.
+
+### Step 1 — Normalize and tokenize each name
+
+Apply `normalize_string`. Tokenize on whitespace AND hyphens.
+Drop stoplist tokens. If all tokens drop, the name contributes
+nothing.
+
+### Step 2 — Posting-list lookup
+
+For each surviving token, fetch posting list from
+`award_name_token`. **Intersect posting lists within the name**
+→ `award_name_entry_id` set.
+
+If the parallel ceremony channel has resolved `ceremony_id`
+values, filter each entry set to entries whose `ceremony_id` is
+in the resolved set. Kills Cannes-vs-Sundance homonyms without
+any extra rules.
+
+### Step 3 — Union across names
+
+Across `award_names`, union the per-name entry-id sets.
+
+### Step 4 — Resolve to movies
+
+```sql
+SELECT movie_id FROM movie_awards
+WHERE award_name_entry_id = ANY(:entry_ids)
+```
+
+Combined with the existing filters on `ceremony_id`,
+`category_tag_ids`, `outcome_id`, and `year` that the rest of the
+award endpoint already emits.
+
+### Step 5 — No further fallbacks
+
+If token resolution returns empty, the award channel contributes
+nothing. Vector and metadata channels carry the search.
+
+## Normalization Rules
+
+Applied symmetrically at ingest and query. **This supersedes the
+"deliberately do not normalize" comment in
+`award_query_execution.py`** — the risk that comment calls out
+(silent coercion of mismatched pairs) is real but the current
+cost (no case-fold, no apostrophe fold, no diacritic strip) is
+strictly worse.
+
+1. Lowercase.
+2. Diacritic-fold (NFKD → strip combining marks) — handles
+   `Spéciale`, `d'Or` with combining acute, etc.
+3. Strip punctuation (`.`, `,`, `:`, `;`, `'`, `"`, `(`, `)`, `-`,
+   `/`, etc.) — folds straight and curly apostrophes to nothing
+   (`Palme d'Or` U+0027 vs U+2019 both → `palme dor`), and fixes
+   the `Critics Week Grand Prize` / `Critics' Week Grand Prize`
+   variant split.
+4. Collapse whitespace.
+5. Ordinal number-to-word (shared with studio/title) — future-
+   proofing against IMDB prize names that acquire ordinals.
+6. **Cardinal number-to-word** for pure-numeric tokens with
+   integer value in [0, 99] (shared with studio and franchise).
+   Same bounds and rationale as the studio rule — see Studio
+   Normalization Rules. Applied here so award strings like
+   `8th Annual Critics' Week Grand Prize` (ordinal path) and
+   hypothetical future prize variants with bare numbers (`Award
+   8`) stay symmetric with query-side phrasings.
+
+**Tokenization: whitespace AND hyphens**, same as studio / title.
+
+## Edge Cases
+
+### Flagship prize with sub-variants (Palme d'Or)
+
+Query: "Palme d'Or winners".
+```
+LLM: award_names = ["palme d'or"]
+Normalize → "palme dor"
+Tokenize → {palme, dor}
+Intersect → entries: {Palme d'Or, Palme d'Or - Best Short Film,
+                      Palme d'Or Spéciale}
+```
+All sibling variants returned — umbrella intent satisfied. If the
+user asked "Palme d'Or Best Short Film", LLM emits that narrower
+form; tokens `{palme, dor, short}` (after `best`/`film` stoplist
+drop) intersect to only the short-film entry.
+
+### Apostrophe / punctuation variant
+
+`Critics Week Grand Prize` (44) vs `Critics' Week Grand Prize`
+(39) normalize identically to `critics week grand prize`. Two
+separate `award_name_entry` rows (raw strings differ) but
+identical token posting lists, so any "Critics Week Grand Prize"
+query retrieves both.
+
+### Cross-festival homonym (Grand Jury Prize)
+
+Cannes has `Jury Prize` (66); Sundance has `Grand Jury Prize`
+(1,276). When the ceremony channel resolves
+`ceremony_id=SUNDANCE`, posting-list lookups filter to Sundance
+entries only.
+
+### Long-tail festival prize
+
+`Waldo Salt Screenwriting Award` (37, Sundance only). LLM emits
+`"waldo salt screenwriting award"`. Tokens `{waldo, salt,
+screenwriting}` (after `award` stoplist drop) → single entry.
+Works without any curation.
+
+### LLM emits wrong form (BAFTA vs BAFTA Film Award)
+
+User: "BAFTA winners". LLM emits any of `"bafta"`, `"bafta
+award"`, `"bafta film award"`. After stoplist drops
+`award`/`film`, all collapse to `{bafta}` → entries covering
+`BAFTA Film Award`, `BAFTA TV Award`, `BAFTA Children's Award`.
+Ceremony scoping plus the rest of the query (category, year)
+narrows.
+
+### IMDB surface-form inconsistency
+
+If IMDB rescrape introduces a new variant, each becomes its own
+`award_name_entry` row and enters the token index on the next
+Stage A+B pass. No manual reconciliation.
+
+### Historically distinct prizes (Grand Prize of the Festival vs
+### Palme d'Or)
+
+Cannes's pre-1955 `Grand Prize of the Festival` is a *different*
+prize from the post-1955 `Palme d'Or`, not a rename — IMDB treats
+them as distinct and so do we. Token sets are disjoint after
+stoplist (`{grand, festival}` vs `{palme, dor}`), so the two
+don't bridge. A user naming one doesn't get the other. Correct
+behavior.
+
+### Deep-cult historical prize
+
+`Mussolini Cup` (130 tags, early Venice prize). LLM emits the
+name; tokens `{mussolini, cup}` hit the entry directly. Works
+without curation.
+
+## Worked Examples
+
+### Example 1 — "Oscar winners"
+
+```
+thinking: "Single flagship ceremony prize; Oscar is the base form."
+award_names: ["oscar"]
+→ tokens {oscar}
+→ entries (ceremony=OSCAR): {Oscar, Oscars Cheer Moment,
+                             Oscars Fan Favorite}
+→ all Oscar-tagged movie_awards rows.
+```
+
+### Example 2 — "Palme d'Or winners"
+
+```
+thinking: "Cannes flagship prize; base form is Palme d'Or."
+award_names: ["palme d'or"]
+→ normalize "palme dor" → tokens {palme, dor}
+→ entries (ceremony=CANNES): {Palme d'Or, Palme d'Or - Best Short
+                               Film, Palme d'Or Spéciale}
+→ 1262 + 44 + 1 = 1307 award rows.
+```
+
+### Example 3 — "Sundance Grand Jury Prize"
+
+```
+thinking: "Sundance's top prize; ceremony resolved separately."
+award_names: ["grand jury prize"]
+→ tokens {grand, jury} (prize in stoplist)
+→ entries (ceremony=SUNDANCE): {Grand Jury Prize, Short Film Grand
+                                 Jury Prize, World Cinema Grand
+                                 Jury Prize}
+```
+
+### Example 4 — "Critics Week Grand Prize"
+
+```
+thinking: "Cannes Critics' Week top prize."
+award_names: ["critics week grand prize"]
+→ tokens {critics, week, grand}
+→ entries (ceremony=CANNES): {Critics Week Grand Prize,
+                               Critics' Week Grand Prize}
+Both sides of the apostrophe split covered.
+```
+
+### Example 5 — User asked for a specific sub-variant
+
+```
+User: "Best Short Film at Cannes"
+thinking: "User named the short-film sub-variant explicitly."
+award_names: ["palme d'or best short film"]
+→ tokens {palme, dor, short} (best/film in stoplist)
+→ entries (ceremony=CANNES): {Palme d'Or - Best Short Film}
+Specificity preserved — main Palme d'Or correctly excluded.
+```
+
+## Open Decisions
+
+1. **DF ceiling.** Deferred until post-ingestion. After Stage B
+   runs on the full `movie_awards` table, inspect bucket
+   distribution and decide whether any ceiling is needed. Award
+   tokens are much less frequent than studio tokens — the problem
+   may be moot.
+2. **Stoplist evolution.** Start with the list above; extend
+   empirically after the first bucket review. Watch for
+   non-English residuals in Venice / Cannes / Berlin prize names.
+3. **Ceremony-scoping precedence.** Proposed as a hard filter when
+   the ceremony channel has resolved one. If that channel returns
+   empty, fall through to unscoped token lookup. Confirm after
+   evaluation whether this is the right default.
+
+---
+
+# Franchise Resolution
+
+## Context
+
+`public.movie_franchise_metadata` stores `lineage` and
+`shared_universe` as independent TEXT columns and
+`recognized_subgroups` as `TEXT[]`. Stage-3 retrieval does strict
+string equality on each — see
+[fetch_franchise_movie_ids](db/postgres.py#L1897). The failure
+mode is documented in the Related Endpoints analysis: two LLMs
+run months apart on different movies produce subtly different
+canonical strings for the same concept, and exact match misses.
+
+The fix ports the freeform half of the studio resolver —
+symmetric normalization + token inverted index — with four
+franchise-specific adjustments:
+
+1. **Lineage and shared_universe are one search space, not two.**
+   The ingest-side LLM sometimes places a franchise name in
+   `lineage` and sometimes in `shared_universe` depending on
+   scope judgment. The retrieval path must not require the
+   query-side LLM to predict which column the stored name landed
+   in. The two columns are preserved on the row for debugging and
+   non-search consumers, but the search-time representation
+   unions their entry ids into a single array.
+2. **No registry, no enum.** The lineage / universe space is
+   unbounded and grows with every new franchise. Maintenance cost
+   of a closed enum outweighs the benefit; the token index
+   handles umbrella and specific queries uniformly.
+3. **Subgroups match by token intersection.** Currently exact
+   match; promoted to the same token-intersection treatment as
+   the combined lineage/universe field, which cleans up
+   `phase 1` ↔ `phase one` / `snyderverse` ↔ `snyder-verse`
+   style drift.
+4. **DF ceiling replaces the stoplist.** Non-discriminative
+   tokens — structural filler (`the`, `of`) and domain boilerplate
+   (`universe`, `saga`, `trilogy`) — are dropped by a single
+   data-driven rule rather than a hand-curated list. The ceiling
+   is picked empirically from the post-ingest DF distribution,
+   and the same rule applies symmetrically at ingest and query.
+
+## Design Principles
+
+1. **Decouple lineage vs shared_universe at retrieval time.**
+   Search matches against `franchise_name_entry_ids`, the union
+   of the two columns' entry ids. A franchise name hits regardless
+   of which column the ingest LLM chose.
+2. **Symmetric normalization on both sides.** Reuse
+   `normalize_string` + the shared ordinal and cardinal
+   number-to-word rules defined on the studio side. Cardinal
+   conversion (pure-numeric tokens 0–99) is what gets the
+   `phase 1` ↔ `phase one` and `fast 2 furious` ↔ `fast two
+   furious` cases across both ingest and query.
+3. **Specificity via multi-token intersection.** Same rule as
+   studios — multi-token names narrow; single-token names sweep
+   the family.
+4. **No registry, no alias table.** The ingest-side
+   canonical-naming rules in
+   [prompts/franchise.py](movie_ingestion/metadata_generation/prompts/franchise.py)
+   already constrain emission. Token intersection forgives the
+   residual orthographic drift.
+
+## Data Model
+
+```
+franchise_entry
+  id          PK
+  normalized  TEXT UNIQUE   -- post-normalization canonical form;
+                            -- the only key used at search time
+
+franchise_token
+  token                  TEXT
+  franchise_entry_id     INT FK
+  PRIMARY KEY (token, franchise_entry_id)
+
+movie_franchise_metadata
+  movie_id                      BIGINT PK
+  lineage                       TEXT     -- kept for debug/analytics
+  shared_universe               TEXT     -- kept for debug/analytics
+  recognized_subgroups          TEXT[]   -- kept for debug/analytics
+  franchise_name_entry_ids      INT[]    -- UNION of lineage +
+                                         -- shared_universe entry ids
+                                         -- GIN-indexed, USED AT SEARCH
+  subgroup_entry_ids            INT[]    -- recognized_subgroups
+                                         -- entry ids. GIN-indexed.
+  -- lineage_position, is_spinoff, is_crossover, launched_subgroup,
+  -- launched_franchise unchanged
+```
+
+**franchise_entry** — one row per distinct **normalized** string
+seen across `lineage`, `shared_universe`, or any element of
+`recognized_subgroups`. Normalization runs symmetrically at ingest
+and query, so two columns whose raw strings differ only in casing
+or punctuation collapse to a single id here. Lineage, universe,
+and subgroup strings share this table: we never filter by where a
+string came from at retrieval time, so separating them buys
+nothing.
+
+**franchise_token** — inverted index. GIN index on `token`.
+
+**movie_franchise_metadata.franchise_name_entry_ids** — **union of
+the lineage entry id and the shared_universe entry id** for the
+movie. Two ids maximum (often one). This is the key
+simplification — at search time, we match against this array and
+don't care which column produced which id.
+
+**movie_franchise_metadata.subgroup_entry_ids** — one id per
+subgroup string on the movie.
+
+The original `lineage`, `shared_universe`, `recognized_subgroups`
+columns are preserved. They support debugging, movie-card
+display, other query paths (`is_spinoff` / `shared_universe`
+semantics), and re-ingestion if the index needs to be rebuilt.
+
+## Ingestion Pipeline
+
+### Stage A — Populate `franchise_entry`
+
+Sweep `movie_franchise_metadata`. For each non-null `lineage`,
+each non-null `shared_universe`, and each element of
+`recognized_subgroups`, compute `normalized` via the shared
+normalization rules and upsert a row in `franchise_entry` keyed
+on `normalized`. Strings from different source columns that
+collapse to the same normalized form resolve to the same row
+(and therefore the same id) — this is the point. The stored
+strings are already normalized at Stage-6 metadata generation
+time; recomputing here guarantees symmetry with query time
+regardless of drift between the Stage-6 prompt and the resolver.
+
+### Stage B — Compute Token Document Frequencies
+
+For every row in `franchise_entry`:
+
+1. Tokenize `normalized` on whitespace AND hyphens.
+2. For each token, increment a DF counter (one per distinct
+   `franchise_entry` — do not double-count repeats within a
+   single string).
+3. Write `(token, df)` to a working `token_frequency` table.
+
+DF is measured per `franchise_entry`, not per movie. No tokens
+are dropped at this stage — the ceiling is selected empirically
+in Stage C and applied in Stage D and at query time.
+
+### Stage C — Select the DF Ceiling
+
+Inspect the DF distribution produced in Stage B, same procedure
+as the studio DF Ceiling Determination section. The ceiling must
+cleanly separate discriminative franchise tokens (`marvel`,
+`conjuring`, `jackson`, `lotr`) from non-discriminative residue
+(`the`, `of`, `universe`, `saga`, `trilogy`, `collection`).
+Common high-DF candidates to verify are clustered above the
+ceiling: structural filler (`the`, `of`, `a`, `an`, `and`),
+domain boilerplate (`universe`, `cinematic`, `saga`, `trilogy`,
+`series`, `chronicles`, `collection`, `films`, `movies`).
+
+Starting guess to refine empirically once the distribution is in
+hand. The franchise corpus is much smaller than the studio one,
+so the numeric ceiling will differ — what transfers is the
+shape of the decision, not the value.
+
+### Stage D — Build `franchise_token`
+
+For every row in `franchise_entry`, tokenize again (same rules
+as Stage B), filter by `df <= ceiling`, and insert one row into
+`franchise_token` per surviving `(token, franchise_entry_id)`
+pair. DF floor is 1 — singletons included, which is what makes
+the long tail findable.
+
+Create a GIN index on `franchise_token.token`.
+
+### Stage E — Stamp movies
+
+For each movie:
+
+1. Resolve `lineage` (if non-null) and `shared_universe` (if
+   non-null) against `franchise_entry` via `normalized` →
+   up to two ids → write union to `franchise_name_entry_ids`.
+2. Resolve each element of `recognized_subgroups` → write to
+   `subgroup_entry_ids`.
+
+GIN indexes on both columns.
+
+### Stage F — Re-run cadence
+
+Re-run on new movie ingest. If the normalizer or DF ceiling
+changes, re-run Stages B–E across all movies (cheap; no LLM
+cost). Re-running does not require regenerating Stage-6
+metadata.
+
+## Query-Time Resolution
+
+The stage-3 franchise translator emits:
+
+```python
+class FranchiseQuerySpec(BaseModel):
+    thinking: str                         # scope reasoning
+    franchise_names: list[str]            # up to 3; covers lineage
+                                          # AND shared_universe
+                                          # (single combined space)
+    recognized_subgroups: list[str]       # up to 3 subgroup names
+    # structural flags + lineage_position unchanged
+```
+
+Key rename: `lineage_or_universe_names` → `franchise_names`,
+reflecting the combined search space.
+
+**Prompt contract:**
+
+- Each `franchise_names` entry is a surface form the ingest-side
+  LLM plausibly produced. Use the same canonical-naming rules
+  already codified in `prompts/franchise.py` (lowercase, digits
+  as words, abbreviation expansion where the expanded form is
+  common).
+- Emit the **broadest form** for umbrella queries (`"marvel
+  cinematic universe"`, `"the lord of the rings"`); emit the
+  **specific form** for narrow queries (`"doctor strange"`,
+  `"captain america"`). Same specificity-by-user-intent rule as
+  studios.
+- Up to 3 alternates only when there are genuinely different
+  canonical forms in wide use (`"marvel cinematic universe"` AND
+  `"marvel"`; `"the lord of the rings"` AND `"middle-earth"`).
+  Do not pad with spelling variants — normalization handles those.
+- `thinking` field comes first and must commit scope (umbrella
+  universe vs specific lineage vs sub-phase) before field values.
+
+### Step 1 — Normalize and tokenize each name
+
+For each `franchise_names` and each `recognized_subgroups`:
+
+1. Apply `normalize_string` + ordinal + cardinal number-to-word.
+2. Tokenize on whitespace AND hyphens.
+3. Drop tokens whose `DF > ceiling` (same ceiling selected in
+   Stage C, applied symmetrically here). If all tokens drop,
+   name contributes nothing.
+
+### Step 2 — Per-name intersection
+
+For each token in a name, fetch posting list from
+`franchise_token`. Intersect posting lists within the name →
+`franchise_entry_id` set.
+
+### Step 3 — Across-name union
+
+Union per-name entry-id sets separately for:
+
+- `franchise_names` → `franchise_entry_ids_A`
+- `recognized_subgroups` → `franchise_entry_ids_B`
+
+### Step 4 — Resolve to movies
+
+```sql
+SELECT movie_id FROM movie_franchise_metadata
+WHERE franchise_name_entry_ids && :franchise_entry_ids_A
+  AND (
+    :franchise_entry_ids_B = '{}'
+    OR subgroup_entry_ids && :franchise_entry_ids_B
+  )
+```
+
+`&&` is the GIN array-overlap operator. When both franchise names
+and subgroups are present the two constraints AND (user asked for
+"MCU Phase One movies" → must belong to MCU AND to Phase One).
+
+Structural flags (`is_spinoff`, `is_crossover`,
+`launched_subgroup`, `launched_franchise`) and `lineage_position`
+filter the result set via their existing columns, unchanged.
+
+### Step 5 — No further fallbacks
+
+If token resolution returns empty, the franchise channel
+contributes nothing.
+
+## Normalization Rules
+
+Shared with studio and title:
+
+1. Lowercase.
+2. Diacritic-fold (NFKD → strip combining marks).
+3. Strip punctuation.
+4. Collapse whitespace.
+5. Ordinal number-to-word (`phase 1st` → `phase first`) — shared
+   rule. Always on, both sides.
+6. **Cardinal number-to-word** for pure-numeric tokens with
+   integer value in [0, 99] (`phase 1` → `phase one`, `fast 2
+   furious` → `fast two furious`). Same shared rule as studio
+   and awards — bounds, leading-zero handling, and the "numbers
+   ≥ 100 stay as digits" carve-out all apply here identically.
+   Always on, both sides. Applies across lineage,
+   shared_universe, and subgroup name strings. The ingest prompt
+   already mandates word form, but we do not rely on that — the
+   normalizer is the source of truth, and running it symmetrically
+   removes any dependence on prompt discipline.
+
+**Tokenization: whitespace AND hyphens.** Same rule as studio and
+title.
+
+## Edge Cases
+
+### Ingest put the brand in one column, query emits the other
+
+Ingest wrote `shared_universe = "marvel cinematic universe"`,
+`lineage = "captain america"` for Captain America: The First
+Avenger. User asks "MCU movies" → LLM emits
+`franchise_names = ["marvel cinematic universe"]`. Token lookup
+resolves to the MCU entry id. The movie's
+`franchise_name_entry_ids` contains that id (from the
+`shared_universe` side of the union). Match. The fact that MCU
+came from `shared_universe` rather than `lineage` is invisible to
+the search path.
+
+### Stopword drift (the lord of the rings)
+
+Ingest wrote `"the lord of the rings"`, query LLM emits `"lord of
+the rings"`. `the` and `of` exceed the DF ceiling (they appear
+across a large fraction of `franchise_entry` rows) and are
+dropped on both sides. Both strings reduce to `{lord, rings}` and
+resolve to the same entry id.
+
+### Digit-vs-word drift (phase 1 vs phase one)
+
+Cardinal number-to-word normalization collapses both to `phase
+one` on both sides. Same entry id.
+
+### Hyphen-split drift (spider-man vs spider man)
+
+Ingest stores `"spider-man"` (prompt mandates x-men/spider-man
+stays hyphenated). Hyphen-split tokenizer → `{spider, man}`.
+Query `"spider-man"` or `"spider man"` both tokenize to `{spider,
+man}` → match. Query `"spiderman"` is one token `{spiderman}` and
+does not bridge — prompt discipline on the query side is the
+mitigation, matching what ingest does.
+
+### Subgroup fragmentation (phase one vs infinity saga)
+
+Both exist as distinct subgroup strings. Token intersection DOES
+NOT bridge them — they are legitimately different sub-phases.
+User asking "MCU phase one" gets phase-one movies; user asking
+"infinity saga" gets infinity-saga movies. If the ingest LLM
+inconsistently tagged the same movie with one vs the other,
+that's an ingest-side data-quality issue, not a retrieval issue.
+
+### Umbrella sweep (Marvel → Marvel Cinematic Universe)
+
+User: "Marvel movies". LLM emits `franchise_names = ["marvel
+cinematic universe", "marvel"]`. First tokens `{marvel}`
+(cinematic / universe dropped by DF ceiling); second tokens
+`{marvel}`.
+Posting list on `marvel` → entries whose normalized form has
+`marvel` as a discriminative token (`marvel cinematic universe`,
+`marvel comics`, `marvel knights`, etc.). Union → all
+Marvel-flavored entry ids. Matches MCU films plus other
+Marvel-stamped films.
+
+### Long-tail lineage with no universe
+
+User: "James Bond movies". Ingest wrote `lineage = "james bond"`,
+`shared_universe = null`. LLM emits `["james bond"]`. Tokens
+`{james, bond}` → Bond entry id. Movie's
+`franchise_name_entry_ids` contains it from the lineage side of
+the union.
+
+### Acronym that must expand (MCU)
+
+Ingest prompt canonicalizes `MCU` → `marvel cinematic universe`.
+Query-side prompt must do the same. If the query LLM emits
+`"mcu"` anyway, tokens `{mcu}` don't appear in any posting list.
+Prompt guidance is the mitigation; no code-level acronym
+expansion.
+
+### LLM emits wrong specificity
+
+User: "Marvel". LLM emits `["doctor strange"]` instead of
+`["marvel cinematic universe"]`. The `thinking` field catches
+most of these. When it doesn't, retrieval is too narrow; vector
+and metadata channels carry the search. Browsing UX absorbs the
+imprecision — same fallback philosophy as studios.
+
+### Franchise-names OR semantics when user wanted AND
+
+User: "Doctor Strange in the MCU". If the LLM emits both
+`["doctor strange", "marvel cinematic universe"]`, the
+across-name union produces OR semantics and retrieval is too
+broad (all MCU movies, not just Doctor Strange). **Mitigation
+lives in the prompt:** when the user names a specific lineage
+inside a universe, the LLM emits only the narrower form since
+every Doctor Strange film is already MCU. The `thinking` field
+commits this before field values.
+
+## Worked Examples
+
+### Example 1 — "Marvel movies"
+
+```
+thinking: "Broad umbrella. Use the universe form plus the bare
+           brand token."
+franchise_names: ["marvel cinematic universe", "marvel"]
+recognized_subgroups: []
+→ tokens collapse to {marvel} for both (cinematic / universe
+   dropped by DF ceiling)
+→ entries: {marvel cinematic universe, marvel comics,
+            marvel knights, ...}
+→ franchise_name_entry_ids && :ids
+→ all MCU movies plus other Marvel-stamped films.
+```
+
+### Example 2 — "Doctor Strange in the MCU"
+
+```
+thinking: "Narrow lineage inside a universe. Every Doctor Strange
+           film is MCU, so the narrow form alone suffices."
+franchise_names: ["doctor strange"]
+recognized_subgroups: []
+→ tokens {doctor, strange}
+→ single doctor strange entry id
+→ Doctor Strange films only.
+```
+
+### Example 3 — "MCU Phase One"
+
+```
+thinking: "Umbrella PLUS specific sub-phase."
+franchise_names: ["marvel cinematic universe"]
+recognized_subgroups: ["phase one"]
+franchise_entry_ids_A = [MCU id]
+franchise_entry_ids_B = [phase one id]
+SQL: franchise_name_entry_ids && [MCU]
+     AND subgroup_entry_ids && [phase one]
+→ Iron Man, Incredible Hulk, Iron Man 2, Thor, Captain America,
+  Avengers.
+```
+
+### Example 4 — "Lord of the Rings"
+
+```
+thinking: "Long-running franchise, umbrella query."
+franchise_names: ["the lord of the rings"]
+recognized_subgroups: []
+→ tokens {lord, rings} (the/of exceed DF ceiling, dropped)
+→ lord of the rings entry id
+→ Jackson trilogy (stored as lineage=the lord of the rings).
+```
+
+### Example 5 — Jackson-specific narrowing
+
+```
+User: "Jackson's LOTR trilogy"
+thinking: "Director-era subgroup named explicitly."
+franchise_names: ["the lord of the rings"]
+recognized_subgroups: ["jackson lotr trilogy"]
+subgroup tokens {jackson, lotr} (trilogy exceeds DF ceiling,
+                                  dropped)
+→ jackson lotr trilogy entry id
+→ Only Peter Jackson's LOTR films, not Bakshi animated, not the
+  Hobbit trilogy.
+```
+
+### Example 6 — Phase-number word/digit bridging
+
+```
+User: "Phase 1 Marvel movies"
+Cardinal normalization: "phase 1" → "phase one" on the query side.
+franchise_names: ["marvel cinematic universe"]
+recognized_subgroups: ["phase one"]
+Matches ingest-side stored "phase one" directly.
+```
+
+### Example 7 — Ingest stored the brand in shared_universe only
+
+```
+User: "Conjuring Universe movies"
+Ingest rows:
+  The Conjuring → lineage="the conjuring",
+                  shared_universe="conjuring universe"
+  Annabelle     → lineage="annabelle",
+                  shared_universe="conjuring universe"
+franchise_names: ["conjuring universe"]
+→ tokens {conjuring} (universe exceeds DF ceiling, dropped)
+→ entries: {the conjuring, conjuring universe}
+→ franchise_name_entry_ids && :ids
+  - The Conjuring ✓ (conjuring universe id present via shared_universe)
+  - Annabelle ✓ (conjuring universe id present via shared_universe)
+  - Nun, Curse of La Llorona, etc. ✓
+The combined-column representation is what makes this work —
+Annabelle's `lineage` is "annabelle" but its
+`franchise_name_entry_ids` includes the `conjuring universe` id
+from the `shared_universe` side.
+```
+
+## Open Decisions
+
+1. **DF ceiling value.** The ceiling itself is central to this
+   design, not deferred — it replaces the stoplist and is the
+   single knob controlling which tokens count as discriminative.
+   The numeric value is picked empirically after Stage B runs on
+   the full table (same procedure as the studio DF Ceiling
+   Determination section). The franchise corpus is smaller, so
+   the value will not be the studio value. Common tokens to
+   verify sit above the ceiling: `the`, `of`, `universe`,
+   `cinematic`, `saga`, `trilogy`, `series`, `collection`. Common
+   tokens to verify sit below: `marvel`, `conjuring`, `jackson`,
+   `lotr`, `snyderverse`.
+2. **`franchise_names` OR vs AND semantics.** Across-name union
+   is OR. For the specific "narrow lineage inside umbrella"
+   case, prompt discipline produces the right narrow form
+   alone. If evaluation shows this pattern misfires at scale,
+   consider a narrower-of-two selection rule in the resolver.
+3. **Rebuild-on-prompt-change.** When canonical-naming rules in
+   `prompts/franchise.py` change, stored ingest-side canonical
+   forms drift from new LLM emissions. Stages A–E rebuild the
+   index without regenerating Stage-6 metadata. Confirm this
+   workflow is cheap enough to re-run per prompt iteration.
 
 ---
 

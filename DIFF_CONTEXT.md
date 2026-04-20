@@ -1,6 +1,26 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## v2 search planning: fleshed-out Award Name + Franchise resolution plans
+Files: search_improvement_planning/v2_search_data_improvements.md
+
+### Intent
+Extended the v2 search data improvements doc (originally scoped to the studio resolver) with two new top-level design sections — `Award Name Resolution` and `Franchise Resolution` — porting the studio resolver's token-index approach to the two remaining stage-3 axes with the query-side-guesses-what-ingest-wrote problem.
+
+### Key Decisions
+- **No registry for either endpoint.** Studios' closed brand enum does not port. For award_name, the ceremony axis is already a closed enum and scoping posting-list lookups by ceremony substitutes for deterministic brand routing. For franchise, the open-vocabulary space (5,206 distinct lineages) is too large to maintain; ingest-side canonical-naming rules plus token intersection carry retrieval.
+- **Symmetric normalization supersedes the `award_query_execution.py:62-83` "do not normalize" comment.** Apostrophe/diacritic/case drift in IMDB's award surface forms creates silent misses; the comment's stated risk of masking mismatches is smaller than the cost of the current strict-eq behavior.
+- **Franchise lineage and shared_universe become one search array at retrieval time.** Per user direction: ingest-side LLM inconsistently places franchise names in one column or the other, so the query path must not require guessing which. `movie_franchise_metadata.franchise_name_entry_ids INT[]` holds the union; original TEXT columns preserved for debugging and non-search consumers.
+- **Subgroups promoted to token intersection.** Per user direction — exact match currently splits `phase 1`/`phase one`/`snyderverse`/`snyder-verse` variants.
+- **DF ceiling deferred for both** — decision made only after the first full ingest reveals the bucket distribution, matching how the studio design stages the same call.
+- **Franchise-only cardinal number-to-word rule** on top of the shared ordinal rule (studios/titles use ordinal-only); `phase 1 → phase one` is the motivating case.
+
+### Planning Context
+Builds on the studio resolver design at the top of the same document. User explicitly rejected registry-based proposals for both endpoints in favor of the studio freeform/token-index path minus the brand-path half. Corrected a factual error from my earlier response: `Grand Prize of the Festival` at Cannes (pre-1955) is a genuinely different prize from the `Palme d'Or`, not a rename — written into the edge-case section accordingly.
+
+### Testing Notes
+Planning-only changeset; no code. Implementation will span new DB tables (`award_name_entry`, `award_name_token`, `franchise_entry`, `franchise_token`) + column additions (`movie_awards.award_name_entry_id`, `movie_franchise_metadata.franchise_name_entry_ids`, `movie_franchise_metadata.subgroup_entry_ids`) + ingestion Stages A–C per endpoint + stage-3 query execution rewrites.
+
 ## Stage-3 semantic endpoint: query execution
 Files: search_v2/stage_3/semantic_query_execution.py (new), pyproject.toml
 
@@ -1143,3 +1163,27 @@ Apply fixes from the review of the previous entry: one critical bug (backfill po
 - Re-ran `ast.parse` across all modified files.
 - Smoke-tested `tokenize_company_string('20th Century Fox')` vs `tokenize_company_string('twentieth century fox', already_normalized=True)` — identical output, confirming the short-circuit path is safe.
 - Unit tests still unrun per the rule; the three existing test references to `batch_insert_studio_postings` remain as pending test-update work.
+
+## Add studio_token_doc_frequency materialized view
+Files: db/init/01_create_postgres_tables.sql, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py
+Why: Freeform studio path needs DF-ceiling stop-word filtering analogous to title_token_doc_frequency. Previously only the title axis had a token-frequency MV.
+Approach: Added `lex.studio_token_doc_frequency` MV (COUNT per token over `lex.studio_token`, which already enforces one row per (token, production_company_id) via PK, so COUNT per token = per-canonical-string DF as specified in v2_search_data_improvements.md). Unique index on `token` enables REFRESH CONCURRENTLY. Added `refresh_studio_token_doc_frequency()` in db/postgres.py mirroring the title version, and wired it into the post-ingestion refresh block in ingest_movie.py alongside the title and popularity refreshes.
+Design context: DF-per-canonical-string semantics per search_improvement_planning/v2_search_data_improvements.md §"Stage B — Compute Token Document Frequencies".
+Testing notes: Unit tests unrun per test-boundaries rule; existing test_postgres.py pattern for refresh_title_token_doc_frequency is the template.
+
+## Refresh studio_token_doc_frequency from backfill script
+Files: backfill_production_brands_and_companies.py
+Files: backfill_production_brands_and_companies.py | Call `refresh_studio_token_doc_frequency()` at the end of `_run_backfill` (before pool.close) so the one-shot backfill leaves the new MV populated without a manual follow-up step.
+
+## Wipe production data before rebuild in backfill script
+Files: backfill_production_brands_and_companies.py
+Why: Prior data in lex.production_company, lex.studio_token, lex.inv_production_brand_postings, and movie_card.production_company_ids was written with older normalization/tokenization rules and is considered wrong. Merging (ON CONFLICT DO NOTHING + DELETE-per-movie) would leave stale rows behind.
+Approach: Added `_wipe_production_data()` step that runs once at the top of `_run_backfill` (before tracker load). TRUNCATE order: studio_token → production_company (RESTART IDENTITY CASCADE) → inv_production_brand_postings; then bulk UPDATE movie_card SET production_company_ids = '{}'. All four statements share one transaction. Per-movie writes in the subsequent loop remain unchanged — the full rewrite + fresh company-id assignment gives every movie_card row clean data. Step numbering updated 1/4→1/5, with the wipe as step 2/5.
+Testing notes: Destructive operation; safe because the backfill fully rebuilds from tracker data and nothing outside these four sites references the wiped rows (FK is ON DELETE CASCADE; movie_card column is rewritten by the loop).
+
+## Cardinal number-to-word + lone-hyphen guard for studio normalization
+Files: implementation/misc/production_company_text.py, search_improvement_planning/v2_search_data_improvements.md
+Why: Spot-check of the production-brand backfill surfaced two disconnects between the implementation and the v2 studio spec. (1) `-` was appearing as a studio_token row because `normalize_string` preserves hyphens and names shaped like `X - Y Productions` leave a bare `-` after whitespace split. (2) Pure-numeric tokens like `8` or `20` were kept in digit form, which meant `Section 8 Productions` couldn't match a query typed as "section eight". The spec only mandated ordinal conversion (`20th` → `twentieth`) for studios, leaving the digit form of cardinal numbers unhandled.
+Approach: Extended `normalize_company_string` to chain a second regex pass after the existing ordinal pass, matching `\b\d+\b` and substituting word forms for integers in [0, 99]. Leading zeros (`01`) collapse via `int()` before lookup, so `Studio 01` and `Studio 1` produce the same token set. Capped at 99 — year-like numbers (`Fox 2000`, `Studio 100`) stay in digit form because users never spell them out, and converting them would add unnatural tokens. Compound cardinals use hyphens (`twenty-one`), matching the existing ordinal convention and piggy-backing on the tokenizer's hyphen-split to contribute `{twenty-one, twenty, one}`. The lone-hyphen guard is a post-tokenize filter in `tokenize_company_string` (`[t for t in tokens if t.replace("-", "")]`); kept scoped to the studio path so it doesn't change title tokenization behavior.
+Design context: Spec updated to describe cardinal conversion as a shared rule across studio, awards, and franchise Normalization Rules sections. Awards section previously only had ordinal; franchise already had cardinal but framed as franchise-specific — reframed as part of the shared rule with matching bounds and carve-outs. The franchise Design Principles bullet and Open Decisions #3 were reworded to match.
+Testing notes: Existing studio data was backfilled under the old rules and still has `-` tokens and digit-form small numbers in studio_token. A rebuild of `lex.production_company` / `lex.studio_token` is required for the new rules to take effect end-to-end — the backfill script is idempotent so a re-run should be sufficient. Unit coverage needed: `normalize_company_string` for `Section 8` / `Studio 01` / `Fox 2000` cases; `tokenize_company_string` for `X - Y Productions` and `Metro-Goldwyn-Mayer`.

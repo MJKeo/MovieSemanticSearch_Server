@@ -12,11 +12,17 @@ Pipeline:
      lex tables (production_company, studio_token, inv_production_brand_postings).
      IF NOT EXISTS throughout; no-op on fresh-init DBs that already got these
      from 01_create_postgres_tables.sql.
-  2. Enumerate movies from public.movie_card.
-  3. Read each movie's IMDB production_companies list and release_date from
+  2. Wipe every table/column the backfill writes — truncate lex.studio_token,
+     lex.production_company (RESTART IDENTITY CASCADE), and
+     lex.inv_production_brand_postings, and reset
+     movie_card.production_company_ids to '{}'. The prior data is treated as
+     wrong (normalization/tokenization rules have changed); merging would
+     leave stale rows behind.
+  3. Enumerate movies from public.movie_card.
+  4. Read each movie's IMDB production_companies list and release_date from
      the ingestion tracker SQLite (./ingestion_data/tracker.db) — same source
      Stage 8 ingestion reads from.
-  4. For each movie, call write_production_data — which writes brand
+  5. For each movie, call write_production_data — which writes brand
      postings, production_company rows, studio_token rows, and stamps
      production_company_ids onto movie_card.
 
@@ -39,7 +45,11 @@ from pathlib import Path
 import psycopg
 from dotenv import load_dotenv
 
-from db.postgres import pool, update_movie_card_production_company_ids
+from db.postgres import (
+    pool,
+    refresh_studio_token_doc_frequency,
+    update_movie_card_production_company_ids,
+)
 from movie_ingestion.final_ingestion.ingest_movie import write_production_data
 from movie_ingestion.tracker import TRACKER_DB_PATH
 
@@ -73,7 +83,7 @@ def _apply_schema_migrations() -> None:
     with _sync_connect() as conn:
         conn.autocommit = True
         with conn.cursor() as cur:
-            print("Step 1/4: applying schema migrations...")
+            print("Step 1/5: applying schema migrations...")
 
             cur.execute(
                 """
@@ -204,6 +214,49 @@ async def _load_movie_ids_from_card() -> list[int]:
     return [int(row[0]) for row in rows]
 
 
+async def _wipe_production_data() -> None:
+    """
+    Clear every table/column the backfill is about to rewrite.
+
+    The prior run(s) may have used different normalization or tokenization
+    rules, so stale rows in these tables (and stale id arrays on movie_card)
+    are treated as wrong rather than merge-able. The subsequent per-movie
+    loop rebuilds the data from the tracker's IMDB payload.
+
+    Ordering:
+      1. ``lex.studio_token`` — child of ``lex.production_company`` via
+         ON DELETE CASCADE. Truncate first so the parent truncate doesn't
+         have to drive the cascade.
+      2. ``lex.production_company`` — ``RESTART IDENTITY`` so reissued ids
+         start from 1 on the clean slate. No outside refs survive: the
+         only readers are ``studio_token`` (just wiped) and
+         ``movie_card.production_company_ids`` (reset in step 4).
+      3. ``lex.inv_production_brand_postings`` — rebuilt per-movie inside
+         ``write_production_data``, but a full truncate here also drops
+         postings for any movie that lost its ``movie_card`` row so no
+         orphaned rows linger.
+      4. ``public.movie_card.production_company_ids`` — bulk reset to
+         ``'{}'`` so any movie_card row the loop skips (none expected) is
+         left in a consistent empty state rather than pointing at
+         production_company ids that no longer exist.
+
+    All four statements run in a single transaction so a mid-wipe failure
+    cannot leave the schema half-cleared.
+    """
+    print("Step 2/5: wiping existing production data (tables + movie_card.production_company_ids)...")
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("TRUNCATE TABLE lex.studio_token")
+            await cur.execute("TRUNCATE TABLE lex.production_company RESTART IDENTITY CASCADE")
+            await cur.execute("TRUNCATE TABLE lex.inv_production_brand_postings")
+            await cur.execute(
+                "UPDATE public.movie_card SET production_company_ids = '{}' "
+                "WHERE production_company_ids <> '{}'"
+            )
+        await conn.commit()
+    print("  Production tables truncated and movie_card.production_company_ids reset.")
+
+
 async def _run_backfill() -> None:
     """
     Main async pass: iterate movies, run the production data writes + stamp.
@@ -219,15 +272,20 @@ async def _run_backfill() -> None:
     """
     await pool.open()
     try:
-        print("Step 2/4: loading tracker rows...")
+        # Wipe first so the per-movie loop runs on a clean slate — the old
+        # data is assumed wrong (different normalization / tokenization
+        # rules on the prior run) and merging would leave stale rows.
+        await _wipe_production_data()
+
+        print("Step 3/5: loading tracker rows...")
         tracker = _load_tracker_rows()
         print(f"  Loaded {len(tracker):,} imdb_data rows from tracker.")
 
-        print("Step 3/4: loading movie_card ids...")
+        print("Step 4/5: loading movie_card ids...")
         movie_ids = await _load_movie_ids_from_card()
         print(f"  Found {len(movie_ids):,} movies in public.movie_card.")
 
-        print(f"Step 4/4: backfilling brand/company data (batches of {COMMIT_EVERY})...")
+        print(f"Step 5/5: backfilling brand/company data (batches of {COMMIT_EVERY})...")
         total = len(movie_ids)
         processed = 0
         missing_tracker = 0
@@ -273,6 +331,14 @@ async def _run_backfill() -> None:
                 f"Note: {missing_tracker} movies had a movie_card row but no "
                 "imdb_data in the tracker — written with empty production data."
             )
+
+        # Refresh the studio-token DF materialized view so the freeform
+        # studio path's DF-ceiling stop-word filter reflects the newly
+        # written lex.studio_token rows. Done here (pool still open) so
+        # a fresh run doesn't require a separate follow-up step.
+        print("Refreshing lex.studio_token_doc_frequency...")
+        await refresh_studio_token_doc_frequency()
+
         print("Backfill complete.")
     finally:
         await pool.close()

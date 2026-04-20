@@ -310,3 +310,22 @@ GROUP BY term_id;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_title_token_df_term_id
   ON lex.title_token_doc_frequency (term_id);
+
+-- Materialized view used for DF-ceiling stop-word filtering in the freeform
+-- studio path. DF is measured per canonical production_company string — since
+-- lex.studio_token has PRIMARY KEY (token, production_company_id), a row
+-- count per token is exactly the number of distinct production companies
+-- containing that token. Query-side filters tokens whose doc_frequency
+-- exceeds the empirically-chosen ceiling (see
+-- search_improvement_planning/v2_search_data_improvements.md, "DF Ceiling
+-- Determination").
+CREATE MATERIALIZED VIEW IF NOT EXISTS lex.studio_token_doc_frequency AS
+SELECT
+  token,
+  COUNT(*)::BIGINT AS doc_frequency,
+  now()            AS updated_at
+FROM lex.studio_token
+GROUP BY token;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_studio_token_df_token
+  ON lex.studio_token_doc_frequency (token);
