@@ -57,6 +57,10 @@ from implementation.misc.franchise_text import (
     normalize_franchise_string,
     tokenize_franchise_string,
 )
+from implementation.misc.award_name_text import (
+    normalize_award_string,
+    tokenize_award_string,
+)
 from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_failures, batch_log_filter, PipelineStage
 from .brand_resolver import resolve_brands_for_movie
 from db.postgres import (
@@ -71,8 +75,10 @@ from db.postgres import (
     batch_insert_brand_postings,
     batch_insert_studio_tokens,
     batch_insert_franchise_tokens,
+    batch_insert_award_name_tokens,
     batch_upsert_production_companies,
     batch_upsert_franchise_entries,
+    batch_upsert_award_name_entries,
     batch_upsert_lexical_dictionary,
     batch_upsert_title_token_strings,
     batch_upsert_character_strings,
@@ -83,6 +89,7 @@ from db.postgres import (
     refresh_title_token_doc_frequency,
     refresh_studio_token_doc_frequency,
     refresh_franchise_token_doc_frequency,
+    refresh_award_name_token_doc_frequency,
     refresh_movie_popularity_scores,
     fetch_movie_ids_missing_card,
 )
@@ -653,8 +660,14 @@ async def ingest_movie_awards(movie: Movie, conn=None) -> None:
     """
     Upsert all award rows for a movie into public.movie_awards.
 
-    Filters to awards with known ceremony mappings and passes the
-    AwardNomination objects directly to batch_upsert_movie_awards.
+    Filters to awards with known ceremony mappings, resolves each raw
+    ``award_name`` to its ``lex.award_name_entry`` id (and writes the
+    corresponding token rows), then passes the AwardNomination objects
+    plus the aligned entry-id list to ``batch_upsert_movie_awards`` so
+    the entry id is stamped in the same INSERT as the rest of the row.
+    Doing the resolution inline here — rather than via a secondary
+    UPDATE — mirrors the production-company / franchise ingest pattern
+    and avoids a write-then-patch round trip.
 
     Args:
         movie: Movie object with populated ``imdb_data.awards``.
@@ -684,8 +697,52 @@ async def ingest_movie_awards(movie: Movie, conn=None) -> None:
         if existing is None or a.outcome.outcome_id < existing.outcome.outcome_id:
             best_by_key[key] = a
     deduped_awards = list(best_by_key.values())
+    if not deduped_awards:
+        return
 
-    await batch_upsert_movie_awards(movie_id, deduped_awards, conn=conn)
+    # --- Award-name entry + token resolution (freeform path) ---------
+    # Normalize each raw award_name once and memoize so the lookup used
+    # to build token rows is the same one used to build the
+    # per-award_name_entry_id list stamped on movie_awards below.
+    normalized_by_raw: dict[str, str] = {}
+    for a in deduped_awards:
+        if a.award_name in normalized_by_raw:
+            continue
+        normalized_by_raw[a.award_name] = normalize_award_string(a.award_name)
+
+    # Upsert the distinct normalized values. ``batch_upsert_award_name_entries``
+    # already drops empties and dedups internally, but we only pass
+    # non-empty normalized strings so the return map covers everything
+    # we care about.
+    unique_normalized = [n for n in normalized_by_raw.values() if n]
+    entry_id_map = await batch_upsert_award_name_entries(
+        unique_normalized, conn=conn,
+    )
+
+    # Emit (token, entry_id) rows for every distinct normalized string.
+    # Tokenize from the already-normalized form to skip a redundant
+    # normalize pass per token.
+    token_rows: set[tuple[str, int]] = set()
+    for normalized in set(unique_normalized):
+        eid = entry_id_map.get(normalized)
+        if eid is None:
+            continue
+        for token in tokenize_award_string(normalized, already_normalized=True):
+            token_rows.add((token, eid))
+    await batch_insert_award_name_tokens(list(token_rows), conn=conn)
+
+    # Build the per-award entry-id list aligned 1:1 with deduped_awards.
+    # ``None`` is a valid value for award names that normalize to an
+    # empty string (rare: punctuation-only names) — the column is
+    # nullable and query-side intersections simply skip those rows.
+    entry_ids: list[int | None] = []
+    for a in deduped_awards:
+        normalized = normalized_by_raw.get(a.award_name) or ""
+        entry_ids.append(entry_id_map.get(normalized) if normalized else None)
+
+    await batch_upsert_movie_awards(
+        movie_id, deduped_awards, entry_ids, conn=conn,
+    )
 
 
 # ================================
@@ -1479,6 +1536,7 @@ async def cmd_ingest(
             await refresh_title_token_doc_frequency()
             await refresh_studio_token_doc_frequency()
             await refresh_franchise_token_doc_frequency()
+            await refresh_award_name_token_doc_frequency()
             await refresh_movie_popularity_scores()
             print("Materialized views refreshed.")
 

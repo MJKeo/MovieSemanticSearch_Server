@@ -1,6 +1,36 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Award name resolution: ingest-side landing of the token-index plan
+Files: db/init/01_create_postgres_tables.sql, implementation/misc/award_name_text.py, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py, backfill_award_name_entries.py, docs/TODO.md
+
+### Intent
+Land the ingest-side half of the Award Name Resolution plan committed to search_improvement_planning/v2_search_data_improvements.md. After this change, every `public.movie_awards` row carries a resolved `award_name_entry_id` pointing at a normalized-form registry in `lex.award_name_entry`, and a token inverted index (`lex.award_name_token`) plus DF materialized view are in place ready for the stage-3 query-side cutover. The exact-string comparison in `search_v2/stage_3/award_query_execution.py` is intentionally unchanged — it continues to serve queries until the follow-up PR flips it over, and the "do not normalize" comment stays in place for now (TODO tracked).
+
+### Key Decisions
+- **Schema placement in `lex.`** (not `public.`). Aligns with `lex.production_company` / `lex.franchise_entry`; the plan doc's unqualified SQL was a doc-level omission, corrected per user confirmation.
+- **Entry table is `{id, normalized}` only — no `canonical_string`.** Studio and franchise entry tables duplicate the first-seen raw form for display, but `public.movie_awards.award_name` already preserves every raw form per-movie, so the extra column would be redundant. Normalized-only keeps the plan doc's intent verbatim.
+- **`INT` identity, not `BIGINT`.** ~600 distinct award-name strings observed today; `INT` is sufficient and matches the column width on `movie_awards.award_name_entry_id`.
+- **No FK from `movie_awards.award_name_entry_id` → `lex.award_name_entry`.** `movie_awards` is declared before the lex tables in `01_create_postgres_tables.sql`; adding the FK inline would create a forward reference. Matches the loose-reference convention already used for `ceremony_id`, `outcome_id`, and `category_tag_ids`.
+- **Inline resolution inside `ingest_movie_awards`.** Entry + token writes happen in the same call that prepares the `movie_awards` upsert, and the resolved entry id is passed through to `batch_upsert_movie_awards` so it's stamped in the same INSERT — no write-then-patch UPDATE. Matches the user's "part of the main upsert" directive and mirrors how `ingest_production_data` / `ingest_franchise_data` feed ids into `upsert_movie_card`.
+- **No stoplist at ingest.** `tokenize_award_string` emits every surviving token; the only ingest-time filter is lone-hyphen residue (matching studio). Stopword choice is deferred to query time, to be made after the DF bucket distribution from the first real backfill is visible — matching how studio and franchise stage the same call. The plan doc's Stage-B stoplist is therefore a query-side artifact, not an ingest-side one.
+- **Curly-apostrophe fold scoped to `normalize_award_string`, not the shared helper.** `implementation/misc/helpers.normalize_string`'s apostrophe regex only covers ASCII U+0027 and modifier variants — it does NOT strip U+2018 / U+2019, so `Palme d\u2019Or` would otherwise normalize to `palme d or` (space) while `Palme d'Or` normalizes to `palme dor` (stripped). Fixed by pre-folding U+2018 / U+2019 → U+0027 inside `normalize_award_string` before delegating. Deliberately NOT fixed in the shared helper: every existing `lex.lexical_dictionary` / `lex.production_company` / `lex.franchise_entry` row was stamped under the old rule, so a broadening there would silently invalidate already-ingested keys. The fold must be mirrored on the stage-3 query side when that cutover lands (tracked in docs/TODO.md).
+- **Backfill uses one bulk `UPDATE … FROM (VALUES ...)` rather than a per-movie loop.** The transform `normalize_award_string` can't be expressed in SQL (NFKD + digit-to-word are Python-side), but with only ~600 distinct raw strings the `(raw, entry_id)` mapping fits in a single statement. Server-side one round trip; no `asyncio` fan-out.
+- **Wipe-before-rebuild in the backfill.** Prior runs may have used different normalization/tokenization rules (stoplist evolution, digit-to-word changes), so merging would leave stale rows. Same rationale as `backfill_production_brands_and_companies.py`.
+- **DF materialized view created even though the DF ceiling is deferred** (plan doc Open Decision #1). Registered alongside studio/franchise in `cmd_ingest`'s post-ingest refresh block so bucket distribution is always available for the empirical review.
+
+### Planning Context
+Plan file: `/Users/michaelkeohane/.claude/plans/lovely-whistling-nova.md`. Design grounded in search_improvement_planning/v2_search_data_improvements.md §Award Name Resolution, which was re-edited earlier this session to drop `raw_name` and ceremony from the entry key and route cross-festival homonym disambiguation through the row-level `movie_awards.ceremony_id` filter instead. User confirmed three architectural questions (schema, column shape, backfill strategy) before plan write. Query-time cutover is explicitly scoped out and tracked in docs/TODO.md.
+
+### Testing Notes
+- Per .claude/rules/test-boundaries.md tests were not touched in this changeset. New/affected signatures that will need test updates in a dedicated pass:
+  - `batch_upsert_movie_awards` now accepts an aligned `award_name_entry_ids: Sequence[int | None] | None` parameter and writes a new `award_name_entry_id` column.
+  - `ingest_movie_awards` now makes three additional DB calls (entries, tokens, then the extended movie_awards upsert) rather than one.
+  - Three new public functions in db/postgres.py: `batch_upsert_award_name_entries`, `batch_insert_award_name_tokens`, `refresh_award_name_token_doc_frequency`.
+  - New module `implementation/misc/award_name_text.py` with `normalize_award_string` and `tokenize_award_string` (no stoplist — deferred to query time).
+- Manual verification steps (in the plan file): DDL parse on a fresh docker-compose bring-up, normalization sanity checks (straight-vs-curly apostrophe, `BAFTA Film Award` → `["award", "bafta", "film"]`), backfill dry-run expects ~588 entries and zero NULL `award_name_entry_id` rows, fresh ingest on a single movie confirms the entry id writes in the same INSERT and the MV refresh runs at the end of `cmd_ingest`.
+- Bucket review for the DF ceiling is the follow-up task — inspect `SELECT token, doc_frequency FROM lex.award_name_token_doc_frequency ORDER BY doc_frequency DESC LIMIT 20` after the backfill runs.
+
 ## v2 search planning: fleshed-out Award Name + Franchise resolution plans
 Files: search_improvement_planning/v2_search_data_improvements.md
 
@@ -1240,3 +1270,13 @@ Wires the ingest-time brand registry + freeform token index (already populated o
 - `LexicalCandidate.matched_studio_count` is gone; test_lexical_search.py:236 asserts on it and will fail.
 - Cross-codebase invariant preserved: the query side calls the exact same `normalize_company_string` + `tokenize_company_string` the ingest side used (reuse, not reimplementation), so tokens match by construction.
 - Verification steps live in the plan's "Verification" section; no end-to-end verification has been run yet (Postgres + Qdrant would need to be up with the backfill already applied).
+
+## Review pass on v2 studio query endpoint
+Files: search_v2/stage_2.py, schemas/studio_translation.py, search_v2/stage_3/studio_query_generation.py, search_v2/stage_3/studio_query_execution.py, docs/modules/db.md
+Why: /review-code surfaced one critical inconsistency, one latency warning, one readability nit, and one stale module doc. User approved four fixes; all landed in one follow-up pass.
+Approach:
+- **stage_2.py count refs removed.** Dropped both "one of seven" (in `_TASK`) and "one of these eight" (in `_ENDPOINTS`) — replaced with "one of the retrieval endpoints defined below" / "one of the endpoints below". Avoids stale-count maintenance when endpoints are added or removed.
+- **StudioQuerySpec `brand_id` → `brand`.** The Pydantic field collided with the enum's own `brand_id` int attribute, making `spec.brand_id.brand_id` read like a typo. Renamed field to `brand`; executor now reads `spec.brand.brand_id` which clearly distinguishes enum member from its int attribute. Propagated through the LLM prompt (every `brand_id` schema-field reference became `brand`; the single remaining `brand_id` mention is the enum-attribute one in the module comment). Blast radius was zero beyond new files.
+- **Freeform path batched to one DB round-trip.** `_execute_freeform_path` was doing N sequential `fetch_company_ids_for_tokens` awaits (one per freeform_name, up to 3). Rewrote into 4 phases: (1) tokenize every name + collect into a single token set, (2) one batched DF-filtered fetch, (3) per-name intersection in Python over the shared response, (4) final GIN join. Round-trip count is now 2 (tokens + movie-ids) regardless of how many freeform_names the LLM emits. Same semantics (intersection within name, union across names).
+- **docs/modules/db.md refreshed.** Studio and `lex.inv_franchise_postings` were still listed in the `postgres.py` row's posting-tables parenthetical — stale after this session's studio drop and the prior franchise rewrite. Replaced with an explicit line-item for the new studio read helpers (`fetch_movie_ids_by_brand`, `fetch_company_ids_for_tokens`, `fetch_movie_ids_by_production_company_ids`) and updated the franchise mention to reference `lex.franchise_entry` / `lex.franchise_token`.
+Testing notes: `python -c "import ast"` across all four files, plus a smoke-test confirming `spec.brand.brand_id` access works, `fetch_company_ids_for_tokens` is called exactly once in `_execute_freeform_path`'s source, and no `one of seven` / `one of eight` substrings remain in stage_2's SYSTEM_PROMPT. Unit-test updates still deferred per test-boundaries rule.

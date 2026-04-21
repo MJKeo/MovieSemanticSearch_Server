@@ -1077,7 +1077,10 @@ Data shape (empirical):
 ## Design Principles
 
 1. **Symmetric normalization replaces the registry.** Both ingest
-   and query tokenize the same way and drop the same stopwords.
+   and query run the same `normalize_award_string` +
+   `tokenize_award_string` pair, so surface-form drift collapses
+   on both sides. Stopword removal diverges — see Principle #5
+   — but the string-transform that comes before it is identical.
    The LLM emits the *official* form of the prize, not the exact
    IMDB string.
 2. **Ceremony scoping happens at the row level, not the entry
@@ -1097,6 +1100,16 @@ Data shape (empirical):
    token index is auto-built from the existing 588 distinct
    `award_name` strings. New prize names picked up on future
    scrapes enter the index on the next ingest.
+5. **Stopword droplist at query time only, not ingest.** A short
+   closed list of domain-boilerplate words (`award`, `prize`,
+   `best`, `the`, `of`, etc. — see the "Stopword Droplist"
+   section below) is dropped symmetrically at query time only,
+   unlike franchise which drops at both sides. The ingest path
+   writes every surviving token to `lex.award_name_token` so the
+   token index stays the full empirical corpus — future droplist
+   refinements become a config change, not a re-ingest. The
+   domain is tiny enough (~600 entries, ~2.2k token rows) that
+   the storage cost of keeping the stopwords is negligible.
 
 ## Data Model
 
@@ -1164,25 +1177,33 @@ ingests resolve new rows against the entry table by the same
 normalized-string key. Idempotent — re-running adds only the
 newly-seen normalized strings.
 
-### Stage B — Tokenize
+### Stage B — Tokenize & Write
 
 For every `award_name_entry`:
 
 1. Tokenize `normalized` on whitespace AND hyphens (same rule as
    studio and title).
-2. Drop tokens in the award-domain stoplist:
-   `{award, awards, prize, prizes, film, films, best, for, of, the,
-     a, an, and, special, honorary}`
-   (refine empirically after the first full ingest).
-3. Write surviving `(token, award_name_entry_id)` pairs to
-   `award_name_token`. DF floor 1.
+2. Write every surviving `(token, award_name_entry_id)` pair to
+   `lex.award_name_token`. **No stopword filtering at ingest.**
+   Stopword removal is a query-side concern — see Design
+   Principle #5 above and the Stopword Droplist section below.
+   The only ingest-time filter is a lone-hyphen residue drop,
+   matching `tokenize_company_string`.
 
-No DF ceiling applied yet. Bucket distribution will be inspected
-after the full ingest and a ceiling (if any) picked empirically
-— same decision procedure as the studio DF Ceiling
-Determination, deferred to post-ingestion.
+### Stage C — Compute Token Document Frequencies (diagnostic)
 
-### Stage C — Index
+Materialize `lex.award_name_token_doc_frequency` — one row per
+distinct token with `COUNT(*)` over `lex.award_name_token`. DF is
+measured per `award_name_entry`, not per movie.
+
+This view is **diagnostic**, not a filter. It exists so the
+query-side stopword droplist can be curated from real data and
+revisited as the corpus grows. See the Stopword Droplist section
+for the empirically-chosen list and the "Why Not a DF Ceiling"
+rationale that comes from inspecting the actual top-DF
+distribution.
+
+### Stage D — Index
 
 Btree on `award_name_token.token` (drives posting-list lookups,
 exact-token equality only — GIN not needed unless we later add
@@ -1222,9 +1243,10 @@ class AwardQuerySpec(BaseModel):
 
 ### Step 1 — Normalize and tokenize each name
 
-Apply `normalize_string`. Tokenize on whitespace AND hyphens.
-Drop stoplist tokens. If all tokens drop, the name contributes
-nothing.
+Apply `normalize_award_string`. Tokenize on whitespace AND
+hyphens. Drop tokens matching the stopword droplist (see the
+Stopword Droplist section below). If all tokens drop, the name
+contributes nothing — the award channel falls through to Step 5.
 
 ### Step 2 — Posting-list lookup
 
@@ -1262,6 +1284,84 @@ narrow to the correct rows. Cross-festival homonyms like
 
 If token resolution returns empty, the award channel contributes
 nothing. Vector and metadata channels carry the search.
+
+## Stopword Droplist
+
+Applied only at query time (Step 1 above). The ingest path keeps
+every token so this list can be revised from the DF view without
+re-ingesting — see Design Principle #5.
+
+```
+award, awards, prize, prizes,
+film, films, best,
+a, an, and, for, of, the
+```
+
+Revisit cadence: after every ingest sweep, read the top 25 rows
+of `lex.award_name_token_doc_frequency`. If a new domain-
+boilerplate or English-connective token surfaces, extend the
+list; if a word currently on the list turns out to be carrying
+real signal in some prize family, pull it off. The list is tiny,
+closed, and hand-reviewable — no threshold to tune.
+
+### Why Not a DF Ceiling
+
+The initial design left the stopword-vs-DF-ceiling choice to
+post-ingestion. The post-backfill DF distribution (585 entries,
+621 distinct tokens) showed why a numeric ceiling fails:
+
+```
+token           DF   % of entries
+award          339   58%   ← domain boilerplate
+special        102   17%   ← DOMAIN-MEANINGFUL (Special Jury Prize)
+prize           95   16%   ← domain boilerplate
+mention         77   13%   ← DOMAIN-MEANINGFUL (Honorable Mention)
+film            59   10%   ← domain boilerplate
+jury            49    8%   ← DOMAIN-MEANINGFUL (Grand Jury Prize)
+the             45    8%   ← English stopword
+of              43    7%   ← English stopword
+best            38    7%   ← domain boilerplate
+cinema          26    4%   ← DISCRIMINATIVE
+golden          24    4%   ← DISCRIMINATIVE (Golden Lion, Golden Bear)
+international   24    4%   ← DISCRIMINATIVE
+grand           23    4%   ← DISCRIMINATIVE (Grand Jury / Grand Prix)
+regard          23    4%   ← DISCRIMINATIVE (Un Certain Regard)
+un              21    4%   ← DISCRIMINATIVE (Un Certain Regard)
+```
+
+There is no single numeric threshold that cleanly splits signal
+from noise:
+
+- Cut above 30 → correctly drops `award`, `special`, `prize`,
+  `mention`, `film`, `jury`, `the`, `of`, `best`. But `jury` and
+  `mention` are load-bearing. A user typing "Grand Jury Prize"
+  then intersects on `{grand}` alone and every "Grand …" prize
+  matches.
+- Cut above 60 → keeps `jury`, `the`, `of`, `best`. `the` and
+  `of` are pure noise that inflate posting-list intersection.
+- Cut above 100 → keeps everything except `award` and `special`,
+  which defeats the point.
+
+The distribution is **tri-modal and overlapping**: pure English
+connectives, domain-meaningful high-DF words, and discriminative
+prize signal all coexist in the 20–100 band. The bad tokens are
+**semantically bad, not statistically bad** — they need to be
+named, not counted.
+
+Notably excluded from the droplist:
+
+- `special` (DF 102) — is a wrapper in "Special Award" but a real
+  signal in "Special Jury Prize" (a distinct prize at multiple
+  festivals). Keep it and let the ceremony filter narrow.
+- `mention` (DF 77) — "Honorable Mention" / "Special Mention"
+  appear across many festivals, but a user typing "Special
+  Mention" without `mention` keeps no signal at all.
+- `jury` (DF 49) — load-bearing across the Cannes / Sundance /
+  Venice "Jury Prize" family.
+
+With only ~600 entries and ~2.2k token rows total, a closed hand-
+curated droplist is cheap. The materialized DF view stays as the
+observation surface for future curation.
 
 ## Normalization Rules
 
@@ -1436,21 +1536,25 @@ Specificity preserved — main Palme d'Or correctly excluded.
 
 ## Open Decisions
 
-1. **DF ceiling.** Deferred until post-ingestion. After Stage B
-   runs on the full `movie_awards` table, inspect bucket
-   distribution and decide whether any ceiling is needed. Award
-   tokens are much less frequent than studio tokens — the problem
-   may be moot.
-2. **Stoplist evolution.** Start with the list above; extend
-   empirically after the first bucket review. Watch for
-   non-English residuals in Venice / Cannes / Berlin prize names.
-3. **Ceremony filter precedence.** Resolved: ceremony scoping is
-   applied only as a row-level filter on `movie_awards.ceremony_id`
-   in Step 4. The entry table is ceremony-agnostic. If the
-   ceremony channel returns empty, the ceremony filter is simply
-   omitted and token resolution runs unscoped — the same behavior
-   the rest of the award endpoint already uses for its other
-   optional filters.
+1. **DF ceiling vs stopword droplist — resolved.** Post-backfill
+   DF distribution (585 entries, 621 distinct tokens) is tri-modal
+   and overlapping — no numeric threshold separates boilerplate
+   from discriminative signal. Using a closed, hand-curated
+   droplist applied at query time only. See the Stopword Droplist
+   section above for the finalized list and the full rationale.
+2. **Stoplist evolution — resolved.** Initial list finalized from
+   the top-25 DF scan (see Stopword Droplist section). Revisit
+   cadence: inspect the top 25 rows of
+   `lex.award_name_token_doc_frequency` after every ingest sweep.
+   Any list change is query-side-only — no re-ingest needed,
+   since ingest writes every token.
+3. **Ceremony filter precedence — resolved.** Ceremony scoping is
+   applied only as a row-level filter on
+   `movie_awards.ceremony_id` in Step 4. The entry table is
+   ceremony-agnostic. If the ceremony channel returns empty, the
+   ceremony filter is simply omitted and token resolution runs
+   unscoped — the same behavior the rest of the award endpoint
+   already uses for its other optional filters.
 
 ---
 
@@ -1488,12 +1592,13 @@ franchise-specific adjustments:
    the combined lineage/universe field, which cleans up
    `phase 1` ↔ `phase one` / `snyderverse` ↔ `snyder-verse`
    style drift.
-4. **DF ceiling replaces the stoplist.** Non-discriminative
-   tokens — structural filler (`the`, `of`) and domain boilerplate
-   (`universe`, `saga`, `trilogy`) — are dropped by a single
-   data-driven rule rather than a hand-curated list. The ceiling
-   is picked empirically from the post-ingest DF distribution,
-   and the same rule applies symmetrically at ingest and query.
+4. **Stopword droplist (not DF ceiling).** Non-discriminative
+   English stopwords (`the`, `of`, `and`, `a`, `in`, `to`, `on`,
+   `my`, `i`, `for`, `at`, `by`, `with`) are dropped symmetrically
+   at ingest and query time. **Domain scaffolding** tokens
+   (`trilogy`, `collection`, `films`, `series`, `universe`,
+   `cinematic`, etc.) are **kept**. See "Why Not a DF Ceiling"
+   below for the decision rationale.
 
 ## Design Principles
 
@@ -1583,44 +1688,91 @@ strings are already normalized at Stage-6 metadata generation
 time; recomputing here guarantees symmetry with query time
 regardless of drift between the Stage-6 prompt and the resolver.
 
-### Stage B — Compute Token Document Frequencies
+### Stage B — Compute Token Document Frequencies (diagnostic)
 
-For every row in `franchise_entry`:
+Materialize `lex.franchise_token_doc_frequency` — one row per
+distinct token with `COUNT(*)` over `franchise_token`. DF is
+measured per `franchise_entry`, not per movie.
 
-1. Tokenize `normalized` on whitespace AND hyphens.
-2. For each token, increment a DF counter (one per distinct
-   `franchise_entry` — do not double-count repeats within a
-   single string).
-3. Write `(token, df)` to a working `token_frequency` table.
+This view is **diagnostic**, not a filter. It exists to surface
+new stopword candidates as the corpus grows, so the droplist can
+be curated by hand from real data instead of guessed up front.
+See "Why Not a DF Ceiling" below.
 
-DF is measured per `franchise_entry`, not per movie. No tokens
-are dropped at this stage — the ceiling is selected empirically
-in Stage C and applied in Stage D and at query time.
+### Stage C — Stopword Droplist
 
-### Stage C — Select the DF Ceiling
+`tokenize_franchise_string` drops this closed list symmetrically
+on both sides (ingest and query):
 
-Inspect the DF distribution produced in Stage B, same procedure
-as the studio DF Ceiling Determination section. The ceiling must
-cleanly separate discriminative franchise tokens (`marvel`,
-`conjuring`, `jackson`, `lotr`) from non-discriminative residue
-(`the`, `of`, `universe`, `saga`, `trilogy`, `collection`).
-Common high-DF candidates to verify are clustered above the
-ceiling: structural filler (`the`, `of`, `a`, `an`, `and`),
-domain boilerplate (`universe`, `cinematic`, `saga`, `trilogy`,
-`series`, `chronicles`, `collection`, `films`, `movies`).
+```
+the, of, and, a, in, to, on, my, i, for, at, by, with
+```
 
-Starting guess to refine empirically once the distribution is in
-hand. The franchise corpus is much smaller than the studio one,
-so the numeric ceiling will differ — what transfers is the
-shape of the decision, not the value.
+All other tokens — including domain scaffolding like `trilogy`,
+`collection`, `films`, `series`, `universe`, `cinematic`,
+`chronicles`, `anthology`, `franchise` — are kept. The scaffolding
+words overlap in DF range with legitimately discriminative words
+(see rationale below), so any filter that would remove them also
+removes signal we need.
+
+Revisit cadence: after every ingest sweep, read the top 25 rows
+of `lex.franchise_token_doc_frequency`. If a new English
+stopword surfaces above the existing list, add it; if a
+scaffolding word crosses a threshold where it's clearly dominating
+retrieval, consider whether to drop it as a one-off rather than
+by rule. Re-run Stages A and D across all movies after any
+droplist change (cheap, no LLM cost).
+
+#### Why Not a DF Ceiling
+
+The initial design used a numeric DF ceiling. The post-backfill
+DF distribution (5795 franchise entries, 5999 distinct tokens)
+showed why that fails:
+
+```
+the        1005   ← stopword
+of          294   ← stopword
+trilogy     212   ← scaffolding
+and         206   ← stopword
+collection  107   ← scaffolding
+films       107   ← scaffolding
+a           106   ← stopword
+in           76   ← stopword
+man          58   ← DISCRIMINATIVE (Spider-Man, Iron Man, Batman, Ant-Man)
+one          50   ← number word (ambiguous)
+three        48   ← number word
+dead         38   ← DISCRIMINATIVE (Evil Dead, Dead Poets)
+love         36   ← DISCRIMINATIVE
+christmas    32   ← DISCRIMINATIVE
+black        30   ← DISCRIMINATIVE (Black Panther, Men in Black)
+```
+
+The distribution is **tri-modal**, and the bands overlap:
+
+- Stopwords (frequency ≥ 76) — pure noise.
+- Scaffolding (`trilogy` 212, `collection` 107, `films` 107,
+  `series` 35) — meaningless alone but they're fine to keep as
+  tokens, because a multi-token name always pairs them with the
+  real franchise token in the intersection.
+- Discriminative words in the 25–60 range — `man` (58) is load-
+  bearing for the entire superhero corpus.
+
+No single numeric threshold separates these. Cut at 100 and we
+keep `trilogy`/`collection` (fine, but arbitrary); cut at 50 and
+we kill `man`, breaking every Spider-Man / Iron Man / Ant-Man
+query. The bad tokens are **semantically bad, not statistically
+bad** — they need to be named, not counted.
+
+With only ~6k tokens total, a closed, hand-curated stopword list
+is cheap. The materialized DF view stays so the list can be
+revisited from real data.
 
 ### Stage D — Build `franchise_token`
 
 For every row in `franchise_entry`, tokenize again (same rules
-as Stage B), filter by `df <= ceiling`, and insert one row into
-`franchise_token` per surviving `(token, franchise_entry_id)`
-pair. DF floor is 1 — singletons included, which is what makes
-the long tail findable.
+as Stage B), drop any token that matches the stopword droplist
+from Stage C, and insert one row into `franchise_token` per
+surviving `(token, franchise_entry_id)` pair.
 
 Create a GIN index on `franchise_token.token`.
 
@@ -1685,9 +1837,9 @@ For each `franchise_names` and each `recognized_subgroups`:
 
 1. Apply `normalize_string` + ordinal + cardinal number-to-word.
 2. Tokenize on whitespace AND hyphens.
-3. Drop tokens whose `DF > ceiling` (same ceiling selected in
-   Stage C, applied symmetrically here). If all tokens drop,
-   name contributes nothing.
+3. Drop tokens matching the Stage C stopword droplist (applied
+   symmetrically here). If all tokens drop, name contributes
+   nothing.
 
 ### Step 2 — Per-name intersection
 
@@ -1767,8 +1919,7 @@ the search path.
 ### Stopword drift (the lord of the rings)
 
 Ingest wrote `"the lord of the rings"`, query LLM emits `"lord of
-the rings"`. `the` and `of` exceed the DF ceiling (they appear
-across a large fraction of `franchise_entry` rows) and are
+the rings"`. `the` and `of` are in the stopword droplist and are
 dropped on both sides. Both strings reduce to `{lord, rings}` and
 resolve to the same entry id.
 
@@ -1798,14 +1949,15 @@ that's an ingest-side data-quality issue, not a retrieval issue.
 ### Umbrella sweep (Marvel → Marvel Cinematic Universe)
 
 User: "Marvel movies". LLM emits `franchise_names = ["marvel
-cinematic universe", "marvel"]`. First tokens `{marvel}`
-(cinematic / universe dropped by DF ceiling); second tokens
-`{marvel}`.
-Posting list on `marvel` → entries whose normalized form has
-`marvel` as a discriminative token (`marvel cinematic universe`,
-`marvel comics`, `marvel knights`, etc.). Union → all
-Marvel-flavored entry ids. Matches MCU films plus other
-Marvel-stamped films.
+cinematic universe", "marvel"]`. First tokens `{marvel, cinematic,
+universe}` — per-name intersection resolves to the single MCU
+entry (only entry containing all three). Second tokens `{marvel}`
+— posting list sweeps every entry carrying `marvel` as a token
+(`marvel cinematic universe`, `marvel comics`, `marvel knights`,
+etc.). Across-name union → MCU id plus every Marvel-flavored
+entry id. Matches MCU films plus other Marvel-stamped films. The
+umbrella sweep works by emitting the bare-brand alternate, not by
+filtering scaffolding out of the universe form.
 
 ### Long-tail lineage with no universe
 
@@ -1851,10 +2003,10 @@ thinking: "Broad umbrella. Use the universe form plus the bare
            brand token."
 franchise_names: ["marvel cinematic universe", "marvel"]
 recognized_subgroups: []
-→ tokens collapse to {marvel} for both (cinematic / universe
-   dropped by DF ceiling)
-→ entries: {marvel cinematic universe, marvel comics,
-            marvel knights, ...}
+→ name 1 tokens {marvel, cinematic, universe} → MCU entry id
+→ name 2 tokens {marvel} → every entry carrying `marvel`
+  ({marvel cinematic universe, marvel comics, marvel knights, ...})
+→ across-name union → MCU id ∪ all Marvel-stamped entry ids
 → franchise_name_entry_ids && :ids
 → all MCU movies plus other Marvel-stamped films.
 ```
@@ -1891,7 +2043,7 @@ SQL: franchise_name_entry_ids && [MCU]
 thinking: "Long-running franchise, umbrella query."
 franchise_names: ["the lord of the rings"]
 recognized_subgroups: []
-→ tokens {lord, rings} (the/of exceed DF ceiling, dropped)
+→ tokens {lord, rings} (the/of dropped by stopword droplist)
 → lord of the rings entry id
 → Jackson trilogy (stored as lineage=the lord of the rings).
 ```
@@ -1903,9 +2055,11 @@ User: "Jackson's LOTR trilogy"
 thinking: "Director-era subgroup named explicitly."
 franchise_names: ["the lord of the rings"]
 recognized_subgroups: ["jackson lotr trilogy"]
-subgroup tokens {jackson, lotr} (trilogy exceeds DF ceiling,
-                                  dropped)
-→ jackson lotr trilogy entry id
+subgroup tokens {jackson, lotr, trilogy} (scaffolding kept —
+                                  `trilogy` survives alongside
+                                  the discriminative tokens)
+→ jackson lotr trilogy entry id (intersection of all three
+   posting lists resolves to the single subgroup entry)
 → Only Peter Jackson's LOTR films, not Bakshi animated, not the
   Hobbit trilogy.
 ```
@@ -1930,31 +2084,36 @@ Ingest rows:
   Annabelle     → lineage="annabelle",
                   shared_universe="conjuring universe"
 franchise_names: ["conjuring universe"]
-→ tokens {conjuring} (universe exceeds DF ceiling, dropped)
-→ entries: {the conjuring, conjuring universe}
-→ franchise_name_entry_ids && :ids
+→ tokens {conjuring, universe} (scaffolding kept)
+→ per-name intersection → single `conjuring universe` entry id
+→ franchise_name_entry_ids && [conjuring_universe_id]
   - The Conjuring ✓ (conjuring universe id present via shared_universe)
   - Annabelle ✓ (conjuring universe id present via shared_universe)
   - Nun, Curse of La Llorona, etc. ✓
 The combined-column representation is what makes this work —
 Annabelle's `lineage` is "annabelle" but its
 `franchise_name_entry_ids` includes the `conjuring universe` id
-from the `shared_universe` side.
+from the `shared_universe` side. The umbrella sweep across the
+whole Conjuring family (including the standalone `the conjuring`
+lineage entry) depends on the ingest-side union, not on stripping
+`universe` at query time.
 ```
 
 ## Open Decisions
 
-1. **DF ceiling value.** The ceiling itself is central to this
-   design, not deferred — it replaces the stoplist and is the
-   single knob controlling which tokens count as discriminative.
-   The numeric value is picked empirically after Stage B runs on
-   the full table (same procedure as the studio DF Ceiling
-   Determination section). The franchise corpus is smaller, so
-   the value will not be the studio value. Common tokens to
-   verify sit above the ceiling: `the`, `of`, `universe`,
-   `cinematic`, `saga`, `trilogy`, `series`, `collection`. Common
-   tokens to verify sit below: `marvel`, `conjuring`, `jackson`,
-   `lotr`, `snyderverse`.
+1. **Stopword droplist vs DF ceiling (resolved).** Franchise-side
+   filtering uses a closed stopword list
+   (`the, of, and, a, in, to, on, my, i, for, at, by, with`),
+   **not** a numeric DF ceiling. Rationale: the post-backfill DF
+   distribution is tri-modal (stopwords, scaffolding,
+   discriminative words), and scaffolding (`trilogy` 212,
+   `collection` 107, `films` 107) overlaps in DF range with load-
+   bearing words like `man` (58, Spider-Man/Iron Man/Batman) and
+   `dead` (38). No single threshold separates the three bands, so
+   a hand-curated droplist is used instead. The materialized DF
+   view is retained as a diagnostic for revisiting the droplist as
+   new data comes in. See Stage C, "Why Not a DF Ceiling" for the
+   full decision.
 2. **`franchise_names` OR vs AND semantics.** Across-name union
    is OR. For the specific "narrow lineage inside umbrella"
    case, prompt discipline produces the right narrow form

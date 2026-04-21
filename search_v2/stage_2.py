@@ -48,9 +48,9 @@ for. Your job is to break it into dealbreakers (hard requirements), \
 preferences (soft ranking qualities), and system-level priors \
 (quality and notability biases).
 
-Each dealbreaker and preference is routed to one of seven \
-retrieval endpoints. Downstream endpoint-specific translators \
-receive your output and convert it into exact search \
+Each dealbreaker and preference is routed to one of the \
+retrieval endpoints defined below. Downstream endpoint-specific \
+translators receive your output and convert it into exact search \
 specifications — you do not need to know how each endpoint \
 executes internally. Your role is to interpret what the user \
 wants and route each piece to the endpoint best equipped to \
@@ -199,10 +199,10 @@ executed as an independent search.
 _ENDPOINTS = f"""\
 RETRIEVAL ENDPOINTS
 
-Each dealbreaker and preference is routed to one of these eight \
-endpoints. Each endpoint specializes in a different kind of movie \
-attribute. Accurate routing is critical — the endpoint must be \
-capable of evaluating the concept you send it.
+Each dealbreaker and preference is routed to one of the \
+endpoints below. Each endpoint specializes in a different kind \
+of movie attribute. Accurate routing is critical — the endpoint \
+must be capable of evaluating the concept you send it.
 
 
 entity — Looks up named entities: real people, fictional \

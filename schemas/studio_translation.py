@@ -24,9 +24,10 @@ from schemas.production_brands import ProductionBrand
 # Step 3 studio endpoint output.
 #
 # Two matching paths:
-#   brand_id     — closed enum (31 curated ProductionBrand values).
+#   brand        — closed enum (31 curated ProductionBrand values).
 #                  Set for umbrella queries that name a registry
-#                  brand. Executor reads lex.inv_production_brand_postings.
+#                  brand. Executor reads lex.inv_production_brand_postings
+#                  keyed by the enum member's int brand_id attribute.
 #   freeform_names — up to 3 surface forms likely to appear in IMDB's
 #                  production_companies strings. Set for sub-labels,
 #                  long-tail studios, or anything not in the registry.
@@ -36,33 +37,33 @@ from schemas.production_brands import ProductionBrand
 #                  movie_card.production_company_ids.
 #
 # The schema permits either / both / neither. Executor semantics:
-#   - brand_id set AND returns non-empty → use brand, ignore freeform.
-#   - brand_id unset → use freeform_names.
-#   - brand_id set but empty result → fall through to freeform as backup.
+#   - brand set AND returns non-empty → use brand, ignore freeform.
+#   - brand unset → use freeform_names.
+#   - brand set but empty result → fall through to freeform as backup.
 #   - neither set → empty result.
 #
 # Schema ordering is load-bearing. `thinking` is first so the LLM
 # reasons about umbrella-vs-specific scope and the correct canonical
-# form(s) before committing to brand_id / freeform_names.
+# form(s) before committing to brand / freeform_names.
 class StudioQuerySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Scoped reasoning field. One or two sentences stating whether the
-    # query is umbrella / parent-brand (→ brand_id) or specific sub-
-    # label / long-tail (→ freeform_names), then naming the registry
-    # brand or listing the surface forms the phrasing maps to. LLM-
-    # facing guidance lives in the system prompt.
+    # query is umbrella / parent-brand (→ brand) or specific sub-label
+    # / long-tail (→ freeform_names), then naming the registry brand or
+    # listing the surface forms the phrasing maps to. LLM-facing
+    # guidance lives in the system prompt.
     thinking: constr(strip_whitespace=True, min_length=1) = Field(...)
 
     # Closed-registry umbrella brand. Use for queries at the parent-
     # brand level (Disney, Warner Bros., A24, MGM, etc.). Null when
     # the query names a sub-label or long-tail studio.
-    brand_id: ProductionBrand | None = Field(default=None)
+    brand: ProductionBrand | None = Field(default=None)
 
     # Up to 3 IMDB-surface-form strings the LLM believes appear in
     # production_companies credits for the target studio. Empty or
-    # null when brand_id covers the query umbrella-style. Up to 3
-    # covers condensed/acronym + expanded + alternate well-known form.
+    # null when brand covers the query umbrella-style. Up to 3 covers
+    # condensed/acronym + expanded + alternate well-known form.
     # Executor normalizes + tokenizes each name; a match is
     # intersection-within-name (all discriminative tokens must match
     # one company string) and union-across-names (any name matching

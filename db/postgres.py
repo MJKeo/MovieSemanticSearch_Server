@@ -870,6 +870,107 @@ async def refresh_franchise_token_doc_frequency() -> None:
     )
 
 
+async def refresh_award_name_token_doc_frequency() -> None:
+    """
+    Refresh the lex.award_name_token_doc_frequency materialized view concurrently.
+
+    Called after each bulk ingest so DF-ceiling stop-word filtering on the
+    award-name path reflects the latest (token, award_name_entry_id) rows.
+    CONCURRENTLY avoids blocking reads during rebuild (requires the unique
+    index idx_award_name_token_df_token on the view).
+    """
+    await _execute_write(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.award_name_token_doc_frequency;"
+    )
+
+
+async def batch_upsert_award_name_entries(
+    normalized_strings: Sequence[str],
+    conn=None,
+) -> dict[str, int]:
+    """
+    Upsert normalized award-name strings into lex.award_name_entry.
+
+    Unlike the studio and franchise entry tables, this one has no
+    ``canonical_string`` column — raw surface forms live on
+    ``public.movie_awards.award_name`` already, so the entry row carries
+    only the normalized lookup key. Callers pass a flat sequence of
+    normalized strings (empty strings are dropped).
+
+    Dedup-and-sort before issuing the query so that all concurrent
+    transactions acquire the UNIQUE-index locks in the same order — same
+    deadlock-avoidance pattern used by batch_upsert_production_companies
+    and batch_upsert_franchise_entries.
+
+    Returns a ``{normalized: award_name_entry_id}`` mapping covering every
+    unique normalized string in the input.
+    """
+    if not normalized_strings:
+        return {}
+
+    # Drop empties and dedup-preserving-first-occurrence via set; then sort
+    # for deterministic lock ordering.
+    unique = sorted({n for n in normalized_strings if n})
+    if not unique:
+        return {}
+
+    # Insert any new rows; then re-select all requested normalized strings
+    # (whether newly inserted or pre-existing) so every caller input maps to
+    # an id. Same CTE pattern as batch_upsert_production_companies /
+    # batch_upsert_franchise_entries.
+    query = """
+    WITH input_rows AS (
+        SELECT unnest(%s::text[]) AS normalized
+    ),
+    inserted AS (
+        INSERT INTO lex.award_name_entry (normalized)
+        SELECT normalized FROM input_rows
+        ON CONFLICT (normalized) DO NOTHING
+        RETURNING award_name_entry_id, normalized
+    )
+    SELECT normalized, award_name_entry_id FROM inserted
+    UNION ALL
+    SELECT e.normalized, e.award_name_entry_id
+    FROM lex.award_name_entry e
+    JOIN input_rows i ON i.normalized = e.normalized
+    WHERE NOT EXISTS (
+        SELECT 1 FROM inserted ins
+        WHERE ins.normalized = e.normalized
+    );
+    """
+    rows = await _execute_on_conn(conn, query, (unique,), fetch=True) or []
+    return {str(norm): int(eid) for norm, eid in rows}
+
+
+async def batch_insert_award_name_tokens(
+    pairs: Sequence[tuple[str, int]],
+    conn=None,
+) -> None:
+    """
+    Insert (token, award_name_entry_id) rows into lex.award_name_token.
+
+    Idempotent via ``ON CONFLICT DO NOTHING``. Every unique pair is inserted
+    once regardless of how many times it appears in the input; callers are
+    free to pass duplicates.
+    """
+    if not pairs:
+        return
+    unique = list({(token, eid) for token, eid in pairs if token})
+    if not unique:
+        return
+    tokens = [t for t, _ in unique]
+    entry_ids = [e for _, e in unique]
+    # award_name_entry_id is INT (see 01_create_postgres_tables.sql —
+    # award volume is small enough that INT suffices), so cast to int[]
+    # here rather than the bigint[] used by studio/franchise.
+    query = """
+    INSERT INTO lex.award_name_token (token, award_name_entry_id)
+    SELECT unnest(%s::text[]), unnest(%s::int[])
+    ON CONFLICT (token, award_name_entry_id) DO NOTHING;
+    """
+    await _execute_on_conn(conn, query, (tokens, entry_ids))
+
+
 async def batch_upsert_franchise_entries(
     pairs: Sequence[tuple[str, str]],
     conn=None,
@@ -1256,6 +1357,7 @@ async def upsert_movie_card(
 async def batch_upsert_movie_awards(
     movie_id: int,
     awards: list[AwardNomination],
+    award_name_entry_ids: Sequence[int | None] | None = None,
     conn=None,
 ) -> None:
     """
@@ -1269,10 +1371,29 @@ async def batch_upsert_movie_awards(
     Args:
         movie_id: The movie to upsert awards for.
         awards: AwardNomination objects with known (non-None) ceremony_id values.
+        award_name_entry_ids: Optional parallel list aligned 1:1 with
+            ``awards``, supplying the resolved ``lex.award_name_entry``
+            id for each row. Pass ``None`` (the default) when the caller
+            has not resolved the entry table yet — the column is
+            nullable and the UPDATE-style stamp from the backfill script
+            will fill it in later. Pass a list of the same length as
+            ``awards`` (with ``None`` for any entry that normalizes to
+            empty) during ingest so the id is written in the same INSERT.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not awards:
         return
+
+    if award_name_entry_ids is not None and len(award_name_entry_ids) != len(awards):
+        # Cheap guard — a length mismatch here means the caller built the
+        # parallel list from a different filtered set than ``awards``,
+        # which would silently stamp the wrong ids on rows. Fail loudly
+        # rather than commit bad data.
+        raise ValueError(
+            "batch_upsert_movie_awards: award_name_entry_ids length "
+            f"({len(award_name_entry_ids)}) does not match awards "
+            f"length ({len(awards)})."
+        )
 
     # Delete existing awards for this movie, then bulk insert the new set.
     delete_query = "DELETE FROM public.movie_awards WHERE movie_id = %s"
@@ -1287,8 +1408,11 @@ async def batch_upsert_movie_awards(
     # to a single round trip. ~50 awards per movie at most, so the
     # parameter count stays modest.
     rows: list[tuple] = []
-    for a in awards:
+    for idx, a in enumerate(awards):
         category = a.category or ""
+        entry_id = (
+            award_name_entry_ids[idx] if award_name_entry_ids is not None else None
+        )
         rows.append((
             movie_id,
             a.ceremony_id,
@@ -1297,12 +1421,13 @@ async def batch_upsert_movie_awards(
             tags_for_category(category),
             a.outcome.outcome_id,
             a.year,
+            entry_id,
         ))
 
-    values_template = ", ".join(["(%s, %s, %s, %s, %s, %s, %s)"] * len(rows))
+    values_template = ", ".join(["(%s, %s, %s, %s, %s, %s, %s, %s)"] * len(rows))
     insert_query = f"""
     INSERT INTO public.movie_awards
-        (movie_id, ceremony_id, award_name, category, category_tag_ids, outcome_id, year)
+        (movie_id, ceremony_id, award_name, category, category_tag_ids, outcome_id, year, award_name_entry_id)
     VALUES {values_template}
     """
     flat_params: list = []
@@ -2311,49 +2436,107 @@ async def fetch_movie_ids_with_title_like(
 #   FRANCHISE ENDPOINT HELPERS
 # ===============================
 #
-# Read helper dedicated to the step 3 franchise endpoint
-# (search_v2/stage_3/franchise_query_execution.py). All SQL for
-# movie_franchise_metadata reads lives here.
+# Read helpers dedicated to the step 3 franchise endpoint
+# (search_v2/stage_3/franchise_query_execution.py). Two helpers:
+#
+#   - fetch_franchise_entry_ids_for_tokens: posting-list fetch for a
+#     batch of tokens against lex.franchise_token. No DF filter —
+#     stopwords are dropped upstream in tokenize_franchise_string, so
+#     every token that reaches this helper is already discriminative.
+#
+#   - fetch_franchise_movie_ids: final GIN `&&` overlap on
+#     movie_card.franchise_name_entry_ids / subgroup_entry_ids, with
+#     an optional LEFT JOIN to movie_franchise_metadata when any
+#     structural axis (lineage_position / is_spinoff / is_crossover /
+#     launched_franchise / launched_subgroup) is active.
+#
+# The two-step shape mirrors the studio endpoint
+# (fetch_company_ids_for_tokens → fetch_movie_ids_by_production_company_ids)
+# — same rationale: per-name intersection lives in Python, final
+# movie-id resolution is a single SQL overlap.
+
+
+async def fetch_franchise_entry_ids_for_tokens(
+    tokens: list[str],
+) -> dict[str, set[int]]:
+    """
+    Resolve a batch of tokens to franchise_entry_ids via lex.franchise_token.
+
+    Mirror of fetch_company_ids_for_tokens but without a DF-ceiling filter:
+    FRANCHISE_STOPLIST is applied inside tokenize_franchise_string before the
+    executor ever calls this helper, so every token passed in is already
+    discriminative. Re-filtering here would be redundant and would obscure
+    the "ingest and query share one tokenizer" invariant.
+
+    Tokens that have no postings (never stamped at ingest) are omitted from
+    the result — the executor must treat "missing key" as "name fails
+    intersection", not "name matches everything" (matches the
+    Phase-3 behavior in studio_query_execution.py).
+
+    Args:
+        tokens: Tokens from one or more franchise / subgroup names, after
+            normalize + tokenize + stopword drop. Caller typically passes
+            `sorted(set(...))` for deterministic query text.
+
+    Returns:
+        Mapping `{token: {franchise_entry_id, ...}}` covering only tokens
+        that had at least one posting.
+    """
+    if not tokens:
+        return {}
+
+    query = """
+        SELECT token, franchise_entry_id
+        FROM lex.franchise_token
+        WHERE token = ANY(%s::text[])
+    """
+    rows = await _execute_read(query, (tokens,))
+    out: dict[str, set[int]] = {}
+    for token, entry_id in rows:
+        out.setdefault(token, set()).add(entry_id)
+    return out
 
 
 async def fetch_franchise_movie_ids(
     *,
-    normalized_name_variations: list[str] | None,
-    normalized_subgroup_variations: list[str] | None,
+    franchise_name_entry_ids: set[int] | None,
+    subgroup_entry_ids: set[int] | None,
     lineage_position_id: int | None,
-    is_spinoff: bool | None,
-    is_crossover: bool | None,
-    launched_franchise: bool | None,
-    launched_subgroup: bool | None,
+    is_spinoff: bool,
+    is_crossover: bool,
+    launched_franchise: bool,
+    launched_subgroup: bool,
     restrict_movie_ids: set[int] | None = None,
 ) -> set[int]:
-    """Query movie_franchise_metadata for movies satisfying all populated axes.
+    """Resolve pre-computed franchise entry-id sets + structural flags to movie IDs.
 
-    Builds a single AND-composed WHERE clause from whichever axes are non-None.
-    All populated constraints must hold simultaneously — this is the AND
-    execution policy for the franchise endpoint.
+    Builds a single AND-composed WHERE clause from whichever axes are
+    active. All populated constraints must hold simultaneously — this is
+    the AND execution policy for the franchise endpoint.
 
-    Name and subgroup variations are pre-normalized by the caller
-    (normalize_string applied in Python). Stored values were also written
-    with normalize_string applied at ingest time, so string equality is
-    sufficient — no LOWER() or further transformation needed on either side.
+    Array-axis matching uses the GIN `&&` overlap operator against the
+    denormalized entry-id arrays on public.movie_card. Structural-axis
+    predicates (lineage_position, is_spinoff, is_crossover,
+    launched_franchise, launched_subgroup) live on
+    public.movie_franchise_metadata, so we LEFT JOIN only when any of
+    those is active — keeping the zero-structural-axis case as a
+    single-table scan on movie_card.
 
     Args:
-        normalized_name_variations: Python-normalized canonical name forms
-            to match against lineage OR shared_universe. Any one variation
-            matching either column counts as a hit. None = axis not active.
-        normalized_subgroup_variations: Python-normalized subgroup name forms
-            to match against any element in the recognized_subgroups TEXT[].
-            Any one variation matching any array element counts as a hit.
-            None = axis not active.
+        franchise_name_entry_ids: Pre-resolved entry-id set from the
+            executor's `franchise_or_universe_names` token intersection +
+            cross-name union. None = axis not active. Empty set is treated
+            as "no conditions" for this axis and NOT as a universal match
+            — see the defensive guard below.
+        subgroup_entry_ids: Same, for the `recognized_subgroups` axis.
         lineage_position_id: SMALLINT ID for the desired lineage position
             (from LineagePosition.lineage_position_id). None = not filtered.
-        is_spinoff: True = require is_spinoff = TRUE. None = not filtered.
-        is_crossover: True = require is_crossover = TRUE. None = not filtered.
-        launched_franchise: True = require launched_franchise = TRUE.
-            None = not filtered.
-        launched_subgroup: True = require launched_subgroup = TRUE.
-            None = not filtered.
+        is_spinoff: True = require mfm.is_spinoff = TRUE. False = not filtered.
+        is_crossover: True = require mfm.is_crossover = TRUE. False = not filtered.
+        launched_franchise: True = require mfm.launched_franchise = TRUE.
+            False = not filtered.
+        launched_subgroup: True = require mfm.launched_subgroup = TRUE.
+            False = not filtered.
         restrict_movie_ids: Optional candidate-pool filter. When provided,
             only movies in this set can appear in the result.
 
@@ -2364,52 +2547,62 @@ async def fetch_franchise_movie_ids(
     conditions: list[str] = []
     params: list = []
 
-    if normalized_name_variations:
-        # Both sides are pre-normalized with normalize_string, so plain equality
-        # is correct. The same list is bound twice — once per OR branch — because
-        # psycopg does not support referencing the same parameter twice.
-        conditions.append(
-            "(lineage = ANY(%s::text[]) OR shared_universe = ANY(%s::text[]))"
-        )
-        params.extend([normalized_name_variations, normalized_name_variations])
+    if franchise_name_entry_ids:
+        conditions.append("mc.franchise_name_entry_ids && %s::bigint[]")
+        params.append(list(franchise_name_entry_ids))
 
-    if normalized_subgroup_variations:
-        # Unnest the stored TEXT[] and check if any element matches any search
-        # variation. EXISTS short-circuits on the first match — efficient for
-        # the typical case of small subgroup arrays (1-3 elements).
-        conditions.append(
-            "EXISTS (SELECT 1 FROM unnest(recognized_subgroups) AS sg"
-            " WHERE sg = ANY(%s::text[]))"
-        )
-        params.append(normalized_subgroup_variations)
+    if subgroup_entry_ids:
+        conditions.append("mc.subgroup_entry_ids && %s::bigint[]")
+        params.append(list(subgroup_entry_ids))
 
+    # Structural-axis predicates hit movie_franchise_metadata. Track which
+    # rows require the JOIN so we can skip it when no structural axis is
+    # active (common case for umbrella franchise queries).
+    structural_conditions: list[str] = []
     if lineage_position_id is not None:
-        conditions.append("lineage_position = %s")
+        structural_conditions.append("mfm.lineage_position = %s")
         params.append(lineage_position_id)
 
     if is_spinoff:
-        conditions.append("is_spinoff = TRUE")
+        structural_conditions.append("mfm.is_spinoff = TRUE")
 
     if is_crossover:
-        conditions.append("is_crossover = TRUE")
+        structural_conditions.append("mfm.is_crossover = TRUE")
 
     if launched_franchise:
-        conditions.append("launched_franchise = TRUE")
+        structural_conditions.append("mfm.launched_franchise = TRUE")
 
     if launched_subgroup:
-        conditions.append("launched_subgroup = TRUE")
+        structural_conditions.append("mfm.launched_subgroup = TRUE")
 
-    # Defensive guard: the FranchiseQuerySpec validator requires at least one
-    # axis, so this branch should never be reached in normal operation.
+    conditions.extend(structural_conditions)
+
+    # Defensive guard: the FranchiseQuerySpec validator requires at least
+    # one axis, and the executor early-exits when all textual axes collapse
+    # to empty entry-id sets with no structural axes populated. This branch
+    # should therefore not be reachable in normal operation.
     if not conditions:
         return set()
 
     if restrict_movie_ids is not None:
-        conditions.append("movie_id = ANY(%s::bigint[])")
+        if not restrict_movie_ids:
+            return set()
+        conditions.append("mc.movie_id = ANY(%s::bigint[])")
         params.append(list(restrict_movie_ids))
 
+    # LEFT JOIN only when we actually need columns from movie_franchise_metadata.
+    # Movies with no franchise metadata row simply won't satisfy the mfm.*
+    # predicates (NULL on those columns never matches = TRUE).
+    if structural_conditions:
+        from_clause = (
+            "public.movie_card mc "
+            "LEFT JOIN public.movie_franchise_metadata mfm USING (movie_id)"
+        )
+    else:
+        from_clause = "public.movie_card mc"
+
     where_clause = " AND ".join(conditions)
-    query = f"SELECT movie_id FROM public.movie_franchise_metadata WHERE {where_clause}"
+    query = f"SELECT mc.movie_id FROM {from_clause} WHERE {where_clause}"
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}
 

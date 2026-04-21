@@ -669,10 +669,33 @@ the vocabulary (e.g., "zombie" exists but "clown" doesn't).
 **When:** After the semantic system prompt is authored.
 **See:** search_improvement_planning/finalized_search_proposal.md (Endpoint 6: Semantic → Execution Scenarios), schemas/semantic_translation.py, schemas/semantic_bodies.py
 
-## Implement Award Name Resolution plan
-**Context:** Design committed in search_improvement_planning/v2_search_data_improvements.md §Award Name Resolution. Work spans: (1) new tables `award_name_entry` (id, raw_name, normalized, ceremony_id) and `award_name_token` (token, award_name_entry_id) with GIN on token; (2) `ALTER TABLE movie_awards ADD COLUMN award_name_entry_id INT`; (3) one-time Stage A backfill sweeping distinct (award_name, ceremony_id) pairs and writing back entry ids; (4) Stage B tokenizer with award-domain stoplist and hyphen-splitting; (5) rewrite of `search_v2/stage_3/award_query_execution.py` to drop the "deliberately do not normalize" comment and instead symmetric-normalize + token-intersect + ceremony-scope; (6) prompt update in `search_v2/stage_3/award_query_generation.py` instructing the LLM to emit official base prize names (not sub-variants) per the new contract. DF ceiling decision deferred to post-ingestion.
-**When:** When the v2 search data improvements work stream moves past studio resolver into the remaining endpoints.
-**See:** search_improvement_planning/v2_search_data_improvements.md §Award Name Resolution, schemas/award_surface_forms.py, search_v2/stage_3/award_query_execution.py, search_v2/stage_3/award_query_generation.py, db/init/01_create_postgres_tables.sql (movie_awards)
+## Cut stage-3 award endpoint over to token-intersection path
+**Context:** Ingest-side landing of the Award Name Resolution plan is now
+complete — `lex.award_name_entry` / `lex.award_name_token` +
+`lex.award_name_token_doc_frequency` MV exist, every `public.movie_awards`
+row carries `award_name_entry_id`, `ingest_movie_awards` resolves entries
+inline, and `backfill_award_name_entries.py` handles the one-shot
+population. What remains is the query-side cutover: (1) remove the
+"deliberately do not normalize" comment in
+[search_v2/stage_3/award_query_execution.py:62-83](search_v2/stage_3/award_query_execution.py#L62-L83);
+(2) replace the exact-string equality match with the plan's
+normalize → tokenize (via `tokenize_award_string`) → intersect-per-name
+→ union-across-names flow against `lex.award_name_token`; (3) resolve
+to movies via `WHERE award_name_entry_id = ANY(:ids) AND ceremony_id = ...`
+(keep the existing ceremony/category/outcome/year filters as row-level
+AND clauses); (4) update
+`search_v2/stage_3/award_query_generation.py` (or the corresponding
+stage-3 translator) so the LLM emits official base prize names and the
+`AwardQuerySpec.thinking` scope field is required before `award_names`;
+(5) decide on query-side token filtering by inspecting
+`lex.award_name_token_doc_frequency` bucket distribution after the
+backfill has run against full data — the ingest side writes every
+token, so both an explicit stoplist (award/awards/prize/best/etc.)
+and a DF ceiling are open design choices picked here, not pre-baked
+into ingestion.
+**When:** Once the backfill has been executed against the production DB and
+the DF distribution has been eyeballed.
+**See:** search_improvement_planning/v2_search_data_improvements.md §Award Name Resolution (Query-Time Resolution), search_v2/stage_3/award_query_execution.py, search_v2/stage_3/award_query_generation.py, implementation/misc/award_name_text.py (normalize_award_string, tokenize_award_string)
 
 ## Implement Franchise Resolution plan
 **Context:** Design committed in search_improvement_planning/v2_search_data_improvements.md §Franchise Resolution. Work spans: (1) new tables `franchise_entry` (id, raw_name, normalized, origin) and `franchise_token` (token, franchise_entry_id); (2) `ALTER TABLE movie_franchise_metadata ADD COLUMN franchise_name_entry_ids INT[]` (union of lineage + shared_universe entry ids) and `subgroup_entry_ids INT[]` with GIN indexes; (3) original `lineage` / `shared_universe` / `recognized_subgroups` TEXT columns preserved for debugging; (4) Stage A–C ingestion (populate entries, tokenize with franchise-domain stoplist, stamp movies); (5) rewrite of `search_v2/stage_3/franchise_query_execution.py` + `db/postgres.py:fetch_franchise_movie_ids` to use GIN overlap on the entry-id arrays; (6) `FranchiseQuerySpec` schema change: `lineage_or_universe_names` renamed to `franchise_names`, `thinking` field added/surfaced first; (7) shared normalization gains cardinal number-to-word rule (`phase 1` → `phase one`) alongside the existing ordinal rule. DF ceiling decision deferred to post-ingestion.

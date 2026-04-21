@@ -13,12 +13,12 @@
 # handling, no ordinal normalization, no long-tail sub-label matching).
 #
 # This translator emits two complementary axes:
-#   1. brand_id (closed enum, 31 curated ProductionBrand values) for
+#   1. brand (closed enum, 31 curated ProductionBrand values) for
 #      umbrella queries. Execution reads the ingest-time-stamped
-#      `lex.inv_production_brand_postings` directly, so time-bounded
-#      membership (Lucasfilm under Disney only from 2012-) and rename
-#      chains (Twentieth Century Fox → 20th Century Studios) are
-#      handled automatically.
+#      `lex.inv_production_brand_postings` keyed by the enum's int
+#      brand_id attribute, so time-bounded membership (Lucasfilm under
+#      Disney only from 2012-) and rename chains (Twentieth Century
+#      Fox → 20th Century Studios) are handled automatically.
 #   2. freeform_names (≤3 IMDB surface forms) for specific sub-labels
 #      and long-tail studios. Execution normalizes + tokenizes + does
 #      DF-filtered intersection against `lex.studio_token`, then joins
@@ -43,7 +43,7 @@ from schemas.studio_translation import StudioQuerySpec
 # output field guidance.
 #
 # Prompt authoring conventions applied:
-# - Evidence-inventory reasoning (thinking precedes brand_id /
+# - Evidence-inventory reasoning (thinking precedes brand /
 #   freeform_names and forces umbrella-vs-specific scope reasoning)
 # - Principle-based constraints, not failure catalogs
 # - Evaluation guidance over outcome shortcuts (tell the LLM what a
@@ -80,7 +80,7 @@ this — if they meant "movies on Netflix" the item would have gone to \
 a different endpoint.
 
 You choose between two paths. Set exactly one:
-- brand_id for umbrella / parent-brand queries that name one of the \
+- brand for umbrella / parent-brand queries that name one of the \
 curated brands in the registry below.
 - freeform_names for specific sub-labels or long-tail studios that \
 the registry doesn't cover at umbrella level.
@@ -116,16 +116,16 @@ containing this studio, period. Do not invert, do not search for \
 # ---------------------------------------------------------------------------
 
 _BRAND_VS_FREEFORM = """\
-BRAND_ID vs FREEFORM_NAMES
+BRAND vs FREEFORM_NAMES
 
-Set brand_id when the user is asking at the umbrella / parent-brand \
+Set brand when the user is asking at the umbrella / parent-brand \
 level and the registry below covers that brand. Umbrella intent \
 means "the whole catalog of this studio's productions, across \
 subsidiaries and historical sub-labels." Examples: "Disney movies", \
 "Warner Bros. films", "A24 indies", "MGM catalog", "Ghibli" (the \
 registry covers it), "Marvel Studios films" (its own registry entry \
-AND a member of the DISNEY umbrella — pick MARVEL_STUDIOS for the \
-narrow reading, DISNEY for the broad reading).
+AND a member of the DISNEY umbrella — pick marvel-studios for the \
+narrow reading, disney for the broad reading).
 
 The brand path respects time-bounded ownership at ingest — a movie \
 is only stamped with a brand if the movie's release year falls \
@@ -136,7 +136,7 @@ reason about this; just pick the brand. The data handles the rest.
 
 Set freeform_names when the query names:
 - A specific sub-label not in the registry ("Walt Disney Animation \
-Studios" specifically — the DISNEY brand_id would return the whole \
+Studios" specifically — the disney brand would return the whole \
 Disney catalog, which is too broad; "HBO Documentary Films", "Fox \
 Searchlight" before its 2020 rename).
 - A long-tail or niche studio absent from the registry ("Villealfa \
@@ -150,7 +150,7 @@ credits for films associated with that studio. Good covering set:
 - one expanded / full form ("Metro-Goldwyn-Mayer", "Home Box Office")
 - one alternate well-known variant when a distinct form exists \
 ("20th Century Studios" vs "Twentieth Century Fox" — but remember \
-these live under brand_id=TWENTIETH_CENTURY if an umbrella query)
+these live under brand=twentieth-century if an umbrella query)
 
 Emit fewer than 3 when fewer distinct forms exist. Do not pad with \
 variations that are just spelling or capitalization changes — \
@@ -159,10 +159,10 @@ semantic translations of a name ("Japan Broadcasting Corporation" \
 for NHK) unless that translation is a form IMDB actually uses in \
 credits.
 
-Leave brand_id null when you use freeform_names. Leave freeform_names \
-null (or empty) when you use brand_id. Both set at once is allowed \
-but only has effect when the brand path returns empty — execution \
-will then try freeform_names as a fallback.
+Leave brand null when you use freeform_names. Leave freeform_names \
+null (or empty) when you use brand. Both set at once is allowed but \
+only has effect when the brand path returns empty — execution will \
+then try freeform_names as a fallback.
 
 ---
 
@@ -177,11 +177,11 @@ will then try freeform_names as a fallback.
 _BRAND_REGISTRY = f"""\
 REGISTRY BRANDS
 
-The closed set of brand_id values you may emit, each line followed \
-by a sample of IMDB `production_companies` surface forms that count \
-as that brand. The form list is a sample, not exhaustive — umbrella \
+The closed set of brand values you may emit, each line followed by \
+a sample of IMDB `production_companies` surface forms that count as \
+that brand. The form list is a sample, not exhaustive — umbrella \
 brands cover more strings than shown. Use this table to decide (a) \
-which brand_id to pick for umbrella queries, and (b) whether a query \
+which brand to pick for umbrella queries, and (b) whether a query \
 is actually umbrella-level at all (if no registry brand covers the \
 user's phrasing, use freeform_names instead).
 
@@ -210,9 +210,9 @@ the studio is known by.
 
 Emit each form the way IMDB would store it, not the way the user \
 typed it. "WB" rarely appears standalone in IMDB credits — emit \
-"Warner Bros." instead (and you'd use brand_id=WARNER_BROS for \
-that anyway). "Mouse House" never appears — don't emit it; use \
-brand_id=DISNEY. Hyphenated and spaced variants (`Tri-Star` vs \
+"Warner Bros." instead (and you'd use brand=warner-bros for that \
+anyway). "Mouse House" never appears — don't emit it; use \
+brand=disney. Hyphenated and spaced variants (`Tri-Star` vs \
 `TriStar`) are handled by tokenization; emit the form you believe \
 is most common.
 
@@ -244,11 +244,11 @@ slug you will emit, or list the 1-3 IMDB surface forms you will \
 emit. This field is where the brand-vs-freeform decision is made; \
 the structured fields just encode that decision.
 
-brand_id — The registry brand slug when the query is umbrella-level. \
+brand — The registry brand slug when the query is umbrella-level. \
 Leave null when you are using freeform_names.
 
 freeform_names — Up to 3 surface forms when the query is specific or \
-long-tail. Leave null or empty when you are using brand_id. Follow \
+long-tail. Leave null or empty when you are using brand. Follow \
 the canonicalization guidance: each entry should be a form that \
 plausibly appears verbatim in IMDB's production_companies credits \
 for films associated with this studio.
@@ -276,8 +276,8 @@ async def generate_studio_query(
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
     context) and one step 2 item's description plus routing_rationale.
-    It produces either a brand_id (for umbrella queries) or up to 3
-    freeform_names (for sub-labels and long-tail studios).
+    It produces either a brand enum value (for umbrella queries) or
+    up to 3 freeform_names (for sub-labels and long-tail studios).
 
     Args:
         intent_rewrite: The full concrete statement of what the user is

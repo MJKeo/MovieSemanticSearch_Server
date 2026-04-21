@@ -9,8 +9,9 @@
 #
 # Two paths, chosen by the LLM's spec:
 #
-#   Brand path (spec.brand_id set) — direct lookup against
-#   `lex.inv_production_brand_postings`. Time-bounded membership
+#   Brand path (spec.brand set) — direct lookup against
+#   `lex.inv_production_brand_postings` keyed by the ProductionBrand
+#   enum's int `brand_id` attribute. Time-bounded membership
 #   (Lucasfilm joined DISNEY in 2012, Twentieth Century Fox's
 #   windowed rows, etc.) was applied at ingest, so this path is just
 #   a membership read. Returns flat 1.0 per matched movie — see the
@@ -31,7 +32,7 @@
 #   multiple surface-form candidates.
 #
 # Precedence: brand path wins when set and non-empty; freeform is the
-# backup when brand_id is unset OR when the brand path returned empty
+# backup when brand is unset OR when the brand path returned empty
 # (rare — means the registry brand has no stamped movies, usually only
 # during backfill edge cases).
 
@@ -76,14 +77,20 @@ async def _execute_freeform_path(
 ) -> dict[int, float]:
     """Freeform path — per-name token intersection, union across names.
 
-    For each surface form: normalize → tokenize → fetch DF-filtered
-    posting lists → intersect per-token company sets. A name that has
-    *any* of its tokens DF-dropped or unseen contributes nothing (all
-    tokens must participate for the intersection to be meaningful).
-    Company sets union across names, then join against
-    `movie_card.production_company_ids` produces the final movie set.
+    For each surface form: normalize → tokenize. All tokens across all
+    names are collected into one batched fetch against `lex.studio_token`
+    (DF-filtered), keeping the Postgres round-trip count at 2 regardless
+    of how many freeform_names the LLM emitted. Per-name intersection
+    then happens in Python over the shared response. Cross-name union
+    gives OR semantics across the LLM's surface-form candidates. A name
+    that has *any* of its tokens DF-dropped or unseen contributes nothing
+    (all tokens must participate for the intersection to be meaningful).
     """
-    all_company_ids: set[int] = set()
+    # Phase 1: normalize + tokenize each name and collect distinct tokens
+    # across every name into one batch. `per_name_tokens` preserves the
+    # per-name grouping for the intersection step below.
+    per_name_tokens: list[list[str]] = []
+    all_tokens: set[str] = set()
     for name in freeform_names:
         normalized = normalize_company_string(name)
         # Pass already_normalized=True — we just ran the normalizer
@@ -91,25 +98,33 @@ async def _execute_freeform_path(
         tokens = tokenize_company_string(normalized, already_normalized=True)
         if not tokens:
             continue
+        per_name_tokens.append(tokens)
+        all_tokens.update(tokens)
+    if not all_tokens:
+        return {}
 
-        token_to_companies = await fetch_company_ids_for_tokens(tokens, DF_CEILING)
+    # Phase 2: single DF-filtered fetch for every token across every
+    # name. sorted() gives deterministic query text (stable plan cache)
+    # and reproducible logs.
+    token_to_companies = await fetch_company_ids_for_tokens(
+        sorted(all_tokens), DF_CEILING
+    )
 
-        # Every token must be present AND non-empty for the per-name
-        # intersection to be well-defined. A missing token (DF-dropped
-        # or never indexed) collapses this name's contribution to
-        # empty — we skip it rather than silently treating "missing"
-        # as "matches everything".
+    # Phase 3: per-name intersection over the shared response. A
+    # missing key (DF-dropped or unseen token) collapses the name's
+    # contribution to empty — we must not silently treat "missing" as
+    # "matches everything".
+    all_company_ids: set[int] = set()
+    for tokens in per_name_tokens:
         per_token_sets = [token_to_companies.get(t) for t in tokens]
         if not all(per_token_sets):
             continue
-
-        intersected = set.intersection(*per_token_sets)
-        if intersected:
-            all_company_ids |= intersected
+        all_company_ids |= set.intersection(*per_token_sets)
 
     if not all_company_ids:
         return {}
 
+    # Phase 4: join the union set against movie_card's GIN array.
     movie_ids = await fetch_movie_ids_by_production_company_ids(
         all_company_ids, restrict_movie_ids
     )
@@ -131,7 +146,7 @@ async def execute_studio_query(
         supplied ID, with 0.0 for non-matches.
 
     Path precedence:
-      1. If spec.brand_id is set, try the brand path. If it returns
+      1. If spec.brand is set, try the brand path. If it returns
          any matches, those are the result.
       2. Otherwise (brand unset or brand-path empty), if spec has
          freeform_names, run the freeform path.
@@ -149,15 +164,16 @@ async def execute_studio_query(
     """
     scores_by_movie: dict[int, float] = {}
 
-    if spec.brand_id is not None:
-        # ProductionBrand enum carries the int brand_id as an
-        # attribute; the DB column is SMALLINT on that int.
+    if spec.brand is not None:
+        # `spec.brand` is a ProductionBrand enum member. The enum carries
+        # an int `brand_id` attribute (attached in __new__) that keys the
+        # SMALLINT column on lex.inv_production_brand_postings.
         scores_by_movie = await _execute_brand_path(
-            spec.brand_id.brand_id, restrict_to_movie_ids
+            spec.brand.brand_id, restrict_to_movie_ids
         )
 
-    # Freeform as fallback: runs either when brand_id was unset, OR
-    # when the brand path returned empty but the LLM also provided
+    # Freeform as fallback: runs either when brand was unset, OR when
+    # the brand path returned empty but the LLM also provided
     # freeform_names. Covers the rare edge case of a registry brand
     # with no stamped movies during backfill.
     if not scores_by_movie and spec.freeform_names:
