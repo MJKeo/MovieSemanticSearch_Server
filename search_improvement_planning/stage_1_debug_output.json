@@ -1,0 +1,730 @@
+{
+  "generated_at": "2026-04-21T22:53:37Z",
+  "total_elapsed_s": 23.91,
+  "stage_1_model": "gemini-3-flash-preview (thinking_budget=0)",
+  "buckets": [
+    {
+      "bucket": "original_failure",
+      "hypothesis": "Reproduce the reported failure case: ambiguity is cited but no alternative_intents are emitted.",
+      "results": [
+        {
+          "query": "Disney millennial favorites",
+          "status": "ok",
+          "elapsed_ms": 4016.7,
+          "input_tokens": 4874,
+          "output_tokens": 583,
+          "response": {
+            "ambiguity_analysis": "readings:\n- Disney movies millennials grew up with -> primary\n- Disney movies currently popular with millennials -> emit as alt (modern preference vs nostalgia returns a different film set)\n- generation-defining Disney films for millennials -> skip (overlaps heavily with the primary reading)",
+            "primary_intent": {
+              "routing_signals": "The phrase 'millennial favorites' combined with 'Disney' strongly implies a nostalgia-driven search for films from their childhood era.",
+              "intent_rewrite": "Disney movies that millennials grew up with during the 80s and 90s",
+              "flow": "standard",
+              "display_phrase": "Disney Nostalgia for Millennials",
+              "title": null
+            },
+            "alternative_intents": [
+              {
+                "routing_signals": "The word 'favorites' can also refer to current viewing preferences or trending titles.",
+                "difference_rationale": "This targets modern Disney releases or acquisitions that are currently popular with the millennial demographic rather than just childhood classics.",
+                "intent_rewrite": "Disney movies currently popular with millennial audiences",
+                "flow": "standard",
+                "display_phrase": "Currently Popular with Millennials",
+                "title": null
+              }
+            ],
+            "creative_spin_analysis": "spin_potential: high (broad nostalgia set with distinct sub-categories)\ncandidate_spins:\n- Disney Renaissance-era animated films -> emit (specifically targets the peak 1989-1999 hits for millennials)\n- Live-action Disney movies from the 90s -> emit (narrows to the specific live-action subset like The Parent Trap or Hocus Pocus)\n- Disney Channel Original Movies for millennials -> skip (too narrow/niche for a first spin)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on the specific peak era of Disney animation that defined the millennial childhood.",
+                "intent_rewrite": "Disney Renaissance-era animated movies from the late 80s and 90s",
+                "flow": "standard",
+                "display_phrase": "The Disney Renaissance Classics",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on the live-action family films that were staple viewing for millennials in the 90s.",
+                "intent_rewrite": "Live-action Disney movies from the 1990s",
+                "flow": "standard",
+                "display_phrase": "90s Live-Action Favorites",
+                "title": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "bucket": "reading_ambiguity",
+      "hypothesis": "Queries whose vagueness corresponds to genuinely distinct readings (not just fuzzy edges). Should produce alternative_intents.",
+      "results": [
+        {
+          "query": "gen z horror favorites",
+          "status": "ok",
+          "elapsed_ms": 3811.8,
+          "input_tokens": 4875,
+          "output_tokens": 467,
+          "response": {
+            "ambiguity_analysis": "readings:\n- horror movies that members of Gen Z grew up watching -> primary\n- horror movies that are currently trending or popular with Gen Z viewers -> emit as alt (current popularity vs childhood nostalgia produces different movie sets)",
+            "primary_intent": {
+              "routing_signals": "The phrase 'gen z horror favorites' suggests a collection of movies associated with a specific generational cohort.",
+              "intent_rewrite": "Horror movies that Gen Z grew up with and consider favorites",
+              "flow": "standard",
+              "display_phrase": "Gen Z Horror Nostalgia",
+              "title": null
+            },
+            "alternative_intents": [
+              {
+                "routing_signals": "The word 'favorites' can refer to current preferences rather than just nostalgia.",
+                "difference_rationale": "Focusing on current trends among Gen Z viewers targets modern social-media-driven hits rather than childhood classics.",
+                "intent_rewrite": "Horror movies that are currently popular with the Gen Z audience",
+                "flow": "standard",
+                "display_phrase": "Current Gen Z Horror Hits",
+                "title": null
+              }
+            ],
+            "creative_spin_analysis": "spin_potential: high (generational favorites cover a wide range of sub-genres and eras)\ncandidate_spins:\n- A24 and 'elevated' horror favorites for Gen Z -> emit (this studio's output is a distinct pillar of Gen Z horror taste)\n- 2000s and 2010s 'slumber party' horror classics -> emit (specific nostalgic context for this generation)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on the 'elevated horror' trend and A24 films that defined Gen Z's taste in the genre.",
+                "intent_rewrite": "Stylistic and psychological horror movies from A24 and similar studios popular with Gen Z",
+                "flow": "standard",
+                "display_phrase": "A24 & Elevated Horror",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on the mainstream 'slumber party' horror movies from the 2000s and 2010s.",
+                "intent_rewrite": "Mainstream horror movies from the 2000s and 2010s that were popular among Gen Z youth",
+                "flow": "standard",
+                "display_phrase": "2000s Slumber Party Horror",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "80s kids would love",
+          "status": "ok",
+          "elapsed_ms": 4447.3,
+          "input_tokens": 4878,
+          "output_tokens": 672,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies released in the 1980s that were aimed at children -> primary\n- movies from any era that appeal to the nostalgic taste of people who grew up in the 1980s -> emit as alt (targets a broader aesthetic beyond just 80s release dates)\n- people born in the 1980s who are currently kids -> skip (logically impossible/no movie-search application)",
+            "primary_intent": {
+              "routing_signals": "The phrase '80s kids' combined with 'would love' suggests a search for classic children's films from that decade.",
+              "intent_rewrite": "Children's movies from the 1980s that are beloved classics",
+              "flow": "standard",
+              "display_phrase": "80s Childhood Classics",
+              "title": null
+            },
+            "alternative_intents": [
+              {
+                "routing_signals": "The phrase '80s kids would love' can refer to the specific nostalgic taste of that generation for modern content.",
+                "difference_rationale": "This shifts from searching for movies made in the 80s to movies from any era that capture the specific '80s kid' aesthetic or nostalgia.",
+                "intent_rewrite": "Movies that appeal to the nostalgia and tastes of people who grew up in the 1980s",
+                "flow": "standard",
+                "display_phrase": "Nostalgia for 80s Kids",
+                "title": null
+              }
+            ],
+            "creative_spin_analysis": "spin_potential: high (the 80s children's catalog is broad and spans several distinct sub-genres)\ncandidate_spins:\n- 80s live-action fantasy adventure movies for kids -> emit (captures a very specific and popular '80s kid' sub-genre like Labyrinth or NeverEnding Story)\n- 80s animated feature films for children -> emit (focuses on the distinct era of animation from that decade)\n- 80s sci-fi movies for families -> skip (overlaps significantly with fantasy/adventure)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on the iconic live-action fantasy and quest movies popular in the 1980s.",
+                "intent_rewrite": "1980s live-action fantasy and adventure movies for kids",
+                "flow": "standard",
+                "display_phrase": "80s Fantasy Adventures",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on the specific style of animated features released during the 1980s.",
+                "intent_rewrite": "Animated children's movies released in the 1980s",
+                "flow": "standard",
+                "display_phrase": "80s Animated Gems",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "movies dads like",
+          "status": "ok",
+          "elapsed_ms": 2705.2,
+          "input_tokens": 4874,
+          "output_tokens": 355,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies that are popular with or generally liked by fathers -> primary",
+            "primary_intent": {
+              "routing_signals": "The plural 'movies' and the demographic 'dads' point to a collection search.",
+              "intent_rewrite": "Movies that dads like",
+              "flow": "standard",
+              "display_phrase": "Movies for dads",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (broad demographic preference with several distinct sub-genres)\ncandidate_spins:\n- action and war movies for dads -> emit (common sub-genre associated with this demographic)\n- heartwarming father-child relationship movies -> emit (thematic narrowing within the parent-interest category)\n- historical and biography films for dads -> skip (overlaps with existing spins for a broad query)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Action and war movies often enjoyed by fathers.",
+                "intent_rewrite": "Action and war movies that dads like",
+                "flow": "standard",
+                "display_phrase": "Action & War Classics",
+                "title": null
+              },
+              {
+                "spin_angle": "Heartwarming movies centered on father-child relationships.",
+                "intent_rewrite": "Movies about being a father or father-child relationships",
+                "flow": "standard",
+                "display_phrase": "Fatherhood Stories",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "Y2K vibes",
+          "status": "ok",
+          "elapsed_ms": 2975.8,
+          "input_tokens": 4875,
+          "output_tokens": 391,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies that embody the visual style, music, and energy of the late 90s/early 2000s -> primary",
+            "primary_intent": {
+              "routing_signals": "The phrase 'Y2K vibes' refers to the specific aesthetic and cultural atmosphere of the late 1990s and early 2000s.",
+              "intent_rewrite": "Movies that capture the Y2K aesthetic and vibes from the late 90s and early 2000s",
+              "flow": "standard",
+              "display_phrase": "Y2K Vibes",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (Y2K vibes covers many distinct genres and sub-aesthetics)\ncandidate_spins:\n- late 90s and early 2000s teen comedies -> emit (this genre is a core pillar of Y2K pop culture)\n- futuristic and tech-obsessed Y2K thrillers -> emit (captures the millennium-bug and techno-optimism side of the vibe)\n- bubblegum pop aesthetic romances -> skip (too similar to teen comedies)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on the era's signature high-school and teen comedy genre.",
+                "intent_rewrite": "Teen comedies from the late 90s and early 2000s that define the Y2K era",
+                "flow": "standard",
+                "display_phrase": "Y2K Teen Classics",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on the techno-futurism and digital anxiety themes common in Y2K-era films.",
+                "intent_rewrite": "Techno-thrillers and futuristic movies from the Y2K era",
+                "flow": "standard",
+                "display_phrase": "Y2K Techno-Futurism",
+                "title": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "bucket": "title_vs_collection",
+      "hypothesis": "Known-good branching shape: single phrase that could be a real title or a collection request. Baseline for alternative emission.",
+      "results": [
+        {
+          "query": "Scary Movie",
+          "status": "ok",
+          "elapsed_ms": 2615.9,
+          "input_tokens": 4873,
+          "output_tokens": 284,
+          "response": {
+            "ambiguity_analysis": "readings:\n- the movie titled \"Scary Movie\" -> primary\n- movies that are scary -> emit as alt (genre-based search targets an entirely different set of horror films)",
+            "primary_intent": {
+              "routing_signals": "The query matches the literal title of the 2000 horror parody film.",
+              "intent_rewrite": "The movie titled \"Scary Movie\"",
+              "flow": "exact_title",
+              "display_phrase": "Scary Movie",
+              "title": "Scary Movie"
+            },
+            "alternative_intents": [
+              {
+                "routing_signals": "The phrase \"Scary Movie\" is also a common natural language description for horror cinema.",
+                "difference_rationale": "It shifts from a specific title search to a broad genre discovery for frightening films.",
+                "intent_rewrite": "Movies that are scary",
+                "flow": "standard",
+                "display_phrase": "Scary movies",
+                "title": null
+              }
+            ],
+            "creative_spin_analysis": "spin_potential: none (exact_title flow for primary; alternative is already a broad genre category)",
+            "creative_alternatives": []
+          }
+        },
+        {
+          "query": "Up",
+          "status": "ok",
+          "elapsed_ms": 1902.1,
+          "input_tokens": 4872,
+          "output_tokens": 161,
+          "response": {
+            "ambiguity_analysis": "readings:\n- the movie titled \"Up\" -> primary\n- the word \"up\" as a direction or fragment -> skip (no plausible movie-search intent attaches to the fragment)",
+            "primary_intent": {
+              "routing_signals": "The single word matches the literal title of the popular Pixar film.",
+              "intent_rewrite": "Up",
+              "flow": "exact_title",
+              "display_phrase": "Up",
+              "title": "Up"
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: none (exact_title flow)",
+            "creative_alternatives": []
+          }
+        }
+      ]
+    },
+    {
+      "bucket": "semantic_vagueness",
+      "hypothesis": "Vague phrases with a single reading. Should NOT emit alternatives just because the meaning is fuzzy.",
+      "results": [
+        {
+          "query": "cozy movie for tonight",
+          "status": "ok",
+          "elapsed_ms": 3006.6,
+          "input_tokens": 4875,
+          "output_tokens": 366,
+          "response": {
+            "ambiguity_analysis": "readings:\n- a cozy movie that fits the vibe for tonight -> primary",
+            "primary_intent": {
+              "routing_signals": "The words 'cozy' and 'for tonight' signal a subjective mood and viewing preference.",
+              "intent_rewrite": "A cozy movie for tonight",
+              "flow": "standard",
+              "display_phrase": "Cozy Movies for Tonight",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (broad subjective mood with many productive sub-genres)\ncandidate_spins:\n- animated cozy movies -> emit (animation is a major subset of the cozy vibe)\n- lighthearted romantic comedies -> emit (rom-coms are a frequent go-to for cozy nights)\n- comfort classics from the 90s -> skip (overlaps with general cozy category)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on animated films that provide a cozy and gentle atmosphere.",
+                "intent_rewrite": "Cozy animated movies for tonight",
+                "flow": "standard",
+                "display_phrase": "Cozy Animated Favorites",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on lighthearted romantic comedies that fit a cozy viewing mood.",
+                "intent_rewrite": "Lighthearted romantic comedy movies for a cozy night",
+                "flow": "standard",
+                "display_phrase": "Cozy Rom-Coms",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "something feel-good",
+          "status": "ok",
+          "elapsed_ms": 3140.5,
+          "input_tokens": 4875,
+          "output_tokens": 386,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies with a feel-good tone or atmosphere -> primary",
+            "primary_intent": {
+              "routing_signals": "The phrase 'feel-good' describes a specific emotional tone or vibe for a movie search.",
+              "intent_rewrite": "Movies that have a feel-good tone",
+              "flow": "standard",
+              "display_phrase": "Feel-good movies",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (feel-good is a broad emotional category with distinct genre variations)\ncandidate_spins:\n- feel-good romantic comedies -> emit (rom-coms are a core pillar of the feel-good category)\n- feel-good animated family movies -> emit (animation offers a distinct visual and thematic style of feel-good)\n- feel-good underdog sports stories -> skip (useful, but rom-coms and family movies are more broadly representative)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on the popular intersection of romantic comedy and positive emotional vibes.",
+                "intent_rewrite": "Feel-good romantic comedy movies",
+                "flow": "standard",
+                "display_phrase": "Feel-good rom-coms",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on uplifting animated films suitable for all ages.",
+                "intent_rewrite": "Feel-good animated movies for the whole family",
+                "flow": "standard",
+                "display_phrase": "Feel-good animated movies",
+                "title": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "bucket": "clean_controls",
+      "hypothesis": "Fully specified queries with no ambiguity. Should produce no alternatives and ambiguity=none.",
+      "results": [
+        {
+          "query": "Inception",
+          "status": "ok",
+          "elapsed_ms": 1822.9,
+          "input_tokens": 4873,
+          "output_tokens": 166,
+          "response": {
+            "ambiguity_analysis": "readings:\n- the movie titled Inception -> primary\n- \"inception\" as a natural language concept regarding origins -> skip (no plausible movie-search intent attaches to the dictionary definition)",
+            "primary_intent": {
+              "routing_signals": "The query matches the exact title of the well-known Christopher Nolan film.",
+              "intent_rewrite": "Inception",
+              "flow": "exact_title",
+              "display_phrase": "Inception",
+              "title": "Inception"
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: none (exact_title flow)",
+            "creative_alternatives": []
+          }
+        },
+        {
+          "query": "Tom Cruise action movies from the 90s",
+          "status": "ok",
+          "elapsed_ms": 1638.4,
+          "input_tokens": 4881,
+          "output_tokens": 138,
+          "response": {
+            "ambiguity_analysis": "readings:\n- action films released in the 1990s starring Tom Cruise -> primary",
+            "primary_intent": {
+              "routing_signals": "The query specifies an actor 'Tom Cruise', a genre 'action', and a decade '90s'.",
+              "intent_rewrite": "Action movies starring Tom Cruise from the 1990s",
+              "flow": "standard",
+              "display_phrase": "Tom Cruise '90s Action Hits",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: none (the query is already very narrow, specifying actor, genre, and decade)",
+            "creative_alternatives": []
+          }
+        }
+      ]
+    },
+    {
+      "bucket": "edge_vague_or_ambiguous",
+      "hypothesis": "Phrases where it is unclear whether the vagueness is a single fuzzy reading or multiple distinct readings. Probes where the model draws the line.",
+      "results": [
+        {
+          "query": "prestige drama",
+          "status": "ok",
+          "elapsed_ms": 2859.5,
+          "input_tokens": 4873,
+          "output_tokens": 368,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies categorized as prestige dramas -> primary\n- movies like the specific 2006 film \"The Prestige\" -> emit as alt (the query could be a shorthand for dramas similar to that specific title)",
+            "primary_intent": {
+              "routing_signals": "The phrase uses generic category terms 'prestige' and 'drama'.",
+              "intent_rewrite": "Movies that are considered prestige dramas",
+              "flow": "standard",
+              "display_phrase": "Prestige dramas",
+              "title": null
+            },
+            "alternative_intents": [
+              {
+                "routing_signals": "The word 'prestige' matches a well-known movie title.",
+                "difference_rationale": "This branch treats 'Prestige' as a specific reference title rather than a category descriptor.",
+                "intent_rewrite": "Drama movies similar to The Prestige",
+                "flow": "standard",
+                "display_phrase": "Dramas like The Prestige",
+                "title": null
+              }
+            ],
+            "creative_spin_analysis": "spin_potential: high (the prestige drama category covers a vast range of eras and styles)\ncandidate_spins:\n- modern award-winning prestige dramas -> emit (narrows to recent critical successes)\n- historical and period-piece prestige dramas -> emit (focuses on a popular sub-genre within the category)\n- gritty psychological prestige dramas -> skip (too specific for a first-level spin)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on recent award-winning and critically acclaimed films.",
+                "intent_rewrite": "Modern award-winning prestige drama movies",
+                "flow": "standard",
+                "display_phrase": "Modern award winners",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on historical settings and period-piece narratives.",
+                "intent_rewrite": "Historical and period-piece prestige dramas",
+                "flow": "standard",
+                "display_phrase": "Historical dramas",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "arthouse thriller",
+          "status": "ok",
+          "elapsed_ms": 2877.6,
+          "input_tokens": 4874,
+          "output_tokens": 368,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies that fit both the arthouse and thriller genres -> primary",
+            "primary_intent": {
+              "routing_signals": "The query combines two distinct genre/style labels 'arthouse' and 'thriller'.",
+              "intent_rewrite": "Arthouse thriller movies",
+              "flow": "standard",
+              "display_phrase": "Arthouse Thrillers",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (broad stylistic intersection with several distinct sub-moods)\ncandidate_spins:\n- psychological arthouse thrillers -> emit (narrows the focus to internal tension and mental states)\n- slow-burn international arthouse thrillers -> emit (focuses on pacing and global cinema origins)\n- avant-garde or experimental thrillers -> skip (overlaps significantly with the general arthouse label)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on internal tension and psychological depth within the arthouse thriller style.",
+                "intent_rewrite": "Psychological arthouse thriller movies",
+                "flow": "standard",
+                "display_phrase": "Psychological Arthouse",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on slow-burn pacing and non-US productions.",
+                "intent_rewrite": "Slow-burn international arthouse thrillers",
+                "flow": "standard",
+                "display_phrase": "Slow-Burn International",
+                "title": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "bucket": "spin_candidates",
+      "hypothesis": "Broad single-intent queries with no reading ambiguity. Should produce zero alternative_intents but one or more creative_alternatives subdividing the broad set.",
+      "results": [
+        {
+          "query": "Best Christmas movies for families",
+          "status": "ok",
+          "elapsed_ms": 2778.5,
+          "input_tokens": 4876,
+          "output_tokens": 360,
+          "response": {
+            "ambiguity_analysis": "readings:\n- best Christmas movies for families -> primary",
+            "primary_intent": {
+              "routing_signals": "The query uses the plural 'movies' and 'for families' describing a collection of films based on genre and target audience.",
+              "intent_rewrite": "Best Christmas movies for families",
+              "flow": "standard",
+              "display_phrase": "Best family Christmas movies",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (broad family-Christmas-movie set with many productive sub-angles)\ncandidate_spins:\n- animated family Christmas movies -> emit (animation focus filters to a distinct sub-collection)\n- modern family Christmas movies -> emit (focusing on recent releases creates a different browsing experience from older classics)\n- live-action family Christmas classics -> skip (partially overlaps with the primary)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on animated holiday films suitable for all ages.",
+                "intent_rewrite": "Best animated Christmas movies for families",
+                "flow": "standard",
+                "display_phrase": "Animated holiday favorites",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on modern holiday movies released in recent years.",
+                "intent_rewrite": "Best modern Christmas movies for families",
+                "flow": "standard",
+                "display_phrase": "Modern family Christmas movies",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "Disney classics",
+          "status": "ok",
+          "elapsed_ms": 2767.3,
+          "input_tokens": 4873,
+          "output_tokens": 361,
+          "response": {
+            "ambiguity_analysis": "readings:\n- Disney movies considered classics -> primary",
+            "primary_intent": {
+              "routing_signals": "The query uses 'Disney' as a studio/brand and 'classics' as a broad collection category.",
+              "intent_rewrite": "Disney movies considered classics",
+              "flow": "standard",
+              "display_phrase": "Disney Classics",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (broad studio catalog with distinct eras and production styles)\ncandidate_spins:\n- animated golden-age Disney classics -> emit (focuses on the hand-drawn foundation of the studio)\n- Disney Renaissance-era animated classics -> emit (targets the specific 1990s peak era)\n- live-action Disney classics -> skip (distinct but less requested than animation spins)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Golden-age hand-drawn animation from Disney's early years.",
+                "intent_rewrite": "Golden-age animated Disney classics",
+                "flow": "standard",
+                "display_phrase": "Golden-Age Animation",
+                "title": null
+              },
+              {
+                "spin_angle": "The peak 1990s era of Disney animated musical blockbusters.",
+                "intent_rewrite": "Disney Renaissance-era animated classics",
+                "flow": "standard",
+                "display_phrase": "The Disney Renaissance",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "good horror movies",
+          "status": "ok",
+          "elapsed_ms": 2790.4,
+          "input_tokens": 4874,
+          "output_tokens": 355,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies in the horror genre that are well-regarded -> primary",
+            "primary_intent": {
+              "routing_signals": "The user combines the quality descriptor 'good' with the genre 'horror movies'.",
+              "intent_rewrite": "Good horror movies",
+              "flow": "standard",
+              "display_phrase": "Good horror movies",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (broad genre-based quality search with many distinct sub-categories)\ncandidate_spins:\n- modern horror movies with high ratings -> emit (focuses on recent well-received entries)\n- classic horror films that are highly regarded -> emit (focuses on essential or historical horror)\n- slow-burn psychological horror -> skip (narrower sub-genre that might be too specific without a signal)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on modern horror movies that have received high praise.",
+                "intent_rewrite": "Good modern horror movies",
+                "flow": "standard",
+                "display_phrase": "Modern horror gems",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on horror movies considered to be all-time classics.",
+                "intent_rewrite": "Good classic horror movies",
+                "flow": "standard",
+                "display_phrase": "Classic horror essentials",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "movies for date night",
+          "status": "ok",
+          "elapsed_ms": 2757.6,
+          "input_tokens": 4875,
+          "output_tokens": 297,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies suitable for a date night -> primary",
+            "primary_intent": {
+              "routing_signals": "The phrase 'movies for date night' indicates a semantic category request for recommendations suitable for couples.",
+              "intent_rewrite": "Movies that are suitable for a date night",
+              "flow": "standard",
+              "display_phrase": "Date Night Movies",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (date night is a broad category with diverse romantic and tonal sub-genres)\ncandidate_spins:\n- romantic comedies for date night -> emit (popular sub-angle that provides a lighthearted experience)\n- intense or suspenseful movies for date night -> emit (captures the 'thrilling' side of date night movies)\n- cozy and heartwarming movies for date night -> skip (partially overlaps with the primary vibe)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on lighthearted and funny romantic movies perfect for a couple's evening.",
+                "intent_rewrite": "Romantic comedies suitable for a date night",
+                "flow": "standard",
+                "display_phrase": "Rom-Com Date Night",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on high-stakes, suspenseful films that provide an exciting date night experience.",
+                "intent_rewrite": "Thrilling or suspenseful movies suitable for a date night",
+                "flow": "standard",
+                "display_phrase": "Thrilling Date Night",
+                "title": null
+              }
+            ]
+          }
+        },
+        {
+          "query": "feel-good comedies",
+          "status": "ok",
+          "elapsed_ms": 2983.2,
+          "input_tokens": 4875,
+          "output_tokens": 374,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies that are both feel-good and comedies -> primary",
+            "primary_intent": {
+              "routing_signals": "The query uses descriptive genre and mood terms 'feel-good' and 'comedies'.",
+              "intent_rewrite": "feel-good comedy movies",
+              "flow": "standard",
+              "display_phrase": "Feel-good comedies",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: high (broad genre/mood category with various stylistic sub-angles)\ncandidate_spins:\n- animated feel-good comedies -> emit (animation often targets this specific mood differently)\n- heartwarming romantic feel-good comedies -> emit (rom-coms are a major distinct subset of this intent)\n- slapstick or high-energy feel-good comedies -> skip (overlaps too much with general comedy results)",
+            "creative_alternatives": [
+              {
+                "spin_angle": "Focuses on animated films that deliver a feel-good comedic experience.",
+                "intent_rewrite": "animated feel-good comedy movies",
+                "flow": "standard",
+                "display_phrase": "Animated feel-good fun",
+                "title": null
+              },
+              {
+                "spin_angle": "Focuses on the romantic comedy sub-genre within the feel-good category.",
+                "intent_rewrite": "heartwarming feel-good romantic comedies",
+                "flow": "standard",
+                "display_phrase": "Heartwarming rom-coms",
+                "title": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "bucket": "spin_negative_controls",
+      "hypothesis": "Queries where spins should NOT fire — already-narrow filters or non-standard flow.",
+      "results": [
+        {
+          "query": "Tom Cruise action movies from the 90s",
+          "status": "ok",
+          "elapsed_ms": 1953.6,
+          "input_tokens": 4881,
+          "output_tokens": 178,
+          "response": {
+            "ambiguity_analysis": "readings:\n- Tom Cruise action movies released in the 1990s -> primary",
+            "primary_intent": {
+              "routing_signals": "The query names a specific actor, a specific genre, and a specific decade.",
+              "intent_rewrite": "Tom Cruise action movies from the 1990s",
+              "flow": "standard",
+              "display_phrase": "Tom Cruise's 90s action hits",
+              "title": null
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: low (the actor, genre, and decade constraints already create a relatively focused set)\ncandidate_spins:\n- high-stakes espionage and thriller films -> skip (already well-represented in the primary set)\n- 90s blockbusters featuring Tom Cruise -> skip (too similar to primary)",
+            "creative_alternatives": []
+          }
+        },
+        {
+          "query": "Inception",
+          "status": "ok",
+          "elapsed_ms": 1510.1,
+          "input_tokens": 4873,
+          "output_tokens": 131,
+          "response": {
+            "ambiguity_analysis": "readings:\n- the movie titled \"Inception\" -> primary\n- search for movies conceptually similar to the film \"Inception\" -> skip (handled by recommendations, not a distinct reading of the word)",
+            "primary_intent": {
+              "routing_signals": "The query matches a well-known, singular movie title exactly.",
+              "intent_rewrite": "The movie Inception",
+              "flow": "exact_title",
+              "display_phrase": "Inception",
+              "title": "Inception"
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: none (exact_title flow)",
+            "creative_alternatives": []
+          }
+        },
+        {
+          "query": "movies like The Matrix",
+          "status": "ok",
+          "elapsed_ms": 1506.9,
+          "input_tokens": 4875,
+          "output_tokens": 102,
+          "response": {
+            "ambiguity_analysis": "readings:\n- movies similar to The Matrix -> primary",
+            "primary_intent": {
+              "routing_signals": "The phrase \"movies like\" followed by a single movie title and no other qualifiers.",
+              "intent_rewrite": "Movies similar to The Matrix",
+              "flow": "similarity",
+              "display_phrase": "Movies like The Matrix",
+              "title": "The Matrix"
+            },
+            "alternative_intents": [],
+            "creative_spin_analysis": "spin_potential: none (similarity flow)",
+            "creative_alternatives": []
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -439,6 +439,20 @@ class ActorProminenceMode(StrEnum):
     MINOR = "minor"
 
 
+# How to score character billing position for character entity lookups.
+# Only meaningful when entity_type is CHARACTER. Two modes:
+#   DEFAULT — character is a filter; gentle top-to-bottom linear decay
+#     across the movie's character cast.
+#   CENTRAL — character is the subject of the query ("Spider-Man
+#     movies"); top-of-bill characters score 1.0 with a fixed decay,
+#     independent of cast size.
+# See search_improvement_planning/character_scoring_revamp.md for
+# curve shapes and compression-to-[0.5, 1.0] rationale.
+class CharacterProminenceMode(StrEnum):
+    DEFAULT = "default"
+    CENTRAL = "central"
+
+
 # How to match a title pattern against movie title strings.
 # contains = LIKE '%pattern%', starts_with = LIKE 'pattern%'.
 class TitlePatternMatchType(StrEnum):

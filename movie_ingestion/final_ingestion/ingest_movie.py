@@ -425,7 +425,17 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     await batch_insert_writer_postings(list(dict.fromkeys(writer_term_ids)), movie_id, conn=conn)
     await batch_insert_producer_postings(list(dict.fromkeys(producer_term_ids)), movie_id, conn=conn)
     await batch_insert_composer_postings(list(dict.fromkeys(composer_term_ids)), movie_id, conn=conn)
-    await batch_insert_character_postings(list(dict.fromkeys(character_term_ids)), movie_id, conn=conn)
+    # Character dedup preserves cast-edge order (topmost-billed first)
+    # via dict.fromkeys; character_cast_size reflects the deduplicated
+    # distinct-term count, which is what the prominence-score DEFAULT
+    # curve divides by.
+    deduped_character_term_ids = list(dict.fromkeys(character_term_ids))
+    await batch_insert_character_postings(
+        deduped_character_term_ids,
+        movie_id,
+        character_cast_size=len(deduped_character_term_ids),
+        conn=conn,
+    )
 
 
 async def write_production_data(

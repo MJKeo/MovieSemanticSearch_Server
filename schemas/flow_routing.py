@@ -12,7 +12,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
-from schemas.enums import QueryAmbiguityLevel, SearchFlow
+from schemas.enums import SearchFlow
 
 
 def _validate_title_for_flow(flow: SearchFlow, title: str | None) -> None:
@@ -62,34 +62,58 @@ class AlternativeIntent(BaseModel):
         return self
 
 
+# Creative spin output. Semantically distinct from AlternativeIntent:
+# alternatives capture different readings of what the user asked for,
+# while spins propose productive sub-angles within the primary's broad
+# set. The user's intent stays fixed across spins; only the narrowing
+# changes. Spins are always standard flow (we only spin on broad
+# discovery queries), and never carry a title — the flow/title pairing
+# validator is reused to keep this invariant enforced consistently with
+# the other intent classes.
+class CreativeSpin(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    spin_angle: constr(strip_whitespace=True, min_length=1) = Field(...)
+    intent_rewrite: constr(strip_whitespace=True, min_length=1) = Field(...)
+    flow: SearchFlow = Field(...)
+    display_phrase: constr(strip_whitespace=True, min_length=1) = Field(...)
+    title: str | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def validate_flow_title_pairing(self) -> "CreativeSpin":
+        _validate_title_for_flow(self.flow, self.title)
+        return self
+
+
 # Top-level response from the step 1 flow routing LLM.
 #
 # Field order follows the preprocessing chain:
-# 1. ambiguity_analysis — brief evidence inventory about whether more
-#    than one search would add browsing value
-# 2. ambiguity_level — compact classification of branching pressure
-# 3. hard_constraints — fixed traits that must survive every emitted
-#    branch
-# 4. ambiguity_sources — the clause(s) or concept(s) that are open to
-#    interpretation
-# 5. primary_intent — the default search path
-# 6. alternative_intents — up to two materially distinct alternates
+# 1. ambiguity_analysis — brief evidence inventory describing the
+#    plausible readings and which one is most likely
+# 2. primary_intent — the default search path
+# 3. alternative_intents — up to two materially distinct alternates
+#    (different readings of the user's words)
+# 4. creative_spin_analysis — separate trace evaluating whether the
+#    primary describes a broad set worth subdividing into exploratory
+#    sub-angles. Placed after the alternative_intents block so the
+#    earlier reasoning is already committed before the model considers
+#    spins (structured-output generation runs in field order).
+# 5. creative_alternatives — up to two productive sub-angle spins on
+#    the primary's intent. The user's intent stays fixed; only the
+#    narrowing changes. Conceptually distinct from alternative_intents.
 class FlowRoutingResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ambiguity_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
-    ambiguity_level: QueryAmbiguityLevel = Field(...)
-    hard_constraints: conlist(
-        constr(strip_whitespace=True, min_length=1),
-        min_length=0,
-    ) = Field(...)
-    ambiguity_sources: conlist(
-        constr(strip_whitespace=True, min_length=1),
-        min_length=0,
-    ) = Field(...)
     primary_intent: PrimaryIntent = Field(...)
     alternative_intents: conlist(
         AlternativeIntent,
+        min_length=0,
+        max_length=2,
+    ) = Field(...)
+    creative_spin_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
+    creative_alternatives: conlist(
+        CreativeSpin,
         min_length=0,
         max_length=2,
     ) = Field(...)

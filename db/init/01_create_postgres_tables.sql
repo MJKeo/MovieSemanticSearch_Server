@@ -258,10 +258,16 @@ CREATE TABLE IF NOT EXISTS lex.character_strings (
 CREATE INDEX IF NOT EXISTS idx_character_strings_trgm
   ON lex.character_strings USING GIN (norm_str gin_trgm_ops);
 
--- Inverted index postings for character names so we can LIKE match
+-- Inverted index postings for character names (with billing metadata
+-- for prominence scoring). Analogous to inv_actor_postings, but with
+-- a distinct character_cast_size because characters are not 1:1 with
+-- actors (aliases like "Peter Parker" + "Spider-Man" produce multiple
+-- character rows for a single cast edge).
 CREATE TABLE IF NOT EXISTS lex.inv_character_postings (
-  term_id   BIGINT NOT NULL,
-  movie_id  BIGINT NOT NULL,
+  term_id              BIGINT NOT NULL,
+  movie_id             BIGINT NOT NULL,
+  billing_position     INT    NOT NULL,
+  character_cast_size  INT    NOT NULL,
   PRIMARY KEY (term_id, movie_id)
 );
 

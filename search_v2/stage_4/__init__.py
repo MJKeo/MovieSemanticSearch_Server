@@ -1,6 +1,5 @@
 # Search V2 — Stage 4 public surface.
 
-from search_v2.stage_4.orchestrator import run_stage_4
 from search_v2.stage_4.types import (
     EndpointOutcome,
     ScoreBreakdown,
@@ -19,3 +18,11 @@ __all__ = [
     "EndpointOutcome",
     "ScoreBreakdown",
 ]
+
+
+def __getattr__(name: str):
+    if name == "run_stage_4":
+        from search_v2.stage_4.orchestrator import run_stage_4
+
+        return run_stage_4
+    raise AttributeError(name)

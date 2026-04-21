@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_valida
 
 from schemas.enums import (
     ActorProminenceMode,
+    CharacterProminenceMode,
     EntityType,
     PersonCategory,
     SpecificPersonCategory,
@@ -42,6 +43,7 @@ _ACTOR_TABLE_CATEGORIES: frozenset[PersonCategory] = frozenset(
 #   entity_type_evidence → scaffolds entity_type and person_category
 #   name_resolution_notes → scaffolds lookup_text
 #   prominence_evidence  → scaffolds actor_prominence_mode
+#   character_prominence_evidence → scaffolds character_prominence_mode
 #
 # Field ordering:
 #   entity_type_evidence — evidence inventory for lookup type + role signal
@@ -54,6 +56,8 @@ _ACTOR_TABLE_CATEGORIES: frozenset[PersonCategory] = frozenset(
 #   actor_prominence_mode — billing-position scoring for actor results
 #   title_pattern_match_type — contains vs starts_with for title searches
 #   character_alternative_names — additional credited name variations
+#   character_prominence_evidence — evidence inventory for character prominence
+#   character_prominence_mode — billing-position scoring for character results
 class EntityQuerySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -111,18 +115,31 @@ class EntityQuerySpec(BaseModel):
 
     # Additional credited name variations beyond lookup_text for
     # exact matching. Empty list when lookup_text is the only known
-    # form. Each variation is searched independently; a match on any
-    # (including lookup_text itself) scores 1.0.
+    # form. Each variation is searched independently; per-movie score
+    # is the max across all variant rows.
     character_alternative_names: conlist(
         constr(strip_whitespace=True, min_length=1), min_length=0
     ) | None = Field(default=None)
+
+    # Evidence-inventory reasoning that scaffolds character_prominence_mode.
+    # Only populated when entity_type == character; otherwise null.
+    # Must be emitted BEFORE character_prominence_mode.
+    character_prominence_evidence: constr(
+        strip_whitespace=True, min_length=1
+    ) | None = Field(default=None)
+
+    # How to score character billing position. Only meaningful when
+    # entity_type == character. Null defaults to DEFAULT in the
+    # validator below.
+    character_prominence_mode: CharacterProminenceMode | None = Field(default=None)
 
     # --- Validators ---
 
     # Structural coercions applied post-parse so execution code
     # does not need to re-implement the same defaults:
     #   (1) the abstention sentinel "not applicable" on
-    #       prominence_evidence is normalized back to null.
+    #       prominence_evidence / character_prominence_evidence is
+    #       normalized back to null.
     #   (2) prominence_evidence defaults to "no prominence signal"
     #       whenever the actor table participates and the LLM left it
     #       null, so actor-applicable specs don't silently lose that
@@ -132,6 +149,10 @@ class EntityQuerySpec(BaseModel):
     #       person AND person_category is actor or broad_person) and
     #       the LLM left it null. Matches the execution-layer default
     #       described in the finalized proposal.
+    #   (4) character_prominence_evidence / character_prominence_mode
+    #       get the same treatment for character lookups
+    #       (entity_type == CHARACTER): evidence defaults to "no
+    #       prominence signal", mode defaults to DEFAULT.
     @model_validator(mode="after")
     def _normalize_person_fields(self) -> "EntityQuerySpec":
         if (
@@ -139,6 +160,12 @@ class EntityQuerySpec(BaseModel):
             and self.prominence_evidence.strip().lower() == "not applicable"
         ):
             self.prominence_evidence = None
+
+        if (
+            self.character_prominence_evidence is not None
+            and self.character_prominence_evidence.strip().lower() == "not applicable"
+        ):
+            self.character_prominence_evidence = None
 
         if (
             self.entity_type == EntityType.PERSON
@@ -149,5 +176,12 @@ class EntityQuerySpec(BaseModel):
 
             if self.actor_prominence_mode is None:
                 self.actor_prominence_mode = ActorProminenceMode.DEFAULT
+
+        if self.entity_type == EntityType.CHARACTER:
+            if self.character_prominence_evidence is None:
+                self.character_prominence_evidence = "no prominence signal"
+
+            if self.character_prominence_mode is None:
+                self.character_prominence_mode = CharacterProminenceMode.DEFAULT
 
         return self

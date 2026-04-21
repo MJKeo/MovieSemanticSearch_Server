@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal, Union
+from typing import Literal
 
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import EndpointRoute
-from schemas.query_understanding import Dealbreaker, Preference
+from schemas.query_understanding import RetrievalExpression
 
 
 # Four mutually-exclusive flows the orchestrator can land in. Chosen
@@ -27,26 +27,31 @@ class Stage4Flow(str, Enum):
     BROWSE = "exclusion_only_browse"
 
 
-# A step-2 item decorated with everything the orchestrator needs to
-# dispatch and score it.  `index` is a stable identifier usable as a
-# debug key — preference[3] is a distinct debug slot from dealbreaker[3].
+# A step-2 expression decorated with everything the orchestrator needs
+# to dispatch and score it, while preserving its parent concept
+# identity for concept-level aggregation in scoring.
 @dataclass(frozen=True)
 class TaggedItem:
-    source: Union[Dealbreaker, Preference]
+    source: RetrievalExpression
     role: Literal[
         "inclusion_dealbreaker",
         "exclusion_dealbreaker",
         "preference",
     ]
+    concept_index: int
+    concept_text: str
+    expression_index: int
     endpoint: EndpointRoute
     # Set by flow_detection after the flow is chosen. True means the
     # item's execution will run with restrict_to_movie_ids=None and
     # its matched-id set gets unioned into the branch pool.
     generates_candidates: bool
     # False for dealbreakers — simpler to carry the default than
-    # sprinkle `isinstance(source, Preference)` checks downstream.
+    # repeatedly branch on the expression kind downstream.
     is_primary_preference: bool
-    # Stable debug key. Format "<role>[<idx>]" e.g. "preference[2]".
+    # Stable grouping key for concept-level aggregation.
+    concept_debug_key: str
+    # Stable debug key for this expression under its concept.
     debug_key: str
 
 

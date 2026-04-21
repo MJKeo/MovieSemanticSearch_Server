@@ -10,10 +10,9 @@
 #      (candidate generators + deterministic exclusions + trending)
 #   3. assembly barrier — union candidate sets into the pool
 #   4. subtract deterministic exclusions from the pool
-#   5. execute pool-dependent items in parallel + bulk-fetch cards
-#      (cards serve both priors for scoring and the display payload)
+#   5. execute pool-dependent items in parallel
 #   6. compose final scores
-#   7. sort, slice top-K, shape the payload
+#   7. sort, slice top-K, fetch display cards, shape the payload
 #
 # Soft-failure is load-bearing: a single endpoint's timeout or error
 # never blocks the branch.  The per-LLM and per-execution 20-second
@@ -30,7 +29,7 @@ from qdrant_client import AsyncQdrantClient
 from db.postgres import fetch_browse_seed_ids, fetch_movie_cards
 from implementation.llms.generic_methods import LLMProvider
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import EndpointRoute, SystemPrior
+from schemas.enums import EndpointRoute
 from schemas.query_understanding import QueryUnderstandingResponse
 from search_v2.stage_4.assembly import (
     apply_deterministic_exclusions,
@@ -49,9 +48,8 @@ from search_v2.stage_4.types import (
 )
 
 
-# Browse-seed size — top-N from movie_card ordered by prior composite.
-# Matches the 2000 figure from step_4_planning.md §"Initial
-# implementation parameters".
+# Browse-seed size — top-N from movie_card ordered by a temporary
+# popularity-first fallback until priors are redesigned.
 BROWSE_SEED_SIZE = 2000
 
 
@@ -108,7 +106,7 @@ async def run_stage_4(
     # Three concurrent streams:
     #   (a) translate + execute pool-independent items
     #   (b) translate pool-dependent items (stash specs for phase 5)
-    #   (c) in BROWSE flow only, fetch the prior-based seed pool
+    #   (c) in BROWSE flow only, fetch the temporary browse seed pool
     pool_independent_task = _run_pool_independent_items(
         pool_independent_items,
         translate_kwargs=translate_kwargs,
@@ -118,7 +116,7 @@ async def run_stage_4(
         pool_dependent_items, translate_kwargs=translate_kwargs
     )
     browse_seed_task = (
-        _build_browse_seed(qu.quality_prior, qu.notability_prior)
+        _build_browse_seed()
         if flow == Stage4Flow.BROWSE
         else _no_browse_seed()
     )
@@ -169,21 +167,14 @@ async def run_stage_4(
             pool_size_after_exclusion=0,
         )
 
-    # ----- Phase 5: pool-dependent execution + card fetch ---------------------
-    # fetch_movie_cards serves both the prior-score inputs for Phase 6
-    # and the display fields for Phase 7 — one DB round-trip for both
-    # purposes.
+    # ----- Phase 5: pool-dependent execution ----------------------------------
     pool_set = set(pool)
     pool_dep_exec_task = _run_pool_dependent_executions(
         pool_dependent_translations,
         restrict_to_movie_ids=pool_set,
         execute_kwargs=execute_kwargs,
     )
-    cards_task = fetch_movie_cards(pool)
-    pool_dependent_outcomes, cards = await asyncio.gather(
-        pool_dep_exec_task, cards_task
-    )
-    cards_by_id: dict[int, dict] = {c["movie_id"]: c for c in cards}
+    pool_dependent_outcomes = await pool_dep_exec_task
 
     # ----- Phase 6: score composition -----------------------------------------
     all_outcomes = list(pool_independent_outcomes) + list(
@@ -201,22 +192,11 @@ async def run_stage_4(
         and o.item.endpoint == EndpointRoute.SEMANTIC
     ]
 
-    prior_inputs: dict[int, tuple[float | None, float | None]] = {
-        mid: (
-            cards_by_id.get(mid, {}).get("reception_score"),
-            cards_by_id.get(mid, {}).get("popularity_score"),
-        )
-        for mid in pool
-    }
-
     breakdowns = score_pool(
         pool,
         inclusion_outcomes=inclusion_outcomes,
         preference_outcomes=preference_outcomes,
         semantic_exclusion_outcomes=semantic_exclusion_outcomes,
-        prior_inputs=prior_inputs,
-        quality_prior_mode=qu.quality_prior,
-        notability_prior_mode=qu.notability_prior,
     )
 
     # ----- Phase 7: sort, slice, shape ----------------------------------------
@@ -227,6 +207,8 @@ async def run_stage_4(
     top_breakdowns = breakdowns[:top_k]
     top_ids = [b.movie_id for b in top_breakdowns]
 
+    cards = await fetch_movie_cards(top_ids)
+    cards_by_id: dict[int, dict] = {c["movie_id"]: c for c in cards}
     movies = build_display_payload(top_ids, cards_by_id)
 
     # Debug shape: per-item EndpointOutcome keyed by debug_key, plus
@@ -357,25 +339,11 @@ async def _run_pool_dependent_executions(
 
 
 async def _build_browse_seed(
-    quality_mode: SystemPrior,
-    notability_mode: SystemPrior,
 ) -> list[int]:
-    """Top-N movie_ids ordered by the prior-based browse composite.
-
-    Scoring, sorting, and truncation all happen in Postgres — only the
-    2000 winning ids cross the wire. The SQL formula in
-    ``db.postgres.fetch_browse_seed_ids`` mirrors
-    ``priors.browse_composite`` exactly; this helper just translates
-    the ``SystemPrior`` modes into the inversion bits the SQL expects,
-    collapsing ``SUPPRESSED`` to the non-inverted branch the way
-    ``browse_composite`` does (suppressed priors still need a
-    deterministic ordering).
-    """
-    return await fetch_browse_seed_ids(
-        quality_inverted=quality_mode == SystemPrior.INVERTED,
-        notability_inverted=notability_mode == SystemPrior.INVERTED,
-        limit=BROWSE_SEED_SIZE,
-    )
+    """Top-N movie_ids ordered by the temporary browse fallback."""
+    # TODO: Priors were intentionally removed. Revisit browse seeding
+    # when a replacement ranking mechanism is designed.
+    return await fetch_browse_seed_ids(limit=BROWSE_SEED_SIZE)
 
 
 async def _no_browse_seed() -> None:

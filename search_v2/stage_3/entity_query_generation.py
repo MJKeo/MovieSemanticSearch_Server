@@ -244,6 +244,48 @@ actor_prominence_mode null.
 """
 
 # ---------------------------------------------------------------------------
+# Character prominence: a simpler two-mode system parallel to actor
+# prominence. The decision is framed on whether the description
+# positions the character as the subject of the query or as a filter.
+# ---------------------------------------------------------------------------
+
+_CHARACTER_PROMINENCE = """\
+CHARACTER PROMINENCE MODES
+
+When entity_type is character, you pick how character billing \
+position should be scored. The two modes reflect how central the \
+user wants that character to be in the movie.
+
+default — The character is a filter, not the subject. The \
+description lists the character as something the movie "includes", \
+"features", or simply "has", or gives no prominence signal at all. \
+"films that include Spider-Man", "movies featuring the Joker", \
+"movies with Hannibal Lecter". This is the typical case when the \
+query just names the character.
+
+central — The description frames the character as the subject of \
+the movie. Language like "centers on", "is about", "the story of", \
+"protagonist", or when the description uses the character's name \
+as the subject of a possessive noun phrase ("Spider-Man movies", \
+"the Joker's story", "films about Batman"). Only choose central \
+when the description explicitly pins the character to the center \
+of the film.
+
+The principle: central requires explicit subject-positioning \
+language in the description. When the character is described as \
+appearing *in* the film, "featured in" the film, or simply listed \
+alongside other filters, the correct choice is default. Do not \
+pick central just because the character is well-known — a query \
+for "movies that have the Joker in them" is still default.
+
+When entity_type is not character, leave both \
+character_prominence_evidence and character_prominence_mode null.
+
+---
+
+"""
+
+# ---------------------------------------------------------------------------
 # Name canonicalization: the literal-search-text rules. For people
 # and characters the returned string must equal the stored lexical
 # form after shared normalization; title_pattern is literal
@@ -373,6 +415,26 @@ when the character is genuinely known by additional credited \
 forms that would appear in cast lists. Do not add descriptive \
 phrases, scene quotes, nicknames that appear only in dialogue, or \
 speculative variants. Leave null for non-character entities.
+
+character_prominence_evidence — A single short sentence. FIRST: \
+determine whether character prominence reasoning applies at all. \
+Character prominence reasoning applies only when entity_type is \
+character. If that condition fails, leave this field null. \
+Otherwise, quote or paraphrase the specific language in the \
+description that signals how central the character is to the film \
+("centers on", "is about", "the story of", "protagonist", or the \
+character name used as a possessive subject like "Spider-Man \
+movies"); if no such language is present, state "no prominence \
+signal" explicitly. Your goal is to surface what the input says, \
+not to argue for a preferred mode.
+
+character_prominence_mode — Populated only when \
+character_prominence_evidence applies. Pick default when \
+character_prominence_evidence reports "no prominence signal" or \
+only describes the character as included / featured; pick central \
+only when character_prominence_evidence has quoted explicit \
+subject-positioning language. Leave null when \
+character_prominence_evidence is null.
 """
 
 SYSTEM_PROMPT = (
@@ -381,6 +443,7 @@ SYSTEM_PROMPT = (
     + _ENTITY_TYPES
     + _PERSON_ROLES
     + _ACTOR_PROMINENCE
+    + _CHARACTER_PROMINENCE
     + _NAME_CANONICALIZATION
     + _OUTPUT
 )

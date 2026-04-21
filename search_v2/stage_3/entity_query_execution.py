@@ -13,14 +13,22 @@
 # are all orchestrator concerns handled in step 4. This module's sole
 # job is: spec in → raw [0, 1] per-movie scores out.
 #
-# Scoring criteria reference — finalized_search_proposal.md §Endpoint 1:
-#   - Non-actor persons / characters / title patterns →
-#     binary 1.0 match.
+# Scoring criteria reference — finalized_search_proposal.md §Endpoint 1
+# and search_improvement_planning/character_scoring_revamp.md:
+#   - Non-actor non-character role persons (director, writer, producer,
+#     composer) / title patterns → binary 1.0 match.
 #   - Actor persons → zone-based prominence via billing_position +
 #     cast_size, one of four modes (DEFAULT / LEAD / SUPPORTING /
 #     MINOR) selected by the LLM.
+#   - Characters → billing-position prominence via CENTRAL / DEFAULT
+#     modes against lex.inv_character_postings.
+#   - All prominence scores (actor + character) are compressed into
+#     [0.5, 1.0] via `_compress_to_floor` so any real match stays at
+#     or above the dealbreaker-eligible floor.
 #   - broad_person → per-table scores merged with max; non-primary
-#     tables discounted to 0.5× when primary_category is set.
+#     tables discounted to 0.5× when primary_category is set, with a
+#     final 0.5 floor applied so a real match can never drop below
+#     the dealbreaker-eligible band after weighting.
 # Studio lookups have their own stage-3 endpoint
 # (search_v2/stage_3/studio_query_execution.py) and are not handled here.
 #
@@ -37,6 +45,7 @@ from db.postgres import (
     PEOPLE_POSTING_TABLES,
     PostingTable,
     fetch_actor_billing_rows,
+    fetch_character_billing_rows,
     fetch_character_strings_exact,
     fetch_movie_ids_by_term_ids,
     fetch_movie_ids_with_title_like,
@@ -49,6 +58,7 @@ from schemas.entity_translation import EntityQuerySpec
 from search_v2.stage_3.result_helpers import build_endpoint_result
 from schemas.enums import (
     ActorProminenceMode,
+    CharacterProminenceMode,
     EntityType,
     PersonCategory,
     SpecificPersonCategory,
@@ -68,6 +78,25 @@ SUPP_SCALE: float = 1.0
 # posting consolidation. Primary gets full credit, others get this
 # multiplier. Uses max across tables (not sum).
 BROAD_PERSON_NON_PRIMARY_WEIGHT: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Shared tail transform — compresses raw [0, 1] prominence scores into
+# the global [0.5, 1.0] floor-eligible band. Every prominence scorer
+# (actor + character) runs its raw output through this so a real match
+# never falls below the 0.5 dealbreaker floor.
+# ---------------------------------------------------------------------------
+
+
+def _compress_to_floor(raw: float) -> float:
+    """Affine-compress a raw [0, 1] prominence score to [0.5, 1.0].
+
+    Formula: ``0.5 + 0.5 * raw``. The clamp defends against floating-
+    point drift and against future scorers whose raw output exceeds
+    [0, 1]. See character_scoring_revamp.md §"Scoring Formulas" for
+    the floor-rule rationale.
+    """
+    return max(0.5, min(1.0, 0.5 + 0.5 * raw))
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +138,7 @@ def _zone_relative_position(
     return (billing_position - zone_start) / span
 
 
-def _score_in_default_mode(zone: str, zp: float) -> float:
+def _actor_score_default(zone: str, zp: float) -> float:
     """DEFAULT mode — no prominence signal, leads get full credit,
     smooth gradient through supporting and minor."""
     if zone == "lead":
@@ -119,7 +148,7 @@ def _score_in_default_mode(zone: str, zp: float) -> float:
     return 0.7 - 0.2 * zp  # minor
 
 
-def _score_in_lead_mode(zone: str, zp: float) -> float:
+def _actor_score_lead(zone: str, zp: float) -> float:
     """LEAD mode — explicit 'starring' or 'lead role' language."""
     if zone == "lead":
         return 1.0
@@ -128,7 +157,7 @@ def _score_in_lead_mode(zone: str, zp: float) -> float:
     return 0.4 - 0.2 * zp  # minor
 
 
-def _score_in_supporting_mode(zone: str, zp: float) -> float:
+def _actor_score_supporting(zone: str, zp: float) -> float:
     """SUPPORTING mode — explicit 'supporting role' language."""
     if zone == "lead":
         return 0.7 - 0.1 * zp
@@ -137,7 +166,7 @@ def _score_in_supporting_mode(zone: str, zp: float) -> float:
     return 0.6 - 0.25 * zp  # minor
 
 
-def _score_in_minor_mode(zone: str, zp: float) -> float:
+def _actor_score_minor(zone: str, zp: float) -> float:
     """MINOR mode — explicit 'cameo' or 'minor role' language. Minor
     zone ramps UP as billing gets deeper."""
     if zone == "lead":
@@ -147,27 +176,30 @@ def _score_in_minor_mode(zone: str, zp: float) -> float:
     return 0.7 + 0.3 * zp  # minor
 
 
-# Dispatch table for the four prominence modes. Keeps _prominence_score
-# readable and lets us add a mode without reshaping conditionals.
-_MODE_SCORERS = {
-    ActorProminenceMode.DEFAULT: _score_in_default_mode,
-    ActorProminenceMode.LEAD: _score_in_lead_mode,
-    ActorProminenceMode.SUPPORTING: _score_in_supporting_mode,
-    ActorProminenceMode.MINOR: _score_in_minor_mode,
+# Dispatch table for the four actor prominence modes. Keeps
+# _actor_prominence_score readable and lets us add a mode without
+# reshaping conditionals. Character modes use a parallel table
+# (_CHARACTER_MODE_SCORERS) below.
+_ACTOR_MODE_SCORERS = {
+    ActorProminenceMode.DEFAULT: _actor_score_default,
+    ActorProminenceMode.LEAD: _actor_score_lead,
+    ActorProminenceMode.SUPPORTING: _actor_score_supporting,
+    ActorProminenceMode.MINOR: _actor_score_minor,
 }
 
 
-def _prominence_score(
+def _actor_prominence_score(
     billing_position: int,
     cast_size: int,
     mode: ActorProminenceMode,
 ) -> float:
     """Score a single actor credit row under the given prominence mode.
 
-    Uses the proposal's zone-based formulas with sqrt-adaptive cutoffs.
-    Returns a value in [0, 1] — formulas are designed to stay in-range
-    for realistic (billing_position, cast_size) pairs; the final clamp
-    defends against floating-point drift only.
+    Uses the proposal's zone-based formulas with sqrt-adaptive cutoffs
+    to compute a raw [0, 1] value, then compresses into [0.5, 1.0] so
+    every matched actor scores at or above the dealbreaker floor. The
+    per-mode scorers are unchanged — only this tail transform shifts
+    the effective range.
     """
     cutoffs = _zone_cutoffs(cast_size)
 
@@ -185,8 +217,71 @@ def _prominence_score(
             billing_position, cutoffs.supp_cutoff + 1, cast_size
         )
 
-    raw = _MODE_SCORERS[mode](zone, zp)
-    return max(0.0, min(1.0, raw))
+    raw = _ACTOR_MODE_SCORERS[mode](zone, zp)
+    return _compress_to_floor(raw)
+
+
+# ---------------------------------------------------------------------------
+# Character prominence scoring (pure functions — no I/O).
+#
+# Two modes, picked by the stage 3 LLM from description wording:
+#   CENTRAL — character is the subject of the query. Fixed decay
+#     curve; cast_size-independent. "Spider-Man movies" scores the
+#     same way whether the cast is 8 or 80.
+#   DEFAULT — character is a filter with a gentle prominence
+#     preference. Linear ramp from 1.0 at the top to 0.5 at the bottom
+#     of the movie's character cast (pre-compression raw ramps from
+#     1.0 to 0.0; compression lifts the tail to 0.5).
+#
+# See search_improvement_planning/character_scoring_revamp.md
+# §"Scoring Formulas" for the curve tables.
+# ---------------------------------------------------------------------------
+
+
+def _character_score_central(billing_position: int) -> float:
+    """CENTRAL raw score — fixed decay, cast_size-independent.
+
+    Positions 1 and 2 both score 1.0 (handles alias edges like
+    "Peter Parker" / "Spider-Man" where the requested character
+    appears second on its cast edge). Beyond position 2, decay 0.15
+    per step until the raw value reaches 0, at which point
+    compression pins it to the 0.5 floor.
+    """
+    return max(0.0, 1.0 - 0.15 * max(0, billing_position - 2))
+
+
+def _character_score_default(billing_position: int, cast_size: int) -> float:
+    """DEFAULT raw score — linear ramp across the character cast.
+
+    Pre-compression: 1.0 at position 1, smoothly descending to 0.0 at
+    position == cast_size. The `max(1, size - 1)` guards against
+    single-character casts where the naive denominator would be 0.
+    """
+    return 1.0 - (billing_position - 1) / max(1, cast_size - 1)
+
+
+# Dispatch table for the two character modes — parallel to
+# _MODE_SCORERS for actors. Keeps _character_prominence_score
+# readable and makes adding a future mode a one-line change.
+_CHARACTER_MODE_SCORERS = {
+    CharacterProminenceMode.CENTRAL: lambda pos, size: _character_score_central(pos),
+    CharacterProminenceMode.DEFAULT: _character_score_default,
+}
+
+
+def _character_prominence_score(
+    billing_position: int,
+    character_cast_size: int,
+    mode: CharacterProminenceMode,
+) -> float:
+    """Score a single character credit row under the given mode.
+
+    Dispatches to the mode-specific raw scorer, then applies the
+    shared [0.5, 1.0] compression so character scores sit in the same
+    floor-eligible band as actor scores.
+    """
+    raw = _CHARACTER_MODE_SCORERS[mode](billing_position, character_cast_size)
+    return _compress_to_floor(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -207,9 +302,7 @@ async def _fetch_actor_scores(
     rows = await fetch_actor_billing_rows(term_ids, restrict_movie_ids)
     scores: dict[int, float] = {}
     for movie_id, billing_position, cast_size in rows:
-        score = _prominence_score(billing_position, cast_size, mode)
-        if score <= 0.0:
-            continue
+        score = _actor_prominence_score(billing_position, cast_size, mode)
         prev = scores.get(movie_id)
         if prev is None or score > prev:
             scores[movie_id] = score
@@ -221,15 +314,44 @@ async def _fetch_binary_role_scores(
     term_ids: list[int],
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """Binary 1.0 scoring for non-actor role tables and characters.
+    """Binary 1.0 scoring for non-actor / non-character role tables
+    (director, writer, producer, composer). Character lookups moved
+    off this path and onto prominence scoring via
+    `_fetch_character_scores`; actor has its own prominence path.
+
     Post-filters by restrict in Python — the matched set size for a
-    single person/character is small enough that pulling it back and
+    single person is small enough that pulling it back and
     intersecting is cheaper than extending every posting helper to
     support a server-side restrict."""
     movie_ids = await fetch_movie_ids_by_term_ids(table, term_ids)
     if restrict_movie_ids is not None:
         movie_ids = movie_ids & restrict_movie_ids
     return {mid: 1.0 for mid in movie_ids}
+
+
+async def _fetch_character_scores(
+    term_ids: list[int],
+    mode: CharacterProminenceMode,
+    restrict_movie_ids: set[int] | None,
+) -> dict[int, float]:
+    """Fetch billing rows for character term_ids and score each row.
+
+    Mirrors `_fetch_actor_scores`. When the same movie has multiple
+    matching rows — which happens whenever the LLM supplies variant
+    names like "Spider-Man" + "Peter Parker" that each resolve to a
+    distinct term_id on the same cast — the per-movie score is the
+    max across rows. That naturally implements the "max across
+    nicknames" rule without special-casing the caller."""
+    rows = await fetch_character_billing_rows(term_ids, restrict_movie_ids)
+    scores: dict[int, float] = {}
+    for movie_id, billing_position, character_cast_size in rows:
+        score = _character_prominence_score(
+            billing_position, character_cast_size, mode
+        )
+        prev = scores.get(movie_id)
+        if prev is None or score > prev:
+            scores[movie_id] = score
+    return scores
 
 
 async def _execute_person_specific_role(
@@ -336,7 +458,18 @@ async def _execute_person_broad(
             prev = merged.get(movie_id)
             if prev is None or weighted > prev:
                 merged[movie_id] = weighted
-    return merged
+
+    # Apply the dealbreaker-eligible 0.5 floor to the merged score.
+    # Per-row prominence scores are already in [0.5, 1.0] via
+    # `_compress_to_floor`, but non-primary weighting
+    # (BROAD_PERSON_NON_PRIMARY_WEIGHT = 0.5) can drop a real match
+    # below the floor — e.g. a compressed actor score of 0.5 becomes
+    # 0.25 under non-primary weighting. Floor here so any matched
+    # movie stays at or above the same threshold as direct per-role
+    # scoring. Ordering at the floor collapses (several matches all
+    # land at 0.5), which is the intended behavior — the floor wins
+    # over within-non-primary gradient.
+    return {movie_id: max(0.5, score) for movie_id, score in merged.items()}
 
 
 async def _execute_character(
@@ -344,8 +477,9 @@ async def _execute_character(
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
     """Character lookup — exact match lookup_text plus every alternative
-    credited form against lex.character_strings. A match on any variant
-    scores 1.0."""
+    credited form against lex.character_strings. Each matched term_id
+    produces a per-row score via the CENTRAL or DEFAULT prominence
+    curve, and per-movie we take the max across variant rows."""
     # Build the full list of name variants, normalize each, dedupe
     # while preserving order.
     variants = [spec.lookup_text]
@@ -367,8 +501,12 @@ async def _execute_character(
     if not term_ids:
         return {}
 
-    return await _fetch_binary_role_scores(
-        PostingTable.CHARACTER, term_ids, restrict_movie_ids
+    # character_prominence_mode is guaranteed non-null here by the
+    # EntityQuerySpec validator (coerced to DEFAULT when the LLM
+    # leaves it null for a character entity).
+    assert spec.character_prominence_mode is not None
+    return await _fetch_character_scores(
+        term_ids, spec.character_prominence_mode, restrict_movie_ids
     )
 
 
