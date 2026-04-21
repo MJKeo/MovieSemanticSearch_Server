@@ -261,6 +261,27 @@ Files: schemas/award_translation.py, search_improvement_planning/finalized_searc
 Why: `concept_analysis` was doing double duty — inventorying both filter-axis signals (ceremony, category, outcome, year) and count/intensity signals (scoring shape). These are different evidence types scaffolding different decisions. The scoring shape decision (mode + mark) is the hardest in the schema: small models default to FLOOR/1 for everything, missing gradient intent. Separating the two forces the model to explicitly classify the intensity pattern before committing to numeric values.
 Approach: Added `scoring_shape_label: str` between `concept_analysis` and `scoring_mode`. Brief classification from five fixed labels — follows the `value_intent_label` pattern in MetadataTranslationOutput (brief label, no consistency coupling instruction, primes via attention not by explicit constraint). Tightened `concept_analysis` comment to clarify it inventories filter axes only, not count/intensity language. Updated proposal with a reasoning-fields table documenting both fields, their positions, what they scaffold, and the rationale for the two-field split.
 
+## Capture Step 2 revamp design direction
+Files: search_improvement_planning/step_2_revamp.md
+Why: Save the current redesign discussion as a durable planning artifact before implementation work begins.
+Approach: Wrote a new planning doc that records the settled direction for splitting query understanding into Step 2A concept extraction and Step 2B expression planning, removes quality/notability priors from the revamped design, and proposes concrete output schemas for both substeps using concept-level scoring with multi-expression union behavior.
+Design context: Grounded in search_improvement_planning/finalized_search_proposal.md, the current search_v2/stage_2.py design, and the latest brainstorming decisions in this session about concept-vs-expression modeling.
+Testing notes: Planning-only docs change; no code or tests touched.
+
+## Add positive-presence invariant to Step 2 revamp plan
+Files: search_improvement_planning/step_2_revamp.md
+Why: Preserve the existing direction-agnostic Step 3 contract while the Step 2 redesign is still being formed.
+Approach: Updated the planning doc so dealbreaker-side and exclusion-side expressions are always phrased as the presence of an attribute, with inclusion/exclusion metadata carrying the direction. Also clarified that negative user preferences must be converted into positive ranking targets before reaching Step 3.
+Design context: Aligns the Step 2A/2B redesign with the current Step 3 principle that endpoint descriptions should test for attribute presence and let direction be handled separately.
+Testing notes: Planning-only docs change; no code or tests touched.
+
+## Consolidate Step 2 revamp decisions into the working design doc
+Files: search_improvement_planning/step_2_revamp.md
+Why: The earlier draft still reflected several schema ideas we later rejected, including concept-level role labels, candidate-behavior hints, generic boost logic, and endpoint-specific scope fields. The design needed a full consolidation pass so later implementation work starts from the actual current decisions rather than an outdated midpoint.
+Approach: Rewrote the working planning doc around the latest settled structure: Step 2A is now minimal concept extraction (`concept_inventory_analysis` + `concepts: list[str]`), Step 2B owns expression planning with expression-level `dealbreaker` / `preference` labels, exclusions are represented as dealbreakers with `exclude` polarity, and preferences explicitly emit `core` vs `supporting`. Removed generic boost/scope fields, moved prominence and lineage-vs-universe preference down to endpoint-specific Step 3 work, and added complex-query checks plus implementation notes to preserve the reasoning behind those choices.
+Design context: Synthesizes the latest discussion about keeping search-system internals out of the LLM contract, preserving positive-presence phrasing, supporting concepts that contain both dealbreakers and preferences, and containing weighting/prominence behavior inside Step 3 where the data can judge it best.
+Testing notes: Planning-only docs change; no code or tests touched.
+
 ## Award endpoint: output schema + planning doc update
 Files: schemas/award_translation.py, schemas/enums.py, search_improvement_planning/finalized_search_proposal.md
 Why: Endpoint 3 (Awards) had a high-level prose spec but no output schema and several open design questions around scoring, data source dispatch, and Razzie handling.
