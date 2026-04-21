@@ -33,7 +33,7 @@ from schemas.imdb_models import (
 )
 from movie_ingestion.scoring_utils import unpack_provider_keys
 from movie_ingestion.tracker import IMDB_DATA_COLUMNS, IMDB_JSON_COLUMNS
-from implementation.classes.overall_keywords import keyword_from_string
+from implementation.classes.overall_keywords import OverallKeyword, keyword_from_string
 from schemas.enums import BoxOfficeStatus
 from schemas.metadata import (
     FranchiseOutput,
@@ -514,7 +514,11 @@ class Movie(BaseModel):
         ]
 
     def keyword_ids(self) -> list[int]:
-        """Map IMDB overall_keywords strings to their integer keyword IDs."""
+        """Map IMDB overall_keywords strings to their integer keyword IDs.
+
+        If Animation isn't present in the final list, stamp LIVE_ACTION as
+        its explicit complement so every movie carries a medium signal.
+        """
         ids: list[int] = []
         seen: set[int] = set()
         for kw_str in self.imdb_data.overall_keywords:
@@ -523,6 +527,14 @@ class Movie(BaseModel):
                 continue
             seen.add(kw_enum.keyword_id)
             ids.append(kw_enum.keyword_id)
+
+        if (
+            OverallKeyword.ANIMATION.keyword_id not in seen
+            and OverallKeyword.LIVE_ACTION.keyword_id not in seen
+        ):
+            seen.add(OverallKeyword.LIVE_ACTION.keyword_id)
+            ids.append(OverallKeyword.LIVE_ACTION.keyword_id)
+
         return ids
 
     def concept_tag_ids(self) -> list[int]:

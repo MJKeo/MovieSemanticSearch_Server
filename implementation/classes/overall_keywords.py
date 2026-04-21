@@ -259,6 +259,10 @@ class OverallKeyword(Enum):
     WORKPLACE_DRAMA = (223, "Workplace Drama", "A drama centered on professional environments, where the main conflicts come from work relationships, ambition, power struggles, and job pressures.")  # 223 movies
     WUXIA = (224, "Wuxia", "A Chinese martial-arts adventure featuring chivalrous heroes who fight for righteousness, distinguished by highly stylized, gravity-defying (wire-fu) action sequences, usually set in historical or mythic China.")  # 85 movies
     ZOMBIE_HORROR = (225, "Zombie Horror", "A horror story where zombies—reanimated corpses or infected humans—are the central threat, exploring themes of survival and societal breakdown and often serving as metaphors for social anxieties.")  # 333 movies
+    # Added out of alphabetical order to preserve existing keyword_id numbering.
+    # LIVE_ACTION is the explicit complement of ANIMATION and is stamped
+    # automatically by Movie.keyword_ids() when Animation is absent.
+    LIVE_ACTION = (226, "Live Action", "A movie whose primary medium is live-action footage of real actors and settings rather than animation.")
 
 
 KEYWORD_BY_NORMALIZED_NAME: dict[str, OverallKeyword] = {

@@ -621,11 +621,11 @@ Motorsport, Soccer, Sport, Water Sport
 Family, Coming-of-Age, Teen Adventure, Teen Comedy, Teen Drama, \
 Teen Fantasy, Teen Horror, Teen Romance
 
-13. Animation / Anime Form / Technique
+13. Animation / Live Action / Anime Form / Technique
 
 Adult Animation, Animation, Anime, Computer Animation, \
-Hand-Drawn Animation, Isekai, Iyashikei, Josei, Seinen, Shojo, \
-Shonen, Slice of Life, Stop Motion Animation
+Hand-Drawn Animation, Isekai, Iyashikei, Josei, Live Action, \
+Seinen, Shojo, Shonen, Slice of Life, Stop Motion Animation
 
 14. Seasonal / Holiday
 

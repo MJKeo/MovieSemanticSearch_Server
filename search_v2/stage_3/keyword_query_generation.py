@@ -140,11 +140,12 @@ _FAMILIES: list[tuple[str, list[str]]] = [
         ],
     ),
     (
-        "13. Animation / Anime Form / Technique",
+        "13. Animation / Live Action / Anime Form / Technique",
         [
             "ADULT_ANIMATION", "ANIMATION", "ANIME", "COMPUTER_ANIMATION",
-            "HAND_DRAWN_ANIMATION", "ISEKAI", "IYASHIKEI", "JOSEI", "SEINEN",
-            "SHOJO", "SHONEN", "SLICE_OF_LIFE", "STOP_MOTION_ANIMATION",
+            "HAND_DRAWN_ANIMATION", "ISEKAI", "IYASHIKEI", "JOSEI",
+            "LIVE_ACTION", "SEINEN", "SHOJO", "SHONEN", "SLICE_OF_LIFE",
+            "STOP_MOTION_ANIMATION",
         ],
     ),
     (
