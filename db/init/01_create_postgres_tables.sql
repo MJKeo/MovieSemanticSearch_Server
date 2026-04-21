@@ -36,16 +36,29 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   -- are BIGINT identities; no gin__int_ops (int[]-only opclass) — plain GIN
   -- works on bigint[].
   production_company_ids BIGINT[] NOT NULL DEFAULT '{}',
-  -- Franchise lineage + shared-universe entry IDs, unioned into a single
-  -- search space. Stage-3 franchise retrieval matches a normalized query
-  -- name through lex.franchise_token → lex.franchise_entry → this array
-  -- via the && GIN overlap operator. BIGINT[] to match franchise_entry_id
-  -- width; plain GIN (no gin__int_ops, which is INT[]-only).
-  franchise_name_entry_ids BIGINT[] NOT NULL DEFAULT '{}',
+  -- Franchise lineage entry IDs — the direct sequel/prequel/reboot chain
+  -- the movie belongs to (from movie_franchise_metadata.lineage). Stored
+  -- separately from shared-universe entry IDs so stage-3 can score
+  -- lineage matches higher than universe-only matches when the query
+  -- spec sets prefer_lineage. Stage-3 retrieval resolves a query name
+  -- through lex.franchise_token → lex.franchise_entry → this array (and
+  -- shared_universe_entry_ids below) via the && GIN overlap operator.
+  -- BIGINT[] to match franchise_entry_id width; plain GIN (no
+  -- gin__int_ops, which is INT[]-only).
+  lineage_entry_ids       BIGINT[] NOT NULL DEFAULT '{}',
+  -- Shared-universe entry IDs — the broader multi-film universe the
+  -- movie belongs to (from movie_franchise_metadata.shared_universe).
+  -- A single franchise_entry_id can legitimately appear in this column
+  -- for one movie (e.g., Puss in Boots carrying "Shrek" as its shared
+  -- universe) and in lineage_entry_ids for another movie (e.g., Shrek 2
+  -- carrying "Shrek" as its lineage); that's what makes
+  -- lineage-vs-universe scoring work at query time.
+  shared_universe_entry_ids BIGINT[] NOT NULL DEFAULT '{}',
   -- Subgroup entry IDs (one per element of movie_franchise_metadata.
-  -- recognized_subgroups). Intersected with franchise_name_entry_ids at
-  -- search time when the query carries both a lineage/universe name and
-  -- a subgroup name (e.g., "MCU Phase One movies").
+  -- recognized_subgroups). Intersected with lineage_entry_ids /
+  -- shared_universe_entry_ids at search time when the query carries
+  -- both a lineage/universe name and a subgroup name (e.g., "MCU
+  -- Phase One movies").
   subgroup_entry_ids     BIGINT[] NOT NULL DEFAULT '{}',
   imdb_vote_count     INT NOT NULL DEFAULT 0,
   popularity_score    FLOAT NOT NULL DEFAULT 0.0,
@@ -99,9 +112,13 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_award_ceremony_win_ids
 CREATE INDEX IF NOT EXISTS idx_movie_card_production_company_ids
   ON public.movie_card USING GIN (production_company_ids);
 
--- Franchise lineage/universe membership. Plain GIN (BIGINT[]).
-CREATE INDEX IF NOT EXISTS idx_movie_card_franchise_name_entry_ids
-  ON public.movie_card USING GIN (franchise_name_entry_ids);
+-- Franchise lineage membership. Plain GIN (BIGINT[]).
+CREATE INDEX IF NOT EXISTS idx_movie_card_lineage_entry_ids
+  ON public.movie_card USING GIN (lineage_entry_ids);
+
+-- Shared-universe membership. Plain GIN (BIGINT[]).
+CREATE INDEX IF NOT EXISTS idx_movie_card_shared_universe_entry_ids
+  ON public.movie_card USING GIN (shared_universe_entry_ids);
 
 -- Subgroup membership. Plain GIN (BIGINT[]).
 CREATE INDEX IF NOT EXISTS idx_movie_card_subgroup_entry_ids

@@ -1019,7 +1019,7 @@ token-index fallback.
 | Endpoint | Axis | Current state | Resolution plan |
 |----------|------|---------------|------------------|
 | Studio | production_company | Brand registry + time-bounded membership + token index | `Studio Entity Resolution` above |
-| Franchise | lineage / shared_universe / subgroups | Freeform text, exact match after `normalize_string` | `Franchise Resolution` below — combined-column entry-id arrays + token index |
+| Franchise | lineage / shared_universe / subgroups | Freeform text, exact match after `normalize_string` | `Franchise Resolution` below — separate lineage / shared_universe entry-id arrays + token index; OR-combined for match, distinguished for scoring via `prefer_lineage` |
 | Awards | ceremony | Closed enum (AwardCeremony), registry-driven prompt | ✓ already solved |
 | Awards | category | Closed 3-level taxonomy (CategoryTag), GIN overlap | ✓ already solved |
 | Awards | award_name | Raw IMDB surface form, exact match, no normalize | `Award Name Resolution` below — symmetric normalization + token index + ceremony scoping |
@@ -1575,14 +1575,19 @@ The fix ports the freeform half of the studio resolver —
 symmetric normalization + token inverted index — with four
 franchise-specific adjustments:
 
-1. **Lineage and shared_universe are one search space, not two.**
-   The ingest-side LLM sometimes places a franchise name in
-   `lineage` and sometimes in `shared_universe` depending on
-   scope judgment. The retrieval path must not require the
-   query-side LLM to predict which column the stored name landed
-   in. The two columns are preserved on the row for debugging and
-   non-search consumers, but the search-time representation
-   unions their entry ids into a single array.
+1. **Lineage and shared_universe are one search space for
+   matching, two for scoring.** The ingest-side LLM sometimes
+   places a franchise name in `lineage` and sometimes in
+   `shared_universe` depending on scope judgment. The retrieval
+   path must not require the query-side LLM to predict which
+   column the stored name landed in. Matching OR-combines both
+   columns so every movie with the name in either slot hits.
+   Scoring can still distinguish them: when the query spec sets
+   `prefer_lineage`, stage-3 scores lineage matches at 1.0 and
+   shared-universe-only matches at 0.75, which upranks the main
+   line of a franchise without excluding its spinoffs. When
+   `prefer_lineage` is false, both sides score 1.0 (the pre-flag
+   behavior).
 2. **No registry, no enum.** The lineage / universe space is
    unbounded and grows with every new franchise. Maintenance cost
    of a closed enum outweighs the benefit; the token index
@@ -1602,10 +1607,13 @@ franchise-specific adjustments:
 
 ## Design Principles
 
-1. **Decouple lineage vs shared_universe at retrieval time.**
-   Search matches against `franchise_name_entry_ids`, the union
-   of the two columns' entry ids. A franchise name hits regardless
-   of which column the ingest LLM chose.
+1. **Keep lineage and shared_universe as separate columns on the
+   card; OR-combine them for matching.** Search uses a GIN overlap
+   against both `lineage_entry_ids` and `shared_universe_entry_ids`.
+   A franchise name hits regardless of which column the ingest LLM
+   chose. The match source is returned to stage-3 so the
+   `prefer_lineage` flag on `FranchiseQuerySpec` can bias scoring
+   without affecting the match set.
 2. **Symmetric normalization on both sides.** Reuse
    `normalize_string` + the shared ordinal and cardinal
    number-to-word rules defined on the studio side. Cardinal
@@ -1639,13 +1647,21 @@ movie_franchise_metadata
   lineage                       TEXT     -- kept for debug/analytics
   shared_universe               TEXT     -- kept for debug/analytics
   recognized_subgroups          TEXT[]   -- kept for debug/analytics
-  franchise_name_entry_ids      INT[]    -- UNION of lineage +
-                                         -- shared_universe entry ids
-                                         -- GIN-indexed, USED AT SEARCH
-  subgroup_entry_ids            INT[]    -- recognized_subgroups
-                                         -- entry ids. GIN-indexed.
   -- lineage_position, is_spinoff, is_crossover, launched_subgroup,
   -- launched_franchise unchanged
+
+movie_card
+  -- ...
+  lineage_entry_ids             BIGINT[] -- lineage entry id(s) for
+                                         -- the movie. GIN-indexed.
+                                         -- USED AT SEARCH (lineage
+                                         -- side of the name axis).
+  shared_universe_entry_ids     BIGINT[] -- shared_universe entry
+                                         -- id(s) for the movie.
+                                         -- GIN-indexed. USED AT
+                                         -- SEARCH (universe side).
+  subgroup_entry_ids            BIGINT[] -- recognized_subgroups
+                                         -- entry ids. GIN-indexed.
 ```
 
 **franchise_entry** — one row per distinct **normalized** string
@@ -1659,14 +1675,25 @@ nothing.
 
 **franchise_token** — inverted index. GIN index on `token`.
 
-**movie_franchise_metadata.franchise_name_entry_ids** — **union of
-the lineage entry id and the shared_universe entry id** for the
-movie. Two ids maximum (often one). This is the key
-simplification — at search time, we match against this array and
-don't care which column produced which id.
+**movie_card.lineage_entry_ids** — the lineage entry id for the
+movie (0 or 1 element). Stored on `movie_card` rather than
+`movie_franchise_metadata` so the card-side GIN index on this
+column is sufficient for the search-time overlap without joining
+another table.
 
-**movie_franchise_metadata.subgroup_entry_ids** — one id per
-subgroup string on the movie.
+**movie_card.shared_universe_entry_ids** — the shared_universe
+entry id for the movie (0 or 1 element). Separate column from
+`lineage_entry_ids` so stage-3 can score lineage matches higher
+than universe-only matches when the query spec's `prefer_lineage`
+flag is set. The token/entry space is still flat — the same
+`franchise_entry_id` legitimately appears in one movie's lineage
+column and another movie's shared_universe column (e.g., Shrek
+sequels carry "Shrek" in lineage; Puss in Boots carries "Shrek"
+in shared_universe), which is what makes the scoring distinction
+meaningful.
+
+**movie_card.subgroup_entry_ids** — one id per subgroup string on
+the movie.
 
 The original `lineage`, `shared_universe`, `recognized_subgroups`
 columns are preserved. They support debugging, movie-card
@@ -1780,13 +1807,17 @@ Create a GIN index on `franchise_token.token`.
 
 For each movie:
 
-1. Resolve `lineage` (if non-null) and `shared_universe` (if
-   non-null) against `franchise_entry` via `normalized` →
-   up to two ids → write union to `franchise_name_entry_ids`.
-2. Resolve each element of `recognized_subgroups` → write to
+1. Resolve `lineage` (if non-null) against `franchise_entry` via
+   `normalized` → at most one id → write to `lineage_entry_ids`.
+2. Resolve `shared_universe` (if non-null) the same way → write
+   to `shared_universe_entry_ids`. A name that happens to
+   normalize to the same id as lineage lands in both columns;
+   that's fine — stage-3 scoring treats lineage-side matches as
+   dominant when both sides hit.
+3. Resolve each element of `recognized_subgroups` → write to
    `subgroup_entry_ids`.
 
-GIN indexes on both columns.
+GIN indexes on all three columns.
 
 ### Stage F — Re-run cadence
 
@@ -1857,17 +1888,28 @@ Union per-name entry-id sets separately for:
 ### Step 4 — Resolve to movies
 
 ```sql
-SELECT movie_id FROM movie_franchise_metadata
-WHERE franchise_name_entry_ids && :franchise_entry_ids_A
+SELECT mc.movie_id,
+       (mc.lineage_entry_ids && :franchise_entry_ids_A) AS lineage_hit
+FROM movie_card mc
+WHERE (
+    mc.lineage_entry_ids         && :franchise_entry_ids_A
+    OR mc.shared_universe_entry_ids && :franchise_entry_ids_A
+  )
   AND (
     :franchise_entry_ids_B = '{}'
-    OR subgroup_entry_ids && :franchise_entry_ids_B
+    OR mc.subgroup_entry_ids && :franchise_entry_ids_B
   )
 ```
 
-`&&` is the GIN array-overlap operator. When both franchise names
-and subgroups are present the two constraints AND (user asked for
-"MCU Phase One movies" → must belong to MCU AND to Phase One).
+`&&` is the GIN array-overlap operator. The name axis OR-combines
+lineage and shared_universe so a movie with the name in either
+column hits. The `lineage_hit` boolean is returned so stage-3 can
+apply `prefer_lineage`-based scoring: lineage hits score 1.0,
+universe-only hits score 0.75, with a fallback to 1.0 for universe
+when lineage is empty. When `prefer_lineage` is false, both sides
+score 1.0. When both franchise names and subgroups are present the
+two constraints AND (user asked for "MCU Phase One movies" → must
+belong to MCU AND to Phase One).
 
 Structural flags (`is_spinoff`, `is_crossover`,
 `launched_subgroup`, `launched_franchise`) and `lineage_position`
@@ -1909,12 +1951,13 @@ title.
 Ingest wrote `shared_universe = "marvel cinematic universe"`,
 `lineage = "captain america"` for Captain America: The First
 Avenger. User asks "MCU movies" → LLM emits
-`franchise_names = ["marvel cinematic universe"]`. Token lookup
-resolves to the MCU entry id. The movie's
-`franchise_name_entry_ids` contains that id (from the
-`shared_universe` side of the union). Match. The fact that MCU
-came from `shared_universe` rather than `lineage` is invisible to
-the search path.
+`franchise_names = ["marvel cinematic universe"]` and leaves
+`prefer_lineage=false` (umbrella query). Token lookup resolves to
+the MCU entry id. The OR-combined name overlap hits on the
+`shared_universe_entry_ids` side; the movie appears in the
+universe-only bucket. Because `prefer_lineage` is false, the
+bucket distinction is ignored and the match scores 1.0 — same as
+it would if the name had landed in `lineage_entry_ids` instead.
 
 ### Stopword drift (the lord of the rings)
 
@@ -1962,10 +2005,11 @@ filtering scaffolding out of the universe form.
 ### Long-tail lineage with no universe
 
 User: "James Bond movies". Ingest wrote `lineage = "james bond"`,
-`shared_universe = null`. LLM emits `["james bond"]`. Tokens
-`{james, bond}` → Bond entry id. Movie's
-`franchise_name_entry_ids` contains it from the lineage side of
-the union.
+`shared_universe = null`. LLM emits `["james bond"]` and sets
+`prefer_lineage=true` (single specific franchise, no subgroup, no
+spinoff invitation). Tokens `{james, bond}` → Bond entry id.
+Every Bond movie's `lineage_entry_ids` contains it; the universe
+side is empty. All matches are lineage-side, so they score 1.0.
 
 ### Acronym that must expand (MCU)
 
@@ -2000,15 +2044,18 @@ commits this before field values.
 
 ```
 thinking: "Broad umbrella. Use the universe form plus the bare
-           brand token."
+           brand token. Umbrella query, so prefer_lineage stays
+           false."
 franchise_names: ["marvel cinematic universe", "marvel"]
 recognized_subgroups: []
+prefer_lineage: false
 → name 1 tokens {marvel, cinematic, universe} → MCU entry id
 → name 2 tokens {marvel} → every entry carrying `marvel`
   ({marvel cinematic universe, marvel comics, marvel knights, ...})
 → across-name union → MCU id ∪ all Marvel-stamped entry ids
-→ franchise_name_entry_ids && :ids
-→ all MCU movies plus other Marvel-stamped films.
+→ (lineage_entry_ids OR shared_universe_entry_ids) && :ids
+→ all MCU movies plus other Marvel-stamped films, all scored 1.0
+  (prefer_lineage=false collapses the lineage/universe distinction).
 ```
 
 ### Example 2 — "Doctor Strange in the MCU"
@@ -2026,12 +2073,15 @@ recognized_subgroups: []
 ### Example 3 — "MCU Phase One"
 
 ```
-thinking: "Umbrella PLUS specific sub-phase."
+thinking: "Umbrella PLUS specific sub-phase. Subgroup already
+           disambiguates, so prefer_lineage stays false."
 franchise_names: ["marvel cinematic universe"]
 recognized_subgroups: ["phase one"]
+prefer_lineage: false  (validator would coerce to false anyway
+                       when a subgroup is present per prompt rule)
 franchise_entry_ids_A = [MCU id]
 franchise_entry_ids_B = [phase one id]
-SQL: franchise_name_entry_ids && [MCU]
+SQL: (lineage_entry_ids || shared_universe_entry_ids) && [MCU]
      AND subgroup_entry_ids && [phase one]
 → Iron Man, Incredible Hulk, Iron Man 2, Thor, Captain America,
   Avengers.
@@ -2084,19 +2134,73 @@ Ingest rows:
   Annabelle     → lineage="annabelle",
                   shared_universe="conjuring universe"
 franchise_names: ["conjuring universe"]
+prefer_lineage: false  (user said "universe" explicitly — they
+                       want the whole family)
 → tokens {conjuring, universe} (scaffolding kept)
 → per-name intersection → single `conjuring universe` entry id
-→ franchise_name_entry_ids && [conjuring_universe_id]
-  - The Conjuring ✓ (conjuring universe id present via shared_universe)
-  - Annabelle ✓ (conjuring universe id present via shared_universe)
+→ (lineage_entry_ids OR shared_universe_entry_ids) && [conjuring_universe_id]
+  - The Conjuring ✓ (via shared_universe_entry_ids)
+  - Annabelle ✓ (via shared_universe_entry_ids)
   - Nun, Curse of La Llorona, etc. ✓
-The combined-column representation is what makes this work —
-Annabelle's `lineage` is "annabelle" but its
-`franchise_name_entry_ids` includes the `conjuring universe` id
-from the `shared_universe` side. The umbrella sweep across the
-whole Conjuring family (including the standalone `the conjuring`
-lineage entry) depends on the ingest-side union, not on stripping
-`universe` at query time.
+All matches score 1.0. The OR-combined overlap is what makes this
+work — Annabelle's `lineage_entry_ids` is [annabelle id] but its
+`shared_universe_entry_ids` contains the `conjuring universe` id,
+so the umbrella sweep across the whole Conjuring family works
+without stripping `universe` at query time.
+```
+
+### Example 8 — Lineage preference upranks the main line
+
+```
+User: "Shrek movies"
+Ingest rows:
+  Shrek 1–4          → lineage="shrek", shared_universe=null
+  Puss in Boots (1)  → lineage="puss in boots",
+                       shared_universe="shrek"
+  Puss in Boots: The
+  Last Wish          → lineage="puss in boots",
+                       shared_universe="shrek"
+franchise_names: ["shrek"]
+prefer_lineage: true  (single specific franchise with known
+                      spinoffs, no subgroup, user did not invite
+                      spinoffs explicitly)
+→ tokens {shrek} → shrek entry id
+→ (lineage_entry_ids OR shared_universe_entry_ids) && [shrek id]
+  - Shrek 1–4              ✓ lineage side → score 1.0
+  - Puss in Boots (both)   ✓ shared_universe side → score 0.75
+Puss in Boots still appears in the result — the flag biases
+ranking, not retrieval. If the user had instead asked "shrek
+spinoffs", the prompt would set prefer_lineage=false (explicit
+spinoff invitation) and all matches would score 1.0.
+```
+
+### Example 9 — Lineage-empty fallback promotes universe hits
+
+```
+User: "Dark Universe movies"  (Universal's one-off shared-universe
+                              attempt that stalled after one film)
+Ingest rows:
+  The Mummy (2017) → lineage="the mummy",
+                     shared_universe="dark universe"
+franchise_names: ["dark universe"]
+prefer_lineage: true  (single specific franchise name, no subgroup,
+                     no spinoff invitation — the LLM cannot know in
+                     advance that the ingest side stored the name
+                     only as shared_universe)
+→ tokens {dark, universe} → dark universe entry id
+→ (lineage_entry_ids OR shared_universe_entry_ids) && [dark universe id]
+  The Mummy (2017) hits via shared_universe_entry_ids only — its
+  lineage_entry_ids contains "the mummy", not "dark universe".
+→ lineage_matched = {} (empty)
+→ universe_only_matched = {The Mummy (2017)}
+→ Fallback triggers (prefer_lineage=true + empty lineage bucket +
+  non-empty universe bucket) → universe matches are promoted to
+  1.0 instead of being demoted to 0.75.
+Without the fallback every Dark Universe result would score 0.75
+with no lineage-side counterpart to justify the demotion. The
+fallback is the safety net: when the flag has nothing to uprank
+against, it reverts to the default 1.0 score rather than
+demoting the entire result set.
 ```
 
 ## Open Decisions

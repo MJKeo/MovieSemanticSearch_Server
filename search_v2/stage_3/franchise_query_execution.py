@@ -2,8 +2,9 @@
 #
 # Takes the LLM's FranchiseQuerySpec output and runs a single AND-composed
 # query against the franchise token index + movie_card + (optionally)
-# movie_franchise_metadata, producing binary-scored EndpointResult
-# objects.
+# movie_franchise_metadata, producing an EndpointResult whose scores
+# reflect both match presence and (when prefer_lineage is set) the
+# lineage-vs-universe source of each match.
 #
 # Two-phase resolution, mirroring the studio freeform path:
 #
@@ -21,13 +22,21 @@
 #   Phase 2 — final resolution. The union entry-id sets (A from
 #   franchise names, B from subgroups) and the structural flags feed
 #   fetch_franchise_movie_ids, which runs the GIN `&&` overlap on
-#   movie_card and (when any structural axis is active) LEFT JOINs
-#   movie_franchise_metadata for the flag predicates.
+#   movie_card (both lineage_entry_ids and shared_universe_entry_ids
+#   when a name axis is active) and (when any structural axis is
+#   active) LEFT JOINs movie_franchise_metadata for the flag predicates.
+#   The helper returns two disjoint sets: lineage matches and
+#   universe-only matches.
 #
-# Scoring: binary 1.0 for any movie that satisfies all active
-# constraints, 0.0 otherwise. AND semantics mean an empty intermediate
-# result on the dealbreaker path exits with an empty EndpointResult; on
-# the preference path, non-matching candidates score 0.0.
+# Scoring: when prefer_lineage is false (or cannot take effect), every
+# match scores 1.0 and non-matches score 0.0 — the pre-flag behavior.
+# When prefer_lineage is true, lineage matches score 1.0 and
+# universe-only matches score 0.75, unless the lineage side is empty
+# in which case universe matches are promoted back to 1.0 so the flag
+# biases ranking without rejecting the match set. AND semantics mean
+# an empty intermediate result on the dealbreaker path exits with an
+# empty EndpointResult; on the preference path, non-matching
+# candidates score 0.0.
 #
 # Early-exit rule: if every *populated* textual axis collapses to empty
 # after token resolution (all tokens stopword-dropped or unmatched in
@@ -166,7 +175,14 @@ async def execute_franchise_query(
             the natural match set (dealbreaker path).
 
     Returns:
-        EndpointResult with scores in {0.0, 1.0} per movie.
+        EndpointResult with per-movie scores. When `spec.prefer_lineage`
+        is False (or cannot take effect), every matched movie scores 1.0.
+        When True, movies whose lineage_entry_ids overlap the query name
+        set score 1.0, and movies that matched only via
+        shared_universe_entry_ids score 0.75. When the name side has no
+        lineage matches at all, universe-only matches are promoted back
+        to 1.0 so the flag biases the ranking without rejecting the
+        entire result set.
     """
     # Resolve the lineage_position string value to its SMALLINT storage ID.
     # FranchiseQuerySpec uses use_enum_values=True, so spec.lineage_position
@@ -203,10 +219,11 @@ async def execute_franchise_query(
     if spec.recognized_subgroups and not subgroup_entry_ids:
         return build_endpoint_result({}, restrict_to_movie_ids)
 
-    matched_ids: set[int] = set()
+    lineage_matched: set[int] = set()
+    universe_only_matched: set[int] = set()
     for attempt in range(2):
         try:
-            matched_ids = await fetch_franchise_movie_ids(
+            lineage_matched, universe_only_matched = await fetch_franchise_movie_ids(
                 franchise_name_entry_ids=franchise_name_entry_ids or None,
                 subgroup_entry_ids=subgroup_entry_ids or None,
                 lineage_position_id=lineage_position_id,
@@ -233,4 +250,25 @@ async def execute_franchise_query(
             )
             return EndpointResult()
 
-    return build_endpoint_result({mid: 1.0 for mid in matched_ids}, restrict_to_movie_ids)
+    # Score the match set. Three cases:
+    #   1. prefer_lineage not set — every match scores 1.0. Preserves
+    #      the pre-flag behavior for umbrella queries, subgroup queries,
+    #      spinoff queries, etc.
+    #   2. prefer_lineage set and lineage side is empty but universe
+    #      side is non-empty — promote universe matches to 1.0. The
+    #      flag biases ranking, so with no lineage matches to uprank
+    #      it falls back to treating universe matches as the main
+    #      result set rather than demoting them all.
+    #   3. prefer_lineage set with a non-empty lineage side — lineage
+    #      scores 1.0, universe-only scores 0.75. The helper already
+    #      attributes movies that match via both sides to lineage, so
+    #      the two sets are disjoint.
+    if not spec.prefer_lineage:
+        scores = {mid: 1.0 for mid in (lineage_matched | universe_only_matched)}
+    elif not lineage_matched and universe_only_matched:
+        scores = {mid: 1.0 for mid in universe_only_matched}
+    else:
+        scores = {mid: 1.0 for mid in lineage_matched}
+        scores.update({mid: 0.75 for mid in universe_only_matched})
+
+    return build_endpoint_result(scores, restrict_to_movie_ids)

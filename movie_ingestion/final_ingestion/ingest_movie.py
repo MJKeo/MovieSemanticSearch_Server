@@ -176,14 +176,13 @@ async def ingest_movie(movie: Movie) -> None:
             # lex.franchise_entry, lex.franchise_token) have no FK into
             # movie_card, so running them before the card upsert is safe.
             production_company_ids = await ingest_production_data(movie, conn=conn)
-            franchise_name_entry_ids, subgroup_entry_ids = await ingest_franchise_data(
-                movie, conn=conn
-            )
+            franchise_ids = await ingest_franchise_data(movie, conn=conn)
             await ingest_movie_card(
                 movie,
                 production_company_ids=production_company_ids,
-                franchise_name_entry_ids=franchise_name_entry_ids,
-                subgroup_entry_ids=subgroup_entry_ids,
+                lineage_entry_ids=franchise_ids.lineage,
+                shared_universe_entry_ids=franchise_ids.shared_universe,
+                subgroup_entry_ids=franchise_ids.subgroup,
                 conn=conn,
             )
             await ingest_movie_awards(movie, conn=conn)
@@ -202,7 +201,8 @@ async def ingest_movie(movie: Movie) -> None:
 async def ingest_movie_card(
     movie: Movie,
     production_company_ids: Sequence[int] = (),
-    franchise_name_entry_ids: Sequence[int] = (),
+    lineage_entry_ids: Sequence[int] = (),
+    shared_universe_entry_ids: Sequence[int] = (),
     subgroup_entry_ids: Sequence[int] = (),
     conn=None,
 ) -> None:
@@ -216,9 +216,13 @@ async def ingest_movie_card(
             final array in its single upsert (no wasteful post-write UPDATE).
             Callers that don't have companies resolved yet can pass ``()`` and
             patch the column later via update_movie_card_production_company_ids.
-        franchise_name_entry_ids: IDs from the lineage + shared_universe side
-            of the franchise resolver (up to 2 elements). Resolved before this
-            call for the same single-upsert reason.
+        lineage_entry_ids: IDs from the lineage side of the franchise resolver
+            (0 or 1 element). Resolved before this call for the same
+            single-upsert reason.
+        shared_universe_entry_ids: IDs from the shared_universe side of the
+            franchise resolver (0 or 1 element). Stored separately from
+            lineage so stage-3 can score lineage matches higher than
+            universe-only matches when the query sets prefer_lineage.
         subgroup_entry_ids: IDs from the recognized_subgroups side of the
             franchise resolver (one per subgroup). Resolved before this call.
         conn: Optional existing async connection for caller-managed transaction scope.
@@ -296,7 +300,8 @@ async def ingest_movie_card(
             budget_bucket=budget_bucket,
             box_office_bucket=box_office_bucket,
             production_company_ids=production_company_ids,
-            franchise_name_entry_ids=franchise_name_entry_ids,
+            lineage_entry_ids=lineage_entry_ids,
+            shared_universe_entry_ids=shared_universe_entry_ids,
             subgroup_entry_ids=subgroup_entry_ids,
             conn=conn,
         )
@@ -313,9 +318,10 @@ async def ingest_movie_franchise_metadata(movie: Movie, conn=None) -> None:
     Upsert the raw TEXT-column franchise projection for one movie.
 
     Token-space resolution (lex.franchise_entry / lex.franchise_token and
-    the movie_card.franchise_name_entry_ids / subgroup_entry_ids arrays) now
-    runs earlier in ``ingest_movie`` via ``write_franchise_data`` so the card
-    upsert can stamp those arrays in a single INSERT. This function is
+    the movie_card.lineage_entry_ids / shared_universe_entry_ids /
+    subgroup_entry_ids arrays) now runs earlier in ``ingest_movie`` via
+    ``write_franchise_data`` so the card upsert can stamp those arrays in
+    a single INSERT. This function is
     responsible ONLY for the raw lineage / shared_universe /
     recognized_subgroups / structural-flag columns on
     ``public.movie_franchise_metadata``, which survive as the debug /
@@ -542,12 +548,35 @@ async def ingest_production_data(movie: Movie, conn=None) -> list[int]:
     return await write_production_data(movie_id, raw_strings, release_year, conn=conn)
 
 
+@dataclass(frozen=True)
+class FranchiseEntryIds:
+    """
+    Franchise entry-id arrays returned by ``write_franchise_data`` /
+    ``ingest_franchise_data`` for stamping on ``movie_card``.
+
+    Lineage and shared_universe are kept in separate attributes (not
+    unioned) so stage-3 can score a lineage match higher than a
+    universe-only match when the query sets ``prefer_lineage``. The
+    token/entry space is still flat — the same franchise_entry_id can
+    appear in one movie's lineage slot and another movie's shared_universe
+    slot, which is what makes lineage-vs-universe scoring work.
+
+    Each attribute is sorted and deduplicated. ``lineage`` and
+    ``shared_universe`` have 0 or 1 element each; ``subgroup`` has one
+    element per unique normalized subgroup.
+    """
+
+    lineage: list[int]
+    shared_universe: list[int]
+    subgroup: list[int]
+
+
 async def write_franchise_data(
     lineage: str | None,
     shared_universe: str | None,
     recognized_subgroups: Sequence[str],
     conn=None,
-) -> tuple[list[int], list[int]]:
+) -> FranchiseEntryIds:
     """
     Core franchise writer. Decoupled from the ``Movie`` object so the
     backfill script can call it with raw Postgres rows.
@@ -556,8 +585,8 @@ async def write_franchise_data(
     ``lex.franchise_entry`` rows via normalize_franchise_string, tokenizes
     every normalized string, and records ``(token, franchise_entry_id)``
     pairs in ``lex.franchise_token`` for the query-side token intersection.
-    Returns the two sorted, deduplicated id arrays so the caller can stamp
-    them on ``movie_card`` in its single upsert.
+    Returns a ``FranchiseEntryIds`` dataclass so the caller can stamp its
+    three arrays on ``movie_card`` in its single upsert.
 
     See search_improvement_planning/v2_search_data_improvements.md,
     "Franchise Resolution".
@@ -578,25 +607,25 @@ async def write_franchise_data(
             transaction scope.
 
     Returns:
-        ``(franchise_name_entry_ids, subgroup_entry_ids)`` — both sorted and
-        deduplicated. ``franchise_name_entry_ids`` has 0–2 elements (at most
-        one each from lineage and shared_universe, deduplicated if they
-        normalize identically). ``subgroup_entry_ids`` has one element per
-        unique normalized subgroup.
+        ``FranchiseEntryIds`` with the three arrays populated. When no
+        franchise data reduces to any normalized form, all three arrays
+        are empty.
     """
     # Build (canonical, normalized) pairs for every string that came in.
-    # Tracking which input group each pair came from (names vs subgroups)
-    # is done on the side so a single batch upsert covers all of them in
-    # one round trip while still letting us reconstruct the two return
-    # arrays afterwards.
-    name_pairs: list[tuple[str, str]] = []
-    for raw in (lineage, shared_universe):
-        if not raw:
-            continue
-        normalized = normalize_franchise_string(raw)
-        if not normalized:
-            continue
-        name_pairs.append((raw, normalized))
+    # Each name is tracked with its source slot so we can reconstruct the
+    # two separate arrays after the shared batch upsert. A single batch
+    # round-trip still covers lineage + shared_universe + all subgroups.
+    lineage_pairs: list[tuple[str, str]] = []
+    if lineage:
+        normalized = normalize_franchise_string(lineage)
+        if normalized:
+            lineage_pairs.append((lineage, normalized))
+
+    shared_universe_pairs: list[tuple[str, str]] = []
+    if shared_universe:
+        normalized = normalize_franchise_string(shared_universe)
+        if normalized:
+            shared_universe_pairs.append((shared_universe, normalized))
 
     subgroup_pairs: list[tuple[str, str]] = []
     for raw in recognized_subgroups:
@@ -607,9 +636,9 @@ async def write_franchise_data(
             continue
         subgroup_pairs.append((raw, normalized))
 
-    all_pairs = name_pairs + subgroup_pairs
+    all_pairs = lineage_pairs + shared_universe_pairs + subgroup_pairs
     if not all_pairs:
-        return ([], [])
+        return FranchiseEntryIds(lineage=[], shared_universe=[], subgroup=[])
 
     entry_id_map = await batch_upsert_franchise_entries(all_pairs, conn=conn)
 
@@ -626,37 +655,40 @@ async def write_franchise_data(
             token_rows.add((token, fid))
     await batch_insert_franchise_tokens(list(token_rows), conn=conn)
 
-    # Reconstruct the two return arrays. Lineage and shared_universe can
-    # resolve to the same normalized string (and thus the same id), which
-    # is exactly the "unified search space" behavior we want — set dedup
-    # handles it.
-    franchise_name_entry_ids = sorted({
-        entry_id_map[n] for _, n in name_pairs if n in entry_id_map
+    # Reconstruct the three return arrays. A name present in both lineage
+    # and shared_universe (rare — same normalized string) ends up in both
+    # arrays; stage-3 scoring treats a movie that matches via both slots
+    # as lineage (dominant slot wins).
+    lineage_entry_ids = sorted({
+        entry_id_map[n] for _, n in lineage_pairs if n in entry_id_map
+    })
+    shared_universe_entry_ids = sorted({
+        entry_id_map[n] for _, n in shared_universe_pairs if n in entry_id_map
     })
     subgroup_entry_ids = sorted({
         entry_id_map[n] for _, n in subgroup_pairs if n in entry_id_map
     })
-    return (franchise_name_entry_ids, subgroup_entry_ids)
+    return FranchiseEntryIds(
+        lineage=lineage_entry_ids,
+        shared_universe=shared_universe_entry_ids,
+        subgroup=subgroup_entry_ids,
+    )
 
 
-async def ingest_franchise_data(
-    movie: Movie, conn=None
-) -> tuple[list[int], list[int]]:
+async def ingest_franchise_data(movie: Movie, conn=None) -> FranchiseEntryIds:
     """
     Ingest franchise-entry and franchise-token data for one ``Movie``.
 
     Thin adapter over ``write_franchise_data`` that extracts lineage /
     shared_universe / recognized_subgroups from the Movie's
     ``franchise_metadata``. When franchise_metadata is absent the movie
-    contributes no rows — returns ``([], [])`` and ``ingest_movie_card``
-    stamps empty arrays, which is the correct stateless default.
-
-    Returns the two entry-id arrays for ``ingest_movie_card`` to stamp on
-    the card row in its single upsert.
+    contributes no rows — returns an empty ``FranchiseEntryIds`` and
+    ``ingest_movie_card`` stamps empty arrays, which is the correct
+    stateless default.
     """
     franchise_metadata = movie.franchise_metadata
     if franchise_metadata is None:
-        return ([], [])
+        return FranchiseEntryIds(lineage=[], shared_universe=[], subgroup=[])
 
     return await write_franchise_data(
         franchise_metadata.lineage,

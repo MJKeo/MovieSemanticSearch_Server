@@ -1078,17 +1078,22 @@ async def batch_insert_franchise_tokens(
 
 async def update_movie_card_franchise_ids(
     movie_id: int,
-    franchise_name_entry_ids: Sequence[int],
+    lineage_entry_ids: Sequence[int],
+    shared_universe_entry_ids: Sequence[int],
     subgroup_entry_ids: Sequence[int],
     conn=None,
 ) -> None:
     """
     Stamp the franchise entry-id arrays on movie_card.
 
-    Exists as a standalone helper so the backfill script can set both
-    columns without rewriting every movie_card field. Ingest-time callers
-    pass the arrays directly to ``upsert_movie_card`` and do not need this
-    function.
+    Exists as a standalone helper so the backfill script can set all
+    three columns without rewriting every movie_card field. Ingest-time
+    callers pass the arrays directly to ``upsert_movie_card`` and do not
+    need this function.
+
+    lineage_entry_ids and shared_universe_entry_ids are stored in separate
+    columns so stage-3 can score a lineage match higher than a
+    universe-only match when prefer_lineage is set on the query spec.
 
     Raises ``ValueError`` if no movie_card row exists for ``movie_id``.
     Without this guard the UPDATE would silently no-op, hiding upstream
@@ -1096,13 +1101,15 @@ async def update_movie_card_franchise_ids(
     """
     query = """
     UPDATE public.movie_card
-    SET franchise_name_entry_ids = %s,
+    SET lineage_entry_ids = %s,
+        shared_universe_entry_ids = %s,
         subgroup_entry_ids = %s,
         updated_at = now()
     WHERE movie_id = %s
     """
     params = (
-        list(franchise_name_entry_ids),
+        list(lineage_entry_ids),
+        list(shared_universe_entry_ids),
         list(subgroup_entry_ids),
         movie_id,
     )
@@ -1124,7 +1131,8 @@ async def update_movie_card_franchise_ids(
         raise ValueError(
             f"update_movie_card_franchise_ids: no movie_card row for "
             f"movie_id={movie_id}. The card must be upserted before the "
-            f"franchise_name_entry_ids / subgroup_entry_ids columns can be stamped."
+            f"lineage_entry_ids / shared_universe_entry_ids / "
+            f"subgroup_entry_ids columns can be stamped."
         )
 
 
@@ -1242,10 +1250,11 @@ async def delete_movie_franchise_metadata(movie_id: int, conn=None) -> None:
     """
     Delete franchise metadata for one movie.
 
-    The franchise_name_entry_ids / subgroup_entry_ids columns on movie_card
-    are rewritten by upsert_movie_card on next ingest, so they need no
-    separate clear here; and lex.franchise_entry / lex.franchise_token are
-    registry-wide (not movie-scoped), so nothing else to delete.
+    The lineage_entry_ids / shared_universe_entry_ids / subgroup_entry_ids
+    columns on movie_card are rewritten by upsert_movie_card on next
+    ingest, so they need no separate clear here; and lex.franchise_entry /
+    lex.franchise_token are registry-wide (not movie-scoped), so nothing
+    else to delete.
 
     Args:
         movie_id: Target movie ID.
@@ -1276,7 +1285,8 @@ async def upsert_movie_card(
     budget_bucket: Optional[str] = None,
     box_office_bucket: Optional[str] = None,
     production_company_ids: Sequence[int] = (),
-    franchise_name_entry_ids: Sequence[int] = (),
+    lineage_entry_ids: Sequence[int] = (),
+    shared_universe_entry_ids: Sequence[int] = (),
     subgroup_entry_ids: Sequence[int] = (),
     conn=None,
 ) -> None:
@@ -1305,9 +1315,13 @@ async def upsert_movie_card(
         box_office_bucket: Box office classification ('hit', 'flop', or None for ambiguous/unknown).
         production_company_ids: lex.production_company IDs this movie credits.
             Empty sequence is allowed (movies with no IMDB production_companies).
-        franchise_name_entry_ids: lex.franchise_entry IDs resolved from the
-            movie's lineage + shared_universe strings (union, 0-2 elements).
-            Empty sequence when the movie has no franchise metadata.
+        lineage_entry_ids: lex.franchise_entry IDs resolved from the movie's
+            lineage string (0 or 1 element). Empty sequence when the movie
+            has no franchise metadata or no lineage.
+        shared_universe_entry_ids: lex.franchise_entry IDs resolved from the
+            movie's shared_universe string (0 or 1 element). Stored
+            separately from lineage so stage-3 can score lineage matches
+            higher than universe-only matches when prefer_lineage is set.
         subgroup_entry_ids: lex.franchise_entry IDs resolved from each element
             of recognized_subgroups. Empty sequence when there are no subgroups.
         conn: Optional existing async connection for caller-managed transaction scope.
@@ -1318,10 +1332,10 @@ async def upsert_movie_card(
         maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_of_origin_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids, award_ceremony_win_ids,
         imdb_vote_count, reception_score, budget_bucket, box_office_bucket, title_token_count,
-        production_company_ids, franchise_name_entry_ids, subgroup_entry_ids,
+        production_company_ids, lineage_entry_ids, shared_universe_entry_ids, subgroup_entry_ids,
         created_at, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
         poster_url = EXCLUDED.poster_url,
@@ -1342,7 +1356,8 @@ async def upsert_movie_card(
         box_office_bucket = EXCLUDED.box_office_bucket,
         title_token_count = EXCLUDED.title_token_count,
         production_company_ids = EXCLUDED.production_company_ids,
-        franchise_name_entry_ids = EXCLUDED.franchise_name_entry_ids,
+        lineage_entry_ids = EXCLUDED.lineage_entry_ids,
+        shared_universe_entry_ids = EXCLUDED.shared_universe_entry_ids,
         subgroup_entry_ids = EXCLUDED.subgroup_entry_ids,
         updated_at = now();
     """
@@ -1367,7 +1382,8 @@ async def upsert_movie_card(
         box_office_bucket,
         title_token_count,
         list(production_company_ids),
-        list(franchise_name_entry_ids),
+        list(lineage_entry_ids),
+        list(shared_universe_entry_ids),
         list(subgroup_entry_ids),
     )
     await _execute_on_conn(conn, query, params)
@@ -2459,10 +2475,14 @@ async def fetch_movie_ids_with_title_like(
 #     every token that reaches this helper is already discriminative.
 #
 #   - fetch_franchise_movie_ids: final GIN `&&` overlap on
-#     movie_card.franchise_name_entry_ids / subgroup_entry_ids, with
-#     an optional LEFT JOIN to movie_franchise_metadata when any
-#     structural axis (lineage_position / is_spinoff / is_crossover /
-#     launched_franchise / launched_subgroup) is active.
+#     movie_card.lineage_entry_ids / shared_universe_entry_ids /
+#     subgroup_entry_ids, with an optional LEFT JOIN to
+#     movie_franchise_metadata when any structural axis
+#     (lineage_position / is_spinoff / is_crossover /
+#     launched_franchise / launched_subgroup) is active. When a name
+#     axis is active the helper returns the matched movie ids split
+#     into "lineage" vs "universe-only" so stage-3 can apply
+#     lineage-preference scoring when prefer_lineage is set.
 #
 # The two-step shape mirrors the studio endpoint
 # (fetch_company_ids_for_tokens → fetch_movie_ids_by_production_company_ids)
@@ -2521,7 +2541,7 @@ async def fetch_franchise_movie_ids(
     launched_franchise: bool,
     launched_subgroup: bool,
     restrict_movie_ids: set[int] | None = None,
-) -> set[int]:
+) -> tuple[set[int], set[int]]:
     """Resolve pre-computed franchise entry-id sets + structural flags to movie IDs.
 
     Builds a single AND-composed WHERE clause from whichever axes are
@@ -2529,19 +2549,24 @@ async def fetch_franchise_movie_ids(
     the AND execution policy for the franchise endpoint.
 
     Array-axis matching uses the GIN `&&` overlap operator against the
-    denormalized entry-id arrays on public.movie_card. Structural-axis
-    predicates (lineage_position, is_spinoff, is_crossover,
-    launched_franchise, launched_subgroup) live on
-    public.movie_franchise_metadata, so we LEFT JOIN only when any of
-    those is active — keeping the zero-structural-axis case as a
-    single-table scan on movie_card.
+    denormalized entry-id arrays on public.movie_card. The name axis
+    overlaps against BOTH lineage_entry_ids AND shared_universe_entry_ids
+    (OR-combined for the row filter), and the SELECT returns a boolean
+    flagging which side matched so stage-3 can score lineage matches
+    higher than universe-only matches. Structural-axis predicates
+    (lineage_position, is_spinoff, is_crossover, launched_franchise,
+    launched_subgroup) live on public.movie_franchise_metadata, so we
+    LEFT JOIN only when any of those is active — keeping the
+    zero-structural-axis case as a single-table scan on movie_card.
 
     Args:
         franchise_name_entry_ids: Pre-resolved entry-id set from the
             executor's `franchise_or_universe_names` token intersection +
-            cross-name union. None = axis not active. Empty set is treated
-            as "no conditions" for this axis and NOT as a universal match
-            — see the defensive guard below.
+            cross-name union. None or an empty set = axis not active
+            (the predicate is dropped, not treated as a universal match).
+            The executor normalizes these two forms upstream via
+            `franchise_name_entry_ids or None`, so the expected contract
+            is `None` for inactive and a non-empty set for active.
         subgroup_entry_ids: Same, for the `recognized_subgroups` axis.
         lineage_position_id: SMALLINT ID for the desired lineage position
             (from LineagePosition.lineage_position_id). None = not filtered.
@@ -2555,16 +2580,44 @@ async def fetch_franchise_movie_ids(
             only movies in this set can appear in the result.
 
     Returns:
-        Set of movie_ids that satisfy all active constraints. Empty set when
-        no conditions are provided (defensive guard) or when no movies match.
+        ``(lineage_matched, universe_only_matched)`` — disjoint sets of
+        movie_ids. A movie whose lineage_entry_ids overlap the query name
+        set lands in the first element regardless of whether its
+        shared_universe_entry_ids also overlap (lineage-dominant). When
+        the name axis is not active (`franchise_name_entry_ids is None`
+        or empty), all matches land in the first element and the second
+        is empty — there is no lineage-vs-universe distinction to make
+        in that case. Empty sets when no conditions are provided
+        (defensive guard) or when no movies match.
     """
+    # The name axis overlaps both lineage_entry_ids and
+    # shared_universe_entry_ids. Track it separately from the other
+    # array conditions because the executor needs to know which side
+    # matched per row — not just whether the row matched at all. The
+    # lineage-side expression is reused in both the WHERE (OR with
+    # universe side) and the SELECT list (as the flag), so we build a
+    # dedicated list of lineage-side params that get bound twice.
+    name_axis_active = bool(franchise_name_entry_ids)
+    if name_axis_active:
+        name_entry_list = list(franchise_name_entry_ids)
+        lineage_hit_sql = "(mc.lineage_entry_ids && %s::bigint[])"
+        universe_hit_sql = "(mc.shared_universe_entry_ids && %s::bigint[])"
+        name_row_filter_sql = f"({lineage_hit_sql} OR {universe_hit_sql})"
+    else:
+        name_entry_list = []
+        lineage_hit_sql = ""
+        name_row_filter_sql = ""
+
     # Array-axis predicates hit the denormalized entry-id arrays on
-    # public.movie_card.
+    # public.movie_card. The name axis (if active) contributes one OR
+    # clause spanning lineage + shared_universe columns; the subgroup
+    # axis contributes a single && overlap on subgroup_entry_ids.
     array_conditions: list[str] = []
     array_params: list = []
-    if franchise_name_entry_ids:
-        array_conditions.append("mc.franchise_name_entry_ids && %s::bigint[]")
-        array_params.append(list(franchise_name_entry_ids))
+    if name_axis_active:
+        array_conditions.append(name_row_filter_sql)
+        array_params.append(name_entry_list)  # lineage side
+        array_params.append(name_entry_list)  # universe side
     if subgroup_entry_ids:
         array_conditions.append("mc.subgroup_entry_ids && %s::bigint[]")
         array_params.append(list(subgroup_entry_ids))
@@ -2589,7 +2642,7 @@ async def fetch_franchise_movie_ids(
     # collapses to empty entry-id sets. This branch should therefore not
     # be reachable in normal operation.
     if not array_conditions and not structural_conditions:
-        return set()
+        return (set(), set())
 
     # Structural-only specs (e.g. "spinoffs", "sequels with no named
     # franchise") query movie_franchise_metadata directly — mfm is far
@@ -2623,14 +2676,40 @@ async def fetch_franchise_movie_ids(
 
     if restrict_movie_ids is not None:
         if not restrict_movie_ids:
-            return set()
+            return (set(), set())
         conditions.append(f"{restrict_column} = ANY(%s::bigint[])")
         params.append(list(restrict_movie_ids))
 
     where_clause = " AND ".join(conditions)
-    query = f"SELECT {movie_id_expr} FROM {from_clause} WHERE {where_clause}"
+
+    # When the name axis is active we also SELECT a per-row boolean
+    # flagging whether the lineage side matched. psycopg binds %s params
+    # positionally, so the SELECT-clause param has to be prepended to
+    # the WHERE params.
+    if name_axis_active:
+        select_clause = f"{movie_id_expr}, {lineage_hit_sql} AS lineage_hit"
+        params = [name_entry_list] + params
+    else:
+        select_clause = movie_id_expr
+
+    query = f"SELECT {select_clause} FROM {from_clause} WHERE {where_clause}"
     rows = await _execute_read(query, params)
-    return {row[0] for row in rows}
+
+    # Split rows by match source. When the name axis is inactive there's
+    # no lineage-hit column; every match lands in the first bucket and
+    # the caller treats the second bucket as empty.
+    lineage_matched: set[int] = set()
+    universe_only_matched: set[int] = set()
+    if name_axis_active:
+        for movie_id, is_lineage in rows:
+            if is_lineage:
+                lineage_matched.add(movie_id)
+            else:
+                universe_only_matched.add(movie_id)
+    else:
+        lineage_matched = {row[0] for row in rows}
+
+    return (lineage_matched, universe_only_matched)
 
 
 # ===============================

@@ -22,18 +22,22 @@
 # Resolution):
 #   1. franchise_or_universe_names — up to 3 canonical surface forms
 #      resolved through the franchise token inverted index
-#      (`lex.franchise_token`) and matched against
-#      `movie_card.franchise_name_entry_ids` (the per-movie UNION of
-#      lineage + shared_universe entry ids). Ingest may have placed
-#      the franchise name in either the `lineage` or `shared_universe`
-#      stored column; the union-at-ingest representation means the
-#      query side does not need to predict which column it landed in.
+#      (`lex.franchise_token`) and matched against both
+#      `movie_card.lineage_entry_ids` AND
+#      `movie_card.shared_universe_entry_ids`. Ingest stores lineage
+#      and shared_universe in separate columns; retrieval OR-combines
+#      them for the match set, then stage-3 uses the lineage-vs-universe
+#      distinction to bias scoring when `prefer_lineage` is set.
 #   2. recognized_subgroups — up to 3 canonical subgroup surface forms
 #      resolved through the same token index and matched against
 #      `movie_card.subgroup_entry_ids`.
 #   3. lineage_position — SEQUEL / PREQUEL / REMAKE / REBOOT.
 #   4. structural_flags — SPINOFF and/or CROSSOVER.
 #   5. launch_scope — FRANCHISE or SUBGROUP.
+#   6. prefer_lineage — bool. Biases stage-3 scoring toward lineage
+#      matches over shared-universe-only matches when the query names
+#      a specific franchise whose main line is the user's apparent
+#      target. Does not restrict the match set.
 #
 # Direction-agnostic: always expressed as positive presence.
 # Exclusion is a step 4 concern.
@@ -64,6 +68,7 @@ from schemas.enums import (
 #   lineage_position              — narrative position enum
 #   structural_flags              — spinoff / crossover list
 #   launch_scope                  — franchise vs subgroup launcher
+#   prefer_lineage                — lineage-over-universe scoring bias
 class FranchiseQuerySpec(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -94,10 +99,13 @@ class FranchiseQuerySpec(BaseModel):
     # entry AND unions in every `marvel`-tagged entry (Marvel Comics,
     # Marvel Knights, etc.) for an umbrella sweep.
     #
-    # The ingest side unions lineage + shared_universe entry ids onto
-    # `movie_card.franchise_name_entry_ids`, so either stored column
-    # is searchable from this single field — the LLM does NOT pick
-    # between them.
+    # The ingest side stores lineage and shared_universe in separate
+    # columns on `movie_card` (`lineage_entry_ids` and
+    # `shared_universe_entry_ids`), but from this field's perspective
+    # the search space is flat — every match contributes, and the LLM
+    # does NOT pick between them. The lineage-vs-universe distinction
+    # is consumed by the `prefer_lineage` flag below, which biases
+    # scoring rather than restricting the match set.
     #
     # Position 1 = the most canonical form for the query's apparent
     # specificity (broadest for umbrella queries, narrowest for
@@ -163,6 +171,26 @@ class FranchiseQuerySpec(BaseModel):
     # Null when launch behavior is not part of the concept.
     launch_scope: FranchiseLaunchScope | None = Field(default=None)
 
+    # --- Lineage preference ---
+    #
+    # When True, stage-3 scores lineage matches at 1.0 and
+    # universe-only matches at 0.75 instead of the default 1.0 for
+    # both. Biases the result set toward the main-line narrative
+    # without excluding broader shared-universe entries. When the
+    # lineage side would return nothing, universe-only matches are
+    # promoted back to 1.0 — the flag biases, it does not reject.
+    #
+    # Default False. The LLM should only set True when the query
+    # names one specific franchise (not an umbrella universe), does
+    # not explicitly invite spinoffs, is not a multi-name umbrella
+    # sweep, and does not pair the name with a subgroup. See the
+    # step 3 franchise generation prompt for the full decision list.
+    #
+    # Coerced to False by the validator when it cannot take effect:
+    # no name axis is populated, or SPINOFF is in structural_flags
+    # (the user explicitly asked for spinoffs).
+    prefer_lineage: bool = Field(default=False)
+
     # --- Validators ---
 
     @model_validator(mode="after")
@@ -172,6 +200,24 @@ class FranchiseQuerySpec(BaseModel):
         if self.structural_flags is not None:
             deduped_flags = list(dict.fromkeys(self.structural_flags))
             self.structural_flags = deduped_flags or None
+
+        # Coerce prefer_lineage to False when the flag cannot take effect.
+        # Two incompatible cases, both of which the LLM prompt instructs
+        # against but the validator enforces as a hard guard:
+        #   1. No name axis — nothing to apply lineage preference to.
+        #   2. SPINOFF in structural_flags — the user explicitly asked
+        #      for spinoffs, so upranking lineage would invert the intent.
+        # StrEnum members compare equal to their string values, so the
+        # membership check handles both enum and post-use_enum_values
+        # string representations.
+        if self.prefer_lineage:
+            if self.franchise_or_universe_names is None:
+                self.prefer_lineage = False
+            elif (
+                self.structural_flags is not None
+                and FranchiseStructuralFlag.SPINOFF in self.structural_flags
+            ):
+                self.prefer_lineage = False
 
         # At least one axis must be populated — otherwise the
         # endpoint has nothing to search for. All axes are mutually

@@ -167,12 +167,13 @@ class ProductionBrand(str, Enum):
         BrandCompany("Marvel Studios", 1996, None),
     ))
 
-    # LUCASFILM — Star Wars + Indiana Jones. `Lucasfilm Ltd.` is the
-    # formal IMDB credit. Animation arm added for Clone Wars and animated
-    # output. ILM/Skywalker Sound excluded — VFX/sound, not production.
+    # LUCASFILM — Star Wars + Indiana Jones. IMDB uses bare `Lucasfilm`
+    # (the `Lucasfilm Ltd.` variant was proposed by research but has zero
+    # evidence in live IMDB data). Animation arm kept for Clone Wars and
+    # Star Wars animated output. ILM/Skywalker Sound excluded — VFX/sound,
+    # not production.
     LUCASFILM = ("lucasfilm", 5, "Lucasfilm", (
         BrandCompany("Lucasfilm", 1971, None),
-        BrandCompany("Lucasfilm Ltd.", 1971, None),
         BrandCompany("Lucasfilm Animation", 2003, None),
     ))
 
@@ -238,9 +239,10 @@ class ProductionBrand(str, Enum):
         BrandCompany("Universal International Pictures (UI)", None, None),
         BrandCompany("Universal Pictures International (UPI)", None, None),
         BrandCompany("Universal", None, None),
-        # Illumination (2007-; co-branded "Universal & Illumination")
+        # Illumination (2007-; co-branded "Universal & Illumination").
+        # IMDB retains `Illumination Entertainment` even post-2018 rename;
+        # bare `Illumination` has zero evidence in live data.
         BrandCompany("Illumination Entertainment", 2007, None),
-        BrandCompany("Illumination", 2018, None),
         BrandCompany("Illumination Studios Paris", 2011, None),
     ))
 
@@ -349,22 +351,24 @@ class ProductionBrand(str, Enum):
 
     # DREAMWORKS_ANIMATION — the Shrek/Kung Fu Panda/HTTYD/Trolls
     # animation catalog only. Live-action DreamWorks (Gladiator, American
-    # Beauty, Transformers) is a separate entity and excluded.
+    # Beauty, Transformers) is a separate entity and excluded. IMDB uses
+    # bare `DreamWorks Animation` and `Pacific Data Images (PDI)`; the
+    # `DreamWorks Animation SKG` and `PDI/DreamWorks` variants proposed
+    # by research have zero evidence in live data.
     DREAMWORKS_ANIMATION = ("dreamworks-animation", 16, "DreamWorks Animation", (
         BrandCompany("DreamWorks Animation", 2004, None),
-        BrandCompany("DreamWorks Animation SKG", 2004, 2015),
         BrandCompany("Pacific Data Images (PDI)", 1994, 2015),
-        BrandCompany("PDI/DreamWorks", 1996, 2015),
     ))
 
-    # ILLUMINATION — Despicable Me / Minions / Mario studio. Rebranded
-    # from "Illumination Entertainment" to "Illumination" in 2018. Paris
-    # animation arm kept (produces the flagship films). Mac Guff Ligne
-    # dropped — its pre-2011 output is French VFX work casual viewers
-    # don't associate with Illumination.
+    # ILLUMINATION — Despicable Me / Minions / Mario studio. The company
+    # rebranded to "Illumination" in 2018 but IMDB retains `Illumination
+    # Entertainment` on films through the present day — the bare
+    # `Illumination` variant has zero evidence in live data. Window
+    # widened to open-ended to cover post-2018 output. Paris animation
+    # arm kept. Mac Guff Ligne dropped — its pre-2011 output is French
+    # VFX work casual viewers don't associate with Illumination.
     ILLUMINATION = ("illumination", 17, "Illumination", (
-        BrandCompany("Illumination Entertainment", 2007, 2018),
-        BrandCompany("Illumination", 2018, None),
+        BrandCompany("Illumination Entertainment", 2007, None),
         BrandCompany("Illumination Studios Paris", 2011, None),
     ))
 
@@ -400,18 +404,17 @@ class ProductionBrand(str, Enum):
         BrandCompany("Summit Premiere", 2012, None),
     ))
 
-    # A24 — prestige indie brand, primary surface plus common IMDB LLC
-    # and "Films" variants.
+    # A24 — prestige indie brand. IMDB uses bare `A24` on all titles;
+    # `A24 Films` / `A24 Films LLC` variants proposed by research have
+    # zero evidence in live data.
     A24 = ("a24", 20, "A24", (
         BrandCompany("A24", None, None),
-        BrandCompany("A24 Films", None, None),
-        BrandCompany("A24 Films LLC", None, None),
     ))
 
-    # NEON — primary "Neon" brand plus "Neon Rated" legal-entity form.
+    # NEON — prestige indie brand. IMDB uses bare `Neon`; the
+    # `Neon Rated` legal-entity form has zero evidence in live data.
     NEON = ("neon", 21, "Neon", (
         BrandCompany("Neon", None, None),
-        BrandCompany("Neon Rated", None, None),
     ))
 
     # BLUMHOUSE — Blumhouse Productions + International. Atomic Monster
@@ -424,11 +427,11 @@ class ProductionBrand(str, Enum):
         BrandCompany("Atomic Monster", 2024, None),
     ))
 
-    # STUDIO_GHIBLI — primary brand plus formal "Studio Ghibli, Inc."
-    # legal-entity surface.
+    # STUDIO_GHIBLI — IMDB uses bare `Studio Ghibli` on all Ghibli films;
+    # `Studio Ghibli, Inc.` variant proposed by research has zero
+    # evidence in live data.
     STUDIO_GHIBLI = ("studio-ghibli", 23, "Studio Ghibli", (
         BrandCompany("Studio Ghibli", None, None),
-        BrandCompany("Studio Ghibli, Inc.", None, None),
     ))
 
     # NETFLIX — producer-intent brand. "A Netflix Original Documentary"
@@ -467,21 +470,25 @@ class ProductionBrand(str, Enum):
     ))
 
     # MIRAMAX — Weinstein-era prestige indie catalog (Pulp Fiction, Good
-    # Will Hunting, Kill Bill, No Country). Dimension Films dropped —
-    # horror/family-genre (Scream, Spy Kids, Scary Movie) built its own
-    # identity distinct from Miramax's prestige brand.
+    # Will Hunting, Kill Bill, No Country). IMDB uses bare `Miramax`;
+    # `Miramax Films` variant proposed by research has zero evidence in
+    # live data. Dimension Films dropped — horror/family-genre (Scream,
+    # Spy Kids, Scary Movie) built its own identity distinct from
+    # Miramax's prestige brand.
     MIRAMAX = ("miramax", 28, "Miramax", (
         BrandCompany("Miramax", 1979, None),
-        BrandCompany("Miramax Films", 1979, None),
     ))
 
-    # UNITED_ARTISTS — two active eras with a dormant gap. `United
-    # Artists Pictures` covers the 1981-2018 MGM-era releasing label.
-    # Corporate/regional-distribution strings dropped (Europa, Film
-    # Corporation) — not casual-facing credits.
+    # UNITED_ARTISTS — one continuous brand identity. IMDB credits bare
+    # `United Artists` across all eras (classic 1919-1981, MGM-era
+    # 1981-2018, and Amazon-MGM revival 2024-), not just the classic era
+    # — confirmed against Rocky IV (1985), Rain Man (1988), Valkyrie
+    # (2008). Earlier (1919, 1981) + (2024-) split incorrectly assumed
+    # MGM-era films credited `United Artists Pictures` instead. The
+    # `United Artists Pictures` row is kept as additional surface
+    # coverage for films that do use that variant.
     UNITED_ARTISTS = ("united-artists", 29, "United Artists", (
-        BrandCompany("United Artists", 1919, 1981),
-        BrandCompany("United Artists", 2024, None),
+        BrandCompany("United Artists", 1919, None),
         BrandCompany("United Artists Pictures", 1981, 2018),
     ))
 

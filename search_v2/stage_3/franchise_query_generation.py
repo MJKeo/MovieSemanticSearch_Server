@@ -109,24 +109,28 @@ evidence.
 _SEARCHABLE_AXES = """\
 SEARCHABLE AXES
 
-Five axes are available. All are independent — populate only the \
-ones the concept actually signals, leave the rest null. A \
-subgroup-only spec ("trilogies"), a structural-only spec \
-("spinoffs"), and a named-franchise spec ("Marvel movies") are all \
-valid. Multiple axes may populate naturally when one concept spans \
-them (for example a named franchise plus a structural role).
+Six axes are available. The first five are retrieval axes and all \
+are independent — populate only the ones the concept actually \
+signals, leave the rest null. A subgroup-only spec ("trilogies"), \
+a structural-only spec ("spinoffs"), and a named-franchise spec \
+("Marvel movies") are all valid. Multiple axes may populate \
+naturally when one concept spans them (for example a named \
+franchise plus a structural role). The sixth axis (prefer_lineage) \
+is a scoring bias, not a retrieval axis.
 
 franchise_or_universe_names — The named franchise, IP, or shared \
 cinematic universe the user is searching for. Signals include \
 proper-noun franchise references such as "James Bond", "Star Wars", \
 "Harry Potter", "Marvel", "Marvel Cinematic Universe", or \
-"MonsterVerse". At ingest time a franchise name may have been \
-stored as either the lineage (the specific-title slot) or the \
-shared_universe (the umbrella slot) — retrieval covers both from \
-this single field, so you do NOT need to predict which slot the \
-stored value lives in. Populate whenever a named franchise is part \
-of the requirement. Leave null when the concept is purely \
-structural or purely subgroup-based with no named franchise.
+"MonsterVerse". At ingest time a franchise name is stored as \
+either the lineage (the specific-title slot) or the shared_universe \
+(the umbrella slot) — retrieval covers both from this single \
+field, so you do NOT need to predict which slot the stored value \
+lives in. The lineage-vs-universe distinction is consumed by \
+prefer_lineage below to bias scoring, not to restrict matches. \
+Populate whenever a named franchise is part of the requirement. \
+Leave null when the concept is purely structural or purely \
+subgroup-based with no named franchise.
 
 recognized_subgroups — A named subgroup: phase, saga, trilogy, \
 timeline, director-era slice, or other widely-used sub-lineage \
@@ -165,6 +169,54 @@ the user asks for "movies that launched a subgroup", set \
 launch_scope=subgroup even when recognized_subgroups stays null. \
 Populate recognized_subgroups only when the user names the subgroup \
 itself.
+
+prefer_lineage — A scoring-bias bool. When true, movies whose \
+lineage side matches the query name are scored higher than movies \
+that match only via the shared_universe side. The match set is \
+unchanged — spinoffs and universe-adjacent films still appear in \
+the results, just ranked below main-line entries. Default false. \
+Set true ONLY when all of the following hold:
+- exactly one specific franchise is named (not an umbrella like \
+  "Marvel" or "DC"), and that franchise has a main line plus known \
+  spinoffs or universe-adjacent entries
+- the requirement does not explicitly invite spinoffs or \
+  universe-adjacent content
+- franchise_or_universe_names is not a multi-name umbrella sweep
+- recognized_subgroups is null — a named subgroup already \
+  disambiguates intent, so layering prefer_lineage on top adds \
+  noise
+
+Positive examples (set prefer_lineage=true):
+- "shrek movies" — main Shrek films upranked over Puss in Boots
+- "john wick movies" — main John Wick films upranked over The \
+  Continental
+- "toy story movies" — main Toy Story films upranked over Forky \
+  shorts or Lightyear
+- "harry potter movies" — main Harry Potter films upranked over \
+  Fantastic Beasts
+- "the conjuring movies" — main Conjuring films upranked over \
+  Annabelle / The Nun
+
+Negative examples (leave prefer_lineage=false):
+- "MCU movies" / "marvel movies" — the umbrella IS the request
+- "DCU movies" / "dc movies" — same
+- "star wars movies" — Star Wars is the umbrella, not a single \
+  lineage
+- "middle-earth movies" — umbrella shared universe
+- "shrek spinoffs" — the user explicitly asked for the \
+  non-lineage side
+- "harry potter and fantastic beasts" — the user explicitly \
+  invites the shared-universe entries
+- "marvel phase one movies" — subgroup disambiguates; no \
+  lineage preference needed
+- any entry with two or more franchise_or_universe_names (umbrella \
+  sweep by definition)
+
+When in doubt, leave prefer_lineage=false. False is the safer \
+default — it preserves the current behavior of scoring every match \
+equally, and misclassifying true as false only loses a small \
+ranking nudge. Misclassifying false as true when the user \
+actually wanted the umbrella demotes content they wanted.
 
 ---
 
@@ -295,6 +347,10 @@ axis it implicates:
 - launched / started / kicked off a franchise → launch_scope=franchise
 - launched / started a subgroup / phase / saga / era / timeline → \
   launch_scope=subgroup
+- naming exactly one specific franchise with known spinoffs or \
+  universe-adjacent entries, with no phrasing inviting those \
+  entries and no subgroup → prefer_lineage=true (otherwise \
+  prefer_lineage=false)
 
 If no phrase signals a given axis, say so explicitly. Do not leave \
 absence implicit. This is an evidence inventory, not a justification.
@@ -321,6 +377,13 @@ launch_scope — Null when launch behavior is not requested. Otherwise \
 emit exactly one of:
 - franchise
 - subgroup
+
+prefer_lineage — Emit true only when the concept_analysis captured \
+a single specific franchise with known spinoffs or \
+universe-adjacent entries AND the user did not invite those \
+entries AND no subgroup is populated AND \
+franchise_or_universe_names has exactly one entry. Otherwise emit \
+false. When uncertain, emit false.
 
 Remember the input hierarchy: description chooses the axes; \
 intent_rewrite disambiguates vague references; routing_rationale is \
