@@ -11,18 +11,18 @@ apply the ordinal + cardinal digit-to-word rewrite already shared by
 studio and franchise so ``8th Annual Critics' Week Grand Prize`` stays
 token-compatible with any future natural-language phrasings.
 
-Tokenization splits on whitespace AND hyphens (via ``tokenize_title_phrase``)
-and emits every surviving token — no stoplist is applied here. Stopword-
-style filtering is deferred to query time; the DF-ceiling decision will
-be made empirically against ``lex.award_name_token_doc_frequency`` once
-the backfill has produced a real bucket distribution, matching how
-studios and franchises already stage the same call.
-
-Applied symmetrically at ingest and query time — the same string
-transform on both sides is the invariant that replaces the v1 exact
-equality comparison (see
-search_improvement_planning/v2_search_data_improvements.md, "Award Name
-Resolution").
+Ingest and query share ``normalize_award_string`` verbatim, so the entry
+lookup key is identical on both sides — that symmetry is what replaces
+the v1 exact-equality comparison. The tokenizers intentionally diverge
+by one step: ``tokenize_award_string`` (ingest) emits every surviving
+token, while ``tokenize_award_string_for_query`` (query) additionally
+drops ``AWARD_QUERY_STOPLIST`` before returning. The ingest side
+deliberately keeps every token in ``lex.award_name_token`` so the
+droplist can be revised from the DF materialized view without
+re-ingesting. The finalized droplist and the reasoning against a
+numeric DF ceiling live in
+search_improvement_planning/v2_search_data_improvements.md
+§ "Stopword Droplist" / "Why Not a DF Ceiling".
 """
 
 from __future__ import annotations
@@ -60,15 +60,17 @@ def normalize_award_string(raw: str) -> str:
 
 
 def tokenize_award_string(raw: str, *, already_normalized: bool = False) -> list[str]:
-    """Tokenize an award name for the freeform award-name posting path.
+    """Tokenize an award name for the ingest-side posting path.
 
     Delegates to ``tokenize_title_phrase`` (whitespace + hyphen split,
     dedup) and emits every surviving token. No stoplist is applied —
-    the query side will decide what to drop after the DF bucket
-    distribution from the first full backfill is visible. Only
-    lone-hyphen residue (from names shaped like ``X - Y Award``, where
-    ``normalize_string`` preserves the bare ``-`` as a standalone token)
-    is filtered, matching the guard in ``tokenize_company_string``.
+    ingest keeps every token in ``lex.award_name_token`` so the
+    query-side droplist (``AWARD_QUERY_STOPLIST``, applied via
+    ``tokenize_award_string_for_query``) can be revised without
+    re-ingest. Only lone-hyphen residue (from names shaped like
+    ``X - Y Award``, where ``normalize_string`` preserves the bare
+    ``-`` as a standalone token) is filtered, matching the guard in
+    ``tokenize_company_string``.
 
     Pass ``already_normalized=True`` in the hot ingest loop where the
     caller has already run ``normalize_award_string`` on the input —
@@ -79,3 +81,44 @@ def tokenize_award_string(raw: str, *, already_normalized: bool = False) -> list
         return []
     tokens = tokenize_title_phrase(normalized, already_normalized=True)
     return [t for t in tokens if t.replace("-", "")]
+
+
+# Finalized query-side droplist. See
+# search_improvement_planning/v2_search_data_improvements.md §"Stopword
+# Droplist" for the empirical top-DF distribution that drove the choice
+# and the reasoning against a numeric DF ceiling. This asymmetry vs
+# franchise (which applies its stoplist bilaterally) is deliberate —
+# the ingest path writes every token to lex.award_name_token so the
+# list can be revised from the DF materialized view without re-ingest.
+AWARD_QUERY_STOPLIST: frozenset[str] = frozenset(
+    {
+        "award",
+        "awards",
+        "prize",
+        "prizes",
+        "film",
+        "films",
+        "best",
+        "a",
+        "an",
+        "and",
+        "for",
+        "of",
+        "the",
+    }
+)
+
+
+def tokenize_award_string_for_query(raw: str) -> list[str]:
+    """Tokenize an award name for the query-side posting-list lookup.
+
+    Runs the same normalize + whitespace/hyphen split as the ingest
+    tokenizer (``tokenize_award_string``), then drops
+    ``AWARD_QUERY_STOPLIST`` tokens before they reach
+    ``lex.award_name_token``. Returning an empty list signals to the
+    caller that this name contributes nothing to the axis (every token
+    was a stopword), in which case the executor should skip it rather
+    than broaden the posting-list fetch.
+    """
+    tokens = tokenize_award_string(raw)
+    return [t for t in tokens if t not in AWARD_QUERY_STOPLIST]

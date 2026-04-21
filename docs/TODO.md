@@ -669,35 +669,67 @@ the vocabulary (e.g., "zombie" exists but "clown" doesn't).
 **When:** After the semantic system prompt is authored.
 **See:** search_improvement_planning/finalized_search_proposal.md (Endpoint 6: Semantic → Execution Scenarios), schemas/semantic_translation.py, schemas/semantic_bodies.py
 
-## Cut stage-3 award endpoint over to token-intersection path
-**Context:** Ingest-side landing of the Award Name Resolution plan is now
-complete — `lex.award_name_entry` / `lex.award_name_token` +
-`lex.award_name_token_doc_frequency` MV exist, every `public.movie_awards`
-row carries `award_name_entry_id`, `ingest_movie_awards` resolves entries
-inline, and `backfill_award_name_entries.py` handles the one-shot
-population. What remains is the query-side cutover: (1) remove the
-"deliberately do not normalize" comment in
-[search_v2/stage_3/award_query_execution.py:62-83](search_v2/stage_3/award_query_execution.py#L62-L83);
-(2) replace the exact-string equality match with the plan's
-normalize → tokenize (via `tokenize_award_string`) → intersect-per-name
-→ union-across-names flow against `lex.award_name_token`; (3) resolve
-to movies via `WHERE award_name_entry_id = ANY(:ids) AND ceremony_id = ...`
-(keep the existing ceremony/category/outcome/year filters as row-level
-AND clauses); (4) update
-`search_v2/stage_3/award_query_generation.py` (or the corresponding
-stage-3 translator) so the LLM emits official base prize names and the
-`AwardQuerySpec.thinking` scope field is required before `award_names`;
-(5) decide on query-side token filtering by inspecting
-`lex.award_name_token_doc_frequency` bucket distribution after the
-backfill has run against full data — the ingest side writes every
-token, so both an explicit stoplist (award/awards/prize/best/etc.)
-and a DF ceiling are open design choices picked here, not pre-baked
-into ingestion.
-**When:** Once the backfill has been executed against the production DB and
-the DF distribution has been eyeballed.
-**See:** search_improvement_planning/v2_search_data_improvements.md §Award Name Resolution (Query-Time Resolution), search_v2/stage_3/award_query_execution.py, search_v2/stage_3/award_query_generation.py, implementation/misc/award_name_text.py (normalize_award_string, tokenize_award_string)
+## ~~Cut stage-3 award endpoint over to token-intersection path~~ DONE
+Shipped in the session ending 2026-04-20. `AWARD_QUERY_STOPLIST` +
+`tokenize_award_string_for_query` added to `implementation/misc/award_name_text.py`;
+new `fetch_award_name_entry_ids_for_tokens` posting-list helper in `db/postgres.py`;
+`fetch_award_row_counts` signature changed to take `award_name_entry_ids: set[int] | None`
+instead of `award_names: list[str] | None`, with the WHERE clause swapped to
+`award_name_entry_id = ANY(...)`. `execute_award_query` now resolves `spec.award_names`
+via token-intersection + across-name union, early-exits with empty `EndpointResult`
+when the axis was populated but resolved to zero entry ids. Translator prompt's
+`AWARD NAME SURFACE FORMS` section rewritten to describe base-form emission + shared
+tokenizer (no more "one-character difference produces zero matches" language on the
+prize axis); `CEREMONIES` section left intact because ceremony matching is still
+exact enum. Related follow-ups tracked as separate TODOs below.
 
-## Implement Franchise Resolution plan
-**Context:** Design committed in search_improvement_planning/v2_search_data_improvements.md §Franchise Resolution. Work spans: (1) new tables `franchise_entry` (id, raw_name, normalized, origin) and `franchise_token` (token, franchise_entry_id); (2) `ALTER TABLE movie_franchise_metadata ADD COLUMN franchise_name_entry_ids INT[]` (union of lineage + shared_universe entry ids) and `subgroup_entry_ids INT[]` with GIN indexes; (3) original `lineage` / `shared_universe` / `recognized_subgroups` TEXT columns preserved for debugging; (4) Stage A–C ingestion (populate entries, tokenize with franchise-domain stoplist, stamp movies); (5) rewrite of `search_v2/stage_3/franchise_query_execution.py` + `db/postgres.py:fetch_franchise_movie_ids` to use GIN overlap on the entry-id arrays; (6) `FranchiseQuerySpec` schema change: `lineage_or_universe_names` renamed to `franchise_names`, `thinking` field added/surfaced first; (7) shared normalization gains cardinal number-to-word rule (`phase 1` → `phase one`) alongside the existing ordinal rule. DF ceiling decision deferred to post-ingestion.
-**When:** When the v2 search data improvements work stream moves past studio resolver into the remaining endpoints.
-**See:** search_improvement_planning/v2_search_data_improvements.md §Franchise Resolution, schemas/metadata.py (FranchiseOutput), search_v2/stage_3/franchise_query_generation.py, search_v2/stage_3/franchise_query_execution.py, db/postgres.py (fetch_franchise_movie_ids), movie_ingestion/metadata_generation/prompts/franchise.py, db/init/01_create_postgres_tables.sql (movie_franchise_metadata)
+## Update award query-side tests for new tokenizer + DB helper signatures
+**Context:** Per .claude/rules/test-boundaries.md, no test files were touched during the
+query-side cutover. Test fixtures and assertions will need updating for: (1) new
+`tokenize_award_string_for_query` and `AWARD_QUERY_STOPLIST`; (2) removal of
+`_dedupe_nonempty` from `search_v2/stage_3/award_query_execution.py`; (3) new
+`db.postgres.fetch_award_name_entry_ids_for_tokens` helper; (4) `fetch_award_row_counts`
+parameter rename `award_names` → `award_name_entry_ids`; (5) the early-exit branch
+in `execute_award_query` that returns empty when `spec.award_names` is populated but
+resolves to no entry ids.
+**When:** Dedicated test-updates phase after the query-side cutover stabilizes.
+**See:** implementation/misc/award_name_text.py, db/postgres.py (fetch_award_row_counts, fetch_award_name_entry_ids_for_tokens), search_v2/stage_3/award_query_execution.py, unit_tests/
+
+## DF-ceiling tuning + second-wave stopword candidates for award tokens
+**Context:** Analogous to the franchise follow-up — query-side `AWARD_QUERY_STOPLIST`
+is hand-curated from the post-backfill top-25 DF scan; planning doc Open Decisions
+#1/#2 are resolved. After future ingest sweeps, inspect
+`SELECT token, doc_frequency FROM lex.award_name_token_doc_frequency ORDER BY doc_frequency DESC LIMIT 25`
+and extend the droplist if new domain-boilerplate or English-connective tokens surface.
+Do NOT add a numeric DF ceiling — the tri-modal rationale (see Stopword Droplist
+section of the planning doc) applies.
+**When:** After each significant ingest sweep, and again periodically as the corpus grows.
+**See:** search_improvement_planning/v2_search_data_improvements.md §Award Name Resolution ("Why Not a DF Ceiling"), implementation/misc/award_name_text.py (AWARD_QUERY_STOPLIST)
+
+## ~~Implement Franchise Resolution plan~~ DONE
+Ingest-side landed in prior session; query-side landed in the session ending 2026-04-20. Shipped: `lex.franchise_entry` / `lex.franchise_token` / `lex.franchise_token_doc_frequency`; `movie_card.franchise_name_entry_ids` / `subgroup_entry_ids` (BIGINT[], GIN); cardinal number-to-word rule; `FRANCHISE_STOPLIST` in `tokenize_franchise_string`; `FranchiseQuerySpec.franchise_or_universe_names` rename (user chose `franchise_or_universe_names` over the planning-doc's `franchise_names`); cross-field validator dropped so subgroup-only / structural-only specs are valid; `fetch_franchise_entry_ids_for_tokens` posting-list helper; `fetch_franchise_movie_ids` rewritten with spec-shape-aware from-clause branching; prompt rewritten with umbrella-vs-specific rule and scope-commitment in `concept_analysis`. See DIFF_CONTEXT.md (prior session + current session entries) for the full decision log. Remaining follow-ups tracked as separate TODOs below.
+
+## Re-run franchise backfill under stopword-dropping tokenizer
+**Context:** `FRANCHISE_STOPLIST` was added to `tokenize_franchise_string` in the query-side cutover. The ingest-side tokens in `lex.franchise_token` were stamped before the stoplist was wired, so they still contain `the` / `of` / `and` etc. Query-side tokenization now drops those, so the `lex.franchise_token` rows for stopword tokens are dead weight but not incorrect (they're just never queried). Re-running the franchise backfill script under the updated tokenizer cleans up the index so debuggability (DF view head) is not cluttered with rows that will never be hit. Precondition before production retrieval relies on the new executor.
+**When:** Before shipping the query-side cutover to production. Sanity check after: `SELECT COUNT(*) FROM lex.franchise_token WHERE token IN ('the', 'of', 'and', 'a', 'in', 'to', 'on', 'my', 'i', 'for', 'at', 'by', 'with')` should return 0.
+**See:** backfill_franchise_entries_and_tokens.py, implementation/misc/franchise_text.py (FRANCHISE_STOPLIST), DIFF_CONTEXT.md "Franchise resolution: query-side cutover"
+
+## DF-ceiling tuning + second-wave stopword candidates for franchise tokens
+**Context:** Planning doc Open Decision #1 intentionally deferred picking any numeric DF ceiling for franchise tokens — the current design uses a closed hand-curated `FRANCHISE_STOPLIST` instead, backed by the rationale that the DF distribution is tri-modal (stopwords / scaffolding / discriminative) with overlapping bands. After the backfill re-run in the prior TODO, inspect `SELECT token, doc_frequency FROM lex.franchise_token_doc_frequency ORDER BY doc_frequency DESC LIMIT 25` and add any obvious new English stopwords to `FRANCHISE_STOPLIST`. Do NOT add a numeric DF ceiling — the planning doc documents why.
+**When:** After the backfill re-run, and again periodically as the corpus grows.
+**See:** search_improvement_planning/v2_search_data_improvements.md §Franchise Resolution ("Why Not a DF Ceiling"), implementation/misc/franchise_text.py
+
+## Narrow-inside-umbrella resolver rule for franchise (if eval shows prompt-only mitigation fails)
+**Context:** Planning doc Open Decision #2. When a user asks "Doctor Strange in the MCU", the prompt currently instructs the LLM to emit only the narrow form (`["doctor strange"]`) because every Doctor Strange film is already MCU — so across-name union would OR-broaden the result. If evaluation shows the prompt-only mitigation misfires at scale, implement a resolver-side subset-elimination rule: when one name's entry-id set is a strict subset of another's in the same spec, drop the superset.
+**When:** After eval data on stage-3 franchise retrieval quality is available.
+**See:** search_improvement_planning/v2_search_data_improvements.md §Franchise Resolution Edge Cases / §Franchise-names OR semantics when user wanted AND, search_v2/stage_3/franchise_query_execution.py
+
+## Update franchise query-side tests for renamed field + tokenizer + new DB helper signatures
+**Context:** Per .claude/rules/test-boundaries.md, no test files were touched during the query-side cutover. Test fixtures and assertions will need updating for: (1) `FranchiseQuerySpec.franchise_or_universe_names` (renamed from `lineage_or_universe_names`); (2) removal of the `recognized_subgroups requires lineage_or_universe_names` validator (subgroup-only specs now valid); (3) `tokenize_franchise_string` now drops `FRANCHISE_STOPLIST` entries — any fixture depending on `the` / `of` / etc. surviving will break; (4) new `db.postgres.fetch_franchise_entry_ids_for_tokens` helper; (5) `db.postgres.fetch_franchise_movie_ids` signature changed from string-list variations to entry-id sets, and structural-flag args changed from `bool | None` → `bool`.
+**When:** Dedicated test-updates phase after the query-side cutover stabilizes.
+**See:** DIFF_CONTEXT.md "Franchise resolution: query-side cutover" testing notes, unit_tests/
+
+## Update v2_search_data_improvements.md franchise_names reference to franchise_or_universe_names
+**Context:** The planning doc's §Query-Time Resolution section says "Key rename: `lineage_or_universe_names` → `franchise_names`". The actual rename landed as `franchise_or_universe_names` (user preference — keeps "either lineage or universe" signal visible in the schema). The planning doc is now mildly stale on this detail.
+**When:** Next time the planning doc is edited, or sooner if anyone references the rename.
+**See:** search_improvement_planning/v2_search_data_improvements.md §Franchise Resolution / Query-Time Resolution (around line 1708), schemas/franchise_translation.py

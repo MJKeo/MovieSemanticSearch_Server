@@ -109,31 +109,39 @@ evidence.
 _SEARCHABLE_AXES = """\
 SEARCHABLE AXES
 
-Five axes are available. Populate only the ones the concept \
-actually signals. Leave the rest null. Multiple axes may populate \
-naturally when one concept spans them (for example a named \
-franchise plus a structural role).
+Five axes are available. All are independent — populate only the \
+ones the concept actually signals, leave the rest null. A \
+subgroup-only spec ("trilogies"), a structural-only spec \
+("spinoffs"), and a named-franchise spec ("Marvel movies") are all \
+valid. Multiple axes may populate naturally when one concept spans \
+them (for example a named franchise plus a structural role).
 
-lineage_or_universe_names — The named franchise, IP, or cinematic \
-universe the user is searching for. Signals include proper-noun \
-franchise references such as "James Bond", "Star Wars", "Harry \
-Potter", "Marvel", "Marvel Cinematic Universe", or "MonsterVerse". \
-Populate whenever a named franchise is part of the requirement. \
-Leave null when the concept is purely structural with no named \
-franchise.
+franchise_or_universe_names — The named franchise, IP, or shared \
+cinematic universe the user is searching for. Signals include \
+proper-noun franchise references such as "James Bond", "Star Wars", \
+"Harry Potter", "Marvel", "Marvel Cinematic Universe", or \
+"MonsterVerse". At ingest time a franchise name may have been \
+stored as either the lineage (the specific-title slot) or the \
+shared_universe (the umbrella slot) — retrieval covers both from \
+this single field, so you do NOT need to predict which slot the \
+stored value lives in. Populate whenever a named franchise is part \
+of the requirement. Leave null when the concept is purely \
+structural or purely subgroup-based with no named franchise.
 
-recognized_subgroups — A named subgroup inside a franchise: phase, \
-saga, trilogy, timeline, director-era slice, or other widely-used \
-sub-lineage label. Pull this guidance from the same standards used \
-at ingest:
+recognized_subgroups — A named subgroup: phase, saga, trilogy, \
+timeline, director-era slice, or other widely-used sub-lineage \
+label. Pull this guidance from the same standards used at ingest:
 - valid examples include labels such as "phase one", "phase three", \
   "infinity saga", "multiverse saga", "kelvin timeline", \
   "snyderverse", "disney live-action remakes", "sequel trilogy", \
   "skywalker saga"
 - do not restate the franchise itself as a subgroup
 - do not invent labels on the spot
-- only populate when the user's requirement actually targets a \
-  recognized subgroup
+- populate whenever the user's requirement actually targets a \
+  recognized subgroup — INCLUDING standalone subgroup concepts like \
+  "trilogies" or "phase one movies" where no parent franchise is \
+  named. This axis is independent; it does not require \
+  franchise_or_universe_names to be populated.
 
 lineage_position — The narrative-position enum with four values: \
 sequel, prequel, remake, reboot. Sequel and prequel are the common \
@@ -165,13 +173,15 @@ itself.
 _NAME_CANONICALIZATION = """\
 CANONICAL NAMING
 
-The names you emit are not fuzzy guesses. After a shared \
-normalization step, execution compares them to stored franchise and \
-subgroup strings by exact equality. The lists in \
-lineage_or_universe_names and recognized_subgroups exist so you can \
-provide multiple alternate exact stored-form attempts for the SAME \
-underlying concept when more than one canonical form is genuinely \
-plausible.
+The names you emit are resolved through a shared tokenizer and a \
+token inverted index. The tokenizer applies: lowercase, diacritic \
+fold, punctuation strip, whitespace collapse, ordinal digit-to-word \
+("20th" → "twentieth"), cardinal 0-99 digit-to-word ("phase 1" → \
+"phase one"), whitespace + hyphen split, and stopword drop \
+("the of and a in to on my i for at by with"). The same tokenizer \
+ran at ingest time, so orthographic variants do not need to be \
+enumerated by you — they collide automatically. Focus your \
+alternates on genuinely different canonical forms.
 
 Follow the same canonical naming rules used by the ingest-side \
 franchise generator:
@@ -194,13 +204,28 @@ franchise generator:
   - "John Carpenter Halloween films" → \
     "carpenter halloween films"
 
-For lineage_or_universe_names:
+Specificity — pick the broadest or narrowest form based on the \
+user's apparent intent:
+- UMBRELLA query ("Marvel movies", "Lord of the Rings films") → \
+  emit the broad form ("marvel cinematic universe", \
+  "the lord of the rings")
+- NARROW lineage inside an umbrella ("Doctor Strange", \
+  "Captain America") → emit the narrow form alone. Every Doctor \
+  Strange film is already MCU; adding "marvel cinematic universe" \
+  as a second entry would OR-union the MCU sweep back in and \
+  over-broaden the query.
+
+For franchise_or_universe_names:
 - emit 1 entry in the common case
-- emit 2-3 entries only when there are genuinely different canonical \
-  names in common use that the ingest side might have stored
-- examples: "marvel cinematic universe" and "marvel"; \
-  "the lord of the rings" and "middle-earth"
-- do NOT pad the list with spelling, punctuation, or casing variants
+- emit 2-3 entries ONLY when genuinely different canonical names are \
+  in common use that the ingest side might plausibly have stored — \
+  the extra entries perform an umbrella sweep via across-name union \
+  (e.g. "marvel cinematic universe" plus "marvel" sweeps the MCU \
+  proper PLUS every other "marvel"-tagged franchise entry; \
+  "the lord of the rings" plus "middle-earth")
+- do NOT pad the list with spelling, punctuation, casing, \
+  hyphenation, diacritic, or digit-vs-word variants — the shared \
+  tokenizer handles those symmetrically
 
 For recognized_subgroups:
 - apply the same rules
@@ -208,9 +233,8 @@ For recognized_subgroups:
   widely-used fan terminology actually use
 - do not invent a subgroup label just because one would be useful
 
-Because matching is exact after normalization, omitting a real \
-canonical alternative can miss the stored value. But adding fake or \
-speculative alternatives widens the query incorrectly. Be deliberate.
+Adding fake or speculative alternatives widens the query \
+incorrectly. Be deliberate.
 
 ---
 
@@ -243,11 +267,25 @@ Generate fields in the schema's order. concept_analysis comes \
 first and scaffolds all later fields.
 
 concept_analysis — FIRST field. An evidence inventory that grounds \
-axis presence and absence. Quote signal phrases from description \
-first. Use intent_rewrite only when it clarifies what a vague term \
-in description refers to. For each relevant phrase, pair it with the \
+axis presence and absence, AND commits to query scope before any \
+field values are emitted.
+
+Begin by stating the scope: umbrella (broad franchise sweep) vs \
+specific lineage inside an umbrella vs sub-phase of an umbrella vs \
+pure subgroup with no named franchise vs pure structural. Scope \
+drives whether you emit 1 vs 2-3 entries in \
+franchise_or_universe_names, and whether you pair it with a \
+subgroup, and whether it stays null entirely. Committing to scope \
+up front avoids OR-broadening mistakes like emitting both \
+"doctor strange" and "marvel cinematic universe" for a narrow \
+request (which would union every MCU film back in).
+
+After scope, quote signal phrases from description first. Use \
+intent_rewrite only when it clarifies what a vague term in \
+description refers to. For each relevant phrase, pair it with the \
 axis it implicates:
-- franchise / IP / cinematic-universe name → lineage_or_universe_names
+- franchise / IP / cinematic-universe name → \
+  franchise_or_universe_names
 - named phase / saga / timeline / trilogy / subgroup label → \
   recognized_subgroups
 - sequel / prequel / remake / reboot phrasing → lineage_position
@@ -261,13 +299,16 @@ axis it implicates:
 If no phrase signals a given axis, say so explicitly. Do not leave \
 absence implicit. This is an evidence inventory, not a justification.
 
-lineage_or_universe_names — Up to three canonical franchise or \
-shared-universe names. Use the exact stored-form logic from the \
-Canonical Naming section. Leave null when no named franchise is part \
+franchise_or_universe_names — Up to three canonical franchise or \
+shared-universe surface forms. Apply the Canonical Naming specificity \
+rule: broad form for umbrella queries, narrow form alone for \
+specific-lineage queries. Leave null when no named franchise is part \
 of the requirement.
 
-recognized_subgroups — Up to three canonical subgroup labels. Leave \
-null unless the requirement actually targets a named subgroup.
+recognized_subgroups — Up to three canonical subgroup labels. \
+Populate whenever a named subgroup is part of the requirement, even \
+when franchise_or_universe_names is null (standalone subgroup \
+queries like "trilogies" or "phase one movies" are valid).
 
 lineage_position — One of sequel, prequel, remake, reboot, or null.
 

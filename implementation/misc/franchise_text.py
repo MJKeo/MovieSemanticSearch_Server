@@ -4,12 +4,12 @@ Mirrors `production_company_text.py` for the franchise resolution path (see
 search_improvement_planning/v2_search_data_improvements.md, "Franchise
 Resolution"). Applies the shared `normalize_string` rules and the shared
 digit-word rewrites (ordinal `20th` → `twentieth`, cardinal 0–99 `1` →
-`one`), then tokenizes on whitespace and hyphens.
+`one`), then tokenizes on whitespace and hyphens, and finally drops the
+closed-form `FRANCHISE_STOPLIST` below.
 
 Applied symmetrically at ingest and query time so variants like
-`phase 1` / `phase one`, `the lord of the rings` / `lord of the rings`
-(after DF-ceiling filtering), and `spider-man` / `spider man` collide to
-the same token set.
+`phase 1` / `phase one`, `the lord of the rings` / `lord of the rings`,
+and `spider-man` / `spider man` collide to the same token set.
 
 Only applies to franchise strings (lineage, shared_universe, recognized
 subgroups). We deliberately share the digit-word substitution helper with
@@ -21,6 +21,31 @@ from __future__ import annotations
 
 from implementation.misc.helpers import normalize_string, tokenize_title_phrase
 from implementation.misc.production_company_text import apply_digit_word_substitution
+
+
+# Closed stopword droplist, applied symmetrically at ingest and query
+# time. Source: v2_search_data_improvements.md §Franchise Resolution /
+# Stage C. These are pure English function words whose presence or
+# absence carries no franchise signal — `"the lord of the rings"` and
+# `"lord of the rings"` must collide, and `"a" in "a clockwork orange"`
+# must not anchor a posting-list intersection.
+#
+# Scaffolding tokens (`trilogy`, `collection`, `films`, `series`,
+# `universe`, `cinematic`, `chronicles`, `anthology`, `franchise`) are
+# deliberately KEPT — their DF range overlaps with load-bearing
+# discriminative tokens like `man` (Spider-Man / Iron Man / Batman /
+# Ant-Man) and `dead` (Evil Dead / Dead Poets), so any statistical
+# cutoff wide enough to remove scaffolding also removes signal. See
+# the "Why Not a DF Ceiling" subsection in the planning doc for the
+# full rationale.
+#
+# `lex.franchise_token_doc_frequency` exists as a diagnostic for
+# curating new stopword candidates from real data over time; additions
+# should be made by hand here rather than by numeric threshold.
+FRANCHISE_STOPLIST: frozenset[str] = frozenset({
+    "the", "of", "and", "a", "in", "to", "on",
+    "my", "i", "for", "at", "by", "with",
+})
 
 
 def normalize_franchise_string(raw: str) -> str:
@@ -49,11 +74,17 @@ def tokenize_franchise_string(
     """Tokenize a franchise string for `lex.franchise_token` insertion.
 
     Delegates to the shared title tokenizer (whitespace split + hyphen
-    expansion + dedup). The `already_normalized` hand-off skips a redundant
+    expansion + dedup), then drops `FRANCHISE_STOPLIST` entries and any
+    lone-hyphen residue. The `already_normalized` hand-off skips a redundant
     `normalize_franchise_string` pass when the caller already has the
     normalized form — used in the per-movie ingest hot loop where the same
     normalized string feeds both the `franchise_entry` upsert and the token
     set.
+
+    Stopword drop is applied symmetrically at ingest and query time so
+    `"the lord of the rings"` and `"lord of the rings"` produce the same
+    token set `{lord, rings}`. Mirrors the award-name resolver's
+    `AWARD_STOPLIST` handling in `award_name_text.py`.
 
     Drops lone-hyphen tokens for the same reason `tokenize_company_string`
     does: `normalize_string` preserves `-` as a character, which can leave a
@@ -64,4 +95,7 @@ def tokenize_franchise_string(
     if not normalized:
         return []
     tokens = tokenize_title_phrase(normalized, already_normalized=True)
-    return [t for t in tokens if t.replace("-", "")]
+    return [
+        t for t in tokens
+        if t.replace("-", "") and t not in FRANCHISE_STOPLIST
+    ]

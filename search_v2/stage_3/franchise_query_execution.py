@@ -1,28 +1,57 @@
 # Search V2 — Stage 3 Franchise Endpoint: Query Execution
 #
 # Takes the LLM's FranchiseQuerySpec output and runs a single AND-composed
-# query against public.movie_franchise_metadata, producing binary-scored
-# EndpointResult objects. movie_franchise_metadata is the sole source of
-# truth for franchise data in the current exact-match design.
+# query against the franchise token index + movie_card + (optionally)
+# movie_franchise_metadata, producing binary-scored EndpointResult
+# objects.
 #
-# Scoring: binary 1.0 for any movie that satisfies all populated axes, 0.0
-# otherwise. AND semantics mean an empty intermediate result on the
-# dealbreaker path exits with an empty EndpointResult; on the preference
-# path, non-matching candidates score 0.0.
+# Two-phase resolution, mirroring the studio freeform path:
+#
+#   Phase 1 — per-name token resolution. Each name in
+#   `franchise_or_universe_names` and each name in `recognized_subgroups`
+#   is tokenized via tokenize_franchise_string (normalize + ordinal +
+#   cardinal + whitespace/hyphen split + FRANCHISE_STOPLIST drop). All
+#   tokens across all names go into a single batched fetch against
+#   lex.franchise_token, keeping the Postgres round trip count at 2
+#   regardless of how many names the LLM emitted. Per-name intersection
+#   happens in Python over the shared response. Cross-name union gives
+#   OR semantics across the LLM's surface-form candidates (the umbrella
+#   sweep).
+#
+#   Phase 2 — final resolution. The union entry-id sets (A from
+#   franchise names, B from subgroups) and the structural flags feed
+#   fetch_franchise_movie_ids, which runs the GIN `&&` overlap on
+#   movie_card and (when any structural axis is active) LEFT JOINs
+#   movie_franchise_metadata for the flag predicates.
+#
+# Scoring: binary 1.0 for any movie that satisfies all active
+# constraints, 0.0 otherwise. AND semantics mean an empty intermediate
+# result on the dealbreaker path exits with an empty EndpointResult; on
+# the preference path, non-matching candidates score 0.0.
+#
+# Early-exit rule: if every *populated* textual axis collapses to empty
+# after token resolution (all tokens stopword-dropped or unmatched in
+# the posting table), the channel returns empty unless a structural
+# axis is active. A spec that asked for a specific franchise name but
+# resolved to no entry ids should not accidentally match every spinoff
+# via a lingering structural flag it never requested.
 #
 # Retry: transient DB errors are retried once. The second failure yields an
 # empty EndpointResult rather than propagating the exception to the caller —
 # a soft-failure contract consistent with the other stage 3 executors.
 #
-# See search_improvement_planning/finalized_search_proposal.md
-# (Endpoint 4: Franchise Structure) for the scoring design rationale.
+# See search_improvement_planning/v2_search_data_improvements.md
+# §Franchise Resolution for the full design rationale.
 
 from __future__ import annotations
 
 import logging
 
-from db.postgres import fetch_franchise_movie_ids
-from implementation.misc.helpers import normalize_string
+from db.postgres import (
+    fetch_franchise_entry_ids_for_tokens,
+    fetch_franchise_movie_ids,
+)
+from implementation.misc.franchise_text import tokenize_franchise_string
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import (
     FranchiseLaunchScope,
@@ -36,29 +65,71 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Input preprocessing — pure functions, no I/O.
+# Token-index resolution — pure Python over a shared batched response.
 # ---------------------------------------------------------------------------
 
 
-def _normalize_variations(raw: list[str] | None) -> list[str] | None:
-    """Normalize a list of name or subgroup variations and deduplicate.
+async def _resolve_names_to_entry_ids(names: list[str] | None) -> set[int]:
+    """Resolve a list of franchise / subgroup surface forms to entry ids.
 
-    Applies normalize_string to each entry, deduplicates while preserving
-    first-seen order, and filters empty results. Returns None when the input
-    is None or every entry normalizes to an empty string, signaling to the
-    caller that this axis is not active.
+    Pipeline per spec §Query-Time Resolution Step 1-3:
+      1. Tokenize each name (normalize + ordinal + cardinal + whitespace
+         / hyphen split + FRANCHISE_STOPLIST drop). A name that reduces
+         to zero tokens after stopword drop contributes nothing and is
+         skipped.
+      2. Collect all distinct tokens across all names into one batched
+         fetch against lex.franchise_token (1 round trip, not N).
+      3. Per-name intersection over the shared response. A missing token
+         (never stamped at ingest) collapses that name's contribution to
+         empty — we must NOT silently treat "missing" as "matches
+         everything", matching the studio freeform executor's Phase-3
+         behavior.
+      4. Union the per-name sets. Cross-name union is OR semantics for
+         the LLM's multiple surface-form candidates — this is the
+         umbrella-sweep mechanism (e.g. emitting
+         `["marvel cinematic universe", "marvel"]` sweeps MCU PLUS every
+         other `marvel`-tagged entry).
+
+    Args:
+        names: Raw surface forms from the FranchiseQuerySpec (not
+            pre-normalized — tokenize_franchise_string normalizes
+            internally). None or empty = axis not active.
+
+    Returns:
+        Set of franchise_entry_ids. Empty when the axis was inactive,
+        every name collapsed to zero tokens, or no tokens had postings.
     """
-    if raw is None:
-        return None
-    seen: set[str] = set()
-    result: list[str] = []
-    for item in raw:
-        norm = normalize_string(item)
-        if not norm or norm in seen:
+    if not names:
+        return set()
+
+    # Phase 1: per-name tokenize. Preserve grouping for intersection, and
+    # collect a flat token set for the batched fetch.
+    per_name_tokens: list[list[str]] = []
+    all_tokens: set[str] = set()
+    for name in names:
+        tokens = tokenize_franchise_string(name)
+        if not tokens:
             continue
-        seen.add(norm)
-        result.append(norm)
-    return result if result else None
+        per_name_tokens.append(tokens)
+        all_tokens.update(tokens)
+    if not all_tokens:
+        return set()
+
+    # Phase 2: single batched posting-list fetch. sorted() gives
+    # deterministic query text (stable plan cache, reproducible logs).
+    token_to_entries = await fetch_franchise_entry_ids_for_tokens(sorted(all_tokens))
+
+    # Phase 3: per-name intersection over the shared response. A missing
+    # key means the token has no postings — the name fails, it does NOT
+    # match everything.
+    all_entry_ids: set[int] = set()
+    for tokens in per_name_tokens:
+        per_token_sets = [token_to_entries.get(t) for t in tokens]
+        if not all(per_token_sets):
+            continue
+        all_entry_ids |= set.intersection(*per_token_sets)
+
+    return all_entry_ids
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +142,7 @@ async def execute_franchise_query(
     *,
     restrict_to_movie_ids: set[int] | None = None,
 ) -> EndpointResult:
-    """Execute one FranchiseQuerySpec against movie_franchise_metadata.
+    """Execute one FranchiseQuerySpec against the franchise token index.
 
     Single entry point for both dealbreakers and preferences. The
     restrict_to_movie_ids parameter controls output shape:
@@ -82,7 +153,7 @@ async def execute_franchise_query(
 
     All populated axes are ANDed in a single SQL query. A movie must satisfy
     every active constraint to appear in the result. An empty result is a
-    valid outcome — it means no movie in the table satisfied all axes jointly.
+    valid outcome — it means no movie satisfied all axes jointly.
 
     Transient DB errors are retried once. The second failure yields an empty
     EndpointResult so the orchestrator can continue rather than hard-failing
@@ -97,12 +168,6 @@ async def execute_franchise_query(
     Returns:
         EndpointResult with scores in {0.0, 1.0} per movie.
     """
-    # Normalize name and subgroup variation lists in Python so the DB
-    # comparison uses the same canonical form produced by the ingest LLM.
-    # Execution does exact equality on these normalized values.
-    normalized_names = _normalize_variations(spec.lineage_or_universe_names)
-    normalized_subgroups = _normalize_variations(spec.recognized_subgroups)
-
     # Resolve the lineage_position string value to its SMALLINT storage ID.
     # FranchiseQuerySpec uses use_enum_values=True, so spec.lineage_position
     # holds the raw string (e.g. "sequel"), not the LineagePosition member.
@@ -117,12 +182,33 @@ async def execute_franchise_query(
     launched_franchise = spec.launch_scope == FranchiseLaunchScope.FRANCHISE
     launched_subgroup = spec.launch_scope == FranchiseLaunchScope.SUBGROUP
 
+    # Phase 1 — resolve both textual axes to entry-id sets. Run
+    # sequentially rather than gather()-ing because the two share the
+    # same posting-list fetch pattern and the second call would benefit
+    # from Postgres connection reuse; the wall-clock difference for 1-6
+    # total names is negligible.
+    franchise_name_entry_ids = await _resolve_names_to_entry_ids(
+        spec.franchise_or_universe_names
+    )
+    subgroup_entry_ids = await _resolve_names_to_entry_ids(spec.recognized_subgroups)
+
+    # Early-exit rule (user directive #3 in the plan). A textual axis
+    # that was *requested* but resolved to an empty entry-id set must
+    # short-circuit to an empty result — the DB helper treats an empty
+    # set as "axis inactive" and skips the predicate, which would
+    # silently broaden the match. "No entries resolved" is not the same
+    # as "axis inactive".
+    if spec.franchise_or_universe_names and not franchise_name_entry_ids:
+        return build_endpoint_result({}, restrict_to_movie_ids)
+    if spec.recognized_subgroups and not subgroup_entry_ids:
+        return build_endpoint_result({}, restrict_to_movie_ids)
+
     matched_ids: set[int] = set()
     for attempt in range(2):
         try:
             matched_ids = await fetch_franchise_movie_ids(
-                normalized_name_variations=normalized_names,
-                normalized_subgroup_variations=normalized_subgroups,
+                franchise_name_entry_ids=franchise_name_entry_ids or None,
+                subgroup_entry_ids=subgroup_entry_ids or None,
                 lineage_position_id=lineage_position_id,
                 is_spinoff=is_spinoff,
                 is_crossover=is_crossover,

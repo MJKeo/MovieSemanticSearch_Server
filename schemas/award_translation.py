@@ -100,7 +100,12 @@ class AwardQuerySpec(BaseModel):
     # execution treats both as "all non-Razzie ceremonies."
     ceremonies: list[AwardCeremony] | None = None
 
-    # Prize names as stored in movie_awards.award_name. Null when not specified.
+    # Prize names as canonical base forms. Resolved at query time via
+    # normalize + tokenize + stoplist drop + posting-list intersection
+    # against lex.award_name_token; NOT a raw-string comparison against
+    # movie_awards.award_name. See
+    # search_improvement_planning/v2_search_data_improvements.md
+    # § Award Name Resolution. Null when not specified.
     award_names: list[str] | None = None
 
     # Category-concept tags. Members may come from any of the three tag

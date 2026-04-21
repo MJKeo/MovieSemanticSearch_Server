@@ -22,9 +22,17 @@
 # spec.ceremonies, it is included — the user explicitly asked for it.
 #
 # Filter axis encoding:
-#   award_name is compared to stored rows with un-normalized exact equality.
-#     The ingest pipeline preserves IMDB surface forms; case-folding or
-#     diacritic-stripping here would silently zero out valid matches.
+#   award_names resolve through a token inverted index: each raw name is
+#     normalized, tokenized (whitespace + hyphen split, AWARD_QUERY_STOPLIST
+#     dropped), and then a single batched fetch against lex.award_name_token
+#     returns postings that are intersected per-name and unioned across
+#     names. The resulting award_name_entry_id set feeds the WHERE clause
+#     on public.movie_awards. Surface-form variants (curly vs straight
+#     apostrophe, case, diacritics, "Critics Week" vs "Critics' Week",
+#     "BAFTA" vs "BAFTA Film Award") collapse to shared entry ids
+#     automatically — see
+#     search_improvement_planning/v2_search_data_improvements.md § Award
+#     Name Resolution for the design rationale.
 #   category_tags (CategoryTag enum members) are converted to integer
 #     tag ids and matched against the GIN-indexed `category_tag_ids INT[]`
 #     column via array overlap (`&&`). The 3-level taxonomy
@@ -44,7 +52,12 @@ from __future__ import annotations
 
 import logging
 
-from db.postgres import fetch_award_fast_path_movie_ids, fetch_award_row_counts
+from db.postgres import (
+    fetch_award_fast_path_movie_ids,
+    fetch_award_name_entry_ids_for_tokens,
+    fetch_award_row_counts,
+)
+from implementation.misc.award_name_text import tokenize_award_string_for_query
 from schemas.award_category_tags import RAZZIE_TAG_IDS, TAG_BY_SLUG
 from schemas.award_translation import AwardQuerySpec
 from schemas.endpoint_result import EndpointResult
@@ -57,30 +70,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Pure helpers — input preprocessing and scoring. No I/O.
 # ---------------------------------------------------------------------------
-
-
-def _dedupe_nonempty(values: list[str] | None) -> list[str] | None:
-    """Remove duplicates and empty strings from a spec list, preserving order.
-
-    Applied to award_names only. Does NOT normalize — stored values keep
-    their raw IMDB surface form and the comparison must be exact. No
-    case-folding, no diacritic stripping, no whitespace trimming: any of
-    those could silently mask a real stored/query mismatch. Only
-    duplicates and strictly-empty strings are filtered out.
-
-    Returns None when the input is None or every entry is empty, signaling
-    to the caller that this axis is not active.
-    """
-    if values is None:
-        return None
-    seen: set[str] = set()
-    result: list[str] = []
-    for item in values:
-        if not item or item in seen:
-            continue
-        seen.add(item)
-        result.append(item)
-    return result if result else None
 
 
 def _resolve_category_tag_ids(
@@ -189,6 +178,78 @@ def _score_from_count(count: int, mode: str, mark: int) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Token-index resolution — mirrors _resolve_names_to_entry_ids in the
+# franchise executor. Per-name tokenize (query stoplist applied) →
+# single batched posting-list fetch → per-name intersection →
+# across-name union.
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_award_names_to_entry_ids(
+    names: list[str] | None,
+) -> set[int]:
+    """Resolve raw award_names from the spec to award_name_entry_ids.
+
+    Pipeline per v2 plan-doc § Query-Time Resolution:
+      1. Tokenize each name with tokenize_award_string_for_query
+         (normalize + ordinal + cardinal + whitespace/hyphen split +
+         AWARD_QUERY_STOPLIST drop). A name that reduces to zero tokens
+         (all stopwords or nothing after normalization) contributes
+         nothing and is skipped.
+      2. Collect all distinct surviving tokens into a single batched
+         posting-list fetch (1 round trip, not N).
+      3. Per-name intersection over the shared response. A missing
+         token (never stamped at ingest) collapses that name's
+         contribution to empty — must NOT be treated as universal
+         match. Matches the franchise executor's Phase-3 behavior.
+      4. Union the per-name sets. Cross-name union gives OR semantics
+         across the LLM's surface-form alternatives (e.g. emitting
+         ``["oscar", "academy award"]`` unions the two entry-id sets).
+
+    Args:
+        names: Raw surface forms from the spec (not pre-normalized —
+            the tokenizer normalizes internally). None or empty = axis
+            not active.
+
+    Returns:
+        Set of award_name_entry_ids. Empty when the axis was inactive,
+        every name reduced to zero tokens, or no tokens had postings.
+        The caller distinguishes "inactive" from "requested but empty"
+        by checking the original ``spec.award_names``.
+    """
+    if not names:
+        return set()
+
+    per_name_tokens: list[list[str]] = []
+    all_tokens: set[str] = set()
+    for name in names:
+        tokens = tokenize_award_string_for_query(name)
+        if not tokens:
+            continue
+        per_name_tokens.append(tokens)
+        all_tokens.update(tokens)
+    if not all_tokens:
+        return set()
+
+    # sorted() keeps the query text deterministic for plan caching and
+    # reproducible logs, matching the franchise executor.
+    token_to_entries = await fetch_award_name_entry_ids_for_tokens(
+        sorted(all_tokens)
+    )
+
+    all_entry_ids: set[int] = set()
+    for tokens in per_name_tokens:
+        per_token_sets = [token_to_entries.get(t) for t in tokens]
+        if not all(per_token_sets):
+            # A token with no postings collapses this name to empty;
+            # do NOT union — an empty intersection must not broaden.
+            continue
+        all_entry_ids |= set.intersection(*per_token_sets)
+
+    return all_entry_ids
+
+
+# ---------------------------------------------------------------------------
 # Public entry point.
 # ---------------------------------------------------------------------------
 
@@ -262,10 +323,24 @@ async def execute_award_query(
     # ---------------------------------------------------------------------
     ceremony_ids, exclude_razzie = _resolve_ceremony_ids(spec.ceremonies)
     outcome_id = _resolve_outcome_id(spec.outcome)
-    award_names = _dedupe_nonempty(spec.award_names)
     category_tag_ids = _resolve_category_tag_ids(spec.category_tags)
     year_from = spec.years.year_from if spec.years is not None else None
     year_to = spec.years.year_to if spec.years is not None else None
+
+    # Resolve award_names via token intersection against lex.award_name_token.
+    # Surface-form variants (apostrophe style, case, diacritics, "BAFTA" vs
+    # "BAFTA Film Award") collapse to shared entry ids automatically —
+    # see v2 plan-doc § Award Name Resolution.
+    award_name_entry_ids = await _resolve_award_names_to_entry_ids(
+        spec.award_names
+    )
+
+    # Requested-but-empty early-exit, mirroring the franchise executor's
+    # contract. If the spec asked for specific prize names and the token
+    # intersection resolved to no entry ids, we must NOT silently drop the
+    # axis — that would broaden the result. Return empty instead.
+    if spec.award_names and not award_name_entry_ids:
+        return build_endpoint_result({}, restrict_to_movie_ids)
 
     # The default Razzie exclusion was originally gated only on the
     # ceremonies axis (the only axis that could express Razzie intent
@@ -288,7 +363,10 @@ async def execute_award_query(
         try:
             counts = await fetch_award_row_counts(
                 ceremony_ids=ceremony_ids,
-                award_names=award_names,
+                # `or None` collapses the empty-set case (axis inactive)
+                # so the DB helper skips the predicate rather than
+                # emitting `= ANY('{}')`.
+                award_name_entry_ids=award_name_entry_ids or None,
                 category_tag_ids=category_tag_ids,
                 outcome_id=outcome_id,
                 year_from=year_from,

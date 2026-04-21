@@ -18,12 +18,19 @@
 # generator (movie_ingestion/metadata_generation/prompts/franchise.py)
 # so the two LLMs agree on what to write into each slot.
 #
-# Searchable axes (see finalized_search_proposal.md Endpoint 4):
-#   1. lineage_or_universe_names — up to 3 alternate exact stored-form
-#      attempts searched against both `lineage` and `shared_universe`
-#      after shared normalization.
-#   2. recognized_subgroups — up to 3 alternate exact stored-form
-#      attempts searched against normalized subgroup labels.
+# Searchable axes (see v2_search_data_improvements.md §Franchise
+# Resolution):
+#   1. franchise_or_universe_names — up to 3 canonical surface forms
+#      resolved through the franchise token inverted index
+#      (`lex.franchise_token`) and matched against
+#      `movie_card.franchise_name_entry_ids` (the per-movie UNION of
+#      lineage + shared_universe entry ids). Ingest may have placed
+#      the franchise name in either the `lineage` or `shared_universe`
+#      stored column; the union-at-ingest representation means the
+#      query side does not need to predict which column it landed in.
+#   2. recognized_subgroups — up to 3 canonical subgroup surface forms
+#      resolved through the same token index and matched against
+#      `movie_card.subgroup_entry_ids`.
 #   3. lineage_position — SEQUEL / PREQUEL / REMAKE / REBOOT.
 #   4. structural_flags — SPINOFF and/or CROSSOVER.
 #   5. launch_scope — FRANCHISE or SUBGROUP.
@@ -51,12 +58,12 @@ from schemas.enums import (
 # Field ordering (cognitive scaffolding — each reasoning field
 # immediately precedes the decisions it grounds, per the
 # "cognitive-scaffolding field ordering" convention):
-#   concept_analysis            — axis-signal evidence inventory
-#   lineage_or_universe_names   — up to 3 canonical name variations
-#   recognized_subgroups        — up to 3 subgroup-name variations
-#   lineage_position            — narrative position enum
-#   structural_flags            — spinoff / crossover list
-#   launch_scope                — franchise vs subgroup launcher
+#   concept_analysis              — axis-signal evidence inventory
+#   franchise_or_universe_names   — up to 3 canonical surface forms
+#   recognized_subgroups          — up to 3 subgroup surface forms
+#   lineage_position              — narrative position enum
+#   structural_flags              — spinoff / crossover list
+#   launch_scope                  — franchise vs subgroup launcher
 class FranchiseQuerySpec(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -77,22 +84,35 @@ class FranchiseQuerySpec(BaseModel):
 
     # --- Name axis ---
     #
-    # Up to 3 canonical franchise/IP name variations. These are not
-    # fuzzy expansions; they are alternate exact stored-form attempts
-    # for the same underlying brand after shared normalization.
+    # Up to 3 canonical surface forms for the franchise / IP /
+    # shared universe. Each entry is tokenized (whitespace + hyphen
+    # split after shared normalization) and resolved through
+    # `lex.franchise_token` — intra-name token intersection produces
+    # one `franchise_entry_id` set per name, and the across-name
+    # union sweeps the umbrella. Example: emitting
+    # `["marvel cinematic universe", "marvel"]` intersects to the MCU
+    # entry AND unions in every `marvel`-tagged entry (Marvel Comics,
+    # Marvel Knights, etc.) for an umbrella sweep.
     #
-    # Position 1 = the most canonical form. Additional entries are
-    # added ONLY when a genuinely different canonical name is in
-    # common use and might plausibly be the one stored at ingest
-    # time (e.g., "Marvel Cinematic Universe" vs. "Marvel";
-    # "The Lord of the Rings" vs. "Middle-earth"). Do not add
-    # orthographic variants — casing and punctuation are normalized
-    # separately, but the remaining string match is exact.
+    # The ingest side unions lineage + shared_universe entry ids onto
+    # `movie_card.franchise_name_entry_ids`, so either stored column
+    # is searchable from this single field — the LLM does NOT pick
+    # between them.
+    #
+    # Position 1 = the most canonical form for the query's apparent
+    # specificity (broadest for umbrella queries, narrowest for
+    # specific-lineage queries). Add 2-3 entries ONLY when genuinely
+    # different canonical forms are in common use (e.g., "Marvel
+    # Cinematic Universe" + "Marvel"; "The Lord of the Rings" +
+    # "Middle-earth"). Do NOT pad with spelling, punctuation,
+    # hyphenation, diacritic, or digit-vs-word variants — shared
+    # normalization collapses those symmetrically at ingest and
+    # query time.
     #
     # Null when the concept is purely structural (e.g., "spinoff
     # movies", "movies that launched a franchise") with no named
     # franchise.
-    lineage_or_universe_names: conlist(
+    franchise_or_universe_names: conlist(
         constr(strip_whitespace=True, min_length=1),
         min_length=1,
         max_length=3,
@@ -100,12 +120,14 @@ class FranchiseQuerySpec(BaseModel):
 
     # --- Subgroup axis ---
     #
-    # Up to 3 canonical subgroup-name variations. Like the top-level
-    # name axis, these are alternate exact stored-form attempts after
-    # shared normalization, not fuzzy variants.
+    # Up to 3 canonical subgroup surface forms. Same tokenization +
+    # token-index resolution as the top-level name axis, matched
+    # against `movie_card.subgroup_entry_ids`.
     #
-    # Must be null when lineage_or_universe_names is null — subgroup
-    # labels are only meaningful inside a resolved franchise scope.
+    # Independent of `franchise_or_universe_names` — a subgroup-only
+    # spec ("trilogies", "phase one movies") is a valid, complete
+    # query and populates only this field. Execution AND-composes
+    # whichever axes are populated.
     recognized_subgroups: conlist(
         constr(strip_whitespace=True, min_length=1),
         min_length=1,
@@ -145,21 +167,18 @@ class FranchiseQuerySpec(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> "FranchiseQuerySpec":
-        # Subgroups only make sense within a resolved franchise.
-        if self.recognized_subgroups is not None and self.lineage_or_universe_names is None:
-            raise ValueError(
-                "recognized_subgroups requires lineage_or_universe_names to be populated"
-            )
-
         # Deduplicate structural flags while preserving first-seen order.
+        # Small data-quality fix, not a semantic constraint.
         if self.structural_flags is not None:
             deduped_flags = list(dict.fromkeys(self.structural_flags))
             self.structural_flags = deduped_flags or None
 
         # At least one axis must be populated — otherwise the
-        # endpoint has nothing to search for.
+        # endpoint has nothing to search for. All axes are mutually
+        # independent: a subgroup-only spec ("trilogies") is valid,
+        # a structural-only spec ("spinoffs") is valid, etc.
         has_any_axis = any([
-            self.lineage_or_universe_names is not None,
+            self.franchise_or_universe_names is not None,
             self.recognized_subgroups is not None,
             self.lineage_position is not None,
             self.structural_flags is not None,

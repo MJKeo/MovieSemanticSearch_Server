@@ -2544,65 +2544,77 @@ async def fetch_franchise_movie_ids(
         Set of movie_ids that satisfy all active constraints. Empty set when
         no conditions are provided (defensive guard) or when no movies match.
     """
-    conditions: list[str] = []
-    params: list = []
-
+    # Array-axis predicates hit the denormalized entry-id arrays on
+    # public.movie_card.
+    array_conditions: list[str] = []
+    array_params: list = []
     if franchise_name_entry_ids:
-        conditions.append("mc.franchise_name_entry_ids && %s::bigint[]")
-        params.append(list(franchise_name_entry_ids))
-
+        array_conditions.append("mc.franchise_name_entry_ids && %s::bigint[]")
+        array_params.append(list(franchise_name_entry_ids))
     if subgroup_entry_ids:
-        conditions.append("mc.subgroup_entry_ids && %s::bigint[]")
-        params.append(list(subgroup_entry_ids))
+        array_conditions.append("mc.subgroup_entry_ids && %s::bigint[]")
+        array_params.append(list(subgroup_entry_ids))
 
-    # Structural-axis predicates hit movie_franchise_metadata. Track which
-    # rows require the JOIN so we can skip it when no structural axis is
-    # active (common case for umbrella franchise queries).
+    # Structural-axis predicates hit public.movie_franchise_metadata.
     structural_conditions: list[str] = []
+    structural_params: list = []
     if lineage_position_id is not None:
         structural_conditions.append("mfm.lineage_position = %s")
-        params.append(lineage_position_id)
-
+        structural_params.append(lineage_position_id)
     if is_spinoff:
         structural_conditions.append("mfm.is_spinoff = TRUE")
-
     if is_crossover:
         structural_conditions.append("mfm.is_crossover = TRUE")
-
     if launched_franchise:
         structural_conditions.append("mfm.launched_franchise = TRUE")
-
     if launched_subgroup:
         structural_conditions.append("mfm.launched_subgroup = TRUE")
 
-    conditions.extend(structural_conditions)
-
     # Defensive guard: the FranchiseQuerySpec validator requires at least
-    # one axis, and the executor early-exits when all textual axes collapse
-    # to empty entry-id sets with no structural axes populated. This branch
-    # should therefore not be reachable in normal operation.
-    if not conditions:
+    # one axis, and the executor early-exits when a requested textual axis
+    # collapses to empty entry-id sets. This branch should therefore not
+    # be reachable in normal operation.
+    if not array_conditions and not structural_conditions:
         return set()
 
-    if restrict_movie_ids is not None:
-        if not restrict_movie_ids:
-            return set()
-        conditions.append("mc.movie_id = ANY(%s::bigint[])")
-        params.append(list(restrict_movie_ids))
-
-    # LEFT JOIN only when we actually need columns from movie_franchise_metadata.
-    # Movies with no franchise metadata row simply won't satisfy the mfm.*
-    # predicates (NULL on those columns never matches = TRUE).
-    if structural_conditions:
+    # Structural-only specs (e.g. "spinoffs", "sequels with no named
+    # franchise") query movie_franchise_metadata directly — mfm is far
+    # smaller than movie_card and has no useful column on mc to filter by,
+    # so driving from mc would force an unnecessary join across ~100K
+    # rows. When at least one array axis is active, drive from movie_card
+    # (GIN index) and LEFT JOIN mfm if any structural predicate is also
+    # active. The LEFT JOIN is effectively an INNER join because NULL
+    # mfm.* columns cannot satisfy the `= TRUE` / `= N` predicates.
+    if not array_conditions:
+        from_clause = "public.movie_franchise_metadata mfm"
+        movie_id_expr = "mfm.movie_id"
+        restrict_column = "mfm.movie_id"
+        conditions = structural_conditions
+        params: list = list(structural_params)
+    elif structural_conditions:
         from_clause = (
             "public.movie_card mc "
             "LEFT JOIN public.movie_franchise_metadata mfm USING (movie_id)"
         )
+        movie_id_expr = "mc.movie_id"
+        restrict_column = "mc.movie_id"
+        conditions = array_conditions + structural_conditions
+        params = array_params + structural_params
     else:
         from_clause = "public.movie_card mc"
+        movie_id_expr = "mc.movie_id"
+        restrict_column = "mc.movie_id"
+        conditions = array_conditions
+        params = list(array_params)
+
+    if restrict_movie_ids is not None:
+        if not restrict_movie_ids:
+            return set()
+        conditions.append(f"{restrict_column} = ANY(%s::bigint[])")
+        params.append(list(restrict_movie_ids))
 
     where_clause = " AND ".join(conditions)
-    query = f"SELECT mc.movie_id FROM {from_clause} WHERE {where_clause}"
+    query = f"SELECT {movie_id_expr} FROM {from_clause} WHERE {where_clause}"
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}
 
@@ -2686,10 +2698,13 @@ async def fetch_keyword_matched_movie_ids(
 #   2) Standard path via public.movie_awards — COUNT(*) grouped by
 #      movie_id, with whichever filter axes the spec populated.
 #
-# Razzie ceremony_id = 10. All string filters (award_name, category)
-# are matched as exact, un-normalized equality against stored values —
-# ingestion deliberately preserves IMDB surface forms so this
-# un-normalized comparison is correct.
+# Razzie ceremony_id = 10. The award_name axis is filtered by
+# `award_name_entry_id` (INT FK into lex.award_name_entry), resolved
+# upstream by the executor via token intersection against
+# lex.award_name_token — see
+# search_improvement_planning/v2_search_data_improvements.md § Award
+# Name Resolution. Category tags remain an array-overlap match on the
+# `category_tag_ids` INT[] column.
 
 
 # Ceremony_id for the Razzie Awards. Stripped from the fast-path
@@ -2705,6 +2720,49 @@ _RAZZIE_CEREMONY_ID: int = AwardCeremony.RAZZIE.ceremony_id
 _NON_RAZZIE_CEREMONY_IDS: list[int] = sorted(
     c.ceremony_id for c in AwardCeremony if c is not AwardCeremony.RAZZIE
 )
+
+
+async def fetch_award_name_entry_ids_for_tokens(
+    tokens: list[str],
+) -> dict[str, set[int]]:
+    """Resolve a batch of tokens to award_name_entry_ids via
+    lex.award_name_token.
+
+    Structural mirror of fetch_franchise_entry_ids_for_tokens. The
+    AWARD_QUERY_STOPLIST is applied inside
+    tokenize_award_string_for_query before the executor ever calls this
+    helper, so every token passed in is already discriminative — no
+    re-filtering happens here.
+
+    Tokens that have no postings (never stamped at ingest) are omitted
+    from the result. The executor must treat "missing key" as "this
+    name fails intersection", not "this name matches everything" —
+    matches the equivalent contract in the franchise and studio
+    executors.
+
+    Args:
+        tokens: Tokens from one or more award names, after normalize +
+            stoplist drop. Callers typically pass ``sorted(set(...))``
+            for deterministic query text (stable plan cache,
+            reproducible logs).
+
+    Returns:
+        Mapping ``{token: {award_name_entry_id, ...}}`` covering only
+        tokens that had at least one posting.
+    """
+    if not tokens:
+        return {}
+
+    query = """
+        SELECT token, award_name_entry_id
+        FROM lex.award_name_token
+        WHERE token = ANY(%s::text[])
+    """
+    rows = await _execute_read(query, (tokens,))
+    out: dict[str, set[int]] = {}
+    for token, entry_id in rows:
+        out.setdefault(token, set()).add(entry_id)
+    return out
 
 
 async def fetch_award_fast_path_movie_ids(
@@ -2745,7 +2803,7 @@ async def fetch_award_fast_path_movie_ids(
 async def fetch_award_row_counts(
     *,
     ceremony_ids: list[int] | None,
-    award_names: list[str] | None,
+    award_name_entry_ids: set[int] | None,
     category_tag_ids: list[int] | None,
     outcome_id: int | None,
     year_from: int | None,
@@ -2759,10 +2817,10 @@ async def fetch_award_row_counts(
     populated, then `GROUP BY movie_id` yields the per-movie has_count
     the scoring formula consumes.
 
-    String filter (award_names) is matched as exact, un-normalized
-    equality. Stored values on the ingest side are deliberately NOT
-    passed through normalize_string, so case-folding or diacritic-
-    stripping here would silently zero out valid matches.
+    The award_name axis is filtered by `award_name_entry_id` — the INT
+    FK into lex.award_name_entry. Entry ids come pre-resolved from the
+    executor's token-intersection phase; this helper does not know (or
+    need to know) how they were computed.
 
     Category filter uses the ingestion-derived `category_tag_ids` INT[]
     column (see schemas/award_category_tags.py) and an array-overlap
@@ -2782,8 +2840,9 @@ async def fetch_award_row_counts(
     Args:
         ceremony_ids: List of AwardCeremony.ceremony_id values the row
             must match (ANY). None = no ceremony filter.
-        award_names: List of exact award_name strings (ANY). None/empty
-            = no filter on award_name.
+        award_name_entry_ids: Pre-resolved lex.award_name_entry ids the
+            row's award_name_entry_id must match (ANY). None/empty =
+            no filter on award_name.
         category_tag_ids: List of CategoryTag.tag_id values the row's
             category_tag_ids array must overlap with (ANY). None/empty
             = no filter on category.
@@ -2814,10 +2873,9 @@ async def fetch_award_row_counts(
         conditions.append("ceremony_id <> %s")
         params.append(_RAZZIE_CEREMONY_ID)
 
-    if award_names:
-        # Exact equality per ingest convention — do NOT normalize here.
-        conditions.append("award_name = ANY(%s::text[])")
-        params.append(award_names)
+    if award_name_entry_ids:
+        conditions.append("award_name_entry_id = ANY(%s::int[])")
+        params.append(list(award_name_entry_ids))
 
     if category_tag_ids:
         # Array overlap against the GIN-indexed category_tag_ids column.

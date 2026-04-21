@@ -8,8 +8,9 @@
 # upstream. Its job is to (1) inventory which filter axes the
 # concept signals, (2) classify the count/intensity pattern for
 # scoring, (3) map user-facing ceremony names to their canonical
-# stored strings, and (4) produce exact category and prize-name
-# strings the retrieval layer can match against.
+# stored strings, and (4) produce canonical prize-name base forms
+# that the shared tokenizer will resolve against the award-name
+# posting index.
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Step 3 → Endpoint 3: Awards) for the full design rationale and
@@ -240,11 +241,10 @@ object.
 
 AWARD NAMES
 
-The specific prize name as stored in the award database — distinct \
-from the ceremony name. The ceremony is the event; the prize is the \
-individual award object granted at that event. Common prize names: \
-"Oscar", "Palme d'Or", "Golden Globe", "BAFTA Film Award", "Golden \
-Lion", "Golden Bear", "Silver Bear", "Jury Prize".
+The specific prize name — the individual award object (the ceremony \
+is the event at which it is granted). Common prize names: "Oscar", \
+"Palme d'Or", "Golden Globe", "BAFTA Film Award", "Golden Lion", \
+"Golden Bear", "Silver Bear", "Jury Prize".
 
 Emit when the user names the specific prize object, even if that \
 prize implies a ceremony. Represent what the user actually asked \
@@ -333,28 +333,57 @@ award-ceremony season numbers.
 )
 
 # ---------------------------------------------------------------------------
-# Award-name canonical surface forms. Categories are expressed via the
-# closed CategoryTag enum; this section covers only the award_names axis,
-# where exact stored strings are still required. Rendered programmatically
-# so the prompt cannot drift from the canonical registry.
+# Award-name base forms. Categories are expressed via the closed CategoryTag
+# enum; this section covers only the award_names axis, which is resolved
+# through the shared tokenizer + lex.award_name_token posting index, so
+# surface variants (casing, punctuation, apostrophe style, diacritics)
+# collapse automatically and do not need to match stored strings exactly.
+# The ceremony-to-prize anchor table is rendered programmatically from
+# schemas/award_surface_forms.py so the prompt cannot drift from it.
 # ---------------------------------------------------------------------------
 
 _SURFACE_FORMS = (
     """\
-AWARD NAME SURFACE FORMS
+AWARD NAME BASE FORMS
 
-The retrieval layer matches award_names as exact, un-normalized \
-strings against stored award rows. A one-character difference \
-produces zero matches. When the user names a specific prize, emit \
-the official IMDB surface form for that prize — matching \
-capitalization, punctuation, and apostrophe style. The table below \
-anchors common canonical forms.
+award_names are resolved through a shared tokenizer and a token \
+inverted index. The tokenizer applies: lowercase, diacritic fold, \
+punctuation strip, apostrophe fold (straight and curly both become \
+nothing), whitespace collapse, ordinal digit-to-word \
+("8th" → "eighth"), cardinal 0-99 digit-to-word, whitespace + hyphen \
+split, and stopword drop of domain-boilerplate words like "award", \
+"awards", "prize", "prizes", "film", "films", "best", and the common \
+English connectives. The same tokenizer ran at ingest time, so \
+orthographic variants — "Palme d'Or" vs "Palme d\u2019Or", "Critics \
+Week" vs "Critics' Week", "BAFTA" vs "BAFTA Film Award" — collapse \
+to the same postings automatically. Capitalization, punctuation, and \
+apostrophe style do not matter for retrieval.
 
-The table is not a closed vocabulary. Do NOT restrict output to \
-table entries. Do NOT pattern-match a user's phrase onto a \
-similar-looking table entry when the user clearly named a different \
-specific award. For example, a user asking for "Cannes Jury Prize" \
-must emit "Jury Prize", not "Palme d'Or".
+Emit the OFFICIAL BASE FORM of the prize — "Palme d'Or", "Oscar", \
+"Golden Lion", "BAFTA Film Award", "Grand Jury Prize". The table \
+below anchors the correct base form per ceremony (for example, SAG \
+stores the prize as "Actor", not "Actor Award"). It is guidance, \
+NOT a closed vocabulary — when a user names a prize that isn't in \
+the table, use your knowledge of IMDB nomenclature for that \
+ceremony and emit the base form directly. Do NOT pattern-match a \
+user's phrase onto a similar-looking table entry when the user \
+clearly named a different specific award. For example, a user \
+asking for "Cannes Jury Prize" must emit "Jury Prize", not \
+"Palme d'Or".
+
+Specificity — emit the BASE prize name for umbrella queries \
+("Palme d'Or winners" → "Palme d'Or" sweeps every Palme variant). \
+Emit a narrower sub-variant ("Palme d'Or Best Short Film", \
+"Silver Berlin Bear Jury Grand Prix") only when the user \
+explicitly asked for that sub-variant. Token intersection sweeps \
+sibling variants naturally, so you do not need to enumerate them.
+
+Emit 1 entry in the common case. Emit 2-3 entries only when \
+genuinely different canonical names are in common use for the \
+same prize — the extra entries perform an OR union across names \
+(umbrella sweep). Do NOT pad the list with casing, punctuation, \
+apostrophe, diacritic, hyphenation, or digit-vs-word variants; the \
+shared tokenizer collapses those automatically on both sides.
 
 """
     + render_award_name_surface_forms_for_prompt()
@@ -484,14 +513,18 @@ ceremony table. Emit multiple entries when multiple ceremonies are \
 named. Prefer null over an empty list.
 
 award_names — Null when concept_analysis found no prize-name \
-signal. Emit the official IMDB surface form of the prize (e.g., \
-"Oscar", "Palme d'Or", "Golden Lion", "BAFTA Film Award") when a \
-specific prize was named — see AWARD NAME SURFACE FORMS. When the \
-prize is not in that table, use your knowledge of IMDB nomenclature \
-for the relevant ceremony; do not approximate to a similar-looking \
-table entry. Do not automatically add a ceremony filter just because \
-the prize belongs to one. Emit multiple when the same prize has \
-been known by different names over time.
+signal. Emit the official BASE form of the prize (e.g., "Oscar", \
+"Palme d'Or", "Golden Lion", "BAFTA Film Award") when a specific \
+prize was named — see AWARD NAME BASE FORMS. Capitalization, \
+punctuation, and apostrophes are normalized on both sides, so \
+those surface details do not matter. Prefer the base form for \
+umbrella queries and reserve sub-variants for queries that \
+explicitly ask for them. When the prize is not in the anchor \
+table, use your knowledge of IMDB nomenclature for the relevant \
+ceremony rather than pattern-matching to a similar-looking entry. \
+Do not automatically add a ceremony filter just because the prize \
+belongs to one. Emit multiple entries only when genuinely \
+different canonical names are in common use for the same prize.
 
 category_tags — Null when concept_analysis found no category signal. \
 Otherwise emit one or more tags from the closed CategoryTag enum at \
