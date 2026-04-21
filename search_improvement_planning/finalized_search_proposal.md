@@ -29,8 +29,10 @@ are routed at step 1 and bypass steps 2–4.
 ## Step 1: Flow Routing
 
 Classifies the query into one of three major search flows before any
-decomposition happens. May also produce multiple interpretations when a
-query is genuinely ambiguous.
+decomposition happens. Also decides whether multiple searches would
+improve browsing value under the query's ambiguity or open-endedness.
+Step 1 always emits one `primary_intent` and may emit up to two
+`alternative_intents`.
 
 ### Flow Definitions
 
@@ -102,50 +104,72 @@ neighbors to X." It becomes a standard interpreted search, where the LLM
 can use its parametric knowledge of the reference movie as a fast way to
 understand the intended traits.
 
-### Interpretation Branching
+### Branching Philosophy
 
-Step 1 may produce multiple interpretations when a query is genuinely
-ambiguous. Branching is **cross-flow** — a single query can produce
-interpretations that route to different major flows.
+Branching is driven by **browsing value**, not just by whether multiple
+readings are theoretically possible. The question is: would running
+additional searches materially improve what the user gets to browse?
 
-**Branching bar:** An intelligent person would agree that the
-interpretations are reasonably similar in likelihood. If one interpretation
-is clearly more correct than the others, produce only that interpretation
-— including alternatives would just be confusing. The goal is not "find
-all possible interpretations" but "identify when there are multiple
-equally reasonable readings of the request."
+Step 1 may branch **cross-flow** — a single query can produce intents
+routed to different major flows. This matters most when a phrase can be
+both a literal title and a natural-language request, or when a standard-
+flow query contains one or more concepts that are genuinely open to
+interpretation.
 
-**Examples where branching applies** — movie titles that double as natural
-language descriptions:
-- "Scary Movie" → exact title (the 2001 parody) OR standard flow (movies
-  that are scary)
-- "Not Another Teen Movie" → exact title (the 2001 film) OR standard flow
-  (user wants something other than a teen movie)
-- "Love Story" → exact title (the 1970 film) OR standard flow (movies
-  with a love story)
-- "Date Night" → exact title (the 2010 film) OR standard flow (movies for
-  a date night)
+The model should preserve **hard constraints** across every emitted
+search. Only the genuinely ambiguous or underspecified part of the query
+should vary. Examples:
+- `"Scary Movie"` can justify both exact-title and standard-flow intents,
+  because the phrase naturally supports both searches and the results
+  would be very different.
+- `"Disney live action movies millennials would love"` should keep
+  `Disney` and `live action` fixed while varying only what
+  `"millennials would love"` could plausibly mean.
 
-**Examples where branching does NOT apply** — one interpretation is
-clearly dominant:
-- "Frozen" — clearly the Disney movie in a movie search context
-- "Her" — clearly the 2013 film; no other reasonable reading
-- "Cars" — clearly the Pixar film; "movies with cars" is not a similarly
-  reasonable interpretation
-- "La La Land" — distinctive title, no ambiguity
-- "Inception (2010)" — disambiguation hint makes intent explicit
-- "action movies starring Ryan Reynolds" — clearly standard flow
+### Ambiguity Scaling
 
-**Other branching candidates** (within standard flow):
-- "Movies like Inception and Interstellar" — different subsets of traits
-  could be extracted from the two reference movies, producing multiple
-  reasonable standard-flow interpretations
-- "Movies like Inception but funnier" — different key traits of the
-  reference movie could be emphasized in different interpretations
+The schema includes a compact `ambiguity_level` enum:
 
-Branching is capped at **3 interpretations maximum**. The default should
-be a single interpretation, and the step 1 prompt should not subtly
-encourage producing multiple interpretations when ambiguity is low.
+- **`clear`** — One dominant reading. Usually emits only `primary_intent`.
+  Typical for exact-title queries, zero-qualifier similarity queries, and
+  standard-flow queries whose intent is already concrete.
+- **`moderate`** — One main reading is strongest, but at least one useful
+  alternative search would improve browsing.
+- **`high`** — Multiple strong readings exist, or the query is vague
+  enough that trying several distinct searches is clearly better than
+  forcing one thin interpretation.
+
+This is **not** a confidence score. It is a compact summary of branching
+pressure.
+
+### Inference Policy
+
+Inference is allowed when the query is vague, semantically
+underspecified, or uses a loose social/vibe concept that needs to be
+fleshed out into something searchable. In these cases, the model may
+make logical interpretive leaps about what qualities the user could
+mean, as long as each emitted search remains faithful to the query's
+hard constraints.
+
+Inference is **not** allowed to guess an exact movie title from a
+description. Description-based identification remains in the standard
+flow even when the likely movie seems obvious.
+
+This distinction matters because vague queries benefit from several
+well-formed searches, while description-based identification should still
+let the retrieval system do the matching rather than hard-committing to a
+guessed title.
+
+### Crude Language
+
+Step 1 must preserve meaning when the user uses crude, sexual, profane,
+or blunt language. The goal is semantic fidelity, not moral cleanup.
+
+- `intent_rewrite` should stay precise and faithful.
+- `display_phrase` may be lightly cleaned for UI readability only when
+  that does not blur the meaning.
+- `display_phrase` can be a bit more lively and human than the rewrite,
+  as long as it stays informative and semantically faithful.
 
 ### Output Structure
 
@@ -153,98 +177,87 @@ The step 1 LLM produces a `FlowRoutingResponse` (defined in
 `schemas/flow_routing.py`). The schema is designed to follow the prompt
 authoring conventions established during metadata generation — cognitive
 scaffolding field ordering, evidence-inventory reasoning, brief
-pre-generation fields, and abstention-first framing for rare behaviors.
+pre-generation fields, and explicit empty paths for optional list fields.
 
 #### Top-Level Fields
 
-**`interpretation_analysis`** (string, required) — One concise sentence
-stating whether the query has a single clear reading or multiple equally
-reasonable interpretations. When multiple, names what makes the query
-ambiguous.
+**`ambiguity_analysis`** (string, required) — One concise sentence naming
+whether the query is clear, moderately ambiguous, or highly open to
+multiple useful searches, and why.
 
-*Why included:* Forces the model to assess ambiguity before generating
-interpretations, following the evidence-inventory pattern. Without this
-field, the model defaults to "always produce something" and is more likely
-to manufacture branching. The abstention-first framing ("most queries have
-a single clear reading") counteracts that tendency. Kept to one sentence
-per the brief-pre-generation-fields convention — a classification, not an
-essay.
+*Why included:* Forces the model to assess branching value before
+generating intents. It is framed as an evidence inventory rather than a
+justification essay.
 
-**`interpretations`** (list of 1–3 `QueryInterpretation`) — The
-interpretation(s) of the query. Most queries produce exactly 1. The first
-interpretation in the list is the default that the system auto-executes.
+**`ambiguity_level`** (enum: `clear` | `moderate` | `high`, required) —
+Compact ambiguity classification.
 
-#### Per-Interpretation Fields
+*Why included:* Gives downstream logic and debugging a stable signal
+without introducing confidence scoring.
 
-Each `QueryInterpretation` contains, in order:
+**`hard_constraints`** (list of string, required, may be empty) — Traits
+that must remain fixed across every emitted search.
 
-**`routing_signals`** (string, required) — One short sentence citing the
-specific words or patterns in the query that determined this
-interpretation's flow classification.
+*Why included:* This is the core anti-drift scaffold. It tells the model
+what may not vary when generating alternatives.
 
-*Why included:* Per-interpretation evidence inventory. Forces the model to
-ground each routing decision in concrete query text rather than
-pattern-matching on vibes. Placed first so the cited evidence scaffolds
-the downstream fields (intent rewrite, flow enum, title extraction).
+**`ambiguity_sources`** (list of string, required, may be empty) — The
+clause(s), concept(s), or query fragments that are open to interpretation.
 
-**`intent_rewrite`** (string, required) — The user's query rewritten as a
-complete, concrete statement of what they are looking for under this
-interpretation. Makes implicit expectations explicit.
+*Why included:* Complements `hard_constraints` by explicitly localizing the
+part of the query that can vary.
 
-*Why included:* Serves two purposes. First, it is the primary scaffolding
-field — by articulating the full concrete intention before selecting the
-flow enum, the model commits to a specific reading that constrains the
-remaining fields. Second, it feeds directly into step 2 for standard-flow
-interpretations as the input query that gets decomposed into dealbreakers
-and preferences. For exact-title and similarity flows (which skip step 2),
-the rewrite still serves as a human-readable audit trail of what the model
-understood.
+**`primary_intent`** (`PrimaryIntent`, required) — The default search path.
+This is the most likely or most useful main reading in movie-search
+context.
 
-**`flow`** (enum: `exact_title` | `similarity` | `standard`, required) —
-Which major search flow handles this interpretation.
+**`alternative_intents`** (list of 0–2 `AlternativeIntent`) — Optional
+additional searches. These may come from genuine alternate readings,
+different fleshing-outs of vague semantics, or adjacent exploratory
+variations that preserve hard constraints.
 
-*Why included:* The core routing decision. Placed after `routing_signals`
-and `intent_rewrite` so the model has already committed to evidence and a
-concrete reading before selecting the enum — reducing the chance of the
-enum selection driving the interpretation rather than the other way around.
+#### Primary Intent Fields
 
-**`display_phrase`** (string, required, 2–8 words) — Short label for this
-interpretation as displayed in the app UI. For exact-title flows: the
-movie title. For similarity: "Movies like [title]." For standard: a brief
-summary of the search intent.
+`PrimaryIntent` contains, in order:
+- `routing_signals`
+- `intent_rewrite`
+- `flow`
+- `display_phrase`
+- `title`
 
-*Why included:* The app needs a display label for each interpretation
-group, especially when multiple interpretations are presented for user
-selection. Always required (not nullable) because even single-
-interpretation queries benefit from a display header, and it costs the
-model almost nothing. Placed after `flow` because the flow classification
-informs what kind of label to generate.
+This preserves the original cognitive chain: **evidence → intent →
+classification → display → extraction**.
 
-**`title`** (string, nullable) — The movie title extracted from the query,
-using the most common fully expanded English-language title form. Required
-when flow is `exact_title` or `similarity`. Null for `standard`.
+`display_phrase` should read like a short, thoughtful UI label rather
+than a sterile summary. It should still be immediately understandable,
+but can carry a little personality.
 
-*Why included:* Both non-standard flows need a title string to look up in
-the database. The "most common fully expanded" instruction follows the
-exact-match convergence convention — both the LLM output and the database
-entries should converge on the same canonical form to maximize match
-probability without requiring fuzzy matching infrastructure. DB-side
-trigram matching still serves as a safety net for residual mismatches.
-Placed last because it is conditional on the flow value.
+#### Alternative Intent Fields
+
+`AlternativeIntent` contains, in order:
+- `routing_signals`
+- `difference_rationale`
+- `intent_rewrite`
+- `flow`
+- `display_phrase`
+- `title`
+
+The extra `difference_rationale` field is deliberately placed before the
+alternative's rewrite so the model must commit to what meaningfully
+changes before generating the branch. This is the main guardrail against
+near-duplicate alternatives.
 
 #### Design Rationale: Field Ordering
 
-The field order within each interpretation follows the model's cognitive
-chain: **evidence → intent → classification → display → extraction**. This
-is deliberate:
+The top-level field order follows the model's preprocessing chain:
+**assess ambiguity → classify branching pressure → preserve fixed traits →
+name what can vary → generate the default intent → generate optional
+alternatives**.
 
-- `routing_signals` and `intent_rewrite` are open-ended generation that
-  benefits from appearing early in the token sequence (no prior commitments
-  to anchor against).
-- `flow` is a constrained enum that benefits from the rewrite having
-  already committed the model to a direction.
-- `display_phrase` and `title` are derivative fields that the model can
-  generate confidently once flow is decided.
+The intent-level field ordering keeps the evidence inventory immediately
+ahead of the decision it scaffolds. Alternative intents add one brief
+pre-generation field (`difference_rationale`) so the model does not drift
+into paraphrasing.
 
 This mirrors the cognitive-scaffolding convention from metadata generation:
 concrete/extractive fields before abstract/synthetic, with reasoning
@@ -261,9 +274,10 @@ means.
 ### Input
 
 Step 2 receives the `intent_rewrite` from step 1 as its input query. It
-operates on one standard-flow interpretation at a time, producing one complete
-decomposition per branch. Exact-title and similarity branches bypass steps 2-4
-entirely.
+operates on one standard-flow intent at a time, producing one complete
+decomposition per branch. The caller runs it for `primary_intent` and any
+`alternative_intents` whose `flow` is `standard`. Exact-title and similarity
+branches bypass steps 2-4 entirely.
 
 ### Preprocessing Chain
 

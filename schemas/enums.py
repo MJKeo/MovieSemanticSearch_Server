@@ -343,6 +343,14 @@ class SearchFlow(StrEnum):
     STANDARD = "standard"
 
 
+# Step 1 ambiguity level. This is a compact branching signal, not a
+# confidence score.
+class QueryAmbiguityLevel(StrEnum):
+    CLEAR = "clear"
+    MODERATE = "moderate"
+    HIGH = "high"
+
+
 # ---------------------------------------------------------------------------
 # Search V2 query understanding (step 2).
 # ---------------------------------------------------------------------------
