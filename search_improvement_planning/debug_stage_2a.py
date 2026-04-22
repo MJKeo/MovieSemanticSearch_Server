@@ -32,11 +32,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from implementation.llms.generic_methods import (
-    LLMProvider,
-    generate_llm_response_async,
-)
-from schemas.query_understanding import Step2AResponse
+from implementation.llms.generic_methods import LLMProvider
 
 from search_improvement_planning.debug_stage_1 import (
     OUTPUT_PATH as STAGE_1_OUTPUT_PATH,
@@ -44,7 +40,7 @@ from search_improvement_planning.debug_stage_1 import (
     _load_cache as _load_stage_1_cache,
     _run_bucket as _run_stage_1_bucket,
 )
-from search_v2.stage_2 import _STEP_2A_SYSTEM_PROMPT
+from search_v2.stage_2a import BranchKind, run_stage_2a
 
 
 # ---------------------------------------------------------------------------
@@ -66,16 +62,24 @@ STAGE_2A_OUTPUT_PATH = (
 )
 
 
-async def _run_step_2a(rewrite: str) -> dict:
-    """Run Step 2A on a single Step-1 rewrite and return a serializable record."""
+async def _run_step_2a(branch: dict, query_traits: str) -> dict:
+    """Run Step 2A on one standard-flow branch and return a serializable record.
+
+    The branch dict carries everything `run_stage_2a` needs for its
+    branch-dynamic prompt: branch_kind enum, rewrite, and (where
+    applicable) difference_rationale or spin_angle. query_traits is
+    shared across all branches of the same Stage 1 response and is
+    passed through once per call.
+    """
     started = time.perf_counter()
     try:
-        user_prompt = f"Interpretation rewrite:\n{rewrite}"
-        response, input_tokens, output_tokens = await generate_llm_response_async(
+        response, input_tokens, output_tokens = await run_stage_2a(
+            branch_kind=branch["branch_kind_enum"],
+            intent_rewrite=branch["rewrite"],
+            query_traits=query_traits,
+            difference_rationale=branch.get("difference_rationale"),
+            spin_angle=branch.get("spin_angle"),
             provider=_STEP_2A_PROVIDER,
-            user_prompt=user_prompt,
-            system_prompt=_STEP_2A_SYSTEM_PROMPT,
-            response_format=Step2AResponse,
             model=_STEP_2A_MODEL,
             **_STEP_2A_KWARGS,
         )
@@ -102,9 +106,10 @@ def _extract_standard_flow_branches(stage_1_response: dict) -> list[dict]:
 
     Step 2 only runs on standard flow. For each query we harvest the
     primary, any alternative_intents, and any creative_alternatives
-    whose flow == "standard". Each branch becomes its own Step 2A
-    input so we can observe concept-extraction behavior across the
-    variants the pipeline actually produces for one raw query.
+    whose flow == "standard". Each branch carries the branch_kind
+    enum plus the Step-1 composition field that travels with that
+    branch into Step 2A (difference_rationale for alternatives,
+    spin_angle for spins).
     """
     branches: list[dict] = []
 
@@ -113,6 +118,7 @@ def _extract_standard_flow_branches(stage_1_response: dict) -> list[dict]:
         branches.append(
             {
                 "branch_kind": "primary",
+                "branch_kind_enum": BranchKind.PRIMARY,
                 "rewrite": primary["intent_rewrite"],
                 "display_phrase": primary.get("display_phrase"),
             }
@@ -123,8 +129,10 @@ def _extract_standard_flow_branches(stage_1_response: dict) -> list[dict]:
             branches.append(
                 {
                     "branch_kind": f"alternative[{idx}]",
+                    "branch_kind_enum": BranchKind.ALTERNATIVE,
                     "rewrite": alt["intent_rewrite"],
                     "display_phrase": alt.get("display_phrase"),
+                    "difference_rationale": alt.get("difference_rationale"),
                 }
             )
 
@@ -133,6 +141,7 @@ def _extract_standard_flow_branches(stage_1_response: dict) -> list[dict]:
             branches.append(
                 {
                     "branch_kind": f"spin[{idx}]",
+                    "branch_kind_enum": BranchKind.SPIN,
                     "rewrite": spin["intent_rewrite"],
                     "display_phrase": spin.get("display_phrase"),
                     "spin_angle": spin.get("spin_angle"),
@@ -204,21 +213,26 @@ async def _run_bucket_stage_2a(
             continue
 
         stage_1_response = stage_1_record["response"]
+        query_traits = stage_1_response.get("query_traits", "")
         branches = _extract_standard_flow_branches(stage_1_response)
 
         # Fan out Step 2A calls for all branches concurrently. Step
         # 2A is independent across branches — one per rewrite.
         branch_results = await asyncio.gather(
-            *(_run_step_2a(b["rewrite"]) for b in branches)
+            *(_run_step_2a(b, query_traits) for b in branches)
         )
 
+        # Drop the enum before serialization — the JSON record keeps
+        # the human-readable branch_kind string.
         for branch_meta, result in zip(branches, branch_results):
+            branch_meta.pop("branch_kind_enum", None)
             branch_meta["step_2a"] = result
 
         query_reports.append(
             {
                 "query": query,
                 "stage_1_status": "ok",
+                "stage_1_query_traits": query_traits,
                 "stage_1_primary_rewrite": stage_1_response["primary_intent"][
                     "intent_rewrite"
                 ],
@@ -257,18 +271,24 @@ def _render_compact_summary(report: dict) -> str:
                     )
                     continue
                 resp = s2a["response"]
-                inv = ", ".join(resp["ingredient_inventory"]) or "(empty)"
-                analysis = resp["concept_inventory_analysis"].replace("\n", " ")
-                lines.append(f"      ingredient_inventory: {inv}")
-                lines.append(f"      concept_inventory_analysis: {analysis}")
-                for idx, concept in enumerate(resp["concepts"]):
-                    ingredients = ", ".join(concept["required_ingredients"])
+                inv = ", ".join(resp["inventory"]) or "(empty)"
+                unit_trace = resp["unit_analysis"].replace("\n", " ↵ ")
+                slot_trace = resp["slot_analysis"].replace("\n", " ↵ ")
+                lines.append(f"      unit_analysis: {unit_trace}")
+                lines.append(f"      inventory: {inv}")
+                lines.append(f"      slot_analysis: {slot_trace}")
+                for idx, slot in enumerate(resp["slots"]):
+                    scope = ", ".join(slot["scope"])
                     lines.append(
-                        f"      concept[{idx}]: {concept['concept']!r} "
-                        f"-> ingredients=[{ingredients}]"
+                        f"      slot[{idx}]: {slot['handle']!r} "
+                        f"(confidence={slot['confidence']}) "
+                        f"-> scope=[{scope}]"
                     )
                     lines.append(
-                        f"        boundary_note: {concept['boundary_note']}"
+                        f"        retrieval_shape: {slot['retrieval_shape']}"
+                    )
+                    lines.append(
+                        f"        cohesion: {slot['cohesion']}"
                     )
     return "\n".join(lines)
 

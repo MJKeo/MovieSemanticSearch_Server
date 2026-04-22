@@ -1,0 +1,694 @@
+[
+  {
+    "query": "Indiana jones movie where he runs from the boulder",
+    "stage_1": {
+      "query_traits": "Indiana Jones, runs from the boulder, scene description",
+      "primary_flow": "standard",
+      "primary_rewrite": "An Indiana Jones movie featuring the scene where he runs from a rolling boulder",
+      "ambiguity_analysis": "readings:\n- an Indiana Jones movie featuring the rolling boulder chase scene -> primary",
+      "creative_spin_analysis": "spin_potential: low (already points to a specific sequence in a specific franchise)\ncandidate_spins:\n- adventure films with iconic trap-filled temples [preserves: Indiana Jones, runs from the boulder; swaps: none] -> emit (surfaces movies with the same spirit)"
+    },
+    "stage_2a": [
+      {
+        "branch_kind": "primary",
+        "rewrite": "An Indiana Jones movie featuring the scene where he runs from a rolling boulder",
+        "response": {
+          "unit_analysis": "units:\n- \"An\" [trait: none] -> filler (generic article)\n- \"Indiana Jones\" [trait: Indiana Jones] -> literal (family: entity, fictional character name)\n- \"movie\" [trait: none] -> filler (generic noun)\n- \"featuring the scene where he runs from a rolling boulder\" [trait: runs from the boulder, scene description] -> literal (family: semantic, plot_events, concrete scene description)",
+          "inventory": [
+            "Indiana Jones",
+            "featuring the scene where he runs from a rolling boulder"
+          ],
+          "slot_analysis": "slots:\n- \"Indiana Jones\" [units: Indiana Jones] -> emit (family: entity, identifies the character core to search)\n- \"featuring the scene where he runs from a rolling boulder\" [units: featuring the scene where he runs from a rolling boulder] -> emit (family: semantic, specific scene retrieval)",
+          "slots": [
+            {
+              "handle": "Indiana Jones character",
+              "scope": [
+                "Indiana Jones"
+              ],
+              "retrieval_shape": "entity: fictional character",
+              "cohesion": "Distinct person/character entity filter.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "boulder chase scene",
+              "scope": [
+                "featuring the scene where he runs from a rolling boulder"
+              ],
+              "retrieval_shape": "semantic: plot events",
+              "cohesion": "A specific descriptive plot event. Cross-family split from entity.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Adventure movies featuring iconic temple traps and escape sequences",
+        "response": {
+          "unit_analysis": "units:\n- \"Adventure movies\" [trait: none] -> literal (family: keyword, genre categorization)\n- \"featuring\" [trait: none] -> filler (generic connector)\n- \"iconic temple traps\" [trait: scene description] -> literal (family: semantic, plot_events, specific trap-based action sequences)\n- \"escape sequences\" [trait: runs from the boulder] -> literal (family: semantic, plot_events, chase and evasion scenes)",
+          "inventory": [
+            "Adventure movies",
+            "iconic temple traps",
+            "escape sequences"
+          ],
+          "slot_analysis": "slots:\n- \"Adventure movies\" [units: Adventure movies] -> emit (family: keyword, standard genre filter)\n- \"iconic temple traps\" [units: iconic temple traps] -> emit (family: semantic, plot event descriptor)\n- \"escape sequences\" [units: escape sequences] -> fuse_with \"iconic temple traps\" (family: semantic, same ranking-style action descriptors)",
+          "slots": [
+            {
+              "handle": "adventure genre",
+              "scope": [
+                "Adventure movies"
+              ],
+              "retrieval_shape": "keyword genre",
+              "cohesion": "Single genre keyword tag for filtering.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "temple trap and escape action",
+              "scope": [
+                "iconic temple traps",
+                "escape sequences"
+              ],
+              "retrieval_shape": "semantic plot events",
+              "cohesion": "Both are semantic plot event descriptors defining a cohesive action style.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "query": "Tarantino movies with Samuel L. Jackson that boomers love",
+    "stage_1": {
+      "query_traits": "Quentin Tarantino, Samuel L. Jackson, boomer audience, love",
+      "primary_flow": "standard",
+      "primary_rewrite": "Quentin Tarantino movies featuring Samuel L. Jackson that boomers love",
+      "ambiguity_analysis": "readings:\n- Quentin Tarantino movies featuring Samuel L. Jackson that were generation-defining hits for boomers -> primary\n- Quentin Tarantino movies featuring Samuel L. Jackson that are currently rated highest by boomer viewers -> skip (heavy overlap with cultural favorites)\n- movies by any director starring both Tarantino and Jackson that boomers love -> skip (no plausible director interpretation beyond Tarantino)",
+      "creative_spin_analysis": "spin_potential: low (the specific combination of director, actor, and audience is already quite narrow)\ncandidate_spins:\n- iconic Tarantino and Jackson collaborations [preserves: Quentin Tarantino, Samuel L. Jackson; swaps: boomer audience] -> emit (removes the subjective generational lens for broader iconic hits)\n- boomer-favorite crime dramas [preserves: boomer audience, love; swaps: Quentin Tarantino, Samuel L. Jackson] -> skip (swaps too many specific entity traits)"
+    },
+    "stage_2a": [
+      {
+        "branch_kind": "primary",
+        "rewrite": "Quentin Tarantino movies featuring Samuel L. Jackson that boomers love",
+        "response": {
+          "unit_analysis": "units:\n- \"Quentin Tarantino\" [trait: Quentin Tarantino] -> literal (family: entity, director)\n- \"movies\" [trait: none] -> filler (generic search term)\n- \"featuring\" [trait: none] -> filler (generic connector)\n- \"Samuel L. Jackson\" [trait: Samuel L. Jackson] -> literal (family: entity, actor)\n- \"that boomers love\" [trait: boomer audience, love] -> interpret:\n  - \"appeals to baby boomer generation\" (family: semantic, viewer_experience, subjective demographic appeal)\n  - \"high audience reception\" (family: metadata, reception, \"love\" implies high score)\nmissing_trait: none",
+          "inventory": [
+            "Quentin Tarantino",
+            "Samuel L. Jackson",
+            "appeals to baby boomer generation",
+            "high audience reception"
+          ],
+          "slot_analysis": "slots:\n- \"Quentin Tarantino\" [units: Quentin Tarantino] -> emit (family: entity, specific named director)\n- \"Samuel L. Jackson\" [units: Samuel L. Jackson] -> emit (family: entity, specific named actor)\n- \"appeals to baby boomer generation\" [units: appeals to baby boomer generation] -> emit (family: semantic, subjective demographic theme)\n- \"high audience reception\" [units: high audience reception] -> emit (family: metadata, reception filter)",
+          "slots": [
+            {
+              "handle": "director_tarantino",
+              "scope": [
+                "Quentin Tarantino"
+              ],
+              "retrieval_shape": "entity: Quentin Tarantino",
+              "cohesion": "Literal named director entity.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "actor_jackson",
+              "scope": [
+                "Samuel L. Jackson"
+              ],
+              "retrieval_shape": "entity: Samuel L. Jackson",
+              "cohesion": "Literal named actor entity.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "boomer_appeal",
+              "scope": [
+                "appeals to baby boomer generation"
+              ],
+              "retrieval_shape": "semantic: viewer_experience",
+              "cohesion": "Subjective demographic resonance requiring semantic vector search.",
+              "confidence": "inferred"
+            },
+            {
+              "handle": "high_reception",
+              "scope": [
+                "high audience reception"
+              ],
+              "retrieval_shape": "metadata: reception",
+              "cohesion": "Quantitative reception signal inferred from the word love.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Quentin Tarantino movies featuring Samuel L. Jackson",
+        "response": {
+          "unit_analysis": "units:\n- \"Quentin Tarantino\" [trait: Quentin Tarantino] -> literal (family: entity, named director)\n- \"movies\" [trait: none] -> filler (generic movie quantifier)\n- \"featuring\" [trait: none] -> filler (entity connector)\n- \"Samuel L. Jackson\" [trait: Samuel L. Jackson] -> literal (family: entity, named actor)\nmissing_trait: boomer audience\nmissing_trait: love",
+          "inventory": [
+            "Quentin Tarantino",
+            "Samuel L. Jackson"
+          ],
+          "slot_analysis": "slots:\n- \"Quentin Tarantino\" [units: Quentin Tarantino] -> emit (family: entity, specific named director filter)\n- \"Samuel L. Jackson\" [units: Samuel L. Jackson] -> emit (family: entity, specific named actor filter)",
+          "slots": [
+            {
+              "handle": "director_filter",
+              "scope": [
+                "Quentin Tarantino"
+              ],
+              "retrieval_shape": "entity",
+              "cohesion": "A specific director entity is a discrete filter.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "actor_filter",
+              "scope": [
+                "Samuel L. Jackson"
+              ],
+              "retrieval_shape": "entity",
+              "cohesion": "A specific actor entity is a discrete filter.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "query": "Movies with main character energy",
+    "stage_1": {
+      "query_traits": "traits: main character energy, protagonist-driven, charismatic",
+      "primary_flow": "standard",
+      "primary_rewrite": "Movies featuring protagonists with main character energy",
+      "ambiguity_analysis": "readings:\n- movies featuring characters that embody the \"main character energy\" archetype (confident, charismatic, or central to their world) -> primary",
+      "creative_spin_analysis": "spin_potential: high (subjective vibe with several concrete character-driven sub-types)\ncandidate_spins:\n- underdogs who find their main character energy [preserves: main character energy; swaps: none] -> emit (compelling character arc narrowing)\n- stylish, high-aesthetic films with iconic protagonists [preserves: main character energy; swaps: none] -> emit (visual/vibe-based narrowing)"
+    },
+    "stage_2a": [
+      {
+        "branch_kind": "primary",
+        "rewrite": "Movies featuring protagonists with main character energy",
+        "response": {
+          "unit_analysis": "units:\n- \"Movies\" [trait: none] -> filler (generic search term)\n- \"featuring\" [trait: none] -> filler (generic scaffolding)\n- \"protagonists\" [trait: none] -> fold_into \"protagonists with main character energy\" (bound to description)\n- \"with\" [trait: none] -> filler (conjunction)\n- \"main character energy\" [trait: main character energy] -> fold_into \"protagonists with main character energy\" (bound to subject)\n- \"protagonists with main character energy\" [trait: protagonist-driven, charismatic] -> interpret:\n    - \"charismatic protagonist\" (family: semantic, plot_analysis, thematic character description)\n    - \"larger-than-life presence\" (family: semantic, viewer_experience, experiential effect of the character)\nmissing_trait: protagonist-driven\nmissing_trait: charismatic",
+          "inventory": [
+            "charismatic protagonist",
+            "larger-than-life presence"
+          ],
+          "slot_analysis": "slots:\n- \"charismatic protagonist\" [units: charismatic protagonist] -> emit (family: semantic, central thematic character type)\n- \"larger-than-life presence\" [units: larger-than-life presence] -> fuse_with \"charismatic protagonist\" (same-family and joint ranking-style character qualifier)",
+          "slots": [
+            {
+              "handle": "charismatic larger-than-life protagonists",
+              "scope": [
+                "charismatic protagonist",
+                "larger-than-life presence"
+              ],
+              "retrieval_shape": "semantic character analysis and viewer experience",
+              "cohesion": "Both atoms describe a singular character archetype using subjective semantic signals. Fused per same-family ranking-qualifier test.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Movies about underdogs who find their main character energy",
+        "response": {
+          "unit_analysis": "units:\n- \"Movies about\" [trait: none] -> filler (generic scaffolding)\n- \"underdogs\" [trait: none] -> literal (family: keyword, plot_archetype, standard narrative tag)\n- \"who find their\" [trait: none] -> filler (grammatical connective)\n- \"main character energy\" [trait: main character energy][swapped_in] -> interpret:\n    - \"charismatic lead performance\" (family: semantic, production, captures charisma production-wise)\n    - \"transformational character arc\" (family: semantic, plot_analysis, captures narrative growth)\nmissing_trait: protagonist-driven\nmissing_trait: charismatic",
+          "inventory": [
+            "underdogs",
+            "charismatic lead performance",
+            "transformational character arc"
+          ],
+          "slot_analysis": "slots:\n- \"underdogs\" [units: underdogs] -> emit (family: keyword, independent narrative archetype)\n- \"charismatic lead performance\" [units: charismatic lead performance] -> emit (family: semantic, performance-based signal)\n- \"transformational character arc\" [units: transformational character arc] -> emit (family: semantic, distinct narrative thematic space)",
+          "slots": [
+            {
+              "handle": "underdog archetype",
+              "scope": [
+                "underdogs"
+              ],
+              "retrieval_shape": "plot_archetype keyword",
+              "cohesion": "Literal tag for the central character archetype.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "charismatic lead",
+              "scope": [
+                "charismatic lead performance"
+              ],
+              "retrieval_shape": "production semantic",
+              "cohesion": "Focuses on the subjective charisma and screen presence.",
+              "confidence": "inferred"
+            },
+            {
+              "handle": "transformation arc",
+              "scope": [
+                "transformational character arc"
+              ],
+              "retrieval_shape": "plot_analysis semantic",
+              "cohesion": "Captures the thematic narrative growth described in the rewrite.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Stylish and aesthetic movies with iconic protagonists that have main character energy",
+        "response": {
+          "unit_analysis": "units:\n- \"Stylish and aesthetic\" [trait: none][swapped_in] -> literal (family: semantic, production, visual style focus)\n- \"movies\" [trait: none] -> filler (generic term)\n- \"with\" [trait: none] -> filler (connector)\n- \"iconic protagonists\" [trait: protagonist-driven] -> literal (family: keyword, character_type, prominent lead characters)\n- \"that have\" [trait: none] -> filler (connector)\n- \"main character energy\" [trait: main character energy] -> interpret:\n    - \"charismatic lead persona\" (family: semantic, plot_analysis, character traits)\n    - \"stylized protagonist presence\" (family: semantic, narrative_techniques, narrative focus)",
+          "inventory": [
+            "Stylish and aesthetic",
+            "iconic protagonists",
+            "charismatic lead persona",
+            "stylized protagonist presence"
+          ],
+          "slot_analysis": "slots:\n- \"Stylish and aesthetic\" [units: Stylish and aesthetic] -> emit (family: semantic, visual production style)\n- \"iconic protagonists\" [units: iconic protagonists] -> emit (family: keyword, character type filter)\n- \"charismatic lead persona\" [units: charismatic lead persona] -> emit (family: semantic, character archetype)\n- \"stylized protagonist presence\" [units: stylized protagonist presence] -> fuse_with \"charismatic lead persona\" (same family, joint ranking of character feel)",
+          "slots": [
+            {
+              "handle": "visual style",
+              "scope": [
+                "Stylish and aesthetic"
+              ],
+              "retrieval_shape": "production-focused semantic search",
+              "cohesion": "Focuses specifically on the aesthetic/visual quality of the film.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "iconic protagonists",
+              "scope": [
+                "iconic protagonists"
+              ],
+              "retrieval_shape": "character-type keyword tag",
+              "cohesion": "Closed-taxonomy tag for films defined by iconic leads.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "main character persona",
+              "scope": [
+                "charismatic lead persona",
+                "stylized protagonist presence"
+              ],
+              "retrieval_shape": "character-focused semantic ranking",
+              "cohesion": "Jointly defines the vibe and persona of the protagonist.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "query": "Mindless action movies",
+    "stage_1": {
+      "query_traits": "traits: action, mindless",
+      "primary_flow": "standard",
+      "primary_rewrite": "Mindless action movies",
+      "ambiguity_analysis": "readings:\n- action movies that require little mental effort or complex plot following -> primary",
+      "creative_spin_analysis": "spin_potential: high (broad category with several distinct 'mindless' styles)\ncandidate_spins:\n- high-octane spectacle action films [preserves: action, mindless; swaps: none] -> emit (focuses on visual scale and stunts)\n- cheesy 80s and 90s action movies [preserves: action, mindless; swaps: none] -> emit (focuses on retro fun and tropes)"
+    },
+    "stage_2a": [
+      {
+        "branch_kind": "primary",
+        "rewrite": "Mindless action movies",
+        "response": {
+          "unit_analysis": "units:\n- \"Mindless\" [trait: mindless] -> literal (family: semantic, viewer_experience, describes low-complexity entertainment style)\n- \"action movies\" [trait: action] -> literal (family: keyword, genre)",
+          "inventory": [
+            "Mindless",
+            "action movies"
+          ],
+          "slot_analysis": "slots:\n- \"Mindless\" [units: \"Mindless\"] -> emit (family: semantic, subjective tonal descriptor)\n- \"action movies\" [units: \"action movies\"] -> emit (family: keyword, standard genre filter)",
+          "slots": [
+            {
+              "handle": "mindless-tone",
+              "scope": [
+                "Mindless"
+              ],
+              "retrieval_shape": "semantic (viewer_experience)",
+              "cohesion": "Subjective tonal quality requiring vector search.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "action-genre",
+              "scope": [
+                "action movies"
+              ],
+              "retrieval_shape": "keyword (genre)",
+              "cohesion": "Standard genre category filter.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "High-octane spectacle action movies",
+        "response": {
+          "unit_analysis": "units:\n- \"High-octane\" [trait: mindless][swapped_in] -> interpret:\n    - \"fast-paced and intense\" (family: semantic, viewer_experience, emotional tone of the action)\n- \"spectacle\" [trait: none][swapped_in] -> interpret:\n    - \"stunning visual effects and stunts\" (family: semantic, production, high-budget technical achievement)\n- \"action\" [trait: action] -> literal (family: keyword, genre)\n- \"movies\" [trait: none] -> filler (generic term)",
+          "inventory": [
+            "fast-paced and intense",
+            "stunning visual effects and stunts",
+            "action"
+          ],
+          "slot_analysis": "slots:\n- \"fast-paced and intense\" [units: fast-paced and intense] -> fuse_with \"stunning visual effects and stunts\" (same-family semantic and joint ranking-qualifier)\n- \"stunning visual effects and stunts\" [units: stunning visual effects and stunts, fast-paced and intense] -> emit (family: semantic, unified high-intensity experience)\n- \"action\" [units: action] -> emit (family: keyword, distinct categorical genre filter)",
+          "slots": [
+            {
+              "handle": "spectacle and intensity",
+              "scope": [
+                "fast-paced and intense",
+                "stunning visual effects and stunts"
+              ],
+              "retrieval_shape": "semantic production and viewer experience",
+              "cohesion": "Same-family semantic qualifiers joint-defining the 'high-octane spectacle' ranking gradient.",
+              "confidence": "inferred"
+            },
+            {
+              "handle": "action genre",
+              "scope": [
+                "action"
+              ],
+              "retrieval_shape": "keyword genre",
+              "cohesion": "Standalone categorical filter for the action genre.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Cheesy 80s and 90s action movies",
+        "response": {
+          "unit_analysis": "units:\n- \"Cheesy\" [trait: none][swapped_in] -> literal (family: semantic, viewer_experience, subjective tonal description)\n- \"80s\" [trait: none][swapped_in] -> literal (family: metadata, release_date, specific decade filter)\n- \"and\" [trait: none] -> filler (logical conjunction)\n- \"90s\" [trait: none][swapped_in] -> literal (family: metadata, release_date, specific decade filter)\n- \"action movies\" [trait: action] -> literal (family: keyword, action genre category)",
+          "inventory": [
+            "Cheesy",
+            "80s",
+            "90s",
+            "action movies"
+          ],
+          "slot_analysis": "slots:\n- \"Cheesy\" [units: Cheesy] -> emit (family: semantic, subjective tonal qualifier)\n- \"80s\" [units: 80s] -> fuse_with \"90s\" (family: metadata, same-attribute release era)\n- \"90s\" [units: 80s, 90s] -> emit (family: metadata, joint release era filter)\n- \"action movies\" [units: action movies] -> emit (family: keyword, core genre category)",
+          "slots": [
+            {
+              "handle": "cheesy tone",
+              "scope": [
+                "Cheesy"
+              ],
+              "retrieval_shape": "semantic tone",
+              "cohesion": "Single subjective tonal qualifier for viewer experience.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "retro era",
+              "scope": [
+                "80s",
+                "90s"
+              ],
+              "retrieval_shape": "release date metadata",
+              "cohesion": "Fused same-attribute metadata filters defining a single release era.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "action genre",
+              "scope": [
+                "action movies"
+              ],
+              "retrieval_shape": "genre keyword",
+              "cohesion": "Primary genre classification for the request.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "query": "Popcorn movies",
+    "stage_1": {
+      "query_traits": "traits: popcorn, movies",
+      "primary_flow": "standard",
+      "primary_rewrite": "Movies that are fun, lighthearted, and easy to watch",
+      "ambiguity_analysis": "readings:\n- movies that are fun, light, and easy to watch -> primary\n- movies that literally feature popcorn or are set in movie theaters -> skip (highly unlikely to be the core intent)",
+      "creative_spin_analysis": "spin_potential: high (broad vibe with many genre-specific blockbusters)\ncandidate_spins:\n- high-octane popcorn action movies [preserves: popcorn; swaps: none] -> emit (genre-specific narrowing)\n- feel-good popcorn comedies [preserves: popcorn; swaps: none] -> emit (tone-specific narrowing)\n- visually stunning sci-fi popcorn movies [preserves: popcorn; swaps: none] -> skip (too narrow)"
+    },
+    "stage_2a": [
+      {
+        "branch_kind": "primary",
+        "rewrite": "Movies that are fun, lighthearted, and easy to watch",
+        "response": {
+          "unit_analysis": "units:\n- \"Movies\" [trait: movies] -> filler (generic movie-search scaffolding)\n- \"that are\" [trait: none] -> filler (grammatical connective)\n- \"fun\" [trait: popcorn] -> literal (family: semantic, viewer_experience, emotional tone adjective)\n- \"lighthearted\" [trait: popcorn] -> literal (family: semantic, viewer_experience, emotional tone adjective)\n- \"and\" [trait: none] -> filler (grammatical connective)\n- \"easy to watch\" [trait: popcorn] -> interpret:\n  - \"comforting tone\" (family: semantic, watch_context, low-intensity viewing experience)",
+          "inventory": [
+            "fun",
+            "lighthearted",
+            "comforting tone"
+          ],
+          "slot_analysis": "slots:\n- \"fun\" [units: fun] -> emit (family: semantic, ranking qualifier for emotional tone)\n- \"lighthearted\" [units: lighthearted] -> fuse_with \"fun\" (same-family and shared ranking gradient)\n- \"comforting tone\" [units: comforting tone] -> fuse_with \"fun\" (same-family and shared ranking gradient)",
+          "slots": [
+            {
+              "handle": "fun and lighthearted viewer experience",
+              "scope": [
+                "fun",
+                "lighthearted",
+                "comforting tone"
+              ],
+              "retrieval_shape": "semantic tone and watch context",
+              "cohesion": "All items are semantic ranking qualifiers within viewer experience and watch context.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "High-octane action movies that are fun popcorn entertainment",
+        "response": {
+          "unit_analysis": "units:\n- \"High-octane\" [swapped_in] -> interpret:\n    - \"high-energy pacing\" (family: semantic, narrative_techniques, describes intense storytelling rhythm)\n- \"action movies\" [swapped_in] -> literal (family: keyword, genre filter)\n- \"fun\" [trait: popcorn] -> interpret:\n    - \"lighthearted and enjoyable\" (family: semantic, viewer_experience, captures pure entertainment tone)\n- \"popcorn entertainment\" [trait: popcorn] -> interpret:\n    - \"mass-appeal blockbuster style\" (family: metadata, budget_scale, high production value entertainment)\n    - \"easy-watching tone\" (family: semantic, watch_context, low-friction entertainment)",
+          "inventory": [
+            "high-energy pacing",
+            "action movies",
+            "lighthearted and enjoyable",
+            "mass-appeal blockbuster style",
+            "easy-watching tone"
+          ],
+          "slot_analysis": "slots:\n- \"high-energy pacing\" [units: high-energy pacing] -> fuse_with \"tonal entertainment\" (same family, joint ranking gradient)\n- \"action movies\" [units: action movies] -> emit (family: keyword, distinct genre filter)\n- \"lighthearted and enjoyable\" [units: lighthearted and enjoyable] -> fuse_with \"tonal entertainment\" (same family, joint ranking gradient)\n- \"mass-appeal blockbuster style\" [units: mass-appeal blockbuster style] -> emit (family: metadata, distinct attribute filter)\n- \"easy-watching tone\" [units: easy-watching tone] -> fuse_with \"tonal entertainment\" (same family, joint ranking gradient)\n- \"tonal entertainment\" [units: high-energy pacing, lighthearted and enjoyable, easy-watching tone] -> emit (family: semantic, joint ranking-style qualifiers)",
+          "slots": [
+            {
+              "handle": "action_genre",
+              "scope": [
+                "action movies"
+              ],
+              "retrieval_shape": "action keyword",
+              "cohesion": "Distinct genre category acting as a primary structural filter.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "tonal_entertainment",
+              "scope": [
+                "high-energy pacing",
+                "lighthearted and enjoyable",
+                "easy-watching tone"
+              ],
+              "retrieval_shape": "tonal and experiential semantic",
+              "cohesion": "Fused semantic qualifiers that jointly define the high-energy popcorn viewing experience.",
+              "confidence": "inferred"
+            },
+            {
+              "handle": "blockbuster_scale",
+              "scope": [
+                "mass-appeal blockbuster style"
+              ],
+              "retrieval_shape": "budget_scale metadata",
+              "cohesion": "Specific metadata attribute for high-production, mass-market entertainment value.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Feel-good comedies that are fun popcorn movies",
+        "response": {
+          "unit_analysis": "units:\n- \"Feel-good\" [trait: none][swapped_in] -> literal (family: keyword, experiential, tag for positive emotional response)\n- \"comedies\" [trait: none][swapped_in] -> literal (family: keyword, genre word)\n- \"that are\" [trait: none] -> filler (grammatical scaffolding)\n- \"fun popcorn movies\" [trait: popcorn] -> interpret:\n    - \"lighthearted entertainment\" (family: semantic, viewer_experience, easy to watch for general audiences)\n    - \"blockbuster scale\" (family: metadata, budget_scale, popcorn implies high production value)",
+          "inventory": [
+            "Feel-good",
+            "comedies",
+            "lighthearted entertainment",
+            "blockbuster scale"
+          ],
+          "slot_analysis": "slots:\n- \"Feel-good\" [units: Feel-good] -> emit (family: keyword, emotional tag)\n- \"comedies\" [units: comedies] -> emit (family: keyword, genre category)\n- \"lighthearted entertainment\" [units: lighthearted entertainment] -> emit (family: semantic, tonal experience)\n- \"blockbuster scale\" [units: blockbuster scale] -> emit (family: metadata, production scale)",
+          "slots": [
+            {
+              "handle": "feel-good tone",
+              "scope": [
+                "Feel-good"
+              ],
+              "retrieval_shape": "experiential keyword",
+              "cohesion": "Specific emotional keyword tag.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "comedy genre",
+              "scope": [
+                "comedies"
+              ],
+              "retrieval_shape": "genre keyword",
+              "cohesion": "Core genre classification.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "lighthearted entertainment",
+              "scope": [
+                "lighthearted entertainment"
+              ],
+              "retrieval_shape": "viewer experience semantic",
+              "cohesion": "Describes the effortless, fun vibe of the movie.",
+              "confidence": "inferred"
+            },
+            {
+              "handle": "production scale",
+              "scope": [
+                "blockbuster scale"
+              ],
+              "retrieval_shape": "budget scale metadata",
+              "cohesion": "Interprets 'popcorn' as a production tier.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "query": "Movies with soul",
+    "stage_1": {
+      "query_traits": "traits: soul, movies",
+      "primary_flow": "standard",
+      "primary_rewrite": "Movies with a soulful, emotional, or deeply human quality",
+      "ambiguity_analysis": "readings:\n- movies with a soulful, emotional, or deeply human quality -> primary\n- movies featuring soul music -> emit as alt (musical genre search is a distinct retrieval target)\n- the 2020 Pixar movie titled \"Soul\" -> skip (plural \"movies\" and natural language usage point away from a specific title search)",
+      "creative_spin_analysis": "spin_potential: high (vague qualitative term allows for productive sub-genre narrowings)\ncandidate_spins:\n- soulful indie dramas [preserves: soul; swaps: none] -> emit (narrowing by tone and scale)\n- spiritually or philosophically soulful films [preserves: soul; swaps: none] -> emit (narrowing to a specific interpretation of soul)"
+    },
+    "stage_2a": [
+      {
+        "branch_kind": "primary",
+        "rewrite": "Movies with a soulful, emotional, or deeply human quality",
+        "response": {
+          "unit_analysis": "units:\n- \"Movies\" [trait: movies] -> filler (generic movie-search scaffolding)\n- \"with a\" [trait: none] -> filler (generic connecting phrase)\n- \"soulful\" [trait: soul] -> literal (family: semantic, plot_analysis, descriptive thematic quality)\n- \"emotional\" [trait: none] -> literal (family: semantic, viewer_experience, emotional tone adjective)\n- \"or\" [trait: none] -> filler (logical connector)\n- \"deeply human quality\" [trait: none] -> literal (family: semantic, plot_analysis, descriptive character/thematic depth)",
+          "inventory": [
+            "soulful",
+            "emotional",
+            "deeply human quality"
+          ],
+          "slot_analysis": "slots:\n- \"soulful\" [units: soulful] -> emit (family: semantic, thematic tone)\n- \"emotional\" [units: emotional] -> fuse_with \"soulful\" (same-family and joint ranking-style qualifiers)\n- \"deeply human quality\" [units: deeply human quality] -> fuse_with \"soulful\" (same-family and joint ranking-style qualifiers)",
+          "slots": [
+            {
+              "handle": "soulful emotional human films",
+              "scope": [
+                "soulful",
+                "emotional",
+                "deeply human quality"
+              ],
+              "retrieval_shape": "semantic search on thematic and emotional resonance",
+              "cohesion": "Fused same-family semantic qualifiers into a single ranking-friendly preference gradient.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "alternative",
+        "rewrite": "Movies featuring soul music or about the soul music scene",
+        "response": {
+          "unit_analysis": "units:\n- \"Movies\" [trait: movies] -> filler (generic scaffolding)\n- \"featuring soul music\" [trait: soul][shift] -> literal (family: keyword, setting, identifies genre as a musical element)\n- \"or about the soul music scene\" [trait: soul][shift] -> literal (family: semantic, plot_analysis, thematic focus on the music industry)",
+          "inventory": [
+            "featuring soul music",
+            "about the soul music scene"
+          ],
+          "slot_analysis": "slots:\n- \"featuring soul music\" [units: featuring soul music] -> emit (family: keyword, identifies movies tagged by musical genre)\n- \"about the soul music scene\" [units: about the soul music scene] -> emit (family: semantic, captures thematic and narrative industry focus)",
+          "slots": [
+            {
+              "handle": "soul music element",
+              "scope": [
+                "featuring soul music"
+              ],
+              "retrieval_shape": "keyword: setting",
+              "cohesion": "Literal descriptive genre tag. Independent filter from thematic analysis.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "soul music industry themes",
+              "scope": [
+                "about the soul music scene"
+              ],
+              "retrieval_shape": "semantic: plot_analysis",
+              "cohesion": "Thematic focus on a subculture or industry. Cross-family split from keyword.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Soulful and emotional independent drama movies",
+        "response": {
+          "unit_analysis": "units:\n- \"Soulful\" [trait: soul] -> literal (family: semantic, viewer_experience, emotional tone of the film)\n- \"and\" [trait: none] -> filler (grammatical conjunction)\n- \"emotional\" [trait: none] -> literal (family: semantic, viewer_experience, internal character intensity)\n- \"independent\" [trait: none][swapped_in] -> literal (family: metadata, budget_scale, indie production scope)\n- \"drama\" [trait: none][swapped_in] -> literal (family: keyword, genre category)\n- \"movies\" [trait: movies] -> filler (generic movie-referent scaffolding)",
+          "inventory": [
+            "Soulful",
+            "emotional",
+            "independent",
+            "drama"
+          ],
+          "slot_analysis": "slots:\n- \"Soulful\" [units: Soulful] -> emit (family: semantic, tone-based descriptive qualifier)\n- \"emotional\" [units: emotional] -> fuse_with \"Soulful\" (same-family, joint ranking gradient)\n- \"independent\" [units: independent] -> emit (family: metadata, budget-tier filter)\n- \"drama\" [units: drama] -> emit (family: keyword, genre filter)",
+          "slots": [
+            {
+              "handle": "soulful and emotional tone",
+              "scope": [
+                "Soulful",
+                "emotional"
+              ],
+              "retrieval_shape": "semantic viewer_experience",
+              "cohesion": "Fused same-family tonal qualifiers that joint-rank for emotional resonance intensity.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "independent production",
+              "scope": [
+                "independent"
+              ],
+              "retrieval_shape": "metadata budget_scale",
+              "cohesion": "Independent filter for production scale and budget tier.",
+              "confidence": "literal"
+            },
+            {
+              "handle": "drama genre",
+              "scope": [
+                "drama"
+              ],
+              "retrieval_shape": "keyword genre",
+              "cohesion": "Standard genre filter for dramatic narrative focus.",
+              "confidence": "literal"
+            }
+          ]
+        }
+      },
+      {
+        "branch_kind": "spin",
+        "rewrite": "Movies with a spiritual or philosophical soul",
+        "response": {
+          "unit_analysis": "units:\n- \"Movies\" [trait: movies] -> filler (generic movie-search scaffolding)\n- \"with a\" [trait: none] -> filler (generic connector)\n- \"spiritual or philosophical soul\" [trait: soul] -> interpret:\n  - \"spiritual themes\" (family: semantic, plot_analysis, descriptive themes and ideas)\n  - \"philosophical depth\" (family: semantic, plot_analysis, exploration of concepts)",
+          "inventory": [
+            "spiritual themes",
+            "philosophical depth"
+          ],
+          "slot_analysis": "slots:\n- \"spiritual themes\" [units: spiritual themes] -> emit (family: semantic, core thematic focus)\n- \"philosophical depth\" [units: philosophical depth] -> fuse_with \"spiritual themes\" (same family and targets same ranking gradient)",
+          "slots": [
+            {
+              "handle": "spiritual and philosophical depth",
+              "scope": [
+                "spiritual themes",
+                "philosophical depth"
+              ],
+              "retrieval_shape": "thematic semantic search",
+              "cohesion": "Fused same-family semantic atoms that jointly define a ranking-style thematic preference.",
+              "confidence": "inferred"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

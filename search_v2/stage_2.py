@@ -1,17 +1,18 @@
 # Search V2 — Stage 2: Query Understanding
 #
-# Revamped concept-based Stage 2:
-#   Step 2A — extract the concept inventory from the Step-1 rewrite
-#   Step 2B — plan one or more retrieval expressions per concept
+# Stage 2 decomposes a Step-1 standard-flow rewrite into the concept-
+# bound retrieval expressions Step 3 / Step 4 will execute.
 #
-# The public entrypoint remains `run_stage_2()`.
+# Step 2A (partition extraction) has been moved to its own module —
+# see `search_v2/stage_2a.py`. Its new output shape (PlanningSlot)
+# does not yet flow through Step 2B; `run_stage_2` therefore raises
+# NotImplementedError until Step 2B is reworked to consume slots
+# directly. See the plan at
+# `~/.claude/plans/this-seems-good-rewrite-cozy-harbor.md`.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-
-from pydantic import ValidationError
 
 from implementation.classes.watch_providers import (
     STREAMING_SERVICE_DISPLAY_NAMES,
@@ -20,9 +21,7 @@ from implementation.classes.watch_providers import (
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from schemas.query_understanding import (
     ExtractedConcept,
-    QueryConcept,
     QueryUnderstandingResponse,
-    Step2AResponse,
     Step2BResponse,
 )
 
@@ -31,70 +30,6 @@ logger = logging.getLogger(__name__)
 _TRACKED_STREAMING_SERVICE_NAMES = ", ".join(
     STREAMING_SERVICE_DISPLAY_NAMES[service] for service in StreamingService
 )
-
-_STEP_2A_SYSTEM_PROMPT = """\
-You extract the stable concept inventory for a movie-search query.
-
-You receive a query that has already been rewritten by Step 1 into a
-complete, concrete statement of what the user wants. Your job here is
-to identify the minimal query ingredients and decide concept boundaries.
-
-Generate fields in the schema's order. The field order is deliberate:
-- `ingredient_inventory` first
-- `concept_inventory_analysis` second
-- `concepts` last
-
-A concept is one user intent such as:
-- "Spider-Man movie"
-- "Christmas movie"
-- "dark and gritty tone"
-- "animated movie" in an exclusion context
-
-Important rules:
-- Think in user-intent concepts, not route-bound search items.
-- `ingredient_inventory` is a short evidence inventory of the meaningful
-  ingredients in the rewrite.
-- One concept may later require multiple retrieval expressions.
-- Keep one concept unified when multiple expressions are just alternate
-  retrieval views of the same user intent.
-- Keep genuinely separate user intents separate, even if they may end
-  up routed to the same endpoint later.
-- Split aggressively when one ingredient defines the candidate domain
-  and another ingredient ranks or characterizes items within that domain.
-- Keep concepts unified only when the phrase names one fused phenomenon
-  or one entity whose multiple retrieval routes are internal to the same idea.
-- Do not narrow a broad scope anchor to a more specific sub-brand or
-  sub-unit unless the query explicitly says so.
-- If unsure whether to keep "scope anchor + trait" together, split them.
-- Do not decide routes.
-- Do not decide dealbreaker vs preference.
-- Do not decide include vs exclude.
-- Do not decide exact Step-3 grounded values.
-
-Examples:
-- "Disney classics" should split into:
-  - "Disney movies"
-  - "historically significant / classic"
-- "A24 horror movies" should split into:
-  - "A24 movies"
-  - "horror"
-- "Spider-Man movies" should stay one concept even if later it needs
-  both franchise and character expressions.
-- "Christmas movies" should stay one concept even if later it needs a
-  keyword dealbreaker plus a semantic preference for Christmas centrality.
-- "dark and gritty" often stays one unified tonal concept.
-- "award-winning comedy" is two concepts because the user is asking for
-  award status and comedy classification separately.
-
-Output:
-- `ingredient_inventory` should list the minimal meaningful ingredients in the rewrite.
-- `concept_inventory_analysis` should briefly explain the boundary choices.
-- `concepts` should contain one object per concept with:
-  - `boundary_note`: a brief note explaining why this is one concept boundary
-  - `concept`: the concept label
-  - `required_ingredients`: the exact ingredient strings from
-    `ingredient_inventory` that this concept must preserve
-"""
 
 _STEP_2B_SYSTEM_PROMPT = f"""\
 You plan retrieval expressions for exactly one movie-search concept.
@@ -289,78 +224,17 @@ async def run_stage_2(
     model: str,
     **kwargs,
 ) -> tuple[QueryUnderstandingResponse, int, int]:
-    """Decompose a standard-flow query into concept-bound expressions."""
-    query = query.strip()
-    if not query:
-        raise ValueError("query must be a non-empty string.")
+    """Temporarily disabled: Step 2A now emits PlanningSlot, not ExtractedConcept.
 
-    step_2a_user_prompt = f"Interpretation rewrite:\n{query}"
-    step_2a_response, input_tokens, output_tokens = await generate_llm_response_async(
-        provider=provider,
-        user_prompt=step_2a_user_prompt,
-        system_prompt=_STEP_2A_SYSTEM_PROMPT,
-        response_format=Step2AResponse,
-        model=model,
-        **kwargs,
-    )
-
-    step_2b_tasks = [
-        _run_step_2b_for_concept(
-            query=query,
-            concept=concept,
-            inventory=step_2a_response.concepts,
-            provider=provider,
-            model=model,
-            **kwargs,
-        )
-        for concept in step_2a_response.concepts
-    ]
-
-    concepts: list[QueryConcept] = []
-    if step_2b_tasks:
-        raw_results = await asyncio.gather(*step_2b_tasks, return_exceptions=True)
-        for extracted_concept, raw_result in zip(step_2a_response.concepts, raw_results):
-            if isinstance(raw_result, Exception):
-                logger.warning(
-                    "Dropping Step 2 concept %r after Step 2B failure: %s",
-                    extracted_concept.concept,
-                    raw_result,
-                )
-                continue
-
-            step_2b_response, concept_input_tokens, concept_output_tokens = raw_result
-            try:
-                concepts.append(
-                    QueryConcept(
-                        boundary_note=extracted_concept.boundary_note,
-                        concept=extracted_concept.concept,
-                        required_ingredients=extracted_concept.required_ingredients,
-                        expression_plan_analysis=step_2b_response.expression_plan_analysis,
-                        expressions=step_2b_response.expressions,
-                    )
-                )
-            except ValidationError as exc:
-                logger.warning(
-                    "Dropping Step 2 concept %r after invalid Step 2B coverage: %s",
-                    extracted_concept.concept,
-                    exc,
-                )
-                continue
-            input_tokens += concept_input_tokens
-            output_tokens += concept_output_tokens
-
-    if step_2a_response.concepts and not concepts:
-        raise RuntimeError(
-            "Step 2A extracted concepts, but every Step 2B concept was dropped."
-        )
-
-    # TODO: Priors were intentionally removed from the revamped Step 2.
-    return (
-        QueryUnderstandingResponse(
-            ingredient_inventory=step_2a_response.ingredient_inventory,
-            concept_inventory_analysis=step_2a_response.concept_inventory_analysis,
-            concepts=concepts,
-        ),
-        input_tokens,
-        output_tokens,
+    Step 2A has moved to `search_v2.stage_2a.run_stage_2a` with a new
+    output shape (PlanningSlot). The 2A → 2B bridge has not been
+    rewritten yet; callers should wire 2A and 2B manually (as the
+    debug notebook does) until Step 2B is reworked to consume slots
+    directly.
+    """
+    raise NotImplementedError(
+        "run_stage_2 is temporarily disabled. Step 2A now lives in "
+        "search_v2.stage_2a.run_stage_2a and emits PlanningSlot instead of "
+        "ExtractedConcept. The 2A→2B bridge will be rebuilt once Step 2B is "
+        "reworked to consume slots directly."
     )

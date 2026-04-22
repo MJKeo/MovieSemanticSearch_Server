@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-22T04:16:41Z",
-  "total_elapsed_s": 32.68,
+  "generated_at": "2026-04-22T16:59:46Z",
+  "total_elapsed_s": 43.46,
   "step_2a_model": "gemini-3-flash-preview (thinking_budget=0)",
   "buckets": [
     {
@@ -10,6 +10,7 @@
         {
           "query": "Disney millennial favorites",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Disney, millennials, favorites",
           "stage_1_primary_rewrite": "Disney movies that millennials grew up with",
           "branches": [
             {
@@ -18,29 +19,34 @@
               "display_phrase": "Disney Childhood Classics",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1947.2,
-                "input_tokens": 644,
-                "output_tokens": 136,
+                "elapsed_ms": 2103.7,
+                "input_tokens": 5669,
+                "output_tokens": 248,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Disney movies\" [trait: Disney] -> literal (family: studio, production label)\n- \"that millennials grew up with\" [trait: millennials] -> best_guess: \"widely-viewed millennial-generation classics\" (family: metadata, historical popularity and notability)\n- missing_trait: favorites",
+                  "inventory": [
                     "Disney movies",
-                    "millennials grew up with"
+                    "widely-viewed millennial-generation classics"
                   ],
-                  "concept_inventory_analysis": "The query combines a production entity (Disney) with a specific historical/nostalgic timeframe (millennial childhood). These are distinct intents: one defines the studio scope and the other defines a specific era/vibe.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Disney movies\" [units: Disney movies] -> emit (family: studio, production entity)\n- \"millennial classics\" [units: widely-viewed millennial-generation classics] -> emit (family: metadata, historical popularity signal)",
+                  "slots": [
                     {
-                      "boundary_note": "Identifies the studio/brand responsible for the content.",
-                      "concept": "Disney movies",
-                      "required_ingredients": [
+                      "handle": "Disney studio",
+                      "scope": [
                         "Disney movies"
-                      ]
+                      ],
+                      "retrieval_shape": "Disney studio production label",
+                      "cohesion": "Single studio entity from literal query phrase.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Identifies the target era and nostalgic appeal associated with the millennial generation's upbringing.",
-                      "concept": "millennial nostalgia / classics",
-                      "required_ingredients": [
-                        "millennials grew up with"
-                      ]
+                      "handle": "millennial-era popularity",
+                      "scope": [
+                        "widely-viewed millennial-generation classics"
+                      ],
+                      "retrieval_shape": "historical popularity and notability metadata",
+                      "cohesion": "Grounds non-retrievable audience signal into global popularity metadata.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -50,39 +56,37 @@
               "branch_kind": "alternative[0]",
               "rewrite": "Disney movies currently popular with millennial audiences",
               "display_phrase": "Popular with Millennials Today",
+              "difference_rationale": "This branch targets modern popularity and contemporary trends among millennials rather than childhood nostalgia.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 2129.6,
-                "input_tokens": 644,
-                "output_tokens": 244,
+                "elapsed_ms": 2542.2,
+                "input_tokens": 5757,
+                "output_tokens": 355,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Disney movies\" [trait: Disney] -> literal (family: studio, production company identifier)\n- \"currently popular\" [trait: none] [shift] -> fold_into \"popular with millennial audiences\" (needs audience context)\n- \"millennial audiences\" [trait: millennials] [shift] -> best_guess: \"modern trending favorites and contemporary hits\" (family: metadata, overall popularity/notability)\nmissing_trait: favorites",
+                  "inventory": [
                     "Disney movies",
-                    "currently popular",
-                    "millennial audiences"
+                    "modern trending favorites and contemporary hits"
                   ],
-                  "concept_inventory_analysis": "The query is split into three distinct concepts: the studio/brand domain, the temporal popularity metric, and the specific demographic target. Each represents a separate filtering or ranking intent that requires different data signals.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Disney movies\" [units: Disney movies] -> emit (family: studio, identifies production company)\n- \"modern trending favorites\" [units: modern trending favorites and contemporary hits] -> emit (family: metadata, global popularity signal substitute for demographic)",
+                  "slots": [
                     {
-                      "boundary_note": "Identifies the core studio or content brand domain.",
-                      "concept": "Disney movies",
-                      "required_ingredients": [
+                      "handle": "Disney studio",
+                      "scope": [
                         "Disney movies"
-                      ]
+                      ],
+                      "retrieval_shape": "Disney production studio",
+                      "cohesion": "Identifies the specific production entity.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "A temporal trend or ranking signal independent of the brand.",
-                      "concept": "currently popular",
-                      "required_ingredients": [
-                        "currently popular"
-                      ]
-                    },
-                    {
-                      "boundary_note": "A specific demographic preference or cultural resonance filter.",
-                      "concept": "millennial audiences",
-                      "required_ingredients": [
-                        "millennial audiences"
-                      ]
+                      "handle": "millennial popularity",
+                      "scope": [
+                        "modern trending favorites and contemporary hits"
+                      ],
+                      "retrieval_shape": "highly-rated and trending metadata",
+                      "cohesion": "Best guess mapping of demographic resonance to system's popularity signals.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -95,37 +99,54 @@
               "spin_angle": "Focuses on the 1989-1999 Disney Renaissance era which defines the millennial childhood experience.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 2238.3,
-                "input_tokens": 649,
-                "output_tokens": 191,
+                "elapsed_ms": 2722.1,
+                "input_tokens": 5767,
+                "output_tokens": 404,
                 "response": {
-                  "ingredient_inventory": [
-                    "Disney Renaissance",
-                    "animated movies",
+                  "unit_analysis": "units:\n- \"Disney\" [trait: Disney] -> literal (family: studio, production label)\n- \"Renaissance-era\" [trait: none] -> literal (family: franchise_structure, recognized era within studio catalog)\n- \"animated\" [trait: none] -> literal (family: keyword, production format)\n- \"movies\" -> filler (generic scaffolding)\n- \"from the 90s\" [trait: favorites][swapped_in] -> literal (family: metadata, release date era)",
+                  "inventory": [
+                    "Disney",
+                    "Renaissance-era",
+                    "animated",
                     "from the 90s"
                   ],
-                  "concept_inventory_analysis": "The query combines a specific studio era, a medium, and a temporal constraint. While 'Disney Renaissance' is often synonymous with 90s animation, they represent distinct user intents: one identifies the studio/brand context and historical era, while the other defines the specific time period. The medium (animated) is distinct from the brand anchor.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Disney\" [units: Disney] -> emit (family: studio, studio name)\n- \"Renaissance-era\" [units: Renaissance-era] -> emit (family: franchise_structure, studio era designation)\n- \"animated\" [units: animated] -> emit (family: keyword, production format tag)\n- \"from the 90s\" [units: from the 90s] -> emit (family: metadata, release year range)",
+                  "slots": [
                     {
-                      "boundary_note": "Identifies the specific historical era and studio brand associated with the query.",
-                      "concept": "Disney Renaissance",
-                      "required_ingredients": [
-                        "Disney Renaissance"
-                      ]
+                      "handle": "Disney Studio",
+                      "scope": [
+                        "Disney"
+                      ],
+                      "retrieval_shape": "Disney studio production",
+                      "cohesion": "Single studio entity.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Defines the specific medium or format of the films.",
-                      "concept": "animated movies",
-                      "required_ingredients": [
-                        "animated movies"
-                      ]
+                      "handle": "Disney Renaissance Era",
+                      "scope": [
+                        "Renaissance-era"
+                      ],
+                      "retrieval_shape": "Renaissance era franchise tag",
+                      "cohesion": "Recognized historical era within Disney's structure.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Restricts the search to a specific calendar decade.",
-                      "concept": "from the 90s",
-                      "required_ingredients": [
+                      "handle": "Animated Format",
+                      "scope": [
+                        "animated"
+                      ],
+                      "retrieval_shape": "animated production format",
+                      "cohesion": "Specific film format tag (keyword).",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "1990s Release Era",
+                      "scope": [
                         "from the 90s"
-                      ]
+                      ],
+                      "retrieval_shape": "release date 1990-1999",
+                      "cohesion": "Quantitative metadata constraint.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -138,39 +159,44 @@
               "spin_angle": "Narrows the favorites to the specific live-action films millennials loved in the 90s and early 2000s.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1983.0,
-                "input_tokens": 653,
-                "output_tokens": 190,
+                "elapsed_ms": 2380.4,
+                "input_tokens": 5775,
+                "output_tokens": 362,
                 "response": {
-                  "ingredient_inventory": [
-                    "90s",
-                    "early 2000s",
+                  "unit_analysis": "units:\n- \"90s and early 2000s\" [trait: none][swapped_in] -> literal (family: metadata, specific release era)\n- \"Disney\" [trait: Disney] -> literal (family: studio, production studio)\n- \"live-action\" [trait: none][swapped_in] -> literal (family: keyword, production format)\n- \"movies\" -> filler (generic scaffolding)\n- missing_trait: millennials\n- missing_trait: favorites",
+                  "inventory": [
+                    "90s and early 2000s",
                     "Disney",
                     "live-action"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into its temporal, studio, and format constraints. Time periods are grouped because they define a continuous era. Disney and live-action are separated because one defines the entity/origin while the other defines the specific medium within that entity's catalog.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"90s and early 2000s\" [units: 90s and early 2000s] -> emit (family: metadata, factual release date range)\n- \"Disney\" [units: Disney] -> emit (family: studio, primary production entity)\n- \"live-action\" [units: live-action] -> emit (family: keyword, specific format category)",
+                  "slots": [
                     {
-                      "boundary_note": "Combined chronological constraint defining the target era.",
-                      "concept": "released in the 90s or early 2000s",
-                      "required_ingredients": [
-                        "90s",
-                        "early 2000s"
-                      ]
+                      "handle": "90s and early 2000s era",
+                      "scope": [
+                        "90s and early 2000s"
+                      ],
+                      "retrieval_shape": "release date metadata",
+                      "cohesion": "Single chronological era defining the search period.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "The studio/brand anchor for the search.",
-                      "concept": "Disney movies",
-                      "required_ingredients": [
+                      "handle": "Disney studio",
+                      "scope": [
                         "Disney"
-                      ]
+                      ],
+                      "retrieval_shape": "production studio",
+                      "cohesion": "Specific named studio entity.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "A specific medium/format constraint within the studio's library.",
-                      "concept": "live-action",
-                      "required_ingredients": [
+                      "handle": "live-action format",
+                      "scope": [
                         "live-action"
-                      ]
+                      ],
+                      "retrieval_shape": "production format keyword",
+                      "cohesion": "Distinct categorical tag for non-animated media.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -187,6 +213,7 @@
         {
           "query": "gen z horror favorites",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: gen z, horror, favorites",
           "stage_1_primary_rewrite": "Horror movies that Gen Z grew up with and consider favorites",
           "branches": [
             {
@@ -195,31 +222,36 @@
               "display_phrase": "Gen Z Horror Nostalgia",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1572.9,
-                "input_tokens": 649,
-                "output_tokens": 142,
+                "elapsed_ms": 3366.6,
+                "input_tokens": 5675,
+                "output_tokens": 463,
                 "response": {
-                  "ingredient_inventory": [
-                    "Horror movies",
-                    "Gen Z childhood favorites",
-                    "nostalgic"
+                  "unit_analysis": "units:\n- \"Horror\" [trait: horror] -> literal (family: keyword, genre classification)\n- \"movies\" [trait: none] -> filler (generic scaffolding)\n- \"Gen Z grew up with\" [trait: gen z] -> best_guess: \"popular movies released 2005-2015\" (family: metadata, release era/popularity)\n- \"consider favorites\" [trait: favorites] -> literal (family: metadata, audience reception/popularity)\n- missing_trait: none",
+                  "inventory": [
+                    "Horror",
+                    "popular movies released 2005-2015",
+                    "consider favorites"
                   ],
-                  "concept_inventory_analysis": "The query combines a specific genre with a generational and experiential filter. These are distinct user intents: one defines the primary candidate domain (Horror) and the other filters for a specific cultural and chronological context (Gen Z nostalgia).",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Horror\" [units: Horror] -> emit (family: keyword, genre classification)\n- \"popular movies released 2005-2015\" [units: popular movies released 2005-2015] -> emit (family: metadata, specific demographic era relevance)\n- \"consider favorites\" [units: consider favorites] -> fuse_with \"popular movies released 2005-2015\" (both metadata quality signals)",
+                  "slots": [
                     {
-                      "boundary_note": "Defines the primary genre of the request.",
-                      "concept": "horror",
-                      "required_ingredients": [
-                        "Horror movies"
-                      ]
+                      "handle": "horror_genre",
+                      "scope": [
+                        "Horror"
+                      ],
+                      "retrieval_shape": "horror genre keyword",
+                      "cohesion": "Standard categorical genre tag. Independent of audience era or sentiment.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the specific generational audience and the nostalgic sentiment of films they grew up with.",
-                      "concept": "Gen Z favorites and nostalgia",
-                      "required_ingredients": [
-                        "Gen Z childhood favorites",
-                        "nostalgic"
-                      ]
+                      "handle": "gen_z_cultural_relevance",
+                      "scope": [
+                        "popular movies released 2005-2015",
+                        "consider favorites"
+                      ],
+                      "retrieval_shape": "metadata for era and popularity",
+                      "cohesion": "Fuses release era with popularity; Gate 2 same-family metadata signals for cultural relevance.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -229,39 +261,57 @@
               "branch_kind": "alternative[0]",
               "rewrite": "Horror movies currently popular with Gen Z audiences",
               "display_phrase": "Current Gen Z Horror Hits",
+              "difference_rationale": "This focuses on contemporary horror trends and current buzz rather than formative favorites.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1698.8,
-                "input_tokens": 646,
-                "output_tokens": 168,
+                "elapsed_ms": 3465.2,
+                "input_tokens": 5759,
+                "output_tokens": 621,
                 "response": {
-                  "ingredient_inventory": [
-                    "horror movies",
-                    "popular",
-                    "Gen Z audiences"
+                  "unit_analysis": "units:\n- \"Horror\" [trait: horror] -> literal (family: keyword, genre classification)\n- \"movies\" -> filler (generic scaffolding)\n- \"currently popular\" [trait: favorites][shift] -> literal (family: trending, real-time buzz and charts)\n- \"with Gen Z audiences\" [trait: gen z][shift] -> best_guess: \"popular among younger adult demographics\" (family: metadata, high popularity/notability with broad segmenting)\n- \"with Gen Z audiences\" [trait: gen z][shift] -> best_guess: \"gen-z aesthetic and social media buzz\" (family: semantic, cultural/tonal trend signal)",
+                  "inventory": [
+                    "Horror",
+                    "currently popular",
+                    "popular among younger adult demographics",
+                    "gen-z aesthetic and social media buzz"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into a genre category, a popularity ranker, and a specific demographic target. While 'popular with Gen Z' describes the current cultural trend, 'popular' and 'Gen Z' are distinct ingredients that characterize the candidate set of 'horror movies'.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Horror\" [units: Horror] -> emit (family: keyword, distinct genre category)\n- \"currently popular\" [units: currently popular] -> emit (family: trending, explicit real-time buzz focus)\n- \"Gen Z demographic\" [units: popular among younger adult demographics] -> emit (family: metadata, global popularity signal)\n- \"Gen Z vibe\" [units: gen-z aesthetic and social media buzz] -> emit (family: semantic, cultural/aesthetic trend signal)",
+                  "slots": [
                     {
-                      "boundary_note": "Defines the primary genre domain for the search.",
-                      "concept": "horror movies",
-                      "required_ingredients": [
-                        "horror movies"
-                      ]
+                      "handle": "horror-genre",
+                      "scope": [
+                        "Horror"
+                      ],
+                      "retrieval_shape": "horror genre keyword",
+                      "cohesion": "Standard categorical genre classification.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "A ranking and popularity intent that characterizes the current status of the content.",
-                      "concept": "popular",
-                      "required_ingredients": [
-                        "popular"
-                      ]
+                      "handle": "current-buzz",
+                      "scope": [
+                        "currently popular"
+                      ],
+                      "retrieval_shape": "currently trending movies",
+                      "cohesion": "Focuses on real-time chart performance and buzz.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Specifies the demographic lens through which the content's relevance is measured.",
-                      "concept": "Gen Z audiences",
-                      "required_ingredients": [
-                        "Gen Z audiences"
-                      ]
+                      "handle": "youth-popularity",
+                      "scope": [
+                        "popular among younger adult demographics"
+                      ],
+                      "retrieval_shape": "high global popularity and notability",
+                      "cohesion": "Grounded in metadata popularity as proxy for youth appeal.",
+                      "confidence": "inferred"
+                    },
+                    {
+                      "handle": "gen-z-aesthetic",
+                      "scope": [
+                        "gen-z aesthetic and social media buzz"
+                      ],
+                      "retrieval_shape": "semantic cultural trend search",
+                      "cohesion": "Captures the vibe and aesthetic of Gen Z content.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -274,47 +324,46 @@
               "spin_angle": "This spin narrows the search to 'elevated horror' studios like A24 which are defining favorites for this generation.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 2314.8,
-                "input_tokens": 657,
-                "output_tokens": 257,
+                "elapsed_ms": 2851.8,
+                "input_tokens": 5776,
+                "output_tokens": 462,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Stylistic or 'elevated' horror\" [swapped_in] -> literal (family: semantic, tonal and stylistic subgenre description)\n- \"movies\" -> filler (generic scaffolding)\n- \"from A24\" [trait: none] -> literal (family: studio, production company)\n- \"and similar studios\" [swapped_in] -> best_guess: \"indie horror labels like Neon and IFC\" (family: studio, interpretive extension)\n- \"popular with Gen Z\" [trait: gen z] -> best_guess: \"trending and culturally resonant films\" (family: metadata, global popularity signal)\nmissing_trait: favorites",
+                  "inventory": [
+                    "Stylistic or 'elevated' horror",
                     "A24",
-                    "horror",
-                    "stylistic",
-                    "elevated",
-                    "studios popular with Gen Z"
+                    "indie horror labels like Neon and IFC",
+                    "trending and culturally resonant films"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into a content domain (horror), a specific studio anchor (A24), a group of peer studios based on a demographic trend (Gen Z favorites), and a specific aesthetic quality (stylistic/elevated). The aesthetic is split from the genre because it acts as a filter on the genre. The studios are split because A24 is a concrete entity while 'Gen Z studios' represents a separate, broader category of studio peers.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Stylistic or 'elevated' horror\" [units: Stylistic or 'elevated' horror] -> emit (family: semantic, single tonal descriptor)\n- \"A24\" [units: A24] -> emit (family: studio, specific production label)\n- \"indie horror labels\" [units: indie horror labels like Neon and IFC] -> fuse_with \"A24\" (same studio retrieval target)\n- \"popular with Gen Z\" [units: trending and culturally resonant films] -> emit (family: metadata, global popularity/buzz)",
+                  "slots": [
                     {
-                      "boundary_note": "The primary genre classification defining the search domain.",
-                      "concept": "horror movies",
-                      "required_ingredients": [
-                        "horror"
-                      ]
+                      "handle": "elevated horror style",
+                      "scope": [
+                        "Stylistic or 'elevated' horror"
+                      ],
+                      "retrieval_shape": "stylistic and elevated horror themes",
+                      "cohesion": "Single semantic phenomenon describing tone and narrative style.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Specific studio entity used as a brand anchor.",
-                      "concept": "A24 movies",
-                      "required_ingredients": [
-                        "A24"
-                      ]
+                      "handle": "indie horror studios",
+                      "scope": [
+                        "A24",
+                        "indie horror labels like Neon and IFC"
+                      ],
+                      "retrieval_shape": "specific indie production studios",
+                      "cohesion": "Fused studios. A24 and its peers share one studio family target.",
+                      "confidence": "inferred"
                     },
                     {
-                      "boundary_note": "A distinct intent to include studios sharing a specific cultural relevance with a demographic.",
-                      "concept": "studios popular with Gen Z",
-                      "required_ingredients": [
-                        "studios popular with Gen Z"
-                      ]
-                    },
-                    {
-                      "boundary_note": "A unified stylistic and tonal requirement describing the sophisticated approach to the genre.",
-                      "concept": "stylistic and elevated tone",
-                      "required_ingredients": [
-                        "stylistic",
-                        "elevated"
-                      ]
+                      "handle": "trending popularity",
+                      "scope": [
+                        "trending and culturally resonant films"
+                      ],
+                      "retrieval_shape": "popular and notable films",
+                      "cohesion": "Metadata-based popularity signal representing current cultural resonance.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -327,33 +376,36 @@
               "spin_angle": "This spin swaps general favorites for movies that became viral sensations on Gen Z-dominant social platforms.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1819.5,
-                "input_tokens": 652,
-                "output_tokens": 174,
+                "elapsed_ms": 2569.4,
+                "input_tokens": 5766,
+                "output_tokens": 427,
                 "response": {
-                  "ingredient_inventory": [
-                    "horror movies",
+                  "unit_analysis": "units:\n- \"Horror\" [trait: horror] -> literal (family: keyword, genre classification)\n- \"movies\" -> filler (generic scaffolding)\n- \"viral sensations or trends\" [swapped_in] -> literal (family: trending, real-time or historical buzz)\n- \"among Gen Z on social media\" [swapped_in] -> best_guess: \"high-engagement trending content for youth audiences\" (family: trending, ground demographic signal in overall buzz)\n- missing_trait: gen z",
+                  "inventory": [
+                    "Horror",
                     "viral sensations or trends",
-                    "Gen Z",
-                    "social media"
+                    "high-engagement trending content for youth audiences"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into a genre-based candidate set (horror) and a separate social/cultural impact layer (viral social media trends involving Gen Z). While 'viral', 'Gen Z', and 'social media' are distinct ingredients, they function together here to describe a single phenomenon of cultural popularity, whereas 'horror' is the categorical domain.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Horror\" [units: Horror] -> emit (family: keyword, distinct genre constraint)\n- \"viral sensations or trends\" [units: viral sensations or trends] -> emit (family: trending, social buzz signal)\n- \"high-engagement trending content for youth audiences\" [units: high-engagement trending content for youth audiences] -> fuse_with \"viral sensations or trends\" (Gate 2: both trending family, same social phenomenon)",
+                  "slots": [
                     {
-                      "boundary_note": "Defines the core cinematic genre/domain for the search.",
-                      "concept": "horror movies",
-                      "required_ingredients": [
-                        "horror movies"
-                      ]
+                      "handle": "horror genre",
+                      "scope": [
+                        "Horror"
+                      ],
+                      "retrieval_shape": "horror keyword",
+                      "cohesion": "Standard genre keyword retrieval.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Describes a specific type of cultural impact or popularity metric based on demographic and platform.",
-                      "concept": "viral social media trends among Gen Z",
-                      "required_ingredients": [
+                      "handle": "gen-z viral trends",
+                      "scope": [
                         "viral sensations or trends",
-                        "Gen Z",
-                        "social media"
-                      ]
+                        "high-engagement trending content for youth audiences"
+                      ],
+                      "retrieval_shape": "trending buzz and engagement",
+                      "cohesion": "Fused trending signals naming the same social media phenomenon.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -364,6 +416,7 @@
         {
           "query": "80s kids would love",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: 80s kids, nostalgia, love",
           "stage_1_primary_rewrite": "Movies that people who were kids in the 1980s grew up loving",
           "branches": [
             {
@@ -372,31 +425,34 @@
               "display_phrase": "80s Childhood Favorites",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1902.8,
-                "input_tokens": 654,
-                "output_tokens": 181,
+                "elapsed_ms": 2373.4,
+                "input_tokens": 5683,
+                "output_tokens": 409,
                 "response": {
-                  "ingredient_inventory": [
-                    "1980s",
-                    "people who were kids",
-                    "grew up loving"
+                  "unit_analysis": "units:\n- \"Movies\" [trait: none] -> filler (generic scaffolding)\n- \"people who were kids in the 1980s grew up loving\" [trait: 80s kids] -> best_guess: \"beloved 1980s nostalgia classics\" (family: metadata, historical popularity and era)\n- \"people who were kids in the 1980s grew up loving\" [trait: love] -> best_guess: \"popular iconic childhood favorites\" (family: semantic, emotional resonance and appeal)\nmissing_trait: nostalgia",
+                  "inventory": [
+                    "beloved 1980s nostalgia classics",
+                    "popular iconic childhood favorites"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into the target era of the films (1980s) and the specific nostalgic sentiment/reception (beloved childhood classics). These are distinct because the 1980s defines the temporal candidate set, while the 'childhood favorites' aspect provides the quality and demographic lens.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"1980s classics\" [units: beloved 1980s nostalgia classics] -> emit (family: metadata, factual era and quality attributes)\n- \"childhood favorites\" [units: popular iconic childhood favorites] -> emit (family: semantic, subjective nostalgic appeal and archetypes)",
+                  "slots": [
                     {
-                      "boundary_note": "Specifies the historical period for the movies' release or cultural relevance.",
-                      "concept": "released in the 1980s",
-                      "required_ingredients": [
-                        "1980s"
-                      ]
+                      "handle": "1980s classics",
+                      "scope": [
+                        "beloved 1980s nostalgia classics"
+                      ],
+                      "retrieval_shape": "metadata",
+                      "cohesion": "Focuses on the factual era and popularity attributes defined by the timeframe.",
+                      "confidence": "inferred"
                     },
                     {
-                      "boundary_note": "Captures the specific demographic appeal and the nostalgic status of being a 'childhood favorite'.",
-                      "concept": "nostalgic childhood favorites",
-                      "required_ingredients": [
-                        "people who were kids",
-                        "grew up loving"
-                      ]
+                      "handle": "childhood favorites",
+                      "scope": [
+                        "popular iconic childhood favorites"
+                      ],
+                      "retrieval_shape": "semantic",
+                      "cohesion": "Captures the subjective emotional resonance of growing up with specific films.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -406,33 +462,49 @@
               "branch_kind": "alternative[0]",
               "rewrite": "Modern movies with an 80s aesthetic or themes that appeal to 80s kids",
               "display_phrase": "Modern Movies with 80s Vibes",
+              "difference_rationale": "This shifts the search from 80s-era films to modern movies that use 80s style or themes.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1721.2,
-                "input_tokens": 656,
-                "output_tokens": 169,
+                "elapsed_ms": 3000.7,
+                "input_tokens": 5783,
+                "output_tokens": 485,
                 "response": {
-                  "ingredient_inventory": [
-                    "modern movies",
-                    "80s aesthetic",
-                    "themes that appeal to 80s kids"
+                  "unit_analysis": "units:\n- \"Modern movies\" [trait: none] [shift] -> literal (family: metadata, release date era filter)\n- \"with an 80s aesthetic\" [trait: none] [shift] -> literal (family: semantic, visual style and tone)\n- \"themes\" [trait: none] -> literal (family: semantic, narrative elements)\n- \"that appeal to\" [trait: none] -> fold_into \"80s kids\"\n- \"80s kids\" [trait: 80s kids] [shift] -> best_guess: \"80s nostalgia and cultural callbacks\" (family: semantic, audience resonance)\n- missing_trait: nostalgia\n- missing_trait: love",
+                  "inventory": [
+                    "Modern movies",
+                    "with an 80s aesthetic",
+                    "themes",
+                    "80s nostalgia and cultural callbacks"
                   ],
-                  "concept_inventory_analysis": "I have separated the release era requirement from the stylistic and thematic elements. The '80s aesthetic' and '80s themes' are unified into a single concept because they both serve the same user intent of capturing the 1980s vibe, while the 'modern' requirement defines a separate temporal domain.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Modern movies\" [units: Modern movies] -> emit (family: metadata, specific release era constraint)\n- \"with an 80s aesthetic\" [units: with an 80s aesthetic] -> fuse_with \"themes\" (both semantic tonal/narrative style)\n- \"themes\" [units: themes] -> fuse_with \"with an 80s aesthetic\" (both semantic tonal/narrative style)\n- \"80s nostalgia and cultural callbacks\" [units: 80s nostalgia and cultural callbacks] -> emit (family: semantic, distinct audience resonance dimension)",
+                  "slots": [
                     {
-                      "boundary_note": "Defines the candidate set by release timeframe.",
-                      "concept": "modern movies",
-                      "required_ingredients": [
-                        "modern movies"
-                      ]
+                      "handle": "Modern release era",
+                      "scope": [
+                        "Modern movies"
+                      ],
+                      "retrieval_shape": "modern release year metadata",
+                      "cohesion": "Specifies films released in recent years rather than 1980s.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Unified concept capturing the specific nostalgic style and thematic content requested.",
-                      "concept": "80s aesthetic or themes",
-                      "required_ingredients": [
-                        "80s aesthetic",
-                        "themes that appeal to 80s kids"
-                      ]
+                      "handle": "80s stylistic themes",
+                      "scope": [
+                        "with an 80s aesthetic",
+                        "themes"
+                      ],
+                      "retrieval_shape": "80s-inspired visual and narrative themes",
+                      "cohesion": "Gate 2: Fuses visual aesthetic and narrative themes into one semantic profile.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "80s audience nostalgia",
+                      "scope": [
+                        "80s nostalgia and cultural callbacks"
+                      ],
+                      "retrieval_shape": "nostalgic 80s cultural callbacks",
+                      "cohesion": "Semantic retrieval targeting specific nostalgic resonance for a generation.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -445,39 +517,46 @@
               "spin_angle": "This narrows the primary intent to the popular live-action adventure sub-genre that defined 80s youth cinema.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1913.9,
-                "input_tokens": 659,
-                "output_tokens": 216,
+                "elapsed_ms": 2677.3,
+                "input_tokens": 5781,
+                "output_tokens": 446,
                 "response": {
-                  "ingredient_inventory": [
-                    "live-action",
-                    "adventure movies",
-                    "1980s",
-                    "80s kids grew up with"
+                  "unit_analysis": "units:\n- \"Live-action\" [trait: none] -> literal (family: keyword, format classification)\n- \"adventure\" [trait: none] [swapped_in] -> literal (family: keyword, genre classification)\n- \"movies\" [trait: none] -> filler (generic scaffolding)\n- \"from the 1980s\" [trait: none] -> literal (family: metadata, release era)\n- \"that 80s kids grew up with\" [trait: 80s kids] -> best_guess: \"popular nostalgic cultural classics\" (family: metadata, global popularity and notability)\n- missing_trait: nostalgia\n- missing_trait: love",
+                  "inventory": [
+                    "Live-action",
+                    "adventure",
+                    "from the 1980s",
+                    "popular nostalgic cultural classics"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into its primary genre/medium category, the specific time constraint, and the subjective nostalgic quality. 'Live-action' and 'adventure movies' are grouped as the core domain, while the 1980s period and the nostalgic 'childhood favorites' aspect are treated as separate qualifying layers.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Live-action\" [units: \"Live-action\"] -> emit (family: keyword, distinct format tag)\n- \"adventure\" [units: \"adventure\"] -> emit (family: keyword, distinct genre tag)\n- \"from the 1980s\" [units: \"from the 1980s\"] -> fuse_with \"popular nostalgic cultural classics\" (both metadata scalars)\n- \"popular nostalgic cultural classics\" [units: \"popular nostalgic cultural classics\"] -> emit (family: metadata, fused era and popularity)",
+                  "slots": [
                     {
-                      "boundary_note": "This defines the base format and genre domain of the films requested.",
-                      "concept": "Live-action adventure movies",
-                      "required_ingredients": [
-                        "live-action",
-                        "adventure movies"
-                      ]
+                      "handle": "live-action format",
+                      "scope": [
+                        "Live-action"
+                      ],
+                      "retrieval_shape": "live-action format tag",
+                      "cohesion": "Single deterministic format keyword.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "This is a strict temporal constraint defining the release window.",
-                      "concept": "1980s era",
-                      "required_ingredients": [
-                        "1980s"
-                      ]
+                      "handle": "adventure genre",
+                      "scope": [
+                        "adventure"
+                      ],
+                      "retrieval_shape": "adventure genre keyword",
+                      "cohesion": "Single deterministic genre keyword.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "This represents a specific cultural sentiment and nostalgic status distinct from just being released in that decade.",
-                      "concept": "80s childhood classics",
-                      "required_ingredients": [
-                        "80s kids grew up with"
-                      ]
+                      "handle": "popular 1980s classics",
+                      "scope": [
+                        "from the 1980s",
+                        "popular nostalgic cultural classics"
+                      ],
+                      "retrieval_shape": "1980s era and high popularity",
+                      "cohesion": "Both units map to metadata scalars; Gate 2 fuses into one chronological popularity target.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -490,37 +569,46 @@
               "spin_angle": "This narrows the focus to animated films that were staples for children during the 1980s.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 2173.8,
-                "input_tokens": 655,
-                "output_tokens": 284,
+                "elapsed_ms": 3023.5,
+                "input_tokens": 5774,
+                "output_tokens": 505,
                 "response": {
-                  "ingredient_inventory": [
-                    "animated movies",
-                    "1980s",
+                  "unit_analysis": "units:\n- \"Animated\" [trait: none] -> literal (family: keyword, format classification)\n- \"movies\" -> filler (generic scaffolding)\n- \"from the 1980s\" [trait: none] -> literal (family: metadata, release era)\n- \"80s kids would love\" [trait: 80s kids] -> best_guess: \"nostalgic 1980s children's staples\" (family: semantic, era-specific audience resonance)\n- \"80s kids would love\" [trait: love] -> literal (family: metadata, high popularity/notability)",
+                  "inventory": [
+                    "Animated",
+                    "from the 1980s",
+                    "nostalgic 1980s children's staples",
                     "80s kids would love"
                   ],
-                  "concept_inventory_analysis": "The request is split into three distinct concepts: the medium (animation), the temporal domain (1980s), and a subjective quality/nostalgia factor (content for 80s kids). These are separate intent layers that define the candidate set and then filter it by specific era and vibe.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Animated\" [units: \"Animated\"] -> emit (family: keyword, distinct format classification)\n- \"from the 1980s\" [units: \"from the 1980s\"] -> emit (family: metadata, specific temporal attribute)\n- \"nostalgic 1980s children's staples\" [units: \"nostalgic 1980s children's staples\"] -> emit (family: semantic, era-specific cultural vibe)\n- \"80s kids would love\" [units: \"80s kids would love\"] -> fuse_with \"from the 1980s\" (Gate 1 match: both metadata)",
+                  "slots": [
                     {
-                      "boundary_note": "Defines the specific medium of the films.",
-                      "concept": "animated movies",
-                      "required_ingredients": [
-                        "animated movies"
-                      ]
+                      "handle": "animated_format",
+                      "scope": [
+                        "Animated"
+                      ],
+                      "retrieval_shape": "animated movies",
+                      "cohesion": "Single genre/format keyword classification.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Defines the release era/temporal boundary.",
-                      "concept": "1980s",
-                      "required_ingredients": [
-                        "1980s"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Captures the nostalgic and demographic-specific appeal requested by the user.",
-                      "concept": "80s kids nostalgia",
-                      "required_ingredients": [
+                      "handle": "release_era_and_popularity",
+                      "scope": [
+                        "from the 1980s",
                         "80s kids would love"
-                      ]
+                      ],
+                      "retrieval_shape": "1980s release and high popularity",
+                      "cohesion": "Fuses metadata era with metadata popularity per Gate 2 metadata-grouping.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "nostalgic_staples",
+                      "scope": [
+                        "nostalgic 1980s children's staples"
+                      ],
+                      "retrieval_shape": "nostalgic 1980s kids films",
+                      "cohesion": "Semantic retrieval of films with specific cultural resonance/vibe.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -531,6 +619,7 @@
         {
           "query": "movies dads like",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: movies, dads like",
           "stage_1_primary_rewrite": "Movies that are popular with or commonly liked by dads",
           "branches": [
             {
@@ -539,29 +628,34 @@
               "display_phrase": "Movies Dads Love",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1791.4,
-                "input_tokens": 647,
-                "output_tokens": 167,
+                "elapsed_ms": 2695.5,
+                "input_tokens": 5671,
+                "output_tokens": 330,
                 "response": {
-                  "ingredient_inventory": [
-                    "popular/commonly liked",
-                    "dads"
+                  "unit_analysis": "units:\n- \"Movies\" [trait: movies] -> filler (generic movie-search scaffolding)\n- \"popular with or commonly liked by\" [trait: none] -> fold_into \"dads\" (audience-dependent popularity signal)\n- \"dads\" [trait: dads like] -> best_guess: \"broadly-appealing films with paternal resonance\" (family: semantic, character/tonal appeal)\n- \"dads\" [trait: dads like] -> best_guess: \"popular established classics and blockbusters\" (family: metadata, global popularity signal)",
+                  "inventory": [
+                    "broadly-appealing films with paternal resonance",
+                    "popular established classics and blockbusters"
                   ],
-                  "concept_inventory_analysis": "The query combines a target audience or demographic persona ('dads') with a popularity/affinity qualifier ('commonly liked'). These are distinct intents: one defines the subjective appeal or cultural trope of a 'Dad Movie', and the other specifies the ranking or quality signal of being 'popular'. Splitting them allows for separate handling of the thematic content and the popularity metric.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"paternal resonance\" [units: broadly-appealing films with paternal resonance] -> emit (family: semantic, captures dad-targeted themes and vibes)\n- \"mass popularity\" [units: popular established classics and blockbusters] -> emit (family: metadata, captures broad mainstream appeal)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the core thematic identity or appeal associated with the 'Dad' demographic.",
-                      "concept": "Dad movies",
-                      "required_ingredients": [
-                        "dads"
-                      ]
+                      "handle": "paternal resonance",
+                      "scope": [
+                        "broadly-appealing films with paternal resonance"
+                      ],
+                      "retrieval_shape": "themes and character archetypes favoring paternal resonance",
+                      "cohesion": "Captures the thematic and tonal side of the idiom 'dads like'.",
+                      "confidence": "inferred"
                     },
                     {
-                      "boundary_note": "Represents the qualifier that these must be well-regarded or widely recognized within that category.",
-                      "concept": "popular or commonly liked",
-                      "required_ingredients": [
-                        "popular/commonly liked"
-                      ]
+                      "handle": "mass popularity",
+                      "scope": [
+                        "popular established classics and blockbusters"
+                      ],
+                      "retrieval_shape": "highly rated and popular mainstream movies",
+                      "cohesion": "Gate 1 split: metadata popularity is a distinct retrieval endpoint from semantic themes.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -574,45 +668,54 @@
               "spin_angle": "This spin narrows the broad 'dads' label into the classic high-stakes action and thriller genres often associated with the archetype.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 2028.3,
-                "input_tokens": 645,
-                "output_tokens": 225,
+                "elapsed_ms": 2771.2,
+                "input_tokens": 5764,
+                "output_tokens": 425,
                 "response": {
-                  "ingredient_inventory": [
-                    "Classic movies",
-                    "Action movies",
-                    "Thriller movies",
-                    "Dads like"
+                  "unit_analysis": "units:\n- \"Classic\" [none] -> literal (family: metadata, historical notability and era classification)\n- \"action\" [swapped_in] -> literal (family: keyword, genre classification)\n- \"and\" [none] -> filler (logical conjunction)\n- \"thriller movies\" [swapped_in] -> literal (family: keyword, genre classification)\n- \"that dads like\" [trait: dads like] -> best_guess: \"broadly appealing masculine-interest blockbusters\" (family: metadata, high global popularity/notability)",
+                  "inventory": [
+                    "Classic",
+                    "action",
+                    "thriller movies",
+                    "broadly appealing masculine-interest blockbusters"
                   ],
-                  "concept_inventory_analysis": "The query combines historical classification (classic), genre classifications (action, thriller), and a specific audience preference (movies for dads). These are distinct intents because historical status, genre identity, and audience appeal are separate evaluative and categorical dimensions. Action and Thriller are kept separate to allow for distinct genre matching, while 'Classic' is treated as a temporal/quality attribute.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Classic\" [units: Classic] -> emit (family: metadata, era-based quality descriptor)\n- \"action\" [units: action] -> emit (family: keyword, primary genre keyword)\n- \"thriller movies\" [units: thriller movies] -> emit (family: keyword, secondary genre keyword)\n- \"broadly appealing masculine-interest blockbusters\" [units: broadly appealing masculine-interest blockbusters] -> emit (family: metadata, popularity and demographic appeal)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the historical or 'timeless' quality requested by the user.",
-                      "concept": "Classic films",
-                      "required_ingredients": [
-                        "Classic movies"
-                      ]
+                      "handle": "Classic status",
+                      "scope": [
+                        "Classic"
+                      ],
+                      "retrieval_shape": "metadata era and notability",
+                      "cohesion": "Distinct attribute defining the film's historical status.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the core genre intent for high-intensity physical conflict.",
-                      "concept": "Action movies",
-                      "required_ingredients": [
-                        "Action movies"
-                      ]
+                      "handle": "Action genre",
+                      "scope": [
+                        "action"
+                      ],
+                      "retrieval_shape": "action genre keyword",
+                      "cohesion": "Core genre category; splits from metadata family.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the core genre intent for suspense and tension.",
-                      "concept": "Thriller movies",
-                      "required_ingredients": [
-                        "Thriller movies"
-                      ]
+                      "handle": "Thriller genre",
+                      "scope": [
+                        "thriller movies"
+                      ],
+                      "retrieval_shape": "thriller genre keyword",
+                      "cohesion": "Distinct genre; split from action to allow independent weighting.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the specific demographic appeal or 'Dad movie' archetype requested.",
-                      "concept": "Movies for dads",
-                      "required_ingredients": [
-                        "Dads like"
-                      ]
+                      "handle": "Broad popularity for dads",
+                      "scope": [
+                        "broadly appealing masculine-interest blockbusters"
+                      ],
+                      "retrieval_shape": "metadata global popularity and appeal",
+                      "cohesion": "Best guess translation of demographic preference into system capability.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -625,23 +728,26 @@
               "spin_angle": "This spin focuses on the literal experience of fatherhood, selecting movies that explore the relationships and roles of being a dad.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1734.7,
-                "input_tokens": 645,
-                "output_tokens": 106,
+                "elapsed_ms": 1807.9,
+                "input_tokens": 5762,
+                "output_tokens": 214,
                 "response": {
-                  "ingredient_inventory": [
-                    "fatherhood",
-                    "being a dad"
+                  "unit_analysis": "units:\n- \"Movies\" [trait: movies] -> filler (generic scaffolding)\n- \"about fatherhood\" [trait: none] -> literal (family: semantic, core narrative theme)\n- \"and being a dad\" [trait: none] -> literal (family: semantic, character archetype and role)",
+                  "inventory": [
+                    "about fatherhood",
+                    "and being a dad"
                   ],
-                  "concept_inventory_analysis": "The query describes a single thematic focus (the role and experience of being a father) using two synonymous phrases. Since both ingredients describe the same core user intent, they are grouped into one concept.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"about fatherhood\" [units: about fatherhood] -> emit (family: semantic, core theme of the request)\n- \"and being a dad\" [units: and being a dad] -> fuse_with \"about fatherhood\" (Gate 2: both semantic character/thematic dimensions)",
+                  "slots": [
                     {
-                      "boundary_note": "Both ingredients represent the same thematic intent of father-centric narratives and are conceptually inseparable in this context.",
-                      "concept": "fatherhood and being a dad",
-                      "required_ingredients": [
-                        "fatherhood",
-                        "being a dad"
-                      ]
+                      "handle": "fatherhood and dad roles",
+                      "scope": [
+                        "about fatherhood",
+                        "and being a dad"
+                      ],
+                      "retrieval_shape": "semantic theme of fatherhood and parenting",
+                      "cohesion": "Gate 2: Both units describe the same thematic and character archetype territory.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -652,6 +758,7 @@
         {
           "query": "Y2K vibes",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Y2K, vibes",
           "stage_1_primary_rewrite": "Movies with a Y2K aesthetic and cultural vibe",
           "branches": [
             {
@@ -660,23 +767,26 @@
               "display_phrase": "Y2K Aesthetic",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1531.8,
-                "input_tokens": 647,
-                "output_tokens": 154,
+                "elapsed_ms": 2323.8,
+                "input_tokens": 5672,
+                "output_tokens": 279,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Movies\" [trait: none] -> filler (generic scaffolding)\n- \"Y2K aesthetic\" [trait: Y2K] -> literal (family: semantic, visual style and period aesthetic)\n- \"cultural vibe\" [trait: vibes] -> literal (family: semantic, social atmosphere and tonal mood)",
+                  "inventory": [
                     "Y2K aesthetic",
                     "cultural vibe"
                   ],
-                  "concept_inventory_analysis": "The query focuses on a singular, unified phenomenon: the specific stylistic and cultural era known as Y2K. While 'aesthetic' and 'cultural vibe' are mentioned as separate ingredients, they both describe different facets of the same overarching period and atmosphere. Splitting them would result in redundant concepts, as the 'cultural vibe' of Y2K is inextricable from its 'aesthetic'.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Y2K aesthetic\" [units: \"Y2K aesthetic\"] -> emit (family: semantic, period visual style)\n- \"cultural vibe\" [units: \"cultural vibe\"] -> fuse_with \"Y2K aesthetic\" (Gate 2: unified period-specific semantic phenomenon)",
+                  "slots": [
                     {
-                      "boundary_note": "The Y2K aesthetic and cultural vibe are two descriptors for the same singular era-based intent. They form a unified thematic concept.",
-                      "concept": "Y2K aesthetic and cultural vibe",
-                      "required_ingredients": [
+                      "handle": "Y2K era aesthetic and vibe",
+                      "scope": [
                         "Y2K aesthetic",
                         "cultural vibe"
-                      ]
+                      ],
+                      "retrieval_shape": "Y2K period style and cultural atmosphere",
+                      "cohesion": "Fuses visual aesthetic with cultural vibe as a single semantic period-based descriptor.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -689,29 +799,44 @@
               "spin_angle": "This spin narrows the aesthetic to the iconic teen comedy genre that defined the era's fashion and tone.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1509.9,
-                "input_tokens": 646,
-                "output_tokens": 124,
+                "elapsed_ms": 2746.7,
+                "input_tokens": 5761,
+                "output_tokens": 459,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Teen comedies\" [trait: none] -> literal (family: keyword, genre and demographic classification)\n- \"with a strong Y2K vibe\" [trait: Y2K] [swapped_in] -> best_guess: \"late-1990s and early-2000s era\" (family: metadata, release period)\n- \"with a strong Y2K vibe\" [trait: vibes] [swapped_in] -> best_guess: \"neon aesthetic and Y2K fashion atmosphere\" (family: semantic, visual style)",
+                  "inventory": [
                     "Teen comedies",
-                    "Y2K vibe"
+                    "late-1990s and early-2000s era",
+                    "neon aesthetic and Y2K fashion atmosphere"
                   ],
-                  "concept_inventory_analysis": "The query is split into a genre/target audience component and a specific aesthetic/era vibe component to ensure the domain is defined separately from the stylistic filter.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Teen comedies\" [units: Teen comedies] -> emit (family: keyword, standard genre classification)\n- \"late-1990s and early-2000s era\" [units: late-1990s and early-2000s era] -> emit (family: metadata, chronological release window)\n- \"neon aesthetic and Y2K fashion atmosphere\" [units: neon aesthetic and Y2K fashion atmosphere] -> emit (family: semantic, specific visual and tonal atmosphere)",
+                  "slots": [
                     {
-                      "boundary_note": "Defines the core genre and demographic of the films.",
-                      "concept": "Teen comedy movies",
-                      "required_ingredients": [
+                      "handle": "Teen comedy genre",
+                      "scope": [
                         "Teen comedies"
-                      ]
+                      ],
+                      "retrieval_shape": "teen comedy genre tags",
+                      "cohesion": "Single genre keyword. Gate 1 splits keyword from metadata and semantic.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Captures the specific aesthetic, cultural era, and visual style requested as a modifier.",
-                      "concept": "Y2K aesthetic/vibe",
-                      "required_ingredients": [
-                        "Y2K vibe"
-                      ]
+                      "handle": "Y2K release window",
+                      "scope": [
+                        "late-1990s and early-2000s era"
+                      ],
+                      "retrieval_shape": "release years 1997 to 2004",
+                      "cohesion": "Metadata target for the 'Y2K' temporal component. Gate 1 splits family.",
+                      "confidence": "inferred"
+                    },
+                    {
+                      "handle": "Y2K visual aesthetic",
+                      "scope": [
+                        "neon aesthetic and Y2K fashion atmosphere"
+                      ],
+                      "retrieval_shape": "Y2K fashion and aesthetic themes",
+                      "cohesion": "Semantic target for the 'vibe' component. Gate 1 splits family.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -724,37 +849,46 @@
               "spin_angle": "This spin focuses on the 'cyperpunk' and high-tech futurism visual style prevalent in Y2K-era action and sci-fi.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1551.2,
-                "input_tokens": 650,
-                "output_tokens": 179,
+                "elapsed_ms": 2934.4,
+                "input_tokens": 5775,
+                "output_tokens": 522,
                 "response": {
-                  "ingredient_inventory": [
-                    "sci-fi movies",
-                    "action movies",
-                    "Y2K tech aesthetic"
+                  "unit_analysis": "units:\n- \"Sci-fi\" [trait: none] -> literal (family: keyword, genre classification)\n- \"action\" [trait: none] -> literal (family: keyword, genre classification)\n- \"movies\" [trait: none] -> filler (generic scaffolding)\n- \"featuring\" [trait: none] -> filler (generic scaffolding)\n- \"the Y2K tech aesthetic\" [trait: Y2K, vibes][swapped_in] -> best_guess: \"high-tech futurism and cyberpunk visual style\" (family: semantic, visual style and atmosphere)\n- \"the Y2K tech aesthetic\" [trait: Y2K, vibes][swapped_in] -> best_guess: \"movies released between 1998 and 2003\" (family: metadata, specific release era)",
+                  "inventory": [
+                    "Sci-fi",
+                    "action",
+                    "high-tech futurism and cyberpunk visual style",
+                    "movies released between 1998 and 2003"
                   ],
-                  "concept_inventory_analysis": "The query specifies two distinct genres (sci-fi and action) which function as candidate domain filters, and a specific visual/thematic style (Y2K tech aesthetic) that characterizes the content. Each genre is a separate intent, and the aesthetic is a separate qualitative trait.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Sci-fi\" [units: Sci-fi] -> fuse_with \"action\"\n- \"action\" [units: Sci-fi, action] -> emit (family: keyword, combined genre tags)\n- \"high-tech futurism and cyberpunk visual style\" [units: high-tech futurism and cyberpunk visual style] -> emit (family: semantic, cohesive visual atmosphere)\n- \"movies released between 1998 and 2003\" [units: movies released between 1998 and 2003] -> emit (family: metadata, distinct temporal constraint)",
+                  "slots": [
                     {
-                      "boundary_note": "A distinct genre classification for the candidate set.",
-                      "concept": "sci-fi movies",
-                      "required_ingredients": [
-                        "sci-fi movies"
-                      ]
+                      "handle": "Sci-fi and action genre",
+                      "scope": [
+                        "Sci-fi",
+                        "action"
+                      ],
+                      "retrieval_shape": "genre classification tags",
+                      "cohesion": "Gate 2 fuses compatible genre keywords into a single genre-based query.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "A distinct genre classification for the candidate set.",
-                      "concept": "action movies",
-                      "required_ingredients": [
-                        "action movies"
-                      ]
+                      "handle": "Y2K visual aesthetic",
+                      "scope": [
+                        "high-tech futurism and cyberpunk visual style"
+                      ],
+                      "retrieval_shape": "visual style and atmosphere",
+                      "cohesion": "Semantic retrieval handles multi-dimensional visual descriptions in one vector space.",
+                      "confidence": "inferred"
                     },
                     {
-                      "boundary_note": "A specific visual and cultural style characterizing the film's look and feel.",
-                      "concept": "Y2K tech aesthetic",
-                      "required_ingredients": [
-                        "Y2K tech aesthetic"
-                      ]
+                      "handle": "Y2K release era",
+                      "scope": [
+                        "movies released between 1998 and 2003"
+                      ],
+                      "retrieval_shape": "release date range",
+                      "cohesion": "Metadata-based temporal constraint is distinct from visual aesthetic (Gate 1 split).",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -771,29 +905,34 @@
         {
           "query": "Scary Movie",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Scary Movie, horror, parody",
           "stage_1_primary_rewrite": "The movie titled \"Scary Movie\"",
           "branches": [
             {
               "branch_kind": "alternative[0]",
               "rewrite": "Movies that are scary",
               "display_phrase": "Genuinely scary movies",
+              "difference_rationale": "A genre search for genuinely frightening films provides a materially different experience than a specific title lookup for a comedy.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1379.7,
-                "input_tokens": 641,
-                "output_tokens": 92,
+                "elapsed_ms": 1425.1,
+                "input_tokens": 5761,
+                "output_tokens": 149,
                 "response": {
-                  "ingredient_inventory": [
-                    "scary movies"
+                  "unit_analysis": "units:\n- \"Movies\" [trait: none] -> filler (generic scaffolding)\n- \"that are\" [trait: none] -> filler (grammatical connective)\n- \"scary\" [trait: horror][shift] -> literal (family: keyword, genre classification)\nmissing_trait: Scary Movie\nmissing_trait: parody",
+                  "inventory": [
+                    "scary"
                   ],
-                  "concept_inventory_analysis": "The user's intent is focused on a single genre/tonal classification. 'Scary' and 'movies' together define the candidate set without any secondary ranking or qualifying traits.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"scary\" [units: scary] -> emit (family: keyword, genre categorization)",
+                  "slots": [
                     {
-                      "boundary_note": "This is a single unified intent defining the genre or tone of the movies requested.",
-                      "concept": "horror or scary movies",
-                      "required_ingredients": [
-                        "scary movies"
-                      ]
+                      "handle": "scary",
+                      "scope": [
+                        "scary"
+                      ],
+                      "retrieval_shape": "horror genre",
+                      "cohesion": "Single genre keyword for frightening films.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -806,37 +945,36 @@
               "spin_angle": "This spin focuses on the early 2000s parody era of the primary title.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1978.1,
-                "input_tokens": 650,
-                "output_tokens": 205,
+                "elapsed_ms": 2195.9,
+                "input_tokens": 5764,
+                "output_tokens": 312,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Horror\" [trait: horror] -> literal (family: keyword, genre classification)\n- \"parody\" [trait: parody] -> literal (family: keyword, subgenre tag)\n- \"movies\" -> filler (generic scaffolding)\n- \"early 2000s\" [swapped_in] -> literal (family: metadata, release era)",
+                  "inventory": [
                     "Horror",
-                    "parody movies",
+                    "parody",
                     "early 2000s"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into a primary genre (horror), a specific style or sub-genre (parody), and a chronological constraint (early 2000s). While 'horror parody' often describes one film, horror and parody are separate intents—the user wants films that are horror-based and films that are comedic parodies. The time period is a distinct ranking/filtering domain.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Horror\" [units: Horror] -> fuse_with \"parody\" (Gate 2: compound keyword subgenre)\n- \"parody\" [units: parody] -> emit (family: keyword, horror-parody genre unit)\n- \"early 2000s\" [units: early 2000s] -> emit (family: metadata, temporal release filter)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the primary thematic domain of horror.",
-                      "concept": "horror genre",
-                      "required_ingredients": [
-                        "Horror"
-                      ]
+                      "handle": "horror parody genre",
+                      "scope": [
+                        "Horror",
+                        "parody"
+                      ],
+                      "retrieval_shape": "horror comedy and parody keywords",
+                      "cohesion": "Gate 2: combined into a single compound subgenre classification.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the stylistic intent of comedic spoof or parody movies.",
-                      "concept": "parody movies",
-                      "required_ingredients": [
-                        "parody movies"
-                      ]
-                    },
-                    {
-                      "boundary_note": "A chronological constraint defining the specific era of the films.",
-                      "concept": "early 2000s",
-                      "required_ingredients": [
+                      "handle": "early 2000s era",
+                      "scope": [
                         "early 2000s"
-                      ]
+                      ],
+                      "retrieval_shape": "release year between 2000 and 2005",
+                      "cohesion": "Distinct metadata temporal constraint. Gate 1: keyword vs metadata.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -847,6 +985,7 @@
         {
           "query": "Up",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Up",
           "stage_1_primary_rewrite": "Up",
           "branches": []
         }
@@ -859,6 +998,7 @@
         {
           "query": "cozy movie for tonight",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: cozy, tonight",
           "stage_1_primary_rewrite": "A cozy movie that is good for watching tonight",
           "branches": [
             {
@@ -867,29 +1007,24 @@
               "display_phrase": "Cozy movies for tonight",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1709.2,
-                "input_tokens": 646,
-                "output_tokens": 147,
+                "elapsed_ms": 1617.7,
+                "input_tokens": 5669,
+                "output_tokens": 190,
                 "response": {
-                  "ingredient_inventory": [
-                    "cozy",
-                    "good for watching tonight"
+                  "unit_analysis": "units:\n- \"A cozy movie\" [trait: cozy] -> literal (family: semantic, mood/atmosphere descriptor)\n- \"that is good for watching tonight\" [trait: tonight] -> filler (generic situational scaffolding)",
+                  "inventory": [
+                    "A cozy movie"
                   ],
-                  "concept_inventory_analysis": "The user has a specific tonal requirement and a generic situational filler. 'Cozy' represents the core semantic and atmospheric intent. 'Good for watching tonight' is a common filler phrase indicating a general quality preference or a desire for recommendations, which is distinct from the specific atmosphere requested.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"A cozy movie\" [units: A cozy movie] -> emit (family: semantic, single tonal descriptor)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the core atmospheric and tonal preference of the user.",
-                      "concept": "cozy tone",
-                      "required_ingredients": [
-                        "cozy"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Represents the situational context or general quality filter implied by the user's framing.",
-                      "concept": "good recommendations for now",
-                      "required_ingredients": [
-                        "good for watching tonight"
-                      ]
+                      "handle": "cozy atmosphere",
+                      "scope": [
+                        "A cozy movie"
+                      ],
+                      "retrieval_shape": "cozy mood and atmosphere",
+                      "cohesion": "Single cohesive tonal descriptor for mood retrieval.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -902,33 +1037,34 @@
               "spin_angle": "This angle focuses on the visual comfort of animation while preserving the cozy vibe.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1613.3,
-                "input_tokens": 646,
-                "output_tokens": 161,
+                "elapsed_ms": 1892.8,
+                "input_tokens": 5753,
+                "output_tokens": 227,
                 "response": {
-                  "ingredient_inventory": [
-                    "cozy",
-                    "animated",
-                    "movies",
-                    "relaxing night in"
+                  "unit_analysis": "units:\n- \"Cozy\" [trait: cozy] -> literal (family: semantic, tonal descriptor)\n- \"animated\" [trait: none][swapped_in] -> literal (family: keyword, format tag)\n- \"movies\" -> filler (generic scaffolding)\n- \"for a relaxing night in\" [trait: tonight] -> filler (generic situational scaffolding)",
+                  "inventory": [
+                    "Cozy",
+                    "animated"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into a content format (animated), an emotional/tonal quality (cozy), and a situational context (relaxing night in). 'Cozy' and 'relaxing night in' are grouped as they represent a single unified mood intent. 'Animated' is separated as it defines the medium/format constraint.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Cozy\" [units: Cozy] -> emit (family: semantic, tonal descriptor for vibe)\n- \"animated\" [units: animated] -> emit (family: keyword, animation format category)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the specific medium or production style requested.",
-                      "concept": "animated movies",
-                      "required_ingredients": [
-                        "animated",
-                        "movies"
-                      ]
+                      "handle": "cozy tone",
+                      "scope": [
+                        "Cozy"
+                      ],
+                      "retrieval_shape": "semantic mood: cozy",
+                      "cohesion": "Distinct tonal descriptor handled by semantic vector search.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the unified emotional tone and atmospheric preference for the viewing experience.",
-                      "concept": "cozy and relaxing tone",
-                      "required_ingredients": [
-                        "cozy",
-                        "relaxing night in"
-                      ]
+                      "handle": "animated format",
+                      "scope": [
+                        "animated"
+                      ],
+                      "retrieval_shape": "keyword format: animated",
+                      "cohesion": "Gate 1 split: keyword format is distinct from semantic tone.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -941,31 +1077,28 @@
               "spin_angle": "This angle leans into the 'rainy day' mood which is a popular subset of cozy cinema.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1986.8,
-                "input_tokens": 648,
-                "output_tokens": 193,
+                "elapsed_ms": 2136.5,
+                "input_tokens": 5760,
+                "output_tokens": 308,
                 "response": {
-                  "ingredient_inventory": [
-                    "atmospheric",
+                  "unit_analysis": "units:\n- \"Atmospheric\" [trait: none][swapped_in] -> literal (family: semantic, stylistic tonal quality)\n- \"cozy\" [trait: cozy] -> literal (family: semantic, experiential feeling)\n- \"movies\" -> filler (generic category scaffolding)\n- \"that fit a\" -> filler (generic grammatical bridge)\n- \"rainy-day mood\" [trait: none][swapped_in] -> best_guess: \"comforting rainy-day vibe\" (family: semantic, metaphorical mood grounding)",
+                  "inventory": [
+                    "Atmospheric",
                     "cozy",
-                    "rainy-day mood"
+                    "comforting rainy-day vibe"
                   ],
-                  "concept_inventory_analysis": "The query describes a specific aesthetic and emotional state. 'Atmospheric' and 'cozy' are distinct but related tonal qualities, while 'rainy-day mood' is a situational vibe. Since they all converge into a single atmospheric request, they could be seen as one, but splitting 'cozy' from 'rainy-day' allows for more precise retrieval of the specific low-energy/indoors feeling versus the general visual atmosphere.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Atmospheric\" [units: Atmospheric] -> fuse_with \"cozy_vibe\" (Semantic-grouping: same family tonal descriptors)\n- \"cozy\" [units: cozy] -> fuse_with \"cozy_vibe\" (Semantic-grouping: same family tonal descriptors)\n- \"cozy_vibe\" [units: Atmospheric, cozy, comforting rainy-day vibe] -> emit (family: semantic, unified atmospheric comfort vibe)",
+                  "slots": [
                     {
-                      "boundary_note": "Atmospheric and cozy are often unified as a single tonal signature for film discovery.",
-                      "concept": "atmospheric and cozy tone",
-                      "required_ingredients": [
-                        "atmospheric",
-                        "cozy"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Rainy-day mood is a distinct situational vibe that characterizes the desired candidate domain.",
-                      "concept": "rainy-day mood",
-                      "required_ingredients": [
-                        "rainy-day mood"
-                      ]
+                      "handle": "cozy_vibe",
+                      "scope": [
+                        "Atmospheric",
+                        "cozy",
+                        "comforting rainy-day vibe"
+                      ],
+                      "retrieval_shape": "cozy atmospheric comforting mood",
+                      "cohesion": "Fused semantic descriptors under Semantic-grouping note for a single tonal vector search.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -976,6 +1109,7 @@
         {
           "query": "something feel-good",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: feel-good",
           "stage_1_primary_rewrite": "Movies that are feel-good",
           "branches": [
             {
@@ -984,21 +1118,24 @@
               "display_phrase": "Something feel-good",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1273.7,
-                "input_tokens": 643,
-                "output_tokens": 84,
+                "elapsed_ms": 1597.5,
+                "input_tokens": 5666,
+                "output_tokens": 187,
                 "response": {
-                  "ingredient_inventory": [
-                    "feel-good movies"
+                  "unit_analysis": "units:\n- \"Movies\" [trait: none] -> filler (generic scaffolding)\n- \"feel-good\" [trait: feel-good] -> literal (family: keyword, experiential narrative tag)",
+                  "inventory": [
+                    "feel-good"
                   ],
-                  "concept_inventory_analysis": "The query contains a single unified intent describing a specific emotional tone or psychological effect. There are no secondary ingredients like genres, actors, or release periods to separate.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"feel-good\" [units: feel-good] -> emit (family: keyword, experiential genre tag)",
+                  "slots": [
                     {
-                      "boundary_note": "This is a single unified emotional tone and user intent.",
-                      "concept": "feel-good movies",
-                      "required_ingredients": [
-                        "feel-good movies"
-                      ]
+                      "handle": "feel-good keyword",
+                      "scope": [
+                        "feel-good"
+                      ],
+                      "retrieval_shape": "feel-good keyword tag",
+                      "cohesion": "Direct mapping to a deterministic experiential keyword tag.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1011,29 +1148,34 @@
               "spin_angle": "Narrows the broad feel-good tone to romantic comedies, a common subtype for this request.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1527.9,
-                "input_tokens": 643,
-                "output_tokens": 128,
+                "elapsed_ms": 1699.3,
+                "input_tokens": 5754,
+                "output_tokens": 215,
                 "response": {
-                  "ingredient_inventory": [
-                    "feel-good",
+                  "unit_analysis": "units:\n- \"Feel-good\" [trait: feel-good] -> literal (family: keyword, experiential tag)\n- \"romantic comedy\" [swapped_in] -> literal (family: keyword, genre)\n- \"movies\" -> filler (generic scaffolding)",
+                  "inventory": [
+                    "Feel-good",
                     "romantic comedy"
                   ],
-                  "concept_inventory_analysis": "The query contains a genre classification ('romantic comedy') and a distinct emotional/tonal qualifier ('feel-good'). These are separate user intents: one defines the narrative structure and the other defines the desired psychological effect on the viewer.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Feel-good\" [units: Feel-good] -> emit (family: keyword, experiential vibe)\n- \"romantic comedy\" [units: romantic comedy] -> emit (family: keyword, genre classification)",
+                  "slots": [
                     {
-                      "boundary_note": "Separated because tone is an independent qualifier from genre classification.",
-                      "concept": "feel-good tone",
-                      "required_ingredients": [
-                        "feel-good"
-                      ]
+                      "handle": "feel-good experience",
+                      "scope": [
+                        "Feel-good"
+                      ],
+                      "retrieval_shape": "experiential feel-good tag",
+                      "cohesion": "Distinct experiential tag from genre. Gate 1 split.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "The genre is a single unified concept for retrieval.",
-                      "concept": "romantic comedy movies",
-                      "required_ingredients": [
+                      "handle": "romantic comedy genre",
+                      "scope": [
                         "romantic comedy"
-                      ]
+                      ],
+                      "retrieval_shape": "romantic comedy genre keyword",
+                      "cohesion": "Distinct genre keyword from tone. Gate 1 split.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1046,29 +1188,26 @@
               "spin_angle": "Narrows the feel-good intent to family-friendly movies that are uplifting for all ages.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1368.5,
-                "input_tokens": 645,
-                "output_tokens": 132,
+                "elapsed_ms": 1787.7,
+                "input_tokens": 5756,
+                "output_tokens": 220,
                 "response": {
-                  "ingredient_inventory": [
-                    "feel-good movies",
+                  "unit_analysis": "units:\n- \"Feel-good\" [trait: feel-good] -> literal (family: semantic, emotional/tonal experience)\n- \"movies\" -> filler (generic scaffolding)\n- \"for the whole family\" [swapped_in] -> literal (family: semantic, family-friendly suitability)",
+                  "inventory": [
+                    "Feel-good",
                     "for the whole family"
                   ],
-                  "concept_inventory_analysis": "The query contains two distinct user intents: a specific emotional tone (feel-good) and a target audience/rating constraint (family-friendly). These are separate dimensions of the search and are split accordingly.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Feel-good\" [units: Feel-good] -> fuse_with \"for the whole family\" (Gate 2: fused tonal/suitability semantic concept)\n- \"for the whole family\" [units: for the whole family] -> emit (family: semantic, cohesive family-friendly mood)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the specific emotional or atmospheric quality requested by the user.",
-                      "concept": "feel-good tone",
-                      "required_ingredients": [
-                        "feel-good movies"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Represents the target audience demographic and suitability for all ages.",
-                      "concept": "family-friendly",
-                      "required_ingredients": [
+                      "handle": "feel-good family mood",
+                      "scope": [
+                        "Feel-good",
                         "for the whole family"
-                      ]
+                      ],
+                      "retrieval_shape": "family-friendly uplifting semantic content",
+                      "cohesion": "Gate 2: Both units name semantic qualities (tone and suitability) that fuse into one retrieval embedding.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1085,12 +1224,14 @@
         {
           "query": "Inception",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Inception",
           "stage_1_primary_rewrite": "The movie titled Inception",
           "branches": []
         },
         {
           "query": "Tom Cruise action movies from the 90s",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Tom Cruise, action, 1990s",
           "stage_1_primary_rewrite": "Tom Cruise action movies from the 1990s",
           "branches": [
             {
@@ -1099,37 +1240,44 @@
               "display_phrase": "Tom Cruise 90s Action Hits",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1935.8,
-                "input_tokens": 649,
-                "output_tokens": 156,
+                "elapsed_ms": 2301.4,
+                "input_tokens": 5680,
+                "output_tokens": 322,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Tom Cruise\" [trait: Tom Cruise] -> literal (family: entity, actor name)\n- \"action\" [trait: action] -> literal (family: keyword, genre)\n- \"movies\" -> filler (generic scaffolding)\n- \"from the 1990s\" [trait: 1990s] -> literal (family: metadata, release era)",
+                  "inventory": [
                     "Tom Cruise",
-                    "action movies",
-                    "1990s"
+                    "action",
+                    "from the 1990s"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into three distinct intents: the specific actor (entity), the genre (classification), and the specific decade (temporal constraint). These are split because they represent independent criteria that can be retrieved or filtered separately.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Tom Cruise\" [units: Tom Cruise] -> emit (family: entity, actor identity)\n- \"action\" [units: action] -> emit (family: keyword, genre category)\n- \"from the 1990s\" [units: from the 1990s] -> emit (family: metadata, release date scalar)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the core entity/person intent.",
-                      "concept": "Tom Cruise",
-                      "required_ingredients": [
+                      "handle": "actor_tom_cruise",
+                      "scope": [
                         "Tom Cruise"
-                      ]
+                      ],
+                      "retrieval_shape": "actor name in entity family",
+                      "cohesion": "Single named entity for specific actor.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the specific genre or stylistic intent.",
-                      "concept": "action movies",
-                      "required_ingredients": [
-                        "action movies"
-                      ]
+                      "handle": "genre_action",
+                      "scope": [
+                        "action"
+                      ],
+                      "retrieval_shape": "action genre keyword",
+                      "cohesion": "Deterministic genre classification in keyword family.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the temporal boundary for the search results.",
-                      "concept": "1990s",
-                      "required_ingredients": [
-                        "1990s"
-                      ]
+                      "handle": "era_1990s",
+                      "scope": [
+                        "from the 1990s"
+                      ],
+                      "retrieval_shape": "1990s release date range",
+                      "cohesion": "Factual metadata attribute for release era.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1146,6 +1294,7 @@
         {
           "query": "prestige drama",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: prestige, drama",
           "stage_1_primary_rewrite": "Movies in the prestige drama genre",
           "branches": [
             {
@@ -1154,29 +1303,34 @@
               "display_phrase": "Prestige Dramas",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1642.2,
-                "input_tokens": 643,
-                "output_tokens": 130,
+                "elapsed_ms": 2119.3,
+                "input_tokens": 5666,
+                "output_tokens": 229,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Movies\" [trait: none] -> filler (generic scaffolding)\n- \"in the\" [trait: none] -> filler (grammatical scaffolding)\n- \"prestige\" [trait: prestige] -> literal (family: semantic, production quality and high-status tone)\n- \"drama\" [trait: drama] -> literal (family: keyword, genre classification)",
+                  "inventory": [
                     "prestige",
-                    "drama genre"
+                    "drama"
                   ],
-                  "concept_inventory_analysis": "I am splitting the query into two concepts: the core genre classification and the qualitative attribute. 'Prestige' indicates a specific level of production quality or critical acclaim that acts as a filter on the broader 'drama' category.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"prestige\" [units: prestige] -> emit (family: semantic, high-quality production vibe)\n- \"drama\" [units: drama] -> emit (family: keyword, standard genre category)",
+                  "slots": [
                     {
-                      "boundary_note": "Identifies the primary genre category for the search.",
-                      "concept": "drama genre",
-                      "required_ingredients": [
-                        "drama genre"
-                      ]
+                      "handle": "prestige vibe",
+                      "scope": [
+                        "prestige"
+                      ],
+                      "retrieval_shape": "semantic production quality and tone",
+                      "cohesion": "Distinct semantic attribute describing the feel and status.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Identifies the qualitative 'prestige' status or high-brow tone associated with the request.",
-                      "concept": "prestige movies",
-                      "required_ingredients": [
-                        "prestige"
-                      ]
+                      "handle": "drama genre",
+                      "scope": [
+                        "drama"
+                      ],
+                      "retrieval_shape": "keyword genre category",
+                      "cohesion": "Standard genre classification. Splits from semantic via Gate 1.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1189,29 +1343,44 @@
               "spin_angle": "This spin preserves the prestige and drama traits while narrowing the focus to award-winning period pieces.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1720.0,
-                "input_tokens": 643,
-                "output_tokens": 130,
+                "elapsed_ms": 2121.6,
+                "input_tokens": 5754,
+                "output_tokens": 290,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Award-winning\" [swapped_in] -> literal (family: awards, specific recognition status)\n- \"period\" [swapped_in] -> literal (family: semantic, historical setting descriptor)\n- \"drama\" [trait: drama] -> literal (family: keyword, genre classification)\n- \"movies\" [trait: none] -> filler (generic scaffolding)",
+                  "inventory": [
                     "Award-winning",
-                    "period drama"
+                    "period",
+                    "drama"
                   ],
-                  "concept_inventory_analysis": "The request contains two distinct intents: a quality/recognition status and a specific genre/setting classification. These are split to allow for independent evaluation of the movie's critical success and its narrative category.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Award-winning\" [units: Award-winning] -> emit (family: awards, distinct retrieval for accolades)\n- \"period\" [units: period] -> emit (family: semantic, distinct retrieval for setting/vibes)\n- \"drama\" [units: drama] -> emit (family: keyword, distinct retrieval for genre tag)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the user's intent for films with high critical acclaim or formal recognition.",
-                      "concept": "Award-winning status",
-                      "required_ingredients": [
+                      "handle": "accolades",
+                      "scope": [
                         "Award-winning"
-                      ]
+                      ],
+                      "retrieval_shape": "award-winning status",
+                      "cohesion": "Distinct awards family retrieval.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the narrative genre and historical setting requested by the user.",
-                      "concept": "Period drama genre",
-                      "required_ingredients": [
-                        "period drama"
-                      ]
+                      "handle": "historical_setting",
+                      "scope": [
+                        "period"
+                      ],
+                      "retrieval_shape": "historical era and period setting",
+                      "cohesion": "Distinct semantic family retrieval for setting.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "genre",
+                      "scope": [
+                        "drama"
+                      ],
+                      "retrieval_shape": "drama genre tag",
+                      "cohesion": "Distinct keyword family retrieval for genre.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1222,6 +1391,7 @@
         {
           "query": "arthouse thriller",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: arthouse, thriller",
           "stage_1_primary_rewrite": "Arthouse thriller movies",
           "branches": [
             {
@@ -1230,29 +1400,34 @@
               "display_phrase": "Arthouse Thrillers",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1975.9,
-                "input_tokens": 641,
-                "output_tokens": 120,
+                "elapsed_ms": 1937.2,
+                "input_tokens": 5665,
+                "output_tokens": 214,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Arthouse\" [trait: arthouse] -> literal (family: semantic, production style and tone)\n- \"thriller\" [trait: thriller] -> literal (family: keyword, genre classification)\n- \"movies\" [trait: none] -> filler (generic scaffolding)",
+                  "inventory": [
                     "Arthouse",
                     "thriller"
                   ],
-                  "concept_inventory_analysis": "The query contains a stylistic/production category (Arthouse) and a genre classification (thriller). These are distinct user intents—one describing the creative approach and the other describing the narrative mechanics—so they are split into separate concepts.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Arthouse\" [units: Arthouse] -> emit (family: semantic, stylistic and tonal retrieval)\n- \"thriller\" [units: thriller] -> emit (family: keyword, deterministic genre retrieval)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the cinematic style and distribution niche.",
-                      "concept": "Arthouse movies",
-                      "required_ingredients": [
+                      "handle": "arthouse style",
+                      "scope": [
                         "Arthouse"
-                      ]
+                      ],
+                      "retrieval_shape": "semantic production style",
+                      "cohesion": "Distinct semantic category for non-mainstream stylistic qualities.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the narrative genre classification.",
-                      "concept": "thriller genre",
-                      "required_ingredients": [
+                      "handle": "thriller genre",
+                      "scope": [
                         "thriller"
-                      ]
+                      ],
+                      "retrieval_shape": "keyword genre tag",
+                      "cohesion": "Deterministic genre keyword. Split from semantic per Gate 1.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1265,45 +1440,38 @@
               "spin_angle": "This spin narrows the focus to psychological thrillers with the slow-burn pacing common in arthouse cinema, preserving both core traits.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1841.9,
-                "input_tokens": 645,
-                "output_tokens": 189,
+                "elapsed_ms": 2225.8,
+                "input_tokens": 5764,
+                "output_tokens": 307,
                 "response": {
-                  "ingredient_inventory": [
-                    "slow-burn",
+                  "unit_analysis": "units:\n- \"Slow-burn\" [trait: none] -> literal (family: semantic, pacing/tone)\n- \"psychological\" [trait: none] -> literal (family: semantic, narrative focus)\n- \"arthouse\" [trait: arthouse] -> literal (family: semantic, production style)\n- \"thrillers\" [trait: thriller] -> literal (family: keyword, genre category)",
+                  "inventory": [
+                    "Slow-burn",
                     "psychological",
                     "arthouse",
                     "thrillers"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed by separating the pacing (slow-burn), the thematic focus (psychological), the stylistic/production classification (arthouse), and the core genre (thrillers) to allow for precise multi-vector retrieval.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Slow-burn psychological\" [units: Slow-burn, psychological] -> emit (family: semantic, fused tonal/narrative focus)\n- \"arthouse\" [units: arthouse] -> fuse_with \"Slow-burn psychological\" (one cohesive semantic vibe)\n- \"thrillers\" [units: thrillers] -> emit (family: keyword, Gate 1 split: keyword vs semantic)",
+                  "slots": [
                     {
-                      "boundary_note": "Pacing and narrative development style.",
-                      "concept": "slow-burn pacing",
-                      "required_ingredients": [
-                        "slow-burn"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Thematic focus on the mental and emotional states of characters.",
-                      "concept": "psychological theme",
-                      "required_ingredients": [
-                        "psychological"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Stylistic and production category representing non-mainstream or experimental cinema.",
-                      "concept": "arthouse style",
-                      "required_ingredients": [
+                      "handle": "Slow-burn psychological arthouse vibe",
+                      "scope": [
+                        "Slow-burn",
+                        "psychological",
                         "arthouse"
-                      ]
+                      ],
+                      "retrieval_shape": "tonal and stylistic semantic search",
+                      "cohesion": "Gate 2 fuse: complementary semantic dimensions for a single stylistic vibe.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "The core genre domain for the search.",
-                      "concept": "thriller genre",
-                      "required_ingredients": [
+                      "handle": "Thriller genre",
+                      "scope": [
                         "thrillers"
-                      ]
+                      ],
+                      "retrieval_shape": "thriller keyword genre tag",
+                      "cohesion": "Gate 1 split: keyword family is distinct from semantic styles.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1316,37 +1484,36 @@
               "spin_angle": "This spin focuses on the neo-noir aesthetic within the arthouse thriller space, preserving both the arthouse and thriller traits.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1842.6,
-                "input_tokens": 644,
-                "output_tokens": 186,
+                "elapsed_ms": 1994.9,
+                "input_tokens": 5762,
+                "output_tokens": 293,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Neo-noir\" [none][swapped_in] -> literal (family: semantic, visual/thematic stylistic movement)\n- \"arthouse\" [trait: arthouse] -> literal (family: semantic, production style/category)\n- \"thriller\" [trait: thriller] -> literal (family: keyword, genre)\n- \"movies\" -> filler (generic scaffolding)",
+                  "inventory": [
                     "Neo-noir",
                     "arthouse",
                     "thriller"
                   ],
-                  "concept_inventory_analysis": "The query contains three distinct qualifiers: a stylistic sub-genre (Neo-noir), a production/distribution style (arthouse), and a core genre (thriller). These represent separate user intents regarding aesthetic, market positioning, and narrative tension, and should therefore be split into three concepts.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Neo-noir\" [units: Neo-noir] -> fuse_with \"arthouse\" (Gate 2: both semantic stylistic descriptors)\n- \"arthouse\" [units: arthouse] -> emit (family: semantic, fused stylistic/production tone)\n- \"thriller\" [units: thriller] -> emit (family: keyword, distinct genre category)",
+                  "slots": [
                     {
-                      "boundary_note": "Neo-noir is a specific stylistic and thematic movement that serves as a genre sub-type.",
-                      "concept": "Neo-noir style",
-                      "required_ingredients": [
-                        "Neo-noir"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Arthouse refers to the experimental or non-mainstream nature of the filmmaking, distinct from genre.",
-                      "concept": "Arthouse cinema",
-                      "required_ingredients": [
+                      "handle": "Neo-noir arthouse style",
+                      "scope": [
+                        "Neo-noir",
                         "arthouse"
-                      ]
+                      ],
+                      "retrieval_shape": "stylistic arthouse and neo-noir themes",
+                      "cohesion": "Fused semantic descriptors under Gate 2: both name stylistic/tonal attributes.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Thriller is the fundamental narrative genre classification.",
-                      "concept": "Thriller genre",
-                      "required_ingredients": [
+                      "handle": "Thriller genre",
+                      "scope": [
                         "thriller"
-                      ]
+                      ],
+                      "retrieval_shape": "thriller genre keyword",
+                      "cohesion": "Distinct keyword genre categorization; Gate 1 split from semantic family.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1363,6 +1530,7 @@
         {
           "query": "Best Christmas movies for families",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Christmas, families, best",
           "stage_1_primary_rewrite": "Best Christmas movies for families",
           "branches": [
             {
@@ -1371,37 +1539,44 @@
               "display_phrase": "Top Family Christmas Movies",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1945.5,
-                "input_tokens": 642,
-                "output_tokens": 153,
+                "elapsed_ms": 2399.4,
+                "input_tokens": 5667,
+                "output_tokens": 306,
                 "response": {
-                  "ingredient_inventory": [
-                    "Christmas movies",
-                    "families",
-                    "Best"
+                  "unit_analysis": "units:\n- \"Best\" [trait: best] -> literal (family: metadata, overall popularity and critical consensus)\n- \"Christmas\" [trait: Christmas] -> literal (family: keyword, holiday theme and genre taxonomy)\n- \"movies\" [trait: none] -> filler (generic film entity scaffolding)\n- \"for families\" [trait: families] -> literal (family: semantic, family-friendly suitability and themes)",
+                  "inventory": [
+                    "Best",
+                    "Christmas",
+                    "for families"
                   ],
-                  "concept_inventory_analysis": "The query contains three distinct components: a primary thematic domain (Christmas), a target audience (families), and a qualitative ranking requirement (Best). These are split to allow for independent retrieval of holiday content, demographic suitability, and acclaim or popularity status.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Best\" [units: Best] -> emit (family: metadata, scalar quality and popularity signal)\n- \"Christmas\" [units: Christmas] -> emit (family: keyword, deterministic genre/theme categorization)\n- \"for families\" [units: for families] -> emit (family: semantic, qualitative suitability and thematic vibe)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the primary thematic genre or holiday setting.",
-                      "concept": "Christmas movies",
-                      "required_ingredients": [
-                        "Christmas movies"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Represents the target audience or demographic appropriateness.",
-                      "concept": "family-friendly",
-                      "required_ingredients": [
-                        "families"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Represents a preference for high-rated or critically acclaimed content.",
-                      "concept": "highly rated",
-                      "required_ingredients": [
+                      "handle": "Broad Quality Perception",
+                      "scope": [
                         "Best"
-                      ]
+                      ],
+                      "retrieval_shape": "metadata popularity and critical reception",
+                      "cohesion": "Preserves evaluative breadth spanning ratings and popularity per behavioral test.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "Christmas Theme",
+                      "scope": [
+                        "Christmas"
+                      ],
+                      "retrieval_shape": "keyword holiday genre",
+                      "cohesion": "Standalone deterministic category for holiday-themed cinema.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "Family Suitability",
+                      "scope": [
+                        "for families"
+                      ],
+                      "retrieval_shape": "semantic family-friendly tone",
+                      "cohesion": "Describes qualitative appropriateness for a specific audience segment.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1414,45 +1589,54 @@
               "spin_angle": "This angle preserves the core traits but narrows the format to animation, which is a major sub-collection for family viewing.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1655.5,
-                "input_tokens": 643,
-                "output_tokens": 182,
+                "elapsed_ms": 2393.3,
+                "input_tokens": 5761,
+                "output_tokens": 362,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "- \"Best\" [trait: best] -> literal (family: metadata, broad quality and popularity metric)\n- \"animated\" [swapped_in] -> literal (family: keyword, format classification)\n- \"Christmas\" [trait: Christmas] -> literal (family: keyword, holiday genre/theme)\n- \"movies\" -> filler (generic scaffolding)\n- \"for families\" [trait: families] -> literal (family: semantic, audience suitability and tone)",
+                  "inventory": [
+                    "Best",
                     "animated",
-                    "Christmas movies",
-                    "families",
-                    "Best"
+                    "Christmas",
+                    "for families"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into four distinct user intents: the medium (animation), the central theme/genre (Christmas), the target audience (family-friendly), and the qualitative ranking (critical acclaim).",
-                  "concepts": [
+                  "slot_analysis": "- \"Best\" [units: Best] -> emit (family: metadata, scalar quality signal)\n- \"animated\" [units: animated] -> emit (family: keyword, distinct format category)\n- \"Christmas\" [units: Christmas] -> emit (family: keyword, distinct thematic genre)\n- \"for families\" [units: for families] -> emit (family: semantic, audience-based tonal vibe)",
+                  "slots": [
                     {
-                      "boundary_note": "Specifies the medium or visual style of the film.",
-                      "concept": "animated movies",
-                      "required_ingredients": [
-                        "animated"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Defines the core holiday theme and seasonal setting.",
-                      "concept": "Christmas movies",
-                      "required_ingredients": [
-                        "Christmas movies"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Identifies the intended demographic or suitability for all ages.",
-                      "concept": "family-friendly movies",
-                      "required_ingredients": [
-                        "families"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Represents a preference for high quality, critical acclaim, or popular ranking.",
-                      "concept": "critically acclaimed / top-rated",
-                      "required_ingredients": [
+                      "handle": "top-rated status",
+                      "scope": [
                         "Best"
-                      ]
+                      ],
+                      "retrieval_shape": "notable and popular titles",
+                      "cohesion": "Preserves evaluative breadth across popularity and scores.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "animated format",
+                      "scope": [
+                        "animated"
+                      ],
+                      "retrieval_shape": "animated movies",
+                      "cohesion": "Distinct keyword-based format classification.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "Christmas theme",
+                      "scope": [
+                        "Christmas"
+                      ],
+                      "retrieval_shape": "Christmas holiday films",
+                      "cohesion": "Distinct keyword-based holiday genre classification.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "family-friendly tone",
+                      "scope": [
+                        "for families"
+                      ],
+                      "retrieval_shape": "family audience suitability",
+                      "cohesion": "Semantic audience descriptor. Gate 1 splits keyword from semantic.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1465,37 +1649,54 @@
               "spin_angle": "This angle preserves all primary traits while focusing specifically on recent or modern-era holiday films.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1646.6,
-                "input_tokens": 643,
-                "output_tokens": 141,
+                "elapsed_ms": 2777.3,
+                "input_tokens": 5755,
+                "output_tokens": 529,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Best\" [trait: best] -> literal (family: metadata, broad quality and popularity metric)\n- \"modern\" [swapped_in] -> literal (family: metadata, recent release era)\n- \"Christmas\" [trait: Christmas] -> literal (family: keyword, holiday classification)\n- \"movies\" -> filler (generic scaffolding)\n- \"for families\" [trait: families] -> literal (family: semantic, family-suitability tone)",
+                  "inventory": [
+                    "Best",
                     "modern",
-                    "Christmas movies",
-                    "families"
+                    "Christmas",
+                    "for families"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into three distinct intents: the thematic core (Christmas), the temporal constraint (modern), and the target audience (families). Each represents a separate filtering or ranking dimension.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Best\" [units: Best] -> emit (family: metadata, scalar quality attribute)\n- \"modern\" [units: modern] -> emit (family: metadata, release era constraint)\n- \"Christmas\" [units: Christmas] -> emit (family: keyword, deterministic holiday tag)\n- \"for families\" [units: for families] -> emit (family: semantic, audience-suitability atmosphere)",
+                  "slots": [
                     {
-                      "boundary_note": "The central thematic subject of the query.",
-                      "concept": "Christmas movies",
-                      "required_ingredients": [
-                        "Christmas movies"
-                      ]
+                      "handle": "top-rated and popular",
+                      "scope": [
+                        "Best"
+                      ],
+                      "retrieval_shape": "metadata quality and popularity",
+                      "cohesion": "Preserves broad evaluative intent as one metadata signal.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "A temporal constraint regarding the era or release date of the content.",
-                      "concept": "modern era",
-                      "required_ingredients": [
+                      "handle": "modern era",
+                      "scope": [
                         "modern"
-                      ]
+                      ],
+                      "retrieval_shape": "recent release date metadata",
+                      "cohesion": "Discrete scalar constraint on release era.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "The target demographic or suitability for a specific audience.",
-                      "concept": "family-friendly content",
-                      "required_ingredients": [
-                        "families"
-                      ]
+                      "handle": "Christmas genre",
+                      "scope": [
+                        "Christmas"
+                      ],
+                      "retrieval_shape": "holiday keyword classification",
+                      "cohesion": "Standard categorical tag for holiday films.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "family-friendly appeal",
+                      "scope": [
+                        "for families"
+                      ],
+                      "retrieval_shape": "family-oriented semantic tone",
+                      "cohesion": "Gate 1 split: semantic family for audience suitability vibes.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1506,6 +1707,7 @@
         {
           "query": "Disney classics",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Disney, classics",
           "stage_1_primary_rewrite": "Disney movies considered classics",
           "branches": [
             {
@@ -1514,29 +1716,34 @@
               "display_phrase": "Disney Classics",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1447.3,
-                "input_tokens": 641,
-                "output_tokens": 125,
+                "elapsed_ms": 2022.0,
+                "input_tokens": 5664,
+                "output_tokens": 202,
                 "response": {
-                  "ingredient_inventory": [
-                    "Disney",
-                    "classics"
+                  "unit_analysis": "units:\n- \"Disney movies\" [trait: Disney] -> literal (family: studio, production company)\n- \"considered classics\" [trait: classics] -> literal (family: metadata, high notability and historical acclaim)",
+                  "inventory": [
+                    "Disney movies",
+                    "considered classics"
                   ],
-                  "concept_inventory_analysis": "The query combines a specific studio domain with a historical or critical quality attribute. Following the rule to split when one ingredient defines the domain and another characterizes items within it, the studio and the 'classic' status are separated into distinct concepts.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Disney movies\" [units: Disney movies] -> emit (family: studio, primary production entity)\n- \"considered classics\" [units: considered classics] -> emit (family: metadata, historical status and popularity)",
+                  "slots": [
                     {
-                      "boundary_note": "Identifies the studio/brand domain for the search.",
-                      "concept": "Disney movies",
-                      "required_ingredients": [
-                        "Disney"
-                      ]
+                      "handle": "Disney studio",
+                      "scope": [
+                        "Disney movies"
+                      ],
+                      "retrieval_shape": "studio: Disney",
+                      "cohesion": "Distinct retrieval target for production studio family.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Captures the qualitative status or historical significance attribute.",
-                      "concept": "historically significant / classic movies",
-                      "required_ingredients": [
-                        "classics"
-                      ]
+                      "handle": "classic status",
+                      "scope": [
+                        "considered classics"
+                      ],
+                      "retrieval_shape": "metadata: highly-rated enduring popular classics",
+                      "cohesion": "Gate 1 split: metadata/reception differs from studio family.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1549,37 +1756,54 @@
               "spin_angle": "This narrowing focuses on the earliest era of animated Disney features.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1959.7,
-                "input_tokens": 645,
-                "output_tokens": 177,
+                "elapsed_ms": 2956.6,
+                "input_tokens": 5749,
+                "output_tokens": 486,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Animated\" [trait: none] -> literal (family: keyword, format classification)\n- \"Disney\" [trait: Disney] -> literal (family: studio, production entity)\n- \"movies\" -> filler (generic scaffolding)\n- \"Golden Age era\" [trait: classics][swapped_in] -> best_guess: \"early Disney studio classics from 1937-1942\" (family: metadata, release era/notability)\n- \"Golden Age era\" [trait: classics][swapped_in] -> best_guess: \"foundational cel-animated fairy tales\" (family: semantic, stylistic/narrative era)",
+                  "inventory": [
                     "Animated",
-                    "Disney movies",
-                    "Golden Age era"
+                    "Disney",
+                    "early Disney studio classics from 1937-1942",
+                    "foundational cel-animated fairy tales"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into three distinct user-intent layers: the studio/brand (Disney), the medium/format (Animated), and the specific historical classification (Golden Age era). While these are often searched together, they represent independent constraints on the candidate pool and should be treated as separate concepts to allow for precise filtering and ranking.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Animated\" [units: Animated] -> emit (family: keyword, format tag)\n- \"Disney\" [units: Disney] -> emit (family: studio, distinct production entity)\n- \"Golden Age metadata\" [units: early Disney studio classics from 1937-1942] -> emit (family: metadata, temporal release window)\n- \"Golden Age semantic\" [units: foundational cel-animated fairy tales] -> emit (family: semantic, era-specific style and themes)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the core studio brand requested by the user.",
-                      "concept": "Disney movies",
-                      "required_ingredients": [
-                        "Disney movies"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Specifies the visual medium/format of the film.",
-                      "concept": "Animated movies",
-                      "required_ingredients": [
+                      "handle": "Animated format",
+                      "scope": [
                         "Animated"
-                      ]
+                      ],
+                      "retrieval_shape": "animation genre keyword",
+                      "cohesion": "Single format classification. Gate 1 splits keyword from studio/metadata.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Filters the domain to a specific historical/industry time period.",
-                      "concept": "Golden Age era films",
-                      "required_ingredients": [
-                        "Golden Age era"
-                      ]
+                      "handle": "Disney studio",
+                      "scope": [
+                        "Disney"
+                      ],
+                      "retrieval_shape": "Disney production studio",
+                      "cohesion": "Named studio entity. Gate 1 splits studio from metadata/keywords.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "Golden Age era metadata",
+                      "scope": [
+                        "early Disney studio classics from 1937-1942"
+                      ],
+                      "retrieval_shape": "release era and historical notability",
+                      "cohesion": "Quantitative metadata regarding release period and status.",
+                      "confidence": "inferred"
+                    },
+                    {
+                      "handle": "Golden Age stylistic themes",
+                      "scope": [
+                        "foundational cel-animated fairy tales"
+                      ],
+                      "retrieval_shape": "thematic and aesthetic era qualities",
+                      "cohesion": "Qualitative semantic search for foundational Disney narrative styles.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -1592,37 +1816,44 @@
               "spin_angle": "This narrowing shifts focus from animation to Disney's live-action catalog.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1977.7,
-                "input_tokens": 643,
-                "output_tokens": 181,
+                "elapsed_ms": 2192.9,
+                "input_tokens": 5750,
+                "output_tokens": 301,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Classic\" [trait: classics] -> literal (family: metadata, broad quality and enduring popularity)\n- \"live-action\" [swapped_in] -> literal (family: keyword, production format)\n- \"Disney\" [trait: Disney] -> literal (family: studio, production company)\n- \"movies\" -> filler (generic category scaffolding)",
+                  "inventory": [
                     "Classic",
                     "live-action",
-                    "Disney movies"
+                    "Disney"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into its studio origin, its format, and its historical status. 'Disney movies' identifies the studio domain, 'live-action' specifies the visual medium, and 'Classic' indicates a temporal or status-based quality that ranks/characterizes the domain. These are distinct intents that will likely require separate retrieval strategies.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Classic\" [units: Classic] -> emit (family: metadata, historical popularity and reception)\n- \"live-action\" [units: live-action] -> emit (family: keyword, distinct format category)\n- \"Disney\" [units: Disney] -> emit (family: studio, distinct production company)",
+                  "slots": [
                     {
-                      "boundary_note": "Identifies the core studio entity providing the domain of movies.",
-                      "concept": "Disney movies",
-                      "required_ingredients": [
-                        "Disney movies"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Specifies the historical or qualitative status of the films.",
-                      "concept": "classic/historically significant",
-                      "required_ingredients": [
+                      "handle": "classic status",
+                      "scope": [
                         "Classic"
-                      ]
+                      ],
+                      "retrieval_shape": "notable enduring historical films",
+                      "cohesion": "Broad evaluative metadata. Preserve breadth per behavioral test 1.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Specifies the visual format/medium of the films.",
-                      "concept": "live-action",
-                      "required_ingredients": [
+                      "handle": "live-action format",
+                      "scope": [
                         "live-action"
-                      ]
+                      ],
+                      "retrieval_shape": "live-action production format",
+                      "cohesion": "Gate 1 split: keyword family differs from studio and metadata.",
+                      "confidence": "literal"
+                    },
+                    {
+                      "handle": "Disney studio",
+                      "scope": [
+                        "Disney"
+                      ],
+                      "retrieval_shape": "Disney studio production",
+                      "cohesion": "Gate 1 split: studio family for specific production entity.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1633,6 +1864,7 @@
         {
           "query": "good horror movies",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: horror, good",
           "stage_1_primary_rewrite": "Good horror movies",
           "branches": [
             {
@@ -1641,29 +1873,34 @@
               "display_phrase": "Good horror movies",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1689.9,
-                "input_tokens": 640,
-                "output_tokens": 125,
+                "elapsed_ms": 1933.6,
+                "input_tokens": 5663,
+                "output_tokens": 199,
                 "response": {
-                  "ingredient_inventory": [
-                    "horror movies",
-                    "good/highly rated"
+                  "unit_analysis": "units:\n- \"Good\" [trait: good] -> literal (family: metadata, broad quality indicator)\n- \"horror\" [trait: horror] -> literal (family: keyword, genre)\n- \"movies\" -> filler (generic scaffolding)",
+                  "inventory": [
+                    "Good",
+                    "horror"
                   ],
-                  "concept_inventory_analysis": "The query contains a genre specification and a quality/ranking qualifier. These represent distinct user intents: defining the domain of films and then filtering/ranking them by critical or audience acclaim.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Good\" [units: Good] -> emit (family: metadata, overall popularity and quality)\n- \"horror\" [units: horror] -> emit (family: keyword, deterministic genre tag)",
+                  "slots": [
                     {
-                      "boundary_note": "Defines the core genre and domain of the search.",
-                      "concept": "horror movies",
-                      "required_ingredients": [
-                        "horror movies"
-                      ]
+                      "handle": "Broadly quality-rated",
+                      "scope": [
+                        "Good"
+                      ],
+                      "retrieval_shape": "Overall metadata quality and popularity",
+                      "cohesion": "Preserves evaluative breadth across rating and popularity.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the user's desire for high quality or positive critical reception.",
-                      "concept": "highly rated/critically acclaimed",
-                      "required_ingredients": [
-                        "good/highly rated"
-                      ]
+                      "handle": "Horror genre",
+                      "scope": [
+                        "horror"
+                      ],
+                      "retrieval_shape": "Keyword genre taxonomy",
+                      "cohesion": "Gate 1 Split: Keyword genre vs Metadata quality.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1676,37 +1913,36 @@
               "spin_angle": "This spin focuses on modern horror movies, preserving the genre and quality traits while narrowing the era.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 2081.7,
-                "input_tokens": 641,
-                "output_tokens": 158,
+                "elapsed_ms": 1930.2,
+                "input_tokens": 5752,
+                "output_tokens": 257,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "- \"Good\" [trait: good] -> literal (family: metadata, broad quality/popularity signal)\n- \"modern\" [none] [swapped_in] -> literal (family: metadata, contemporary release era)\n- \"horror\" [trait: horror] -> literal (family: keyword, genre classification)\n- \"movies\" [none] -> filler (generic scaffolding)",
+                  "inventory": [
+                    "Good",
                     "modern",
-                    "horror",
-                    "good"
+                    "horror"
                   ],
-                  "concept_inventory_analysis": "The query contains three distinct components: a temporal constraint (modern), a genre classification (horror), and a quality metric (good). Each represents a separate user intent for filtering and ranking.",
-                  "concepts": [
+                  "slot_analysis": "- \"Good\" [units: Good] -> emit (family: metadata, broad evaluative quality marker)\n- \"modern\" [units: modern] -> fuse_with \"Good\" (Gate 2: both scalar metadata attributes)\n- \"horror\" [units: horror] -> emit (family: keyword, distinct genre retrieval target)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the core genre classification for the domain of movies being searched.",
-                      "concept": "horror",
-                      "required_ingredients": [
-                        "horror"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Defines the temporal scope or era of the films, distinguishing them from classics.",
-                      "concept": "modern movies",
-                      "required_ingredients": [
+                      "handle": "good modern era",
+                      "scope": [
+                        "Good",
                         "modern"
-                      ]
+                      ],
+                      "retrieval_shape": "highly rated contemporary films",
+                      "cohesion": "Fused scalar metadata (quality and era) into one attribute filter.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Indicates a request for high-quality or highly-rated content, which acts as a ranking or selection criterion.",
-                      "concept": "high quality",
-                      "required_ingredients": [
-                        "good"
-                      ]
+                      "handle": "horror genre",
+                      "scope": [
+                        "horror"
+                      ],
+                      "retrieval_shape": "horror genre keyword",
+                      "cohesion": "Distinct keyword classification. Split from metadata via Gate 1.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1719,29 +1955,34 @@
               "spin_angle": "This spin narrows the request to psychological horror, maintaining the core genre while focusing on a specific narrative style.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1683.7,
-                "input_tokens": 641,
-                "output_tokens": 131,
+                "elapsed_ms": 1997.7,
+                "input_tokens": 5754,
+                "output_tokens": 324,
                 "response": {
-                  "ingredient_inventory": [
-                    "psychological horror",
-                    "good"
+                  "unit_analysis": "units:\n- \"Good\" [trait: good] -> literal (family: metadata, broad quality/popularity signal)\n- \"psychological horror\" [trait: horror] [swapped_in] -> literal (family: keyword, specific subgenre classification)\n- \"movies\" -> filler (generic scaffolding)",
+                  "inventory": [
+                    "Good",
+                    "psychological horror"
                   ],
-                  "concept_inventory_analysis": "The query contains two distinct user intents: a specific genre classification (psychological horror) and a quality/critical reception ranking (good). These are split to allow for independent domain filtering and quality ranking.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Good\" [units: Good] -> emit (family: metadata, evaluative quality signal)\n- \"psychological horror\" [units: psychological horror] -> emit (family: keyword, distinct genre categorization)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the core genre and thematic intent of the movies.",
-                      "concept": "psychological horror movies",
-                      "required_ingredients": [
-                        "psychological horror"
-                      ]
+                      "handle": "highly-rated-quality",
+                      "scope": [
+                        "Good"
+                      ],
+                      "retrieval_shape": "metadata quality and popularity",
+                      "cohesion": "Preserves broad evaluative word per principle; metadata handles ratings and popularity.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the user's desire for high-quality or well-reviewed content.",
-                      "concept": "critically acclaimed / high-rated",
-                      "required_ingredients": [
-                        "good"
-                      ]
+                      "handle": "psychological-horror-subgenre",
+                      "scope": [
+                        "psychological horror"
+                      ],
+                      "retrieval_shape": "psychological horror genre keyword",
+                      "cohesion": "Specific subgenre tag found in keyword taxonomy. Separate from metadata per Gate 1.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1752,6 +1993,7 @@
         {
           "query": "movies for date night",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: date night, movies",
           "stage_1_primary_rewrite": "Movies that are suitable for a date night",
           "branches": [
             {
@@ -1760,21 +2002,34 @@
               "display_phrase": "Date Night Movies",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1582.8,
-                "input_tokens": 645,
-                "output_tokens": 88,
+                "elapsed_ms": 2341.0,
+                "input_tokens": 5669,
+                "output_tokens": 290,
                 "response": {
-                  "ingredient_inventory": [
-                    "date night suitable"
+                  "unit_analysis": "units:\n- \"Movies\" [trait: movies] -> filler (generic scaffolding)\n- \"that are suitable for\" [trait: none] -> filler (grammatical scaffolding)\n- \"date night\" [trait: date night] -> best_guess: \"romantic and approachable for couples\" (family: semantic, mood and suitability expansion)\n- \"date night\" [trait: date night] -> best_guess: \"broadly appealing crowd-pleasers\" (family: metadata, overall popularity and watchability)",
+                  "inventory": [
+                    "romantic and approachable for couples",
+                    "broadly appealing crowd-pleasers"
                   ],
-                  "concept_inventory_analysis": "The query contains a single, unified intent describing a specific mood or occasion for which the movies are intended. This is treated as one cohesive thematic concept.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"romantic mood\" [units: romantic and approachable for couples] -> emit (family: semantic, mood-based suitability)\n- \"popular appeal\" [units: broadly appealing crowd-pleasers] -> emit (family: metadata, quantitative quality and popularity signal)",
+                  "slots": [
                     {
-                      "boundary_note": "This encapsulates the single thematic context of the user's request for movies fitting a specific social occasion.",
-                      "concept": "date night movies",
-                      "required_ingredients": [
-                        "date night suitable"
-                      ]
+                      "handle": "romantic mood",
+                      "scope": [
+                        "romantic and approachable for couples"
+                      ],
+                      "retrieval_shape": "romantic and approachable semantic theme",
+                      "cohesion": "Captures the thematic and tonal requirements of the idiom.",
+                      "confidence": "inferred"
+                    },
+                    {
+                      "handle": "popular appeal",
+                      "scope": [
+                        "broadly appealing crowd-pleasers"
+                      ],
+                      "retrieval_shape": "broadly popular and notable films",
+                      "cohesion": "Captures the qualitative/popularity dimension of the idiom.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -1787,29 +2042,44 @@
               "spin_angle": "This spin preserves the date night context but narrows the mood to romantic films.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 2018.7,
-                "input_tokens": 644,
-                "output_tokens": 221,
+                "elapsed_ms": 2404.7,
+                "input_tokens": 5752,
+                "output_tokens": 362,
                 "response": {
-                  "ingredient_inventory": [
-                    "Romantic movies",
-                    "suitable for a date night"
+                  "unit_analysis": "units:\n- \"Romantic\" [trait: none][swapped_in] -> literal (family: keyword, genre category)\n- \"movies\" [trait: movies] -> filler (generic scaffolding)\n- \"suitable for\" [trait: date night] -> fold_into \"date night\"\n- \"a date night\" [trait: date night] -> best_guess: \"romantic cozy atmosphere\" (family: semantic, mood expansion)\n- \"a date night\" [trait: date night] -> best_guess: \"popular crowd-pleasing romance\" (family: metadata, reception expansion)",
+                  "inventory": [
+                    "Romantic",
+                    "romantic cozy atmosphere",
+                    "popular crowd-pleasing romance"
                   ],
-                  "concept_inventory_analysis": "The request contains a genre classification (Romance) and a specific situational context or mood (Date night). These are split because while related, 'date night' implies a curated selection of tones (e.g., lighthearted, engaging) that serves as a filter on top of the base romantic genre.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Romantic\" [units: Romantic] -> emit (family: keyword, primary genre classification)\n- \"romantic cozy atmosphere\" [units: romantic cozy atmosphere] -> emit (family: semantic, atmosphere and mood)\n- \"popular crowd-pleasing romance\" [units: popular crowd-pleasing romance] -> emit (family: metadata, scalar popularity and appeal)",
+                  "slots": [
                     {
-                      "boundary_note": "A primary genre classification representing the core content of the films.",
-                      "concept": "Romantic movies",
-                      "required_ingredients": [
-                        "Romantic movies"
-                      ]
+                      "handle": "romantic genre",
+                      "scope": [
+                        "Romantic"
+                      ],
+                      "retrieval_shape": "romance genre keyword",
+                      "cohesion": "Single genre classification.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "A distinct situational intent that characterizes the vibe and suitability for a specific social context.",
-                      "concept": "date night atmosphere",
-                      "required_ingredients": [
-                        "suitable for a date night"
-                      ]
+                      "handle": "date night atmosphere",
+                      "scope": [
+                        "romantic cozy atmosphere"
+                      ],
+                      "retrieval_shape": "semantic mood and atmosphere",
+                      "cohesion": "Captures the experiential side of date night intent.",
+                      "confidence": "inferred"
+                    },
+                    {
+                      "handle": "date night appeal",
+                      "scope": [
+                        "popular crowd-pleasing romance"
+                      ],
+                      "retrieval_shape": "high popularity and broad appeal",
+                      "cohesion": "Captures the social 'safe-watch' metadata aspect of date night.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -1822,29 +2092,44 @@
               "spin_angle": "This spin preserves the date night context but focuses specifically on lighthearted comedies.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1621.7,
-                "input_tokens": 644,
-                "output_tokens": 121,
+                "elapsed_ms": 3133.0,
+                "input_tokens": 5752,
+                "output_tokens": 515,
                 "response": {
-                  "ingredient_inventory": [
-                    "comedy movies",
-                    "suitable for a date night"
+                  "unit_analysis": "units:\n- \"Comedy\" [trait: none][swapped_in] -> literal (family: keyword, genre classification)\n- \"movies\" [trait: movies] -> filler (generic scaffolding)\n- \"suitable for a date night\" [trait: date night] -> best_guess: \"romance and lighthearted relationship themes\" (family: semantic, tonal/thematic expansion)\n- \"suitable for a date night\" [trait: date night] -> best_guess: \"broadly appealing crowd-pleasing entertainment\" (family: metadata, popularity/accessibility expansion)",
+                  "inventory": [
+                    "Comedy",
+                    "romance and lighthearted relationship themes",
+                    "broadly appealing crowd-pleasing entertainment"
                   ],
-                  "concept_inventory_analysis": "The query contains a primary genre classification and a specific situational context. These are distinct user intents—one defining the domain of movies and the other characterizing their social suitability.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Comedy\" [units: \"Comedy\"] -> emit (family: keyword, standard genre tag)\n- \"romance and lighthearted relationship themes\" [units: \"romance and lighthearted relationship themes\"] -> emit (family: semantic, thematic date-night vibe)\n- \"broadly appealing crowd-pleasing entertainment\" [units: \"broadly appealing crowd-pleasing entertainment\"] -> emit (family: metadata, quality and accessibility dimension)",
+                  "slots": [
                     {
-                      "boundary_note": "This is the core genre classification for the request.",
-                      "concept": "comedy movies",
-                      "required_ingredients": [
-                        "comedy movies"
-                      ]
+                      "handle": "comedy genre",
+                      "scope": [
+                        "Comedy"
+                      ],
+                      "retrieval_shape": "comedy genre keyword",
+                      "cohesion": "Single deterministic genre tag.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "This is a distinct situational trait and social context that filters or ranks the candidates.",
-                      "concept": "date night movies",
-                      "required_ingredients": [
-                        "suitable for a date night"
-                      ]
+                      "handle": "romantic date-night themes",
+                      "scope": [
+                        "romance and lighthearted relationship themes"
+                      ],
+                      "retrieval_shape": "romantic and lighthearted semantic themes",
+                      "cohesion": "Captures the thematic 'date night' intent via semantic search.",
+                      "confidence": "inferred"
+                    },
+                    {
+                      "handle": "broadly appealing quality",
+                      "scope": [
+                        "broadly appealing crowd-pleasing entertainment"
+                      ],
+                      "retrieval_shape": "high popularity and broad metadata appeal",
+                      "cohesion": "Captures the 'suitability' aspect via metadata signals.",
+                      "confidence": "inferred"
                     }
                   ]
                 }
@@ -1855,6 +2140,7 @@
         {
           "query": "feel-good comedies",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: feel-good, comedies",
           "stage_1_primary_rewrite": "Comedy movies that are feel-good",
           "branches": [
             {
@@ -1863,29 +2149,34 @@
               "display_phrase": "Feel-good comedies",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1574.6,
-                "input_tokens": 644,
-                "output_tokens": 129,
+                "elapsed_ms": 1787.6,
+                "input_tokens": 5669,
+                "output_tokens": 238,
                 "response": {
-                  "ingredient_inventory": [
-                    "Comedy movies",
+                  "unit_analysis": "units:\n- \"Comedy\" [trait: comedies] -> literal (family: keyword, genre classification)\n- \"movies\" [trait: none] -> filler (generic scaffolding)\n- \"that are\" [trait: none] -> filler (grammatical connector)\n- \"feel-good\" [trait: feel-good] -> literal (family: keyword, experiential tag)",
+                  "inventory": [
+                    "Comedy",
                     "feel-good"
                   ],
-                  "concept_inventory_analysis": "The request involves a genre classification and a specific emotional tone. These are distinct user intents—one defining the primary category and the other characterizing the mood—and should be treated as separate concepts to allow for independent weighting and retrieval logic.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Comedy\" [units: Comedy] -> emit (family: keyword, genre dimension)\n- \"feel-good\" [units: feel-good] -> emit (family: keyword, experiential dimension)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the primary genre domain of the films requested.",
-                      "concept": "Comedy movies",
-                      "required_ingredients": [
-                        "Comedy movies"
-                      ]
+                      "handle": "comedy genre",
+                      "scope": [
+                        "Comedy"
+                      ],
+                      "retrieval_shape": "comedy genre keyword",
+                      "cohesion": "Distinct genre classification. Fails Gate 1 fuse with feel-good (different keyword types).",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Represents the specific emotional resonance or vibe requested for the films.",
-                      "concept": "feel-good tone",
-                      "required_ingredients": [
+                      "handle": "feel-good experience",
+                      "scope": [
                         "feel-good"
-                      ]
+                      ],
+                      "retrieval_shape": "feel-good experiential keyword",
+                      "cohesion": "Distinct experiential tag classification. Emitted as independent filter.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1898,37 +2189,36 @@
               "spin_angle": "This narrowing preserves the feel-good and comedy traits while focusing specifically on animated films.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1707.5,
-                "input_tokens": 643,
-                "output_tokens": 149,
+                "elapsed_ms": 1987.7,
+                "input_tokens": 5754,
+                "output_tokens": 271,
                 "response": {
-                  "ingredient_inventory": [
-                    "feel-good",
+                  "unit_analysis": "units:\n- \"Feel-good\" [trait: feel-good] -> literal (family: semantic, emotional/experiential tag)\n- \"animated\" [trait: none][swapped_in] -> literal (family: keyword, production format)\n- \"comedy\" [trait: comedies] -> literal (family: keyword, genre classification)\n- \"movies\" -> filler (generic scaffolding)",
+                  "inventory": [
+                    "Feel-good",
                     "animated",
                     "comedy"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into three distinct user intents: a specific visual medium (animated), a genre classification (comedy), and a psychological tone (feel-good). Each represents a separate layer of filtering or characterization.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Feel-good\" [units: Feel-good] -> emit (family: semantic, distinct emotional retrieval target)\n- \"animated\" [units: animated] -> emit (family: keyword, format-based filtering)\n- \"comedy\" [units: comedy] -> fuse_with \"animated\" (Gate 2: standard keyword genre-format compound)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the emotional tone and psychological effect of the movie.",
-                      "concept": "feel-good tone",
-                      "required_ingredients": [
-                        "feel-good"
-                      ]
+                      "handle": "feel-good tone",
+                      "scope": [
+                        "Feel-good"
+                      ],
+                      "retrieval_shape": "feel-good emotional experience",
+                      "cohesion": "Single emotional descriptor retrieved via semantic endpoint.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Identifies the specific cinematic medium and artistic style.",
-                      "concept": "animated movies",
-                      "required_ingredients": [
-                        "animated"
-                      ]
-                    },
-                    {
-                      "boundary_note": "Identifies the primary genre and narrative structure.",
-                      "concept": "comedy genre",
-                      "required_ingredients": [
+                      "handle": "animated comedy genre",
+                      "scope": [
+                        "animated",
                         "comedy"
-                      ]
+                      ],
+                      "retrieval_shape": "animated comedy keyword tags",
+                      "cohesion": "Fuses format and genre keywords into one categorical filter.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1941,29 +2231,34 @@
               "spin_angle": "This narrowing preserves the feel-good and comedy traits while focusing on the romantic comedy sub-genre.",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1527.4,
-                "input_tokens": 643,
-                "output_tokens": 145,
+                "elapsed_ms": 1776.6,
+                "input_tokens": 5757,
+                "output_tokens": 216,
                 "response": {
-                  "ingredient_inventory": [
-                    "feel-good",
+                  "unit_analysis": "units:\n- \"Feel-good\" [trait: feel-good] -> literal (family: semantic, emotional tone)\n- \"romantic comedy\" [trait: none] -> literal (family: keyword, genre sub-type)\n- \"movies\" -> filler (generic scaffolding)",
+                  "inventory": [
+                    "Feel-good",
                     "romantic comedy"
                   ],
-                  "concept_inventory_analysis": "The query contains a genre classification and a specific tonal qualifier. While often grouped together, 'feel-good' is a distinct emotional quality (tone) that can apply across many genres, and 'romantic comedy' is the specific structural genre. These are separated to allow for independent weighting and retrieval of the narrative structure versus the mood.",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Feel-good\" [units: Feel-good] -> emit (family: semantic, describes emotional experience)\n- \"romantic comedy\" [units: romantic comedy] -> emit (family: keyword, specific genre taxonomy)",
+                  "slots": [
                     {
-                      "boundary_note": "This represents the emotional tone and mood requested by the user.",
-                      "concept": "feel-good tone",
-                      "required_ingredients": [
-                        "feel-good"
-                      ]
+                      "handle": "feel-good tone",
+                      "scope": [
+                        "Feel-good"
+                      ],
+                      "retrieval_shape": "feel-good emotional atmosphere",
+                      "cohesion": "Single emotional tone handled by semantic search.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "This represents the primary genre classification.",
-                      "concept": "romantic comedy genre",
-                      "required_ingredients": [
+                      "handle": "romantic comedy genre",
+                      "scope": [
                         "romantic comedy"
-                      ]
+                      ],
+                      "retrieval_shape": "romantic comedy genre keyword",
+                      "cohesion": "Specific genre classification; Gate 1 split from semantic tone.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -1980,6 +2275,7 @@
         {
           "query": "Tom Cruise action movies from the 90s",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Tom Cruise, action, 1990s",
           "stage_1_primary_rewrite": "Tom Cruise action movies from the 1990s",
           "branches": [
             {
@@ -1988,37 +2284,44 @@
               "display_phrase": "Tom Cruise 90s Action Hits",
               "step_2a": {
                 "status": "ok",
-                "elapsed_ms": 1436.0,
-                "input_tokens": 649,
-                "output_tokens": 160,
+                "elapsed_ms": 2736.8,
+                "input_tokens": 5680,
+                "output_tokens": 469,
                 "response": {
-                  "ingredient_inventory": [
+                  "unit_analysis": "units:\n- \"Tom Cruise\" [trait: Tom Cruise] -> literal (family: entity, actor name)\n- \"action\" [trait: action] -> literal (family: keyword, genre category)\n- \"movies\" [trait: none] -> filler (generic scaffolding)\n- \"from the 1990s\" [trait: 1990s] -> literal (family: metadata, release era scalar)",
+                  "inventory": [
                     "Tom Cruise",
-                    "action movies",
-                    "1990s"
+                    "action",
+                    "from the 1990s"
                   ],
-                  "concept_inventory_analysis": "The query is decomposed into three distinct user intents: the lead actor (identity), the genre (classification), and the specific time period (chronological constraint).",
-                  "concepts": [
+                  "slot_analysis": "slots:\n- \"Tom Cruise\" [units: Tom Cruise] -> emit (family: entity, distinct actor search)\n- \"action\" [units: action] -> emit (family: keyword, distinct genre search)\n- \"from the 1990s\" [units: from the 1990s] -> emit (family: metadata, distinct era search)",
+                  "slots": [
                     {
-                      "boundary_note": "Represents the specific actor the user wants to see starring in the films.",
-                      "concept": "Tom Cruise",
-                      "required_ingredients": [
+                      "handle": "Tom Cruise",
+                      "scope": [
                         "Tom Cruise"
-                      ]
+                      ],
+                      "retrieval_shape": "entity (actor)",
+                      "cohesion": "Individual named person. Gate 1 split: different family than other intent units.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "Defines the specific cinematic genre/style requested.",
-                      "concept": "action movies",
-                      "required_ingredients": [
-                        "action movies"
-                      ]
+                      "handle": "action genre",
+                      "scope": [
+                        "action"
+                      ],
+                      "retrieval_shape": "keyword (genre)",
+                      "cohesion": "Deterministic genre tag. Gate 1 split: keyword endpoint for categorical classification.",
+                      "confidence": "literal"
                     },
                     {
-                      "boundary_note": "A temporal constraint focusing on films released between 1990 and 1999.",
-                      "concept": "1990s",
-                      "required_ingredients": [
-                        "1990s"
-                      ]
+                      "handle": "1990s era",
+                      "scope": [
+                        "from the 1990s"
+                      ],
+                      "retrieval_shape": "metadata (release date)",
+                      "cohesion": "Scalar attribute for release year. Gate 1 split: metadata family handles quantitative filters.",
+                      "confidence": "literal"
                     }
                   ]
                 }
@@ -2029,12 +2332,14 @@
         {
           "query": "Inception",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: Inception",
           "stage_1_primary_rewrite": "The movie titled Inception",
           "branches": []
         },
         {
           "query": "movies like The Matrix",
           "stage_1_status": "ok",
+          "stage_1_query_traits": "traits: The Matrix, similarity",
           "stage_1_primary_rewrite": "Movies similar to The Matrix",
           "branches": []
         }

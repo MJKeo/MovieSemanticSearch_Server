@@ -1,17 +1,20 @@
 # Step 2 (query understanding) LLM structured output models.
 #
-# The revamped Step 2 pipeline first extracts concept boundaries
-# (Step 2A), then plans one or more retrieval expressions per concept
-# (Step 2B). The final public response preserves concept identity so
-# Stage 4 can aggregate sibling dealbreakers at the concept level.
+# The revamped Step 2 pipeline first partitions the rewrite into
+# planning slots (Step 2A), then plans one or more retrieval
+# expressions per slot (Step 2B). The final public response preserves
+# concept identity so Stage 4 can aggregate sibling dealbreakers at the
+# concept level.
 #
 # No class-level docstrings or Field descriptions — all LLM-facing
-# guidance lives in the system prompt(s) in `search_v2/stage_2.py`.
+# guidance lives in the system prompt(s) in `search_v2/stage_2a.py`
+# and `search_v2/stage_2.py`.
 # Developer notes live in comments above the class.
 
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
@@ -33,6 +36,9 @@ class PreferenceStrength(StrEnum):
     SUPPORTING = "supporting"
 
 
+# Legacy shape consumed by Step 2B's per-concept loop. Kept alive until
+# Step 2B is reworked to consume PlanningSlot directly; at that point
+# ExtractedConcept should be removed.
 class ExtractedConcept(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -44,26 +50,79 @@ class ExtractedConcept(BaseModel):
     ) = Field(...)
 
 
+# Step 2A output unit. Each slot represents one user-intent partition
+# cell: a scoped, named, coherent chunk of the Step 1 rewrite that
+# Step 2B can plan retrieval expressions for independently of siblings.
+#
+# Fields appear in the order small models should commit them:
+#   - handle: a short label the model names first to anchor the slot
+#   - scope: which committed inventory phrases live in this slot
+#   - retrieval_shape: a ≤8-word phantom-slot sanity check
+#   - cohesion: ≤15-word boundary justification
+#   - confidence: literal if every scope member came from a literal
+#     unit-analysis verdict; inferred if any came from a best_guess
+class PlanningSlot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    handle: constr(strip_whitespace=True, min_length=1) = Field(...)
+    scope: conlist(
+        constr(strip_whitespace=True, min_length=1),
+        min_length=1,
+    ) = Field(...)
+    retrieval_shape: constr(strip_whitespace=True, min_length=1) = Field(...)
+    cohesion: constr(strip_whitespace=True, min_length=1) = Field(...)
+    confidence: Literal["literal", "inferred"] = Field(...)
+
+
+# Step 2A top-level response. Field order is the cognitive scaffold
+# for small-model generation:
+#   1. unit_analysis — per-rewrite-phrase verdict trace (literal /
+#      best_guess / filler / fold_into). Commits per-item verdicts
+#      BEFORE any inventory exists.
+#   2. inventory — the committed actionable phrase set derived from
+#      unit_analysis. Validated to back every slot scope entry.
+#   3. slot_analysis — per-candidate-slot verdict trace (emit /
+#      fuse_with). Commits fuse-vs-split decisions BEFORE slots are
+#      written.
+#   4. slots — the final partition handed off to Step 2B.
 class Step2AResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    ingredient_inventory: conlist(
+    unit_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
+    inventory: conlist(
         constr(strip_whitespace=True, min_length=1),
         min_length=0,
     ) = Field(...)
-    concept_inventory_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
-    concepts: conlist(ExtractedConcept, min_length=0) = Field(...)
+    slot_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
+    slots: conlist(PlanningSlot, min_length=0) = Field(...)
 
     @model_validator(mode="after")
-    def validate_concept_ingredients_against_inventory(self) -> "Step2AResponse":
-        inventory = set(self.ingredient_inventory)
-        for concept in self.concepts:
-            for ingredient in concept.required_ingredients:
-                if ingredient not in inventory:
+    def validate_partition_completeness(self) -> "Step2AResponse":
+        # Enforce the partition invariants that make Step 2B's parallel
+        # planning safe:
+        #   1. Every slot scope entry must appear in inventory (slots
+        #      only reference phrases that were committed retrievable).
+        #   2. Every inventory entry must appear in some slot scope —
+        #      otherwise a "retrievable" phrase falls on the floor and
+        #      the pipeline silently drops user intent.
+        # The confidence flag itself is trusted from the model
+        # (verifying it would require parsing the free-form trace).
+        inventory = set(self.inventory)
+        covered: set[str] = set()
+        for slot in self.slots:
+            for scope_entry in slot.scope:
+                if scope_entry not in inventory:
                     raise ValueError(
-                        "Each concept required_ingredients entry must exactly match "
-                        "an item in ingredient_inventory."
+                        "Each PlanningSlot scope entry must exactly match an "
+                        "item in inventory."
                     )
+                covered.add(scope_entry)
+        orphaned = inventory - covered
+        if orphaned:
+            raise ValueError(
+                "Every inventory entry must appear in some slot scope. "
+                f"Orphaned: {sorted(orphaned)}"
+            )
         return self
 
 
