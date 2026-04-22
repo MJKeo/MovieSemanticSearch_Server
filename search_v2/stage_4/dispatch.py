@@ -128,30 +128,30 @@ def _build_generator_call(
     # separate from translate_item so the timing block stays tight
     # around the actual await.
     description = item.source.description
-    routing_rationale = item.source.routing_rationale
+    route_rationale = item.source.route_rationale
 
     endpoint = item.endpoint
     if endpoint == EndpointRoute.ENTITY:
         return generate_entity_query(
-            intent_rewrite, description, routing_rationale, provider, model
+            intent_rewrite, description, route_rationale, provider, model
         )
     if endpoint == EndpointRoute.STUDIO:
         return generate_studio_query(
-            intent_rewrite, description, routing_rationale, provider, model
+            intent_rewrite, description, route_rationale, provider, model
         )
     if endpoint == EndpointRoute.FRANCHISE_STRUCTURE:
         return generate_franchise_query(
-            intent_rewrite, description, routing_rationale, provider, model
+            intent_rewrite, description, route_rationale, provider, model
         )
     if endpoint == EndpointRoute.KEYWORD:
         return generate_keyword_query(
-            intent_rewrite, description, routing_rationale, provider, model
+            intent_rewrite, description, route_rationale, provider, model
         )
     if endpoint == EndpointRoute.METADATA:
         return generate_metadata_query(
             intent_rewrite,
             description,
-            routing_rationale,
+            route_rationale,
             today,
             provider,
             model,
@@ -160,7 +160,7 @@ def _build_generator_call(
         return generate_award_query(
             intent_rewrite,
             description,
-            routing_rationale,
+            route_rationale,
             today,
             provider,
             model,
@@ -173,12 +173,12 @@ def _build_generator_call(
             return generate_semantic_preference_query(
                 intent_rewrite,
                 description,
-                routing_rationale,
+                route_rationale,
                 provider,
                 model,
             )
         return generate_semantic_dealbreaker_query(
-            intent_rewrite, description, routing_rationale, provider, model
+            intent_rewrite, description, route_rationale, provider, model
         )
     raise ValueError(f"Unsupported endpoint for translation: {endpoint}")
 

@@ -5,7 +5,7 @@
 # the brand-posting and freeform-token paths.
 #
 # Receives: intent_rewrite (step 1) + one item's description and
-# routing_rationale (step 2).
+# route_rationale (step 2).
 #
 # See search_improvement_planning/v2_search_data_improvements.md
 # (Query-Time Resolution) for the full design rationale, and

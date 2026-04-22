@@ -480,7 +480,7 @@ SYSTEM_PROMPT = (
 async def generate_metadata_query(
     intent_rewrite: str,
     description: str,
-    routing_rationale: str,
+    route_rationale: str,
     today: date,
     provider: LLMProvider,
     model: str,
@@ -490,7 +490,7 @@ async def generate_metadata_query(
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
     context), one step 2 item's description plus a routing hint
-    derived from step 2's routing_rationale field,
+    derived from step 2's route_rationale field,
     and today's date (for resolving relative temporal terms). It
     produces the exact single-column query parameters the metadata
     endpoint needs to execute the lookup.
@@ -500,7 +500,7 @@ async def generate_metadata_query(
             is looking for, from step 1.
         description: The positive-presence statement of the metadata
             requirement to translate (from a Dealbreaker or Preference).
-        routing_rationale: The concept-type label from step 2 explaining
+        route_rationale: The concept-type label from step 2 explaining
             why this item was routed to the metadata endpoint. This is
             passed to the prompt as a lightweight routing hint rather
             than as evidence.
@@ -521,13 +521,13 @@ async def generate_metadata_query(
     """
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_hint = routing_rationale.strip()
+    routing_hint = route_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
     if not routing_hint:
-        raise ValueError("routing_rationale must be a non-empty string.")
+        raise ValueError("route_rationale must be a non-empty string.")
 
     # All four inputs are required. Present as labeled sections so
     # the model can keep them distinct. Today's date is rendered in

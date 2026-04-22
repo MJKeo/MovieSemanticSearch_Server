@@ -788,6 +788,25 @@ soft rule holds up; revisit only if leak rate is non-trivial.
 **See:** search_v2/stage_1.py (SYSTEM_PROMPT CREATIVE SPINS / creative_spin_analysis sections),
 DIFF_CONTEXT.md "Stage 1: cap alternatives at 1, add trait extraction, free spins from strict narrowing"
 
+## Rewrite Step 2B to consume new PlanningSlot shape from Step 2A
+**Context:** Step 2A was rewritten this session (new `PlanningSlot` + `Step2AResponse`
+schema, `interpret` verdict, decompose-first-then-group flow, three-condition fusion
+rule). Step 2B was intentionally left broken: `search_v2/stage_2.py::run_stage_2`
+raises `NotImplementedError`, `unit_tests/test_search_v2_stage_2.py` fails, and
+notebook cell 4B (`search_v2/test_stage_1_to_4.ipynb`) still references
+`step_2a_response.concepts` which no longer exists. The 2B rewrite should adopt the
+same Stage-1 / Stage-2A prompt-authoring patterns now codified in
+`search_improvement_planning/steps_1_2_improving.md` — per-slot verdict scaffold
+(plan / skip), explicit "stay inside the slot's retrieval_shape" rule with a drift
+example, single-family-per-expression discipline (each expression targets one
+`EndpointRoute`), and brevity caps on reasoning fields. Step 2B is now the
+highest-leverage next target for search-quality work.
+**When:** Next major search-pipeline work session.
+**See:** search_v2/stage_2.py (run_stage_2, _run_step_2b_for_concept, _STEP_2B_SYSTEM_PROMPT),
+search_v2/stage_2a.py (new PlanningSlot shape that 2B must consume),
+search_v2/test_stage_1_to_4.ipynb (cell 4B broken pending 2B rework),
+search_improvement_planning/steps_1_2_improving.md ("What We Learned From The Step 2A Rewrite" + "Working Hypothesis Going Forward").
+
 ## Update franchise tests for prefer_lineage + column split + dataclass return
 **Context:** Expanded scope on top of the pre-existing "Update franchise query-side tests" TODO. New things that will break or need coverage: (1) `FranchiseQuerySpec` gained a `prefer_lineage: bool` field with two validator coercions (no-name-axis → False, SPINOFF → False); (2) `fetch_franchise_movie_ids` now returns `tuple[set[int], set[int]]` (lineage, universe-only) instead of `set[int]`; (3) `write_franchise_data` / `ingest_franchise_data` return a `FranchiseEntryIds` dataclass instead of a 2-tuple / 3-tuple; (4) `upsert_movie_card` + `update_movie_card_franchise_ids` take `lineage_entry_ids` + `shared_universe_entry_ids` instead of `franchise_name_entry_ids`; (5) the new scoring logic in `execute_franchise_query` produces 1.0 / 0.75 / 1.0-fallback scores that tests asserting binary {0.0, 1.0} will need updating for.
 **When:** Dedicated test-updates phase — bundle with the other franchise test updates already tracked.

@@ -102,6 +102,52 @@ def normalize_string(text: str) -> str:
     return normalized
 
 
+def expand_hyphen_variants(normalized: str) -> list[str]:
+    """
+    Given an already-normalized string, return the deterministic set of
+    hyphen variants used for symmetric ingest/query lookup in the
+    lexical posting tables.
+
+    Returns up to three forms, in this order:
+      1. The original (hyphens preserved, e.g. "spider-man")
+      2. Hyphens replaced with a space, then re-collapsed ("spider man")
+      3. Hyphens removed entirely ("spiderman")
+
+    Inputs are assumed to have already passed ``normalize_string``, so
+    only ASCII hyphens are expected. Strings without a hyphen return as
+    a singleton list. Duplicates are removed while preserving first-seen
+    order (e.g. a leading/trailing hyphen can produce duplicate forms
+    once collapsed).
+
+    Examples:
+        >>> expand_hyphen_variants("spider-man")
+        ['spider-man', 'spider man', 'spiderman']
+        >>> expand_hyphen_variants("tom hanks")
+        ['tom hanks']
+        >>> expand_hyphen_variants("")
+        []
+    """
+    if not normalized:
+        return []
+
+    if "-" not in normalized:
+        return [normalized]
+
+    # Space variant: replace every hyphen with a space, then collapse
+    # any runs of whitespace that this may have introduced (e.g. "a- b"
+    # -> "a  b" -> "a b").
+    spaced = re.sub(r"\s+", " ", normalized.replace("-", " ")).strip()
+    stripped = normalized.replace("-", "")
+
+    variants: list[str] = []
+    seen: set[str] = set()
+    for candidate in (normalized, spaced, stripped):
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            variants.append(candidate)
+    return variants
+
+
 def tokenize_title_phrase(text: str, *, already_normalized: bool = False) -> list[str]:
     """
     Normalize and tokenize a title phrase with hyphen expansion.

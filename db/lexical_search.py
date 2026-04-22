@@ -13,8 +13,6 @@ from implementation.classes.schemas import (
 from implementation.llms.query_understanding_methods import extract_lexical_entities_async
 from db.postgres import (
     fetch_phrase_term_ids,
-    fetch_title_token_ids,
-    fetch_title_token_ids_exact,
     fetch_character_term_ids,
     execute_compound_lexical_search,
     fetch_movie_ids_by_term_ids,
@@ -22,6 +20,22 @@ from db.postgres import (
     PEOPLE_POSTING_TABLES,
     TitleSearchInput,
 )
+
+
+# The v1 title-token infrastructure (lex.title_token_strings /
+# lex.inv_title_token_postings / lex.title_token_doc_frequency) was
+# retired to make room for the Stage 3 title_pattern endpoint in
+# search_v2, which ILIKE-matches a normalized title column on
+# movie_card. These module-local stubs preserve the v1 lexical_search
+# call graph while the broader v1 retirement PR is being prepared;
+# both resolve to an empty mapping so v1 search produces no title
+# matches instead of crashing at import time.
+async def fetch_title_token_ids(*_args, **_kwargs):
+    return {}
+
+
+async def fetch_title_token_ids_exact(*_args, **_kwargs):
+    return {}
 
 # ─── Operational constants (from lexical search guide Section 11) ─────────────
 MAX_DF = 10_000
@@ -426,10 +440,10 @@ async def lexical_search(
         exclusion_resolution_tasks.append(
             fetch_movie_ids_by_term_ids(PostingTable.CHARACTER, exclude_character_term_ids)
         )
-    if exclude_title_term_ids:
-        exclusion_resolution_tasks.append(
-            fetch_movie_ids_by_term_ids(PostingTable.TITLE_TOKEN, exclude_title_term_ids)
-        )
+    # Title-token exclusion was removed with the v1 title-token tables.
+    # Stage 3 title_pattern lookups (search_v2) run ILIKE against the
+    # normalized title column and do not participate in v1 exclusion.
+    _ = exclude_title_term_ids
 
     if exclusion_resolution_tasks:
         exclusion_results = await asyncio.gather(*exclusion_resolution_tasks)

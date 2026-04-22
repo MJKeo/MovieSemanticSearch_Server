@@ -5,9 +5,10 @@
 # lexical posting tables. The LLM is a schema translator, not a
 # re-interpreter: routing and intent have already been resolved
 # upstream. Its job is to (1) identify what kind of entity the
-# description names, (2) produce the correct literal search text,
-# (3) pick the correct role table for persons, and
-# (4) set the actor prominence mode when actor-table search is in play.
+# description names, (2) produce the correct primary credited form
+# plus any additional credited aliases, (3) pick the correct role
+# table for persons, and (4) set the prominence mode when billing-
+# position scoring is in play.
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Step 3 → Endpoint 1: Entity Lookup) for the full design rationale
@@ -21,19 +22,20 @@ from schemas.entity_translation import EntityQuerySpec
 # System prompt — modular sections concatenated at module level.
 #
 # Structure: task → direction-agnostic framing → entity types →
-# person role selection → actor prominence modes → name
-# canonicalization → output field guidance.
+# person role selection → alternative-form expansion → prominence
+# modes → name canonicalization → output field guidance.
 #
 # Prompt authoring conventions applied:
 # - Evidence-inventory reasoning (entity_type_evidence inventories
-#   the lookup type / role signal, prominence_evidence quotes input language)
-# - Brief pre-generation fields (name_resolution_notes is a short label,
-#   not a paragraph)
-# - Abstention-first for prominence_evidence (null path stated before
-#   extraction rules)
+#   the lookup type / role signal; alternative_forms_evidence
+#   enumerates candidate credited variants before committing;
+#   prominence_evidence quotes input language)
+# - Brief pre-generation fields (name_resolution_notes is scoped
+#   narrowly to primary_form, not a general scratch pad)
+# - Abstention-first for prominence / alternative-form evidence
+#   (null / "no signal" paths stated before extraction rules)
 # - Principle-based constraints, not failure catalogs
-# - Evaluation guidance over outcome shortcuts (boundaries explained,
-#   no keyword-matching rules like "if 'starring' appears → LEAD")
+# - Evaluation guidance over outcome shortcuts
 # - Example-eval separation (examples are illustrative; evaluation
 #   test sets draw from a different pool)
 # - No schema/implementation details leaked to the LLM
@@ -45,8 +47,9 @@ specification. You receive a single entity requirement that has \
 already been interpreted, routed, and framed as a positive-presence \
 lookup. Your job is not to decide what the user meant — that is \
 already done. Your job is to produce the exact search parameters \
-the retrieval layer needs: the resolved search text, the entity type, and \
-the role-specific scoring knobs.
+the retrieval layer needs: the primary credited form, any \
+additional credited aliases, the entity type, and the role-specific \
+scoring knobs.
 
 Inputs you receive:
 - intent_rewrite — the full concrete statement of what the user is \
@@ -57,7 +60,7 @@ resolve when you can see the surrounding query context.
 always written in positive-presence form ("includes X in actors", \
 "directed by Y", "has a character named Z", "title contains the \
 word 'W'").
-- routing_rationale — a concept-type label explaining why this \
+- route_rationale — a concept-type label explaining why this \
 entity was routed to this endpoint. It narrows what kind of entity \
 you are dealing with.
 
@@ -161,7 +164,7 @@ searches all five.
 Use a specific role when the description explicitly or nearly \
 explicitly states the role. Phrases like "directed by", "written \
 by", "produced by", "starring", "composed the score for" resolve \
-to one table. Role-cued routing_rationale ("named person \
+to one table. Role-cued route_rationale ("named person \
 (director)") also resolves to one table. This is the common case.
 
 Use broad_person only when the description does not state a role \
@@ -173,7 +176,7 @@ directing, because the phrasing does not specify.
 
 Evidence precedence for person-role decisions:
 - description is authoritative for the requested role or prominence
-- routing_rationale is a coarse type hint that can break close ties
+- route_rationale is a coarse type hint that can break close ties
 - intent_rewrite is disambiguation context
 - parametric knowledge is last-resort support for primary_category \
   and name resolution, not a reason to override explicit phrasing
@@ -194,147 +197,181 @@ only applies to broad_person searches.
 """
 
 # ---------------------------------------------------------------------------
-# Actor prominence: the four-mode system. Evaluation guidance over
-# outcome shortcuts — teach the boundaries, don't give keyword rules.
+# Alternative-form expansion: a shared concern for persons and
+# characters. The LLM must actively enumerate credited aliases, not
+# passively emit a single primary form.
 # ---------------------------------------------------------------------------
 
-_ACTOR_PROMINENCE = """\
-ACTOR PROMINENCE MODES
+_ALTERNATIVE_FORMS = """\
+ALTERNATIVE CREDITED FORMS
 
-When actor-table search is in play (entity_type is person and \
-person_category is actor or broad_person), you pick how billing \
-position should be scored. The four modes correspond to four \
-distinct user intents about how prominently the actor should \
-appear in the movie.
+Persons and characters are frequently credited under more than \
+one string across the movie database. Each credited string is its \
+own exact-match key in the lexical dictionary — a one-character \
+difference means zero matches for that form. Missing a real alias \
+silently drops every movie that uses it.
 
-default — The user wants films involving this actor without \
-specifying how prominent. "Brad Pitt movies", "movies with Brad \
-Pitt", "Brad Pitt action films". No prominence adjective is \
-present. This is the typical case when the query just names the \
-actor.
+COST ASYMMETRY — internalize this before deciding what to \
+include. Retrieval takes the MAXIMUM score across all forms you \
+supply. A spurious alias that matches no credits scores zero and \
+adds nothing to the result. A real credited form you omitted \
+silently drops real results from the set. Over-including costs \
+~0; under-including is a retrieval bug. The correct bias is \
+toward inclusion.
 
-lead — The user explicitly wants the actor in a leading role. The \
-description must contain language that pins the role to the top \
-of the cast: "starring", "in a lead role", "leading role", "main \
-character played by". Merely listing the actor is NOT lead — the \
-description must name the prominence.
+INCLUSION BAR — deliberately low. Include any form you believe \
+would plausibly appear as a credit string in at least one film \
+featuring this entity. You do NOT need to have verified a specific \
+film's credit list. General knowledge of how this kind of entity \
+is typically credited is the signal we want — use it.
 
-supporting — The user explicitly wants the actor in a supporting \
-role. Phrases like "supporting role", "played a supporting part", \
-"as a supporting character". A deliberate, named choice by the \
-user.
+Forms that clear the bar (examples, not a closed list):
+- A superhero or masked vigilante's civilian / secret-identity \
+  name, when films credit the civilian billing separately from \
+  the hero billing.
+- A villain's legal name alongside their alias, or vice versa.
+- A performer's legal name alongside their stage name, rap name, \
+  or mononym, when both forms appear in real film credits.
+- The composite "FirstName 'StageName' LastName" form that some \
+  films use for performers known by a stage name.
+- A long-form credited name (title + full name, or legal middle \
+  name included) alongside the shorter bare form, when films \
+  vary.
 
-minor — The user explicitly wants the actor in a brief, small \
-appearance. "Cameo", "cameos", "in a minor role", "small part". \
-Again, the description must name this — do not infer minor from \
-context.
+Forms that DO NOT belong:
+- Descriptive phrases, scene quotes, or character traits.
+- Nicknames that only live in dialogue, marketing, or fan \
+  communities — not real credit strings.
+- Diacritic / casing / punctuation variants — shared normalization \
+  handles these already.
+- Hyphenation variants — the ingest layer expands hyphens \
+  automatically.
 
-The principle: lead, supporting, and minor each require explicit \
-prominence language in the description. When no such language is \
-present, the correct choice is default. Do not pick lead simply \
-because starring-in-a-movie is the most common case — that is \
-what default already covers.
-
-When actor-table search is not in play (entity is not a person, or \
-person_category is not actor / broad_person), leave \
-actor_prominence_mode null.
+Title patterns have no aliases. Leave the alternative-form fields \
+null when entity_type is title_pattern.
 
 ---
 
 """
 
 # ---------------------------------------------------------------------------
-# Character prominence: a simpler two-mode system parallel to actor
-# prominence. The decision is framed on whether the description
-# positions the character as the subject of the query or as a filter.
+# Unified prominence system: one set of modes covering both actor-
+# table and character lookups. The mode dimension applies only when
+# billing-position scoring is meaningful; for all other lookups
+# (director-only persons, title patterns), leave the prominence
+# fields null.
 # ---------------------------------------------------------------------------
 
-_CHARACTER_PROMINENCE = """\
-CHARACTER PROMINENCE MODES
+_PROMINENCE = """\
+PROMINENCE MODES
 
-When entity_type is character, you pick how character billing \
-position should be scored. The two modes reflect how central the \
-user wants that character to be in the movie.
+When billing-position scoring applies — entity_type is person with \
+person_category actor or broad_person, OR entity_type is character \
+— you pick how prominently the entity should appear in the movie. \
+The modes correspond to distinct user intents about prominence.
 
-default — The character is a filter, not the subject. The \
-description lists the character as something the movie "includes", \
-"features", or simply "has", or gives no prominence signal at all. \
-"films that include Spider-Man", "movies featuring the Joker", \
-"movies with Hannibal Lecter". This is the typical case when the \
-query just names the character.
+Applicable modes by entity:
+- Actor-table searches (person + actor or broad_person): \
+  default, lead, supporting, minor
+- Character searches: default, central
 
-central — The description frames the character as the subject of \
-the movie. Language like "centers on", "is about", "the story of", \
-"protagonist", or when the description uses the character's name \
-as the subject of a possessive noun phrase ("Spider-Man movies", \
-"the Joker's story", "films about Batman"). Only choose central \
-when the description explicitly pins the character to the center \
-of the film.
+Mode definitions:
 
-The principle: central requires explicit subject-positioning \
-language in the description. When the character is described as \
-appearing *in* the film, "featured in" the film, or simply listed \
-alongside other filters, the correct choice is default. Do not \
-pick central just because the character is well-known — a query \
-for "movies that have the Joker in them" is still default.
+default — The user names the entity without specifying prominence. \
+"Brad Pitt movies", "movies with Spider-Man", "films featuring \
+Hannibal Lecter". No prominence adjective is present. This is the \
+typical case.
 
-When entity_type is not character, leave both \
-character_prominence_evidence and character_prominence_mode null.
+lead — Actor-table only. The user explicitly wants the actor in a \
+leading role. Trigger phrases: "starring", "in a lead role", \
+"leading role", "main character played by". Merely listing the \
+actor is NOT lead — the description must name the prominence.
+
+supporting — Actor-table only. The user explicitly wants the actor \
+in a supporting role. Phrases like "supporting role", "played a \
+supporting part", "as a supporting character". A deliberate, named \
+choice by the user.
+
+minor — Actor-table only. The user explicitly wants the actor in \
+a brief, small appearance. "Cameo", "cameos", "in a minor role", \
+"small part".
+
+central — Character-only. The description frames the character as \
+the subject of the movie: "centers on", "is about", "the story \
+of", "protagonist", or when the description uses the character's \
+name as the subject of a possessive noun phrase ("Spider-Man \
+movies", "the Joker's story", "films about Batman"). Only choose \
+central when the description explicitly pins the character to the \
+center of the film.
+
+The principle: lead, supporting, minor, and central all require \
+explicit language in the description. When no such language is \
+present, the correct choice is default. Do not pick a stronger \
+prominence mode simply because the entity is famous or the \
+reference feels prominent — that is what default already covers.
+
+When billing-position scoring does not apply — director / writer / \
+producer / composer-only persons, title patterns — leave both \
+prominence_evidence and prominence_mode null.
 
 ---
 
 """
 
 # ---------------------------------------------------------------------------
-# Name canonicalization: the literal-search-text rules. For people
-# and characters the returned string must equal the stored lexical
-# form after shared normalization; title_pattern is literal
-# substring/prefix text instead. Rules are principle-based.
+# Name canonicalization: the primary_form literal-search rules. For
+# people and characters the returned string must equal the stored
+# lexical form after shared normalization; title_pattern is literal
+# substring/prefix text instead.
 # ---------------------------------------------------------------------------
 
 _NAME_CANONICALIZATION = """\
 NAME CANONICALIZATION
 
-The lookup_text you produce is matched literally by the retrieval \
+The rules in this section govern primary_form ONLY. Inclusion of \
+additional credited forms in alternative_forms follows the \
+Alternative Credited Forms section above, where the default \
+stance is deliberately inclusive. Do not let primary_form's \
+"don't invent" discipline bleed into alias enumeration — those \
+are different decisions with different cost profiles.
+
+The primary_form you produce is matched literally by the retrieval \
 layer. For people and characters, it is resolved by exact string \
 equality against an ingestion-time dictionary after a shared \
 normalization step. A one-character difference in anything else — \
 missing initial, wrong spelling, added or dropped suffix — means \
-zero matches. Produce the most common, fully expanded credited \
-form.
+zero matches for that form. Produce the most common, fully \
+expanded credited form as primary_form; put any additional \
+credited variants in alternative_forms.
 
-Persons — Use the full, conventional credited name. Correct \
-obvious typos ("Johny Dep" → "Johnny Depp"). Expand unambiguous \
-partial names where the surrounding context nails down the \
-referent ("Scorsese" in a query about film directors → "Martin \
-Scorsese"). Never add honorifics, titles, or extra name parts the \
-user did not give you unless the form is the common credited full \
-name. Never invent middle names that the user did not type. If a \
-partial name is genuinely \
-ambiguous and intent_rewrite does not pin it down, use the form \
-the user typed — the lookup will either find the right person or \
-return empty, which is an honest signal.
+Persons — primary_form is the full, conventional credited name. \
+Correct obvious typos ("Johny Dep" → "Johnny Depp"). Expand \
+unambiguous partial names where the surrounding context nails down \
+the referent ("Scorsese" in a query about film directors → \
+"Martin Scorsese"). Never add honorifics, titles, or extra name \
+parts the user did not give you unless the form is the common \
+credited full name. Never invent middle names that the user did \
+not type. If a partial name is genuinely ambiguous and \
+intent_rewrite does not pin it down, use the form the user typed. \
+Stage-name / legal-name variants, when both demonstrably appear in \
+credits, go in alternative_forms (see the Alternative Credited \
+Forms section).
 
-Characters — Produce the primary credited form of the character \
-name as it typically appears in movie cast lists. "The Joker" — \
-not "Joker" as the primary form. "Hannibal Lecter" — not \
-"Dr. Lecter" or "Hannibal the Cannibal" as the primary form. Fix \
-misspellings only when clearly a misspelling; do not guess. When \
-the character is genuinely known by additional credited forms, \
-list them in character_alternative_names — each additional form \
-is an independent exact match against the character string \
-dictionary, and one match scores. Do not pad the list with \
-descriptions or scene quotes; every entry must be a form that \
-actually appears in credits.
+Characters — primary_form is the most prominent credited form of \
+the character name as it typically appears in movie cast lists. \
+"The Joker" — not "Joker" as the primary form. "Hannibal Lecter" \
+— not "Dr. Lecter" or "Hannibal the Cannibal". Fix misspellings \
+only when clearly a misspelling; do not guess. Multiple credited \
+incarnations and secret-identity pairings go in alternative_forms.
 
-Title patterns — Emit the literal text fragment that should be \
-matched inside the title, with no SQL wildcards and no quotation \
-marks. "love" for "title contains the word love"; "The" for \
-"titles starting with The". Pick title_pattern_match_type = \
-contains when the description asks for the pattern anywhere in the \
-title, starts_with when the description specifies the beginning of \
-the title. This is a literal pattern match, not canonical-name \
-resolution.
+Title patterns — primary_form is the literal text fragment that \
+should be matched inside the title, with no SQL wildcards and no \
+quotation marks. "love" for "title contains the word love"; "The" \
+for "titles starting with The". Pick title_pattern_match_type = \
+contains when the description asks for the pattern anywhere in \
+the title, starts_with when the description specifies the \
+beginning of the title. This is a literal pattern match, not \
+canonical-name resolution; alternative_forms does not apply.
 
 ---
 
@@ -342,8 +379,8 @@ resolution.
 
 # ---------------------------------------------------------------------------
 # Output field guidance: per-field instructions in schema order.
-# The two reasoning fields carry their own framing guidance here so
-# that cognitive scaffolding produces its intended effect.
+# Reasoning fields carry their own framing guidance here so that
+# cognitive scaffolding produces its intended effect.
 # ---------------------------------------------------------------------------
 
 _OUTPUT = """\
@@ -355,21 +392,24 @@ commit to values after.
 
 entity_type_evidence — One short sentence that inventories what \
 kind of lookup this is — person, character, or title_pattern — and \
-what in the description or routing_rationale signals that. For \
+what in the description or route_rationale signals that. For \
 persons, include whether a specific role is explicitly named or \
 whether no specific role is stated. This is an evidence inventory, \
 not a justification.
 
-name_resolution_notes — A short telegraphic note describing how you \
-resolved the search text. Examples of the kind of content this note \
-should carry: "exact user form", "typo fix to common credited \
-name", "surname expanded from context", "literal title fragment, \
-no canonicalization". Keep it brief — a label or clause, not a \
-paragraph.
+name_resolution_notes — A short telegraphic note describing how \
+you resolved the PRIMARY credited form you will emit in \
+primary_form. Examples of the kind of content this note should \
+carry: "exact user form", "typo fix to common credited name", \
+"surname expanded from context", "literal title fragment, no \
+canonicalization". This field is scoped to the single primary \
+form — alias reasoning happens later in \
+alternative_forms_evidence. Keep it brief — a label or clause, \
+not a paragraph.
 
-lookup_text — The canonical string or literal pattern per the Name \
-Canonicalization section. This is the search key. No quotation \
-marks, no SQL wildcards, no trailing descriptors.
+primary_form — The canonical string or literal pattern per the \
+Name Canonicalization section. This is the primary search key. No \
+quotation marks, no SQL wildcards, no trailing descriptors.
 
 entity_type — One of person, character, title_pattern. Must match \
 the type you identified in entity_type_evidence.
@@ -387,20 +427,87 @@ known for, when you are confident about that. Leave null when \
 person_category is anything other than broad_person, or when the \
 person is genuinely equally known across multiple roles.
 
-prominence_evidence — A single short sentence. FIRST: determine \
-whether prominence reasoning applies at all. Prominence reasoning \
-applies only when the entity is a person AND person_category is \
-actor or broad_person. If either condition fails, leave this field \
-null. Otherwise, quote or paraphrase the \
-specific language in the description that signals role prominence \
-("starring", "in a lead role", "supporting role", "cameo", "minor \
-role"); if no such language is present, state "no prominence \
-signal" explicitly. Your goal is to surface what the input says, \
-not to argue for a preferred mode.
+alternative_forms_evidence — A structured walkthrough that \
+PRODUCES the list. If entity_type is title_pattern, leave this \
+field null. Otherwise work through each of the three questions \
+below for your entity type. Each answer is a CONCRETE NAME STRING \
+or the literal word "none". Do NOT answer "yes" or "no" — the \
+answers are names, because names are what the list needs.
 
-actor_prominence_mode — Populated only when prominence_evidence \
-applies. Pick default when prominence_evidence reports "no \
-prominence signal"; pick lead, supporting, or minor only when \
+Apply the inclusion bar from the Alternative Credited Forms \
+section: plausibly credited is enough. You do not need a specific \
+film citation. Err toward producing a name when the question's \
+pattern plausibly fits this entity; reserve "none" for when the \
+pattern genuinely does not apply.
+
+For a CHARACTER:
+  Q1. What civilian / secret-identity name do films credit \
+      separately? (Superhero civilian names, masked vigilantes' \
+      real identities, undercover characters' legal names.) \
+      → a name, or "none".
+  Q2. What other credited forms appear in specific film \
+      incarnations of this character? Include (a) a legal or \
+      real name used only in a particular subseries (e.g., an \
+      origin-story spin-off credits the character under their \
+      real name), and (b) a different named character who shares \
+      the same identity / mantle in a particular subseries \
+      (different person, same heroic or villainous role). List \
+      every such name you can identify. → one or more names, or \
+      "none".
+  Q3. What longer or shorter credited variant do films use? (A \
+      full legal name alongside the bare heroic name; a title \
+      plus full name alongside the bare name.) → a name, or \
+      "none".
+
+For a PERSON:
+  Q1. What is the OTHER credited form this person uses alongside \
+      the form in primary_form? (Legal name when primary_form is \
+      a stage name; stage/rap/mononym when primary_form is the \
+      legal name.) → a name, or "none".
+  Q2. What composite "FirstName 'StageName' LastName" form do \
+      films credit this person under, if they are known by a \
+      stage name? → a name, or "none".
+  Q3. What formal-vs-short credited variant exists (middle name \
+      or initial included in some credits, omitted in others)? \
+      → a name, or "none".
+
+End with a summary line: \
+"therefore alternative_forms = [<every non-'none' name from the \
+questions above>]". The summary MUST contain every concrete name \
+produced above — no exceptions, no last-minute filtering. If you \
+wrote a name as an answer, it goes in the list.
+
+Walking all three questions and answering "none" to each is \
+valid and produces an empty list. But you must walk — do not \
+skip to a verdict.
+
+alternative_forms — Populated only when entity_type is person or \
+character. The list of additional credited forms produced by your \
+alternative_forms_evidence walkthrough: every non-"none" name \
+from the three questions belongs here. Each entry is an \
+independent exact match against the lexical / character string \
+dictionary — retrieval takes the max score across forms, so extra \
+entries that find no matches cost nothing. Empty list is valid \
+only when all three walkthrough questions produced "none". Leave \
+null for title_pattern.
+
+prominence_evidence — A single short sentence. FIRST: determine \
+whether prominence reasoning applies at all. It applies only when \
+the entity is a person with person_category actor or broad_person, \
+OR when the entity is a character. If neither condition holds, \
+leave this field null. Otherwise, quote or paraphrase the \
+specific language in the description that signals prominence \
+("starring", "in a lead role", "supporting role", "cameo", \
+"minor role", "centers on", "the story of", a possessive subject \
+phrase like "Spider-Man movies"); if no such language is present, \
+state "no prominence signal" explicitly. Your goal is to surface \
+what the input says, not to argue for a preferred mode.
+
+prominence_mode — Populated only when prominence_evidence applies. \
+Valid modes depend on the entity: actor-table persons may use \
+default, lead, supporting, or minor; characters may use default \
+or central. Pick default when prominence_evidence reports "no \
+prominence signal"; pick a stronger mode only when \
 prominence_evidence has quoted explicit language for that mode. \
 Leave null when prominence_evidence is null.
 
@@ -408,33 +515,6 @@ title_pattern_match_type — Populated only when entity_type is \
 title_pattern. contains for literal substring-anywhere matches, \
 starts_with for literal title-prefix matches. Leave null for all \
 other entity types.
-
-character_alternative_names — Populated only when entity_type is \
-character. An empty list is valid and common — only add entries \
-when the character is genuinely known by additional credited \
-forms that would appear in cast lists. Do not add descriptive \
-phrases, scene quotes, nicknames that appear only in dialogue, or \
-speculative variants. Leave null for non-character entities.
-
-character_prominence_evidence — A single short sentence. FIRST: \
-determine whether character prominence reasoning applies at all. \
-Character prominence reasoning applies only when entity_type is \
-character. If that condition fails, leave this field null. \
-Otherwise, quote or paraphrase the specific language in the \
-description that signals how central the character is to the film \
-("centers on", "is about", "the story of", "protagonist", or the \
-character name used as a possessive subject like "Spider-Man \
-movies"); if no such language is present, state "no prominence \
-signal" explicitly. Your goal is to surface what the input says, \
-not to argue for a preferred mode.
-
-character_prominence_mode — Populated only when \
-character_prominence_evidence applies. Pick default when \
-character_prominence_evidence reports "no prominence signal" or \
-only describes the character as included / featured; pick central \
-only when character_prominence_evidence has quoted explicit \
-subject-positioning language. Leave null when \
-character_prominence_evidence is null.
 """
 
 SYSTEM_PROMPT = (
@@ -442,8 +522,8 @@ SYSTEM_PROMPT = (
     + _DIRECTION_AGNOSTIC
     + _ENTITY_TYPES
     + _PERSON_ROLES
-    + _ACTOR_PROMINENCE
-    + _CHARACTER_PROMINENCE
+    + _ALTERNATIVE_FORMS
+    + _PROMINENCE
     + _NAME_CANONICALIZATION
     + _OUTPUT
 )
@@ -452,7 +532,7 @@ SYSTEM_PROMPT = (
 async def generate_entity_query(
     intent_rewrite: str,
     description: str,
-    routing_rationale: str,
+    route_rationale: str,
     provider: LLMProvider,
     model: str,
     **kwargs,
@@ -460,7 +540,7 @@ async def generate_entity_query(
     """Translate one entity dealbreaker or preference into an EntityQuerySpec.
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
-    context) and one step 2 item's description plus routing_rationale.
+    context) and one step 2 item's description plus route_rationale.
     It produces the exact query parameters the lexical posting tables
     need to execute the lookup.
 
@@ -469,7 +549,7 @@ async def generate_entity_query(
             looking for, from step 1.
         description: The positive-presence statement of the entity
             requirement to translate (from a Dealbreaker or Preference).
-        routing_rationale: The concept-type label from step 2 explaining
+        route_rationale: The concept-type label from step 2 explaining
             why this item was routed to the entity endpoint.
         provider: Which LLM backend to use. No default — callers must
             choose explicitly so call sites are self-documenting and
@@ -492,13 +572,13 @@ async def generate_entity_query(
     # point.
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    route_rationale = route_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
-        raise ValueError("routing_rationale must be a non-empty string.")
+    if not route_rationale:
+        raise ValueError("route_rationale must be a non-empty string.")
 
     # Explicit-absence discipline is not needed here — all three inputs
     # are required. Present them as labeled sections so the model can
@@ -506,7 +586,7 @@ async def generate_entity_query(
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_rationale: {routing_rationale}"
+        f"route_rationale: {route_rationale}"
     )
 
     response, input_tokens, output_tokens = await generate_llm_response_async(

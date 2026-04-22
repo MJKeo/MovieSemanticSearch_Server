@@ -14,7 +14,7 @@ from typing import Literal
 
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import EndpointRoute
-from schemas.query_understanding import RetrievalExpression
+from schemas.query_understanding import RetrievalAction
 
 
 # Four mutually-exclusive flows the orchestrator can land in. Chosen
@@ -27,12 +27,14 @@ class Stage4Flow(str, Enum):
     BROWSE = "exclusion_only_browse"
 
 
-# A step-2 expression decorated with everything the orchestrator needs
-# to dispatch and score it, while preserving its parent concept
-# identity for concept-level aggregation in scoring.
+# A step-2 retrieval action decorated with everything the orchestrator
+# needs to dispatch and score it, while preserving its parent slot
+# identity for concept-level aggregation in scoring. Concept == slot
+# in the revamped Stage 2B design (one 2B call per slot, all actions
+# in the call are siblings under that slot).
 @dataclass(frozen=True)
 class TaggedItem:
-    source: RetrievalExpression
+    source: RetrievalAction
     role: Literal[
         "inclusion_dealbreaker",
         "exclusion_dealbreaker",

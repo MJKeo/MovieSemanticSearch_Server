@@ -52,7 +52,7 @@ description is vague or underspecified.
 translating, always written in positive-presence form ("is a Marvel \
 movie", "is a sequel", "spinoff movies", "movies that launched a \
 subgroup"). This is the authoritative statement of what to translate.
-- routing_rationale — a concept-type label explaining why this \
+- route_rationale — a concept-type label explaining why this \
 requirement was routed to this endpoint. Treat it as a hint, not as \
 evidence.
 
@@ -92,14 +92,14 @@ Use the inputs in this order:
    description is vague. Use it to resolve referents, not to add \
    extra franchise constraints that the description itself did not \
    ask for.
-3. routing_rationale — background hint only. Do not let it override \
+3. route_rationale — background hint only. Do not let it override \
    the actual evidence in description. If the hint leans one way \
    but the description clearly points another way, trust the \
    description.
 
 When writing concept_analysis, extract evidence from description \
 first. Bring in intent_rewrite only when it clarifies what a vague \
-phrase in description refers to. Do not treat routing_rationale as \
+phrase in description refers to. Do not treat route_rationale as \
 evidence.
 
 ---
@@ -386,7 +386,7 @@ franchise_or_universe_names has exactly one entry. Otherwise emit \
 false. When uncertain, emit false.
 
 Remember the input hierarchy: description chooses the axes; \
-intent_rewrite disambiguates vague references; routing_rationale is \
+intent_rewrite disambiguates vague references; route_rationale is \
 just a hint.
 """
 
@@ -404,7 +404,7 @@ SYSTEM_PROMPT = (
 async def generate_franchise_query(
     intent_rewrite: str,
     description: str,
-    routing_rationale: str,
+    route_rationale: str,
     provider: LLMProvider,
     model: str,
     **kwargs,
@@ -412,7 +412,7 @@ async def generate_franchise_query(
     """Translate one franchise dealbreaker or preference into a FranchiseQuerySpec.
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
-    context) and one step 2 item's description plus routing_rationale.
+    context) and one step 2 item's description plus route_rationale.
     It produces the exact franchise query parameters the structured
     execution layer needs.
 
@@ -421,7 +421,7 @@ async def generate_franchise_query(
             looking for, from step 1.
         description: The positive-presence statement of the franchise
             requirement to translate (from a Dealbreaker or Preference).
-        routing_rationale: The concept-type label from step 2 explaining
+        route_rationale: The concept-type label from step 2 explaining
             why this item was routed to the franchise_structure endpoint.
         provider: Which LLM backend to use. No default — callers must
             choose explicitly so call sites are self-documenting and
@@ -437,18 +437,18 @@ async def generate_franchise_query(
     """
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    route_rationale = route_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
-        raise ValueError("routing_rationale must be a non-empty string.")
+    if not route_rationale:
+        raise ValueError("route_rationale must be a non-empty string.")
 
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_rationale: {routing_rationale}"
+        f"route_rationale: {route_rationale}"
     )
 
     response, input_tokens, output_tokens = await generate_llm_response_async(

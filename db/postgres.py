@@ -27,7 +27,6 @@ class PostingTable(Enum):
     PRODUCER = "lex.inv_producer_postings"
     COMPOSER = "lex.inv_composer_postings"
     CHARACTER = "lex.inv_character_postings"
-    TITLE_TOKEN = "lex.inv_title_token_postings"
 
 
 # All role-specific people posting tables, used by search code that needs
@@ -78,36 +77,10 @@ class CompoundLexicalResult:
     character_by_query: dict[int, dict[int, int]]
     title_scores_by_search: dict[int, dict[int, float]]
 
-@dataclass(frozen=True, slots=True)
-class _TitleTokenMatchConfig:
-    """Configuration for one title-token matching mode."""
-    use_exact_match: bool
-    limit: int | None  # None = unbounded
-
-_TITLE_TOKEN_MATCH_EXACT_ONLY = _TitleTokenMatchConfig(
-    use_exact_match=True,
-    limit=None,
-)
-_TITLE_TOKEN_MATCH_SUBSTRING = _TitleTokenMatchConfig(
-    use_exact_match=False,
-    limit=500,
-)
-
-# Matching boundaries:
-# - Tokens with length <= 3 stay exact-only.
-# - Tokens with length >= 3 use substring matching (capped at 500).
-_STRING_MATCH_EXACT_ONLY_MAX_LEN = 3
 # Maximum term_ids returned per query phrase during resolution.
 # Phrases matching more character names than this are too vague to be
 # useful and would bloat the posting join.
 _CHARACTER_RESOLVE_LIMIT_PER_PHRASE: int = 500
-
-# Base query used for title token matching
-_BASE_TITLE_TOKEN_QUERY = """\
-SELECT d.string_id
-FROM lex.title_token_strings d
-JOIN lex.title_token_doc_frequency df
-  ON df.term_id = d.string_id"""
 
 
 def _build_conninfo() -> str:
@@ -246,63 +219,6 @@ async def _execute_on_conn(
 # ===============================
 
 
-def _get_title_token_tier_config(token_len: int) -> _TitleTokenMatchConfig:
-    """
-    Select the title-token matching mode from token length.
-
-    Length <= 3 remains exact-only. Longer tokens use substring matching
-    with a capped candidate list.
-    """
-    if token_len <= _STRING_MATCH_EXACT_ONLY_MAX_LEN:
-        return _TITLE_TOKEN_MATCH_EXACT_ONLY
-    else:
-        return _TITLE_TOKEN_MATCH_SUBSTRING
-
-def _build_title_token_query(
-    tier: _TitleTokenMatchConfig,
-    token: str,
-    max_df: int,
-) -> tuple[str, tuple]:
-    """
-    Assemble the SQL query and params tuple for a given tier config.
-
-    Params are accumulated in the same order as %s placeholders appear
-    in the assembled SQL to prevent positional mismatches.
-    """
-    where_clauses: list[str] = []
-    params: list[str | int | float] = []
-
-    is_exact_only = tier.use_exact_match
-
-    if is_exact_only:
-        where_clauses.append("d.norm_str = %s")
-        params.append(token)
-    else:
-        where_clauses.append(r"d.norm_str LIKE %s ESCAPE '\'")
-        params.append(f"%{escape_like(token)}%")
-
-    # Doc frequency filter — always present, always last in WHERE.
-    where_clauses.append("df.doc_frequency <= %s")
-    params.append(max_df)
-
-    # ── Assemble ────────────────────────────────────────────────────
-    parts = [_BASE_TITLE_TOKEN_QUERY, "WHERE\n  " + "\n  AND ".join(where_clauses)]
-
-    if not is_exact_only:
-        parts.append(
-            "ORDER BY\n"
-            "  (d.norm_str = %s) DESC,\n"
-            "  length(d.norm_str) ASC"
-        )
-        params.append(token)
-
-    if tier.limit is not None:
-        parts.append(f"LIMIT {tier.limit}")
-
-    query = "\n".join(parts)
-    return query, tuple(params)
-
-
 async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
     """
     Build the SQL fragment and parameter list for a MATERIALIZED eligible-set
@@ -366,7 +282,7 @@ async def _build_eligible_cte(filters: MetadataFilters) -> tuple[str, list]:
 
     cte_sql = (
         f"eligible AS MATERIALIZED (\n"
-        f"            SELECT movie_id, title_token_count\n"
+        f"            SELECT movie_id\n"
         f"            FROM public.movie_card\n"
         f"            WHERE {where_clause}\n"
         f"        )"
@@ -447,36 +363,6 @@ async def batch_upsert_lexical_dictionary(
     return {str(norm_str): int(string_id) for norm_str, string_id in rows}
 
 
-async def batch_upsert_title_token_strings(
-    string_ids: list[int],
-    norm_strings: list[str],
-    conn=None,
-) -> None:
-    """
-    Batch upsert title token lookup rows in lex.title_token_strings.
-
-    Args:
-        string_ids: String IDs aligned one-to-one with ``norm_strings``.
-        norm_strings: Normalized token strings aligned one-to-one with ``string_ids``.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    if not string_ids:
-        return
-    if len(string_ids) != len(norm_strings):
-        raise ValueError("Title token string upsert failed: string_ids and norm_strings lengths differ.")
-    unique_pairs = list(dict.fromkeys(zip(string_ids, norm_strings)))
-    deduped_string_ids = [pair[0] for pair in unique_pairs]
-    deduped_norm_strings = [pair[1] for pair in unique_pairs]
-
-    query = """
-    INSERT INTO lex.title_token_strings (string_id, norm_str)
-    SELECT unnest(%s::bigint[]), unnest(%s::text[])
-    ON CONFLICT (string_id) DO UPDATE SET
-        norm_str = EXCLUDED.norm_str;
-    """
-    await _execute_on_conn(conn, query, (deduped_string_ids, deduped_norm_strings))
-
-
 async def batch_upsert_character_strings(
     string_ids: list[int],
     norm_strings: list[str],
@@ -494,9 +380,21 @@ async def batch_upsert_character_strings(
         return
     if len(string_ids) != len(norm_strings):
         raise ValueError("Character string upsert failed: string_ids and norm_strings lengths differ.")
-    unique_pairs = list(dict.fromkeys(zip(string_ids, norm_strings)))
-    deduped_string_ids = [pair[0] for pair in unique_pairs]
-    deduped_norm_strings = [pair[1] for pair in unique_pairs]
+    # Dedupe pairs, then sort by string_id — the ON CONFLICT arbiter
+    # column — so concurrent writers acquire PK locks in the same
+    # order. Mirrors the deadlock-avoidance pattern in
+    # batch_upsert_lexical_dictionary, which sorts by norm_str because
+    # that table's arbiter is the norm_str UNIQUE index. Without this
+    # sort, two movies upserting overlapping character term_ids in
+    # cast-edge order can circular-wait on the PK index (observed with
+    # hyphen-variant expansion, which triples per-character row count
+    # and inflates cross-movie string_id overlap).
+    ordered_pairs = sorted(
+        dict.fromkeys(zip(string_ids, norm_strings)),
+        key=lambda pair: pair[0],
+    )
+    deduped_string_ids = [sid for sid, _ in ordered_pairs]
+    deduped_norm_strings = [ns for _, ns in ordered_pairs]
 
     query = """
     INSERT INTO lex.character_strings (string_id, norm_str)
@@ -508,45 +406,39 @@ async def batch_upsert_character_strings(
 
 
 
-async def batch_insert_title_token_postings(term_ids: list[int], movie_id: int, conn=None) -> None:
-    """
-    Insert title-token postings for one movie in a single round-trip.
-
-    Args:
-        term_ids: Title-token term IDs to insert.
-        movie_id: Movie ID that owns all postings.
-        conn: Optional existing async connection for caller-managed transaction scope.
-    """
-    if not term_ids:
-        return
-    query = """
-    INSERT INTO lex.inv_title_token_postings (term_id, movie_id)
-    SELECT unnest(%s::bigint[]), %s
-    ON CONFLICT (term_id, movie_id) DO NOTHING;
-    """
-    await _execute_on_conn(conn, query, (term_ids, movie_id))
-
-
 async def batch_insert_actor_postings(
-    term_ids: list[int], movie_id: int, cast_size: int, conn=None,
+    term_ids: list[int],
+    billing_positions: list[int],
+    movie_id: int,
+    cast_size: int,
+    conn=None,
 ) -> None:
     """
     Insert actor postings with billing metadata for one movie.
 
-    term_ids must be in billing order (lead actor first). billing_position
-    is auto-generated as 1-based index from the list order.
+    ``term_ids`` and ``billing_positions`` must be aligned one-to-one.
+    Hyphen-variant expansion emits multiple term_ids that share the same
+    billing_position so any variant form can resolve to the credit
+    without inflating prominence denominators (see
+    [implementation/misc/helpers.py](../implementation/misc/helpers.py)
+    ``expand_hyphen_variants``).
 
     Args:
-        term_ids: Actor term IDs in billing order.
+        term_ids: Actor term IDs for every ``(name, variant)`` pair.
+        billing_positions: 1-based position matching each term_id back to
+            its originating distinct actor.
         movie_id: Movie ID that owns all postings.
-        cast_size: Total number of credited cast members in the film.
+        cast_size: Number of distinct actors (pre-variant) in the film.
+            Applied uniformly to every inserted row.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not term_ids:
         return
-    # Parallel unnest: term_ids[i] pairs with billing_positions[i].
-    # cast_size is a scalar that broadcasts across all rows.
-    billing_positions = list(range(1, len(term_ids) + 1))
+    if len(term_ids) != len(billing_positions):
+        raise ValueError(
+            "batch_insert_actor_postings: term_ids and billing_positions "
+            "lengths differ."
+        )
     query = """
     INSERT INTO lex.inv_actor_postings (term_id, movie_id, billing_position, cast_size)
     SELECT unnest(%s::bigint[]), %s, unnest(%s::int[]), %s
@@ -633,6 +525,7 @@ async def batch_insert_composer_postings(term_ids: list[int], movie_id: int, con
 
 async def batch_insert_character_postings(
     term_ids: list[int],
+    billing_positions: list[int],
     movie_id: int,
     character_cast_size: int,
     conn=None,
@@ -640,24 +533,29 @@ async def batch_insert_character_postings(
     """
     Insert character postings with billing metadata for one movie.
 
-    term_ids must be in cast-edge order (topmost-billed character first);
-    billing_position is auto-generated as the 1-based index from the list
-    order. character_cast_size is the post-dedup count of distinct
-    character term IDs for this movie and is applied uniformly to every
-    inserted row.
-
-    Mirrors batch_insert_actor_postings — parallel unnest over
-    (term_ids, billing_positions) with a broadcast cast size.
+    ``term_ids`` and ``billing_positions`` must be aligned one-to-one.
+    Hyphen-variant expansion emits multiple term_ids sharing the same
+    billing_position so any variant form resolves to the credit without
+    inflating character_cast_size (see
+    [implementation/misc/helpers.py](../implementation/misc/helpers.py)
+    ``expand_hyphen_variants``).
 
     Args:
-        term_ids: Character term IDs in cast-edge order.
+        term_ids: Character term IDs for every ``(name, variant)`` pair.
+        billing_positions: 1-based cast-edge position matching each
+            term_id back to its originating distinct character.
         movie_id: Movie ID that owns all postings.
-        character_cast_size: Total number of distinct character term IDs for the film.
+        character_cast_size: Number of distinct characters (pre-variant)
+            in the film. Applied uniformly to every inserted row.
         conn: Optional existing async connection for caller-managed transaction scope.
     """
     if not term_ids:
         return
-    billing_positions = list(range(1, len(term_ids) + 1))
+    if len(term_ids) != len(billing_positions):
+        raise ValueError(
+            "batch_insert_character_postings: term_ids and "
+            "billing_positions lengths differ."
+        )
     query = """
     INSERT INTO lex.inv_character_postings
         (term_id, movie_id, billing_position, character_cast_size)
@@ -845,20 +743,6 @@ async def update_movie_card_production_company_ids(
             f"for movie_id={movie_id}. The card must be upserted before the "
             f"production_company_ids column can be stamped."
         )
-
-
-async def refresh_title_token_doc_frequency() -> None:
-    """
-    Refresh the lex.title_token_doc_frequency materialized view concurrently.
-
-    This should be called after each bulk ingest so that max-df stop-word
-    filtering reflects the latest posting counts.  The CONCURRENTLY option
-    avoids blocking reads during the rebuild (requires the unique index
-    idx_title_token_df_term_id on the view).
-    """
-    await _execute_write(
-        "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.title_token_doc_frequency;"
-    )
 
 
 async def refresh_studio_token_doc_frequency() -> None:
@@ -1281,7 +1165,7 @@ async def upsert_movie_card(
     award_ceremony_win_ids: Sequence[int],
     imdb_vote_count: int,
     reception_score: Optional[float],
-    title_token_count: int,
+    title_normalized: str,
     budget_bucket: Optional[str] = None,
     box_office_bucket: Optional[str] = None,
     production_company_ids: Sequence[int] = (),
@@ -1310,7 +1194,10 @@ async def upsert_movie_card(
         award_ceremony_win_ids: List of AwardCeremony IDs where this movie won.
         imdb_vote_count: Raw IMDb vote count.
         reception_score: Precomputed reception score from IMDB/Metacritic.
-        title_token_count: Number of tokens in the title.
+        title_normalized: Normalized form of ``title`` via
+            :func:`implementation.misc.helpers.normalize_string`. Powers
+            Stage 3 title_pattern ILIKE matching with symmetric
+            query-time normalization.
         budget_bucket: Era-adjusted budget classification ('small', 'large', or None for mid-range/unknown).
         box_office_bucket: Box office classification ('hit', 'flop', or None for ambiguous/unknown).
         production_company_ids: lex.production_company IDs this movie credits.
@@ -1328,16 +1215,17 @@ async def upsert_movie_card(
     """
     query = """
     INSERT INTO public.movie_card (
-        movie_id, title, poster_url, release_ts, runtime_minutes,
+        movie_id, title, title_normalized, poster_url, release_ts, runtime_minutes,
         maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_of_origin_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids, award_ceremony_win_ids,
-        imdb_vote_count, reception_score, budget_bucket, box_office_bucket, title_token_count,
+        imdb_vote_count, reception_score, budget_bucket, box_office_bucket,
         production_company_ids, lineage_entry_ids, shared_universe_entry_ids, subgroup_entry_ids,
         created_at, updated_at
     )
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
+        title_normalized = EXCLUDED.title_normalized,
         poster_url = EXCLUDED.poster_url,
         release_ts = EXCLUDED.release_ts,
         runtime_minutes = EXCLUDED.runtime_minutes,
@@ -1354,7 +1242,6 @@ async def upsert_movie_card(
         reception_score = EXCLUDED.reception_score,
         budget_bucket = EXCLUDED.budget_bucket,
         box_office_bucket = EXCLUDED.box_office_bucket,
-        title_token_count = EXCLUDED.title_token_count,
         production_company_ids = EXCLUDED.production_company_ids,
         lineage_entry_ids = EXCLUDED.lineage_entry_ids,
         shared_universe_entry_ids = EXCLUDED.shared_universe_entry_ids,
@@ -1364,6 +1251,7 @@ async def upsert_movie_card(
     params = (
         movie_id,
         title,
+        title_normalized,
         poster_url,
         release_ts,
         runtime_minutes,
@@ -1380,7 +1268,6 @@ async def upsert_movie_card(
         reception_score,
         budget_bucket,
         box_office_bucket,
-        title_token_count,
         list(production_company_ids),
         list(lineage_entry_ids),
         list(shared_universe_entry_ids),
@@ -1649,105 +1536,6 @@ def _build_compound_character_cte(
     return cte_parts, params
 
 
-def _build_compound_title_ctes(
-    *,
-    search_idx: int,
-    title_search: TitleSearchInput,
-    use_eligible: bool,
-    exclude_movie_ids: Optional[set[int]] = None,
-) -> tuple[list[str], str, list, list]:
-    """
-    Build CTE blocks and UNION branch for one title search.
-
-    Args:
-        search_idx: Zero-based title search index.
-        title_search: One title-search payload.
-        use_eligible: Whether the eligible CTE exists in the query.
-        exclude_movie_ids: Optional IDs excluded from results.
-
-    Returns:
-        Tuple of (cte_sql_parts, union_sql, cte_params, union_params).
-    """
-    token_cte_name = f"q_tokens_{search_idx}"
-    token_matches_cte_name = f"token_matches_{search_idx}"
-    title_matches_cte_name = f"title_matches_{search_idx}"
-    title_scored_cte_name = f"title_scored_{search_idx}"
-    title_ranked_cte_name = f"title_ranked_{search_idx}"
-
-    cte_params: list = [title_search.token_idxs, title_search.term_ids]
-    eligibility_join = (
-        "\n                JOIN eligible e ON e.movie_id = p.movie_id"
-        if use_eligible
-        else ""
-    )
-    exclusion_clause = ""
-    if exclude_movie_ids:
-        exclusion_clause = "\n            WHERE NOT (p.movie_id = ANY(%s::bigint[]))"
-        cte_params.append(list(exclude_movie_ids))
-
-    title_count_source = "eligible" if use_eligible else "public.movie_card"
-    title_count_alias = "e" if use_eligible else "mc"
-
-    cte_params.extend(
-        [
-            title_search.f_coeff,
-            title_search.k,
-            title_search.beta_sq,
-            title_search.k,
-            title_search.k,
-            title_search.score_threshold,
-        ]
-    )
-
-    cte_parts = [
-        f"""{token_cte_name} AS (
-            SELECT unnest(%s::int[]) AS token_idx,
-                   unnest(%s::bigint[]) AS term_id
-        )""",
-        f"""{token_matches_cte_name} AS (
-            SELECT DISTINCT p.movie_id, qt.token_idx
-            FROM {token_cte_name} qt
-            JOIN lex.inv_title_token_postings p
-              ON p.term_id = qt.term_id{eligibility_join}{exclusion_clause}
-        )""",
-        f"""{title_matches_cte_name} AS (
-            SELECT movie_id, COUNT(*)::int AS m
-            FROM {token_matches_cte_name}
-            GROUP BY movie_id
-        )""",
-        f"""{title_scored_cte_name} AS (
-            SELECT
-                tm.movie_id,
-                (%s::double precision
-                    * ((tm.m::double precision / %s)
-                       * (tm.m::double precision / {title_count_alias}.title_token_count)))
-                / (%s::double precision
-                    * (tm.m::double precision / {title_count_alias}.title_token_count)
-                    + (tm.m::double precision / %s))
-                AS title_score
-            FROM {title_matches_cte_name} tm
-            JOIN {title_count_source} {title_count_alias}
-              ON {title_count_alias}.movie_id = tm.movie_id
-            WHERE {title_count_alias}.title_token_count > 0
-              AND %s > 0
-        )""",
-        f"""{title_ranked_cte_name} AS (
-            SELECT
-                movie_id,
-                title_score,
-                ROW_NUMBER() OVER (ORDER BY title_score DESC) AS rn
-            FROM {title_scored_cte_name}
-            WHERE title_score >= %s
-        )""",
-    ]
-    union_sql = (
-        f"SELECT 'title_{search_idx}' AS bucket, -1 AS query_idx, movie_id, title_score AS score "
-        f"FROM {title_ranked_cte_name} WHERE rn <= %s"
-    )
-    union_params = [title_search.max_candidates]
-    return cte_parts, union_sql, cte_params, union_params
-
-
 async def execute_compound_lexical_search(
     *,
     people_term_ids: list[int],
@@ -1829,19 +1617,11 @@ async def execute_compound_lexical_search(
             "FROM character_matches"
         )
 
-    for idx, title_search in enumerate(title_searches):
-        if not title_search.term_ids:
-            continue
-        title_ctes, title_union, title_cte_params, title_union_params = _build_compound_title_ctes(
-            search_idx=idx,
-            title_search=title_search,
-            use_eligible=use_eligible,
-            exclude_movie_ids=exclude_movie_ids,
-        )
-        cte_parts.extend(title_ctes)
-        union_parts.append(title_union)
-        cte_params.extend(title_cte_params)
-        union_params.extend(title_union_params)
+    # Title-token scoring was removed with the v1 title-token infrastructure.
+    # Stage 3 title_pattern lookups now ILIKE against movie_card.title_normalized
+    # directly (fetch_movie_ids_with_title_like), and any remaining v1 callers
+    # that still pass title_searches receive an empty title_scores_by_search.
+    _ = title_searches
 
     if not union_parts:
         return CompoundLexicalResult(
@@ -1878,113 +1658,6 @@ async def execute_compound_lexical_search(
         character_by_query=character_by_query,
         title_scores_by_search=title_scores_by_search,
     )
-
-
-async def fetch_title_token_ids(
-    tokens: list[str],
-    max_df: int = 10_000,
-) -> dict[int, list[int]]:
-    """
-    Resolve title token patterns to candidate string_ids in one query.
-
-    Matching policy is evaluated from each literal token (decoded from its
-    LIKE pattern):
-      - exact-only tier for short tokens
-      - substring tier for longer tokens
-
-    Args:
-        tokens: Normalized title tokens in stable input order.
-        max_df: Maximum document frequency for candidate terms.
-
-    Returns:
-        Dict of {query_idx: [candidate_string_id, ...]}.
-    """
-    if not tokens:
-        return {}
-
-    query_idxs = list(range(len(tokens)))
-    like_patterns = [f"%{escape_like(token)}%" for token in tokens]
-
-    query = r"""
-        SELECT sub.query_idx, sub.string_id
-        FROM (
-            SELECT
-                qt.query_idx,
-                qt.token,
-                d.string_id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY qt.query_idx
-                    ORDER BY
-                        (d.norm_str = qt.token) DESC,
-                        length(d.norm_str)
-                ) AS rn
-            FROM unnest(%s::int[], %s::text[], %s::text[]) AS qt(query_idx, token, like_pattern)
-            JOIN lex.title_token_strings d
-              ON (
-                    (length(qt.token) <= %s AND d.norm_str = qt.token)
-                 OR (length(qt.token) > %s AND d.norm_str LIKE qt.like_pattern ESCAPE '\')
-                 )
-            JOIN lex.title_token_doc_frequency df
-              ON df.term_id = d.string_id
-            WHERE df.doc_frequency <= %s
-        ) sub
-        WHERE length(sub.token) <= %s
-           OR sub.rn <= %s
-    """
-    params = [
-        query_idxs,
-        tokens,
-        like_patterns,
-        _STRING_MATCH_EXACT_ONLY_MAX_LEN,
-        _STRING_MATCH_EXACT_ONLY_MAX_LEN,
-        max_df,
-        _STRING_MATCH_EXACT_ONLY_MAX_LEN,
-        _TITLE_TOKEN_MATCH_SUBSTRING.limit,
-    ]
-    search_results = await _execute_read(query, params)
-
-    result: dict[int, list[int]] = {}
-    for query_idx, string_id in search_results:
-        result.setdefault(query_idx, []).append(string_id)
-    return result
-
-
-async def fetch_title_token_ids_exact(
-    tokens: list[str],
-    max_df: int = 10_000,
-) -> dict[int, list[int]]:
-    """
-    Resolve exact title token matches for a list of tokens in one query.
-
-    This path is used for EXCLUDE title tokens where expansion is disabled.
-
-    Args:
-        tokens: Normalized title tokens in stable input order.
-        max_df: Maximum document frequency for candidate terms.
-
-    Returns:
-        Dict of {token_idx: [exact_match_string_id, ...]}.
-    """
-    if not tokens:
-        return {}
-
-    query_idxs = list(range(len(tokens)))
-    query = """
-        SELECT qt.query_idx, d.string_id
-        FROM unnest(%s::int[], %s::text[]) AS qt(query_idx, token)
-        JOIN lex.title_token_strings d
-          ON d.norm_str = qt.token
-        JOIN lex.title_token_doc_frequency df
-          ON df.term_id = d.string_id
-        WHERE df.doc_frequency <= %s
-    """
-    params = [query_idxs, tokens, max_df]
-    search_results = await _execute_read(query, params)
-
-    result: dict[int, list[int]] = {}
-    for query_idx, string_id in search_results:
-        result.setdefault(query_idx, []).append(string_id)
-    return result
 
 
 async def fetch_character_term_ids(
@@ -2430,13 +2103,18 @@ async def fetch_movie_ids_with_title_like(
     like_pattern: str,
     restrict_movie_ids: Optional[set[int]] = None,
 ) -> set[int]:
-    """Case-insensitive LIKE match of a title pattern against public.movie_card.title.
+    """LIKE match of a normalized title pattern against public.movie_card.title_normalized.
 
     The entity endpoint title_pattern sub-type routes here. The caller
     is responsible for preparing the LIKE pattern: (1) normalize the
     raw user pattern with normalize_string, (2) escape LIKE wildcards
     via escape_like, (3) wrap with '%' on both sides for contains or
     suffix '%' for starts_with.
+
+    Because both sides of the comparison are already normalized
+    (title_normalized is written at ingest via the same normalize_string
+    contract), plain LIKE is symmetric — no ILIKE is needed, and the
+    idx_movie_card_title_normalized_trgm / _prefix indexes get used.
 
     Args:
         like_pattern: Fully formed LIKE pattern (e.g. "%love%", "the %").
@@ -2445,7 +2123,7 @@ async def fetch_movie_ids_with_title_like(
             back every match for high-cardinality patterns.
 
     Returns:
-        Set of movie IDs whose title matches the pattern.
+        Set of movie IDs whose normalized title matches the pattern.
     """
     params: list = [like_pattern]
     restrict_clause = ""
@@ -2456,7 +2134,7 @@ async def fetch_movie_ids_with_title_like(
     query = f"""
         SELECT movie_id
         FROM public.movie_card
-        WHERE title ILIKE %s{restrict_clause}
+        WHERE title_normalized LIKE %s{restrict_clause}
     """
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}

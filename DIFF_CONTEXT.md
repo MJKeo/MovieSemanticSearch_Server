@@ -1,6 +1,102 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Ingestion-side updates for Stage 3 entity improvements: title_normalized + hyphen variants
+Files: db/init/01_create_postgres_tables.sql, implementation/misc/helpers.py, db/postgres.py, db/lexical_search.py, movie_ingestion/final_ingestion/ingest_movie.py, search_v2/stage_3/entity_query_execution.py, movie_ingestion/backfill/rebuild_lexical_postings.py, movie_ingestion/backfill/__init__.py
+
+### Intent
+Land the ingestion side of the entity-endpoint improvements agreed in
+[search_improvement_planning/entity_improvement.md](search_improvement_planning/entity_improvement.md).
+Two concrete wins: (1) symmetric title matching via a new
+`movie_card.title_normalized` column (Stage 3 title_pattern now ILIKEs
+a normalized column with both sides normalized at ingest/query
+identically — closes the diacritic/case gap); (2) deterministic
+hyphen-variant resolution so `"spider-man"` / `"spider man"` /
+`"spiderman"` all resolve to the same credit without any LLM reasoning.
+Retired the v1 title-token SQL objects that were no longer read by
+search_v2.
+
+### Key Decisions
+- **`title_normalized` column on movie_card, backed by trigram GIN
+  (contains) + text_pattern_ops btree (starts_with).** Both indexes
+  live on the normalized column so Postgres can pick the right one per
+  match mode. Stage 3's `_execute_title_pattern` now calls plain LIKE
+  (not ILIKE): since both sides are already normalized, ILIKE is
+  redundant and the indexes become usable.
+- **Hyphen expansion helper lives in `implementation/misc/helpers.py`
+  as `expand_hyphen_variants(normalized) -> list[str]`.** Takes an
+  already-normalized string and returns `{with-hyphen, hyphen→space,
+  hyphen→empty}` (deduped). Symmetric between ingest and query so
+  callers on either side can compose with `normalize_string`.
+- **Ingest expands variants, posting tables keep prominence math
+  honest.** `ingest_lexical_data` now computes cast_size /
+  character_cast_size from distinct normalized names BEFORE expansion,
+  freezing the denominators. Each distinct name then contributes every
+  hyphen variant as its own `term_id` in `lex.lexical_dictionary`
+  (and `lex.character_strings` for characters). Posting rows share the
+  origin name's billing_position so variants can't create phantom
+  cast members or shift prominence.
+- **`batch_insert_actor_postings` /
+  `batch_insert_character_postings` now take parallel `term_ids` +
+  `billing_positions` lists** instead of auto-generating positions
+  from list index. Required for variant expansion to preserve billing.
+  Binary role postings (director/writer/producer/composer) stay on
+  `(term_id, movie_id)` and don't carry billing metadata.
+- **V1 title-token infrastructure dropped.** Removed
+  `lex.title_token_strings`, `lex.inv_title_token_postings`,
+  `lex.title_token_doc_frequency`, `movie_card.title_token_count`
+  from the init SQL, along with every helper in `db/postgres.py` that
+  read/wrote them (`batch_upsert_title_token_strings`,
+  `batch_insert_title_token_postings`, `fetch_title_token_ids`,
+  `fetch_title_token_ids_exact`, `refresh_title_token_doc_frequency`,
+  `_build_compound_title_ctes`, `_get_title_token_tier_config`,
+  `_build_title_token_query`, the tier-config dataclasses and base
+  query constant, and `PostingTable.TITLE_TOKEN`). V1
+  `db/lexical_search.py` still imports — the deleted helpers are now
+  module-local stubs returning `{}` so the module loads; title-token
+  exclusion in v1 is a no-op. Full v1 retirement remains a separate
+  PR per the plan.
+- **Backfill script structured as: schema migration (ALTER + DROP +
+  indexes) → TRUNCATE role posting tables → per-movie rebuild from
+  `movie_card` rows.** Shared registries (`lex.lexical_dictionary`,
+  `lex.character_strings`) intentionally not truncated — they're
+  shared with franchises/studios/awards and their UNIQUE constraints
+  make re-upserts safe; orphaned term_ids are harmless. Per-movie
+  work reuses `ingest_lexical_data(movie, conn)` verbatim, so the
+  backfill and main ingest paths can't drift in posting shape. CLI
+  has `--schema-only`, `--dry-run`, `--max-movies N`.
+
+### Design context
+Follows the companion plan at
+[search_improvement_planning/entity_improvement.md](search_improvement_planning/entity_improvement.md).
+Convention for normalized-at-ingest / normalized-at-query symmetry
+matches
+[docs/conventions.md](docs/conventions.md) "String normalization runs
+identically at ingest and query time." Backfill structure mirrors
+[db/migrate_split_franchise_columns.py](db/migrate_split_franchise_columns.py):
+schema migration inside one transaction, per-movie fan-out bounded
+by a semaphore below the pool's max_size, counters surfaced at the
+end.
+
+### Testing notes
+- Not run against the live DB. Backfill must run after this
+  changeset lands and before search_v2 Stage 3 title_pattern is
+  exercised in production.
+- Unit tests likely to require updates (deferred per test-boundaries
+  rule): `test_ingest_movie.py`, `test_postgres.py`,
+  `test_lexical_search.py` — they reference the removed
+  title-token helpers and the old `batch_insert_actor_postings` /
+  `batch_insert_character_postings` signatures.
+- Verification steps in the plan file
+  (`.claude/plans/mighty-sauteeing-cookie.md`) cover: helper unit
+  behavior in a REPL, smoke slice with `--max-movies 100`, spot-check
+  that a Spider-Man credit resolves via `"spiderman"` against the
+  rebuilt character postings, and Amélie/normalized-title sanity for
+  title_pattern.
+- Smoke-tested module imports for `db.postgres`, `db.lexical_search`,
+  `db.search`, `movie_ingestion.final_ingestion.ingest_movie`, and
+  the new `movie_ingestion.backfill.rebuild_lexical_postings`.
+
 ## Stage 2A prompt content: decompose-first flow + `interpret` verdict + ranking-based fusion
 Files: search_v2/stage_2a.py
 
@@ -1693,3 +1789,389 @@ See `~/.claude/plans/this-seems-good-rewrite-cozy-harbor.md` for full design rat
 
 ### Testing Notes
 Unit tests (`unit_tests/test_search_v2_stage_2.py`) and notebook cell 4B intentionally broken under this change — both depend on the old `step_2a_response.concepts[ExtractedConcept]` shape. They will be reworked alongside the 2B rewrite. Run `python -m search_improvement_planning.debug_stage_2a` against the Step 1 cache to validate the new 2A behavior; watch for (a) evaluative-word preservation on `"Best Christmas movies for families"`, (b) audience-binding on `"popular with millennial audiences"`, (c) filler verdict on `"good for watching tonight"`, (d) best-guess over drop on any Gen-Z-studio style phrasing.
+
+## Step 2B rewrite: parallel-per-slot retrieval action planning
+Files: schemas/query_understanding.py, search_v2/stage_2.py, search_v2/stage_4/types.py, search_v2/stage_4/flow_detection.py, search_v2/stage_4/dispatch.py
+
+### Intent
+Rebuild Step 2B from scratch around the new Stage 2A `PlanningSlot`
+input shape, replacing the per-concept call that `run_stage_2` had
+disabled with a parallel-per-slot fan-out. One LLM call handles one
+slot at a time; each call produces either a sibling group of
+`RetrievalAction`s or a slot-level skip. Concept identity at Stage 4
+is now the slot itself — slot == concept by design, eliminating the
+intersection-vs-union combination ambiguity that dogged the previous
+per-concept shape. Full design rationale in
+[search_improvement_planning/steps_1_2_improving.md](search_improvement_planning/steps_1_2_improving.md)
+"Step 2B Redesign Proposal" and plan file
+`~/.claude/plans/iterative-mixing-cascade.md`.
+
+### Key Decisions
+- **New schema shape.** `RetrievalExpression` → `RetrievalAction`
+  with field order reordered for the small-model decision chain:
+  `coverage_atoms → description → route_rationale → route → role →
+  preference_strength`. Separately, `route_rationale` deliberately
+  placed BEFORE `route` (reasoning before commit, same house style
+  as Stage 1/2A). `description` is always positively framed — even
+  for EXCLUSION actions ("movies released in the 1980s", never "not
+  made in the 1980s"). Direction is carried by the `role` field, not
+  the description text.
+- **Role collapsed from (kind, dealbreaker_mode, preference_strength)
+  to (role, preference_strength).** `ActionRole` replaces the
+  two-level `ExpressionKind + DealbreakerMode` with a flat
+  three-way INCLUSION / EXCLUSION / PREFERENCE enum. Cleaner to
+  reason about and eliminates the strength-pairing combinatorics
+  (strength only applies to PREFERENCE; enforced by a pairing
+  validator).
+- **`Step2BResponse` field order: `atom_analysis → skip_rationale →
+  actions`.** `skip_rationale` placed BEFORE `actions` (not after)
+  so structured-output generation commits the skip-or-proceed
+  decision before writing the action list. `atom_analysis` is a
+  per-atom verdict trace (the house-style scaffold from Stages 1 /
+  2A) committing coverage+expansion, role, and route verdicts in
+  one pass.
+- **`CompletedSlot` as the orchestrator-assembled wire record.**
+  Pairs one Stage 2A slot with its Stage 2B response. `QueryUnder-
+  standingResponse` now carries `completed_slots: list[CompletedSlot]`,
+  replacing the old `concepts: list[QueryConcept]`. One call per
+  slot means one CompletedSlot per slot; Stage 4 iterates this list.
+  Deleted: `ExtractedConcept`, `QueryConcept`, `ExpressionKind`,
+  `DealbreakerMode`, `RetrievalExpression`.
+- **Monolithic system prompt (not branch-dynamic).** Unlike Stage
+  2A which dispatches primary/alternative/spin sections, Stage 2B
+  sees one prompt that carries all eight family capabilities. A
+  branch-dynamic prompt would architecturally commit to 2A's
+  advisory `retrieval_shape`, contradicting the "2A is context, not
+  truth" principle that permits 2B to reroute when the advisory
+  shape's family cannot satisfy the atom.
+- **Capability descriptions tuned with explicit CANNOT-do notes.**
+  Each endpoint family lists both CAN-do bullets (the available
+  sub-dimensions) and CANNOT-do bullets covering the hallucinations
+  Stage 2A probing surfaced: metadata global-only popularity (no
+  demographic breakdowns), keyword closed-taxonomy (unknowns reroute
+  to semantic), franchise_structure title-only (character-centric
+  retrieval routes to entity), semantic not-a-hard-filter for clean
+  deterministic concepts. Generic one-liners are unsafe for families
+  with internal structure.
+- **Three named expansion motives with explicit justification
+  requirements.** `ambiguity_fan_out`, `paraphrase_redundancy`,
+  `defensive_retrieval` — each requires the model to name a
+  specific mechanism in the ≤8-word why (which angles, which
+  paraphrases, which endpoint gap). Vague thoroughness appeals are
+  explicitly banned with a worked example. Default is single
+  action; expansion is never a reflex.
+- **Kind-layering within a slot is legitimate and called out.**
+  A slot may want a keyword-horror INCLUSION + a semantic-scariest
+  PREFERENCE simultaneously. The prompt gives a worked example so
+  the model doesn't force one role per slot.
+- **Skip as first-class, with Pydantic XOR validator.** Empty
+  actions iff non-empty skip_rationale, enforced at parse time. The
+  prompt treats skip as the correct answer when atoms hit capability
+  mismatches — not as a cop-out.
+- **Three-layer validation.** (1) Pydantic per-action strength
+  pairing. (2) Pydantic response skip-XOR-actions. (3) Orchestrator
+  code-side partition completeness (union of coverage_atoms ==
+  focal_slot.scope, or skipped). Same math as Stage 2A's partition
+  validator, one level deeper. Currently non-retrying — plan notes
+  retry-once as a future refinement.
+- **Stage 4 concept key uses `slot[{i}]::{handle}`.** Positional
+  prefix guarantees uniqueness (handles aren't validated unique
+  across slots); handle suffix keeps the key human-readable in
+  debug output. Stage 4 scoring math is unchanged — MAX-within /
+  additive-across just reads from the new key.
+- **Stage 3 generators untouched; field rename happens at the
+  dispatch boundary.** `search_v2/stage_4/dispatch.py` reads
+  `item.source.route_rationale` and passes it to generators as
+  `routing_rationale=` (their existing parameter name). Mild
+  naming inconsistency, accepted to keep Stage 3 out of scope.
+  Stage 3 internals still take `(intent_rewrite, description,
+  routing_rationale)` and nothing else from the action — the
+  "self-contained description" principle is preserved.
+
+### Planning Context
+Full proposal and principle catalog in
+`search_improvement_planning/steps_1_2_improving.md` "Step 2B Redesign
+Proposal" section. Approved implementation plan at
+`~/.claude/plans/iterative-mixing-cascade.md`. The house-style prompt
+scaffolds (per-item verdict trace, skip-as-first-class, ≤N-word
+caps, principle-illustrating examples from a disjoint pool, worked
+failure→fix pairings, explicit CANNOT-do notes) were carried forward
+from the Stage 1 and Stage 2A iterations — this change is primarily
+an application of those learnings to a new decision surface, plus
+the concept=slot identity shift that enables parallelism at the
+call level.
+
+### Testing Notes
+Existing unit tests `unit_tests/test_search_v2_stage_2.py` and
+`unit_tests/test_search_v2_stage_4.py` are broken under this change
+— both import `ExtractedConcept`, `QueryConcept`,
+`RetrievalExpression`, `ExpressionKind`, `DealbreakerMode`, all
+deleted here. Per the test-boundaries rule they were not modified
+in this change; they need to be rewritten around `RetrievalAction`
+/ `CompletedSlot` / `ActionRole` in a separate testing pass. The
+notebook `search_v2/test_stage_1_to_4.ipynb` also needs a cell
+update to call `run_stage_2b(intent_rewrite=..., stage_2a=...)`
+instead of the old `run_stage_2(query=...)`. End-to-end validation:
+run Stage 2A → Stage 2B → Stage 3 → Stage 4 on ~5 representative
+queries spanning single-slot / multi-slot / skip / kind-layered /
+defensive-retrieval cases. Confirm: (a) parallel fan-out completes,
+(b) partition-completeness validator fires correctly when the model
+drops an atom, (c) positive-framed descriptions flow through Stage 3
+generators unchanged, (d) Stage 4 MAX-within-slot aggregation groups
+sibling actions under the new slot-based concept key, (e)
+kind-layered slots route INCLUSION to dealbreaker_sum and
+PREFERENCE to preference_contribution without double-counting.
+
+## Step 2B follow-ups: retry + rename cascade + atom-quote strip
+Files: search_v2/stage_2.py, search_v2/stage_4/dispatch.py, search_v2/stage_3/award_query_generation.py, search_v2/stage_3/entity_query_generation.py, search_v2/stage_3/franchise_query_generation.py, search_v2/stage_3/keyword_query_generation.py, search_v2/stage_3/metadata_query_generation.py, search_v2/stage_3/semantic_query_generation.py, search_v2/stage_3/studio_query_generation.py, schemas/entity_translation.py, schemas/franchise_translation.py, schemas/studio_translation.py
+
+### Intent
+Post-review hardening of the Step 2B rewrite: per-slot retry +
+error isolation so one failing slot cannot kill the whole branch;
+full `routing_rationale → route_rationale` rename through every
+Stage 3 generator (the earlier boundary-adapter approach was
+explicitly flagged as tech debt); and quote-stripping for 2A atoms
+so embedded user-quoted phrases don't collide with the prompt's
+quote-delimited rendering.
+
+### Key Decisions
+- **Per-slot single retry.** `_run_step_2b_for_slot` now wraps
+  `_single_slot_attempt` with one blanket retry on any exception
+  (LLM transport, Pydantic validator, runtime coverage). Retries
+  use the same prompt — stochastic decode variance already produces
+  enough different output to recover most transient failures.
+  Feedback-augmented retry was considered and deferred; not worth
+  the implementation complexity until we see empirical retry
+  patterns.
+- **Error isolation via `gather(return_exceptions=True)`.**
+  `run_stage_2b` now collects per-slot results with exceptions, logs
+  failures at ERROR level with the slot handle, and drops failed
+  slots from the returned `completed_slots`. Preserves tokens spent
+  on successful sibling slots. The whole-stage failure path is
+  explicit: if every slot failed, raise `RuntimeError` referencing
+  the first underlying exception (prevents silent degradation into
+  browse-flow when 2B is completely broken).
+- **Full Stage 3 rename cascade.** `routing_rationale` →
+  `route_rationale` across all 7 generators (award, entity,
+  franchise, keyword, metadata, semantic, studio) including
+  parameter names, docstrings, error messages, and the prompt-label
+  strings the LLM sees in the user prompt (e.g.,
+  `f"route_rationale: {route_rationale}"`). Dispatch.py no longer
+  needs the boundary-adapter variable. Translation schema doc
+  comments in schemas/{entity,franchise,studio}_translation.py
+  updated for consistency. Convention compliance — removes the
+  lingering alias debt flagged in review.
+- **Atom quote-stripping in rendering + validation.**
+  `_clean_atom(s) = s.replace('"', '')` applied to every atom in the
+  prompt (both focal scope and sibling scopes) and to BOTH sides of
+  `_validate_coverage` (so the LLM's echoed-back clean atoms match
+  the cleaned scope). 2A's schema retains atoms verbatim for
+  roundtrip fidelity; the clean is applied at the prompt / validation
+  boundary only. A user query with an embedded quoted phrase (e.g.
+  "best" films) no longer produces ambiguous prompt output.
+
+### Testing Notes
+Test files `unit_tests/test_search_v2_stage_2.py` and
+`unit_tests/test_search_v2_stage_4.py` remain unchanged (both already
+broken by the preceding 2B rewrite, per test-boundaries rule). The
+`routing_rationale` keyword-arg calls in those test files will need
+to be renamed to `route_rationale` in the separate testing pass. The
+Stage 3 notebooks in `search_v2/test_stage_*.ipynb` likewise still
+reference `routing_rationale=` and need a sweep. End-to-end
+validation targets for this follow-up: (a) confirm one intentionally
+failing slot (e.g., mock an exception on one of N parallel calls)
+does not fail the others; (b) confirm a slot that fails both
+attempts is dropped with an ERROR log and the remaining slots still
+produce `completed_slots`; (c) confirm a 2A atom containing a
+literal quote character (e.g., `best` → `"best"`-style) renders
+cleanly in the prompt and validates against the LLM's echoed
+`coverage_atoms`.
+
+## Rename search_v2/stage_2.py -> stage_2b.py and rewire notebook Cell 4B
+Files: search_v2/stage_2b.py (renamed from stage_2.py), schemas/query_understanding.py, search_v2/stage_3/studio_query_generation.py, search_v2/test_stage_1_to_4.ipynb
+
+### Intent
+Tidy-up pass on the Step 2B rewrite: the module file was still named
+`stage_2.py` (a legacy name from when it held the full Stage 2
+pipeline) despite now containing ONLY Stage 2B. Rename matches the
+content; parallel with the existing `stage_2a.py` module; aligns
+with the tests / docs / notebooks. Cell 4B of the end-to-end test
+notebook still imported `_run_step_2b_for_concept` and manually
+reassembled `QueryConcept` objects against the deleted schema, so
+it's also updated to the new parallel-per-slot `run_stage_2b` API.
+
+### Key Decisions
+- **`stage_2.py` → `stage_2b.py`.** Mirrors the `stage_2a.py` naming;
+  no "`run_stage_2`" wrapper remains so the old filename carried no
+  semantic meaning. Stage 2 is now the pairing of two sibling modules
+  callers invoke in sequence: `run_stage_2a` → `run_stage_2b`.
+  Existing internal comments in the file already described it as
+  Stage 2B only — no internal rewording needed.
+- **Comment sweep.** Two non-test files had stale `stage_2.py`
+  references in `#` comments pointing at the old path:
+  [schemas/query_understanding.py:12](schemas/query_understanding.py#L12)
+  and [search_v2/stage_3/studio_query_generation.py:32](search_v2/stage_3/studio_query_generation.py#L32).
+  Updated both to `stage_2b.py`. Historical `DIFF_CONTEXT.md` entries
+  are left alone per context-tracking rule — they describe past state
+  accurately for when they were written.
+- **Notebook Cell 1 imports.** Dropped the two-line "2B still lives
+  in stage_2.py" note, replaced `from search_v2.stage_2 import
+  _run_step_2b_for_concept` with `from search_v2.stage_2b import
+  run_stage_2b`, and removed the unused `QueryConcept,
+  QueryUnderstandingResponse` schema imports (only the type is
+  referenced downstream, implicitly via the returned object).
+- **Notebook Cell 4B full rewrite.** Replaced the 50+ line manual
+  gather / QueryConcept-assembly block with a single
+  `await run_stage_2b(intent_rewrite=..., stage_2a=step_2a_response,
+  provider=..., model=..., **kwargs)` call. Per-slot retry + failure
+  isolation + CompletedSlot packaging all happens inside the helper;
+  the notebook just iterates the returned `qu.completed_slots` for
+  display.
+- **Notebook Cell 4B markdown.** Dropped the "Temporarily broken"
+  warning (which referred to the pre-rewrite state) and replaced
+  with a one-paragraph description of the new parallel-per-slot
+  contract: per-slot retry, isolation, skip-as-first-class, slot-as-
+  concept for Stage 4 grouping.
+
+### Testing Notes
+Both `unit_tests/test_search_v2_stage_2.py` and
+`unit_tests/test_search_v2_stage_4.py` still import from
+`search_v2.stage_2`; these imports now ImportError under the new
+module layout. Per test-boundaries rule, those test files were not
+modified in this change and remain owned by the separate testing
+pass that will rewrite them around `run_stage_2b` / `CompletedSlot`
+/ `ActionRole`. End-to-end manual validation: run the notebook top
+to bottom on a multi-slot query (e.g. "scariest Disney animated
+movies from the 90s") and confirm (a) Cell 4B produces one
+`CompletedSlot` per Stage 2A slot with either actions or a skip
+rationale, (b) Cell 5 still sees the new slot-based
+`concept_debug_key` shape and runs Stage 3 translate/execute cleanly,
+(c) Cell 6 scoring aggregates sibling actions by slot handle.
+
+## Entity endpoint schema cleanup — unify prominence, generalize alternative forms, add alias reasoning scaffold
+Files: schemas/enums.py, schemas/entity_translation.py, search_v2/stage_3/entity_query_generation.py, search_v2/stage_3/entity_query_execution.py
+
+### Intent
+Fix the entity endpoint's alias-catching gap identified this session:
+Joker → Arthur Fleck / Jack Napier, Spider-Man → Peter Parker /
+Miles Morales, etc. Two problems diagnosed: (1) `name_resolution_notes`
+primed single-form commitment before `character_alternative_names`
+was ever considered, and (2) there was no reasoning scaffold
+preceding the alternatives field, so the model had no dedicated
+budget for branching. Also collapses accumulated parallel actor /
+character paths that had grown redundant.
+
+### Key Decisions
+- **Rename `lookup_text` → `primary_form`.** Signals "one form
+  among possibly many"; pairs naturally with the generalized
+  alternatives field. Title pattern case still fits (literal
+  fragment is its own primary form).
+- **Unify `ActorProminenceMode` + `CharacterProminenceMode` → single
+  `ProminenceMode` StrEnum** with all five values (default, lead,
+  supporting, minor, central). Applicability enforced by the
+  `EntityQuerySpec` validator, not the enum.
+- **Validator remaps out-of-scope modes rather than rejecting.**
+  Character receives LEAD → CENTRAL; SUPPORTING/MINOR → DEFAULT.
+  Actor-table receives CENTRAL → LEAD. Reasoning: "wrong mode for
+  this entity" is a misclassification, not malformed output —
+  costlier to retry than to translate. Validator also forces
+  prominence fields null for non-prominence-eligible entities
+  (director-only persons, title_pattern).
+- **Merge `prominence_evidence` + `character_prominence_evidence`.**
+  Same reasoning shape regardless of entity; one field, one scoped
+  applicability rule in the prompt.
+- **Rename `character_alternative_names` → `alternative_forms` and
+  extend to persons.** Stage-name / legal-name variants and
+  formal-vs-short credited forms are real for persons too (just
+  less common than multi-incarnation characters). Title pattern
+  explicitly excluded — literal substrings have no aliases.
+- **Add `alternative_forms_evidence` reasoning field directly
+  preceding `alternative_forms`.** Prompts the model to actively
+  enumerate: re-castings under different credited names, secret-
+  identity pairings, stage-name vs legal-name variants. Closes the
+  structural gap where `character_alternative_names` was the only
+  non-trivial output without a reasoning scaffold.
+- **New field order groups identity together, scoring after.**
+  entity_type_evidence → name_resolution_notes → primary_form →
+  entity_type → person_category → primary_category →
+  alternative_forms_evidence → alternative_forms →
+  prominence_evidence → prominence_mode → title_pattern_match_type.
+  Identity-shape decisions resolve before scoring knobs.
+- **Execution layer extends alias handling to every person path.**
+  `_execute_person_specific_role` and `_execute_person_broad` now
+  resolve primary_form + alternative_forms → list of term_ids,
+  not a single term_id. Max-across-variant-rows already handled in
+  `_fetch_actor_scores` / `_fetch_binary_role_scores` /
+  `_fetch_character_scores`, so no scoring-logic change was needed.
+  Extracted `_collect_normalized_forms` + `_resolve_person_term_ids`
+  helpers to avoid duplicating the normalize-dedupe-lookup flow
+  across three executors.
+- **`name_resolution_notes` reframed as primary-form-only.** Prompt
+  language made explicit that alias reasoning belongs in
+  `alternative_forms_evidence`, not here. Prevents the old
+  "telegraphic note" from implicitly soaking up the model's
+  aliasing budget before the alias field is reached.
+
+### Planning Context
+User diagnosed two root causes from prompt inspection:
+`name_resolution_notes` exemplars ("exact user form", "typo fix",
+"surname expanded") were all single-string resolutions, priming
+single-name commitment; and `character_alternative_names` was the
+one complex output without a preceding evidence field. Confirmed
+both intuitions by reading the prompt + schema, then agreed to
+collapse the parallel actor/character paths at the same time
+rather than in two separate PRs. User also specified the exact
+validator remap rule (character: lead→central, supporting/minor→
+default; actor-table: central→lead) in place of the reject-on-
+mismatch pattern I initially proposed.
+
+### Testing Notes
+- Unit tests in `unit_tests/` reference the old field names
+  (`lookup_text`, `actor_prominence_mode`, `character_prominence_mode`,
+  `character_alternative_names`) and the old enum names
+  (`ActorProminenceMode`, `CharacterProminenceMode`). Per
+  test-boundaries rule, those files were not updated in this
+  changeset; they will need renaming in a separate test pass.
+- `search_v2/test_stage_3.ipynb` still references the old field
+  names in cells that assemble EntityQuerySpec by hand — any
+  notebook-driven smoke should be re-run after the test pass
+  updates the cells.
+- Manual verification queries to run end-to-end:
+  * "joker" → primary_form "The Joker", alternative_forms should
+    include "Arthur Fleck" and "Jack Napier".
+  * "spider-man" → primary_form "Spider-Man", alternatives should
+    include "Peter Parker" (also "Miles Morales" if broadly scoped).
+  * "indiana jones" → primary_form "Indiana Jones", alternative_forms
+    should include "Indy" only if genuinely credited that way.
+  * "the rock" → primary_form depends on canonical credit; aliases
+    between "Dwayne Johnson" and the stage name form should appear.
+  * Plus the 8 sample queries previously provided for broader
+    coverage (hyphen variants, diacritic titles, cameo mode, etc.).
+- Validator behavior: an LLM that emits prominence_mode=CENTRAL
+  with entity_type=PERSON/person_category=ACTOR should be silently
+  remapped to LEAD; an LLM that emits prominence_mode=LEAD with
+  entity_type=CHARACTER should be remapped to CENTRAL. Confirm via
+  unit coverage when the test pass lands.
+
+## Entity endpoint alias-evidence — replace single-sentence verdict with three-question procedural walk
+Files: search_v2/stage_3/entity_query_generation.py, schemas/entity_translation.py
+Why: Initial test on obvious cases (The Rock → Dwayne Johnson, Superman → Clark Kent, Wolverine → Logan) produced empty alternative_forms every time. Diagnosed three compounding causes in the evidence-field guidance: (1) "a single short sentence" cap compressed away the enumeration step; (2) "no additional credited forms known" default sentinel acted as a tractor-beam exit ramp; (3) enumerate-and-justify shared one field, so justification won.
+Approach: alternative_forms_evidence is now a three-question procedural walkthrough per entity type (secret identity / multi-incarnation / long-short variant for characters; stage-name / composite form / formal-short variant for persons), explicitly requiring each question be answered in order before a one-line `therefore alternative_forms = [...]` summary. Validator default changed from `"no additional forms considered"` (reads like a canonical answer) to `"walkthrough skipped"` (reads as a process failure, doesn't prime).
+
+## Entity endpoint alias-evidence redesign — coherent 4-section pass to unblock alias enumeration
+Files: search_v2/stage_3/entity_query_generation.py
+
+### Intent
+First The Rock test produced "Q1. Yes — he is also credited as Dwayne Johnson" followed by `alternative_forms = []` — a consistency failure between Q-answers and summary. Diagnosis surfaced three independent problems plus cross-section contradictions in the prompt. Rather than patch iteratively (which was already introducing contradictions), applied one coordinated pass across four sections.
+
+### Key Decisions
+- **Questions produce names, not yes/no.** Each Q now resolves to either a concrete credited-name string or the literal word "none". Prevents the "yes, but empty list" consistency failure by forcing the Q to commit to a name the summary can then either include or actively contradict.
+- **Cost asymmetry taught explicitly in `_ALTERNATIVE_FORMS`.** Retrieval takes the max across forms → spurious alias scores zero → over-including costs ~0, under-including is a silent retrieval bug. Frames inclusion as the default stance.
+- **Inclusion bar explicitly lowered.** "Demonstrably appears as a main credit string" → "plausibly appears in at least one film featuring this entity". General knowledge is now validated as the signal we want rather than treated as "unverified".
+- **Scoping sentence added to `_NAME_CANONICALIZATION`.** "These rules govern primary_form only. Inclusion of additional credited forms follows the Alternative Credited Forms section, where the default stance is deliberately inclusive." Prevents primary_form's "never invent middle names" discipline from bleeding into alias enumeration.
+- **Removed "if in doubt leave it out" language throughout.** That phrase directly contradicts the cost-asymmetry frame. Replaced with inclusion-biased wording everywhere it appeared.
+- **`alternative_forms` field guidance rewritten** so it refers back to the walkthrough output directly: "every non-'none' name from the three questions belongs here" — no last-minute filtering, no "only add when genuinely known" hedge.
+- **Single source of truth per concern.** `_ALTERNATIVE_FORMS` (tutorial) owns cost asymmetry + inclusion bar + exclusion list. Field guidance owns the procedure. No overlap, no redundant (and potentially contradictory) restatement.
+
+### Testing Notes
+Same test cases from before (The Rock, Superman, Wolverine, Darth Vader, Ice Cube, 50 Cent) should now produce non-empty alternative_forms. Watch for the opposite failure (over-production of implausible forms) on the no-alias controls (Denis Villeneuve, "midnight" title pattern) — empty list / null is still correct there. If over-production appears, the next tuning knob is the Q wording, not the cost-asymmetry frame.

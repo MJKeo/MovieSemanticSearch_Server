@@ -18,6 +18,14 @@ CREATE SCHEMA IF NOT EXISTS lex;
 CREATE TABLE IF NOT EXISTS public.movie_card (
   movie_id            BIGINT PRIMARY KEY,
   title               TEXT NOT NULL,
+  -- Normalized form of title (via implementation.misc.helpers.normalize_string).
+  -- Stage 3 title_pattern lookups run ILIKE against this column so
+  -- ingest-time and query-time normalization are symmetric (casing,
+  -- diacritics, and most punctuation are collapsed; ASCII hyphens are
+  -- preserved). Defaults to '' so the NOT NULL constraint is satisfied
+  -- for any row inserted without an explicit value; ingestion always
+  -- populates it.
+  title_normalized    TEXT NOT NULL DEFAULT '',
   poster_url          TEXT,
   release_ts          BIGINT,
   runtime_minutes     INT,
@@ -65,7 +73,6 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   reception_score     FLOAT,
   budget_bucket       TEXT,
   box_office_bucket   TEXT,
-  title_token_count   INT NOT NULL DEFAULT 0,
   updated_at          TIMESTAMP NOT NULL DEFAULT now(),
   created_at          TIMESTAMP NOT NULL DEFAULT now()
 );
@@ -81,6 +88,19 @@ CREATE INDEX IF NOT EXISTS idx_movie_card_runtime_minutes
 
 CREATE INDEX IF NOT EXISTS idx_movie_card_maturity_rank
   ON public.movie_card (maturity_rank);
+
+-- Trigram GIN for ILIKE '%...%' containment matching (Stage 3
+-- title_pattern endpoint's CONTAINS mode). Runs on the normalized
+-- column so query-time normalize_string() on the pattern stays
+-- symmetric with the stored form.
+CREATE INDEX IF NOT EXISTS idx_movie_card_title_normalized_trgm
+  ON public.movie_card USING GIN (title_normalized gin_trgm_ops);
+
+-- Btree with text_pattern_ops accelerates LIKE '...%' starts-with
+-- queries (Stage 3 title_pattern STARTS_WITH mode) without the trgm
+-- index's per-match cost. Postgres picks the better index per query.
+CREATE INDEX IF NOT EXISTS idx_movie_card_title_normalized_prefix
+  ON public.movie_card (title_normalized text_pattern_ops);
 
 -- Explicit gin__int_ops for efficient integer-array overlap filtering (&&).
 CREATE INDEX IF NOT EXISTS idx_movie_card_genre_ids
@@ -194,25 +214,6 @@ CREATE TABLE IF NOT EXISTS lex.lexical_dictionary (
   norm_str    TEXT NOT NULL UNIQUE,
   created_at  TIMESTAMP NOT NULL DEFAULT now()
 );
-
--- Title-token-only string subset for fuzzy matching scope.
-CREATE TABLE IF NOT EXISTS lex.title_token_strings (
-  string_id  BIGINT PRIMARY KEY REFERENCES lex.lexical_dictionary(string_id) ON DELETE CASCADE,
-  norm_str   TEXT NOT NULL UNIQUE
-);
-
-CREATE INDEX IF NOT EXISTS idx_title_token_strings_trgm
-  ON lex.title_token_strings USING GIN (norm_str gin_trgm_ops);
-
--- Inverted index postings for title tokens.
-CREATE TABLE IF NOT EXISTS lex.inv_title_token_postings (
-  term_id   BIGINT NOT NULL,
-  movie_id  BIGINT NOT NULL,
-  PRIMARY KEY (term_id, movie_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_title_postings_movie
-  ON lex.inv_title_token_postings (movie_id);
 
 -- Inverted index postings for actor names (with billing metadata for prominence scoring).
 CREATE TABLE IF NOT EXISTS lex.inv_actor_postings (
@@ -332,18 +333,6 @@ CREATE TABLE IF NOT EXISTS lex.inv_production_brand_postings (
 
 CREATE INDEX IF NOT EXISTS idx_brand_postings_movie
   ON lex.inv_production_brand_postings (movie_id);
-
--- Materialized view used for max_df stop-word filtering in title matching.
-CREATE MATERIALIZED VIEW IF NOT EXISTS lex.title_token_doc_frequency AS
-SELECT
-  term_id,
-  COUNT(*)::BIGINT AS doc_frequency,
-  now()            AS updated_at
-FROM lex.inv_title_token_postings
-GROUP BY term_id;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_title_token_df_term_id
-  ON lex.title_token_doc_frequency (term_id);
 
 -- Materialized view used for DF-ceiling stop-word filtering in the freeform
 -- studio path. DF is measured per canonical production_company string — since

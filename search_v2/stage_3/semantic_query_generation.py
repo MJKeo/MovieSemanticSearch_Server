@@ -787,7 +787,7 @@ PREFERENCE_SYSTEM_PROMPT = (
 async def generate_semantic_dealbreaker_query(
     intent_rewrite: str,
     description: str,
-    routing_rationale: str,
+    route_rationale: str,
     provider: LLMProvider,
     model: str,
     **kwargs,
@@ -805,7 +805,7 @@ async def generate_semantic_dealbreaker_query(
             the user is looking for, used for disambiguation.
         description: The positive-presence statement of the semantic
             trait to translate (from a step-2 Dealbreaker).
-        routing_rationale: The concept-type label from step 2
+        route_rationale: The concept-type label from step 2
             explaining why this item was routed to the semantic
             endpoint.
         provider: Which LLM backend to use. No default — callers
@@ -828,19 +828,19 @@ async def generate_semantic_dealbreaker_query(
     # in entity_query_generation.py.
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    route_rationale = route_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
-        raise ValueError("routing_rationale must be a non-empty string.")
+    if not route_rationale:
+        raise ValueError("route_rationale must be a non-empty string.")
 
     # Labeled sections keep the three inputs distinct for the model.
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_hint: {routing_rationale}"
+        f"routing_hint: {route_rationale}"
     )
 
     response, input_tokens, output_tokens = await generate_llm_response_async(
@@ -858,7 +858,7 @@ async def generate_semantic_dealbreaker_query(
 async def generate_semantic_preference_query(
     intent_rewrite: str,
     description: str,
-    routing_rationale: str,
+    route_rationale: str,
     provider: LLMProvider,
     model: str,
     **kwargs,
@@ -877,7 +877,7 @@ async def generate_semantic_preference_query(
         description: The grouped qualifier description (from a
             step-2 Preference), consolidating multiple qualifiers
             about the desired viewing experience.
-        routing_rationale: The concept-type label from step 2.
+        route_rationale: The concept-type label from step 2.
         provider: Which LLM backend to use. No default.
         model: Model identifier for the chosen provider. No default.
         **kwargs: Provider-specific parameters forwarded to the LLM
@@ -888,18 +888,18 @@ async def generate_semantic_preference_query(
     """
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    route_rationale = route_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
-        raise ValueError("routing_rationale must be a non-empty string.")
+    if not route_rationale:
+        raise ValueError("route_rationale must be a non-empty string.")
 
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_hint: {routing_rationale}"
+        f"routing_hint: {route_rationale}"
     )
 
     response, input_tokens, output_tokens = await generate_llm_response_async(

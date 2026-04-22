@@ -29,7 +29,7 @@
 # endpoint, step-2 has already decided the user is asking about a
 # production company (not a streaming platform). Streamer
 # disambiguation (NETFLIX / AMAZON_MGM / APPLE_STUDIOS as producer
-# vs. watch-provider) lives entirely in stage_2.py.
+# vs. watch-provider) lives entirely in stage_2b.py.
 
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from schemas.production_brand_surface_forms import render_brand_registry_for_prompt
@@ -68,7 +68,7 @@ Fox or Fox Searchlight depending on surrounding context).
 - description — the single studio requirement you are translating, \
 always written in positive-presence form ("includes A24 as a \
 production company", "produced by Marvel Studios", "made by Ghibli").
-- routing_rationale — a concept-type label explaining why this item \
+- route_rationale — a concept-type label explaining why this item \
 was routed to this endpoint.
 
 Trust the upstream routing. By the time an item reaches this endpoint, \
@@ -267,7 +267,7 @@ SYSTEM_PROMPT = (
 async def generate_studio_query(
     intent_rewrite: str,
     description: str,
-    routing_rationale: str,
+    route_rationale: str,
     provider: LLMProvider,
     model: str,
     **kwargs,
@@ -275,7 +275,7 @@ async def generate_studio_query(
     """Translate one studio dealbreaker or preference into a StudioQuerySpec.
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
-    context) and one step 2 item's description plus routing_rationale.
+    context) and one step 2 item's description plus route_rationale.
     It produces either a brand enum value (for umbrella queries) or
     up to 3 freeform_names (for sub-labels and long-tail studios).
 
@@ -284,7 +284,7 @@ async def generate_studio_query(
             looking for, from step 1.
         description: The positive-presence statement of the studio
             requirement to translate (from a Dealbreaker or Preference).
-        routing_rationale: The concept-type label from step 2 explaining
+        route_rationale: The concept-type label from step 2 explaining
             why this item was routed to the studio endpoint.
         provider: Which LLM backend to use. No default — callers must
             choose explicitly so call sites are self-documenting and
@@ -306,19 +306,19 @@ async def generate_studio_query(
     # entity_query_generation.py / award_query_generation.py.
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_rationale = routing_rationale.strip()
+    route_rationale = route_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
-    if not routing_rationale:
-        raise ValueError("routing_rationale must be a non-empty string.")
+    if not route_rationale:
+        raise ValueError("route_rationale must be a non-empty string.")
 
     # Labelled sections so the model can keep the three inputs distinct.
     user_prompt = (
         f"intent_rewrite: {intent_rewrite}\n"
         f"description: {description}\n"
-        f"routing_rationale: {routing_rationale}"
+        f"route_rationale: {route_rationale}"
     )
 
     response, input_tokens, output_tokens = await generate_llm_response_async(

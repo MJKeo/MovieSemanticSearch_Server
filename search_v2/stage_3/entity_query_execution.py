@@ -18,10 +18,11 @@
 #   - Non-actor non-character role persons (director, writer, producer,
 #     composer) / title patterns → binary 1.0 match.
 #   - Actor persons → zone-based prominence via billing_position +
-#     cast_size, one of four modes (DEFAULT / LEAD / SUPPORTING /
-#     MINOR) selected by the LLM.
+#     cast_size, one of four prominence modes (DEFAULT / LEAD /
+#     SUPPORTING / MINOR) from the unified ProminenceMode enum.
 #   - Characters → billing-position prominence via CENTRAL / DEFAULT
-#     modes against lex.inv_character_postings.
+#     from the same unified ProminenceMode enum against
+#     lex.inv_character_postings.
 #   - All prominence scores (actor + character) are compressed into
 #     [0.5, 1.0] via `_compress_to_floor` so any real match stays at
 #     or above the dealbreaker-eligible floor.
@@ -29,6 +30,10 @@
 #     tables discounted to 0.5× when primary_category is set, with a
 #     final 0.5 floor applied so a real match can never drop below
 #     the dealbreaker-eligible band after weighting.
+#   - Person and character lookups both expand primary_form +
+#     alternative_forms into a set of term_ids and take the max score
+#     per movie across variant rows. This is the "peter parker OR
+#     spider-man wins" merge.
 # Studio lookups have their own stage-3 endpoint
 # (search_v2/stage_3/studio_query_execution.py) and are not handled here.
 #
@@ -57,10 +62,9 @@ from schemas.endpoint_result import EndpointResult
 from schemas.entity_translation import EntityQuerySpec
 from search_v2.stage_3.result_helpers import build_endpoint_result
 from schemas.enums import (
-    ActorProminenceMode,
-    CharacterProminenceMode,
     EntityType,
     PersonCategory,
+    ProminenceMode,
     SpecificPersonCategory,
     TitlePatternMatchType,
 )
@@ -97,6 +101,37 @@ def _compress_to_floor(raw: float) -> float:
     the floor-rule rationale.
     """
     return max(0.5, min(1.0, 0.5 + 0.5 * raw))
+
+
+# ---------------------------------------------------------------------------
+# Shared form normalization — used by every person and character path
+# to build the set of normalized search strings from primary_form +
+# alternative_forms.
+# ---------------------------------------------------------------------------
+
+
+def _collect_normalized_forms(spec: EntityQuerySpec) -> list[str]:
+    """Merge primary_form + alternative_forms, normalize each, dedupe
+    while preserving order. Returns the list of normalized strings
+    that should be looked up in the lexical / character string
+    dictionary.
+
+    Execution-layer invariant: the max score across all variant rows
+    becomes the per-movie score in the downstream fetch helpers, so
+    callers can pass every normalized form without pre-ranking them.
+    """
+    forms = [spec.primary_form]
+    if spec.alternative_forms:
+        forms.extend(spec.alternative_forms)
+    seen: set[str] = set()
+    out: list[str] = []
+    for form in forms:
+        norm = normalize_string(form)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -176,22 +211,22 @@ def _actor_score_minor(zone: str, zp: float) -> float:
     return 0.7 + 0.3 * zp  # minor
 
 
-# Dispatch table for the four actor prominence modes. Keeps
-# _actor_prominence_score readable and lets us add a mode without
-# reshaping conditionals. Character modes use a parallel table
-# (_CHARACTER_MODE_SCORERS) below.
+# Dispatch table for actor-table prominence modes. Keyed on the
+# unified ProminenceMode enum. Validator in EntityQuerySpec guarantees
+# only these four values reach actor-table scoring (CENTRAL is
+# remapped to LEAD before it can arrive here).
 _ACTOR_MODE_SCORERS = {
-    ActorProminenceMode.DEFAULT: _actor_score_default,
-    ActorProminenceMode.LEAD: _actor_score_lead,
-    ActorProminenceMode.SUPPORTING: _actor_score_supporting,
-    ActorProminenceMode.MINOR: _actor_score_minor,
+    ProminenceMode.DEFAULT: _actor_score_default,
+    ProminenceMode.LEAD: _actor_score_lead,
+    ProminenceMode.SUPPORTING: _actor_score_supporting,
+    ProminenceMode.MINOR: _actor_score_minor,
 }
 
 
 def _actor_prominence_score(
     billing_position: int,
     cast_size: int,
-    mode: ActorProminenceMode,
+    mode: ProminenceMode,
 ) -> float:
     """Score a single actor credit row under the given prominence mode.
 
@@ -224,7 +259,8 @@ def _actor_prominence_score(
 # ---------------------------------------------------------------------------
 # Character prominence scoring (pure functions — no I/O).
 #
-# Two modes, picked by the stage 3 LLM from description wording:
+# Two modes on the unified enum, picked by the stage 3 LLM from
+# description wording:
 #   CENTRAL — character is the subject of the query. Fixed decay
 #     curve; cast_size-independent. "Spider-Man movies" scores the
 #     same way whether the cast is 8 or 80.
@@ -260,19 +296,20 @@ def _character_score_default(billing_position: int, cast_size: int) -> float:
     return 1.0 - (billing_position - 1) / max(1, cast_size - 1)
 
 
-# Dispatch table for the two character modes — parallel to
-# _MODE_SCORERS for actors. Keeps _character_prominence_score
-# readable and makes adding a future mode a one-line change.
+# Dispatch table for character prominence modes. Keyed on the unified
+# ProminenceMode enum. Validator guarantees only {DEFAULT, CENTRAL}
+# reach character scoring (LEAD/SUPPORTING/MINOR are remapped before
+# they arrive here).
 _CHARACTER_MODE_SCORERS = {
-    CharacterProminenceMode.CENTRAL: lambda pos, size: _character_score_central(pos),
-    CharacterProminenceMode.DEFAULT: _character_score_default,
+    ProminenceMode.CENTRAL: lambda pos, size: _character_score_central(pos),
+    ProminenceMode.DEFAULT: _character_score_default,
 }
 
 
 def _character_prominence_score(
     billing_position: int,
     character_cast_size: int,
-    mode: CharacterProminenceMode,
+    mode: ProminenceMode,
 ) -> float:
     """Score a single character credit row under the given mode.
 
@@ -293,12 +330,12 @@ def _character_prominence_score(
 
 async def _fetch_actor_scores(
     term_ids: list[int],
-    mode: ActorProminenceMode,
+    mode: ProminenceMode,
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """Fetch billing rows for actor term_ids and score each row. If an
-    actor is somehow credited twice for the same movie, take the max
-    (defensive — PK should prevent this)."""
+    """Fetch billing rows for actor term_ids and score each row. Takes
+    the max score per movie across variant rows — this is how the
+    'primary_form OR alias wins' merge materializes for persons."""
     rows = await fetch_actor_billing_rows(term_ids, restrict_movie_ids)
     scores: dict[int, float] = {}
     for movie_id, billing_position, cast_size in rows:
@@ -331,7 +368,7 @@ async def _fetch_binary_role_scores(
 
 async def _fetch_character_scores(
     term_ids: list[int],
-    mode: CharacterProminenceMode,
+    mode: ProminenceMode,
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
     """Fetch billing rows for character term_ids and score each row.
@@ -354,13 +391,27 @@ async def _fetch_character_scores(
     return scores
 
 
+async def _resolve_person_term_ids(spec: EntityQuerySpec) -> list[int]:
+    """Normalize primary_form + alternative_forms and resolve each to
+    a lexical term_id via the general lexical dictionary. Returns a
+    deduplicated list of term_ids (may be empty if nothing resolves).
+    """
+    normalized = _collect_normalized_forms(spec)
+    if not normalized:
+        return []
+    phrase_to_id = await fetch_phrase_term_ids(normalized)
+    return list({tid for tid in phrase_to_id.values()})
+
+
 async def _execute_person_specific_role(
     spec: EntityQuerySpec,
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """One of: actor, director, writer, producer, composer. Exact-match
-    the name in the lexical dictionary, then query that single posting
-    table."""
+    """One of: actor, director, writer, producer, composer. Resolve
+    primary_form + alternative_forms against the lexical dictionary,
+    then query that single posting table with every resulting
+    term_id. Per-movie max across variant rows is handled in the
+    fetch helpers."""
     # Preconditions guaranteed by the caller (execute_entity_query):
     #   entity_type == PERSON
     #   person_category is a specific role (not None, not broad_person)
@@ -368,26 +419,21 @@ async def _execute_person_specific_role(
     # function fails loudly instead of KeyError-ing inside _ROLE_TO_TABLE.
     assert spec.person_category is not None and spec.person_category != PersonCategory.BROAD_PERSON
 
-    norm = normalize_string(spec.lookup_text)
-    if not norm:
-        return {}
-
-    phrase_to_id = await fetch_phrase_term_ids([norm])
-    term_id = phrase_to_id.get(norm)
-    if term_id is None:
+    term_ids = await _resolve_person_term_ids(spec)
+    if not term_ids:
         return {}
 
     if spec.person_category == PersonCategory.ACTOR:
-        # actor_prominence_mode is guaranteed non-null here by the
+        # prominence_mode is guaranteed non-null here by the
         # EntityQuerySpec validator (coerced to DEFAULT when the LLM
-        # left it null).
-        assert spec.actor_prominence_mode is not None
+        # left it null for an actor-table search).
+        assert spec.prominence_mode is not None
         return await _fetch_actor_scores(
-            [term_id], spec.actor_prominence_mode, restrict_movie_ids
+            term_ids, spec.prominence_mode, restrict_movie_ids
         )
 
     table = _ROLE_TO_TABLE[spec.person_category]
-    return await _fetch_binary_role_scores(table, [term_id], restrict_movie_ids)
+    return await _fetch_binary_role_scores(table, term_ids, restrict_movie_ids)
 
 
 # Specific-role person_category → posting table. Actor is excluded on
@@ -415,26 +461,23 @@ async def _execute_person_broad(
     spec: EntityQuerySpec,
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """broad_person — search all five role tables in parallel, then
-    merge per-table scores via max (with primary-category weighting).
-    """
-    norm = normalize_string(spec.lookup_text)
-    if not norm:
-        return {}
-
-    phrase_to_id = await fetch_phrase_term_ids([norm])
-    term_id = phrase_to_id.get(norm)
-    if term_id is None:
+    """broad_person — resolve primary_form + alternative_forms, then
+    search all five role tables in parallel with every resolved
+    term_id. Merge per-table scores via max (with primary-category
+    weighting)."""
+    term_ids = await _resolve_person_term_ids(spec)
+    if not term_ids:
         return {}
 
     # Kick off actor (prominence-scored) and four binary role fetches
-    # concurrently. Same term_id resolves the person in every table.
-    assert spec.actor_prominence_mode is not None
+    # concurrently. The same term_ids resolve the person in every
+    # table.
+    assert spec.prominence_mode is not None
     actor_task = _fetch_actor_scores(
-        [term_id], spec.actor_prominence_mode, restrict_movie_ids
+        term_ids, spec.prominence_mode, restrict_movie_ids
     )
     binary_tasks = {
-        table: _fetch_binary_role_scores(table, [term_id], restrict_movie_ids)
+        table: _fetch_binary_role_scores(table, term_ids, restrict_movie_ids)
         for table in PEOPLE_POSTING_TABLES
         if table is not PostingTable.ACTOR
     }
@@ -476,23 +519,12 @@ async def _execute_character(
     spec: EntityQuerySpec,
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """Character lookup — exact match lookup_text plus every alternative
-    credited form against lex.character_strings. Each matched term_id
-    produces a per-row score via the CENTRAL or DEFAULT prominence
-    curve, and per-movie we take the max across variant rows."""
-    # Build the full list of name variants, normalize each, dedupe
-    # while preserving order.
-    variants = [spec.lookup_text]
-    if spec.character_alternative_names:
-        variants.extend(spec.character_alternative_names)
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for variant in variants:
-        norm = normalize_string(variant)
-        if not norm or norm in seen:
-            continue
-        seen.add(norm)
-        normalized.append(norm)
+    """Character lookup — exact-match primary_form plus every
+    alternative credited form against lex.character_strings. Each
+    matched term_id produces a per-row score via the CENTRAL or
+    DEFAULT prominence curve, and per-movie we take the max across
+    variant rows."""
+    normalized = _collect_normalized_forms(spec)
     if not normalized:
         return {}
 
@@ -501,12 +533,12 @@ async def _execute_character(
     if not term_ids:
         return {}
 
-    # character_prominence_mode is guaranteed non-null here by the
+    # prominence_mode is guaranteed non-null here by the
     # EntityQuerySpec validator (coerced to DEFAULT when the LLM
     # leaves it null for a character entity).
-    assert spec.character_prominence_mode is not None
+    assert spec.prominence_mode is not None
     return await _fetch_character_scores(
-        term_ids, spec.character_prominence_mode, restrict_movie_ids
+        term_ids, spec.prominence_mode, restrict_movie_ids
     )
 
 
@@ -514,10 +546,11 @@ async def _execute_title_pattern(
     spec: EntityQuerySpec,
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """Title pattern lookup — normalized LIKE match against the full
-    title column on public.movie_card. Binary 1.0 scoring for every
-    matching movie."""
-    norm = normalize_string(spec.lookup_text)
+    """Title pattern lookup — LIKE match of a normalized pattern against
+    public.movie_card.title_normalized. Both sides of the comparison are
+    run through normalize_string at ingest / query time so the match is
+    case- and diacritic-insensitive without ILIKE or unaccent()."""
+    norm = normalize_string(spec.primary_form)
     if not norm:
         return {}
 
@@ -531,10 +564,6 @@ async def _execute_title_pattern(
     else:  # CONTAINS
         like_pattern = f"%{escaped}%"
 
-    # Note: movie_card.title is stored in display form (preserves case
-    # and diacritics). Matching via ILIKE handles the case dimension;
-    # diacritic-insensitive matching would require an unaccent-indexed
-    # column (tracked as a future improvement).
     movie_ids = await fetch_movie_ids_with_title_like(like_pattern, restrict_movie_ids)
     return {mid: 1.0 for mid in movie_ids}
 

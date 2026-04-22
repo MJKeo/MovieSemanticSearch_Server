@@ -427,30 +427,57 @@ class SpecificPersonCategory(StrEnum):
     COMPOSER = "composer"
 
 
-# How to score actor billing position using the zone-based adaptive
-# threshold system. Only meaningful when actor results are in play
-# (person_category is actor or broad_person). See finalized search
-# proposal "Actor Prominence Scoring" for zone definitions and
-# per-mode score tables.
-class ActorProminenceMode(StrEnum):
+# How to score billing prominence for entity lookups. Unified enum
+# covering both actor-table searches (person_category is actor or
+# broad_person) and character searches (entity_type is CHARACTER).
+#
+# Valid-mode subsets, enforced by the EntityQuerySpec validator:
+#   actor-table  → {DEFAULT, LEAD, SUPPORTING, MINOR}
+#   character    → {DEFAULT, CENTRAL}
+#   everything else (director/writer/producer/composer, title_pattern)
+#                → field must be null
+#
+# When the LLM emits an out-of-scope value for the entity being
+# searched, the validator remaps rather than rejects:
+#   character receives LEAD        → CENTRAL (prominence-as-subject)
+#   character receives SUPPORTING  → DEFAULT
+#   character receives MINOR       → DEFAULT
+#   actor-table receives CENTRAL   → LEAD (top-billing equivalent)
+#
+# Mode semantics:
+#   DEFAULT    — no explicit prominence signal; scorer picks a
+#                gentle default curve.
+#   LEAD       — actor-table: user wants the actor in a leading role.
+#   SUPPORTING — actor-table: user wants the actor in a supporting role.
+#   MINOR      — actor-table: user wants a cameo / minor appearance.
+#   CENTRAL    — character: user frames the character as the subject
+#                of the film ("Spider-Man movies").
+#
+# See finalized_search_proposal.md §Actor Prominence Scoring and
+# search_improvement_planning/character_scoring_revamp.md for the
+# per-mode curves and the compression-to-[0.5, 1.0] rationale.
+class ProminenceMode(StrEnum):
     DEFAULT = "default"
     LEAD = "lead"
     SUPPORTING = "supporting"
     MINOR = "minor"
-
-
-# How to score character billing position for character entity lookups.
-# Only meaningful when entity_type is CHARACTER. Two modes:
-#   DEFAULT — character is a filter; gentle top-to-bottom linear decay
-#     across the movie's character cast.
-#   CENTRAL — character is the subject of the query ("Spider-Man
-#     movies"); top-of-bill characters score 1.0 with a fixed decay,
-#     independent of cast size.
-# See search_improvement_planning/character_scoring_revamp.md for
-# curve shapes and compression-to-[0.5, 1.0] rationale.
-class CharacterProminenceMode(StrEnum):
-    DEFAULT = "default"
     CENTRAL = "central"
+
+
+# Subset of ProminenceMode that is valid for actor-table scoring.
+# Used by execution code to drive the actor-mode dispatch table.
+_ACTOR_VALID_PROMINENCE_MODES: frozenset[ProminenceMode] = frozenset({
+    ProminenceMode.DEFAULT,
+    ProminenceMode.LEAD,
+    ProminenceMode.SUPPORTING,
+    ProminenceMode.MINOR,
+})
+
+# Subset of ProminenceMode that is valid for character scoring.
+_CHARACTER_VALID_PROMINENCE_MODES: frozenset[ProminenceMode] = frozenset({
+    ProminenceMode.DEFAULT,
+    ProminenceMode.CENTRAL,
+})
 
 
 # How to match a title pattern against movie title strings.

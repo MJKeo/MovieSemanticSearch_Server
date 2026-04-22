@@ -48,7 +48,7 @@ from .vector_text import (
     create_production_vector_text,
     create_reception_vector_text,
 )
-from implementation.misc.helpers import normalize_string
+from implementation.misc.helpers import expand_hyphen_variants, normalize_string
 from implementation.misc.production_company_text import (
     normalize_company_string,
     tokenize_company_string,
@@ -65,7 +65,6 @@ from movie_ingestion.tracker import TRACKER_DB_PATH, MovieStatus, log_ingestion_
 from .brand_resolver import resolve_brands_for_movie
 from db.postgres import (
     pool,
-    batch_insert_title_token_postings,
     batch_insert_actor_postings,
     batch_insert_director_postings,
     batch_insert_writer_postings,
@@ -80,13 +79,11 @@ from db.postgres import (
     batch_upsert_franchise_entries,
     batch_upsert_award_name_entries,
     batch_upsert_lexical_dictionary,
-    batch_upsert_title_token_strings,
     batch_upsert_character_strings,
     delete_movie_franchise_metadata,
     upsert_movie_franchise_metadata,
     upsert_movie_card,
     batch_upsert_movie_awards,
-    refresh_title_token_doc_frequency,
     refresh_studio_token_doc_frequency,
     refresh_franchise_token_doc_frequency,
     refresh_award_name_token_doc_frequency,
@@ -265,7 +262,10 @@ async def ingest_movie_card(
         award_ceremony_win_ids = await create_award_ceremony_win_ids(movie)
         imdb_vote_count = int(movie.imdb_data.imdb_vote_count or 0)
         reception_score = movie.reception_score()
-        title_token_count = len(movie.normalized_title_tokens())
+        # Symmetric with Stage 3 title_pattern query-time normalization:
+        # the query-side runs normalize_string() on the user pattern and
+        # LIKE-matches this column, so normalize once here at ingest.
+        title_normalized = normalize_string(title)
 
         # Classify the movie's budget relative to its production era.
         # Returns BudgetSize.SMALL or BudgetSize.LARGE for outliers;
@@ -296,7 +296,7 @@ async def ingest_movie_card(
             award_ceremony_win_ids=award_ceremony_win_ids,
             imdb_vote_count=imdb_vote_count,
             reception_score=reception_score,
-            title_token_count=title_token_count,
+            title_normalized=title_normalized,
             budget_bucket=budget_bucket,
             box_office_bucket=box_office_bucket,
             production_company_ids=production_company_ids,
@@ -347,12 +347,96 @@ async def ingest_movie_franchise_metadata(movie: Movie, conn=None) -> None:
     )
 
 
+def _expand_positioned_names(
+    distinct_names: list[str],
+) -> tuple[list[str], list[tuple[str, int]]]:
+    """
+    Expand a billing-ordered list of distinct normalized names into
+    ``(variant, billing_position)`` pairs used for posting writes.
+
+    Each distinct name contributes every hyphen variant produced by
+    :func:`expand_hyphen_variants`. Every variant from the same name
+    shares the same 1-based billing position, so hyphen variants do not
+    inflate prominence denominators (``cast_size`` /
+    ``character_cast_size``) or create phantom credits.
+
+    Returns:
+        ``(unique_variant_strings, positioned_variants)`` where the first
+        list is the deduplicated set of variant forms to register in
+        the lexical dictionary and the second is the per-row source for
+        the posting table insert.
+    """
+    positioned: list[tuple[str, int]] = []
+    variant_set: dict[str, None] = {}
+    for position, name in enumerate(distinct_names, start=1):
+        for variant in expand_hyphen_variants(name):
+            positioned.append((variant, position))
+            variant_set.setdefault(variant, None)
+    return list(variant_set.keys()), positioned
+
+
+def _term_ids_and_positions(
+    positioned: list[tuple[str, int]],
+    string_id_map: dict[str, int],
+) -> tuple[list[int], list[int]]:
+    """
+    Project a ``(variant, billing_position)`` list through the
+    variant→term_id map to the parallel (term_ids, billing_positions)
+    arrays that billing-aware ``batch_insert_*_postings`` consumes.
+
+    Variants missing from ``string_id_map`` are skipped — that only
+    happens when a variant normalized to the empty string upstream.
+    """
+    term_ids: list[int] = []
+    positions: list[int] = []
+    for variant, position in positioned:
+        term_id = string_id_map.get(variant)
+        if term_id is None:
+            continue
+        term_ids.append(term_id)
+        positions.append(position)
+    return term_ids, positions
+
+
+def _term_ids_only(
+    positioned: list[tuple[str, int]],
+    string_id_map: dict[str, int],
+) -> list[int]:
+    """
+    Project a ``(variant, billing_position)`` list to deduplicated
+    term_ids for posting tables that don't carry billing metadata
+    (director / writer / producer / composer).
+
+    Dedup preserves first-seen order so the resulting list mirrors the
+    billing order of the distinct names that produced it, even though
+    the binary-role posting tables don't store that order.
+    """
+    term_ids: list[int] = []
+    seen: set[int] = set()
+    for variant, _ in positioned:
+        term_id = string_id_map.get(variant)
+        if term_id is None or term_id in seen:
+            continue
+        seen.add(term_id)
+        term_ids.append(term_id)
+    return term_ids
+
+
 async def ingest_lexical_data(movie: Movie, conn=None) -> None:
     """
-    Ingest all lexical posting data (title tokens, people, characters) for a movie.
+    Ingest all lexical posting data (people + characters) for a movie.
 
-    Studios are no longer handled here — see ``ingest_production_data`` for the
-    brand + production-company paths that replaced ``lex.inv_studio_postings``.
+    For each role list, distinct normalized names define billing
+    positions 1..N. Each name is then expanded via
+    :func:`expand_hyphen_variants` so that every hyphen spelling
+    ("spider-man" / "spider man" / "spiderman") is stored as its own
+    term_id in ``lex.lexical_dictionary`` and ``lex.character_strings``,
+    and every variant gets a posting row sharing the origin name's
+    billing position. Prominence denominators (``cast_size`` /
+    ``character_cast_size``) count distinct names pre-expansion so
+    variant bloat never changes the prominence math.
+
+    Studios are handled separately in ``ingest_production_data``.
 
     Args:
         movie: Movie object to ingest lexical data for.
@@ -363,83 +447,98 @@ async def ingest_lexical_data(movie: Movie, conn=None) -> None:
         raise ValueError("Movie ingestion failed: ID is required but not found.")
     movie_id = int(movie_id)
 
-    # Phase 1: Collect normalized strings for every lexical bucket.
-    title_tokens = [
-        normalized_token
-        for token in movie.normalized_title_tokens()
-        if (normalized_token := normalize_string(token))
-    ]
-    # Build role-specific people lists (order matters for actor billing position).
+    # Phase 1: distinct normalized names per role, in billing order.
+    # ``_normalize_name_list`` dedups via dict.fromkeys so the list
+    # index directly defines the billing position (actor) or cast-edge
+    # position (character).
     actors = _normalize_name_list(movie.imdb_data.actors)
     directors = _normalize_name_list(movie.imdb_data.directors)
     writers = _normalize_name_list(movie.imdb_data.writers)
     producers = _normalize_name_list(movie.imdb_data.producers)
     composers = _normalize_name_list(movie.imdb_data.composers)
-    all_people = list(dict.fromkeys(actors + directors + writers + producers + composers))
 
     characters: list[str] = []
+    seen_characters: set[str] = set()
     for character in movie.imdb_data.characters:
         normalized_character = normalize_string(str(character))
-        if not normalized_character:
+        if not normalized_character or normalized_character in seen_characters:
             continue
+        seen_characters.add(normalized_character)
         characters.append(normalized_character)
 
-    # Phase 2: Resolve all dictionary IDs in one round-trip.
-    all_strings = list(dict.fromkeys(title_tokens + all_people + characters))
-    string_id_map = await batch_upsert_lexical_dictionary(all_strings, conn=conn)
+    # Phase 2: expand each role list into (variant, billing_position)
+    # pairs plus the per-role unique variant set. Cast sizes are frozen
+    # now — BEFORE expansion — so hyphen variants do not inflate the
+    # prominence denominators.
+    actor_cast_size = len(actors)
+    character_cast_size = len(characters)
 
-    # Phase 3: Build aligned ID/string arrays and posting ID lists.
-    title_token_string_pairs = [
-        (string_id_map[token], token) for token in title_tokens if token in string_id_map
-    ]
-    character_string_pairs = [
-        (string_id_map[character], character)
-        for character in characters
-        if character in string_id_map
-    ]
+    actor_variants, actor_positioned = _expand_positioned_names(actors)
+    director_variants, director_positioned = _expand_positioned_names(directors)
+    writer_variants, writer_positioned = _expand_positioned_names(writers)
+    producer_variants, producer_positioned = _expand_positioned_names(producers)
+    composer_variants, composer_positioned = _expand_positioned_names(composers)
+    character_variants, character_positioned = _expand_positioned_names(characters)
 
-    title_token_term_ids = [string_id for string_id, _ in title_token_string_pairs]
-    # Role-specific term ID lists. Actor list preserves billing order.
-    actor_term_ids = [string_id_map[a] for a in actors if a in string_id_map]
-    director_term_ids = [string_id_map[d] for d in directors if d in string_id_map]
-    writer_term_ids = [string_id_map[w] for w in writers if w in string_id_map]
-    producer_term_ids = [string_id_map[p] for p in producers if p in string_id_map]
-    composer_term_ids = [string_id_map[c] for c in composers if c in string_id_map]
-    character_term_ids = [string_id for string_id, _ in character_string_pairs]
-
-    # Phase 4: Sequential batch writes to lexical sub-tables and posting tables.
-    # Sequential (not asyncio.gather) because a shared psycopg AsyncConnection
-    # does not support concurrent in-flight queries without pipeline mode.
-    await batch_upsert_title_token_strings(
-        [string_id for string_id, _ in title_token_string_pairs],
-        [norm_str for _, norm_str in title_token_string_pairs],
-        conn=conn,
+    # Phase 3: resolve every unique variant to a term_id in one round-trip.
+    all_variant_strings = list(
+        dict.fromkeys(
+            actor_variants
+            + director_variants
+            + writer_variants
+            + producer_variants
+            + composer_variants
+            + character_variants
+        )
     )
+    string_id_map = await batch_upsert_lexical_dictionary(all_variant_strings, conn=conn)
+
+    # Phase 4: register character variants in the character-specific
+    # subset table (used by fuzzy character matching in Stage 3).
+    character_variant_pairs = [
+        (string_id_map[variant], variant)
+        for variant in character_variants
+        if variant in string_id_map
+    ]
     await batch_upsert_character_strings(
-        [string_id for string_id, _ in character_string_pairs],
-        [norm_str for _, norm_str in character_string_pairs],
+        [string_id for string_id, _ in character_variant_pairs],
+        [variant for _, variant in character_variant_pairs],
         conn=conn,
     )
-    await batch_insert_title_token_postings(list(dict.fromkeys(title_token_term_ids)), movie_id, conn=conn)
-    # Role-specific people posting inserts. Actor dedup preserves billing order
-    # via dict.fromkeys; cast_size reflects the deduplicated actor count.
-    deduped_actor_term_ids = list(dict.fromkeys(actor_term_ids))
+
+    # Phase 5: posting writes. Sequential (not asyncio.gather) because a
+    # shared psycopg AsyncConnection does not support concurrent
+    # in-flight queries without pipeline mode.
+    actor_term_ids, actor_positions = _term_ids_and_positions(actor_positioned, string_id_map)
     await batch_insert_actor_postings(
-        deduped_actor_term_ids, movie_id, cast_size=len(deduped_actor_term_ids), conn=conn,
-    )
-    await batch_insert_director_postings(list(dict.fromkeys(director_term_ids)), movie_id, conn=conn)
-    await batch_insert_writer_postings(list(dict.fromkeys(writer_term_ids)), movie_id, conn=conn)
-    await batch_insert_producer_postings(list(dict.fromkeys(producer_term_ids)), movie_id, conn=conn)
-    await batch_insert_composer_postings(list(dict.fromkeys(composer_term_ids)), movie_id, conn=conn)
-    # Character dedup preserves cast-edge order (topmost-billed first)
-    # via dict.fromkeys; character_cast_size reflects the deduplicated
-    # distinct-term count, which is what the prominence-score DEFAULT
-    # curve divides by.
-    deduped_character_term_ids = list(dict.fromkeys(character_term_ids))
-    await batch_insert_character_postings(
-        deduped_character_term_ids,
+        actor_term_ids,
+        actor_positions,
         movie_id,
-        character_cast_size=len(deduped_character_term_ids),
+        cast_size=actor_cast_size,
+        conn=conn,
+    )
+
+    await batch_insert_director_postings(
+        _term_ids_only(director_positioned, string_id_map), movie_id, conn=conn,
+    )
+    await batch_insert_writer_postings(
+        _term_ids_only(writer_positioned, string_id_map), movie_id, conn=conn,
+    )
+    await batch_insert_producer_postings(
+        _term_ids_only(producer_positioned, string_id_map), movie_id, conn=conn,
+    )
+    await batch_insert_composer_postings(
+        _term_ids_only(composer_positioned, string_id_map), movie_id, conn=conn,
+    )
+
+    character_term_ids, character_positions = _term_ids_and_positions(
+        character_positioned, string_id_map
+    )
+    await batch_insert_character_postings(
+        character_term_ids,
+        character_positions,
+        movie_id,
+        character_cast_size=character_cast_size,
         conn=conn,
     )
 
@@ -1575,7 +1674,6 @@ async def cmd_ingest(
         # Post-ingestion: refresh materialized views
         if cumulative_ingested > 0:
             print("\nRefreshing materialized views...")
-            await refresh_title_token_doc_frequency()
             await refresh_studio_token_doc_frequency()
             await refresh_franchise_token_doc_frequency()
             await refresh_award_name_token_doc_frequency()

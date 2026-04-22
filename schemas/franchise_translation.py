@@ -5,7 +5,7 @@
 # against `movie_franchise_metadata`.
 #
 # Receives: intent_rewrite (step 1) + one item's description and
-# routing_rationale (step 2).
+# route_rationale (step 2).
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Endpoint 4: Franchise Structure) for the full design rationale.
@@ -77,7 +77,7 @@ class FranchiseQuerySpec(BaseModel):
     # axis that follows. The system prompt teaches the model to
     # extract signals from `description` first, then use
     # `intent_rewrite` only to disambiguate vague references from
-    # the description. `routing_rationale` is a hint, not evidence.
+    # the description. `route_rationale` is a hint, not evidence.
     #
     # Evidence-inventory framing (quote the input, don't justify
     # the output) is deliberate — it constrains over-inference.

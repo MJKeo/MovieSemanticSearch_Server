@@ -1,15 +1,14 @@
 # Search V2 — Stage 4 flow detection and item tagging.
 #
-# Phase 0 of the orchestrator. Flattens concept expressions into
-# TaggedItems, selects one of four flow scenarios, and stamps each
-# expression with its runtime role and candidate-generation behavior.
+# Phase 0 of the orchestrator. Flattens slot actions into TaggedItems,
+# selects one of four flow scenarios, and stamps each action with its
+# runtime role and candidate-generation behavior.
 
 from __future__ import annotations
 
 from schemas.enums import EndpointRoute
 from schemas.query_understanding import (
-    DealbreakerMode,
-    ExpressionKind,
+    ActionRole,
     PreferenceStrength,
     QueryUnderstandingResponse,
 )
@@ -55,39 +54,53 @@ def tag_items(
     ]
 
 
+# Map each Stage 2B ActionRole to the internal Stage 4 role string.
+# The internal strings stay ("inclusion_dealbreaker",
+# "exclusion_dealbreaker", "preference") because they are referenced
+# across scoring, assembly, and the flow detector — renaming them is
+# out of scope for the Step 2B rewrite.
+_ROLE_MAP: dict[ActionRole, str] = {
+    ActionRole.INCLUSION: "inclusion_dealbreaker",
+    ActionRole.EXCLUSION: "exclusion_dealbreaker",
+    ActionRole.PREFERENCE: "preference",
+}
+
+
 def flatten_items(qu: QueryUnderstandingResponse) -> list[TaggedItem]:
-    """Flatten concept expressions into stable TaggedItems."""
+    """Flatten completed-slot actions into stable TaggedItems.
+
+    One slot becomes one concept group in Stage 4's concept-level
+    aggregation. The debug key format preserves both slot position
+    (for stability) and slot handle (for readability). Slots whose
+    Stage 2B call produced no actions (slot skipped) contribute
+    nothing here — correct behavior, since a skipped slot has no
+    retrieval intent to execute.
+    """
     tagged: list[TaggedItem] = []
 
-    for concept_index, concept in enumerate(qu.concepts):
-        concept_key = f"concept[{concept_index}]"
-        for expression_index, expression in enumerate(concept.expressions):
-            if expression.kind == ExpressionKind.DEALBREAKER:
-                assert expression.dealbreaker_mode is not None
-                role = (
-                    "inclusion_dealbreaker"
-                    if expression.dealbreaker_mode == DealbreakerMode.INCLUDE
-                    else "exclusion_dealbreaker"
-                )
-                is_primary_preference = False
-            else:
-                role = "preference"
-                is_primary_preference = (
-                    expression.preference_strength == PreferenceStrength.CORE
-                )
-
+    for slot_index, completed in enumerate(qu.completed_slots):
+        # Handles aren't validated unique across slots, so the
+        # positional prefix guarantees uniqueness; the handle makes
+        # the key human-readable in debug output.
+        concept_key = f"slot[{slot_index}]::{completed.slot.handle}"
+        for action_index, action in enumerate(completed.response.actions):
+            role = _ROLE_MAP[action.role]
+            is_primary_preference = (
+                action.role == ActionRole.PREFERENCE
+                and action.preference_strength == PreferenceStrength.CORE
+            )
             tagged.append(
                 TaggedItem(
-                    source=expression,
+                    source=action,
                     role=role,
-                    concept_index=concept_index,
-                    concept_text=concept.concept,
-                    expression_index=expression_index,
-                    endpoint=expression.route,
+                    concept_index=slot_index,
+                    concept_text=completed.slot.handle,
+                    expression_index=action_index,
+                    endpoint=action.route,
                     generates_candidates=False,
                     is_primary_preference=is_primary_preference,
                     concept_debug_key=concept_key,
-                    debug_key=f"{concept_key}.expression[{expression_index}]",
+                    debug_key=f"{concept_key}.action[{action_index}]",
                 )
             )
 

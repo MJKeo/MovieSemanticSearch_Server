@@ -610,7 +610,7 @@ SYSTEM_PROMPT = (
 async def generate_keyword_query(
     intent_rewrite: str,
     description: str,
-    routing_rationale: str,
+    route_rationale: str,
     provider: LLMProvider,
     model: str,
     **kwargs,
@@ -619,7 +619,7 @@ async def generate_keyword_query(
 
     The LLM receives the step 1 intent_rewrite (for disambiguation
     context) and one step 2 item's description plus a routing hint
-    derived from step 2's routing_rationale field. It produces
+    derived from step 2's route_rationale field. It produces
     exactly one UnifiedClassification registry selection, preceded by
     the two reasoning fields that scaffold the choice.
 
@@ -629,7 +629,7 @@ async def generate_keyword_query(
         description: The positive-presence statement of the
             classification requirement to translate (from a Dealbreaker
             or Preference).
-        routing_rationale: The concept-type label from step 2 explaining
+        route_rationale: The concept-type label from step 2 explaining
             why this item was routed to the keyword endpoint. This is
             passed to the prompt as a lightweight routing hint rather
             than as evidence.
@@ -647,13 +647,13 @@ async def generate_keyword_query(
     """
     intent_rewrite = intent_rewrite.strip()
     description = description.strip()
-    routing_hint = routing_rationale.strip()
+    routing_hint = route_rationale.strip()
     if not intent_rewrite:
         raise ValueError("intent_rewrite must be a non-empty string.")
     if not description:
         raise ValueError("description must be a non-empty string.")
     if not routing_hint:
-        raise ValueError("routing_rationale must be a non-empty string.")
+        raise ValueError("route_rationale must be a non-empty string.")
 
     # Three labeled sections so the model can keep inputs distinct.
     user_prompt = (
