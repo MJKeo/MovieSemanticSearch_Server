@@ -1,56 +1,116 @@
-# Brand Registry — MVP Tier List
+# Brand Registry — Planning Doc (superseded by retune)
 
-Companion to `v2_search_data_improvements.md`. This file pins the
-closed brand registry for the studio resolver's brand path. Each
-entry lists the production companies that qualify as members of
-the brand (for `brand_member_company` rows), with time bounds
-where ownership changed.
+> **Status:** This document captures the ORIGINAL research and MVP
+> member cut. A 2026-04 retune replaced the selection principle and
+> trimmed every umbrella brand's roster. For the CURRENT brand
+> rosters consumed by ingestion and the stage-3 studio resolver, see
+> [`schemas/production_brands.py`](../schemas/production_brands.py)
+> — that file is the source of truth. The per-brand tables below
+> are historical research preserved for traceability and surface-
+> form references; any row not marked otherwise has been retained.
 
-**Research provenance:** Per-brand sub-brand and ownership
-enumerations below came from 48 parallel research sub-agents
-(one per brand), each drawing on their own knowledge plus web
-research. The MVP cut narrowed the set to 31 brands. All 31 kept
-brands' date-bearing member assertions were cross-validated
-against Wikidata `owned by` time-qualifiers (29/31 OK, 2 dates
-corrected inline), and every member's surface strings were
-checked against the IMDB `production_companies` TSV for non-zero
-evidence (3 zero-evidence members dropped). The remaining 17
-researched brands are listed under "Excluded on purpose →
-Deferred from MVP".
+## What changed in the retune
 
-## Purpose
+**Old principle:** "catalog recall over label purity" — include every
+corporate subsidiary a brand owned during its ownership window, to
+maximize recall. If the parent ever owned it, it counted.
 
-The brand registry is the closed enum that the stage-3 query-time
-LLM emits as `StudioQuerySpec.brand_id`. Each row below becomes a
-`BrandEnum` value and a row in the `brand` table, with one or more
-`brand_member_company` edges linking it to the raw IMDB
-production-company strings users expect it to cover.
+**New principle:** a **brand-identity test, not a corporate-ownership
+test**. A label belongs in a brand's roster only if a casual viewer
+typing "<brand> movies" would expect its films. The test:
 
-## Selection Criteria
+- **KEEP:** labels the parent actively brand-promotes — Pixar
+  ("Disney/Pixar"), Marvel Studios, Lucasfilm/Star Wars, Illumination
+  (Universal-promoted), Screen Gems (Sony-genre), etc.
+- **DROP:** autonomous-identity acquisitions deliberately kept
+  separate — Miramax, Searchlight, Touchstone, Hollywood Pictures,
+  Blue Sky under Disney; New Line, Castle Rock, HBO Films, DC under
+  Warner Bros.; Focus Features, DreamWorks Animation, Working Title
+  under Universal; Nickelodeon, MTV, Republic under Paramount; Sony
+  Pictures Classics under Sony. These remain findable via their own
+  standalone brands in the registry (MIRAMAX, SEARCHLIGHT, TOUCHSTONE,
+  NEW_LINE_CINEMA, DC, FOCUS_FEATURES, DREAMWORKS_ANIMATION, etc.) —
+  the retune removes cross-brand leaks, not discoverability.
+- **DROP:** home-entertainment-only, distribution-only,
+  foreign-region, pure legal-entity, and obscure joint-venture
+  credits with no user-search value.
 
-A brand qualifies only if:
+### Motivating bug
 
-1. **Search intent exists.** Real users type the name with the
-   intent of browsing that brand's catalog.
-2. **Token match is insufficient.** The brand bridges subsidiaries
-   with no shared tokens, has acronym/long-form asymmetry, has a
-   historical rename, or has a common-word token that collides
-   with unrelated entries.
+Under the old principle, searching "Disney movies" returned *No
+Country for Old Men* because Miramax was Disney-owned 1993-2010 —
+even though no casual viewer thinks of that film as a Disney film.
+Retune drops Miramax from DISNEY; NCFOM now tags `MIRAMAX + PARAMOUNT`
+(via Paramount Vantage), which is what a casual viewer expects.
 
-Per-brand member lists prioritize **catalog recall over label
-purity**. If a company string clearly belongs under the umbrella
-and appears in `production_companies`, it can be retained even
-when it is a TV arm, home-entertainment label, or broader
-corporate credit. Still exclude pure financiers, silent
-coproducers, single-purpose LLCs, foreign distribution-only
-entities with no real user-search value, unrelated name
-collisions, and niche imprints with fewer than ~5 notable films.
+## Validation against real IMDB data
+
+Registry validated against 361k films in `tracker.db` `imdb_data`:
+
+**Surface-string existence.** Every retained string has non-zero film
+evidence. Ten agent-proposed ADDs from the initial retune pass had
+zero evidence in live IMDB data and were removed: `Lucasfilm Ltd.`,
+`Illumination` (2018 rename variant), `DreamWorks Animation SKG`,
+`PDI/DreamWorks`, `A24 Films`, `A24 Films LLC`, `Neon Rated`,
+`Studio Ghibli, Inc.`, `Miramax Films`. IMDB consistently uses the
+base forms (`A24`, `Neon`, `Studio Ghibli`, `Miramax`, `Lucasfilm`,
+`Illumination Entertainment`) — agent claims about "X is also a
+common IMDB surface string" were speculative and not ground-truthed.
+
+**Date-window validation.** Three real gating bugs fixed:
+
+| Brand | String | Old window | New window | Why |
+|---|---|---|---|---|
+| SEARCHLIGHT | `Searchlight Pictures` | (2020, None) | (None, None) | IMDB retroactively applies the current "Searchlight Pictures" credit to pre-2020 Fox Searchlight films (Slumdog Millionaire 2008, Black Swan 2010, 12 Years a Slave 2013 were missing their tag) |
+| WARNER_BROS | `Warner Bros. Cartoon Studios` | (1980, None) | (None, None) | String actually covers the 1933-1963 classic Looney Tunes unit, not the 1980 animation relaunch (512 classic shorts were missing their tag) |
+| TWENTIETH_CENTURY | `20th Century Pictures` | (1935, 2020) | (1933, 2020) | Pre-merger 20th Century Pictures (1933-35) films were missing their tag |
+| UNITED_ARTISTS | `United Artists` | (1919, 1981) + (2024, None) | (1919, None) single window | Split assumption was wrong — IMDB uses bare `United Artists` on MGM-era UA films too (Rocky IV 1985, Rain Man 1988, Valkyrie 2008 were all missing their tag) |
+
+**Date windows verified correct despite looking narrow:**
+SONY's 1989 Columbia acquisition gate; DISNEY's Pixar (2006) /
+Marvel (2009) / Lucasfilm (2012) acquisition gates; Summit
+Entertainment 2012 gate (pre-acquisition Summit was competitor);
+Atomic Monster 2024 gate (pre-merger Conjuring/Saw correctly stay
+under their own identity); AMAZON_MGM 2022/2024 gates (classic
+MGM/UA correctly excluded from Amazon brand).
+
+## Lessons
+
+1. **Corporate-ownership and brand-identity are different things.**
+   The old "catalog recall" rule conflated them; the new rule
+   separates them cleanly. Cross-brand leaks disappeared.
+2. **Agent research about IMDB surface-string conventions is
+   speculation.** Claims like "IMDB also uses variant X" or "bare
+   `United Artists` is only used in the classic era" were
+   confidently stated and wrong. Ground-truth against `imdb_data`
+   before adding/splitting surface strings.
+3. **IMDB retroactively applies current names.** Studio renames
+   (Fox Searchlight → Searchlight, Illumination Entertainment →
+   Illumination, Walt Disney Feature Animation → Walt Disney
+   Animation Studios) cause the current name to appear on
+   pre-rename films. Date windows on the new name must include
+   pre-rename years unless there's specific evidence otherwise.
+
+## How to read the historical tables below
+
+The per-brand Members and Surface forms tables below reflect the
+**original pre-retune research** (48 parallel research sub-agents,
+Wikidata date cross-validation, IMDB `production_companies` TSV
+evidence checks). They are preserved for their surface-form counts
+and the per-member rationales. For authoritative current rosters,
+read `schemas/production_brands.py`. Rows in the Members tables
+below that have been DROPPED in the retune are annotated in the
+brand's "Retune status" note directly under its header; all other
+rows are still in the registry (potentially with an updated window
+per the validation fixes above).
 
 ---
 
 # Tier 1 — MVP must-haves (24 brands)
 
 ## DISNEY — "The Walt Disney Studios"
+
+**Retune status:** Heavily trimmed. DROPPED from the umbrella: all 20th Century Fox / Studios variants, Searchlight Pictures, Fox Searchlight, Touchstone Pictures, Hollywood Pictures, Miramax + Dimension Films, Blue Sky Studios, and all home-entertainment / foreign-region / malformed co-credit surfaces. KEPT: Walt Disney Pictures + Animation canon, Pixar (co-branded), Marvel Studios, Lucasfilm, Disneytoon. Dropped labels remain findable via their own standalone brands.
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -234,6 +294,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## WALT_DISNEY_ANIMATION — "Walt Disney Animation Studios"
 
+**Retune status:** Trimmed to two headline credits (`Walt Disney Animation Studios`, `Walt Disney Feature Animation`). DROPPED: satellite/facility units (Australia, Japan, Canada, France, Florida, Paris) and `Walt Disney Productions` (pre-1986 mixed animation + live-action output would dilute the animation-only brand).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Walt Disney Animation Studios | 2007 | — | Current name from Meet the Robinsons onward |
@@ -266,6 +328,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## PIXAR — "Pixar Animation Studios"
 
+**Retune status:** No change. Single-identity studio.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Pixar Animation Studios | 1986 | — | Core studio, spun out from Lucasfilm's Graphics Group |
@@ -284,6 +348,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** TSV case-insensitive grep for 'pixar' returned exactly two distinct strings: 'Pixar Animation Studios' (120 occurrences) and bare 'Pixar' (1 occurrence). Both map to the core Pixar Animation Studios entity. No 'Pixar Canada' surface form appears in the IMDB production_companies column -- member dropped. Pre-1986 predecessor names (Lucasfilm Computer Graphics Division / Graphics Group) are excluded per the tier list and do not appear under a Pixar surface form. No collisions: 'Pixar' token is unique to this brand.
 
 ## MARVEL_STUDIOS — "Marvel Studios"
+
+**Retune status:** DROPPED `Marvel Films` (1993-1996 predecessor); its pre-MCU output (unreleased Fantastic Four, late-80s TV-movie orbit) isn't what casual viewers mean by "Marvel Studios."
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -323,6 +389,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## LUCASFILM — "Lucasfilm"
 
+**Retune status:** ADDED `Lucasfilm Animation` (2003-) for Clone Wars and Star Wars animated output. Proposed ADD `Lucasfilm Ltd.` was validated against IMDB and removed — zero evidence in live data (IMDB consistently uses bare `Lucasfilm`).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Lucasfilm Ltd. | 1971 | — | Primary production credit for Star Wars and Indiana Jones |
@@ -357,6 +425,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Case-insensitive grep over /tmp/company_strings.tsv returned three 'Lucasfilm'-prefixed surface strings: 'Lucasfilm' (86), 'Lucasfilm Animation' (7), 'Lucasfilm Television' (1). Per the tier list, Lucasfilm Animation (TV-only) and Lucasfilm Television (TV) are excluded, so only 'Lucasfilm' is retained. Notably, neither 'Lucasfilm Ltd.' nor 'Lucasfilm Ltd' appears in the TSV — the canonical long-form credit collapses to 'Lucasfilm' in this index. ILM and Skywalker Sound are excluded per the tier list (VFX/sound credits, not production credits). All other Lucas-token matches are unrelated namesakes/individuals and are listed as collisions_flagged for auditability.
 
 ## WARNER_BROS — "Warner Bros."
+
+**Retune status:** Heavily trimmed. DROPPED: all New Line Cinema surfaces (autonomous brand — LOTR, Austin Powers, Rush Hour), Fine Line Features, Castle Rock Entertainment (Shawshank, When Harry Met Sally — own brand identity), all Turner Pictures variants, entire HBO lineage (Home Box Office, HBO Films, HBO Max, HBO Premiere Films, HBO Pictures, HBO Documentary Films — HBO is its own household brand), all DC entries (DC Comics, DC Entertainment, DC Films, DC Studios — now standalone DC brand). KEPT: core Warner Bros. live-action + animation. Window fix: `Warner Bros. Cartoon Studios` widened from (1980, None) to (None, None) to cover the 1933-1963 classic Looney Tunes unit.
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -430,6 +500,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## NEW_LINE_CINEMA — "New Line Cinema"
 
+**Retune status:** DROPPED the two Heron joint-venture shells (obscure coproduction SPVs casual viewers have never heard of) and `Fine Line Features` (arthouse imprint with its own identity). KEPT: four core New Line naming variants.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | New Line Cinema | 1967 | — | Core banner; continues as a WB label after 2008 absorption |
@@ -464,6 +536,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Members per tier list: New Line Cinema (1967-) and Fine Line Features (1990-2005). Picturehouse (2005-2008 WB/New Line JV) explicitly excluded by tier list as primarily distribution. TV (New Line Television), home video (New Line Home Entertainment/Video), and international distribution (New Line International) arms are excluded because they are non-production. New Line-Heron Joint Venture entries are included as they are film production credits tied to New Line. Fine Line Media and Fine Line Productions are treated as name collisions (insufficient evidence they are the New Line arthouse imprint, which was consistently branded 'Fine Line Features').
 
 ## DC — "DC Studios"
+
+**Retune status:** DROPPED pre-2009 `DC Comics` (too broad — IMDB applies it as a source credit across animated DTV and licensed tie-ins casual viewers don't mean by "DC movies"). KEPT: DC Entertainment (2009-2016), DC Films (2016-2022), DC Studios (2022-). Classic theatrical DC (Burton Batman, Donner Superman) correctly tags only WARNER_BROS via its WB credit, which matches casual expectation.
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -514,6 +588,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Four clean canonical members found in TSV: DC Entertainment (134), DC Comics (25), DC Films (19), DC Studios (3). Per tier list, excluded DC Animation (TV) and DC Universe streaming originals — neither appears in TSV as a production_companies string. DC Black Label (comics-only imprint) likewise absent; the only Vertigo-adjacent hit is 'DC Vertigo' (count 1), excluded as comics-only. Several 'DC ...' singletons (DC Pictures, DC Productions, DC Media, etc.) are name-space collisions with unrelated indie companies or geographic (Washington, DC) references and were excluded. Tier list curation flag #4 satisfied: pre-2009 'DC Comics' production credit is retained.
 
 ## UNIVERSAL — "Universal Pictures"
+
+**Retune status:** DROPPED all Focus Features surfaces + precursors (Good Machine, USA Films), DreamWorks Animation + PDI, Working Title Films + WT2 Productions, Gramercy Pictures. KEPT: core Universal + Illumination (Universal actively co-brands Minions/Despicable Me — theme-park integration etc.). Proposed ADD `Illumination` (bare, post-2018 rename) was validated against IMDB and removed — zero evidence (IMDB retains `Illumination Entertainment` even post-rename).
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -566,6 +642,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## FOCUS_FEATURES — "Focus Features"
 
+**Retune status:** DROPPED `Focus World` (niche VOD/genre sub-label) and `Focus Features Africa First Program` (short-film residency). KEPT: core Focus + Good Machine + USA Films precursors (catalog tonally identical to Focus's prestige-indie identity).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Focus Features | 2002 | — | Primary credit on Universal prestige films |
@@ -603,6 +681,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Focus Features is the specialty arm of NBCUniversal, formed in 2002 from the merger of USA Films (1999-2002) and Good Machine (1991-2002); Focus World (2010-2013) was its genre/VOD label. Gramercy Pictures is explicitly excluded per tier list (users don't associate it with Focus). 'Prime Focus World' is a VFX services company (Prime Focus Limited), not affiliated with Focus Features, and was flagged as a collision. All 'USA Films' substring matches other than the exact 'USA Films' string were vetted and excluded as unrelated companies. 'Focus Features Africa First Program' is a Focus Features talent initiative and is included as a member string.
 
 ## PARAMOUNT — "Paramount Pictures"
+
+**Retune status:** DROPPED all Nickelodeon entries (distinct kids-TV brand — SpongeBob/Rugrats/Dora not "Paramount" to casual viewers), all MTV Films entries (MTV's own brand identity — Jackass, Napoleon Dynamite), and the revived `Republic Pictures` entries (own brand identity). KEPT: core Paramount + Paramount Players + Paramount Animation + Paramount Vantage / Classics (the `Paramount` prefix signals co-branding and satisfies the casual-viewer test for Vantage's There Will Be Blood / No Country for Old Men etc.).
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -695,6 +775,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## SONY — "Sony Pictures"
 
+**Retune status:** Heavily trimmed. DROPPED: all foreign-region Columbia variants (Brazil x2, Mexico, Argentina, Asia, Germany, British Productions), obscure corporate labels (`Columbia Pictures Entertainment`, `Columbia Films Productions`, `Columbia Release`), `Sony Pictures Classics` (distinct arthouse brand — Whiplash, Call Me By Your Name), low-profile imprints (Stage 6 Films + Productions, Triumph Films x2), all distribution-only credits (Sony Pictures Releasing, Sony Pictures Releasing International, Sony Pictures International, SPWA, Sony BMG Feature Films, Sony International MPPG, Sony Pictures Films India, Sony / Monumental). KEPT: Columbia core + TriStar + Screen Gems + Sony Pictures Animation + core Sony umbrella credits.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Columbia Pictures | 1989 | — | Flagship Sony label since Columbia Pictures Entertainment acquisition |
@@ -776,6 +858,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## COLUMBIA — "Columbia Pictures"
 
+**Retune status:** DROPPED `Columbia British Productions`, `Columbia Films`, `Columbia Productions` (obscure historic B-picture variants with no casual recall), and the joint-venture shells `Columbia-Delphi Productions` and `Columbia-Thompson Venture` (casual viewers attribute those films to plain "Columbia"). KEPT: `Columbia Pictures` (1924-) and `Columbia Pictures Corporation` (1924-1968).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Columbia Pictures | 1924 | — | Primary credit since 1924 rename |
@@ -843,6 +927,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## TWENTIETH_CENTURY — "20th Century Studios"
 
+**Retune status:** DROPPED pre-1935 Fox Film Corporation / Fox Film Company / Fox Films (silent/early-talkie era is film-historian territory, not casual mental model). KEPT: all post-1935 20th Century Fox + Studios variants + Fox 2000 Pictures (Fight Club, Cast Away, Walk the Line, Life of Pi were Fox-marketed). Window fix: `20th Century Pictures` widened from (1935, 2020) to (1933, 2020) to cover pre-merger films.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Twentieth Century Fox Film Corporation | 1935 | 2020 | Pre-rename core production entity |
@@ -906,6 +992,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## SEARCHLIGHT — "Searchlight Pictures"
 
+**Retune status:** No member drops. Window fix: `Searchlight Pictures` widened from (2020, None) to (None, None) because IMDB retroactively applies the current name to pre-rename films (Slumdog Millionaire 2008, Black Swan 2010, 12 Years a Slave 2013 were all missing their tag).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Fox Searchlight Pictures | 1994 | 2020 | Original label name |
@@ -932,6 +1020,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Searchlight is a compact brand with just two canonical strings: 'Fox Searchlight Pictures' (1994-2020) and 'Searchlight Pictures' (2020-) following the January 2020 Disney-era rebrand. Four other TSV entries contain the word 'Searchlight' but are unrelated companies (Indian JV Mukta Searchlight, plus small outfits named Searchlight Films / Searchlight Productions / Creative Searchlight). No regional arms found. Brand is also a member of DISNEY since 2019.
 
 ## DREAMWORKS_ANIMATION — "DreamWorks Animation"
+
+**Retune status:** No member drops. Proposed ADDs `DreamWorks Animation SKG` and `PDI/DreamWorks` were validated against IMDB and removed — zero evidence in live data. Live-action DreamWorks (Gladiator, American Beauty, Transformers) remains correctly excluded — a separate entity casual viewers don't conflate.
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -973,6 +1063,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## ILLUMINATION — "Illumination"
 
+**Retune status:** DROPPED `Mac Guff Ligne` (pre-2011 French VFX house — Illumination's Paris animation unit was spun off from it in 2011 and renamed `Illumination Studios Paris`, which is the relevant surface going forward). KEPT: `Illumination Entertainment` (widened to (2007, None) — IMDB retains this credit even post-2018 rename) + `Illumination Studios Paris`. Proposed ADD bare `Illumination` was validated and removed — zero evidence.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Illumination | 2018 | — | Current brand name post-rebrand |
@@ -1008,6 +1100,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** The flagship brand member is overwhelmingly 'Illumination Entertainment' (count 59), with no standalone 'Illumination' string appearing in the TSV — suggesting that since the 2018 rebrand IMDB production_companies still predominantly retains the legacy 'Illumination Entertainment' credit. 'Illumination Studios Paris' (1) captures the post-2022 Paris-arm rebrand. 'Mac Guff Ligne' (15) is included as the predecessor/parent of Illumination Mac Guff; because Mac Guff Ligne continued as an independent VFX shop, some of those 15 credits may be non-Illumination work and should be verified during member-row curation. All other Illumination-token strings are unrelated (UK Illuminations Films/Illuminations Media ecosystem and assorted one-offs) and are flagged as collisions. No 'Illumination Mac Guff' surface string appears in the TSV directly — if it appears in imdb_data in practice, add it during DB-scan verification.
 
 ## MGM — "Metro-Goldwyn-Mayer"
+
+**Retune status:** DROPPED the shorts-era animation units (`Metro-Goldwyn-Mayer Cartoon Studios`, `Metro-Goldwyn-Mayer Animation`, `MGM Animation/Visual Arts` — Tom and Jerry era, not casual theatrical expectation), `MGM-Pathé Communications Co.` (two-year 1990-92 corporate shell), `MGM Producción` (Spanish-language regional arm), and `MGM Family Entertainment` (kids sub-imprint). KEPT: core MGM labels + `Metro-Goldwyn-Mayer British Studios` / `MGM British Studios` (produced 2001: A Space Odyssey and early Bond).
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -1059,6 +1153,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## LIONSGATE — "Lionsgate"
 
+**Retune status:** DROPPED `Mandate Pictures` (Juno, Stranger Than Fiction — retained its own identity post-acquisition) and `Artisan Entertainment` (Blair Witch, Requiem for a Dream — remembered as indie-Artisan, not Lionsgate). KEPT: all Lionsgate naming variants + `Summit Entertainment` (2012-) / `Summit Premiere` (2012-). The 2012 Summit gate correctly excludes pre-acquisition Summit output (Memento, Twilight, Hurt Locker) which casual viewers associate with competitor-era Summit, not Lionsgate.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Lionsgate | 1997 | — | Core modern-era banner |
@@ -1103,6 +1199,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## A24 — "A24"
 
+**Retune status:** No change. Proposed ADDs `A24 Films` and `A24 Films LLC` were validated against IMDB and removed — zero evidence (IMDB uses bare `A24` on all A24 titles).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | A24 | 2012 | — | Primary production/distribution credit |
@@ -1122,6 +1220,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Only two A24-token strings exist in the TSV: 'A24' (112) and 'A24 Television' (4). No occurrences of 'A24 Films', 'A24 Distribution', or 'A24 Productions' found -- on IMDB the company is credited as bare 'A24' for both production and distribution. Despite 'A24' being a weak/alphanumeric token, no unrelated-entity collisions were found in the TSV; all matches refer to the NY-based indie distributor/producer.
 
 ## NEON — "Neon"
+
+**Retune status:** No change. Proposed ADD `Neon Rated` was validated against IMDB and removed — zero evidence (IMDB uses bare `Neon`).
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -1177,6 +1277,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## BLUMHOUSE — "Blumhouse Productions"
 
+**Retune status:** DROPPED `Blumhouse Television` ("Blumhouse movies" query intent is theatrical; TV output dilutes the roster). KEPT: `Blumhouse Productions`, `Blumhouse International`, `Atomic Monster` (gated to 2024- to correctly exclude pre-merger Conjuring/Saw — those remain under the James Wan / Atomic Monster identity).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Blumhouse Productions | 2000 | — | Core horror/thriller production company |
@@ -1204,6 +1306,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## STUDIO_GHIBLI — "Studio Ghibli"
 
+**Retune status:** No change. Proposed ADD `Studio Ghibli, Inc.` was validated against IMDB and removed — zero evidence (IMDB uses bare `Studio Ghibli` on all Ghibli films).
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Studio Ghibli | 1985 | — | Primary credit for Ghibli films from Laputa (1986) onward |
@@ -1219,6 +1323,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Only one distinct string present in the TSV: 'Studio Ghibli' (id 1207:55). No variants found for 'Studio Ghibli K.K.' or the Japanese form 'スタジオジブリ'. Distribution/co-production partners explicitly excluded per tier list (Topcraft, Tokuma Shoten, Nippon TV, Buena Vista, GKIDS) are not included — none appeared in a 'Ghibli' grep anyway, so no collisions to flag from this search.
 
 ## NETFLIX — "Netflix"
+
+**Retune status:** DROPPED `A Netflix Original Documentary` (marketing tagline, not a real `production_companies` entry). KEPT: all genuine production entities (`Netflix`, `Netflix Studios`, `Netflix Animation`, `Netflix Worldwide Entertainment`, `Netflix Worldwide Productions`, `Netflix India`) — casual "Netflix movies" intent is inclusive of any Netflix-produced film including regional arms.
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -1249,6 +1355,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## SONY_PICTURES_ANIMATION — "Sony Pictures Animation"
 
+**Retune status:** No change. Single-identity studio.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Sony Pictures Animation | 2002 | — | In-house animation studio |
@@ -1271,6 +1379,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Only one distinct surface string in the TSV unambiguously refers to Sony Pictures Animation: 'Sony Pictures Animation' (count 54). No hyphenated, abbreviated, or legacy-name variants appear in the index. Sony Pictures Imageworks is the primary collision risk (VFX/services arm that is sometimes conflated with SPA) and is explicitly excluded per the brand registry. Other 'Sony Pictures ...' strings belong to sibling Sony entities (Classics, Television, Releasing, Imageworks, Entertainment, Home Entertainment, etc.) and are out of scope for this brand.
 
 ## TRISTAR — "TriStar Pictures"
+
+**Retune status:** DROPPED `Tri Star` (space-separated variant — IMDB data-entry artifact with negligible evidence). KEPT: `TriStar Pictures` (1982-), `Tri-Star Pictures` (1982-1991), `TriStar Productions` (2015- revival).
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -1315,6 +1425,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## TOUCHSTONE — "Touchstone Pictures"
 
+**Retune status:** No change.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | Touchstone Pictures | 1986 | 2018 | Primary mature-audience Disney label; effectively dormant after 2018 per Wikidata |
@@ -1341,6 +1453,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** TSV grep for 'Touchstone' returned 6 distinct strings. Two are true members (Touchstone Pictures, Touchstone Films); the other four are excluded. 'Touchstone Home Entertainment' (the home-video division to exclude per instructions) does not appear in the TSV, so no explicit filter needed. The 230 vs 7 distribution between Touchstone Pictures and Touchstone Films is consistent with Touchstone Films being a brief 1984-1986 label before the 1986 rename. Also member of DISNEY (1984-2018) per cross-brand membership table. Label dormant since ~2016-2018 but technically active.
 
 ## MIRAMAX — "Miramax"
+
+**Retune status:** DROPPED `Dimension Films` (Scream, Spy Kids, Scary Movie — horror/family-genre built its own identity distinct from Miramax's prestige indie brand; casual "Miramax movies" expects Pulp Fiction / Good Will Hunting). KEPT: `Miramax` (1979-). Proposed ADD `Miramax Films` was validated against IMDB and removed — zero evidence (IMDB uses bare `Miramax`).
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -1375,6 +1489,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 
 ## UNITED_ARTISTS — "United Artists"
 
+**Retune status:** DROPPED `United Artists Film Corporation` (legal-entity string, not consumer-facing) and `United Artists Europa` (regional distribution arm). Window fix: the two `United Artists` rows (1919-1981 classic + 2024- revival) were wrong — IMDB uses bare `United Artists` on MGM-era UA films too (confirmed against Rocky IV 1985, Rain Man 1988, Valkyrie 2008). Collapsed to single `United Artists` (1919, None) covering all eras; `United Artists Pictures` (1981, 2018) retained as additional surface coverage.
+
 | Member | Start | End | Rationale |
 |---|---|---|---|
 | United Artists | 1919 | 1981 | Classic UA through Transamerica era |
@@ -1404,6 +1520,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Only 'United Artists' (123) has meaningful volume; the other three member surfaces each occur once and reflect historical corporate/regional credit variants of the same studio lineage. Expected member 'United Artists Releasing' (2018-2023 MGM+Annapurna JV) is NOT present in the TSV as a distinct string — its films likely credit 'United Artists' or co-production partners instead. Excluded 'United Artists Television' (TV-only per brand scope), 'United Artists Theaters' (exhibitor, not studio), and 'Madras United Artists Corporation' (unrelated Indian company).
 
 ## AMAZON_MGM — "Amazon MGM Studios"
+
+**Retune status:** DROPPED `Amazon Studios Germany` (regional TV/local-language arm), `Metro-Goldwyn-Mayer Animation` / `MGM Animation/Visual Arts` / `MGM Family Entertainment` / `MGM British Studios` / `MGM Producción` (legacy sublabels not in Amazon-era casual viewer mental model), `United Artists Film Corporation` / `United Artists Europa` (mirrors UNITED_ARTISTS drops). KEPT: `Amazon Studios`, `Amazon MGM Studios`, `Metro-Goldwyn-Mayer (MGM)` + two Studios variants (2022-), `United Artists` + `United Artists Pictures` (2024-).
 
 | Member | Start | End | Rationale |
 |---|---|---|---|
@@ -1441,6 +1559,8 @@ collisions, and niche imprints with fewer than ~5 notable films.
 **Surface-form notes:** Confident direct Amazon-owned producer credits in the IMDB surface strings are only three: 'Amazon Studios', 'Amazon MGM Studios', and the rare 'Amazon Studios Germany'. 'Amazon Content Services' (listed as a member in the tier spec) does NOT appear anywhere in the TSV, so no surface-string row is produced for it. Because the task is Workstream B surface-form enumeration for production credits (producer intent only), the streamer 'Amazon Prime Video' is deliberately excluded per the tier-list streamer-disambiguation rule. The large open curation question (tier list item #5) is the MGM and United Artists strings: the SAME surface strings 'Metro-Goldwyn-Mayer (MGM)', 'United Artists', etc. are used both pre- and post-Amazon-acquisition. Per the tier-list instruction to exclude pre-2022 MGM and pre-2024 UA, and the near-impossibility of distinguishing eras from the string alone, these strings are NOT emitted as AMAZON_MGM members — they are surfaced under collisions_flagged so curation can decide whether to (a) attribute post-acquisition credits via release-year cross-checks against movie metadata, or (b) leave all classic-string MGM/UA credits under the standalone MGM and UNITED_ARTISTS brands and rely on 'Amazon MGM Studios' as the single reliable Amazon-era umbrella credit.
 
 ## APPLE_STUDIOS — "Apple Studios"
+
+**Retune status:** No change.
 
 | Member | Start | End | Rationale |
 |---|---|---|---|

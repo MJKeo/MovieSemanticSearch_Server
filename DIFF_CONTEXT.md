@@ -1,6 +1,15 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## One-off: tag Joker (2019) with lineage='joker'
+Files: scripts/fix_joker_lineage.py | UPSERTs public.movie_franchise_metadata for movie_id=475557 with lineage='joker'; character is credited as Arthur Fleck and the franchise generator had left the lineage null, so the franchise path couldn't retrieve it on "joker movies" queries. Only the lineage column is written — lex.franchise_entry/token and movie_card.lineage_entry_ids will be refreshed by the upcoming franchise-path rebuild.
+
+## Backfill script: rebuild lex.inv_production_brand_postings from tracker
+Files: movie_ingestion/final_ingestion/rebuild_production_brand_postings.py
+Why: Brand registry retune (see entry below) invalidated every posting in `lex.inv_production_brand_postings` but raw inputs (IMDB `production_companies` + TMDB `release_date`) still live in the tracker — so no full re-ingestion is needed to refresh.
+Approach: TRUNCATE the table, SELECT `(tmdb_id, production_companies, release_date)` from tracker for status=INGESTED via LEFT JOINs, derive release_year from the YYYY prefix (mirrors `ingest_production_data`), run `resolve_brands_for_movie`, hand results to `batch_insert_brand_postings`. Commit every 500 movies for progress visibility and crash safety. Per-movie `try/except` swallows individual failures so one bad row doesn't sink the run. Structure mirrors the sibling `rebuild_character_postings.py` script for consistency.
+Testing notes: not run yet — user runs ingestion scripts themselves. No unit tests for this script (one-shot backfill).
+
 ## Production-brand registry: trim umbrellas to casual-viewer brand identity
 Files: schemas/production_brands.py
 
@@ -1574,3 +1583,21 @@ Plan file: /Users/michaelkeohane/.claude/plans/ok-then-create-a-sleepy-goose.md.
 - Stage-3 end-to-end: "shrek movies" → Shrek sequels at 1.0, Puss in Boots at 0.75. "MCU movies" → all matches at 1.0 (prefer_lineage=false path unchanged). "shrek spinoffs" → validator coerces prefer_lineage=false; all matches at 1.0.
 - Validator coercions: `prefer_lineage=True` with `franchise_or_universe_names=None` → coerced to False. `prefer_lineage=True` with `structural_flags=[SPINOFF]` → coerced to False.
 - Tests not touched per test-boundaries rule. Any test that asserts the old `franchise_name_entry_ids` column name or binary franchise scoring will need updating in a follow-up phase — in particular tests around `fetch_franchise_movie_ids` (return type changed from `set[int]` to `tuple[set[int], set[int]]`), `upsert_movie_card` / `update_movie_card_franchise_ids` (parameter renames), and `write_franchise_data` (three-tuple return).
+
+## Franchise prefer_lineage: review fixes + targeted migration script
+Files: movie_ingestion/final_ingestion/ingest_movie.py, db/postgres.py, search_improvement_planning/v2_search_data_improvements.md, db/migrate_split_franchise_columns.py
+
+### Intent
+Address code-review findings from the prefer_lineage implementation and provide a one-shot migration path that doesn't destroy unrelated Postgres data.
+
+### Key Decisions
+- **`FranchiseEntryIds` dataclass replaces the 3-tuple return.** `write_franchise_data` and `ingest_franchise_data` now return a `@dataclass(frozen=True)` with `lineage` / `shared_universe` / `subgroup` attributes instead of a positional 3-tuple. Aligns with the "more than two related values, return a dataclass" convention and makes call sites self-documenting (`franchise_ids.lineage` vs. positional destructure). Call site in `ingest_movie` updated to attribute access.
+- **Example 9 in v2_search_data_improvements.md rewritten to actually demonstrate the fallback it's named after.** Previous version walked through a Fantastic Beasts scenario that never triggered the fallback (lineage bucket non-empty) and then described the fallback in abstract prose. Replaced with a Dark Universe / The Mummy (2017) scenario where the queried name only lives in `shared_universe_entry_ids` across the corpus, so the lineage bucket is empty and the universe bucket gets promoted to 1.0 — matching the title.
+- **`fetch_franchise_movie_ids` docstring tightened to describe actual behavior.** Previous text said empty set "is NOT a universal match — see the defensive guard below," but the guard only fires when ALL conditions are empty. New text documents that `None` and empty set both drop the predicate, and notes the executor's upstream normalization (`franchise_name_entry_ids or None`) as the expected contract.
+- **Targeted migration over fresh Postgres rebuild.** First iteration wrote `db/rebuild_postgres.sh` that dropped the `postgres_data` Docker volume and re-ingested everything — this would destroy unrelated data (awards, lexical postings, etc.) that the schema change doesn't touch. User pushed back ("Why would I ever want that?"). Replaced with `db/migrate_split_franchise_columns.py`: idempotent `ALTER TABLE` (DROP old column+index `IF EXISTS`, ADD new columns+indexes `IF NOT EXISTS`) + loop over `movie_franchise_metadata` rows calling the existing `write_franchise_data` + `update_movie_card_franchise_ids` helpers. Preserves everything else in Postgres. `lex.franchise_entry` / `lex.franchise_token` stay intact since the token/entry space didn't change; the migration's `write_franchise_data` calls are no-op upserts against those tables. Concurrency capped at 8 via `asyncio.Semaphore` so the max-10 connection pool isn't exhausted. Supports `--schema-only` to apply only the ALTERs.
+- **Non-fix from review:** The third review suggestion (validator coercion on `len(franchise_or_universe_names) > 1`) was intentionally declined. The existing two coercions (no-name-axis, SPINOFF) are structurally-meaningless combinations; a len>1 coercion would be a usage convention and would conflict with the existing "validators are for data-quality fixes + presence guards, not cross-field dependencies" convention. Left to the prompt to enforce.
+
+### Testing Notes
+- `FranchiseEntryIds` construction and attribute access sanity-checked at implementation time.
+- Migration script syntax-checked; not yet executed against a real DB.
+- Tests asserting the old 3-tuple return from `write_franchise_data` / `ingest_franchise_data` will fail and need updating alongside the other test updates tracked in docs/TODO.md.

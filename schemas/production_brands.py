@@ -195,8 +195,13 @@ class ProductionBrand(str, Enum):
         BrandCompany("Warner Bros.-First National Pictures", 1923, None),
         BrandCompany("Warner Brothers Entertainment", 1923, None),
         BrandCompany("Warner Brothers Pictures", 1923, None),
-        # Warner Bros. Animation (1980-)
-        BrandCompany("Warner Bros. Cartoon Studios", 1980, None),
+        # Warner Bros. Animation (1980-) + classic cartoon lineage. The
+        # `Warner Bros. Cartoon Studios` credit actually covers the
+        # 1933-1963 classic Looney Tunes era (What's Opera Doc, Duck
+        # Amuck, Duck Dodgers); Warner Bros. Animation was the 1980
+        # relaunch. Windows reflect IMDB's usage, not the corporate
+        # re-org timeline.
+        BrandCompany("Warner Bros. Cartoon Studios", None, None),
         BrandCompany("Warner Bros. Animation", 1980, None),
         BrandCompany("Warner Bros. Pictures Animation", 1980, None),
         BrandCompany("Warner Bros. Feature Animation", 1980, None),
@@ -331,7 +336,7 @@ class ProductionBrand(str, Enum):
         BrandCompany("Twentieth Century Fox", 1935, 2020),
         BrandCompany("Twentieth Century-Fox Productions", 1935, 2020),
         BrandCompany("Twentieth Century Fox Animation", 1935, 2020),
-        BrandCompany("20th Century Pictures", 1935, 2020),
+        BrandCompany("20th Century Pictures", 1933, 2020),
         BrandCompany("20th Century Fox", 1935, 2020),
         BrandCompany("Twentieth Century Productions", 1935, 2020),
         BrandCompany("Twentieth Century-Fox Studios, Hollywood", 1935, 2020),
@@ -343,10 +348,15 @@ class ProductionBrand(str, Enum):
         BrandCompany("Twentieth Century Animation", 2020, None),
     ))
 
-    # SEARCHLIGHT — Fox Searchlight → Searchlight rename.
+    # SEARCHLIGHT — Fox Searchlight → Searchlight rename (2020). IMDB
+    # retroactively applies the `Searchlight Pictures` credit to
+    # pre-rename films (Slumdog Millionaire 2008, Black Swan 2010,
+    # 12 Years a Slave 2013), so the window is open on both ends. The
+    # legacy `Fox Searchlight Pictures` credit is still present on many
+    # films, retained for coverage.
     SEARCHLIGHT = ("searchlight", 15, "Searchlight Pictures", (
         BrandCompany("Fox Searchlight Pictures", 1994, 2020),
-        BrandCompany("Searchlight Pictures", 2020, None),
+        BrandCompany("Searchlight Pictures", None, None),
     ))
 
     # DREAMWORKS_ANIMATION — the Shrek/Kung Fu Panda/HTTYD/Trolls

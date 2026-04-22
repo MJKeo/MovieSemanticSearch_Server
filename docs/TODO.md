@@ -733,3 +733,13 @@ Ingest-side landed in prior session; query-side landed in the session ending 202
 **Context:** The planning doc's §Query-Time Resolution section says "Key rename: `lineage_or_universe_names` → `franchise_names`". The actual rename landed as `franchise_or_universe_names` (user preference — keeps "either lineage or universe" signal visible in the schema). The planning doc is now mildly stale on this detail.
 **When:** Next time the planning doc is edited, or sooner if anyone references the rename.
 **See:** search_improvement_planning/v2_search_data_improvements.md §Franchise Resolution / Query-Time Resolution (around line 1708), schemas/franchise_translation.py
+
+## Run prefer_lineage migration against the active Postgres DB
+**Context:** `db/migrate_split_franchise_columns.py` lands alongside the code changes but has not been executed. It drops `movie_card.franchise_name_entry_ids` + its GIN index and creates `lineage_entry_ids` / `shared_universe_entry_ids` + indexes, then backfills both columns from `movie_franchise_metadata`. The running DB still has the old schema. Run before exercising any stage-3 franchise search or the ingest pipeline, otherwise `upsert_movie_card` / `write_franchise_data` will fail on the missing new columns.
+**When:** Before the next ingest run or stage-3 search test against the dev DB. Dry-run with `--schema-only` first if a staged rollout is preferred.
+**See:** db/migrate_split_franchise_columns.py, DIFF_CONTEXT.md "Franchise prefer_lineage: review fixes + targeted migration script"
+
+## Update franchise tests for prefer_lineage + column split + dataclass return
+**Context:** Expanded scope on top of the pre-existing "Update franchise query-side tests" TODO. New things that will break or need coverage: (1) `FranchiseQuerySpec` gained a `prefer_lineage: bool` field with two validator coercions (no-name-axis → False, SPINOFF → False); (2) `fetch_franchise_movie_ids` now returns `tuple[set[int], set[int]]` (lineage, universe-only) instead of `set[int]`; (3) `write_franchise_data` / `ingest_franchise_data` return a `FranchiseEntryIds` dataclass instead of a 2-tuple / 3-tuple; (4) `upsert_movie_card` + `update_movie_card_franchise_ids` take `lineage_entry_ids` + `shared_universe_entry_ids` instead of `franchise_name_entry_ids`; (5) the new scoring logic in `execute_franchise_query` produces 1.0 / 0.75 / 1.0-fallback scores that tests asserting binary {0.0, 1.0} will need updating for.
+**When:** Dedicated test-updates phase — bundle with the other franchise test updates already tracked.
+**See:** DIFF_CONTEXT.md "Franchise prefer_lineage" entries, search_v2/stage_3/franchise_query_execution.py, db/postgres.py `fetch_franchise_movie_ids`, schemas/franchise_translation.py
