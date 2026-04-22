@@ -1601,3 +1601,46 @@ Address code-review findings from the prefer_lineage implementation and provide 
 - `FranchiseEntryIds` construction and attribute access sanity-checked at implementation time.
 - Migration script syntax-checked; not yet executed against a real DB.
 - Tests asserting the old 3-tuple return from `write_franchise_data` / `ingest_franchise_data` will fail and need updating alongside the other test updates tracked in docs/TODO.md.
+
+## Stage 1: cap alternatives at 1, add trait extraction, free spins from strict narrowing
+Files: schemas/flow_routing.py, search_v2/stage_1.py
+
+### Intent
+Two observed Stage 1 problems: (1) `alternative_intents` could reach 2 and combined with 2 spins produced up to 5 downstream branches, despite near-zero real cases where three readings are all genuinely useful; (2) `creative_alternatives` for analogical queries like "rocky but with robots" returned timid literal narrowings ("robots boxing") because the prompt mandated spins be "faithful narrowings" that stay inside the primary's intent. Addressed both with a prompt/schema change rather than an architecture split.
+
+### Key Decisions
+- **Alt cap dropped from 2 to 1.** Every worked example in the prompt already used ≤1 alt; no constructed query justified a hard max of 2. Matches authoring practice and caps total branches at 1 primary + 1 alt + 2 spins = 4. Enforced in schema (`max_length=1`) and prompt (ambiguity_analysis now allows at most one "emit as alt" line; alternative_intents guidance updated).
+- **New `query_traits` field between `alternative_intents` and `creative_spin_analysis`.** Single-line `traits: X, Y, Z` format (compact; drops an earlier "load-bearing vs incidental" flag idea — per-candidate `[preserves/swaps]` annotation carries that signal better). Field placement matters: structured-output generation runs in declared order, so naming traits after routing/alt decisions but before spin reasoning forces the model to surface what the query is made of before committing to spin potential.
+- **Narrowing anchor replaced with trait-preservation anchor.** Old rule: every spin must be a faithful narrowing of the primary's intent. New rule: every spin must preserve at least one trait from `query_traits` and may drop or swap the others. Both narrowings (preserve all, add specificity) and tangents (preserve one, swap another) are now valid. Soft guidance: broad primaries lean narrowing; narrow/analogical primaries lean tangential; moderately-specific can go either way.
+- **`creative_spin_analysis` format now requires per-candidate `[preserves: X; swaps: Y]` annotation** referencing specific traits from the `query_traits` line. This forces the creative move to be visible in the trace and gives downstream code a structural hook for validation if wanted later.
+- **exact_title / similarity default to `spin_potential: none`.** User's rationale: downstream title/similarity retrieval already expands the neighborhood, so spins there are duplicative. Framed as a default rather than a hard ban in the prompt; can be code-enforced later.
+- **"Rocky but with robots" added as a worked example** in both CREATIVE SPINS and creative_spin_analysis to anchor the tangential-spin pattern. Previous examples ("Best Christmas movies for families", "Disney classics") all showed broad→narrowing, leaving the model no template for analogical queries.
+
+### Planning Context
+- Considered but deferred: moving spins to a separate LLM call with thinking enabled. Stage 1 is pinned to `gemini-3-flash-preview` with `thinking_budget: 0` ([stage_1.py:663](search_v2/stage_1.py#L663)), which caps creativity regardless of prompt quality. Kept in a single call for now — revisit if the prompt change underdelivers on real traffic.
+- Considered but rejected: removing the spin/alternative distinction entirely under the looser rule. Kept them separate because alternative_intents = mutually-exclusive readings of what the user MEANT, spins = adjacent directions that preserve what the user is drawn to. Trait-preservation rule makes this sharp: "swaps every trait" = alternative reading, not a spin.
+- Tests intentionally not run or read per `.claude/rules/test-boundaries.md`. Schema changes and prompt restructuring will likely require Stage 1 fixture/test updates in a later testing phase.
+
+### Testing Notes
+- Schema shape verified via `FlowRoutingResponse.model_fields` — field order is ambiguity_analysis → primary_intent → alternative_intents → query_traits → creative_spin_analysis → creative_alternatives.
+- Real-query validation still needed: the two flagged failure modes (5-branch blowup, timid spins on "rocky but with robots") should be re-tested against the updated prompt.
+- Stage 1 notebooks ([search_v2/test_stage_1_to_4.ipynb](search_v2/test_stage_1_to_4.ipynb), [search_v2/test_stage_3.ipynb](search_v2/test_stage_3.ipynb)) are candidates for re-running to spot-check output quality on a spread of query types (broad discovery, narrow analogical, exact_title, similarity).
+
+### Revisions (self-review + debug run)
+After the initial edits above, the user asked for a critical self-review against the codebase's prompt-authoring conventions. Eight issues were surfaced; four concrete bugs + one reordering were approved and applied in the same session:
+
+- **Dangling "load-bearing" references removed** ([stage_1.py:420](search_v2/stage_1.py#L420), line 483). The `query_traits` format was compacted to drop the "load-bearing | incidental" flag, but two references to "load-bearing traits" still leaked into the CREATIVE SPINS rules. Rephrased to "traits that carry the user's core pull" in one place; removed from the Tom Cruise example entirely.
+- **"Transformation signal" removed from `query_traits` examples.** It's a query-type property, not a trait — a spin can't meaningfully preserve or swap it. Replaced with a rule instructing the model to decompose analogical queries into their concrete trait components (archetype, genre, setting).
+- **Muddled "broadens boxing to sports" third spin dropped** from the Rocky worked example. Annotation contradicted the `[preserves: X; swaps: Y]` binary the output format demands. Two clean spins now illustrate both tangent axes.
+- **Restored clean "No spins."** for the Tom Cruise 90s negative-control example. Previous soft wording ("Likely no spins. If one is emitted...") could be read as permission.
+- **Schema reorder: `query_traits` moved to position 2** (between `ambiguity_analysis` and `primary_intent`), not position 4. User direction: "Place before primary intent and we can see what happens." Rationale: naming traits upfront scaffolds the primary rewrite (understanding composition before writing) in addition to spin reasoning. The cost is trait enumeration runs on every query, including obvious title lookups — acceptable given the latency target.
+
+Final schema field order: `ambiguity_analysis → query_traits → primary_intent → alternative_intents → creative_spin_analysis → creative_alternatives`.
+
+### Debug run validation
+Ran [search_improvement_planning/debug_stage_1.py](search_improvement_planning/debug_stage_1.py) across 8 buckets / 21 queries (21.6s total). Full output at [stage_1_debug_output.json](search_improvement_planning/stage_1_debug_output.json).
+- **Original failure fixed.** `Disney millennial favorites` now emits 1 alt + 2 spins; previously cited ambiguity but emitted 0 alts.
+- **Alt cap enforced.** No query exceeded 1 alt.
+- **Negative controls clean.** `Inception` (exact_title), `Tom Cruise action movies from the 90s`, and `movies like The Matrix` (similarity) all returned 0 spins.
+- **Trait extraction is concrete and on-topic** across all queries; the `[preserves: X; swaps: Y]` annotations are consistent and reference the declared `query_traits`.
+- **Observations (not regressions):** (1) `Scary Movie` (exact_title) emitted 1 spin — the "default to no spins" rule is soft and the model decided a horror-parody angle was strong enough; strict enforcement would require a code gate. (2) Model sometimes uses `swaps:` for additions rather than true swaps (e.g., `[preserves: cozy; swaps: tonight]` on `cozy movie for tonight` — the spin actually adds a modifier rather than replacing "tonight"). Minor conceptual stretch; annotations remain readable. (3) "movies" occasionally appears as a trait (e.g., `traits: movies, dads like`). Noise, not broken.

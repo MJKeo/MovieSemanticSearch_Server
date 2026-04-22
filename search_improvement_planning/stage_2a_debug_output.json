@@ -1,0 +1,2044 @@
+{
+  "generated_at": "2026-04-22T04:16:41Z",
+  "total_elapsed_s": 32.68,
+  "step_2a_model": "gemini-3-flash-preview (thinking_budget=0)",
+  "buckets": [
+    {
+      "bucket": "original_failure",
+      "hypothesis": "Reproduce the reported failure case: ambiguity is cited but no alternative_intents are emitted.",
+      "queries": [
+        {
+          "query": "Disney millennial favorites",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Disney movies that millennials grew up with",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Disney movies that millennials grew up with",
+              "display_phrase": "Disney Childhood Classics",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1947.2,
+                "input_tokens": 644,
+                "output_tokens": 136,
+                "response": {
+                  "ingredient_inventory": [
+                    "Disney movies",
+                    "millennials grew up with"
+                  ],
+                  "concept_inventory_analysis": "The query combines a production entity (Disney) with a specific historical/nostalgic timeframe (millennial childhood). These are distinct intents: one defines the studio scope and the other defines a specific era/vibe.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Identifies the studio/brand responsible for the content.",
+                      "concept": "Disney movies",
+                      "required_ingredients": [
+                        "Disney movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Identifies the target era and nostalgic appeal associated with the millennial generation's upbringing.",
+                      "concept": "millennial nostalgia / classics",
+                      "required_ingredients": [
+                        "millennials grew up with"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "alternative[0]",
+              "rewrite": "Disney movies currently popular with millennial audiences",
+              "display_phrase": "Popular with Millennials Today",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 2129.6,
+                "input_tokens": 644,
+                "output_tokens": 244,
+                "response": {
+                  "ingredient_inventory": [
+                    "Disney movies",
+                    "currently popular",
+                    "millennial audiences"
+                  ],
+                  "concept_inventory_analysis": "The query is split into three distinct concepts: the studio/brand domain, the temporal popularity metric, and the specific demographic target. Each represents a separate filtering or ranking intent that requires different data signals.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Identifies the core studio or content brand domain.",
+                      "concept": "Disney movies",
+                      "required_ingredients": [
+                        "Disney movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A temporal trend or ranking signal independent of the brand.",
+                      "concept": "currently popular",
+                      "required_ingredients": [
+                        "currently popular"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A specific demographic preference or cultural resonance filter.",
+                      "concept": "millennial audiences",
+                      "required_ingredients": [
+                        "millennial audiences"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Disney Renaissance-era animated movies from the 90s",
+              "display_phrase": "The Disney Renaissance Era",
+              "spin_angle": "Focuses on the 1989-1999 Disney Renaissance era which defines the millennial childhood experience.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 2238.3,
+                "input_tokens": 649,
+                "output_tokens": 191,
+                "response": {
+                  "ingredient_inventory": [
+                    "Disney Renaissance",
+                    "animated movies",
+                    "from the 90s"
+                  ],
+                  "concept_inventory_analysis": "The query combines a specific studio era, a medium, and a temporal constraint. While 'Disney Renaissance' is often synonymous with 90s animation, they represent distinct user intents: one identifies the studio/brand context and historical era, while the other defines the specific time period. The medium (animated) is distinct from the brand anchor.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Identifies the specific historical era and studio brand associated with the query.",
+                      "concept": "Disney Renaissance",
+                      "required_ingredients": [
+                        "Disney Renaissance"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Defines the specific medium or format of the films.",
+                      "concept": "animated movies",
+                      "required_ingredients": [
+                        "animated movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Restricts the search to a specific calendar decade.",
+                      "concept": "from the 90s",
+                      "required_ingredients": [
+                        "from the 90s"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "90s and early 2000s Disney live-action movies",
+              "display_phrase": "90s & 00s Live-Action Hits",
+              "spin_angle": "Narrows the favorites to the specific live-action films millennials loved in the 90s and early 2000s.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1983.0,
+                "input_tokens": 653,
+                "output_tokens": 190,
+                "response": {
+                  "ingredient_inventory": [
+                    "90s",
+                    "early 2000s",
+                    "Disney",
+                    "live-action"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into its temporal, studio, and format constraints. Time periods are grouped because they define a continuous era. Disney and live-action are separated because one defines the entity/origin while the other defines the specific medium within that entity's catalog.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Combined chronological constraint defining the target era.",
+                      "concept": "released in the 90s or early 2000s",
+                      "required_ingredients": [
+                        "90s",
+                        "early 2000s"
+                      ]
+                    },
+                    {
+                      "boundary_note": "The studio/brand anchor for the search.",
+                      "concept": "Disney movies",
+                      "required_ingredients": [
+                        "Disney"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A specific medium/format constraint within the studio's library.",
+                      "concept": "live-action",
+                      "required_ingredients": [
+                        "live-action"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "bucket": "reading_ambiguity",
+      "hypothesis": "Queries whose vagueness corresponds to genuinely distinct readings (not just fuzzy edges). Should produce alternative_intents.",
+      "queries": [
+        {
+          "query": "gen z horror favorites",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Horror movies that Gen Z grew up with and consider favorites",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Horror movies that Gen Z grew up with and consider favorites",
+              "display_phrase": "Gen Z Horror Nostalgia",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1572.9,
+                "input_tokens": 649,
+                "output_tokens": 142,
+                "response": {
+                  "ingredient_inventory": [
+                    "Horror movies",
+                    "Gen Z childhood favorites",
+                    "nostalgic"
+                  ],
+                  "concept_inventory_analysis": "The query combines a specific genre with a generational and experiential filter. These are distinct user intents: one defines the primary candidate domain (Horror) and the other filters for a specific cultural and chronological context (Gen Z nostalgia).",
+                  "concepts": [
+                    {
+                      "boundary_note": "Defines the primary genre of the request.",
+                      "concept": "horror",
+                      "required_ingredients": [
+                        "Horror movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the specific generational audience and the nostalgic sentiment of films they grew up with.",
+                      "concept": "Gen Z favorites and nostalgia",
+                      "required_ingredients": [
+                        "Gen Z childhood favorites",
+                        "nostalgic"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "alternative[0]",
+              "rewrite": "Horror movies currently popular with Gen Z audiences",
+              "display_phrase": "Current Gen Z Horror Hits",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1698.8,
+                "input_tokens": 646,
+                "output_tokens": 168,
+                "response": {
+                  "ingredient_inventory": [
+                    "horror movies",
+                    "popular",
+                    "Gen Z audiences"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into a genre category, a popularity ranker, and a specific demographic target. While 'popular with Gen Z' describes the current cultural trend, 'popular' and 'Gen Z' are distinct ingredients that characterize the candidate set of 'horror movies'.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Defines the primary genre domain for the search.",
+                      "concept": "horror movies",
+                      "required_ingredients": [
+                        "horror movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A ranking and popularity intent that characterizes the current status of the content.",
+                      "concept": "popular",
+                      "required_ingredients": [
+                        "popular"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Specifies the demographic lens through which the content's relevance is measured.",
+                      "concept": "Gen Z audiences",
+                      "required_ingredients": [
+                        "Gen Z audiences"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Stylistic or 'elevated' horror movies from A24 and similar studios popular with Gen Z",
+              "display_phrase": "Gen Z's 'Elevated' Horror Favorites",
+              "spin_angle": "This spin narrows the search to 'elevated horror' studios like A24 which are defining favorites for this generation.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 2314.8,
+                "input_tokens": 657,
+                "output_tokens": 257,
+                "response": {
+                  "ingredient_inventory": [
+                    "A24",
+                    "horror",
+                    "stylistic",
+                    "elevated",
+                    "studios popular with Gen Z"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into a content domain (horror), a specific studio anchor (A24), a group of peer studios based on a demographic trend (Gen Z favorites), and a specific aesthetic quality (stylistic/elevated). The aesthetic is split from the genre because it acts as a filter on the genre. The studios are split because A24 is a concrete entity while 'Gen Z studios' represents a separate, broader category of studio peers.",
+                  "concepts": [
+                    {
+                      "boundary_note": "The primary genre classification defining the search domain.",
+                      "concept": "horror movies",
+                      "required_ingredients": [
+                        "horror"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Specific studio entity used as a brand anchor.",
+                      "concept": "A24 movies",
+                      "required_ingredients": [
+                        "A24"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A distinct intent to include studios sharing a specific cultural relevance with a demographic.",
+                      "concept": "studios popular with Gen Z",
+                      "required_ingredients": [
+                        "studios popular with Gen Z"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A unified stylistic and tonal requirement describing the sophisticated approach to the genre.",
+                      "concept": "stylistic and elevated tone",
+                      "required_ingredients": [
+                        "stylistic",
+                        "elevated"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Horror movies that became viral sensations or trends among Gen Z on social media",
+              "display_phrase": "Viral Horror Hits",
+              "spin_angle": "This spin swaps general favorites for movies that became viral sensations on Gen Z-dominant social platforms.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1819.5,
+                "input_tokens": 652,
+                "output_tokens": 174,
+                "response": {
+                  "ingredient_inventory": [
+                    "horror movies",
+                    "viral sensations or trends",
+                    "Gen Z",
+                    "social media"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into a genre-based candidate set (horror) and a separate social/cultural impact layer (viral social media trends involving Gen Z). While 'viral', 'Gen Z', and 'social media' are distinct ingredients, they function together here to describe a single phenomenon of cultural popularity, whereas 'horror' is the categorical domain.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Defines the core cinematic genre/domain for the search.",
+                      "concept": "horror movies",
+                      "required_ingredients": [
+                        "horror movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Describes a specific type of cultural impact or popularity metric based on demographic and platform.",
+                      "concept": "viral social media trends among Gen Z",
+                      "required_ingredients": [
+                        "viral sensations or trends",
+                        "Gen Z",
+                        "social media"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "80s kids would love",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Movies that people who were kids in the 1980s grew up loving",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Movies that people who were kids in the 1980s grew up loving",
+              "display_phrase": "80s Childhood Favorites",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1902.8,
+                "input_tokens": 654,
+                "output_tokens": 181,
+                "response": {
+                  "ingredient_inventory": [
+                    "1980s",
+                    "people who were kids",
+                    "grew up loving"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into the target era of the films (1980s) and the specific nostalgic sentiment/reception (beloved childhood classics). These are distinct because the 1980s defines the temporal candidate set, while the 'childhood favorites' aspect provides the quality and demographic lens.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Specifies the historical period for the movies' release or cultural relevance.",
+                      "concept": "released in the 1980s",
+                      "required_ingredients": [
+                        "1980s"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Captures the specific demographic appeal and the nostalgic status of being a 'childhood favorite'.",
+                      "concept": "nostalgic childhood favorites",
+                      "required_ingredients": [
+                        "people who were kids",
+                        "grew up loving"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "alternative[0]",
+              "rewrite": "Modern movies with an 80s aesthetic or themes that appeal to 80s kids",
+              "display_phrase": "Modern Movies with 80s Vibes",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1721.2,
+                "input_tokens": 656,
+                "output_tokens": 169,
+                "response": {
+                  "ingredient_inventory": [
+                    "modern movies",
+                    "80s aesthetic",
+                    "themes that appeal to 80s kids"
+                  ],
+                  "concept_inventory_analysis": "I have separated the release era requirement from the stylistic and thematic elements. The '80s aesthetic' and '80s themes' are unified into a single concept because they both serve the same user intent of capturing the 1980s vibe, while the 'modern' requirement defines a separate temporal domain.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Defines the candidate set by release timeframe.",
+                      "concept": "modern movies",
+                      "required_ingredients": [
+                        "modern movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Unified concept capturing the specific nostalgic style and thematic content requested.",
+                      "concept": "80s aesthetic or themes",
+                      "required_ingredients": [
+                        "80s aesthetic",
+                        "themes that appeal to 80s kids"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Live-action adventure movies from the 1980s that 80s kids grew up with",
+              "display_phrase": "80s Adventure Classics",
+              "spin_angle": "This narrows the primary intent to the popular live-action adventure sub-genre that defined 80s youth cinema.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1913.9,
+                "input_tokens": 659,
+                "output_tokens": 216,
+                "response": {
+                  "ingredient_inventory": [
+                    "live-action",
+                    "adventure movies",
+                    "1980s",
+                    "80s kids grew up with"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into its primary genre/medium category, the specific time constraint, and the subjective nostalgic quality. 'Live-action' and 'adventure movies' are grouped as the core domain, while the 1980s period and the nostalgic 'childhood favorites' aspect are treated as separate qualifying layers.",
+                  "concepts": [
+                    {
+                      "boundary_note": "This defines the base format and genre domain of the films requested.",
+                      "concept": "Live-action adventure movies",
+                      "required_ingredients": [
+                        "live-action",
+                        "adventure movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "This is a strict temporal constraint defining the release window.",
+                      "concept": "1980s era",
+                      "required_ingredients": [
+                        "1980s"
+                      ]
+                    },
+                    {
+                      "boundary_note": "This represents a specific cultural sentiment and nostalgic status distinct from just being released in that decade.",
+                      "concept": "80s childhood classics",
+                      "required_ingredients": [
+                        "80s kids grew up with"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Animated movies from the 1980s that 80s kids would love",
+              "display_phrase": "80s Animated Gems",
+              "spin_angle": "This narrows the focus to animated films that were staples for children during the 1980s.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 2173.8,
+                "input_tokens": 655,
+                "output_tokens": 284,
+                "response": {
+                  "ingredient_inventory": [
+                    "animated movies",
+                    "1980s",
+                    "80s kids would love"
+                  ],
+                  "concept_inventory_analysis": "The request is split into three distinct concepts: the medium (animation), the temporal domain (1980s), and a subjective quality/nostalgia factor (content for 80s kids). These are separate intent layers that define the candidate set and then filter it by specific era and vibe.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Defines the specific medium of the films.",
+                      "concept": "animated movies",
+                      "required_ingredients": [
+                        "animated movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Defines the release era/temporal boundary.",
+                      "concept": "1980s",
+                      "required_ingredients": [
+                        "1980s"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Captures the nostalgic and demographic-specific appeal requested by the user.",
+                      "concept": "80s kids nostalgia",
+                      "required_ingredients": [
+                        "80s kids would love"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "movies dads like",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Movies that are popular with or commonly liked by dads",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Movies that are popular with or commonly liked by dads",
+              "display_phrase": "Movies Dads Love",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1791.4,
+                "input_tokens": 647,
+                "output_tokens": 167,
+                "response": {
+                  "ingredient_inventory": [
+                    "popular/commonly liked",
+                    "dads"
+                  ],
+                  "concept_inventory_analysis": "The query combines a target audience or demographic persona ('dads') with a popularity/affinity qualifier ('commonly liked'). These are distinct intents: one defines the subjective appeal or cultural trope of a 'Dad Movie', and the other specifies the ranking or quality signal of being 'popular'. Splitting them allows for separate handling of the thematic content and the popularity metric.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the core thematic identity or appeal associated with the 'Dad' demographic.",
+                      "concept": "Dad movies",
+                      "required_ingredients": [
+                        "dads"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the qualifier that these must be well-regarded or widely recognized within that category.",
+                      "concept": "popular or commonly liked",
+                      "required_ingredients": [
+                        "popular/commonly liked"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Classic action and thriller movies that dads like",
+              "display_phrase": "Dad-Approved Action & Thrillers",
+              "spin_angle": "This spin narrows the broad 'dads' label into the classic high-stakes action and thriller genres often associated with the archetype.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 2028.3,
+                "input_tokens": 645,
+                "output_tokens": 225,
+                "response": {
+                  "ingredient_inventory": [
+                    "Classic movies",
+                    "Action movies",
+                    "Thriller movies",
+                    "Dads like"
+                  ],
+                  "concept_inventory_analysis": "The query combines historical classification (classic), genre classifications (action, thriller), and a specific audience preference (movies for dads). These are distinct intents because historical status, genre identity, and audience appeal are separate evaluative and categorical dimensions. Action and Thriller are kept separate to allow for distinct genre matching, while 'Classic' is treated as a temporal/quality attribute.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the historical or 'timeless' quality requested by the user.",
+                      "concept": "Classic films",
+                      "required_ingredients": [
+                        "Classic movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the core genre intent for high-intensity physical conflict.",
+                      "concept": "Action movies",
+                      "required_ingredients": [
+                        "Action movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the core genre intent for suspense and tension.",
+                      "concept": "Thriller movies",
+                      "required_ingredients": [
+                        "Thriller movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the specific demographic appeal or 'Dad movie' archetype requested.",
+                      "concept": "Movies for dads",
+                      "required_ingredients": [
+                        "Dads like"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Movies about fatherhood and being a dad",
+              "display_phrase": "Stories About Fatherhood",
+              "spin_angle": "This spin focuses on the literal experience of fatherhood, selecting movies that explore the relationships and roles of being a dad.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1734.7,
+                "input_tokens": 645,
+                "output_tokens": 106,
+                "response": {
+                  "ingredient_inventory": [
+                    "fatherhood",
+                    "being a dad"
+                  ],
+                  "concept_inventory_analysis": "The query describes a single thematic focus (the role and experience of being a father) using two synonymous phrases. Since both ingredients describe the same core user intent, they are grouped into one concept.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Both ingredients represent the same thematic intent of father-centric narratives and are conceptually inseparable in this context.",
+                      "concept": "fatherhood and being a dad",
+                      "required_ingredients": [
+                        "fatherhood",
+                        "being a dad"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "Y2K vibes",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Movies with a Y2K aesthetic and cultural vibe",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Movies with a Y2K aesthetic and cultural vibe",
+              "display_phrase": "Y2K Aesthetic",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1531.8,
+                "input_tokens": 647,
+                "output_tokens": 154,
+                "response": {
+                  "ingredient_inventory": [
+                    "Y2K aesthetic",
+                    "cultural vibe"
+                  ],
+                  "concept_inventory_analysis": "The query focuses on a singular, unified phenomenon: the specific stylistic and cultural era known as Y2K. While 'aesthetic' and 'cultural vibe' are mentioned as separate ingredients, they both describe different facets of the same overarching period and atmosphere. Splitting them would result in redundant concepts, as the 'cultural vibe' of Y2K is inextricable from its 'aesthetic'.",
+                  "concepts": [
+                    {
+                      "boundary_note": "The Y2K aesthetic and cultural vibe are two descriptors for the same singular era-based intent. They form a unified thematic concept.",
+                      "concept": "Y2K aesthetic and cultural vibe",
+                      "required_ingredients": [
+                        "Y2K aesthetic",
+                        "cultural vibe"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Teen comedies with a strong Y2K vibe",
+              "display_phrase": "Y2K Teen Classics",
+              "spin_angle": "This spin narrows the aesthetic to the iconic teen comedy genre that defined the era's fashion and tone.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1509.9,
+                "input_tokens": 646,
+                "output_tokens": 124,
+                "response": {
+                  "ingredient_inventory": [
+                    "Teen comedies",
+                    "Y2K vibe"
+                  ],
+                  "concept_inventory_analysis": "The query is split into a genre/target audience component and a specific aesthetic/era vibe component to ensure the domain is defined separately from the stylistic filter.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Defines the core genre and demographic of the films.",
+                      "concept": "Teen comedy movies",
+                      "required_ingredients": [
+                        "Teen comedies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Captures the specific aesthetic, cultural era, and visual style requested as a modifier.",
+                      "concept": "Y2K aesthetic/vibe",
+                      "required_ingredients": [
+                        "Y2K vibe"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Sci-fi and action movies featuring the Y2K tech aesthetic",
+              "display_phrase": "Y2K Digital Futurism",
+              "spin_angle": "This spin focuses on the 'cyperpunk' and high-tech futurism visual style prevalent in Y2K-era action and sci-fi.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1551.2,
+                "input_tokens": 650,
+                "output_tokens": 179,
+                "response": {
+                  "ingredient_inventory": [
+                    "sci-fi movies",
+                    "action movies",
+                    "Y2K tech aesthetic"
+                  ],
+                  "concept_inventory_analysis": "The query specifies two distinct genres (sci-fi and action) which function as candidate domain filters, and a specific visual/thematic style (Y2K tech aesthetic) that characterizes the content. Each genre is a separate intent, and the aesthetic is a separate qualitative trait.",
+                  "concepts": [
+                    {
+                      "boundary_note": "A distinct genre classification for the candidate set.",
+                      "concept": "sci-fi movies",
+                      "required_ingredients": [
+                        "sci-fi movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A distinct genre classification for the candidate set.",
+                      "concept": "action movies",
+                      "required_ingredients": [
+                        "action movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A specific visual and cultural style characterizing the film's look and feel.",
+                      "concept": "Y2K tech aesthetic",
+                      "required_ingredients": [
+                        "Y2K tech aesthetic"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "bucket": "title_vs_collection",
+      "hypothesis": "Known-good branching shape: single phrase that could be a real title or a collection request. Baseline for alternative emission.",
+      "queries": [
+        {
+          "query": "Scary Movie",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "The movie titled \"Scary Movie\"",
+          "branches": [
+            {
+              "branch_kind": "alternative[0]",
+              "rewrite": "Movies that are scary",
+              "display_phrase": "Genuinely scary movies",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1379.7,
+                "input_tokens": 641,
+                "output_tokens": 92,
+                "response": {
+                  "ingredient_inventory": [
+                    "scary movies"
+                  ],
+                  "concept_inventory_analysis": "The user's intent is focused on a single genre/tonal classification. 'Scary' and 'movies' together define the candidate set without any secondary ranking or qualifying traits.",
+                  "concepts": [
+                    {
+                      "boundary_note": "This is a single unified intent defining the genre or tone of the movies requested.",
+                      "concept": "horror or scary movies",
+                      "required_ingredients": [
+                        "scary movies"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Horror parody movies from the early 2000s",
+              "display_phrase": "2000s horror parodies",
+              "spin_angle": "This spin focuses on the early 2000s parody era of the primary title.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1978.1,
+                "input_tokens": 650,
+                "output_tokens": 205,
+                "response": {
+                  "ingredient_inventory": [
+                    "Horror",
+                    "parody movies",
+                    "early 2000s"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into a primary genre (horror), a specific style or sub-genre (parody), and a chronological constraint (early 2000s). While 'horror parody' often describes one film, horror and parody are separate intents—the user wants films that are horror-based and films that are comedic parodies. The time period is a distinct ranking/filtering domain.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the primary thematic domain of horror.",
+                      "concept": "horror genre",
+                      "required_ingredients": [
+                        "Horror"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the stylistic intent of comedic spoof or parody movies.",
+                      "concept": "parody movies",
+                      "required_ingredients": [
+                        "parody movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A chronological constraint defining the specific era of the films.",
+                      "concept": "early 2000s",
+                      "required_ingredients": [
+                        "early 2000s"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "Up",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Up",
+          "branches": []
+        }
+      ]
+    },
+    {
+      "bucket": "semantic_vagueness",
+      "hypothesis": "Vague phrases with a single reading. Should NOT emit alternatives just because the meaning is fuzzy.",
+      "queries": [
+        {
+          "query": "cozy movie for tonight",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "A cozy movie that is good for watching tonight",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "A cozy movie that is good for watching tonight",
+              "display_phrase": "Cozy movies for tonight",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1709.2,
+                "input_tokens": 646,
+                "output_tokens": 147,
+                "response": {
+                  "ingredient_inventory": [
+                    "cozy",
+                    "good for watching tonight"
+                  ],
+                  "concept_inventory_analysis": "The user has a specific tonal requirement and a generic situational filler. 'Cozy' represents the core semantic and atmospheric intent. 'Good for watching tonight' is a common filler phrase indicating a general quality preference or a desire for recommendations, which is distinct from the specific atmosphere requested.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the core atmospheric and tonal preference of the user.",
+                      "concept": "cozy tone",
+                      "required_ingredients": [
+                        "cozy"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the situational context or general quality filter implied by the user's framing.",
+                      "concept": "good recommendations for now",
+                      "required_ingredients": [
+                        "good for watching tonight"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Cozy animated movies for a relaxing night in",
+              "display_phrase": "Cozy animated favorites",
+              "spin_angle": "This angle focuses on the visual comfort of animation while preserving the cozy vibe.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1613.3,
+                "input_tokens": 646,
+                "output_tokens": 161,
+                "response": {
+                  "ingredient_inventory": [
+                    "cozy",
+                    "animated",
+                    "movies",
+                    "relaxing night in"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into a content format (animated), an emotional/tonal quality (cozy), and a situational context (relaxing night in). 'Cozy' and 'relaxing night in' are grouped as they represent a single unified mood intent. 'Animated' is separated as it defines the medium/format constraint.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the specific medium or production style requested.",
+                      "concept": "animated movies",
+                      "required_ingredients": [
+                        "animated",
+                        "movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the unified emotional tone and atmospheric preference for the viewing experience.",
+                      "concept": "cozy and relaxing tone",
+                      "required_ingredients": [
+                        "cozy",
+                        "relaxing night in"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Atmospheric cozy movies that fit a rainy-day mood",
+              "display_phrase": "Rainy day cozy vibes",
+              "spin_angle": "This angle leans into the 'rainy day' mood which is a popular subset of cozy cinema.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1986.8,
+                "input_tokens": 648,
+                "output_tokens": 193,
+                "response": {
+                  "ingredient_inventory": [
+                    "atmospheric",
+                    "cozy",
+                    "rainy-day mood"
+                  ],
+                  "concept_inventory_analysis": "The query describes a specific aesthetic and emotional state. 'Atmospheric' and 'cozy' are distinct but related tonal qualities, while 'rainy-day mood' is a situational vibe. Since they all converge into a single atmospheric request, they could be seen as one, but splitting 'cozy' from 'rainy-day' allows for more precise retrieval of the specific low-energy/indoors feeling versus the general visual atmosphere.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Atmospheric and cozy are often unified as a single tonal signature for film discovery.",
+                      "concept": "atmospheric and cozy tone",
+                      "required_ingredients": [
+                        "atmospheric",
+                        "cozy"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Rainy-day mood is a distinct situational vibe that characterizes the desired candidate domain.",
+                      "concept": "rainy-day mood",
+                      "required_ingredients": [
+                        "rainy-day mood"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "something feel-good",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Movies that are feel-good",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Movies that are feel-good",
+              "display_phrase": "Something feel-good",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1273.7,
+                "input_tokens": 643,
+                "output_tokens": 84,
+                "response": {
+                  "ingredient_inventory": [
+                    "feel-good movies"
+                  ],
+                  "concept_inventory_analysis": "The query contains a single unified intent describing a specific emotional tone or psychological effect. There are no secondary ingredients like genres, actors, or release periods to separate.",
+                  "concepts": [
+                    {
+                      "boundary_note": "This is a single unified emotional tone and user intent.",
+                      "concept": "feel-good movies",
+                      "required_ingredients": [
+                        "feel-good movies"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Feel-good romantic comedy movies",
+              "display_phrase": "Feel-good rom-coms",
+              "spin_angle": "Narrows the broad feel-good tone to romantic comedies, a common subtype for this request.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1527.9,
+                "input_tokens": 643,
+                "output_tokens": 128,
+                "response": {
+                  "ingredient_inventory": [
+                    "feel-good",
+                    "romantic comedy"
+                  ],
+                  "concept_inventory_analysis": "The query contains a genre classification ('romantic comedy') and a distinct emotional/tonal qualifier ('feel-good'). These are separate user intents: one defines the narrative structure and the other defines the desired psychological effect on the viewer.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Separated because tone is an independent qualifier from genre classification.",
+                      "concept": "feel-good tone",
+                      "required_ingredients": [
+                        "feel-good"
+                      ]
+                    },
+                    {
+                      "boundary_note": "The genre is a single unified concept for retrieval.",
+                      "concept": "romantic comedy movies",
+                      "required_ingredients": [
+                        "romantic comedy"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Feel-good movies for the whole family",
+              "display_phrase": "Family feel-good picks",
+              "spin_angle": "Narrows the feel-good intent to family-friendly movies that are uplifting for all ages.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1368.5,
+                "input_tokens": 645,
+                "output_tokens": 132,
+                "response": {
+                  "ingredient_inventory": [
+                    "feel-good movies",
+                    "for the whole family"
+                  ],
+                  "concept_inventory_analysis": "The query contains two distinct user intents: a specific emotional tone (feel-good) and a target audience/rating constraint (family-friendly). These are separate dimensions of the search and are split accordingly.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the specific emotional or atmospheric quality requested by the user.",
+                      "concept": "feel-good tone",
+                      "required_ingredients": [
+                        "feel-good movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the target audience demographic and suitability for all ages.",
+                      "concept": "family-friendly",
+                      "required_ingredients": [
+                        "for the whole family"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "bucket": "clean_controls",
+      "hypothesis": "Fully specified queries with no ambiguity. Should produce no alternatives and ambiguity=none.",
+      "queries": [
+        {
+          "query": "Inception",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "The movie titled Inception",
+          "branches": []
+        },
+        {
+          "query": "Tom Cruise action movies from the 90s",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Tom Cruise action movies from the 1990s",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Tom Cruise action movies from the 1990s",
+              "display_phrase": "Tom Cruise 90s Action Hits",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1935.8,
+                "input_tokens": 649,
+                "output_tokens": 156,
+                "response": {
+                  "ingredient_inventory": [
+                    "Tom Cruise",
+                    "action movies",
+                    "1990s"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into three distinct intents: the specific actor (entity), the genre (classification), and the specific decade (temporal constraint). These are split because they represent independent criteria that can be retrieved or filtered separately.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the core entity/person intent.",
+                      "concept": "Tom Cruise",
+                      "required_ingredients": [
+                        "Tom Cruise"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the specific genre or stylistic intent.",
+                      "concept": "action movies",
+                      "required_ingredients": [
+                        "action movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the temporal boundary for the search results.",
+                      "concept": "1990s",
+                      "required_ingredients": [
+                        "1990s"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "bucket": "edge_vague_or_ambiguous",
+      "hypothesis": "Phrases where it is unclear whether the vagueness is a single fuzzy reading or multiple distinct readings. Probes where the model draws the line.",
+      "queries": [
+        {
+          "query": "prestige drama",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Movies in the prestige drama genre",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Movies in the prestige drama genre",
+              "display_phrase": "Prestige Dramas",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1642.2,
+                "input_tokens": 643,
+                "output_tokens": 130,
+                "response": {
+                  "ingredient_inventory": [
+                    "prestige",
+                    "drama genre"
+                  ],
+                  "concept_inventory_analysis": "I am splitting the query into two concepts: the core genre classification and the qualitative attribute. 'Prestige' indicates a specific level of production quality or critical acclaim that acts as a filter on the broader 'drama' category.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Identifies the primary genre category for the search.",
+                      "concept": "drama genre",
+                      "required_ingredients": [
+                        "drama genre"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Identifies the qualitative 'prestige' status or high-brow tone associated with the request.",
+                      "concept": "prestige movies",
+                      "required_ingredients": [
+                        "prestige"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Award-winning period drama movies",
+              "display_phrase": "Acclaimed Period Dramas",
+              "spin_angle": "This spin preserves the prestige and drama traits while narrowing the focus to award-winning period pieces.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1720.0,
+                "input_tokens": 643,
+                "output_tokens": 130,
+                "response": {
+                  "ingredient_inventory": [
+                    "Award-winning",
+                    "period drama"
+                  ],
+                  "concept_inventory_analysis": "The request contains two distinct intents: a quality/recognition status and a specific genre/setting classification. These are split to allow for independent evaluation of the movie's critical success and its narrative category.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the user's intent for films with high critical acclaim or formal recognition.",
+                      "concept": "Award-winning status",
+                      "required_ingredients": [
+                        "Award-winning"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the narrative genre and historical setting requested by the user.",
+                      "concept": "Period drama genre",
+                      "required_ingredients": [
+                        "period drama"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "arthouse thriller",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Arthouse thriller movies",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Arthouse thriller movies",
+              "display_phrase": "Arthouse Thrillers",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1975.9,
+                "input_tokens": 641,
+                "output_tokens": 120,
+                "response": {
+                  "ingredient_inventory": [
+                    "Arthouse",
+                    "thriller"
+                  ],
+                  "concept_inventory_analysis": "The query contains a stylistic/production category (Arthouse) and a genre classification (thriller). These are distinct user intents—one describing the creative approach and the other describing the narrative mechanics—so they are split into separate concepts.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the cinematic style and distribution niche.",
+                      "concept": "Arthouse movies",
+                      "required_ingredients": [
+                        "Arthouse"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the narrative genre classification.",
+                      "concept": "thriller genre",
+                      "required_ingredients": [
+                        "thriller"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Slow-burn psychological arthouse thrillers",
+              "display_phrase": "Slow-Burn Psychological Thrillers",
+              "spin_angle": "This spin narrows the focus to psychological thrillers with the slow-burn pacing common in arthouse cinema, preserving both core traits.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1841.9,
+                "input_tokens": 645,
+                "output_tokens": 189,
+                "response": {
+                  "ingredient_inventory": [
+                    "slow-burn",
+                    "psychological",
+                    "arthouse",
+                    "thrillers"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed by separating the pacing (slow-burn), the thematic focus (psychological), the stylistic/production classification (arthouse), and the core genre (thrillers) to allow for precise multi-vector retrieval.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Pacing and narrative development style.",
+                      "concept": "slow-burn pacing",
+                      "required_ingredients": [
+                        "slow-burn"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Thematic focus on the mental and emotional states of characters.",
+                      "concept": "psychological theme",
+                      "required_ingredients": [
+                        "psychological"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Stylistic and production category representing non-mainstream or experimental cinema.",
+                      "concept": "arthouse style",
+                      "required_ingredients": [
+                        "arthouse"
+                      ]
+                    },
+                    {
+                      "boundary_note": "The core genre domain for the search.",
+                      "concept": "thriller genre",
+                      "required_ingredients": [
+                        "thrillers"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Neo-noir arthouse thriller movies",
+              "display_phrase": "Arthouse Neo-Noir",
+              "spin_angle": "This spin focuses on the neo-noir aesthetic within the arthouse thriller space, preserving both the arthouse and thriller traits.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1842.6,
+                "input_tokens": 644,
+                "output_tokens": 186,
+                "response": {
+                  "ingredient_inventory": [
+                    "Neo-noir",
+                    "arthouse",
+                    "thriller"
+                  ],
+                  "concept_inventory_analysis": "The query contains three distinct qualifiers: a stylistic sub-genre (Neo-noir), a production/distribution style (arthouse), and a core genre (thriller). These represent separate user intents regarding aesthetic, market positioning, and narrative tension, and should therefore be split into three concepts.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Neo-noir is a specific stylistic and thematic movement that serves as a genre sub-type.",
+                      "concept": "Neo-noir style",
+                      "required_ingredients": [
+                        "Neo-noir"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Arthouse refers to the experimental or non-mainstream nature of the filmmaking, distinct from genre.",
+                      "concept": "Arthouse cinema",
+                      "required_ingredients": [
+                        "arthouse"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Thriller is the fundamental narrative genre classification.",
+                      "concept": "Thriller genre",
+                      "required_ingredients": [
+                        "thriller"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "bucket": "spin_candidates",
+      "hypothesis": "Broad single-intent queries with no reading ambiguity. Should produce zero alternative_intents but one or more creative_alternatives subdividing the broad set.",
+      "queries": [
+        {
+          "query": "Best Christmas movies for families",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Best Christmas movies for families",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Best Christmas movies for families",
+              "display_phrase": "Top Family Christmas Movies",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1945.5,
+                "input_tokens": 642,
+                "output_tokens": 153,
+                "response": {
+                  "ingredient_inventory": [
+                    "Christmas movies",
+                    "families",
+                    "Best"
+                  ],
+                  "concept_inventory_analysis": "The query contains three distinct components: a primary thematic domain (Christmas), a target audience (families), and a qualitative ranking requirement (Best). These are split to allow for independent retrieval of holiday content, demographic suitability, and acclaim or popularity status.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the primary thematic genre or holiday setting.",
+                      "concept": "Christmas movies",
+                      "required_ingredients": [
+                        "Christmas movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the target audience or demographic appropriateness.",
+                      "concept": "family-friendly",
+                      "required_ingredients": [
+                        "families"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents a preference for high-rated or critically acclaimed content.",
+                      "concept": "highly rated",
+                      "required_ingredients": [
+                        "Best"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Best animated Christmas movies for families",
+              "display_phrase": "Animated Christmas Favorites",
+              "spin_angle": "This angle preserves the core traits but narrows the format to animation, which is a major sub-collection for family viewing.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1655.5,
+                "input_tokens": 643,
+                "output_tokens": 182,
+                "response": {
+                  "ingredient_inventory": [
+                    "animated",
+                    "Christmas movies",
+                    "families",
+                    "Best"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into four distinct user intents: the medium (animation), the central theme/genre (Christmas), the target audience (family-friendly), and the qualitative ranking (critical acclaim).",
+                  "concepts": [
+                    {
+                      "boundary_note": "Specifies the medium or visual style of the film.",
+                      "concept": "animated movies",
+                      "required_ingredients": [
+                        "animated"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Defines the core holiday theme and seasonal setting.",
+                      "concept": "Christmas movies",
+                      "required_ingredients": [
+                        "Christmas movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Identifies the intended demographic or suitability for all ages.",
+                      "concept": "family-friendly movies",
+                      "required_ingredients": [
+                        "families"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents a preference for high quality, critical acclaim, or popular ranking.",
+                      "concept": "critically acclaimed / top-rated",
+                      "required_ingredients": [
+                        "Best"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Best modern Christmas movies for families",
+              "display_phrase": "Newer Holiday Family Hits",
+              "spin_angle": "This angle preserves all primary traits while focusing specifically on recent or modern-era holiday films.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1646.6,
+                "input_tokens": 643,
+                "output_tokens": 141,
+                "response": {
+                  "ingredient_inventory": [
+                    "modern",
+                    "Christmas movies",
+                    "families"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into three distinct intents: the thematic core (Christmas), the temporal constraint (modern), and the target audience (families). Each represents a separate filtering or ranking dimension.",
+                  "concepts": [
+                    {
+                      "boundary_note": "The central thematic subject of the query.",
+                      "concept": "Christmas movies",
+                      "required_ingredients": [
+                        "Christmas movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A temporal constraint regarding the era or release date of the content.",
+                      "concept": "modern era",
+                      "required_ingredients": [
+                        "modern"
+                      ]
+                    },
+                    {
+                      "boundary_note": "The target demographic or suitability for a specific audience.",
+                      "concept": "family-friendly content",
+                      "required_ingredients": [
+                        "families"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "Disney classics",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Disney movies considered classics",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Disney movies considered classics",
+              "display_phrase": "Disney Classics",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1447.3,
+                "input_tokens": 641,
+                "output_tokens": 125,
+                "response": {
+                  "ingredient_inventory": [
+                    "Disney",
+                    "classics"
+                  ],
+                  "concept_inventory_analysis": "The query combines a specific studio domain with a historical or critical quality attribute. Following the rule to split when one ingredient defines the domain and another characterizes items within it, the studio and the 'classic' status are separated into distinct concepts.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Identifies the studio/brand domain for the search.",
+                      "concept": "Disney movies",
+                      "required_ingredients": [
+                        "Disney"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Captures the qualitative status or historical significance attribute.",
+                      "concept": "historically significant / classic movies",
+                      "required_ingredients": [
+                        "classics"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Animated Disney movies from the Golden Age era",
+              "display_phrase": "Golden Age Animation",
+              "spin_angle": "This narrowing focuses on the earliest era of animated Disney features.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1959.7,
+                "input_tokens": 645,
+                "output_tokens": 177,
+                "response": {
+                  "ingredient_inventory": [
+                    "Animated",
+                    "Disney movies",
+                    "Golden Age era"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into three distinct user-intent layers: the studio/brand (Disney), the medium/format (Animated), and the specific historical classification (Golden Age era). While these are often searched together, they represent independent constraints on the candidate pool and should be treated as separate concepts to allow for precise filtering and ranking.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the core studio brand requested by the user.",
+                      "concept": "Disney movies",
+                      "required_ingredients": [
+                        "Disney movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Specifies the visual medium/format of the film.",
+                      "concept": "Animated movies",
+                      "required_ingredients": [
+                        "Animated"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Filters the domain to a specific historical/industry time period.",
+                      "concept": "Golden Age era films",
+                      "required_ingredients": [
+                        "Golden Age era"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Classic live-action Disney movies",
+              "display_phrase": "Live-Action Classics",
+              "spin_angle": "This narrowing shifts focus from animation to Disney's live-action catalog.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1977.7,
+                "input_tokens": 643,
+                "output_tokens": 181,
+                "response": {
+                  "ingredient_inventory": [
+                    "Classic",
+                    "live-action",
+                    "Disney movies"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into its studio origin, its format, and its historical status. 'Disney movies' identifies the studio domain, 'live-action' specifies the visual medium, and 'Classic' indicates a temporal or status-based quality that ranks/characterizes the domain. These are distinct intents that will likely require separate retrieval strategies.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Identifies the core studio entity providing the domain of movies.",
+                      "concept": "Disney movies",
+                      "required_ingredients": [
+                        "Disney movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Specifies the historical or qualitative status of the films.",
+                      "concept": "classic/historically significant",
+                      "required_ingredients": [
+                        "Classic"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Specifies the visual format/medium of the films.",
+                      "concept": "live-action",
+                      "required_ingredients": [
+                        "live-action"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "good horror movies",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Good horror movies",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Good horror movies",
+              "display_phrase": "Good horror movies",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1689.9,
+                "input_tokens": 640,
+                "output_tokens": 125,
+                "response": {
+                  "ingredient_inventory": [
+                    "horror movies",
+                    "good/highly rated"
+                  ],
+                  "concept_inventory_analysis": "The query contains a genre specification and a quality/ranking qualifier. These represent distinct user intents: defining the domain of films and then filtering/ranking them by critical or audience acclaim.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Defines the core genre and domain of the search.",
+                      "concept": "horror movies",
+                      "required_ingredients": [
+                        "horror movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the user's desire for high quality or positive critical reception.",
+                      "concept": "highly rated/critically acclaimed",
+                      "required_ingredients": [
+                        "good/highly rated"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Good modern horror movies",
+              "display_phrase": "Modern horror hits",
+              "spin_angle": "This spin focuses on modern horror movies, preserving the genre and quality traits while narrowing the era.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 2081.7,
+                "input_tokens": 641,
+                "output_tokens": 158,
+                "response": {
+                  "ingredient_inventory": [
+                    "modern",
+                    "horror",
+                    "good"
+                  ],
+                  "concept_inventory_analysis": "The query contains three distinct components: a temporal constraint (modern), a genre classification (horror), and a quality metric (good). Each represents a separate user intent for filtering and ranking.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the core genre classification for the domain of movies being searched.",
+                      "concept": "horror",
+                      "required_ingredients": [
+                        "horror"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Defines the temporal scope or era of the films, distinguishing them from classics.",
+                      "concept": "modern movies",
+                      "required_ingredients": [
+                        "modern"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Indicates a request for high-quality or highly-rated content, which acts as a ranking or selection criterion.",
+                      "concept": "high quality",
+                      "required_ingredients": [
+                        "good"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Good psychological horror movies",
+              "display_phrase": "Psychological horror",
+              "spin_angle": "This spin narrows the request to psychological horror, maintaining the core genre while focusing on a specific narrative style.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1683.7,
+                "input_tokens": 641,
+                "output_tokens": 131,
+                "response": {
+                  "ingredient_inventory": [
+                    "psychological horror",
+                    "good"
+                  ],
+                  "concept_inventory_analysis": "The query contains two distinct user intents: a specific genre classification (psychological horror) and a quality/critical reception ranking (good). These are split to allow for independent domain filtering and quality ranking.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the core genre and thematic intent of the movies.",
+                      "concept": "psychological horror movies",
+                      "required_ingredients": [
+                        "psychological horror"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the user's desire for high-quality or well-reviewed content.",
+                      "concept": "critically acclaimed / high-rated",
+                      "required_ingredients": [
+                        "good"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "movies for date night",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Movies that are suitable for a date night",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Movies that are suitable for a date night",
+              "display_phrase": "Date Night Movies",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1582.8,
+                "input_tokens": 645,
+                "output_tokens": 88,
+                "response": {
+                  "ingredient_inventory": [
+                    "date night suitable"
+                  ],
+                  "concept_inventory_analysis": "The query contains a single, unified intent describing a specific mood or occasion for which the movies are intended. This is treated as one cohesive thematic concept.",
+                  "concepts": [
+                    {
+                      "boundary_note": "This encapsulates the single thematic context of the user's request for movies fitting a specific social occasion.",
+                      "concept": "date night movies",
+                      "required_ingredients": [
+                        "date night suitable"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Romantic movies suitable for a date night",
+              "display_phrase": "Romantic Date Night",
+              "spin_angle": "This spin preserves the date night context but narrows the mood to romantic films.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 2018.7,
+                "input_tokens": 644,
+                "output_tokens": 221,
+                "response": {
+                  "ingredient_inventory": [
+                    "Romantic movies",
+                    "suitable for a date night"
+                  ],
+                  "concept_inventory_analysis": "The request contains a genre classification (Romance) and a specific situational context or mood (Date night). These are split because while related, 'date night' implies a curated selection of tones (e.g., lighthearted, engaging) that serves as a filter on top of the base romantic genre.",
+                  "concepts": [
+                    {
+                      "boundary_note": "A primary genre classification representing the core content of the films.",
+                      "concept": "Romantic movies",
+                      "required_ingredients": [
+                        "Romantic movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A distinct situational intent that characterizes the vibe and suitability for a specific social context.",
+                      "concept": "date night atmosphere",
+                      "required_ingredients": [
+                        "suitable for a date night"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Comedy movies suitable for a date night",
+              "display_phrase": "Date Night Comedies",
+              "spin_angle": "This spin preserves the date night context but focuses specifically on lighthearted comedies.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1621.7,
+                "input_tokens": 644,
+                "output_tokens": 121,
+                "response": {
+                  "ingredient_inventory": [
+                    "comedy movies",
+                    "suitable for a date night"
+                  ],
+                  "concept_inventory_analysis": "The query contains a primary genre classification and a specific situational context. These are distinct user intents—one defining the domain of movies and the other characterizing their social suitability.",
+                  "concepts": [
+                    {
+                      "boundary_note": "This is the core genre classification for the request.",
+                      "concept": "comedy movies",
+                      "required_ingredients": [
+                        "comedy movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "This is a distinct situational trait and social context that filters or ranks the candidates.",
+                      "concept": "date night movies",
+                      "required_ingredients": [
+                        "suitable for a date night"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "feel-good comedies",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Comedy movies that are feel-good",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Comedy movies that are feel-good",
+              "display_phrase": "Feel-good comedies",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1574.6,
+                "input_tokens": 644,
+                "output_tokens": 129,
+                "response": {
+                  "ingredient_inventory": [
+                    "Comedy movies",
+                    "feel-good"
+                  ],
+                  "concept_inventory_analysis": "The request involves a genre classification and a specific emotional tone. These are distinct user intents—one defining the primary category and the other characterizing the mood—and should be treated as separate concepts to allow for independent weighting and retrieval logic.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the primary genre domain of the films requested.",
+                      "concept": "Comedy movies",
+                      "required_ingredients": [
+                        "Comedy movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Represents the specific emotional resonance or vibe requested for the films.",
+                      "concept": "feel-good tone",
+                      "required_ingredients": [
+                        "feel-good"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[0]",
+              "rewrite": "Feel-good animated comedy movies",
+              "display_phrase": "Heartwarming animated comedies",
+              "spin_angle": "This narrowing preserves the feel-good and comedy traits while focusing specifically on animated films.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1707.5,
+                "input_tokens": 643,
+                "output_tokens": 149,
+                "response": {
+                  "ingredient_inventory": [
+                    "feel-good",
+                    "animated",
+                    "comedy"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into three distinct user intents: a specific visual medium (animated), a genre classification (comedy), and a psychological tone (feel-good). Each represents a separate layer of filtering or characterization.",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the emotional tone and psychological effect of the movie.",
+                      "concept": "feel-good tone",
+                      "required_ingredients": [
+                        "feel-good"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Identifies the specific cinematic medium and artistic style.",
+                      "concept": "animated movies",
+                      "required_ingredients": [
+                        "animated"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Identifies the primary genre and narrative structure.",
+                      "concept": "comedy genre",
+                      "required_ingredients": [
+                        "comedy"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "branch_kind": "spin[1]",
+              "rewrite": "Feel-good romantic comedy movies",
+              "display_phrase": "Feel-good rom-coms",
+              "spin_angle": "This narrowing preserves the feel-good and comedy traits while focusing on the romantic comedy sub-genre.",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1527.4,
+                "input_tokens": 643,
+                "output_tokens": 145,
+                "response": {
+                  "ingredient_inventory": [
+                    "feel-good",
+                    "romantic comedy"
+                  ],
+                  "concept_inventory_analysis": "The query contains a genre classification and a specific tonal qualifier. While often grouped together, 'feel-good' is a distinct emotional quality (tone) that can apply across many genres, and 'romantic comedy' is the specific structural genre. These are separated to allow for independent weighting and retrieval of the narrative structure versus the mood.",
+                  "concepts": [
+                    {
+                      "boundary_note": "This represents the emotional tone and mood requested by the user.",
+                      "concept": "feel-good tone",
+                      "required_ingredients": [
+                        "feel-good"
+                      ]
+                    },
+                    {
+                      "boundary_note": "This represents the primary genre classification.",
+                      "concept": "romantic comedy genre",
+                      "required_ingredients": [
+                        "romantic comedy"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "bucket": "spin_negative_controls",
+      "hypothesis": "Queries where spins should NOT fire — already-narrow filters or non-standard flow.",
+      "queries": [
+        {
+          "query": "Tom Cruise action movies from the 90s",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Tom Cruise action movies from the 1990s",
+          "branches": [
+            {
+              "branch_kind": "primary",
+              "rewrite": "Tom Cruise action movies from the 1990s",
+              "display_phrase": "Tom Cruise 90s Action Hits",
+              "step_2a": {
+                "status": "ok",
+                "elapsed_ms": 1436.0,
+                "input_tokens": 649,
+                "output_tokens": 160,
+                "response": {
+                  "ingredient_inventory": [
+                    "Tom Cruise",
+                    "action movies",
+                    "1990s"
+                  ],
+                  "concept_inventory_analysis": "The query is decomposed into three distinct user intents: the lead actor (identity), the genre (classification), and the specific time period (chronological constraint).",
+                  "concepts": [
+                    {
+                      "boundary_note": "Represents the specific actor the user wants to see starring in the films.",
+                      "concept": "Tom Cruise",
+                      "required_ingredients": [
+                        "Tom Cruise"
+                      ]
+                    },
+                    {
+                      "boundary_note": "Defines the specific cinematic genre/style requested.",
+                      "concept": "action movies",
+                      "required_ingredients": [
+                        "action movies"
+                      ]
+                    },
+                    {
+                      "boundary_note": "A temporal constraint focusing on films released between 1990 and 1999.",
+                      "concept": "1990s",
+                      "required_ingredients": [
+                        "1990s"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "Inception",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "The movie titled Inception",
+          "branches": []
+        },
+        {
+          "query": "movies like The Matrix",
+          "stage_1_status": "ok",
+          "stage_1_primary_rewrite": "Movies similar to The Matrix",
+          "branches": []
+        }
+      ]
+    }
+  ]
+}

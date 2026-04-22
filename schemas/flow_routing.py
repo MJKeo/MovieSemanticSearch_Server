@@ -1,7 +1,7 @@
 # Step 1 (flow routing) LLM structured output models.
 #
-# Produces one required primary intent plus up to two optional
-# alternatives. Step 1 decides both the major search flow and whether
+# Produces one required primary intent plus up to one optional
+# alternative. Step 1 decides both the major search flow and whether
 # additional searches would improve browsing value under ambiguity.
 # See search_improvement_planning/finalized_search_proposal.md
 # (Step 1: Flow Routing) for the full design rationale.
@@ -64,12 +64,13 @@ class AlternativeIntent(BaseModel):
 
 # Creative spin output. Semantically distinct from AlternativeIntent:
 # alternatives capture different readings of what the user asked for,
-# while spins propose productive sub-angles within the primary's broad
-# set. The user's intent stays fixed across spins; only the narrowing
-# changes. Spins are always standard flow (we only spin on broad
-# discovery queries), and never carry a title — the flow/title pairing
-# validator is reused to keep this invariant enforced consistently with
-# the other intent classes.
+# while spins propose productive angles on the primary's intent. A
+# spin preserves at least one trait from the query and may drop or
+# swap the others — covering both narrowings (preserve all traits,
+# add specificity) and tangential directions (preserve one trait,
+# swap another). Spins are always standard flow, and never carry a
+# title — the flow/title pairing validator is reused to keep this
+# invariant enforced consistently with the other intent classes.
 class CreativeSpin(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -90,26 +91,38 @@ class CreativeSpin(BaseModel):
 # Field order follows the preprocessing chain:
 # 1. ambiguity_analysis — brief evidence inventory describing the
 #    plausible readings and which one is most likely
-# 2. primary_intent — the default search path
-# 3. alternative_intents — up to two materially distinct alternates
-#    (different readings of the user's words)
-# 4. creative_spin_analysis — separate trace evaluating whether the
-#    primary describes a broad set worth subdividing into exploratory
-#    sub-angles. Placed after the alternative_intents block so the
-#    earlier reasoning is already committed before the model considers
-#    spins (structured-output generation runs in field order).
-# 5. creative_alternatives — up to two productive sub-angle spins on
-#    the primary's intent. The user's intent stays fixed; only the
-#    narrowing changes. Conceptually distinct from alternative_intents.
+# 2. query_traits — single-line list of concrete traits the query
+#    carries. Placed before primary_intent so the model has named
+#    what the query is made of before committing to a rewrite; this
+#    supports both the primary rewrite (understanding composition
+#    before writing) and the downstream spin reasoning (which traits
+#    to preserve or swap). Structured-output generation runs in
+#    field order, so earlier reasoning is frozen by the time later
+#    fields are written.
+# 3. primary_intent — the default search path
+# 4. alternative_intents — up to one materially distinct alternate
+#    reading of the user's words (rarely are three interpretations
+#    all genuinely useful, and more branches inflate downstream cost)
+# 5. creative_spin_analysis — separate trace evaluating spin
+#    opportunities grounded in query_traits. Placed after the
+#    alternative_intents block so the earlier reasoning is already
+#    committed before the model considers spins.
+# 6. creative_alternatives — up to two productive angle spins on the
+#    primary's intent. Each spin preserves at least one query trait
+#    and may drop or swap the others; this covers both narrowings
+#    (preserve all, add specificity) and tangential directions
+#    (preserve one, swap another). Conceptually distinct from
+#    alternative_intents, which capture competing readings.
 class FlowRoutingResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ambiguity_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
+    query_traits: constr(strip_whitespace=True, min_length=1) = Field(...)
     primary_intent: PrimaryIntent = Field(...)
     alternative_intents: conlist(
         AlternativeIntent,
         min_length=0,
-        max_length=2,
+        max_length=1,
     ) = Field(...)
     creative_spin_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
     creative_alternatives: conlist(

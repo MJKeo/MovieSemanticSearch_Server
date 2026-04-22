@@ -739,6 +739,55 @@ Ingest-side landed in prior session; query-side landed in the session ending 202
 **When:** Before the next ingest run or stage-3 search test against the dev DB. Dry-run with `--schema-only` first if a staged rollout is preferred.
 **See:** db/migrate_split_franchise_columns.py, DIFF_CONTEXT.md "Franchise prefer_lineage: review fixes + targeted migration script"
 
+## Update Stage 1 flow-routing tests for schema reshape
+**Context:** `FlowRoutingResponse` was restructured in this session:
+(1) `alternative_intents` max_length dropped from 2 to 1;
+(2) new required field `query_traits` (single-line string) inserted
+at position 2 — final field order is ambiguity_analysis →
+query_traits → primary_intent → alternative_intents →
+creative_spin_analysis → creative_alternatives;
+(3) `CreativeSpin` semantics loosened from "faithful narrowing" to
+"trait preservation" (both narrowings and tangents valid). Any test
+fixtures that construct `FlowRoutingResponse` or `CreativeSpin`
+literals, assert on the old field order, or expect 2 alternatives
+will fail. Per `.claude/rules/test-boundaries.md` no tests were
+touched during implementation.
+**When:** Next dedicated testing phase covering V2 search, or before
+Stage 1 is wired into a production code path.
+**See:** schemas/flow_routing.py, search_v2/stage_1.py,
+DIFF_CONTEXT.md "Stage 1: cap alternatives at 1, add trait extraction, free spins from strict narrowing"
+
+## Render `query_traits` + preserves/swaps annotations in debug_stage_1 compact summary
+**Context:** [search_improvement_planning/debug_stage_1.py](search_improvement_planning/debug_stage_1.py)
+`_render_compact_summary` doesn't print the new `query_traits`
+field or the per-candidate `[preserves: X; swaps: Y]` annotation
+from `creative_spin_analysis`. Both live in the JSON report but
+aren't visible when eyeballing the stdout summary, which is the
+primary inspection surface. Low priority — add two lines to the
+renderer (one for query_traits after ambiguity_analysis, and the
+spin annotation already embeds in creative_spin_analysis text).
+**When:** Next time the Stage 1 debug script is used for an
+evaluation pass.
+**See:** search_improvement_planning/debug_stage_1.py
+(`_render_compact_summary`, around lines 177-221)
+
+## Optional code-level gate for exact_title / similarity no-spin enforcement
+**Context:** The Stage 1 prompt now says exact_title and similarity
+flows "default to `spin_potential: none` … err toward zero spins
+unless an unusually strong angle exists." The soft framing was
+deliberate, with the understanding that we could add a hard code
+gate later. Debug run confirmed the soft rule can leak: `Scary
+Movie` (exact_title) emitted one spin because the model judged a
+horror-parody angle worth surfacing. If production traffic shows
+this happening often enough to hurt result quality, add a
+post-LLM guard in `route_query` (or the first consumer of
+`FlowRoutingResponse`) that drops `creative_alternatives` when
+`primary_intent.flow` is exact_title or similarity.
+**When:** After some production traffic data shows whether the
+soft rule holds up; revisit only if leak rate is non-trivial.
+**See:** search_v2/stage_1.py (SYSTEM_PROMPT CREATIVE SPINS / creative_spin_analysis sections),
+DIFF_CONTEXT.md "Stage 1: cap alternatives at 1, add trait extraction, free spins from strict narrowing"
+
 ## Update franchise tests for prefer_lineage + column split + dataclass return
 **Context:** Expanded scope on top of the pre-existing "Update franchise query-side tests" TODO. New things that will break or need coverage: (1) `FranchiseQuerySpec` gained a `prefer_lineage: bool` field with two validator coercions (no-name-axis → False, SPINOFF → False); (2) `fetch_franchise_movie_ids` now returns `tuple[set[int], set[int]]` (lineage, universe-only) instead of `set[int]`; (3) `write_franchise_data` / `ingest_franchise_data` return a `FranchiseEntryIds` dataclass instead of a 2-tuple / 3-tuple; (4) `upsert_movie_card` + `update_movie_card_franchise_ids` take `lineage_entry_ids` + `shared_universe_entry_ids` instead of `franchise_name_entry_ids`; (5) the new scoring logic in `execute_franchise_query` produces 1.0 / 0.75 / 1.0-fallback scores that tests asserting binary {0.0, 1.0} will need updating for.
 **When:** Dedicated test-updates phase — bundle with the other franchise test updates already tracked.

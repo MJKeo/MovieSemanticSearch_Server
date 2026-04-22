@@ -164,14 +164,49 @@ async def _run_one(query: str) -> dict:
         }
 
 
-async def _run_bucket(bucket: dict) -> dict:
-    """Run all queries in a bucket concurrently."""
-    results = await asyncio.gather(*(_run_one(q) for q in bucket["queries"]))
+async def _run_bucket(bucket: dict, cache: dict[str, dict]) -> dict:
+    """Run all queries in a bucket concurrently, reusing cached results.
+
+    `cache` maps raw query text -> previously produced record. Any
+    query with a cached "ok" record is returned as-is (no Stage 1 call).
+    Missing or previously-errored queries are re-executed. This keeps
+    the debug driver cheap across repeated runs while still allowing
+    us to refresh on demand by deleting the cache file.
+    """
+    async def _resolve(q: str) -> dict:
+        cached = cache.get(q)
+        if cached and cached.get("status") == "ok":
+            return cached
+        return await _run_one(q)
+
+    results = await asyncio.gather(*(_resolve(q) for q in bucket["queries"]))
     return {
         "bucket": bucket["bucket"],
         "hypothesis": bucket["hypothesis"],
         "results": results,
     }
+
+
+def _load_cache(path: Path) -> dict[str, dict]:
+    """Flatten prior Stage 1 report into a {query: record} cache.
+
+    Returns an empty dict when the file does not exist, is unreadable,
+    or has no bucket entries yet. Never fails the caller — a bad cache
+    just means we run Stage 1 fresh.
+    """
+    if not path.exists():
+        return {}
+    try:
+        prior = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    cache: dict[str, dict] = {}
+    for bucket in prior.get("buckets", []):
+        for record in bucket.get("results", []):
+            query = record.get("query")
+            if query is not None:
+                cache[query] = record
+    return cache
 
 
 def _render_compact_summary(report: dict) -> str:
@@ -221,14 +256,23 @@ def _render_compact_summary(report: dict) -> str:
     return "\n".join(lines)
 
 
+OUTPUT_PATH = PROJECT_ROOT / "search_improvement_planning" / "stage_1_debug_output.json"
+
+
 async def main() -> None:
     overall_start = time.perf_counter()
+
+    # Reuse the last Stage 1 report as a per-query cache. This makes
+    # iterating on downstream stages (e.g. Step 2A) cheap because we
+    # do not pay for Stage 1 tokens unless a query is new or failed.
+    # Delete the cache file to force a full re-run.
+    cache = _load_cache(OUTPUT_PATH)
 
     # Run buckets sequentially so we do not stampede the provider, but
     # parallelize within each bucket for speed. Each bucket is small.
     bucket_reports = []
     for bucket in QUERY_BUCKETS:
-        bucket_reports.append(await _run_bucket(bucket))
+        bucket_reports.append(await _run_bucket(bucket, cache))
 
     elapsed_s = time.perf_counter() - overall_start
 
@@ -239,14 +283,13 @@ async def main() -> None:
         "buckets": bucket_reports,
     }
 
-    output_path = PROJECT_ROOT / "search_improvement_planning" / "stage_1_debug_output.json"
-    output_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    OUTPUT_PATH.write_text(json.dumps(report, indent=2, ensure_ascii=False))
 
     summary = _render_compact_summary(report)
     print(summary)
     print()
     print("-" * 72)
-    print(f"Wrote full structured report to: {output_path}")
+    print(f"Wrote full structured report to: {OUTPUT_PATH}")
     print(f"Total elapsed: {elapsed_s:.1f}s")
 
 

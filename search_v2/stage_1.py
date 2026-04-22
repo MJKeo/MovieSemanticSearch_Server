@@ -1,9 +1,11 @@
 # Search V2 — Stage 1: Flow Routing
 #
-# Produces one required primary intent plus up to two optional
-# alternative intents. Stage 1 decides both the major search flow and
+# Produces one required primary intent plus up to one optional
+# alternative intent. Stage 1 decides both the major search flow and
 # whether additional searches would improve browsing value under
-# ambiguity. This is the entry point of the V2 search pipeline — all
+# ambiguity. It also extracts the concrete traits the query carries
+# and proposes up to two creative-spin angles grounded in those
+# traits. This is the entry point of the V2 search pipeline — all
 # queries pass through here before any decomposition or retrieval
 # happens.
 #
@@ -202,9 +204,9 @@ A useful alternative usually comes from one of these:
 - a different interpretation of one vague phrase
 - a title-vs-natural-language ambiguity
 
-A productive sub-angle within a broad query is NOT an alternative \
-here. That belongs to creative_alternatives. See the CREATIVE SPINS \
-section below.
+A productive angle on the primary's traits — narrowing or adjacent \
+— is NOT an alternative here. That belongs to creative_alternatives. \
+See the CREATIVE SPINS section below.
 
 Do not branch just because a query can be paraphrased.
 Do not branch just because one phrase could be unpacked into several \
@@ -405,62 +407,80 @@ _CREATIVE_SPINS = """\
 CREATIVE SPINS
 
 Alternatives capture different readings of what the user asked for. \
-Spins capture productive sub-angles within the primary's broad set — \
-the user's intent stays fixed, the spin proposes one concrete way to \
-narrow within it.
+Spins propose productive angles on the primary's intent — either \
+narrowing the set or exploring adjacent directions that preserve \
+what the user is pulling at.
 
-Test:
-- If a candidate would change what the user meant, that is an \
-  alternative, not a spin.
-- If a candidate just narrows the same intent into a useful \
-  sub-collection, that is a spin.
+Trait-preservation rule:
+A spin must preserve at least one trait from query_traits. It may \
+drop or swap the others. This is the creative lever — different \
+spins preserve different subsets of traits.
+- Narrowing spin: preserves all (or nearly all) traits, adds \
+  specificity on one axis.
+- Tangential spin: preserves one or more traits that carry the \
+  user's core pull, swaps another for something adjacent.
+
+Both kinds are valid. Soft guidance on which to lean toward:
+- Broad, sub-categorizable primaries lean narrowing — many \
+  productive sub-collections already exist inside the set.
+- Narrow or analogical/transformation primaries (e.g., "rocky but \
+  with robots") lean tangential — the literal set is small, but \
+  adjacent directions can surface the thing the user is actually \
+  drawn to.
+- Moderately specific primaries can go either way — pick whichever \
+  gives a more useful browsing direction per trait.
 
 When to spin:
-- Standard flow only. Never spin on exact_title or similarity.
-- The primary's intent must describe a broad set whose natural result \
-  list spans many distinct sub-categories that a user might want to \
-  browse separately.
-- Skip when the primary already has narrow filters (a specific actor \
-  + decade + genre, for example) — the set is not broad enough to \
-  subdivide usefully.
-- Be more conservative when alternative_intents already exist. Those \
-  already give browsing variety; emit fewer spins (often zero) when \
-  the user has already been offered competing readings.
+- Standard flow only. exact_title and similarity default to no spins; \
+  downstream retrieval already expands those neighborhoods, so err \
+  on the side of emitting nothing for those flows.
+- Be more conservative when alternative_intents already exist. Emit \
+  fewer spins (often zero) when the user has already been offered a \
+  competing reading.
 
 Discipline:
-- Each spin is a faithful narrowing of the primary, not an \
-  enrichment. Do not inject proxy traits like "iconic", \
-  "highly-rated", or "prestigious" unless the user signaled them.
+- Do not inject proxy traits like "iconic", "highly-rated", \
+  "prestigious", or "cult-favorite" unless the user signaled them. \
+  Swapping a trait means replacing it with something concrete and \
+  adjacent, not decorating with quality signals.
 - Each spin must be clearly distinct from the primary AND from any \
-  alternative_intents already emitted. Do not duplicate angles.
-- Different spins should propose meaningfully different sub-angles, \
-  not variations on the same one.
-- A spin's intent_rewrite stays inside the primary's intent. If the \
-  rewrite drifts to a different reading of the user's words, it has \
-  become an alternative, and you should not emit it as a spin.
+  alternative_intents AND from any other spin. Different spins \
+  should propose meaningfully different angles, not variations on \
+  the same one.
+- A candidate that swaps every trait has drifted into a different \
+  query. That is an alternative reading, not a spin — do not emit it.
 
 Examples:
 
 Query: "Best Christmas movies for families"
-- Primary describes a broad family-Christmas-movie set with many \
-  productive sub-angles.
-- Useful spins: animated Christmas family films; modern \
-  streaming-era Christmas family films; heartwarming non-traditional \
-  holiday films.
-- Each spin produces a meaningfully different sub-collection while \
-  staying inside the "Christmas movies for families" intent.
+- Traits: Christmas, families, best.
+- Broad primary with many productive narrowings.
+- Narrowing spins: animated Christmas family films (preserves all, \
+  narrows format); modern streaming-era Christmas family films \
+  (preserves all, narrows era).
+
+Query: "Rocky but with robots"
+- Traits: Rocky/underdog arc, boxing, robots.
+- Narrow analogical primary — literal matches are sparse, but the \
+  user's pull is clear.
+- Tangential spins: underdog stories with AI or mechanical \
+  protagonists (preserves: underdog arc, robots; swaps: boxing); \
+  human-vs-machine combat sport films (preserves: boxing, robots; \
+  swaps: underdog arc).
 
 Query: "Disney classics"
-- Broad set with productive sub-angles.
-- Useful spins: animated golden-age Disney classics; live-action \
+- Traits: Disney, classics.
+- Broad primary.
+- Narrowing spins: animated golden-age Disney classics; live-action \
   Disney classics; Disney Renaissance-era animated classics.
 
 Query: "Tom Cruise action movies from the 90s"
+- Traits: Tom Cruise, action, 1990s.
 - Already narrow — actor, genre, and decade pin the set down.
 - No spins.
 
 Query: "Inception"
-- Exact_title flow. Spins do not apply.
+- exact_title flow. No spins.
 
 ---
 
@@ -486,8 +506,8 @@ readings:
 
 Rules:
 - Readings are competing interpretations of what the user is asking \
-  for. Productive narrowings of a single intent (sub-angles within \
-  the primary's set) belong to creative spins, not readings.
+  for. Productive angles on a single intent (narrowings or adjacent \
+  directions) belong to creative spins, not readings.
 - Name each reading concretely by what it would retrieve, not by a \
   category label. "movies millennials grew up with" is concrete; \
   "vibe/preference" is not.
@@ -498,6 +518,10 @@ Rules:
   reading of a known single-movie title.
 - A query with only one plausible reading has exactly one line with \
   verdict "primary".
+- At most one "emit as alt" line. If multiple readings are \
+  candidates, keep the strongest and mark the rest "skip" — \
+  downstream cost scales with branch count, so additional alts must \
+  clearly earn their place.
 - The count and content of "emit as alt" lines must match \
   alternative_intents below. Do not promise an alt in the trace and \
   then omit it, and do not add alternative_intents that were not \
@@ -525,6 +549,33 @@ readings:
 - generation-defining Disney films for millennials -> skip (overlaps \
   heavily with the primary reading)
 
+query_traits — Single-line list of the concrete traits the query \
+carries. Naming the query's composition up front scaffolds both \
+primary_intent below (clearer rewrites) and creative_spin_analysis \
+further down (which traits a spin preserves or swaps).
+
+Format: `traits: <trait1>, <trait2>, <trait3>`
+
+Rules:
+- Name traits concretely (e.g., "underdog arc", "Disney", "boxing", \
+  "2000s"), not by category labels (e.g., "genre cue").
+- Include reference movies, franchises, characters, brands, genres, \
+  tones, eras, entities, scene descriptions, and evaluative words \
+  when they appear in the query.
+- For analogy or transformation queries (e.g., "X but with Y"), \
+  decompose the reference into its concrete traits (archetype, \
+  genre, setting) rather than listing a meta-label.
+- Only list traits actually present — do not infer.
+- Usually 2–5 traits.
+
+Examples:
+- Query "Best Christmas movies for families" -> \
+  traits: Christmas, families, best
+- Query "Rocky but with robots" -> \
+  traits: Rocky/underdog arc, boxing, robots
+- Query "Inception" -> traits: Inception
+- Query "cozy date night movie" -> traits: cozy, date-night
+
 primary_intent — Always required. Generate these fields in order:
 
 routing_signals — Cite the specific words or patterns in the query that \
@@ -548,9 +599,11 @@ common fully expanded English-language title form. Null for standard. \
 Canonicalize only when the query is already pointing to a specific \
 movie title reference; never guess from descriptions.
 
-alternative_intents — Zero to two entries. Use an empty list when no \
-alternative search would materially improve browsing. For each entry, \
-generate fields in order:
+alternative_intents — Zero or one entry. Use an empty list when no \
+alternative search would materially improve browsing. Reserve the \
+single alt for a genuinely distinct reading; do not spend it on a \
+near-duplicate or mild paraphrase. For each entry, generate fields \
+in order:
 
 routing_signals — Cite the concrete query text that supports this \
 alternative branch. One short sentence.
@@ -570,20 +623,28 @@ informative, but a little more lively than a sterile summary.
 title — Same title rules as primary_intent.
 
 creative_spin_analysis — A compact decision trace evaluating spin \
-opportunities on the primary's intent. One line for the verdict on \
-the primary's broadness, plus one line per candidate spin. Do not \
-write paragraph prose.
+opportunities on the primary's intent, grounded in query_traits \
+above. One line for the verdict, one line per candidate spin. Do \
+not write paragraph prose.
 
 Format:
 
 spin_potential: <high | low | none, one phrase why>
 candidate_spins:
-- <angle> -> emit (why this gives a useful sub-collection)
-- <angle> -> skip (why not useful enough)
+- <angle> [preserves: <traits>; swaps: <traits>] -> emit (why useful)
+- <angle> [preserves: <traits>; swaps: <traits>] -> skip (why not)
 
 Rules:
 - "spin_potential: none" means no candidate_spins lines and an empty \
   creative_alternatives list.
+- exact_title and similarity flows default to "spin_potential: none" \
+  — downstream retrieval already expands those neighborhoods, so err \
+  toward zero spins unless an unusually strong angle exists.
+- Every candidate must preserve at least one trait from query_traits. \
+  "preserves" and "swaps" must name specific traits by the wording \
+  used in query_traits (use "none" when a list is empty).
+- A candidate that swaps every trait has drifted into a different \
+  query; treat it as an alternative reading and skip it here.
 - "spin_potential: low" usually means zero or one spin emitted.
 - "spin_potential: high" can support up to two spins, but be more \
   conservative when alternative_intents are already populated.
@@ -592,43 +653,48 @@ Rules:
 - Every candidate gets a verdict: emit or skip.
 - The count and content of "emit" lines must match \
   creative_alternatives below.
-- Spins must stay inside the primary's intent. If a candidate \
-  changes what the user meant, that is an alternative reading and \
-  should not be emitted as a spin.
-- Brevity: every parenthetical is a brief label, at most ~8 words. \
-  Do not write full explanatory sentences. The angle itself carries \
-  the meaning; the parenthetical is a quick justification, not an \
-  essay.
+- Brevity: each "why" parenthetical is a brief label, at most ~8 \
+  words. Do not write full explanatory sentences.
 
 Examples:
 
-spin_potential: high (broad family-Christmas-movie set with many \
-productive sub-angles)
+spin_potential: high (broad family-Christmas set, many productive \
+sub-collections)
 candidate_spins:
-- animated Christmas family films -> emit (animation focus filters \
-  to a distinct sub-collection)
-- modern streaming-era Christmas family films -> emit (era-based \
-  narrowing produces a different result list than classic-era)
-- heartwarming non-traditional holiday films -> skip (overlaps \
-  partially with the primary, and two spins are enough)
+- animated Christmas family films [preserves: Christmas, families, \
+  best; swaps: none] -> emit (format-based narrowing)
+- modern streaming-era Christmas family films [preserves: all; \
+  swaps: none] -> emit (era-based narrowing)
+- heartwarming non-traditional holiday films [preserves: families, \
+  best; swaps: Christmas] -> skip (swaps the core holiday trait)
 
-spin_potential: none (specific actor + decade + genre — set is \
-already narrow)
+spin_potential: high (narrow analogical query with distinct \
+swappable traits)
+candidate_spins:
+- underdog AI or mechanical protagonist stories [preserves: \
+  underdog arc, robots; swaps: boxing] -> emit (core pull preserved)
+- human-vs-machine combat sport films [preserves: boxing, robots; \
+  swaps: underdog arc] -> emit (different axis of adjacency)
+
+spin_potential: none (specific actor + decade + genre — already \
+narrow)
 
 spin_potential: none (exact_title flow)
 
 creative_alternatives — Zero to two entries. Use an empty list when \
-spin_potential is none, or when no spin is concrete and useful enough \
-to surface. For each entry, generate fields in order:
+spin_potential is none, or when no candidate is concrete and useful \
+enough to surface. For each entry, generate fields in order:
 
-spin_angle — One short sentence naming the specific sub-angle this \
-spin takes within the primary's broader set. This is what makes the \
-spin distinct from the primary and from any other spin.
+spin_angle — One short sentence naming the specific angle this spin \
+takes. Call out which traits it preserves and which it swaps or \
+drops — that is what makes the spin distinct from the primary and \
+from any other spin.
 
 intent_rewrite — A clear, faithful rewrite for this spin. Same \
 discipline as primary_intent.intent_rewrite: no proxy traits, no \
-unsupported enrichment, and the rewrite must stay inside the \
-primary's intent.
+unsupported enrichment. The rewrite must preserve at least one \
+query trait; if it swaps a trait, the replacement should be a \
+concrete adjacent concept, not a quality signal.
 
 flow — Always "standard" for spins.
 
