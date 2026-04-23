@@ -12,6 +12,9 @@ Defines canonical types for:
 - The `Movie` tracker-backed data loader for ingestion-time access
 - Shared enums (`MetadataType`, `SourceMaterialType`) and utility types (`MultiLineList`)
 - MovieInputData for tracker loading (generation-pipeline entry point)
+- **Search-side schemas** for the V2 search pipeline: flow routing, query
+  understanding, step-3 endpoint translation (entity, metadata, awards,
+  franchise, keyword, semantic), and execution return types
 
 ## Key Files
 
@@ -19,10 +22,21 @@ Defines canonical types for:
 |------|---------|
 | `metadata.py` | `EmbeddableOutput` base class + 10 embeddable `*Output` schema classes + `FranchiseOutput` and `ConceptTagsOutput` / `TagEvidence` (non-embeddable franchise/concept-tag classification). Each `EmbeddableOutput` subclass implements `embedding_text()` returning normalized text for vector embedding. `ConceptTagsOutput` produces integer concept_tag_ids via `all_concept_tag_ids()`, not embedding text. Legacy `__str__()` methods are retained for backward compatibility. Class docstrings are written as `#` comment blocks above each class — not as Python docstrings — to prevent them from leaking into the JSON schema payload sent to the LLM via `model_json_schema()`. |
 | `movie.py` | `Movie`, `TMDBData`, `IMDBData` Pydantic models + `Movie.from_tmdb_id()` single-movie loader and `Movie.from_tmdb_ids()` batch loader. Joins `tmdb_data`, `imdb_data`, and `generated_metadata` from tracker.db in one query and returns fully typed objects with parsed metadata, including `franchise_metadata: FranchiseOutput | None`. |
-| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), concept-tag enums grouped by category, `AwardCeremony` (12 members — IMDB event.text string as value, stable `ceremony_id` int for Postgres), `AwardOutcome` StrEnum (`WINNER`/`NOMINEE`, each with stable `outcome_id`), `LineagePosition` enum (sequel/prequel/remake/reboot), and `BoxOfficeStatus` StrEnum. |
+| `enums.py` | `MetadataType` StrEnum (one value per generation type, 12 total including `PRODUCTION_TECHNIQUES`, `FRANCHISE`, `SOURCE_MATERIAL_V2`, and `CONCEPT_TAGS`), `BoxOfficeStatus` StrEnum (`HIT`, `FLOP`), `SourceMaterialType` enum (10 values with stable integer IDs for GIN-indexed storage), concept-tag enums grouped by category, `AwardCeremony` (12 members — IMDB event.text string as value, stable `ceremony_id` int for Postgres), `AwardOutcome` StrEnum (`WINNER`/`NOMINEE`, each with stable `outcome_id`), `LineagePosition` enum (sequel/prequel/remake/reboot), `BoxOfficeStatus` StrEnum. **Search-side additions**: `SearchFlow` (exact_title/similarity/standard/browse), `EndpointRoute` (7 values — entity/metadata/awards/franchise_structure/keyword/semantic/trending), `DealbreakDirection` (inclusion/exclusion), `SystemPrior` (enhanced/standard/inverted/suppressed), `AwardScoringMode` (FLOOR/THRESHOLD). |
 | `data_types.py` | `MultiLineList` — a constrained list type used in generation schemas. |
 | `imdb_models.py` | Shared IMDB sub-models: `AwardNomination`, `FeaturedReview`, `ParentalGuideItem`, `ReviewTheme`. Moved from `movie_ingestion/imdb_scraping/models.py` so `db/` and `api/` containers can import them without mounting `movie_ingestion/`. |
 | `movie_input.py` | `MovieInputData` dataclass + `load_movie_input_data()` — loads raw tracker data into the form consumed by generator prompt builders. |
+| `flow_routing.py` | **Search V2 Step 1** output schema. `FlowRoutingResponse` contains `primary_intent` plus `alternative_intents` and `creative_alternatives` fields. `AlternativeIntent` (competing readings) and `CreativeSpin` (productive sub-angles within a broad primary) are distinct classes. `CreativeSpin` has `spin_angle` replacing `difference_rationale`. `_validate_title_for_flow` helper enforces flow/title invariant on both types. |
+| `query_understanding.py` | **Search V2 Step 2** output schema. `Step2AResponse` (concept extraction) + `QueryConcept` + `RetrievalExpression` + `Dealbreaker` / `Preference` with per-item `routing_rationale` and `route: EndpointRoute`. `validate_partition_completeness` validator. Schema represents the revised two-step concept-inventory design: Step 2A extracts concept list; Step 2B resolves each concept to expressions. |
+| `endpoint_result.py` | **Search V2 Step 3 return shape**. `ScoredCandidate` (movie_id + score [0,1]) and `EndpointResult` (list of ScoredCandidate). Uniform shape across all 7 endpoints; orchestrator owns direction (inclusion/exclusion) and weighting. |
+| `award_translation.py` | **Search V2 Step 3 award endpoint** output schema. `AwardQuerySpec` with `scoring_mode` (`AwardScoringMode`), `scoring_mark` (int ≥1), filter axes (`ceremonies`, `award_names`, `category_tags`, `outcome`, `years`), and `scoring_shape_label` reasoning field. `AwardYearFilter` sub-model (swaps transposed values). |
+| `award_category_tags.py` | **Award category tag taxonomy**. `CategoryTag` — single `(str, Enum)` with 62 leaves (ids 1..99), 12 mid rollups (ids 100..199), 7 top groups (ids 10000..10006). Each member has `tag_id: int` and `level: int`. `LEVEL_*_TAGS` constants expose per-level views. `tags_for_category(raw_text) -> list[int]` is the ingest-time resolver (leaf + ancestor ids). `RAZZIE_TAG_IDS: frozenset[int]` enumerates every tag signaling Razzie intent (16 ids). `render_taxonomy_for_prompt()` generates the LLM-facing taxonomy section programmatically from the enum. Import-time assertion ensures `_TAG_DESCRIPTIONS` covers every member. |
+| `franchise_translation.py` | **Search V2 Step 3 franchise endpoint** output schema. `FranchiseQuerySpec` with `franchise_or_universe_names` (list, max 3; renamed from `lineage_or_universe_names`), `recognized_subgroups` (list, max 3), `lineage_position` enum, four structural booleans. Validator: subgroup-only specs (no franchise name) are valid; at least one axis must be populated. |
+| `metadata_translation.py` | **Search V2 Step 3 metadata endpoint** output schema. `MetadataTranslationOutput` with `constraint_phrases` (evidence inventory), `value_intent_label`, `target_attribute` (10-value enum), and sub-object fields per attribute. |
+| `entity_translation.py` | **Search V2 Step 3 entity endpoint** output schema. |
+| `keyword_translation.py` | **Search V2 Step 3 keyword endpoint** output schema. Uses `UnifiedClassification` as the selection type. |
+| `unified_classification.py` | `UnifiedClassification` StrEnum — merges `OverallKeyword` (225), `SourceMaterialType` (10), and all `ConceptTag` values (25) into one vocabulary for the Step 3 keyword LLM. Built dynamically at import time. `CLASSIFICATION_ENTRIES` registry maps each name to `(display, definition, source, source_id, backing_column)`. `entry_for(member)` is the lookup entry point. `OverallKeyword` takes precedence on name collisions. `Genre` is excluded (fully subsumed by `OverallKeyword`). |
+| `production_brands.py` | 31-brand registry with identity-test curation principle: a label belongs in a brand's roster only if a casual viewer typing `<brand> movies` would expect its films. Docstring updated to document the new principle; `_build_and_validate_registry()` import-time assertions still run. |
 
 ## Boundaries
 
@@ -189,9 +203,11 @@ matching `AwardCeremony.ceremony_id` integer for Postgres storage, or
   in either Postgres or Qdrant ingestion paths.
 - `movie_ingestion/metadata_generation/inputs.py` — imports
   `MovieInputData` from `schemas.movie_input`.
-- `implementation/classes/schemas.py` (search-side schemas) — remains
-  separate. Will need alignment with generation-side schemas before
-  deployment.
+- `search_v2/` — all step-3 executor modules import their respective
+  translation schemas from `schemas/`. `search_v2/stage_4/` consumes
+  `EndpointResult` / `ScoredCandidate` for assembly.
+- `implementation/classes/schemas.py` (legacy search-side schemas) —
+  remains separate. V2 search uses `schemas/` directly.
 
 ## Gotchas
 
@@ -211,8 +227,9 @@ matching `AwardCeremony.ceremony_id` integer for Postgres storage, or
   rows validate against the current schema without requiring a
   database migration.
 - Generation-side schemas (`schemas/metadata.py`) intentionally diverge
-  from search-side schemas (`implementation/classes/schemas.py`). When
-  deploying, align the search-side schemas.
+  from legacy search-side schemas (`implementation/classes/schemas.py`).
+  V2 search uses `schemas/` directly, so this divergence is being
+  resolved in place.
 - `schemas/testing.ipynb` has been deleted — use the unit tests or a
   notebook in `implementation/notebooks/` for manual inspection.
 - `normalized_title_tokens()` on `Movie` merges tokens from both
@@ -221,3 +238,14 @@ matching `AwardCeremony.ceremony_id` integer for Postgres storage, or
 - `SourceMaterialType` uses `(str, Enum)` pattern (not `StrEnum`) because
   it needs a secondary `source_material_type_id: int` attribute per member.
   `__new__` carries both values.
+- **`UnifiedClassification` loses IDE jump-to-definition** for its members
+  because it is built dynamically at import time. `entry_for()` is the
+  canonical lookup path for execution code.
+- **`production_brands.py` roster semantics changed**: brand membership
+  now uses an identity test (would a casual viewer expect this film under
+  `<brand> movies`?) not corporate ownership. Tests referencing the old
+  rosters (e.g. Miramax films under DISNEY) need to be regenerated.
+- **`CategoryTag` ancestors stored at ingest**: `movie_awards.category_tag_ids`
+  stores leaf + every ancestor id per row. A tag id can therefore appear at
+  any level in the hierarchy — querying `&& ARRAY[10000]` (acting group) is
+  intentional and correct.

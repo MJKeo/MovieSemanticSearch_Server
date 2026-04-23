@@ -22,7 +22,7 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
 | `lexical_search.py` | Entity-based search via Postgres inverted indexes. Resolves actors/directors/franchises/characters to term IDs, computes F-score (beta=2.0). |
 | `metadata_scoring.py` | Scores candidates against LLM-extracted metadata preferences (genres, date, providers, language, maturity, reception, trending, popularity, budget_size). Weighted average, weights are static. |
 | `reranking.py` | Quality-prior reranking: bucket by relevance score (precision=2), sort within buckets by reception score. |
-| `postgres.py` | Async connection pool, all SQL operations, posting list queries (role-specific people tables: actor/director/writer/producer/composer, plus character/title_token), and movie card bulk fetch/upsert. `movie_card` persists nullable text buckets for both `budget_bucket` and `box_office_bucket` alongside the canonical scalar/array metadata used by reranking and downstream filtering. Also owns the franchise upsert helpers for `movie_franchise_metadata` + the franchise token index (`lex.franchise_entry`, `lex.franchise_token`), the studio read helpers for the v2 studio endpoint (`fetch_movie_ids_by_brand`, `fetch_company_ids_for_tokens`, `fetch_movie_ids_by_production_company_ids` — reading `lex.inv_production_brand_postings`, `lex.studio_token`, and `movie_card.production_company_ids`), and the awards upsert helper for `movie_awards` (ceremony_id, award_name, category, outcome_id, year). `PEOPLE_POSTING_TABLES` constant lists all 5 role-specific tables for search code that unions across roles. |
+| `postgres.py` | Async connection pool, all SQL operations, posting list queries (role-specific people tables: actor/director/writer/producer/composer, plus character), and movie card bulk fetch/upsert. `movie_card` persists nullable text buckets for both `budget_bucket` and `box_office_bucket` alongside the canonical scalar/array metadata used by reranking and downstream filtering. Also owns: franchise upsert helpers for `movie_franchise_metadata` + the franchise token index (`lex.franchise_entry`, `lex.franchise_token`, `fetch_franchise_entry_ids_for_tokens`, `fetch_franchise_movie_ids` — the latter branches on spec shape to pick its driving table); studio read helpers for the v2 studio endpoint (`fetch_movie_ids_by_brand`, `fetch_company_ids_for_tokens`, `fetch_movie_ids_by_production_company_ids`); awards helpers for `movie_awards` including award name token index (`fetch_award_name_entry_ids_for_tokens`, `fetch_award_row_counts` — takes `award_name_entry_ids: set[int]`, not raw strings). `PEOPLE_POSTING_TABLES` constant lists all 5 role-specific tables for search code that unions across roles. V1 title-token helpers (`batch_upsert_title_token_strings`, `batch_insert_title_token_postings`, `fetch_title_token_ids`, `fetch_title_token_ids_exact`, etc.) have been removed; stubs returning `{}` are left so v1 `lexical_search.py` still imports. |
 | `qdrant.py` | Minimal Qdrant async client singleton. |
 | `redis.py` | Async Redis pool for all four cache namespaces. |
 | `tmdb.py` | TMDB API client with adaptive token-bucket rate limiting. |
@@ -49,6 +49,21 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
 - Existing Postgres databases need manual rollout SQL when new
   `movie_card` columns are added; for `box_office_bucket` the
   required step is `ALTER TABLE public.movie_card ADD COLUMN IF NOT EXISTS box_office_bucket TEXT;`.
+- **Title normalization symmetry**: `movie_card.title_normalized` stores
+  the normalized form (via `normalize_string()`) and is backed by a
+  trigram GIN index (contains) and a `text_pattern_ops` btree index
+  (starts_with). Stage 3's `_execute_title_pattern` uses plain `LIKE`
+  (not `ILIKE`) because both sides are already normalized, making the
+  indexes usable. This is the v2 search path; v1 title-token tables are
+  retired.
+- **Token-index resolution for franchise and award endpoints**: both
+  `search_v2/stage_3/franchise_query_execution.py` and
+  `search_v2/stage_3/award_query_execution.py` resolve LLM surface forms
+  to entry-id sets via `fetch_franchise_entry_ids_for_tokens` /
+  `fetch_award_name_entry_ids_for_tokens` in `postgres.py`, then match
+  via GIN `&&` overlap on `movie_card.franchise_name_entry_ids` or integer
+  `award_name_entry_id`. Exact TEXT equality on raw stored strings is retired
+  for both endpoints.
 
 ## Scoring Pipeline Constants
 
@@ -99,3 +114,18 @@ reranking, and returns ranked results. Movie ingestion into Postgres/Qdrant now 
   transaction (e.g. from crashed ingestion runs) are forcibly
   terminated after 2 minutes, preventing zombie lock accumulation on
   ingestion tables.
+- **`batch_insert_actor_postings` / `batch_insert_character_postings`
+  now take parallel `term_ids` + `billing_positions` lists** (instead
+  of auto-generating positions from list index). Required for hyphen
+  variant expansion to preserve billing position correctness. Binary
+  role posting tables (director/writer/producer/composer) are
+  unaffected — they don't carry billing metadata.
+- **`fetch_award_row_counts` parameter rename**: the parameter was
+  renamed from `award_names: list[str]` to
+  `award_name_entry_ids: set[int]`. Any test or caller using the old
+  signature must be updated.
+- **Hyphen variant expansion (`expand_hyphen_variants`) lives in
+  `implementation/misc/helpers.py`**, not in `postgres.py`. It takes
+  an already-normalized string and returns `{with-hyphen, hyphen→space,
+  hyphen→empty}` (deduped). Both ingest and query compose it with
+  `normalize_string` symmetrically.
