@@ -16,10 +16,16 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
-from schemas.endpoint_parameters import EndpointParameters
+from schemas.endpoint_parameters import (
+    MATCH_MODE_DESCRIPTION,
+    POLARITY_DESCRIPTION,
+    EndpointParameters,
+)
 from schemas.enums import (
     EntityType,
+    MatchMode,
     PersonCategory,
+    Polarity,
     ProminenceMode,
     SpecificPersonCategory,
     TitlePatternMatchType,
@@ -241,9 +247,14 @@ class EntityQuerySpec(BaseModel):
         return self
 
 
-# Category-handler wrapper. Direction flows through action_role +
-# polarity on the wrapper.
+# Category-handler wrapper. Direction flows through match_mode +
+# polarity on the wrapper. Fields are declared in the order
+# match_mode → parameters → polarity so polarity is emitted last,
+# avoiding the double-negative failure mode where a negative
+# polarity token would bias parameter content toward inversion.
+# See endpoint_parameters.py for the full rationale.
 class EntityEndpointParameters(EndpointParameters):
+    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
     parameters: EntityQuerySpec = Field(
         ...,
         description=(
@@ -255,6 +266,10 @@ class EntityEndpointParameters(EndpointParameters):
             "the type-specific fields that apply (person_category + "
             "prominence_mode for persons, prominence_mode for "
             "characters, title_pattern_match_type for title patterns). "
-            "One call = one entity."
+            "One call = one entity. Describe the target concept "
+            "directly regardless of polarity — negation is handled on "
+            "the wrapper's polarity field, never inside these "
+            "parameters."
         ),
     )
+    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

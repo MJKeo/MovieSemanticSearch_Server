@@ -7,7 +7,7 @@
 # See search_improvement_planning/category_handler_planning.md
 # §"Handler return contract" for the design rationale and
 # §"From LLM output to return buckets" for how the handler's LLM
-# output (action_role, polarity) maps onto these four buckets.
+# output (match_mode, polarity) maps onto these four buckets.
 
 from __future__ import annotations
 
@@ -37,9 +37,9 @@ class HandlerResult:
 
     # Deferred preference searches. Each entry is the exact
     # `endpoint_parameters` object the handler LLM emitted with
-    # action_role == candidate_reranking. The orchestrator runs
-    # these against the final candidate pool after inclusion /
-    # exclusion consolidation and routes each to the correct
-    # endpoint by inspecting its concrete EndpointParameters
-    # subclass — no separate routing tag needed.
+    # match_mode == trait. The orchestrator runs these against
+    # the final candidate pool after inclusion / exclusion
+    # consolidation and routes each to the correct endpoint by
+    # inspecting its concrete EndpointParameters subclass —
+    # no separate routing tag needed.
     preference_specs: list[EndpointParameters] = field(default_factory=list)

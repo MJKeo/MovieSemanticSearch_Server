@@ -1016,28 +1016,29 @@ class MetadataAttribute(StrEnum):
 #
 # Every category handler emits one EndpointParameters object per
 # finding. That wrapper tags the finding along two orthogonal axes —
-# action_role and polarity — which together determine which of the
+# match_mode and polarity — which together determine which of the
 # four HandlerResult buckets the finding falls into:
 #
-#                               | POSITIVE                | NEGATIVE
-#   ---------------------------+-------------------------+----------------------
-#   CANDIDATE_IDENTIFICATION   | inclusion_candidates    | exclusion_ids
-#   CANDIDATE_RERANKING        | preference_specs        | downrank_candidates
+#                   | POSITIVE                | NEGATIVE
+#   ----------------+-------------------------+----------------------
+#   FILTER          | inclusion_candidates    | exclusion_ids
+#   TRAIT           | preference_specs        | downrank_candidates
 #
 # See search_improvement_planning/category_handler_planning.md
 # ("From LLM output to return buckets") for the full mapping.
 # ---------------------------------------------------------------------------
 
 
-# Whether the finding generates a candidate set (identification) or
-# adjusts the ranking of an already-assembled set (reranking).
-class ActionRole(StrEnum):
-    CANDIDATE_IDENTIFICATION = "candidate_identification"
-    CANDIDATE_RERANKING = "candidate_reranking"
+# Whether the finding is a binary yes/no test that selects which
+# movies pass (FILTER) or a descriptive attribute that colors the
+# ranking of movies that already passed (TRAIT).
+class MatchMode(StrEnum):
+    FILTER = "filter"
+    TRAIT = "trait"
 
 
 # Whether the finding pushes candidates IN (positive) or OUT / DOWN
-# (negative). Orthogonal to action_role — together they cover the
+# (negative). Orthogonal to match_mode — together they cover the
 # full 2x2 of inclusion / exclusion / preference / downrank.
 class Polarity(StrEnum):
     POSITIVE = "positive"

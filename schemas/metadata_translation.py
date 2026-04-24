@@ -37,11 +37,17 @@ from implementation.classes.enums import (
 )
 from implementation.classes.languages import Language
 from implementation.classes.watch_providers import StreamingService
-from schemas.endpoint_parameters import EndpointParameters
+from schemas.endpoint_parameters import (
+    MATCH_MODE_DESCRIPTION,
+    POLARITY_DESCRIPTION,
+    EndpointParameters,
+)
 from schemas.enums import (
     BoxOfficeStatus,
     BudgetSize,
+    MatchMode,
     MetadataAttribute,
+    Polarity,
     PopularityMode,
     ReceptionMode,
 )
@@ -193,7 +199,7 @@ class CountryOfOriginTranslation(BaseModel):
 # guarantees one metadata item = one column query = one [0, 1] score.
 #
 # The dealbreaker/preference classification is not repeated here —
-# it flows through action_role + polarity on the enclosing
+# it flows through match_mode + polarity on the enclosing
 # EndpointParameters wrapper (MetadataEndpointParameters). This
 # class itself stays direction-agnostic.
 class MetadataTranslationOutput(BaseModel):
@@ -226,10 +232,13 @@ class MetadataTranslationOutput(BaseModel):
     reception: Optional[ReceptionMode] = Field(default=None)
 
 
-# Category-handler wrapper. Direction flows through action_role +
+# Category-handler wrapper. Direction flows through match_mode +
 # polarity on the wrapper; MetadataTranslationOutput itself stays
-# direction-agnostic.
+# direction-agnostic. Fields are declared in the order
+# match_mode → parameters → polarity so polarity is emitted last.
+# See endpoint_parameters.py for the rationale.
 class MetadataEndpointParameters(EndpointParameters):
+    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
     parameters: MetadataTranslationOutput = Field(
         ...,
         description=(
@@ -241,6 +250,9 @@ class MetadataEndpointParameters(EndpointParameters):
             "object. Do NOT split a single requirement across two "
             "attribute fields — if it seems to span two columns, the "
             "requirement should have been decomposed upstream, not "
-            "merged here."
+            "merged here. Describe the target concept directly "
+            "regardless of polarity — negation is handled on the "
+            "wrapper's polarity field, never inside these parameters."
         ),
     )
+    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

@@ -2,16 +2,16 @@
 #
 # Every category handler emits its per-finding decisions as
 # EndpointParameters objects (one concrete subclass per endpoint)
-# and aggregates them into a HandlerResult. The action_role +
+# and aggregates them into a HandlerResult. The match_mode +
 # polarity pair on every EndpointParameters tags the finding with
 # its intended downstream effect; the handler does not produce
 # separate bucket arrays — HandlerResult is the bucketed shape that
 # the orchestrator folds into the final rerank.
 #
-#                              | POSITIVE               | NEGATIVE
-#   --------------------------+------------------------+-----------------------
-#   CANDIDATE_IDENTIFICATION  | inclusion_candidates   | exclusion_ids
-#   CANDIDATE_RERANKING       | preference_specs       | downrank_candidates
+#               | POSITIVE               | NEGATIVE
+#   ------------+------------------------+-----------------------
+#   FILTER      | inclusion_candidates   | exclusion_ids
+#   TRAIT       | preference_specs       | downrank_candidates
 #
 # The orchestrator routes each preference spec to its endpoint by
 # isinstance-checking its concrete EndpointParameters subclass —
@@ -31,50 +31,123 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from schemas.enums import ActionRole, Polarity
+
+# Shared Field descriptions for the two classification fields every
+# EndpointParameters wrapper declares. Module-level constants so
+# (a) every concrete subclass can declare the fields in its own
+# preferred order with identical wording, and (b) the wording lives
+# in one place — editing here propagates to all seven endpoint
+# wrappers without drift.
+#
+# The descriptions deliberately avoid system-architecture vocabulary
+# ("candidate pool", "orchestrator", "inclusion_candidates", etc.).
+# The LLM that consumes this schema only has the handler prompt's
+# context — nothing about how findings are consolidated downstream
+# — so architecture words are either inert tokens or get mis-
+# interpreted. Every sentence here should be graspable from user-
+# intent reasoning alone.
+MATCH_MODE_DESCRIPTION = (
+    "Pick 'filter' for a binary yes/no test that decides whether a "
+    "movie belongs in the results at all — a non-matching movie is "
+    "dropped entirely. Triggered by 'must', 'only', 'no X', "
+    "'without', or a bare attribute assertion ('starring Tom "
+    "Hanks', 'horror'). "
+    "Pick 'trait' for a descriptive attribute that colors the "
+    "ranking — a non-matching movie still qualifies, just with a "
+    "lower score. Triggered by 'ideally', 'preferably', 'not too', "
+    "'a bit', 'would like'. "
+    "Both modes combine with either polarity, so 'filter' does not "
+    "imply removal: 'must star Tom Hanks' is filter+positive, 'no "
+    "horror' is filter+negative, 'preferably funny' is "
+    "trait+positive, 'not too violent' is trait+negative. "
+    "For neutral phrasing: pick filter for categorical attributes "
+    "(genre, franchise, named entity, award) and trait for gradient "
+    "attributes (tone, mood, quality, pacing). When unsure, prefer "
+    "trait — filter is the stronger commitment."
+)
+
+POLARITY_DESCRIPTION = (
+    "'positive' when the user wants this characteristic ('horror "
+    "movies', 'starring Tom Hanks', 'with a happy ending', "
+    "'acclaimed'). 'negative' when the user wants to avoid it ('no "
+    "horror', 'without gore', 'not too dark', 'avoid boring'). "
+    "Judge by intent, not grammar — 'movies that aren't boring' is "
+    "a POSITIVE request for engaging movies, not a negative one. "
+    "Downweight phrasings ('not too violent', 'a bit less dark') "
+    "are negative — the user wants the trait reduced. "
+    "IMPORTANT: `parameters` always describes the target concept "
+    "directly, regardless of polarity. When polarity is 'negative', "
+    "do NOT negate the parameters — write them as you would for a "
+    "positive query about the same concept, and let this field "
+    "carry the negation. For 'no Tom Hanks', `parameters` "
+    "describes Tom Hanks and polarity is negative; never write "
+    "'not Tom Hanks' into `parameters`, never emit an anti-keyword "
+    "list, never invert the search. That would double-negate."
+)
 
 
-# Abstract base. Concrete subclasses (one per endpoint) live in the
-# per-endpoint translation modules (schemas/keyword_translation.py,
-# schemas/metadata_translation.py, etc.) and declare their own typed
-# `parameters` field pointing at the corresponding *QuerySpec. We
-# use concrete subclassing rather than pydantic generics because
-# OpenAI structured output emits cleaner, flatter JSON schemas that
-# way.
+# Abstract marker base. Concrete subclasses (one per endpoint) live
+# in the per-endpoint translation modules
+# (schemas/keyword_translation.py, schemas/metadata_translation.py,
+# etc.) and declare the three LLM-facing fields directly —
+# `match_mode`, `parameters`, `polarity` in that order. The base
+# is intentionally empty of those fields: Pydantic v2 preserves
+# base-class field positions under inheritance even when subclasses
+# redeclare, so declaring them here would force the base order on
+# the LLM output. We use concrete subclassing rather than pydantic
+# generics because OpenAI structured output emits cleaner, flatter
+# JSON schemas that way, and the empty base still serves its load-
+# bearing purpose: the orchestrator routes preference specs by
+# isinstance-checking the concrete subclass
+# (HandlerResult.preference_specs below).
+#
+# Field ordering rationale: the LLM-facing order is
+# `match_mode → parameters → polarity`. Generating `polarity`
+# immediately before `parameters` risks the model pattern-matching
+# on the negative token and inverting the parameter content (the
+# "not Tom Hanks" double-negative failure). Placing `polarity` last
+# makes it a retrospective routing judgment over already-populated
+# parameters — same pattern as primary_vector in SemanticParameters.
+#
+# Subclasses are expected to declare all three fields;
+# __pydantic_init_subclass__ below enforces this so a future endpoint
+# cannot silently ship without them.
+
+# Module-private constant used by __pydantic_init_subclass__ below.
+# Kept at module scope (not on the class) because Pydantic treats
+# any underscore-prefixed class attribute as a ModelPrivateAttr,
+# which is not iterable at subclass-construction time.
+_REQUIRED_FIELD_ORDER: tuple[str, ...] = ("match_mode", "parameters", "polarity")
+
+
 class EndpointParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action_role: ActionRole = Field(
-        ...,
-        description=(
-            "How the finding affects results. Pick "
-            "'candidate_identification' for hard requirements — "
-            "phrasings like 'must', 'only', 'no X', 'without'. Movies "
-            "failing the condition leave the pool. Pick "
-            "'candidate_reranking' for soft preferences — 'ideally', "
-            "'preferably', 'not too', 'a bit', 'would like'. Matching "
-            "movies get boosted or demoted; non-matching still qualify. "
-            "For neutral phrasing: pick identification for categorical "
-            "attributes (genre, franchise, named entity, award) and "
-            "reranking for gradient attributes (tone, mood, quality, "
-            "pacing). When unsure, prefer reranking — identification is "
-            "the stronger commitment."
-        ),
-    )
-    polarity: Polarity = Field(
-        ...,
-        description=(
-            "'positive' when the user wants this characteristic "
-            "('horror movies', 'starring Tom Hanks', 'with a happy "
-            "ending', 'acclaimed'). 'negative' when the user wants to "
-            "avoid it ('no horror', 'without gore', 'not too dark', "
-            "'avoid boring'). Judge by intent, not grammar — 'movies "
-            "that aren't boring' is a POSITIVE request for engaging "
-            "movies, not a negative one. Gradient-downweight phrasings "
-            "('not too violent', 'a bit less dark') are negative — "
-            "the user wants the trait reduced."
-        ),
-    )
+    # Use Pydantic's own post-field-construction hook rather than
+    # Python's __init_subclass__. The latter fires before Pydantic
+    # has populated cls.model_fields, making it impossible to check
+    # field presence or order.
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        missing = [f for f in _REQUIRED_FIELD_ORDER if f not in cls.model_fields]
+        if missing:
+            raise TypeError(
+                f"{cls.__name__} must declare fields {_REQUIRED_FIELD_ORDER} "
+                f"(missing: {missing}). See schemas/endpoint_parameters.py "
+                "for the ordering rationale."
+            )
+        # Order check: the LLM-facing JSON schema follows model_fields
+        # declaration order. Any deviation from the canonical order
+        # reintroduces the double-negative risk.
+        declared_order = [f for f in cls.model_fields if f in _REQUIRED_FIELD_ORDER]
+        if declared_order != list(_REQUIRED_FIELD_ORDER):
+            raise TypeError(
+                f"{cls.__name__} declares fields in order {declared_order}; "
+                f"expected {list(_REQUIRED_FIELD_ORDER)}. Reorder the class "
+                "body so `match_mode` precedes `parameters` precedes "
+                "`polarity`."
+            )
 
 
 # The four return buckets, filled by the orchestrator after fanning

@@ -185,12 +185,30 @@ useful output.
 | **Failure-mode guardrails** | Bucket | Explicit guidance for ambiguous fragments, fragments that fit no endpoint, and self-contradictory fragments. The desired behavior is an honest no-fire with reasoning, not hallucinated parameters. |
 
 Combined with the four plug-in pieces, a handler's system prompt is
-built from eight composable chunks: four variable (per category /
-per bucket) and four supporting (three shared across all handlers,
-one tuned per bucket). Few-shot examples and guardrails live at the
+built from eight composable chunks plus a ninth piece in the user
+message: four variable (per category / per bucket), four supporting
+(three shared across all handlers, one tuned per bucket), and the
+per-call input payload. Few-shot examples and guardrails live at the
 bucket level because the decision shape is bucket-level; category
 specifics enter only through additional objective notes and the
 endpoint context already in scope.
+
+### Input spec stays descriptive, not prescriptive
+
+The input spec describes *what the handler receives* — field shapes,
+what values mean, invariants that hold. It does **not** tell the
+handler how to decide anything. Decision rules live on the output
+schema's `Field(description=...)` (e.g. how to pick `polarity`) and
+in the bucket's core objective (e.g. when to fire at all). Keeping
+the spec descriptive prevents drift between two sources of the same
+guidance.
+
+The spec's load-bearing job is flagging non-obvious facts about the
+payload — most importantly, that `parent_fragment.modifiers` are
+bound to the fragment, which means a polarity or role marker on the
+fragment applies to the `target_entry` atom the handler is
+responsible for. That scoping is the thing most likely to be misread
+from the XML structure alone.
 
 ### Why the supporting pieces aren't "just prose"
 
@@ -205,7 +223,7 @@ single-sourced with the rest of the codebase it mirrors.
 
 ## Prompt assembly
 
-Finalized decisions about how the eight chunks above are assembled
+Finalized decisions about how the nine chunks above are assembled
 into an actual system prompt + user message pair. Grounded in
 2026 prompt-engineering consensus for small / instruction-tuned
 models (GPT-5.4 mini, Gemini 3 Lite, etc.).
@@ -220,24 +238,30 @@ System prompt, top to bottom:
    sections reference.
 3. **Endpoint context** — the handler's "tools," one static chunk
    per endpoint in its set.
-4. **Core objective + additional objective notes** — the bucket
+4. **Input spec** — describes the per-call payload the handler will
+   receive (field shapes, what values mean, invariants, modifier
+   scoping). Descriptive only; decision rules live elsewhere.
+5. **Core objective + additional objective notes** — the bucket
    instruction with category nuance (see blending below).
-5. **Failure-mode guardrails** — explicit no-fire guidance for
+6. **Failure-mode guardrails** — explicit no-fire guidance for
    ambiguous, unfit, or contradictory target entries.
-6. **Few-shot examples** — wrapped in `<example>` tags.
+7. **Few-shot examples** — wrapped in `<example>` tags.
 
 User message:
 
-7. **Input payload** — `raw_query`, `overall_query_intention_exploration`,
+8. **Input payload** — `raw_query`, `overall_query_intention_exploration`,
    `target_entry`, `parent_fragment`, `sibling_fragments`, serialized
    as XML.
 
 Rationale: role first primes mode; vocab before instruction resolves
 ambiguity of terms the instruction references; endpoints presented
-as "tools" before the objective so the objective can refer to them;
-constraints and examples late for recency weighting; input in the
-user message keeps per-call content freshest. Output schema does
-*not* appear in the prompt — it is enforced by Pydantic via
+as "tools" before the input spec so the spec can reference them;
+input spec sits immediately before the objective so the objective's
+references to `target_entry`, `parent_fragment`, etc. land against
+fresh definitions (recency matters for small models); constraints
+and examples late for recency weighting; input in the user message
+keeps per-call content freshest. Output schema does *not* appear in
+the prompt — it is enforced by Pydantic via
 `.chat.completions.parse()`.
 
 #### Finalized section table
@@ -254,11 +278,12 @@ there is no bucket-level example bank.
 | 1 | Role | Shared |
 | 2 | Shared vocabulary | Shared |
 | 3 | Endpoint context | Per endpoint (assembled from the category's endpoint set) |
-| 4 | Core objective | Per bucket |
-| 5 | Additional objective notes | Per category |
-| 6 | Failure-mode guardrails | Per bucket |
-| 7 | Few-shot examples | Per category |
-| 8 | Input payload *(user message)* | Per call |
+| 4 | Input spec | Shared |
+| 5 | Core objective | Per bucket |
+| 6 | Additional objective notes | Per category |
+| 7 | Failure-mode guardrails | Per bucket |
+| 8 | Few-shot examples | Per category |
+| 9 | Input payload *(user message)* | Per call |
 
 ### Field-level semantics live on the Pydantic model, not in the prompt
 
@@ -303,7 +328,14 @@ Input payload is rendered as XML:
 <parent_fragment>
   <query_text>...</query_text>
   <description>...</description>
-  <modifiers>...</modifiers>
+  <modifiers>
+    <modifier>
+      <type>ROLE_MARKER</type>
+      <original_text>directed by</original_text>
+      <effect>binds the attribute to director role</effect>
+    </modifier>
+    ...
+  </modifiers>
 </parent_fragment>
 <sibling_fragments>
   <fragment>...</fragment>
@@ -311,12 +343,29 @@ Input payload is rendered as XML:
 </sibling_fragments>
 ```
 
-Rationale: (a) works cleanly across providers (Anthropic actively
-recommends XML structuring; OpenAI and Gemini parse it reliably);
-(b) hierarchical Step 2 data nests naturally; (c) small models show
-measurably better parse reliability on tagged content vs. dense
-JSON because tag boundaries are attention-salient; (d) the handler
-can cite sections literally in its visible reasoning
+Modifiers use **fully-tagged nested elements**, not attributes or
+flat prose. Rationale: small models parse element text more
+reliably than attribute values, escaping is uniform across all
+leaves (text nodes only), and the shape stays extensible if
+`Modifier` gains fields later. `<fit_quality>` carries the enum
+`.value` (`clean` / `partial`) so it matches the shared-vocabulary
+block literally.
+
+Text escaping: all user-derived leaves (`raw_query`,
+`overall_query_intention_exploration`, fragment `query_text` /
+`description`, modifier `original_text` / `effect`, the target
+entry's `captured_meaning` / `atomic_rewrite`) are passed through
+`xml.sax.saxutils.escape` before insertion. CDATA is deliberately
+avoided — structured-output models parse escaped text more
+reliably.
+
+Rationale for the overall XML choice: (a) works cleanly across
+providers (Anthropic actively recommends XML structuring; OpenAI
+and Gemini parse it reliably); (b) hierarchical Step 2 data nests
+naturally; (c) small models show measurably better parse
+reliability on tagged content vs. dense JSON because tag
+boundaries are attention-salient; (d) the handler can cite
+sections literally in its visible reasoning
 (`per <target_entry>…`); (e) escaping is trivial.
 
 ### Shared vocabulary delivery
@@ -1053,23 +1102,67 @@ search_v2/stage_3/category_handlers/
     shared/
       role.md
       shared_vocabulary.md
+      input_spec.md
     buckets/
       {single,mutex,tiered,combo}_objective.md
       {single,mutex,tiered,combo}_guardrails.md
     endpoints/
-      {keyword,metadata,semantic,award,franchise,studio,entity}.md
+      # one file per EndpointRoute value (lowercased route value).
+      # TRENDING is absent — it has no LLM codepath.
+      {entity,studio,metadata,awards,franchise_structure,keyword,semantic}.md
     categories/
-      cat_NN_<slug>/
-        notes.md          # additional objective notes (§5)
-        examples.md       # few-shot examples (§7) — always per
-                          # category, never per bucket
+      additional_objective_notes/
+        <category_enum_lower>.md  # one per CategoryName except
+                                  # TRENDING (no LLM handler).
+                                  # Filename is CategoryName.name.lower()
+                                  # — e.g. CREDIT_TITLE → credit_title.md.
+      few_shot_examples/
+        <category_enum_lower>.md  # same naming convention; always
+                                  # per category, never per bucket.
 ```
+
+**File-naming convention.** All dynamically-looked-up prompt chunks
+are named so the enum value maps directly to the filename with a
+single transform:
+
+- Endpoint chunks: `{EndpointRoute.value}.md` (the route values are
+  already lowercase snake_case).
+- Per-category chunks: `{CategoryName.name.lower()}.md` under each
+  category chunk-type subdirectory (`additional_objective_notes/`
+  and `few_shot_examples/`). The enum **name** is used, not the
+  enum **value**, because values contain spaces, slashes, and plus
+  signs that aren't filesystem-safe.
+
+No intermediate mapping table is needed — the filename is
+mechanically derivable from the enum.
 
 `CategoryName.bucket` and `CategoryName.endpoints` already serve
 the "category registry" role on the enum itself — no separate
 registry module. The existing `*_query_execution.py` files in
 `stage_3/` remain the endpoint-execution layer that `handler.py`
 calls once the LLM has emitted parameters.
+
+### Prompt builder behavior
+
+- **Two entry points:** `build_system_prompt(category)` and
+  `build_user_message(raw_query, overall_query_intention_exploration,
+  target_entry, parent_fragment, sibling_fragments)`. System prompt
+  is a pure function of the category; user message is a pure
+  function of the per-call payload. Keeping them split lets the
+  caller cache the system prompt per category (same category, many
+  coverage_evidence atoms in one query).
+- **Import-time loading.** All markdown chunks are read once at
+  module import and cached in module-level dicts, mirroring the
+  eager-build pattern in `schema_factories.py`. Missing shared /
+  bucket / endpoint files fail loudly at import. Missing
+  per-category files fail at `build_system_prompt()` call time
+  with a clear message naming the expected path — this keeps
+  import from breaking while categories are being authored.
+- **TRENDING raises.** `build_system_prompt(CategoryName.TRENDING)`
+  raises `ValueError`. TRENDING has no LLM codepath and callers
+  are expected to dispatch it to the deterministic handler before
+  reaching the prompt builder; the explicit raise catches the
+  mistake if dispatch is forgotten.
 
 ---
 

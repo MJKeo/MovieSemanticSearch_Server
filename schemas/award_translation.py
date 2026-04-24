@@ -28,8 +28,18 @@
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from schemas.award_category_tags import CategoryTag
-from schemas.endpoint_parameters import EndpointParameters
-from schemas.enums import AwardCeremony, AwardOutcome, AwardScoringMode
+from schemas.endpoint_parameters import (
+    MATCH_MODE_DESCRIPTION,
+    POLARITY_DESCRIPTION,
+    EndpointParameters,
+)
+from schemas.enums import (
+    AwardCeremony,
+    AwardOutcome,
+    AwardScoringMode,
+    MatchMode,
+    Polarity,
+)
 
 
 # Year range sub-model. Single year: year_from == year_to.
@@ -123,9 +133,12 @@ class AwardQuerySpec(BaseModel):
     years: AwardYearFilter | None = None
 
 
-# Category-handler wrapper. Direction flows through action_role +
-# polarity on the wrapper.
+# Category-handler wrapper. Direction flows through match_mode +
+# polarity on the wrapper. Fields are declared in the order
+# match_mode → parameters → polarity so polarity is emitted last.
+# See endpoint_parameters.py for the rationale.
 class AwardEndpointParameters(EndpointParameters):
+    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
     parameters: AwardQuerySpec = Field(
         ...,
         description=(
@@ -135,6 +148,10 @@ class AwardEndpointParameters(EndpointParameters):
             "outcome, years). Leave a filter null when the requirement "
             "does not constrain that axis — null means 'no restriction,' "
             "not 'match everything.' Generic 'award-winning' with no "
-            "specifics is THRESHOLD / 3, all filters null."
+            "specifics is THRESHOLD / 3, all filters null. Describe the "
+            "target concept directly regardless of polarity — negation "
+            "is handled on the wrapper's polarity field, never inside "
+            "these parameters."
         ),
     )
+    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

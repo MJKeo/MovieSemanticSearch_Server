@@ -2,14 +2,14 @@
 #
 # One unified shape (SemanticEndpointParameters) covers both the
 # dealbreaker and preference paths. Which path runs is determined by
-# action_role on the enclosing EndpointParameters wrapper, not by a
+# match_mode on the enclosing EndpointParameters wrapper, not by a
 # schema-level split:
 #
-#   action_role == CANDIDATE_IDENTIFICATION (dealbreaker)
+#   match_mode == FILTER (dealbreaker)
 #       Use only the space_queries entry whose .space matches
 #       primary_vector. Ignore weight.
 #
-#   action_role == CANDIDATE_RERANKING (preference)
+#   match_mode == TRAIT (preference)
 #       Use all space_queries entries with their weights
 #       (central/supporting). Ignore primary_vector.
 #
@@ -45,7 +45,12 @@ from typing import Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
-from schemas.endpoint_parameters import EndpointParameters
+from schemas.endpoint_parameters import (
+    MATCH_MODE_DESCRIPTION,
+    POLARITY_DESCRIPTION,
+    EndpointParameters,
+)
+from schemas.enums import MatchMode, Polarity
 from schemas.semantic_bodies import (
     NarrativeTechniquesBody,
     PlotAnalysisBody,
@@ -128,8 +133,8 @@ _WEIGHT_DESC = (
     "not the core ask. A requirement can have multiple central spaces "
     "if two dimensions are equally load-bearing; don't artificially "
     "demote one to supporting just to pick a single central. Only "
-    "consulted in the preference (reranking) path — ignored when the "
-    "enclosing wrapper's action_role is candidate_identification."
+    "consulted in the preference (trait) path — ignored when the "
+    "enclosing wrapper's match_mode is filter."
 )
 
 _CONTENT_DESC = (
@@ -326,7 +331,11 @@ class SemanticParameters(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Fields are declared in the order match_mode → parameters →
+# polarity so polarity is emitted last. See endpoint_parameters.py
+# for the rationale.
 class SemanticEndpointParameters(EndpointParameters):
+    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
     parameters: SemanticParameters = Field(
         ...,
         description=(
@@ -337,6 +346,9 @@ class SemanticEndpointParameters(EndpointParameters):
             "as primary_vector. Do NOT collapse a multi-axis "
             "requirement into one entry just because the dealbreaker "
             "path will only consume one; populate honestly, collapse "
-            "only at the end."
+            "only at the end. Describe the target concept directly "
+            "regardless of polarity — negation is handled on the "
+            "wrapper's polarity field, never inside these parameters."
         ),
     )
+    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

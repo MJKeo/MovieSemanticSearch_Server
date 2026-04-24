@@ -18,7 +18,12 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr
 
-from schemas.endpoint_parameters import EndpointParameters
+from schemas.endpoint_parameters import (
+    MATCH_MODE_DESCRIPTION,
+    POLARITY_DESCRIPTION,
+    EndpointParameters,
+)
+from schemas.enums import MatchMode, Polarity
 from schemas.production_brands import ProductionBrand
 
 
@@ -76,9 +81,12 @@ class StudioQuerySpec(BaseModel):
     ) | None = Field(default=None)
 
 
-# Category-handler wrapper. Direction flows through action_role +
-# polarity on the wrapper.
+# Category-handler wrapper. Direction flows through match_mode +
+# polarity on the wrapper. Fields are declared in the order
+# match_mode → parameters → polarity so polarity is emitted last.
+# See endpoint_parameters.py for the rationale.
 class StudioEndpointParameters(EndpointParameters):
+    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
     parameters: StudioQuerySpec = Field(
         ...,
         description=(
@@ -88,6 +96,10 @@ class StudioEndpointParameters(EndpointParameters):
             "for sub-labels or long-tail studios not in the registry. "
             "Prefer brand when the query is at the parent-brand level; "
             "prefer freeform_names when the query names a specific "
-            "sub-label (e.g. 'Touchstone' → freeform, not Disney)."
+            "sub-label (e.g. 'Touchstone' → freeform, not Disney). "
+            "Describe the target concept directly regardless of "
+            "polarity — negation is handled on the wrapper's polarity "
+            "field, never inside these parameters."
         ),
     )
+    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

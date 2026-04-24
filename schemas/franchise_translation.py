@@ -44,11 +44,17 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
-from schemas.endpoint_parameters import EndpointParameters
+from schemas.endpoint_parameters import (
+    MATCH_MODE_DESCRIPTION,
+    POLARITY_DESCRIPTION,
+    EndpointParameters,
+)
 from schemas.enums import (
     FranchiseLaunchScope,
     FranchiseStructuralFlag,
     LineagePosition,
+    MatchMode,
+    Polarity,
 )
 
 
@@ -240,9 +246,12 @@ class FranchiseQuerySpec(BaseModel):
         return self
 
 
-# Category-handler wrapper. Direction flows through action_role +
-# polarity on the wrapper.
+# Category-handler wrapper. Direction flows through match_mode +
+# polarity on the wrapper. Fields are declared in the order
+# match_mode → parameters → polarity so polarity is emitted last.
+# See endpoint_parameters.py for the rationale.
 class FranchiseEndpointParameters(EndpointParameters):
+    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
     parameters: FranchiseQuerySpec = Field(
         ...,
         description=(
@@ -253,6 +262,10 @@ class FranchiseEndpointParameters(EndpointParameters):
             "axes are ANDed by execution — a requirement naming both a "
             "franchise AND a structural flag (e.g. 'Marvel spinoffs') "
             "must populate both. Leave unused axes null. At least one "
-            "axis must be populated."
+            "axis must be populated. Describe the target concept "
+            "directly regardless of polarity — negation is handled on "
+            "the wrapper's polarity field, never inside these "
+            "parameters."
         ),
     )
+    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

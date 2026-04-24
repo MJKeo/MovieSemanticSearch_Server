@@ -468,3 +468,222 @@ Follows the "Unified semantic schema" section of `search_improvement_planning/ca
 
 ### Testing Notes
 Module imports clean (`python -c "from search_v2.stage_3 import semantic_query_execution"`). `search_v2/stage_3/semantic_query_generation.py` is still broken against the new schema (imports `SemanticDealbreakerSpec` / `SemanticPreferenceSpec`) — that file needs its own rewrite aligned with the category-handler prompt-assembly design and is outside this change's scope. D1/D2/P1/P2 scoring math is byte-identical to before — the change is purely how the executor reads the input, not how it produces the output.
+
+## Reorder EndpointParameters fields to action_role → parameters → polarity
+Files: schemas/endpoint_parameters.py, schemas/entity_translation.py, schemas/keyword_translation.py, schemas/metadata_translation.py, schemas/semantic_translation.py, schemas/franchise_translation.py, schemas/award_translation.py, schemas/studio_translation.py
+
+### Intent
+Change the LLM-facing field order on every `EndpointParameters` subclass from `action_role → polarity → parameters` to `action_role → parameters → polarity`. Generating `polarity=negative` immediately before the `parameters` block was creating a plausible double-negative failure: small instruction-tuned models can pattern-match on the nearby "negative" token and invert the parameter content (e.g. "not Tom Hanks" instead of "Tom Hanks" with a negative polarity routing tag). Moving `polarity` to last reframes it as a retrospective routing judgment over already-populated parameters — same pattern the planning doc already uses for `primary_vector` inside `SemanticParameters`.
+
+### Key Decisions
+- **Pattern 1 (static redeclaration) over Pattern 2 (factory-built wrappers).** The user explicitly rejected a factory-based approach after weighing tradeoffs. Pattern 2 would have coupled class identity to a singleton-cache invariant that the orchestrator's `isinstance`-based preference routing depends on, and degraded IDE/static-analysis support. Pattern 1 costs a handful of redeclaration lines per subclass but keeps every wrapper statically inspectable.
+- **Pydantic v2 preserves base-class field positions under inheritance.** Initial implementation redeclared `action_role` and `polarity` on every subclass expecting this to move them to subclass declaration order — it does not; Pydantic appends new subclass fields after inherited ones regardless of redeclaration. Fix: strip `action_role` and `polarity` off the `EndpointParameters` base entirely. The base is now a pure marker (still load-bearing for the orchestrator's `isinstance` check on `HandlerResult.preference_specs`), and each subclass declares all three fields fresh in canonical order.
+- **Guardrail via `__pydantic_init_subclass__`.** Because the base no longer declares the three fields, a future endpoint could silently ship without them or in the wrong order and the JSON schema would not reveal the mistake until runtime. Added a subclass-construction hook that enforces both field presence and relative order (`action_role` before `parameters` before `polarity`). Not `__init_subclass__` — Pydantic populates `model_fields` after that hook runs, so the check has to use the Pydantic-specific hook.
+- **Shared description constants in `endpoint_parameters.py`.** `ACTION_ROLE_DESCRIPTION` and `POLARITY_DESCRIPTION` live at module scope so all seven wrappers import identical wording. Also rewrote the polarity description to include explicit routing-tag framing: "This field is a routing signal for the orchestrator, not a content modifier: `parameters` always describes the target concept directly…" plus a worked example ("no 'not Tom Hanks', no anti-keyword lists, no inverted searches"). Belt-and-suspenders for the ordering fix: if the ordering argument doesn't fully eliminate the risk, the description itself now reinforces it.
+- **Appended a "describe target directly" sentence to every subclass's `parameters` description.** Same risk, opposite direction: the `parameters` field's own description now tells the LLM not to encode negation inside it. Applied consistently across all seven endpoint wrappers.
+
+### Planning Context
+Conversation-driven refinement of the "EndpointParameters base class" section of `search_improvement_planning/category_handler_planning.md`. The planning doc enumerates the three fields but does not prescribe their order; this change establishes `action_role → parameters → polarity` as the canonical order with the double-negative rationale captured in `endpoint_parameters.py` comments.
+
+### Testing Notes
+Smoke-tested via `model.model_json_schema()["properties"]` for all seven wrappers (EntityEndpointParameters, KeywordEndpointParameters, MetadataEndpointParameters, SemanticEndpointParameters, FranchiseEndpointParameters, AwardEndpointParameters, StudioEndpointParameters) — all emit properties in the order `action_role, parameters, polarity`. Guardrail rejects both missing-field and wrong-order subclasses (verified with two synthetic broken subclasses). `get_output_schema(category)` in `search_v2/stage_3/category_handlers/schema_factories.py` still composes cleanly across all four buckets (single / mutex / tiered / combo). Existing `unit_tests/test_handler_output_schemas.py` was added this session for this contract but left untouched per the test-boundaries rule.
+
+## Rename ActionRole → MatchMode (values: filter | trait); rewrite descriptions in LLM-grounded language
+Files: schemas/enums.py, schemas/endpoint_parameters.py, schemas/entity_translation.py, schemas/keyword_translation.py, schemas/metadata_translation.py, schemas/semantic_translation.py, schemas/franchise_translation.py, schemas/award_translation.py, schemas/studio_translation.py, search_v2/stage_3/semantic_query_execution.py, search_v2/stage_3/category_handlers/schema_factories.py, search_v2/stage_3/category_handlers/handler_result.py, search_v2/stage_3/category_handlers/prompts/shared/shared_vocabulary.md, search_v2/stage_3/category_handlers/prompts/endpoints/semantic.md, search_v2/stage_4/dispatch.py
+
+### Intent
+Two separate but related concerns, done in one pass:
+
+1. **Rename the hard/soft classification enum and field** to terms the LLM can ground from the handler prompt alone. Prior names (`ActionRole`, `candidate_identification`, `candidate_reranking`) referenced system concepts — "candidate pool", "reranking" — that appear nowhere in the handler's visible context. The LLM either inferred meanings inconsistently or treated the tokens as inert, wasting attention.
+2. **Rewrite the `match_mode` and `polarity` field descriptions** to drop system-architecture vocabulary entirely. The handler prompt surfaces no knowledge of the orchestrator, candidate pools, inclusion_candidates, or subtract/downrank mechanics — so those terms were actively misleading for an LLM deciding between two enum values.
+
+### Key Decisions
+- **`match_mode: filter | trait` over alternatives.** Conversation iterated through `action_role: candidate_identification / candidate_reranking` (rejected — system-speak), `strictness: requirement / preference` (rejected — "requirement" collides with `requirement_aspects` reasoning field), `constraint / preference` (rejected — doesn't convey the binary-vs-descriptive asymmetry), before landing on `filter / trait`. `filter` names the binary yes/no pool-reduction role; `trait` names the descriptive attribute role. Both combine freely with either polarity (filter+positive includes; filter+negative excludes; trait+positive boosts; trait+negative demotes) — the rename explicitly removes the "filter means remove" misreading risk.
+- **Description rewrite principle: only use concepts the LLM can ground from the prompt it sees.** No "orchestrator", "candidate pool", "inclusion_candidates", "downrank", "already-decided pool", etc. Descriptions now speak in user-intent terms ("drops out entirely" / "still qualifies, just with a lower score") with concrete example quadrants ("must star Tom Hanks is filter+positive; no horror is filter+negative; preferably funny is trait+positive; not too violent is trait+negative") so the LLM has worked examples to pattern-match against.
+- **Polarity description keeps the no-double-negation paragraph but in LLM-grounded language.** Stripped "routing signal for the orchestrator" → replaced with direct instruction: "parameters always describes the target concept directly, regardless of polarity. When polarity is 'negative', do NOT negate the parameters." Worked example remains ("for 'no Tom Hanks', parameters describes Tom Hanks and polarity is negative").
+- **The separate `ActionRole` in `schemas/query_understanding.py` is untouched.** That enum (`INCLUSION / EXCLUSION / PREFERENCE`) is a different axis used by Stage 2B and survived under the same name. Distinct module, distinct semantics — not swept by this rename. Stage 4's `flow_detection.py` continues to import it.
+- **Shared vocabulary prompt updated; `input_spec.md` untouched.** `input_spec.md` never referenced the old enum, so no change. `shared_vocabulary.md` was rewritten to define `match_mode` with the filter/trait framing and an explicit orthogonality note ("filter does not mean remove"). `semantic.md` updated to replace "candidate-identification" / "candidate-reranking" phrasings with "filter-mode" / "trait-mode".
+- **Stage-4 `dispatch.py` rename.** The semantic executor's kwarg renamed from `action_role` → `match_mode` (no external callers yet beyond dispatch). Mapping at the stage-4 boundary now maps `item.role == "preference"` → `MatchMode.TRAIT`, else `MatchMode.FILTER`.
+
+### Planning Context
+Extends the "Unified semantic schema" / "EndpointParameters base class" sections of `search_improvement_planning/category_handler_planning.md`. The planning doc's discussion of `action_role` / `candidate_identification` / `candidate_reranking` is now stale vocabulary — the code and prompts have moved on. Not rewriting the planning doc in this pass (it's a decision record, not a spec); future planning-doc edits will adopt the new vocabulary as they land.
+
+### Testing Notes
+End-to-end verification: all 7 EndpointParameters subclasses still emit JSON-schema properties in the order `match_mode, parameters, polarity`, with enum values correctly `['filter', 'trait']`. Guardrail still fires for missing-field and wrong-order subclasses. `get_output_schema(category)` still composes cleanly across sampled categories in all four buckets. No remaining `ActionRole` / `action_role` / `candidate_identification` / `candidate_reranking` references in any touched code file. Pre-existing breakage in `search_v2/stage_3/semantic_query_generation.py` (still references removed `SemanticDealbreakerSpec` / `SemanticPreferenceSpec` from the earlier unified-schema work) is unchanged and out of scope. `unit_tests/test_handler_output_schemas.py` still has a comment-only reference to "action_role" — left untouched per the test-boundaries rule; will update when test rewrite is scheduled.
+
+## Authored shared / bucket / endpoint prompt chunks for category handlers
+Files: search_v2/stage_3/category_handlers/prompts/shared/{role,shared_vocabulary,input_spec}.md, search_v2/stage_3/category_handlers/prompts/buckets/{single,mutex,tiered,combo}_{objective,guardrails}.md, search_v2/stage_3/category_handlers/prompts/endpoints/{keyword,metadata,semantic,award,franchise,studio,entity}.md, search_improvement_planning/category_handler_planning.md
+
+### Intent
+First substantive authoring pass for the category-handler prompt chunks. Fills 3 of the 8 plug-in pieces (shared role/vocab/input-spec) plus all 8 bucket-keyed pieces (core objective + failure-mode guardrails for single/mutex/tiered/combo) plus all 7 per-endpoint context chunks. Category-specific `notes.md` + `examples.md` remain to be authored per category.
+
+### Key Decisions
+- **Endpoint chunk content split.** Everything that was task framing, input description, positive-presence invariant, output-field schema-order scaffolding, or worked I/O examples was pruned from the old `stage_3/*_query_generation.py` system prompts — those responsibilities now live in role.md / input_spec.md / `action_role`+`polarity` Field descriptions / bucket objectives / per-category `examples.md`. What's preserved in each endpoint chunk is endpoint-specific semantic knowledge: vocabulary (closed enums, taxonomies), capability boundaries (what this endpoint can/can't express), parameter-semantic rules (how user phrasings resolve to literal parameter values), canonicalization / tokenizer rules, disambiguation principles for near-collision options.
+- **Dynamic registry content via `{{PLACEHOLDER}}` markers.** Classification registry (keyword), tracked/free streaming services (metadata), ceremony mappings / award name surface forms / category tag taxonomy (award), brand registry (studio) stay single-sourced in the existing `render_*_for_prompt()` helpers. Endpoint markdown files use `{{CLASSIFICATION_REGISTRY}}` / `{{CEREMONY_MAPPINGS}}` / etc. — `prompt_builder.py` will substitute at build time. Avoids duplicating vocabulary between the old SYSTEM_PROMPT modules and the new chunks.
+- **Semantic chunk unified (no anchor).** The new `SemanticParameters` enum has 7 non-anchor spaces; `semantic.md` describes those 7 only. Both `match_mode=filter` (dealbreaker-style) and `match_mode=trait` (preference-style) share the same schema, so the chunk documents space selection, body-authoring principles, decomposition discipline, and `central`/`supporting` weight semantics once — not twice.
+- **Bucket-specific guardrails over generic.** Each of the 4 bucket failure-mode chunks covers 3 shared failure modes (ambiguous / out-of-scope / self-contradictory) plus bucket-specific pitfalls (tiered: bias tiebreaker discipline; combo: don't-skip-candidates + don't-fire-everything-just-because). The "correct no-fire emission" is named with the bucket's exact schema shape (`should_run_endpoint: false` vs `endpoint_to_run: "None"` vs per-endpoint breakdown with all false).
+- **No "don't reach for anchor" framing in semantic.md.** Early draft had a line warning the LLM off the anchor space; removed after user pointed out anchor isn't in the enum or input context — mentioning it only surfaces a concept the LLM wouldn't otherwise consider. Corollary to the existing "grounded vocabulary" rule: even concepts the LLM CAN ground shouldn't appear if they're outside its actual decision surface.
+- **Planning doc updates.** Added an "Input spec" chunk to the finalized section table (slot 4, between endpoint context and core objective), new "Input spec stays descriptive, not prescriptive" subsection explaining why decision rules live on Field descriptions and not in the spec. Chunk-ordering rationale updated.
+
+### Planning Context
+Follows the eight-chunk composition laid out in `search_improvement_planning/category_handler_planning.md` §"Full system-prompt composition". Shared + bucket + endpoint authored first because they depend only on the category registry on `CategoryName`; per-category `notes.md` and `examples.md` will be authored one category at a time as handlers start running.
+
+### Cross-verification against EndpointParameters subclasses
+Spot-checked each endpoint chunk against its `*EndpointParameters.parameters` subclass (keyword / metadata / semantic / award / franchise / studio / entity): every enum value, attribute, sub-object, and axis mentioned in the chunk exists on the schema; nothing extra is described that the schema doesn't accept. Verified `SemanticSpace` has exactly 7 non-anchor members after the earlier unification. MatchMode / Polarity terminology (filter / trait / positive / negative) used consistently.
+
+### Testing Notes
+No runtime wiring — `prompt_builder.py` is still a stub. Chunks are authored content only; the build-time substitution of `{{PLACEHOLDER}}` markers for registry content is next in that module.
+
+## Cat 20 (Plot events + narrative setting) handler prompt chunks
+Files: search_v2/stage_3/category_handlers/prompts/categories/additional_objective_notes/cat_20_plot_events.md, search_v2/stage_3/category_handlers/prompts/categories/few_shot_examples/cat_20_plot_events.md | Authored the per-category notes chunk and 5 few-shot examples for the Single/Semantic Cat 20 handler. Notes anchor the category on `plot_events` as the only space that carries raw synopsis prose at ingest, with `primary_vector: "plot_events"` fixed; draws boundaries against Cat 13 (filming vs. narrative location), Cat 10 (release era vs. story era), Cat 21 (themes vs. events), Cat 15 (pattern labels vs. concrete events), and Cat 22 (tone vs. events). Examples cover: concrete plot-event fire (heist/betrayal), narrative time+place fire (1940s Berlin), narrative-place-only fire (Tokyo), plus two no-fires (filmed-in-Tokyo → Cat 13; thematic-grief → Cat 21).
+
+## Cat 24 (Craft acclaim) handler prompt chunks
+Files: search_v2/stage_3/category_handlers/prompts/categories/additional_objective_notes/cat_24_craft_acclaim.md, search_v2/stage_3/category_handlers/prompts/categories/few_shot_examples/cat_24_craft_acclaim.md | Authored the per-category notes chunk and 5 few-shot examples for the Single/Semantic Cat 24 handler. Notes anchor reception.praised_qualities as always in scope with `primary_vector: "reception"` fixed, and describe when production (visual/technical craft) or narrative_techniques (dialogue/writing craft) spaces co-fire per axis. Boundaries drawn against Cat 1 (named director), Cat 29 (named below-the-line creator), Cat 25 (axis-less acclaim → metadata), and Cat 22 (viewer experience). Examples cover: visual acclaim (reception + production), musical acclaim (reception only), dialogue acclaim (reception + narrative_techniques), no-fire on named cinematographer (Deakins → Cat 29), no-fire on named director (Nolan → Cat 1).
+
+## Cat 21 (Kind of story / thematic archetype) handler prompt chunks
+Files: search_v2/stage_3/category_handlers/prompts/categories/additional_objective_notes/cat_21_kind_of_story.md, search_v2/stage_3/category_handlers/prompts/categories/few_shot_examples/cat_21_kind_of_story.md | Authored the per-category notes chunk and 6 few-shot examples for the Tiered Keyword/Semantic Cat 21 handler. Notes lead with the spectrum-escape mechanic unique to this category — gradient framings ("kind of", "leans", "touches of") bypass Keyword even when a registry member would match, because binary posting-list membership cannot rank graded intent. Boundaries drawn against Cat 7 (static type vs arc trajectory), Cat 15 (recognized story-pattern label vs abstract theme), and Cat 17 (audience framing vs story-pattern framing). Examples: clean keyword win on COMING_OF_AGE (binary coming-of-age), clean keyword win on SURVIVAL (binary man-vs-nature), spectrum escape on "kind of about grief" (semantic direct), spectrum escape on "leans redemptive" (semantic direct despite hypothetical tag), lower-tier win on forgiveness (no tag exists, binary → semantic), no-fire on "deep themes". Chose COMING_OF_AGE and SURVIVAL for the keyword-win examples because the registry has no REDEMPTION or FOUND_FAMILY tags — adjusted per the spec's "if the tag exists" caveat.
+
+## Prompt builder + chunk-file rename
+Files: search_v2/stage_3/category_handlers/prompt_builder.py, search_v2/stage_3/category_handlers/prompts/endpoints/{award.md→awards.md,franchise.md→franchise_structure.md}, search_v2/stage_3/category_handlers/prompts/categories/additional_objective_notes/cat_*_*.md → <category_lower>.md (31 files), search_v2/stage_3/category_handlers/prompts/categories/few_shot_examples/cat_*_*.md → <category_lower>.md (31 files), search_v2/stage_3/category_handlers/prompts/shared/input_spec.md, search_improvement_planning/category_handler_planning.md
+
+### Intent
+Implement the handler prompt builder and lock in file-naming
+conventions so the eight chunks can be looked up mechanically from
+`CategoryName.name.lower()` / `EndpointRoute.value` with no
+intermediate mapping table.
+
+### Key Decisions
+- **Two entry points: `build_system_prompt(category)` and
+  `build_user_message(raw_query, overall_query_intention_exploration,
+  target_entry, parent_fragment, sibling_fragments)`.** System prompt
+  is a pure function of the category (enabling per-category caching
+  by the caller across multiple coverage_evidence atoms in one
+  query); user message is a pure function of the per-call payload.
+- **Endpoint prompt files renamed to match `EndpointRoute.value`
+  exactly.** `award.md → awards.md` and `franchise.md →
+  franchise_structure.md`. `f"endpoints/{route.value}.md"` now works
+  uniformly.
+- **Per-category files renamed to `<CategoryName.name.lower()>.md`.**
+  Dropped the `cat_NN_` prefix so the lookup is `category.name.lower()`
+  with no NN→enum mapping. Used enum `.name` (UPPER_SNAKE) rather
+  than `.value` because values contain spaces/slashes that aren't
+  filesystem-safe. 31 files renamed in each of
+  `additional_objective_notes/` and `few_shot_examples/`.
+- **Import-time caching of shared / bucket / endpoint chunks;
+  call-time fallback for per-category chunks.** Missing shared /
+  bucket / endpoint files fail loudly at import (these are
+  invariants of the stack). Missing per-category files surface at
+  `build_system_prompt()` call time with a clear `FileNotFoundError`
+  naming the expected path — keeps import from breaking while
+  categories are being authored. All 31 non-TRENDING categories
+  built cleanly in the smoke test.
+- **`build_system_prompt(CategoryName.TRENDING)` raises `ValueError`.**
+  TRENDING has no LLM codepath; the explicit raise catches dispatch
+  mistakes that would otherwise funnel through the wrong branch.
+  Mirrors `schema_factories.get_output_schema`'s KeyError-for-TRENDING
+  convention.
+- **XML serialization uses fully-tagged nested modifier elements
+  (Option A).** Chosen over attributes or flat prose because small
+  models parse element text more reliably, escaping is uniform
+  across all leaves, and the shape extends cleanly if `Modifier`
+  gains fields.
+- **All user-derived leaf text escaped via `xml.sax.saxutils.escape`.**
+  CDATA explicitly avoided — structured-output models parse escaped
+  text more reliably. Empty `<modifiers>` / `<sibling_fragments>`
+  render as explicit empty tags so the slot is visible to the LLM.
+- **Enum leaves emit `.value`.** `fit_quality` → `clean` / `partial`
+  (matches shared vocabulary literals); `type` on modifiers →
+  `role_marker` / `polarity_modifier`. Updated
+  `prompts/shared/input_spec.md` to use lowercase modifier-type
+  literals (`polarity_modifier` / `role_marker`) so the spec text
+  matches what the builder actually emits — the alternative (switch
+  to `.name` for LanguageType only) would have introduced a one-off
+  rule inconsistent with the `fit_quality` decision.
+
+### Planning doc updates
+- Rewrote the category-handlers module-layout tree to reflect the
+  flat two-subdir-per-chunk-type structure on disk (the earlier
+  `cat_NN_<slug>/notes.md + examples.md` nested layout was never
+  implemented).
+- Documented the filename-derivation convention
+  (`CategoryName.name.lower()` for categories; `EndpointRoute.value`
+  for endpoints) with explicit rationale for using enum `.name` over
+  `.value`.
+- Added the modifier XML example and the text-escape rule to
+  §"Input serialization — XML tags".
+- New §"Prompt builder behavior" capturing the two-function
+  interface, import-time vs call-time loading, and TRENDING-raises.
+
+### Testing Notes
+- Import-time smoke: `import prompt_builder` succeeds; all shared /
+  bucket / endpoint chunks load; 31 non-TRENDING per-category chunks
+  load.
+- `build_system_prompt` tested for every category: 31/31 succeed,
+  TRENDING raises `ValueError` as designed. Largest assembled prompt
+  (SPECIFIC_SUBJECT, tiered) is ~46K chars — within provider limits
+  and comparable to the old per-endpoint SYSTEM_PROMPT sizes.
+- `build_user_message` smoke with `&`/`<`/`>` in user text confirms
+  escape pipeline; nested modifier XML renders in the expected
+  shape; empty siblings modifiers render as `<modifiers></modifiers>`.
+- No unit tests written per test-boundaries rule.
+
+## prompt_builder code-review follow-ups
+Files: search_v2/stage_3/category_handlers/prompt_builder.py
+- Memoized `build_system_prompt` with `@functools.cache` — output is deterministic per CategoryName, removes the per-caller caching burden the planning doc punted.
+- Sibling `<fragment>` children now indent 2 spaces inside `<sibling_fragments>` to match the rest of the XML (parent_fragment, target_entry, modifiers). `_serialize_fragment` takes an `indent` kwarg; parent uses `""`, siblings use `"  "`.
+- `build_system_prompt` now raises `ValueError` if the category's endpoint set resolves to zero LLM-wrapper endpoints. Impossible today (TRENDING raises first) but future-proofs against a later category that might slip past the dispatch guard.
+- `build_user_message` asserts `parent_fragment.coverage_evidence == []` and the same on every sibling. Makes dispatch bugs that forget to strip coverage_evidence a loud failure instead of a silently-bloated payload.
+
+### Testing Notes
+- Verified via smoke test: cache returns identical objects across repeat calls (`CacheInfo(hits=1, misses=1)`); empty-endpoint raise fires with a clear message naming the category + declared routes; coverage_evidence asserts fire for both parent and sibling misuse.
+- unit_tests/test_prompt_builder_system_prompt.py was authored in the same session and still passes the build surface (it only touches `build_system_prompt`, which is unchanged apart from the cache and the new empty-endpoint raise — both transparent to the 31 live categories).
+
+## prompt_builder: drop coverage_evidence-stripping precondition on build_user_message
+Files: search_v2/stage_3/category_handlers/prompt_builder.py | Removed the assertion that parent_fragment / sibling_fragments arrive with coverage_evidence=[]. The serializer only reads query_text, description, and modifiers, so forcing callers to strip the field served no purpose beyond making dispatch code awkward. Callers can now pass RequirementFragment objects straight through from Step 2; coverage_evidence is simply ignored. Planning doc §"Handler input data" description of "RequirementFragment without coverage_evidence" still holds — it describes what the handler *sees*, not a precondition on the caller.
+
+## Implicit expectations step scaffold
+Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py
+
+### Intent
+Add a new post-Step-2 LLM step that classifies every Step-2
+requirement fragment as explicit quality / explicit notability /
+other, then derives whether any implicit quality/notability gap
+remains for reranking to backfill.
+
+### Key Decisions
+- **Kept the Step 0-2 split.** Schema definitions live in
+  `schemas/implicit_expectations.py`; execution, prompt text, XML
+  user payload building, and CLI live in
+  `search_v2/implicit_expectations.py`.
+- **Derived booleans in code, not in the LLM output.**
+  `implicitly_expects_quality` / `implicitly_expects_notability` are
+  computed deterministically from the emitted signal list.
+- **One row per Step-2 requirement is enforced at runtime.** The
+  executor validates both row count and exact
+  `query_span == requirement.query_text` ordering so the step cannot
+  silently merge or drop fragments.
+- **Nullable strength stays narrow but load-bearing.**
+  `strength_of_implicit_expectations` is `strong` / `suppressed` /
+  `null`; `null` is forced when both explicit quality and explicit
+  notability are present. Result-model validation also rejects
+  `null` when an implicit gap still remains.
+- **Schema descriptions carry the output guidance.** Following the
+  newer Step 3 pattern, the LLM-facing explanation for output fields
+  lives in `Field(description=...)` strings rather than the system
+  prompt.
+- **XML payload mirrors the Stage 3 prompt-builder style.** The
+  module emits escaped nested tags for the raw query, overall Step-2
+  intention, modifiers, and full coverage-evidence entries so the
+  Gemini model receives the full fragment structure in a stable
+  shape.
+
+### Testing Notes
+- Ran `python3 -m py_compile schemas/implicit_expectations.py
+  search_v2/implicit_expectations.py` successfully.
+- No pytest or live query runs performed per test-boundaries rule.
+
+## Implicit expectations review follow-up: remove strength field
+Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py | Simplified the step after review: dropped `strength_of_implicit_expectations` from both the LLM output schema and the derived result model, removed the prompt section that asked the small model for a global suppression judgment, and kept the step focused on per-fragment explicit quality/notability classification only. Also tightened the quality examples so ambiguous "prestige" language no longer counts as explicit quality by default. Re-ran `python3 -m py_compile` on both files successfully.
+
+## Notebook harness for implicit expectations step
+Files: search_v2/test_search_v2.ipynb | Added a new bottom markdown/code cell pair that runs `run_step_2(query)`, feeds the result into `run_implicit_expectations(query, step_2_response)`, and prints the derived booleans, per-fragment explicit signals, token counts, and full JSON. Validated the notebook remains parseable by loading the `.ipynb` as JSON with Python.

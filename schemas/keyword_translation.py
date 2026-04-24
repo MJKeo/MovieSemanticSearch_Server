@@ -27,7 +27,12 @@
 
 from pydantic import BaseModel, ConfigDict, Field, constr
 
-from schemas.endpoint_parameters import EndpointParameters
+from schemas.endpoint_parameters import (
+    MATCH_MODE_DESCRIPTION,
+    POLARITY_DESCRIPTION,
+    EndpointParameters,
+)
+from schemas.enums import MatchMode, Polarity
 from schemas.unified_classification import UnifiedClassification
 
 
@@ -47,9 +52,13 @@ class KeywordQuerySpec(BaseModel):
 
 
 # Category-handler wrapper. Direction (inclusion vs exclusion vs
-# preference vs downrank) is supplied by action_role + polarity on
+# preference vs downrank) is supplied by match_mode + polarity on
 # the wrapper; KeywordQuerySpec itself stays direction-agnostic.
+# Fields are declared in the order match_mode → parameters →
+# polarity so polarity is emitted last. See endpoint_parameters.py
+# for the rationale.
 class KeywordEndpointParameters(EndpointParameters):
+    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
     parameters: KeywordQuerySpec = Field(
         ...,
         description=(
@@ -58,6 +67,10 @@ class KeywordEndpointParameters(EndpointParameters):
             "source-material type) whose concept definition most "
             "directly covers the requirement. One member per call — "
             "do NOT stack picks. If no member fits cleanly, pick the "
-            "closest partial match rather than forcing a bad fit."
+            "closest partial match rather than forcing a bad fit. "
+            "Describe the target concept directly regardless of "
+            "polarity — negation is handled on the wrapper's polarity "
+            "field, never inside these parameters."
         ),
     )
+    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)
