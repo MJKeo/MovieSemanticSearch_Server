@@ -261,6 +261,50 @@ behave differently (prompt injection + confidence-lowered phrasing).
 
 ---
 
+## Orchestration shapes
+
+Every category runs under one of four shapes, which govern how
+many endpoint queries can fire for that category on a given user
+request. The shapes fall into two groups: shapes that cap the
+category at a single query, and shapes that allow multiple.
+
+### At most one query fires
+
+**Single endpoint** — only one endpoint is ever applicable. No
+routing decision to make.
+Cats 1, 2, 3, 4, 5, 8, 9, 10, 13, 20, 22, 24, 27, 29, 30, 31.
+
+**Mutually exclusive** — two (or more) endpoints could each
+individually answer the question, but they answer *different
+versions* of it. The query-generation LLM picks whichever matches
+the user's framing and ignores the others. Firing both would mix
+answers to different questions rather than reinforce a single one.
+Cats 11 (canonical genre → Keyword; qualifier-laden genre →
+Semantic), 12 (tradition tag → Keyword; no tag → Metadata fallback).
+
+**Tiered** — an ordered preference list of endpoints. The LLM
+fires whichever is the first *genuine fit* for the user's phrasing.
+Earlier tiers are authoritative when they apply; later tiers exist
+as fallbacks for cases the earlier tiers can't cleanly express
+(typically spectrum-framed or long-tail asks outside the canonical
+vocabulary).
+Cats 6, 7, 14, 15, 16, 21, 26.
+
+### More than one query may fire
+
+**Combo** — multiple endpoints apply to the same request and each
+carries distinct, complementary signal that can't be collapsed
+into a single call. All applicable endpoints fire in parallel and
+their outputs populate the handler's return buckets. Combo is
+reserved for categories where forcing a single endpoint would drop
+real signal — either because no single endpoint's data shape fully
+covers the question, or because the question is inherently
+multi-faceted (e.g. seasonal intent spans proxy tags, watch context,
+and narrative setting at once).
+Cats 17, 18, 19, 23, 25, 28.
+
+---
+
 ## Where every data gap lands
 
 | Gap | Category | How handled |
