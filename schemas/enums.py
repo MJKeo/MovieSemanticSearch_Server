@@ -352,6 +352,345 @@ class QueryAmbiguityLevel(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Search V2 step 2 query categorization taxonomy.
+#
+# CategoryName is the canonical vocabulary the step-2 pre-pass LLM picks
+# from when grounding each captured_meaning of a query fragment against a
+# category. Each member carries a descriptive name (the string value
+# emitted to downstream code) and a concept-only description (attributes
+# contained, concepts covered, questions answered) that is injected into
+# the step-2 system prompt. Routing and mechanism detail is intentionally
+# absent — this enum is the LLM's view of the taxonomy, not the
+# dispatcher's.
+# ---------------------------------------------------------------------------
+class CategoryName(str, Enum):
+    description: str
+
+    def __new__(cls, value: str, description: str) -> "CategoryName":
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.description = description
+        return obj
+
+    CREDIT_TITLE = (
+        "Credit + title text",
+        (
+            "Named person credits — actor, director, writer, producer, "
+            "composer. Also substring matches on movie titles. Does NOT "
+            "cover below-the-line roles (cinematographer, editor, etc.); "
+            "those belong to Below-the-line creator."
+        ),
+    )
+    NAMED_CHARACTER = (
+        "Named character",
+        (
+            "Presence of a specific named character in the movie — "
+            "Batman, Wolverine, Harry Potter, James Bond, Hermione. "
+            "Must be a specific named persona. Character types and "
+            "patterns (lovable rogue, femme fatale) belong to Character "
+            "archetype, not here."
+        ),
+    )
+    STUDIO_BRAND = (
+        "Studio / brand",
+        (
+            "Production studios and curated production brands — Disney, "
+            "Pixar, A24, Studio Ghibli, Blumhouse, Marvel Studios, "
+            "Dreamworks. The entity that made the movie, not its "
+            "franchise or intellectual property."
+        ),
+    )
+    FRANCHISE_LINEAGE = (
+        "Franchise / universe lineage",
+        (
+            "Membership in a named franchise or shared universe, and "
+            "positioning within it — sequels, prequels, spinoffs, "
+            "reboots, remakes, mainline vs offshoot entries, crossovers, "
+            "'the original, not the remake'. About where a movie sits "
+            "inside a named series."
+        ),
+    )
+    ADAPTATION_SOURCE = (
+        "Adaptation source flag",
+        (
+            "Origin medium of the story as a yes/no flag — novel "
+            "adaptation, comic book adaptation, true story, video-game "
+            "adaptation, biography, remake (used as an adaptation flag "
+            "rather than franchise positioning). About WHAT the source "
+            "material's medium is, not which franchise."
+        ),
+    )
+    SPECIFIC_SUBJECT = (
+        "Specific subject / element / motif",
+        (
+            "A specific real-world subject being central (JFK, "
+            "Watergate, Titanic, Vietnam War, Princess Diana) or a "
+            "specific fictional element / motif (clowns, zombies, "
+            "sharks, robots, vampires). The thing is IN the story. "
+            "Distinct from Named character (a specific persona) and "
+            "Character archetype (a type pattern)."
+        ),
+    )
+    CHARACTER_ARCHETYPE = (
+        "Character archetype",
+        (
+            "Character TYPE patterns — lovable rogue, femme fatale, "
+            "anti-hero, underdog protagonist, reluctant hero, manic "
+            "pixie dream girl. Abstract type, not a specific named "
+            "person. Distinct from Kind of story (which is about the "
+            "character's arc trajectory, not static type)."
+        ),
+    )
+    AWARDS = (
+        "Award records",
+        (
+            "Formal award wins and nominations — Oscar-winning, "
+            "BAFTA-nominated, Palme d'Or, Golden Globe, Cannes. "
+            "Ceremony-specific filters and multi-win superlatives. "
+            "Structured recognition records."
+        ),
+    )
+    TRENDING = (
+        "Trending",
+        (
+            "Live 'right now' trending status — 'what's popular this "
+            "week', 'trending', 'what everyone's watching'. Requires a "
+            "current-cadence refresh signal, distinct from static "
+            "popularity."
+        ),
+    )
+    STRUCTURED_METADATA = (
+        "Structured metadata",
+        (
+            "Structured single-attribute filters on closed-schema "
+            "columns — release date / year / era, runtime, maturity "
+            "rating (as a rating, not a content-sensitivity axis), "
+            "audio language, streaming platform, production country "
+            "(legal/financial origin), budget scale, box-office bucket, "
+            "numeric reception score (as a standalone attribute)."
+        ),
+    )
+    TOP_LEVEL_GENRE = (
+        "Top-level genre",
+        (
+            "Broad genre buckets — horror, action, comedy, sci-fi, "
+            "drama, romance, animation, thriller, musical, western, "
+            "fantasy. The coarse top-level classification, not "
+            "sub-genres like 'body horror' or 'cozy mystery'."
+        ),
+    )
+    CULTURAL_TRADITION = (
+        "Cultural tradition / national cinema",
+        (
+            "Named cinema traditions — Bollywood, Korean cinema, Hong "
+            "Kong action, Italian neorealism, French New Wave, Nordic "
+            "noir, J-horror, Dogme 95. The tradition / movement. "
+            "Distinct from production country (legal origin) and "
+            "filming location (where shooting happened)."
+        ),
+    )
+    FILMING_LOCATION = (
+        "Filming location",
+        (
+            "Where a movie was physically shot — filmed in New "
+            "Zealand, shot on location in Iceland, Morocco shoots. "
+            "Literal production geography, not legal production "
+            "country and not the story's narrative setting."
+        ),
+    )
+    FORMAT_VISUAL = (
+        "Format + visual-format specifics",
+        (
+            "Format (documentary, short film, anime, mockumentary) and "
+            "visual-format specifics (black and white, 70mm, IMAX, "
+            "found footage, handheld, widescreen, single-take long "
+            "shot, stop-motion). About the form the movie takes, not "
+            "its genre."
+        ),
+    )
+    SUB_GENRE = (
+        "Sub-genre + story archetype",
+        (
+            "Sub-genre (body horror, cozy mystery, space opera, "
+            "neo-noir, slow-burn thriller, slasher, giallo) and story "
+            "archetype (revenge, underdog, post-apocalyptic, heist, "
+            "chase, survival, fish-out-of-water). More specific than "
+            "top-level genre; labels an identifiable story pattern."
+        ),
+    )
+    NARRATIVE_DEVICES = (
+        "Narrative devices + structural form + craft",
+        (
+            "Storytelling craft — plot twists, nonlinear timeline, "
+            "unreliable narrator, single-location, anthology, "
+            "ensemble, two-hander, POV mechanics, craft-level pacing "
+            "(slow burn, frenetic, methodical), dialogue style "
+            "('Sorkin-style', 'Tarantino-style'), character-vs-plot "
+            "focus. About HOW the story is told."
+        ),
+    )
+    TARGET_AUDIENCE = (
+        "Target audience",
+        (
+            "The audience being pitched to — family, teens, kids, "
+            "adults, 'watch with grandparents', 'for grown-ups'. About "
+            "who the movie is packaged for. Coming-of-age as a STORY "
+            "ARCHETYPE belongs to Kind of story; only the audience "
+            "framing lands here."
+        ),
+    )
+    SENSITIVE_CONTENT = (
+        "Sensitive content",
+        (
+            "Presence/absence and acceptable intensity of sensitive "
+            "content — violence, gore, nudity, strong language, sexual "
+            "content, drug use. Includes gradient phrasing ('not too "
+            "bloody', 'violent but not graphic') and hard inclusions / "
+            "exclusions ('no gore', 'with nudity')."
+        ),
+    )
+    SEASONAL_HOLIDAY = (
+        "Seasonal / holiday",
+        (
+            "Seasonal / holiday framing — Christmas, Halloween, "
+            "Thanksgiving, Fourth of July, summer-blockbuster. Covers "
+            "both 'movie for watching AT this season' and 'movie SET "
+            "at this season'."
+        ),
+    )
+    PLOT_EVENTS = (
+        "Plot events + narrative setting",
+        (
+            "Literal plot events ('heist that unravels when a member "
+            "betrays the crew', 'stranded on an island after a plane "
+            "crash'), narrative time setting ('set in 1940s Berlin', "
+            "'during the Cold War'), narrative place setting ('takes "
+            "place in Tokyo', 'in a small desert town'). Concrete "
+            "plot content and narrative time/place."
+        ),
+    )
+    KIND_OF_STORY = (
+        "Kind of story / thematic archetype",
+        (
+            "The thematic 'kind' of story — movies about grief, "
+            "redemption arcs, man-vs-nature, coming-of-age about "
+            "self-acceptance, stories of forgiveness, man-vs-self. "
+            "The overarching thematic concept or character trajectory, "
+            "not the literal plot events."
+        ),
+    )
+    VIEWER_EXPERIENCE = (
+        "Viewer experience / feel / tone",
+        (
+            "How the movie feels to watch — tonal aesthetic (dark, "
+            "whimsical, gritty, cozy, melancholic), cognitive demand "
+            "(mindless, cerebral), realism vs stylization, tension / "
+            "disturbance intensity, emotional palette. The "
+            "during-viewing experience."
+        ),
+    )
+    OCCASION_GOAL = (
+        "Occasion / self-experience goal / comfort-watch",
+        (
+            "Viewing occasion (date night, background watching, rainy "
+            "Sunday, watch with my brother, family night), "
+            "self-experience goals ('make me cry', 'cheer me up', "
+            "'challenge me', 'something mindless'), comfort-watch "
+            "('go-to movie', 'feel-better movie'), gateway / "
+            "entry-level ('good first anime', 'accessible arthouse')."
+        ),
+    )
+    CRAFT_ACCLAIM = (
+        "Craft acclaim",
+        (
+            "Acclaim for a specific craft axis — visually stunning, "
+            "killer cinematography, iconic score, great soundtrack, "
+            "quotable dialogue, technical marvel, beautifully shot, "
+            "naturalistic dialogue. Praise attached to a specific "
+            "production-craft dimension. Named creators behind the "
+            "craft belong to Credit + title text or Below-the-line "
+            "creator; this category is about the acclaim itself."
+        ),
+    )
+    RECEPTION_QUALITY = (
+        "Reception quality + superlative",
+        (
+            "Reception-quality judgments — cult, acclaimed, underrated, "
+            "divisive, overhyped, still-holds-up, era-defining, "
+            "canonical / 'classic' stature, cultural influence, cast "
+            "popularity ('stacked A-list cast'), quality superlatives "
+            "('best horror of the 80s', 'scariest movie ever', "
+            "'funniest'). The axis of the superlative ('of the 80s', "
+            "'horror') composes into other categories; this one owns "
+            "the superlative / stature framing."
+        ),
+    )
+    POST_VIEWING_RESONANCE = (
+        "Post-viewing resonance",
+        (
+            "How the movie lingers after watching — 'stays with you', "
+            "'haunting', 'gut-punch ending', 'forgettable', happy "
+            "ending, twist ending, ambiguous ending, downer ending. "
+            "Aftertaste and ending type. Distinct from Viewer "
+            "experience (during-viewing feel)."
+        ),
+    )
+    SCALE_SCOPE = (
+        "Scale / scope / holistic vibe",
+        (
+            "Scale (epic, intimate, sprawling, small and personal), "
+            "multi-axis vibe queries, and 'movies that feel like X' "
+            "when X is a vibe rather than a concrete reference. The "
+            "holistic identity-level framing."
+        ),
+    )
+    CURATED_CANON = (
+        "Curated canon / named list",
+        (
+            "Named curated-list membership — Criterion Collection, "
+            "AFI Top 100, Sight & Sound greatest-films lists, IMDb "
+            "Top 250, BFI, National Film Registry, '1001 Movies to "
+            "See Before You Die', film-school canon. A specific "
+            "recognized list, not a general 'acclaimed' judgment."
+        ),
+    )
+    BELOW_THE_LINE = (
+        "Below-the-line creator",
+        (
+            "Non-indexed creator roles — cinematographer, editor, "
+            "production designer, costume designer, visual-effects "
+            "supervisor. 'Roger Deakins movies', 'Thelma "
+            "Schoonmaker-edited', 'Sandy Powell costumes'. Distinct "
+            "from Credit + title text, which covers indexed roles "
+            "only (actor/director/writer/producer/composer)."
+        ),
+    )
+    SOURCE_MATERIAL_AUTHOR = (
+        "Source-material author",
+        (
+            "Authors of the source material a movie adapts — 'Stephen "
+            "King adaptations', 'Jane Austen movies', 'Tolkien "
+            "films', 'Philip K. Dick stories', 'Neil Gaiman works'. "
+            "The author of the original book / story / comic, who is "
+            "NOT a film credit and is NOT the subject depicted."
+        ),
+    )
+    INTERPRETATION_REQUIRED = (
+        "Interpretation-required",
+        (
+            "The captured meaning is real and load-bearing but does "
+            "not map cleanly to any structured category above. Use "
+            "this when a phrase clearly conveys intent yet no "
+            "concept-definition covers it. If even this does not "
+            "capture the meaning — i.e. the observation turned out to "
+            "be speculative or empty — use fit_quality='no_fit' with "
+            "Interpretation-required as a placeholder category; "
+            "downstream treats no_fit entries as discardable."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Search V2 query understanding (step 2).
 # ---------------------------------------------------------------------------
 

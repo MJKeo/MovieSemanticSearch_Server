@@ -807,7 +807,49 @@ search_v2/stage_2a.py (new PlanningSlot shape that 2B must consume),
 search_v2/test_stage_1_to_4.ipynb (cell 4B broken pending 2B rework),
 search_improvement_planning/steps_1_2_improving.md ("What We Learned From The Step 2A Rewrite" + "Working Hypothesis Going Forward").
 
+## Clean up dangling references to deleted search_v2/stage_2a.py and stage_2b.py
+**Context:** `search_v2/stage_2a.py`, `search_v2/stage_2b.py`, and
+`search_v2/prepass_explorations.py` were deleted in the session
+ending 2026-04-23 when the step-2 pre-pass categorization was
+finalized as `search_v2/step_2.py`. Four references survived the
+cleanup because they sat outside the session's touch-scope:
+1. `search_improvement_planning/debug_stage_2a.py` — imports
+   `search_v2.stage_2a` (BranchKind, run_stage_2a); will
+   `ImportError` on run.
+2. `search_improvement_planning/debug_feedback_queries.py` —
+   imports both `search_v2.stage_2a` and `search_v2.stage_2b`;
+   will also `ImportError` on run.
+3. `unit_tests/test_search_v2_stage_2.py` — uses `Step2AResponse`
+   and `Step2BResponse` (which still exist in
+   `schemas/query_understanding.py`, so this file may still
+   import successfully, but it tests deleted behavior).
+4. `Step2AResponse` / `Step2BResponse` / `PlanningSlot` /
+   `CompletedSlot` / `Step2BResponse` / `RetrievalAction` in
+   `schemas/query_understanding.py` — likely orphaned now that
+   their only production consumers are gone. Verify no other
+   stages import them before deleting.
+
+Also note: the earlier TODO "Rewrite Step 2B to consume new
+PlanningSlot shape from Step 2A" is STALE — the slot-partitioning
+/ per-slot action-planning architecture was replaced wholesale by
+the step-2 categorization pre-pass. Whether that functionality
+needs to be re-introduced at a later stage is a separate design
+question, not a rewrite of the old module.
+**When:** Before the next search pipeline dev session that would
+hit the broken debug scripts or the orphaned schemas.
+**See:** search_improvement_planning/debug_stage_2a.py,
+search_improvement_planning/debug_feedback_queries.py,
+unit_tests/test_search_v2_stage_2.py,
+schemas/query_understanding.py,
+DIFF_CONTEXT.md "Step 2 (Query Pre-pass / Categorization)
+migration and finalization"
+
 ## Update franchise tests for prefer_lineage + column split + dataclass return
 **Context:** Expanded scope on top of the pre-existing "Update franchise query-side tests" TODO. New things that will break or need coverage: (1) `FranchiseQuerySpec` gained a `prefer_lineage: bool` field with two validator coercions (no-name-axis → False, SPINOFF → False); (2) `fetch_franchise_movie_ids` now returns `tuple[set[int], set[int]]` (lineage, universe-only) instead of `set[int]`; (3) `write_franchise_data` / `ingest_franchise_data` return a `FranchiseEntryIds` dataclass instead of a 2-tuple / 3-tuple; (4) `upsert_movie_card` + `update_movie_card_franchise_ids` take `lineage_entry_ids` + `shared_universe_entry_ids` instead of `franchise_name_entry_ids`; (5) the new scoring logic in `execute_franchise_query` produces 1.0 / 0.75 / 1.0-fallback scores that tests asserting binary {0.0, 1.0} will need updating for.
 **When:** Dedicated test-updates phase — bundle with the other franchise test updates already tracked.
 **See:** DIFF_CONTEXT.md "Franchise prefer_lineage" entries, search_v2/stage_3/franchise_query_execution.py, db/postgres.py `fetch_franchise_movie_ids`, schemas/franchise_translation.py
+
+## Implement exact_title and similarity flow dispatch in orchestrator
+**Context:** `search_v2/steps_0_2_orchestrator.py` currently handles all three flows at the routing level (step 0 decides which fire, the orchestrator surfaces `exact_title_flow_executed` / `similarity_flow_executed` flags), but the two non-standard flows are no-op placeholders — only the standard flow actually runs step-2 work. The budget rule for standard-flow branches (`3 - count(firing non-standard flows)`) already accounts for these flows running; once the actual search pipelines land, wire them into `run_steps_0_to_2` in parallel with the step-2 branches and remove the `# TODO` comments.
+**When:** When the exact-title search and similarity search pipelines are built.
+**See:** search_v2/steps_0_2_orchestrator.py (exact_title_flow_executed / similarity_flow_executed, TODO comments), schemas/step_0_flow_routing.py
