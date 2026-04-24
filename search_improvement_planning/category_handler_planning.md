@@ -168,6 +168,486 @@ keeps each piece single-sourced:
 
 ---
 
+## Full system-prompt composition
+
+The four plug-in pieces above (endpoint context, output schema, core
+objective, additional objective notes) are the *variable* parts —
+what changes per category or per bucket. A complete handler system
+prompt also needs four supporting pieces that are either shared
+across all handlers or mechanically required for the LLM to produce
+useful output.
+
+| Piece | Keyed by | Purpose |
+|---|---|---|
+| **Input spec** | Shared | Describes what the handler receives on each call: the stage-2 fragment, the category label, and any upstream metadata already resolved (normalized entities, IDs, prior-stage decisions). Without this pinned down, each handler drifts in what it assumes is given vs. inferable. |
+| **Shared vocabulary block** | Shared | Single-sourced definitions of `action_role`, `polarity`, and `fit_quality`. Must be byte-identical across all four bucket prompts; loaded from one markdown file at build time. Does *not* reference return buckets or other bucket types — the handler doesn't need to know its bucket exists. |
+| **Few-shot examples** | Bucket + category | Calibration examples, especially for the no-fire case (`should_run_endpoint: false` / `endpoint_to_run: None`) and close-call tiered bias decisions. These are the failure modes where LLMs drift silently. |
+| **Failure-mode guardrails** | Bucket | Explicit guidance for ambiguous fragments, fragments that fit no endpoint, and self-contradictory fragments. The desired behavior is an honest no-fire with reasoning, not hallucinated parameters. |
+
+Combined with the four plug-in pieces, a handler's system prompt is
+built from eight composable chunks: four variable (per category /
+per bucket) and four supporting (three shared across all handlers,
+one tuned per bucket). Few-shot examples and guardrails live at the
+bucket level because the decision shape is bucket-level; category
+specifics enter only through additional objective notes and the
+endpoint context already in scope.
+
+### Why the supporting pieces aren't "just prose"
+
+The temptation is to fold input spec and shared vocabulary into the
+core-objective string. Don't. Those pieces update on a different
+cadence than the objective (vocabulary stabilizes; input spec
+changes when stage 2 changes; objectives change when decision
+framing changes) and factoring them separately keeps each chunk
+single-sourced with the rest of the codebase it mirrors.
+
+---
+
+## Prompt assembly
+
+Finalized decisions about how the eight chunks above are assembled
+into an actual system prompt + user message pair. Grounded in
+2026 prompt-engineering consensus for small / instruction-tuned
+models (GPT-5.4 mini, Gemini 3 Lite, etc.).
+
+### Chunk ordering
+
+System prompt, top to bottom:
+
+1. **Role** — 1–2 sentences framing the handler's identity.
+2. **Shared vocabulary** — terms (`action_role`, `polarity`,
+   `fit_quality`, `dealbreaker` vs. `preference`) that later
+   sections reference.
+3. **Endpoint context** — the handler's "tools," one static chunk
+   per endpoint in its set.
+4. **Core objective + additional objective notes** — the bucket
+   instruction with category nuance (see blending below).
+5. **Failure-mode guardrails** — explicit no-fire guidance for
+   ambiguous, unfit, or contradictory target entries.
+6. **Few-shot examples** — wrapped in `<example>` tags.
+
+User message:
+
+7. **Input payload** — `raw_query`, `overall_query_intention_exploration`,
+   `target_entry`, `parent_fragment`, `sibling_fragments`, serialized
+   as XML.
+
+Rationale: role first primes mode; vocab before instruction resolves
+ambiguity of terms the instruction references; endpoints presented
+as "tools" before the objective so the objective can refer to them;
+constraints and examples late for recency weighting; input in the
+user message keeps per-call content freshest. Output schema does
+*not* appear in the prompt — it is enforced by Pydantic via
+`.chat.completions.parse()`.
+
+### Field-level semantics live on the Pydantic model, not in the prompt
+
+Per-field guidance — what each output field represents, how the LLM
+should reason through reasoning fields like `requirement_aspects`,
+`performance_vs_bias_analysis`, and `overall_endpoint_fits` — lives
+as `Field(description=...)` on the Pydantic model. Pydantic
+serializes those descriptions into the JSON Schema passed to
+`.parse()`, and both OpenAI and Anthropic surface them to the model
+as inline per-field instructions.
+
+Why the schema is the right channel, not the prompt:
+
+- **Attention anchoring.** When the model emits `requirement_aspects`,
+  the description is co-located with the field — no need to recall
+  prompt instructions from elsewhere.
+- **Single source of truth.** Prompt-restated schemas drift from the
+  real Pydantic model as fields evolve. Descriptions on the model
+  can't drift from themselves.
+- **Token savings.** No duplication between prompt and schema.
+- **Industry convention.** OpenAI's structured-output guidance and
+  the Instructor library are both built around this pattern.
+
+Treat the Pydantic model as the *semantic* contract — field
+meanings, reasoning guidance, enum-value interpretation — and the
+prompt as the *procedural* contract (what task to do, in what
+order, with what inputs).
+
+### Input serialization — XML tags
+
+Input payload is rendered as XML:
+
+```
+<raw_query>...</raw_query>
+<overall_query_intention_exploration>...</overall_query_intention_exploration>
+<target_entry>
+  <captured_meaning>...</captured_meaning>
+  <category_name>...</category_name>
+  <fit_quality>...</fit_quality>
+  <atomic_rewrite>...</atomic_rewrite>
+</target_entry>
+<parent_fragment>
+  <query_text>...</query_text>
+  <description>...</description>
+  <modifiers>...</modifiers>
+</parent_fragment>
+<sibling_fragments>
+  <fragment>...</fragment>
+  ...
+</sibling_fragments>
+```
+
+Rationale: (a) works cleanly across providers (Anthropic actively
+recommends XML structuring; OpenAI and Gemini parse it reliably);
+(b) hierarchical Step 2 data nests naturally; (c) small models show
+measurably better parse reliability on tagged content vs. dense
+JSON because tag boundaries are attention-salient; (d) the handler
+can cite sections literally in its visible reasoning
+(`per <target_entry>…`); (e) escaping is trivial.
+
+### Shared vocabulary delivery
+
+Single-source the shared-vocabulary block in one markdown file
+(e.g. `handler_prompts/shared_vocabulary.md`) loaded verbatim at
+prompt-build time for every handler. Physical include beats
+hand-synced copies; drift risk is zero.
+
+Scope of the block: definitions of `action_role`
+(`candidate_identification` vs. `candidate_reranking`), `polarity`
+(`positive` vs. `negative`), and `fit_quality` (`clean` vs.
+`partial` — `no_fit` never reaches the handler).
+
+`fit_quality` defines an **incoming signal from Step 2**, not a
+criterion the handler computes. The vocab block should frame it as
+context the handler takes into consideration — not as gospel. The
+handler can still override Step 2's verdict if its own reasoning
+over the endpoints says otherwise.
+
+- `clean` → Step 2 judged this category a full cover for the atom.
+  Usually handle the atom fully, unless the handler's own analysis
+  suggests otherwise.
+- `partial` → Step 2 judged this a partial cover; another entry on
+  the same fragment covers the remainder. Guiding signal to scope
+  the response to your slice, but not a hard lockout.
+- `no_fit` → filtered out in code at dispatch time. No LLM call
+  fires for `no_fit` entries, so the handler never sees this value
+  and the vocab block does not need to guide its interpretation.
+
+How well specific *endpoints* fit the atom is a separate
+handler-internal judgment surfaced through the output schema's
+`requirement_aspects` / `endpoint_coverage` fields, not part of the
+shared vocab.
+
+The block does *not* mention the four return buckets or the other
+bucket types. The handler doesn't need to know its bucket exists —
+only its own objective. Cross-bucket awareness just adds distraction.
+
+### Endpoint-context chunks are static per endpoint
+
+One chunk per endpoint, plugged in verbatim for every category that
+reaches that endpoint. Endpoint capabilities (vocabulary, parameter
+shape, caveats) don't vary by category; category-specific nuance
+belongs in additional-objective-notes, never inside endpoint
+chunks. Single source prevents drift when endpoint vocabulary
+changes.
+
+### Role preamble for small models
+
+Keep it (1–2 sentences). Small instruction-tuned models (GPT-5.4
+mini, Gemini 3 Lite) benefit more than frontier models from
+explicit role framing because they infer less from task structure
+alone. Don't over-invest — the structured output schema does most
+of the heavy lifting — but the upside is cheap.
+
+### Few-shot example count + shape
+
+3–5 examples per handler, wrapped in `<example>` tags, with
+format-consistent input/output pairs matching the XML input
+schema and the bucket's Pydantic output schema exactly. Coverage
+requirements:
+
+- Every handler must include the **no-fire case**
+  (`should_run_endpoint: false` or `endpoint_to_run: "None"`). This
+  is the primary drift failure — LLMs default to fabricating
+  parameters when they should abstain.
+- Mutex / Tiered: include one example for each common
+  `endpoint_to_run` outcome, plus a "None" case.
+- Tiered: include one example where a lower-priority endpoint
+  clearly wins despite the bias (prevents the bias from hardening
+  into a lockout).
+- Combo: include a "some fire, some don't" case to exercise the
+  enumerated-breakdown shape.
+
+Authoring: hand-write for launch, then swap in captures from real
+runs as evaluation accrues them.
+
+### Additional objective notes: labeled section, not blended
+
+The core objective and additional objective notes are rendered as
+two adjacent labeled sections, not interpolated into a single
+paragraph.
+
+Blending mechanism (rejected as default): core-objective template
+holds a `{category_nuance}` placeholder and the category's notes
+are inlined mid-sentence at build time, producing one coherent
+paragraph. Tradeoff: reads more naturally to humans but
+(a) harder to diff when notes change and (b) small models benefit
+from explicit section boundaries, which give clearer attention
+anchors. Revisit blending only if evaluation shows the labeled
+form reads disjointed *to the model*.
+
+### Reasoning strategy — start structured, iterate
+
+Reasoning lives in the structured output (`requirement_aspects`,
+`performance_vs_bias_analysis` for Tiered, `overall_endpoint_fits`
+for Combo). No separate free-form scratch field for now. If the
+structured-only form proves too shallow in practice (LLM skipping
+depth when everything is constrained), add a pre-output reasoning
+field later.
+
+---
+
+## Handler input data
+
+Every category handler — regardless of bucket — receives the same
+input payload on every call. The dispatch unit is the
+`coverage_evidence` entry: one call per entry. The handler sees only
+*its* target entry — not sibling entries that belong to other
+categories — but does see the fragment that entry came from and the
+sibling fragments that give cross-fragment context.
+
+Schema source of truth: [schemas/step_2.py](../schemas/step_2.py).
+Five fields are passed on every handler call:
+
+### `raw_query` (str)
+
+The user's query exactly as submitted. Preserves word order,
+intonation, and typos that the structured Step 2 output flattens.
+Not part of `Step2Response` today — added at dispatch time.
+
+### `overall_query_intention_exploration` (str)
+
+Step 2's 2–4-sentence gloss of what the query as a whole is asking
+for, including overarching framing (occasion, audience, mood) that
+colors specific requirements. Gives the handler the top-level
+context its fragment sits inside.
+
+### `target_entry` (CoverageEvidence)
+
+The single `coverage_evidence` atom this handler is responsible for.
+Exactly one per call. Fields:
+
+- `captured_meaning` (str) — neutral one-sentence observation of the
+  atom, stated before committing to a category label.
+- `category_name` (`CategoryName` enum) — the category whose concept
+  definition covers the captured meaning. Full enum (31 categories)
+  defined in [query_categories.md](query_categories.md).
+- `fit_quality` (`FitQuality` enum) — Step 2's verdict on how well
+  this category covers the atom. Treat as context to weigh, not as
+  gospel — the handler can override if its own reasoning over the
+  endpoints diverges from Step 2. In practice the handler only ever
+  sees `clean` or `partial`:
+  - `clean` — Step 2 judged this a full cover. Usually handle the
+    atom fully unless the handler's analysis suggests otherwise.
+  - `partial` — Step 2 judged this a partial cover; another entry
+    on the same fragment covers the rest. Guiding signal to scope
+    the response to your slice, not a hard constraint.
+  - `no_fit` — **filtered out in code at dispatch time**. No LLM
+    call is made for `no_fit` entries; they are removed from the
+    handler pool before any handler runs. Listed here for schema
+    completeness only.
+- `atomic_rewrite` (str) — the captured meaning expressed as a
+  category-grounded request, preserving specifics from the original
+  query (no generalization: `brother` must not become `sibling`,
+  `1990s` must not become `older`).
+
+### `parent_fragment` (RequirementFragment *without* coverage_evidence)
+
+The fragment that produced `target_entry`. Carries `query_text`,
+`description`, and `modifiers` but not the full `coverage_evidence`
+list — the target entry is already broken out above, and any sibling
+entries on this fragment belong to other handlers.
+
+`modifiers` is the load-bearing field here: polarity and role
+markers bound to the fragment drive the handler's `polarity` /
+`action_role` decision. Each modifier has:
+
+- `original_text` (str) — verbatim span.
+- `effect` (str) — terse note on how the modifier shifts
+  interpretation.
+- `type` (`LanguageType` enum) — one of:
+  - `POLARITY_MODIFIER` — flips or modulates sign/strength (`not`,
+    `not too`, `without`, `preferably`, `ideally`).
+  - `ROLE_MARKER` — binds the attribute to a role or dimension
+    (`starring`, `directed by`, `about`, `set in`, `based on`).
+
+### `sibling_fragments` (List[RequirementFragment *without* coverage_evidence])
+
+Every other fragment in the query, with its `coverage_evidence` list
+stripped. Gives the handler cross-fragment context (what else the
+query asks for, ruled-out readings, other attributes in scope)
+without leaking category-level atoms that are the business of other
+handlers.
+
+### Why `coverage_evidence` is scoped to the target only
+
+Passing the full `coverage_evidence` list would invite the handler
+to reason about atoms it isn't responsible for and emit decisions
+that cross category lines. The dispatch unit is one entry per call
+— the payload should reflect that. Sibling fragments still pass
+through (their `query_text` / `description` / `modifiers` carry
+cross-fragment signal) but without their category-level expansions.
+
+### What is *not* in the input (for now)
+
+No focus pointer. The handler is told, via its system prompt's
+endpoint-context chunks, which category it is responsible for; the
+`target_entry` field is pre-selected by dispatch so there is no
+matching step on the handler's end. Dispatch routes on
+`target_entry.category_name` (an enum), and per-category logic can
+live on the enum class itself.
+
+---
+
+## Handler LLM output schema per bucket
+
+The schema the category-handler LLM produces. Distinct from — and
+upstream of — the handler-return contract below; this is what the
+LLM emits, which the handler then translates into the four return
+buckets.
+
+Two classification fields appear inside `endpoint_parameters` for
+every bucket that emits one:
+
+- **`action_role`** — `candidate_identification` (the query drives
+  which movies enter or leave the pool) or `candidate_reranking`
+  (the query nudges scores up or down on an already-established
+  pool; i.e. a preference).
+- **`polarity`** — `positive` or `negative`. For
+  `candidate_identification` this distinguishes inclusion from
+  exclusion; for `candidate_reranking` it distinguishes adding from
+  subtracting score.
+
+These two fields map onto the four return buckets mechanically — see
+the return-contract section below.
+
+### Single endpoint
+
+- **`requirement_aspects`** — list of discrete sub-requirements
+  extracted from the fragment. Each has:
+  - `aspect_description` — what the user is asking for.
+  - `relation_to_endpoint` — capabilities of this endpoint that may
+    be able to handle this aspect.
+  - `coverage_gaps` — parts of this aspect the endpoint can't fully
+    cover, or null.
+- **`should_run_endpoint`** — whether the endpoint covers the
+  requirement adequately enough to warrant executing a search.
+- **`endpoint_parameters`** — endpoint-specific parameter shape
+  (same format as the current `stage_3/` query-generation files),
+  with `action_role` and `polarity` included as first-class fields
+  inside this object rather than appended afterward. Left null when
+  `should_run_endpoint` is false.
+
+### Mutually exclusive
+
+- **`requirement_aspects`** — list. Each has:
+  - `aspect_description`
+  - `endpoint_coverage` — how each candidate endpoint could cover
+    this aspect.
+  - `best_endpoint` — which endpoint best covers this aspect and
+    why (brief).
+  - `best_endpoint_gaps` — parts this endpoint can't fully cover,
+    or null.
+- **`endpoint_to_run`** — enum over the category's candidate
+  endpoints, plus `None` when the gaps indicate nothing covers the
+  requirement well.
+- **`endpoint_parameters`** — same shape as Single endpoint
+  (discriminated on `endpoint_to_run`). Left null when
+  `endpoint_to_run == None`.
+
+### Tiered
+
+- **`requirement_aspects`** — same shape as Mutually exclusive.
+- **`performance_vs_bias_analysis`** — short reasoning field that
+  looks at each endpoint's fit and identifies whether there's a
+  clear winner, or — if it's a close call — how the priority order
+  breaks the tie.
+- **`endpoint_to_run`** — same shape as Mutually exclusive.
+- **`endpoint_parameters`** — same shape as Mutually exclusive.
+
+### Combo
+
+- **`requirement_aspects`** — list. Each has:
+  - `aspect_description`
+  - `endpoint_coverage` — how each candidate endpoint could cover
+    this aspect.
+- **`overall_endpoint_fits`** — bigger-picture reasoning: which
+  endpoints fit, why, and how they interact to produce the best
+  combined result.
+- **`per_endpoint_breakdown`** — **not** a freeform list. Every
+  candidate endpoint in the category is addressed explicitly. Each
+  entry has:
+  - `should_run_endpoint` — boolean.
+  - `endpoint_parameters` — same shape as previous buckets. Left
+    null when `should_run_endpoint` is false.
+
+The enumerated (non-freeform) shape is deliberate: it forces an
+explicit decision per endpoint rather than allowing the LLM to
+quietly omit one, which is the failure mode when every endpoint is
+independently optional.
+
+### Building output schemas dynamically
+
+The four bucket schemas above should not be hand-written per
+category. They're assembled programmatically from (a) the category's
+bucket and (b) its endpoint set, using Pydantic's `create_model()`
+with `Literal` and discriminated `Union` types.
+
+**Prerequisites**
+
+1. **Canonical per-endpoint param models** — every endpoint already
+   has (or needs) a single Pydantic model describing its parameter
+   shape. These are the atomic building blocks the factories
+   compose.
+2. **Shared base class for `action_role` + `polarity`** — both
+   fields live on a base class that every endpoint param model
+   inherits from, guaranteeing they appear inside every
+   `endpoint_parameters` without per-endpoint reimplementation.
+3. **Category registry** — maps `category_name → (bucket_type,
+   endpoint_set)`. The factory looks up both, picks the bucket
+   builder, and returns a typed Pydantic class ready to feed into
+   `.chat.completions.parse()`.
+
+**One factory per bucket**
+
+- `build_single_schema(endpoint)` — slots the endpoint's param model
+  directly into `endpoint_parameters`.
+- `build_mutex_schema(endpoints)` — `endpoint_to_run` becomes a
+  `Literal` over `endpoint_names + ["None"]`; `endpoint_parameters`
+  becomes a discriminated `Union` over the endpoint param models.
+- `build_tiered_schema(endpoints)` — identical to mutex plus a
+  single extra field (`performance_vs_bias_analysis: str`).
+- `build_combo_schema(endpoints)` — each endpoint becomes a *named
+  field* on the `per_endpoint_breakdown` sub-model (not a list
+  entry), wrapping an `{should_run_endpoint, endpoint_parameters}`
+  decision. This is the clearest win: the enumerated-not-freeform
+  invariant is enforced by the type system instead of by
+  prose-pleading in the prompt.
+
+A top-level `build_handler_output_schema(category)` dispatches on
+bucket.
+
+**Watch-outs**
+
+- **OpenAI structured-output JSON Schema constraints.** Discriminated
+  unions require the discriminator field present in every variant;
+  deeply nested `anyOf` and large schemas can hit size limits.
+  Smoke-test the largest Combo category (3+ endpoints) against the
+  API before committing.
+- **Combo field keys must be valid Python identifiers.** Endpoint
+  names used as named fields on the breakdown sub-model need to be
+  sanitized once in the category registry — not at factory call
+  time.
+- **Cache factory output.** Each category's schema is deterministic
+  given its bucket and endpoint set. Build once at process start
+  and cache by category name; don't rebuild per request.
+
+---
+
 ## Handler return contract
 
 Every category handler returns the same four buckets:
@@ -185,6 +665,51 @@ Not every handler emits all four. Cat 10 (structured metadata) emits
 ceilings alongside `inclusion_candidates` for family-friendly
 scoring. Most purely-semantic categories emit only
 `inclusion_candidates` and `preference_specs`.
+
+### From LLM output to return buckets
+
+The handler's LLM emits `action_role` + `polarity` inside every
+`endpoint_parameters` object it fills in. The handler code
+mechanically routes the resulting IDs/scores into one of the four
+buckets based on that 2×2:
+
+| `action_role` | `polarity` | → bucket |
+|---|---|---|
+| `candidate_identification` | `positive` | `inclusion_candidates` |
+| `candidate_identification` | `negative` | `exclusion_ids` (hard) |
+| `candidate_reranking` | `positive` | `preference_specs` (positive) |
+| `candidate_reranking` | `negative` | `downrank_candidates` (soft dealbreaker) |
+
+Only three of these four quadrants carry real load. A hypothetical
+fifth quadrant — hard *inclusion* with INTERSECT semantics — is not
+in the taxonomy today; see the Open Items note on
+`hard_inclusion_ids`.
+
+### Scoring conventions
+
+Orchestrator-level decisions that shape how handlers' emissions
+combine. These are *not* LLM-emitted.
+
+- **Binary firing.** The LLM either emits an entry (with
+  `action_role` + `polarity`) or it does not. No confidence score,
+  no magnitude, no weight hint from the LLM — those fields invite
+  fabrication. Weight assignment happens at the orchestrator layer
+  and is deterministic.
+- **Dealbreaker weighting.** Each firing dealbreaker
+  (`downrank_candidates` entry or negative-polarity
+  `preference_specs` entry) carries a weight in `[0.5, 1.0]`;
+  weights sum across all firing dealbreakers.
+- **Preference weighting.** All firing positive preferences share
+  up to `0.49` of total preference weight, distributed equally.
+  Keeps preferences from overriding identification-driven
+  inclusion.
+- **Inclusion scoring.** `inclusion_candidates` bring their own
+  endpoint-computed scores (already normalized to `[0, 1]`) and
+  contribute additively without separate weighting.
+
+The `0.5` / `0.49` split is deliberate: dealbreakers outrank
+preferences by construction, so in any conflict between them the
+dealbreaker wins.
 
 ---
 
@@ -313,6 +838,186 @@ Final rerank:
     ↓
 Top-N → fetch display metadata → return
 ```
+
+---
+
+## Pre-implementation setup
+
+Structural decisions finalized before writing handler code. Per-
+category content (wording of additional objective notes, few-shot
+examples, etc.) is a later step.
+
+### `HandlerResult` shape
+
+The 4 return buckets as concrete Python types:
+
+- `inclusion_candidates: dict[tmdb_id, score]` — map of movie ID to
+  score contribution.
+- `downrank_candidates: dict[tmdb_id, score]` — same shape; scores
+  contribute negatively in the final rerank.
+- `exclusion_ids: set[tmdb_id]` — no scores attached; pure set
+  subtraction at orchestrator consolidation time.
+- `preference_specs: list[EndpointParameters]` — the exact
+  `endpoint_parameters` objects emitted by the handler LLM (one
+  per deferred preference). The orchestrator routes each to the
+  correct endpoint later by inspecting which concrete
+  `EndpointParameters` subclass it is — no separate routing tag
+  needed.
+
+### `EndpointParameters` base class
+
+Every endpoint's parameter payload is wrapped in a common shape
+with three attributes:
+
+1. The nested parameters themselves (endpoint-specific sub-model).
+2. `action_role` (`candidate_identification` or
+   `candidate_reranking`).
+3. `polarity` (`positive` or `negative`).
+
+Lives in `schemas/` (new module if no appropriate existing home).
+Every endpoint's pure-payload model becomes the nested-parameters
+field inside this wrapper. This is what the dynamic schema
+factories slot into the output schemas' `endpoint_parameters`
+field.
+
+### Endpoint param model refactor — gap + plan
+
+Per-endpoint Pydantic models exist today in
+`schemas/*_translation.py` (keyword, metadata, semantic, award,
+franchise, studio, entity) but not in a shape that plugs directly
+into the new wrapper:
+
+- **Reasoning fields are bundled with executable payload.** Models
+  mix per-LLM-call reasoning (`concept_analysis`,
+  `candidate_shortlist`, `constraint_phrases`, `value_intent_label`,
+  `signal_inventory`, etc.) into the same class as the executable
+  bits. **Decision: keep the reasoning fields in place for now.**
+  They're tangled enough that a clean extraction is its own
+  project, and it's worth confirming the new
+  `requirement_aspects`-style reasoning captures everything the
+  old fields did before we rip them out. Revisit once v2 handlers
+  are running and we can diff behavior.
+- **No common base for `action_role` + `polarity`.** The new
+  `EndpointParameters` wrapper introduces them for the first time.
+- **Semantic endpoint has two top-level shapes.**
+  `SemanticDealbreakerSpec` (7 spaces, single, no weight) and
+  `SemanticPreferenceSpec` (8 spaces, multi, weighted) are
+  structurally different today. Under the new `action_role` /
+  `polarity` model, dealbreaker-vs-preference is a runtime
+  decision, not a schema-level split. **Resolved by unifying into
+  one shape** — see "Unified semantic schema" below.
+
+### Unified semantic schema
+
+Single Pydantic model replaces `SemanticDealbreakerSpec` and
+`SemanticPreferenceSpec`. Anchor is skipped in both paths
+(dealbreaker and preference), so the space enum narrows to the 7
+non-anchor spaces for everyone.
+
+Shape:
+
+```
+SemanticSpaceEntry:
+  carries_qualifiers: str        # reasoning for this space
+  space: Literal[<one of 7 non-anchor spaces>]
+  weight: PreferenceSpaceWeight  # central / supporting
+  content: <space-specific body>
+
+SemanticEndpointParameters:
+  qualifier_inventory: str       # evidence inventory (reasoning)
+  space_queries: conlist[SemanticSpaceEntry, min=1, max=7]
+  primary_vector: DealbreakerSpace  # retrospective pick from space_queries
+```
+
+Field generation order is deliberate:
+`qualifier_inventory` → `space_queries` → `primary_vector`.
+Evidence inventory primes the list; the populated list anchors the
+retrospective pick.
+
+**Why `primary_vector` is placed last.** Generation order = field
+order in Pydantic structured output, and each field anchors on
+what came before. Placing `primary_vector` *before* `space_queries`
+would force the model to commit to "the most effective space" up
+front, then feel structurally pressured to keep the list short
+(why list three when you already picked one). That's exactly the
+bias we're trying to avoid — small models especially collapse
+under that framing. Placing `primary_vector` *after* `space_queries`
+reframes it as a retrospective summary judgment over an
+already-populated inventory: the list gets filled honestly, then
+the model picks the single most effective entry from among them.
+
+The `Field(description=...)` on `primary_vector` should reinforce
+the retrospective framing: "Among the spaces you populated in
+`space_queries` above, identify the single most effective one.
+Listing multiple genuinely-applicable spaces above is always
+correct when multiple apply — this field collapses to one only
+for execution paths that require a single target."
+
+**Downstream execution** (deterministic; no conditional validator
+on the LLM output):
+
+- `action_role == candidate_identification`: use only the
+  `space_queries` entry whose `space` matches `primary_vector`.
+  Ignore `weight`.
+- `action_role == candidate_reranking`: use all `space_queries`
+  entries with their weights. Ignore `primary_vector`.
+
+Symmetric shape, no runtime schema conditional. Each action role
+ignores one field: the dealbreaker path ignores `weight`, the
+preference path ignores `primary_vector`. Both fields are always
+populated so the schema surface is identical regardless of role.
+
+### Error handling
+
+Every handler call retries **once** on failure (timeout, invalid
+structured output, provider error). If the retry also fails, the
+handler does not fail the whole request — it returns empty results
+for inclusion/downrank/exclusion buckets, and preference specs
+from a failed handler contribute 0 to all items (i.e., don't show
+up in the preference rerank at all). Soft-fail by design: one
+broken handler should not tank the whole query.
+
+### Concurrency — fully parallel, no semaphore
+
+All handler calls for a given query run concurrently. No
+semaphore, no rate-limit guard at the dispatcher level. If
+provider rate limits become an issue we revisit, but at ~5–10
+coverage entries per query this is well within normal usage.
+
+### Caching — none for now
+
+Handler calls are not cached. If latency/cost becomes a concern
+after we have real numbers, revisit. The existing per-query
+`Step2Response` cache already absorbs the upstream work.
+
+### Model defaults
+
+Gemini by default (aligned with the other pipeline steps). Provider
+and model are passed as kwargs into the handler function, so
+switching to GPT-5.4 mini (or any other) is a call-site change,
+not a code change.
+
+### Dispatcher location
+
+The per-coverage-evidence dispatcher lives alongside the
+orchestrator that handles steps 0–2 routing, but in its own
+module — not merged into the existing orchestrator file. Exact
+file layout decided at implementation time.
+
+### Deferred to implementation time
+
+These don't block design commitment; pick them when we start
+writing code.
+
+- **Handler entry-point interface.** Concrete function signature
+  for the handler (async, input/output types) — shape it against
+  the first handler implementation.
+- **Category registry location and format.** Will live on the
+  `CategoryName` enum (e.g., as class-level methods returning
+  bucket + endpoint set).
+- **Prompt chunk file layout.** Exact paths for
+  `shared_vocabulary.md`, per-endpoint context chunks, and
+  per-bucket core-objective strings.
 
 ---
 

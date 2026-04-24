@@ -315,8 +315,12 @@ def _pathology_fallback(max_sim: float, *, reason: str) -> tuple[float, float]:
 
 
 def _threshold_flatten(sim: float, elbow: float, floor: float) -> float:
-    # Score transform for dealbreakers and semantic exclusions. Above
-    # elbow → full credit; below floor → zero; linear decay between.
+    # Dealbreaker-only score transform (preference paths use
+    # `_weighted_cosine_score` and never reach this function). Above
+    # elbow → full credit (1.0); below floor → 0.0 (dropped by the
+    # caller's `if s > 0.0` guard); strictly between → linear decay
+    # compressed into [0.5, 1.0] so every match sits at or above the
+    # stage-3 dealbreaker floor.
     if sim >= elbow:
         return 1.0
     if sim <= floor:
@@ -325,7 +329,11 @@ def _threshold_flatten(sim: float, elbow: float, floor: float) -> float:
     # but avoids a divide-by-zero if it ever does.
     if elbow <= floor:
         return 1.0 if sim >= elbow else 0.0
-    return (sim - floor) / (elbow - floor)
+    raw = (sim - floor) / (elbow - floor)
+    # raw ∈ (0, 1) strictly because of the equality guards above, so the
+    # compressed output lands in (0.5, 1.0) — no risk of colliding with
+    # the "dropped" 0.0 sentinel.
+    return 0.5 + 0.5 * raw
 
 
 # ---------------------------------------------------------------------------

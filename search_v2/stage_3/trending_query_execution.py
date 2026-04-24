@@ -28,7 +28,10 @@ from __future__ import annotations
 
 from db.redis import read_trending_scores
 from schemas.endpoint_result import EndpointResult
-from search_v2.stage_3.result_helpers import build_endpoint_result
+from search_v2.stage_3.result_helpers import (
+    build_endpoint_result,
+    compress_to_dealbreaker_floor,
+)
 
 
 async def execute_trending_query(
@@ -54,7 +57,11 @@ async def execute_trending_query(
             ID; omit to get the full trending set for dealbreakers.
 
     Returns:
-        EndpointResult with scores ∈ [0, 1] per movie.
+        EndpointResult with per-movie scores. Dealbreaker path compresses
+        Redis' raw [0, 1] trending scores into the [0.5, 1.0]
+        dealbreaker-eligible band via `compress_to_dealbreaker_floor`;
+        the preference path leaves the raw gradient intact so ranking
+        retains full resolution across trending and non-trending movies.
     """
     # Safety net: if an empty candidate pool reaches preference execution,
     # skip the Redis round-trip — the orchestrator should already be
@@ -64,4 +71,16 @@ async def execute_trending_query(
         return EndpointResult(scores=[])
 
     scores_by_movie = await read_trending_scores()
+
+    # Dealbreaker compression: every movie endorsed by the trending
+    # dealbreaker must contribute at least 0.5 so the candidate pool's
+    # downstream aggregation sees a uniform floor across endpoints.
+    # Rank 1 → ~1.0, rank n → 0.5; concave shape preserved (Redis values
+    # are the raw `1 - (rank/n)**0.5` from compute_trending_score).
+    if restrict_to_movie_ids is None:
+        scores_by_movie = {
+            mid: compress_to_dealbreaker_floor(s)
+            for mid, s in scores_by_movie.items()
+        }
+
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

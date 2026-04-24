@@ -48,6 +48,7 @@ from schemas.enums import (
     ReceptionMode,
 )
 from schemas.metadata_translation import MetadataTranslationOutput
+from search_v2.stage_3.result_helpers import compress_to_dealbreaker_floor
 
 log = logging.getLogger(__name__)
 
@@ -225,6 +226,13 @@ async def _handle_release_date(
     covered: set[int] = set()
     for movie_id, ts in rows:
         score = _score_release_date(ts, lo, hi, grace_days)
+        # Dealbreaker-floor compression: the SQL gate already restricts
+        # rows to the ±grace window, so every score here is ≥ 0.0 and
+        # gets lifted into [0.5, 1.0]. In-window → 1.0, grace-edge → 0.5.
+        # Preference path keeps the raw linear decay so ranking can
+        # distinguish "just outside the window" from "dead center".
+        if restrict is None:
+            score = compress_to_dealbreaker_floor(score)
         scored.append(ScoredCandidate(movie_id=int(movie_id), score=score))
         covered.add(int(movie_id))
 
@@ -289,6 +297,11 @@ async def _handle_runtime(
     covered: set[int] = set()
     for movie_id, runtime in rows:
         score = _score_runtime(runtime, lo, hi)
+        # Dealbreaker-floor compression: SQL gate enforces ±30-minute
+        # grace, so every row's raw score is ≥ 0.0. In-window → 1.0,
+        # ±30-min edge → 0.5. Preference path keeps the linear ramp.
+        if restrict is None:
+            score = compress_to_dealbreaker_floor(score)
         scored.append(ScoredCandidate(movie_id=int(movie_id), score=score))
         covered.add(int(movie_id))
 
@@ -572,7 +585,19 @@ async def _handle_country_of_origin(
     scored: list[ScoredCandidate] = []
     covered: set[int] = set()
     for movie_id, country_ids in rows:
-        score = _score_country_position(country_ids, include_set)
+        # Dealbreaker path uses a discrete-position rule (pos 1 → 1.0,
+        # pos 2 → 0.5, anything else → drop) so movies that only match
+        # at IMDB's tail positions don't dilute the candidate pool — the
+        # GIN `&&` gate above admits any overlap, but downstream we want
+        # only prominently-attributed matches to land in the
+        # dealbreaker band. Preference path keeps the exponential decay
+        # so ranking has a continuous gradient across all positions.
+        if restrict is None:
+            score = _score_country_position_dealbreaker(country_ids, include_set)
+            if score == 0.0:
+                continue
+        else:
+            score = _score_country_position(country_ids, include_set)
         scored.append(ScoredCandidate(movie_id=int(movie_id), score=score))
         covered.add(int(movie_id))
 
@@ -595,6 +620,22 @@ def _score_country_position(
     if best_position is None:
         return 0.0
     return math.exp(-(best_position - 1) / _COUNTRY_POSITION_TAU)
+
+
+def _score_country_position_dealbreaker(
+    movie_country_ids: list[int] | None, include_set: set[int],
+) -> float:
+    # Discrete-position dealbreaker scorer. Positions are 1-indexed to
+    # match `_score_country_position`'s enumerate(..., start=1).
+    #   pos 1 → 1.0, pos 2 → 0.5, pos ≥ 3 (or no match) → 0.0 (dropped).
+    # Only the first two array slots matter, so bail out of the scan as
+    # soon as we either find a match or exhaust them.
+    if not movie_country_ids:
+        return 0.0
+    for idx, cid in enumerate(movie_country_ids[:2], start=1):
+        if cid in include_set:
+            return 1.0 if idx == 1 else 0.5
+    return 0.0
 
 
 # ── Bucket-binary attributes (budget, box office) ─────────────────────────
@@ -696,6 +737,14 @@ async def _handle_popularity(
         score = _score_popularity(pop, mode)
         if restrict is None and score == 0.0:
             continue
+        # Dealbreaker-floor compression happens AFTER the zero-drop so
+        # non-matches don't get promoted to 0.5. The surviving [>0, 1]
+        # range is lifted into (0.5, 1.0] to sit in the
+        # dealbreaker-eligible band. Preference path keeps raw popularity
+        # so its ranking gradient spans the full [0, 1] with 0.0 for
+        # movies missing popularity_score.
+        if restrict is None:
+            score = compress_to_dealbreaker_floor(score)
         scored.append(ScoredCandidate(movie_id=int(movie_id), score=score))
         covered.add(int(movie_id))
 
@@ -746,6 +795,12 @@ async def _handle_reception(
         score = _score_reception(reception, mode)
         if restrict is None and score == 0.0:
             continue
+        # Dealbreaker-floor compression happens AFTER the zero-drop so
+        # "below the sliding cut-off" movies stay at 0.0 rather than
+        # getting promoted to 0.5. Preference path keeps the raw linear
+        # mapping for full ranking resolution.
+        if restrict is None:
+            score = compress_to_dealbreaker_floor(score)
         scored.append(ScoredCandidate(movie_id=int(movie_id), score=score))
         covered.add(int(movie_id))
 

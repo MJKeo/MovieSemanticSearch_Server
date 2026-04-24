@@ -10,6 +10,22 @@ from __future__ import annotations
 from schemas.endpoint_result import EndpointResult, ScoredCandidate
 
 
+def compress_to_dealbreaker_floor(raw: float) -> float:
+    """Affine-map a raw [0, 1] score into the dealbreaker band [0.5, 1.0].
+
+    Formula: ``0.5 + 0.5 * raw``. Every stage-3 endpoint that endorses a
+    movie via a dealbreaker must emit a score of at least 0.5 so the
+    candidate pool's downstream aggregation can rely on a uniform floor.
+    Endpoints compute their natural [0, 1] score, drop zeros where
+    appropriate, then pass the surviving values through this helper.
+
+    The outer clamp defends against floating-point drift at the
+    endpoints so ScoredCandidate range validation never rejects a row
+    that should have landed at exactly 0.5 or 1.0.
+    """
+    return max(0.5, min(1.0, 0.5 + 0.5 * raw))
+
+
 def build_endpoint_result(
     scores_by_movie: dict[int, float],
     restrict_movie_ids: set[int] | None,

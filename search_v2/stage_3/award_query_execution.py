@@ -62,7 +62,10 @@ from schemas.award_category_tags import RAZZIE_TAG_IDS, TAG_BY_SLUG
 from schemas.award_translation import AwardQuerySpec
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import AwardCeremony, AwardOutcome, AwardScoringMode
-from search_v2.stage_3.result_helpers import build_endpoint_result
+from search_v2.stage_3.result_helpers import (
+    build_endpoint_result,
+    compress_to_dealbreaker_floor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -391,11 +394,17 @@ async def execute_award_query(
     # Apply the scoring formula to every movie with a non-zero row count.
     # FLOOR with count < mark yields 0.0; those are dropped so the
     # dealbreaker path does not emit them and the preference path falls
-    # back to the 0.0 default in build_endpoint_result.
+    # back to the 0.0 default in build_endpoint_result. Dealbreaker-path
+    # survivors are lifted into the [0.5, 1.0] band so every
+    # award-endorsed match respects the uniform stage-3 floor; preference
+    # path keeps the raw ramp to preserve ranking gradient.
     scores_by_movie: dict[int, float] = {}
     for movie_id, row_count in counts.items():
-        score = _score_from_count(row_count, spec.scoring_mode, spec.scoring_mark)
-        if score > 0.0:
-            scores_by_movie[movie_id] = score
+        raw = _score_from_count(row_count, spec.scoring_mode, spec.scoring_mark)
+        if raw <= 0.0:
+            continue
+        if restrict_to_movie_ids is None:
+            raw = compress_to_dealbreaker_floor(raw)
+        scores_by_movie[movie_id] = raw
 
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

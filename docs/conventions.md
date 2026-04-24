@@ -268,6 +268,26 @@ to [0, 1] unless explicitly noted otherwise:
   (BUCKET_PRECISION=2), sort within buckets by normalized
   reception score. Reception normalization: [30.0, 90.0] → [0, 1],
   None → 0.5 (neutral).
+- **Dealbreaker-eligible floor ([0.5, 1.0] band)**: Every stage-3
+  endpoint (`search_v2/stage_3/`) that endorses a movie via a
+  dealbreaker must emit a score of at least 0.5. Non-matches are
+  either omitted entirely or score 0.0 — no endorsed match may land
+  between 0.0 and 0.5. Endpoints compute their natural [0, 1] score,
+  drop zeros where appropriate, then pass survivors through
+  `compress_to_dealbreaker_floor(raw) = 0.5 + 0.5 * raw` in
+  `search_v2/stage_3/result_helpers.py`. This invariant only applies
+  to the dealbreaker path (`restrict_to_movie_ids is None`);
+  preference-mode scoring keeps the raw [0, 1] gradient so ranking
+  retains full resolution across weak and strong matches. Binary
+  endpoints (keyword, studio, franchise brand-path) trivially satisfy
+  this by emitting 1.0 for matches; continuous endpoints
+  (trending, award THRESHOLD, semantic decay zone, and the
+  metadata attributes release_date / runtime / popularity / reception)
+  apply the explicit compression. Country-of-origin uses a discrete
+  position rule (pos 1 → 1.0, pos 2 → 0.5, else drop) rather than
+  compressing the exponential decay, since compressing a tail
+  position would dishonestly promote weak attributions into the
+  dealbreaker band.
 
 ## Embedding Conventions
 
