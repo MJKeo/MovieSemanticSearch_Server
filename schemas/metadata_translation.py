@@ -37,6 +37,7 @@ from implementation.classes.enums import (
 )
 from implementation.classes.languages import Language
 from implementation.classes.watch_providers import StreamingService
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import (
     BoxOfficeStatus,
     BudgetSize,
@@ -128,8 +129,9 @@ class MaturityRatingTranslation(BaseModel):
 
 
 # Streaming availability: services and/or access method.
-# Inclusion-only — no exclusion list. Exclusion dealbreakers from
-# step 2 are handled by step 4 scoring, not by this translation.
+# Inclusion-only — no exclusion list. Exclusion handling is supplied
+# by the enclosing EndpointParameters wrapper's polarity field;
+# execution code applies downrank/exclusion scoring downstream.
 # At least one of services or preferred_access_type must be populated.
 class StreamingTranslation(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
@@ -191,9 +193,9 @@ class CountryOfOriginTranslation(BaseModel):
 # guarantees one metadata item = one column query = one [0, 1] score.
 #
 # The dealbreaker/preference classification is not repeated here —
-# it flows through from step 2's Dealbreaker.direction and
-# Preference tags, carried by the orchestration layer alongside
-# this translation output.
+# it flows through action_role + polarity on the enclosing
+# EndpointParameters wrapper (MetadataEndpointParameters). This
+# class itself stays direction-agnostic.
 class MetadataTranslationOutput(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -222,3 +224,23 @@ class MetadataTranslationOutput(BaseModel):
     box_office: Optional[BoxOfficeStatus] = Field(default=None)
     popularity: Optional[PopularityMode] = Field(default=None)
     reception: Optional[ReceptionMode] = Field(default=None)
+
+
+# Category-handler wrapper. Direction flows through action_role +
+# polarity on the wrapper; MetadataTranslationOutput itself stays
+# direction-agnostic.
+class MetadataEndpointParameters(EndpointParameters):
+    parameters: MetadataTranslationOutput = Field(
+        ...,
+        description=(
+            "Metadata endpoint payload. Pick the single "
+            "target_attribute the requirement targets (release_date, "
+            "runtime, maturity_rating, streaming, audio_language, "
+            "country_of_origin, budget_scale, box_office, popularity, "
+            "or reception), then populate ONLY that attribute's sub-"
+            "object. Do NOT split a single requirement across two "
+            "attribute fields — if it seems to span two columns, the "
+            "requirement should have been decomposed upstream, not "
+            "merged here."
+        ),
+    )

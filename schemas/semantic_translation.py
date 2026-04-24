@@ -1,43 +1,52 @@
-# Step 3 semantic endpoint structured output models.
+# Category-handler semantic endpoint structured output model.
 #
-# Two top-level response_format classes cover the semantic endpoint:
+# One unified shape (SemanticEndpointParameters) covers both the
+# dealbreaker and preference paths. Which path runs is determined by
+# action_role on the enclosing EndpointParameters wrapper, not by a
+# schema-level split:
 #
-#   - SemanticDealbreakerSpec — one LLM call per semantic dealbreaker
-#     (also used for semantic exclusions). Covers scenarios D1 and D2
-#     from the finalized proposal. Dealbreakers select exactly one
-#     space from the 7 non-anchor spaces.
+#   action_role == CANDIDATE_IDENTIFICATION (dealbreaker)
+#       Use only the space_queries entry whose .space matches
+#       primary_vector. Ignore weight.
 #
-#   - SemanticPreferenceSpec — one LLM call per grouped semantic
-#     preference. Covers scenarios P1 and P2. Preferences select 1+
-#     spaces from all 8 (anchor allowed), each with a two-level
-#     categorical weight (central / supporting).
+#   action_role == CANDIDATE_RERANKING (preference)
+#       Use all space_queries entries with their weights
+#       (central/supporting). Ignore primary_vector.
 #
-# Both specs emit CONCRETE per-space objects (AnchorBody,
-# PlotEventsBody, etc.) rather than free-form query strings, so
-# query-side vectors embed into the same structured-label format as
-# document-side vectors. The discriminator pattern (Literal[space] on
-# each wrapper) forces the LLM to commit to a space before filling
-# the matching body shape — JSON schema validation rejects any
-# mismatch between declared space and body fields.
+# Anchor is skipped in both paths, so the space enum narrows to the
+# 7 non-anchor spaces for everyone. This replaces the two previous
+# top-level shapes (SemanticDealbreakerSpec + SemanticPreferenceSpec)
+# that differed on the anchor-space inclusion and whether a single
+# space was selected.
 #
-# See search_improvement_planning/finalized_search_proposal.md
-# (Endpoint 6: Semantic → Execution Scenarios) for the full design.
-# All LLM-facing guidance (how to pick a space, how to decompose a
-# grouped preference, central-vs-supporting rules) lives in the
-# system prompt authored in search_v2/stage_3/semantic_query_generation.py.
+# Field generation order inside SemanticParameters is deliberate:
+#   qualifier_inventory -> space_queries -> primary_vector
 #
-# No class-level docstrings or Field(description=...) — those
-# propagate into the JSON schema sent on every API call, per the
-# convention established in schemas/keyword_translation.py and
-# schemas/award_translation.py.
+# Evidence inventory primes the list; the populated list anchors the
+# retrospective single-space pick. Placing primary_vector BEFORE
+# space_queries would pressure small models to collapse the list to
+# one entry (why list three when you already picked one) — placing
+# it LAST reframes it as a retrospective summary judgment over an
+# already-populated inventory. See category_handler_planning.md
+# ("Unified semantic schema") for the full rationale.
+#
+# Field(description=...) IS used on every LLM-facing field in this
+# module — the category-handler design puts per-field semantics in
+# the schema (attention-anchored, single source of truth, token-
+# efficient) rather than restating them in the system prompt. This
+# is a deliberate departure from the older convention in
+# schemas/keyword_translation.py and schemas/award_translation.py
+# where guidance lived exclusively in the prompt.
+
+from __future__ import annotations
 
 from enum import Enum
 from typing import Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.semantic_bodies import (
-    AnchorBody,
     NarrativeTechniquesBody,
     PlotAnalysisBody,
     PlotEventsBody,
@@ -52,15 +61,13 @@ from schemas.semantic_bodies import (
 # Enums
 # ---------------------------------------------------------------------------
 #
-# DealbreakerSpace and VectorSpace share 7 members and differ only on
-# the presence of ANCHOR. They are declared separately rather than
-# subclassed because OpenAI structured output compiles each enum into
-# a concrete JSON-schema enum restriction; declaring the
-# 7-vs-8-member sets independently keeps the schema surface explicit
-# and avoids framework-specific inheritance gotchas.
+# Seven non-anchor spaces. Anchor (dense_anchor_vectors) is excluded
+# from every category-handler semantic call — handlers decompose the
+# requirement into per-space reasoning, and the anchor space doesn't
+# carry a single dimension a handler could argue for.
 
 
-class DealbreakerSpace(str, Enum):
+class SemanticSpace(str, Enum):
     PLOT_EVENTS = "plot_events"
     PLOT_ANALYSIS = "plot_analysis"
     VIEWER_EXPERIENCE = "viewer_experience"
@@ -70,231 +77,225 @@ class DealbreakerSpace(str, Enum):
     RECEPTION = "reception"
 
 
-class VectorSpace(str, Enum):
-    ANCHOR = "anchor"
-    PLOT_EVENTS = "plot_events"
-    PLOT_ANALYSIS = "plot_analysis"
-    VIEWER_EXPERIENCE = "viewer_experience"
-    WATCH_CONTEXT = "watch_context"
-    NARRATIVE_TECHNIQUES = "narrative_techniques"
-    PRODUCTION = "production"
-    RECEPTION = "reception"
-
-
-class PreferenceSpaceWeight(str, Enum):
+# Per-space weight in the preference path. Ignored in the
+# dealbreaker path. Kept as a two-level categorical so the LLM
+# commits to a qualitative judgment rather than a free-form score.
+class SpaceWeight(str, Enum):
     CENTRAL = "central"
     SUPPORTING = "supporting"
 
 
 # ---------------------------------------------------------------------------
-# Dealbreaker discriminator wrappers
-# ---------------------------------------------------------------------------
+# Space-entry discriminator wrappers.
 #
-# One wrapper per non-anchor space. Each pins a Literal[...] on the
-# matching DealbreakerSpace value and carries exactly one Body field.
-# The Literal + extra="forbid" forces every body to match exactly one
-# wrapper, so even without an explicit discriminator the union resolves
-# unambiguously. Mixing space="viewer_experience" with a
-# NarrativeTechniquesBody-shaped payload is a schema-level error.
+# One wrapper per space. The Literal[SemanticSpace.X] tag combined
+# with ConfigDict(extra="forbid") forces every body to match exactly
+# one branch — mixing a NarrativeTechniquesBody-shaped payload with
+# space="viewer_experience" is a schema-level error.
+#
+# Field order inside every entry: carries_qualifiers -> space ->
+# weight -> content. Reasoning first (per-space evidence),
+# discriminator next, weight next, body last.
+#
+# Field descriptions are shared module constants below so all 7 entry
+# classes stay in lockstep — drifting guidance across spaces would
+# bias the model toward whichever space had the freshest wording.
+# ---------------------------------------------------------------------------
 
 
-class PlotEventsDealbreaker(BaseModel):
+_CARRIES_QUALIFIERS_DESC = (
+    "Per-space reasoning: which specific signals from the requirement "
+    "THIS space is capturing. One short sentence grounded in concrete "
+    "phrases from the input — not a restatement of what the space is "
+    "for in general. When the same atom appears across two entries "
+    "(e.g. 'tense' in both plot_events and viewer_experience), name "
+    "the distinct contribution each space draws from it — plot_events "
+    "carries the stakes/setups, viewer_experience carries the felt "
+    "tension."
+)
+
+_SPACE_DESC = (
+    "The vector space this entry targets. Must match the Body type on "
+    "'content'. If a signal honestly spans two spaces, emit two "
+    "separate entries rather than picking the 'closest' one."
+)
+
+_WEIGHT_DESC = (
+    "'central' when this space carries the dominant signal for the "
+    "requirement — the single dimension where a non-match should hurt "
+    "the score the most. 'supporting' when this space captures a "
+    "secondary or compositional aspect that shapes the match but is "
+    "not the core ask. A requirement can have multiple central spaces "
+    "if two dimensions are equally load-bearing; don't artificially "
+    "demote one to supporting just to pick a single central. Only "
+    "consulted in the preference (reranking) path — ignored when the "
+    "enclosing wrapper's action_role is candidate_identification."
+)
+
+_CONTENT_DESC = (
+    "The structured payload for this space. Populate its fields with "
+    "the concrete labels (concept tags, descriptors, or free-form "
+    "phrases depending on the Body type) that ground the signals you "
+    "named in carries_qualifiers above. This is what gets embedded "
+    "and compared against movie-side vectors — include only labels "
+    "genuinely supported by the input, never speculative ones just "
+    "to fill the field."
+)
+
+
+class PlotEventsEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: Literal[DealbreakerSpace.PLOT_EVENTS]
-    content: PlotEventsBody
+    carries_qualifiers: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_CARRIES_QUALIFIERS_DESC
+    )
+    space: Literal[SemanticSpace.PLOT_EVENTS] = Field(..., description=_SPACE_DESC)
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
+    content: PlotEventsBody = Field(..., description=_CONTENT_DESC)
 
 
-class PlotAnalysisDealbreaker(BaseModel):
+class PlotAnalysisEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: Literal[DealbreakerSpace.PLOT_ANALYSIS]
-    content: PlotAnalysisBody
+    carries_qualifiers: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_CARRIES_QUALIFIERS_DESC
+    )
+    space: Literal[SemanticSpace.PLOT_ANALYSIS] = Field(..., description=_SPACE_DESC)
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
+    content: PlotAnalysisBody = Field(..., description=_CONTENT_DESC)
 
 
-class ViewerExperienceDealbreaker(BaseModel):
+class ViewerExperienceEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: Literal[DealbreakerSpace.VIEWER_EXPERIENCE]
-    content: ViewerExperienceBody
+    carries_qualifiers: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_CARRIES_QUALIFIERS_DESC
+    )
+    space: Literal[SemanticSpace.VIEWER_EXPERIENCE] = Field(..., description=_SPACE_DESC)
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
+    content: ViewerExperienceBody = Field(..., description=_CONTENT_DESC)
 
 
-class WatchContextDealbreaker(BaseModel):
+class WatchContextEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: Literal[DealbreakerSpace.WATCH_CONTEXT]
-    content: WatchContextBody
+    carries_qualifiers: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_CARRIES_QUALIFIERS_DESC
+    )
+    space: Literal[SemanticSpace.WATCH_CONTEXT] = Field(..., description=_SPACE_DESC)
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
+    content: WatchContextBody = Field(..., description=_CONTENT_DESC)
 
 
-class NarrativeTechniquesDealbreaker(BaseModel):
+class NarrativeTechniquesEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: Literal[DealbreakerSpace.NARRATIVE_TECHNIQUES]
-    content: NarrativeTechniquesBody
+    carries_qualifiers: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_CARRIES_QUALIFIERS_DESC
+    )
+    space: Literal[SemanticSpace.NARRATIVE_TECHNIQUES] = Field(..., description=_SPACE_DESC)
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
+    content: NarrativeTechniquesBody = Field(..., description=_CONTENT_DESC)
 
 
-class ProductionDealbreaker(BaseModel):
+class ProductionEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: Literal[DealbreakerSpace.PRODUCTION]
-    content: ProductionBody
+    carries_qualifiers: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_CARRIES_QUALIFIERS_DESC
+    )
+    space: Literal[SemanticSpace.PRODUCTION] = Field(..., description=_SPACE_DESC)
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
+    content: ProductionBody = Field(..., description=_CONTENT_DESC)
 
 
-class ReceptionDealbreaker(BaseModel):
+class ReceptionEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: Literal[DealbreakerSpace.RECEPTION]
-    content: ReceptionBody
+    carries_qualifiers: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_CARRIES_QUALIFIERS_DESC
+    )
+    space: Literal[SemanticSpace.RECEPTION] = Field(..., description=_SPACE_DESC)
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
+    content: ReceptionBody = Field(..., description=_CONTENT_DESC)
 
 
 # Plain Union (no Field(discriminator=...)) so Pydantic emits an
-# `anyOf` JSON-schema node rather than `oneOf`. OpenAI's Structured
-# Outputs rejects `oneOf`. The Literal[DealbreakerSpace.X] tag on each
-# wrapper combined with extra="forbid" still guarantees that any given
-# body matches exactly one branch, so `anyOf` is functionally
-# equivalent to `oneOf` here.
-DealbreakerBody = Union[
-    PlotEventsDealbreaker,
-    PlotAnalysisDealbreaker,
-    ViewerExperienceDealbreaker,
-    WatchContextDealbreaker,
-    NarrativeTechniquesDealbreaker,
-    ProductionDealbreaker,
-    ReceptionDealbreaker,
+# `anyOf` JSON-schema node rather than `oneOf`. OpenAI structured
+# outputs rejects `oneOf`. The Literal[SemanticSpace.X] tag on each
+# wrapper plus extra="forbid" still guarantees that any given body
+# matches exactly one branch, so `anyOf` is functionally equivalent.
+SemanticSpaceEntry = Union[
+    PlotEventsEntry,
+    PlotAnalysisEntry,
+    ViewerExperienceEntry,
+    WatchContextEntry,
+    NarrativeTechniquesEntry,
+    ProductionEntry,
+    ReceptionEntry,
 ]
 
 
 # ---------------------------------------------------------------------------
-# Top-level dealbreaker spec.
-# Field order: signal_inventory → target_fields_label → body.
-# (body is a discriminated union; its `.space` is the final commit,
-# `.content` holds the per-space Body.)
-# LLM-facing guidance on each reasoning field lives in
-# search_v2/stage_3/semantic_query_generation.py.
-# ---------------------------------------------------------------------------
-class SemanticDealbreakerSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    signal_inventory: constr(strip_whitespace=True, min_length=1)
-    target_fields_label: constr(strip_whitespace=True, min_length=1)
-    body: DealbreakerBody
-
-
-# ---------------------------------------------------------------------------
-# Preference discriminator wrappers.
-# One wrapper per space (anchor included).
-# Field order inside each entry: carries_qualifiers → space → weight → content.
-# LLM-facing guidance on carries_qualifiers lives in
-# search_v2/stage_3/semantic_query_generation.py.
+# Inner payload.
+#
+# Field order: qualifier_inventory -> space_queries -> primary_vector.
+# See the top-of-file comment for why primary_vector is last. The
+# _no_duplicate_spaces validator guards the Σ(w × cos) / Σw
+# downstream sum from double-counting a space; the
+# _primary_vector_in_space_queries validator enforces that the
+# retrospective pick references a space actually populated above.
 # ---------------------------------------------------------------------------
 
 
-class AnchorPreferenceEntry(BaseModel):
+class SemanticParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.ANCHOR]
-    weight: PreferenceSpaceWeight
-    content: AnchorBody
-
-
-class PlotEventsPreferenceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.PLOT_EVENTS]
-    weight: PreferenceSpaceWeight
-    content: PlotEventsBody
-
-
-class PlotAnalysisPreferenceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.PLOT_ANALYSIS]
-    weight: PreferenceSpaceWeight
-    content: PlotAnalysisBody
-
-
-class ViewerExperiencePreferenceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.VIEWER_EXPERIENCE]
-    weight: PreferenceSpaceWeight
-    content: ViewerExperienceBody
-
-
-class WatchContextPreferenceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.WATCH_CONTEXT]
-    weight: PreferenceSpaceWeight
-    content: WatchContextBody
-
-
-class NarrativeTechniquesPreferenceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.NARRATIVE_TECHNIQUES]
-    weight: PreferenceSpaceWeight
-    content: NarrativeTechniquesBody
-
-
-class ProductionPreferenceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.PRODUCTION]
-    weight: PreferenceSpaceWeight
-    content: ProductionBody
-
-
-class ReceptionPreferenceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    carries_qualifiers: constr(strip_whitespace=True, min_length=1)
-    space: Literal[VectorSpace.RECEPTION]
-    weight: PreferenceSpaceWeight
-    content: ReceptionBody
-
-
-# Plain Union for the same reason as DealbreakerBody above —
-# OpenAI Structured Outputs rejects `oneOf` (which
-# Field(discriminator=...) produces). The Literal[VectorSpace.X] tag
-# on each wrapper plus extra="forbid" keeps dispatch unambiguous.
-PreferenceSpaceEntry = Union[
-    AnchorPreferenceEntry,
-    PlotEventsPreferenceEntry,
-    PlotAnalysisPreferenceEntry,
-    ViewerExperiencePreferenceEntry,
-    WatchContextPreferenceEntry,
-    NarrativeTechniquesPreferenceEntry,
-    ProductionPreferenceEntry,
-    ReceptionPreferenceEntry,
-]
-
-
-# ---------------------------------------------------------------------------
-# Top-level preference spec.
-# Field order: qualifier_inventory → space_queries.
-# space_queries holds 1..8 per-space entries, at most one per space;
-# the _no_duplicate_spaces validator guards the Σ(w × cos) / Σw
-# downstream sum from double-counting a space.
-# LLM-facing guidance on each reasoning field lives in
-# search_v2/stage_3/semantic_query_generation.py.
-# ---------------------------------------------------------------------------
-class SemanticPreferenceSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    qualifier_inventory: constr(strip_whitespace=True, min_length=1)
-    space_queries: conlist(PreferenceSpaceEntry, min_length=1, max_length=8)
+    qualifier_inventory: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Inventory of the signals the requirement carries, written "
+            "BEFORE committing to any specific space. 1-3 short "
+            "sentences enumerating the distinguishable atoms in the "
+            "input (e.g. 'heist plot premise; tense pacing; morally "
+            "grey protagonist') without yet mapping them to vector "
+            "spaces. This primes honest decomposition — naming the "
+            "atoms first prevents collapsing a multi-axis requirement "
+            "into whichever space jumps to mind."
+        ),
+    )
+    space_queries: conlist(SemanticSpaceEntry, min_length=1, max_length=7) = Field(
+        ...,
+        description=(
+            "One entry per vector space whose definition GENUINELY "
+            "covers part of the requirement. Populate multiple entries "
+            "when multiple spaces apply — this is not a 'pick the best "
+            "one' field. A plot-driven preference with tonal "
+            "qualifiers should populate both plot_events AND "
+            "viewer_experience rather than squeezing tone into the "
+            "plot entry. Under-listing is the more common failure mode "
+            "than over-listing; err toward including a space when you "
+            "can name a specific atom it captures."
+        ),
+    )
+    primary_vector: SemanticSpace = Field(
+        ...,
+        description=(
+            "Among the spaces you populated in space_queries above, "
+            "identify the single most effective one — the space whose "
+            "match or non-match would most strongly determine whether "
+            "a movie satisfies the requirement. Listing multiple "
+            "genuinely-applicable spaces above is always correct when "
+            "multiple apply; this field collapses to one ONLY for "
+            "execution paths that require a single target (hard-gate "
+            "dealbreakers). Must be one of the spaces you already "
+            "populated above — do NOT introduce a new space here."
+        ),
+    )
 
     @model_validator(mode="after")
-    def _no_duplicate_spaces(self) -> "SemanticPreferenceSpec":
-        # VectorSpace is a str-Enum, so enum members and their string
+    def _no_duplicate_spaces(self) -> "SemanticParameters":
+        # SemanticSpace is a str-Enum, so members and their string
         # values compare equal and share a hash. One set works for both.
         seen: set = set()
         for entry in self.space_queries:
@@ -304,3 +305,38 @@ class SemanticPreferenceSpec(BaseModel):
                 )
             seen.add(entry.space)
         return self
+
+    @model_validator(mode="after")
+    def _primary_vector_in_space_queries(self) -> "SemanticParameters":
+        # primary_vector is a retrospective pick over space_queries —
+        # picking a space that wasn't populated above would leave the
+        # dealbreaker path without an entry to execute.
+        populated = {entry.space for entry in self.space_queries}
+        if self.primary_vector not in populated:
+            raise ValueError(
+                f"primary_vector {self.primary_vector} is not among "
+                f"populated space_queries {sorted(s.value for s in populated)}"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
+# EndpointParameters wrapper.
+# Same shape as every other endpoint's wrapper.
+# ---------------------------------------------------------------------------
+
+
+class SemanticEndpointParameters(EndpointParameters):
+    parameters: SemanticParameters = Field(
+        ...,
+        description=(
+            "Semantic endpoint payload. Emit one entry for EVERY "
+            "vector space that genuinely covers part of the "
+            "requirement — multi-space is the norm, not the exception. "
+            "Then retrospectively pick the single most effective space "
+            "as primary_vector. Do NOT collapse a multi-axis "
+            "requirement into one entry just because the dealbreaker "
+            "path will only consume one; populate honestly, collapse "
+            "only at the end."
+        ),
+    )

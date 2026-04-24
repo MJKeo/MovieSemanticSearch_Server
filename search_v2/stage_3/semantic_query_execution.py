@@ -1,42 +1,42 @@
 # Search V2 — Stage 3 Semantic Endpoint: Query Execution
 #
-# Takes the step-3 semantic LLM's SemanticDealbreakerSpec or
-# SemanticPreferenceSpec output, runs the corresponding vector search
-# against Qdrant, and returns the scored EndpointResult.
+# Takes the unified SemanticParameters payload (the inner parameters
+# of a SemanticEndpointParameters wrapper) plus the wrapper's
+# action_role, runs the corresponding vector search against Qdrant,
+# and returns the scored EndpointResult.
 #
-# Four scenarios from finalized_search_proposal.md §Endpoint 6:
+# Dispatch is a 2x2 across two orthogonal signals:
 #
-#   D1 — Dealbreaker scores a pre-built candidate pool. Caller passes
-#        restrict_to_movie_ids. One global top-N probe on the chosen
-#        space plus one filtered lookup for the candidate cosines. The
-#        probe calibrates elbow/floor; the filtered cosines feed the
-#        threshold-plus-flatten transform.
+#                              | restrict_to_movie_ids=None | restrict_to_movie_ids=set
+#   --------------------------+----------------------------+-----------------------------
+#   CANDIDATE_IDENTIFICATION  | D2 (generate candidates)   | D1 (score pool)
+#   CANDIDATE_RERANKING       | P2 (generate candidates)   | P1 (score pool)
 #
-#   D2 — Dealbreaker generates candidates. Caller passes
-#        restrict_to_movie_ids=None. A single top-N probe serves as
-#        both the calibration distribution and the candidate pool —
-#        same query, same space, same limit — so no second Qdrant
-#        call is needed. Each dealbreaker runs independently; no
-#        cross-scoring against other dealbreakers' candidate sets (that
-#        is the orchestrator's job).
+# CANDIDATE_IDENTIFICATION paths use ONLY the space_queries entry
+# whose .space matches primary_vector; weight is ignored. A single
+# space, embedded, probed, and threshold+flattened. D2 reuses the
+# corpus probe as both calibration sample and candidate pool; D1
+# adds a filtered HasId lookup for the supplied pool.
 #
-#   P1 — Preference scores a pre-built pool. Caller passes
-#        restrict_to_movie_ids. One filtered lookup per selected space;
-#        cosines combine via raw weighted-sum normalized by Σw.
+# CANDIDATE_RERANKING paths use ALL space_queries entries with their
+# SpaceWeight (central=2.0, supporting=1.0); primary_vector is
+# ignored. Per-space cosines combine via Σ(w × cos) / Σw. P2 unions
+# per-space top-N probes into a pool then fills missing cosines via
+# HasId; P1 runs one filtered lookup per space against the supplied
+# pool.
 #
-#   P2 — Preference generates candidates. Caller passes
-#        restrict_to_movie_ids=None. One top-N probe per selected
-#        space, union = pool. Missing per-space cosines on the union
-#        are filled via targeted HasId lookups before the weighted-sum.
+# Polarity is NOT an executor concern. Both positive and negative
+# findings produce the same EndpointResult shape; the orchestrator
+# routes the returned IDs/scores into inclusion_candidates vs
+# exclusion_ids (for identification) or preference_specs vs
+# downrank_candidates (for reranking). See
+# search_improvement_planning/category_handler_planning.md
+# ("From LLM output to return buckets").
 #
-# Semantic exclusions share the dealbreaker path unchanged — the
-# executor stays direction-agnostic and the orchestrator applies the
-# E_MULT penalty downstream.
-#
-# Retry contract matches sibling executors: transient errors inside a
-# scenario retry once, then the second failure returns an empty
-# EndpointResult (never raises). This lets the orchestrator treat
-# "failed" and "no match" identically.
+# Retry contract matches sibling executors: transient errors retry
+# once, then the second failure returns an empty EndpointResult
+# (never raises). This lets the orchestrator treat "failed" and "no
+# match" identically.
 
 from __future__ import annotations
 
@@ -53,8 +53,8 @@ from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
 from implementation.classes.enums import VectorName
 from implementation.llms.generic_methods import generate_vector_embedding
 from schemas.endpoint_result import EndpointResult
+from schemas.enums import ActionRole
 from schemas.semantic_bodies import (
-    AnchorBody,
     NarrativeTechniquesBody,
     PlotAnalysisBody,
     PlotEventsBody,
@@ -64,9 +64,9 @@ from schemas.semantic_bodies import (
     WatchContextBody,
 )
 from schemas.semantic_translation import (
-    PreferenceSpaceWeight,
-    SemanticDealbreakerSpec,
-    SemanticPreferenceSpec,
+    SemanticParameters,
+    SemanticSpaceEntry,
+    SpaceWeight,
 )
 from search_v2.stage_3.result_helpers import build_endpoint_result
 
@@ -116,19 +116,21 @@ MIN_PROBE_SIZE = 20
 # "-small" but the code has been on "-large" for a while.)
 EMBEDDING_MODEL = "text-embedding-3-large"
 
-# Two-level categorical preference weights per the proposal's recent
-# rename (central/supporting, formerly primary/contributing).
-PREFERENCE_WEIGHT_VALUES: dict[PreferenceSpaceWeight, float] = {
-    PreferenceSpaceWeight.CENTRAL: 2.0,
-    PreferenceSpaceWeight.SUPPORTING: 1.0,
+# Two-level categorical space weights used in the reranking
+# (preference) paths. central vs supporting maps to the numeric
+# multipliers the weighted-sum combiner uses.
+SPACE_WEIGHT_VALUES: dict[SpaceWeight, float] = {
+    SpaceWeight.CENTRAL: 2.0,
+    SpaceWeight.SUPPORTING: 1.0,
 }
 
 
 # Union of all query-side Body types. Every variant exposes
 # embedding_text() -> str producing the structured-label string that
-# mirrors the ingestion-side vector text for its space.
+# mirrors the ingestion-side vector text for its space. Anchor is
+# intentionally excluded — the unified SemanticSpace enum covers 7
+# non-anchor spaces, so no entry can carry an AnchorBody.
 SemanticBody = Union[
-    AnchorBody,
     PlotEventsBody,
     PlotAnalysisBody,
     ViewerExperienceBody,
@@ -352,8 +354,8 @@ def _weighted_cosine_score(
     # 0 for that space rather than being dropped.
     total_weight = sum(per_space_weights.values())
     if total_weight <= 0.0:
-        # Guarded upstream by SemanticPreferenceSpec's min_length=1,
-        # but defense-in-depth keeps this helper pure.
+        # Guarded upstream by SemanticParameters.space_queries'
+        # min_length=1, but defense-in-depth keeps this helper pure.
         return {int(mid): 0.0 for mid in movie_ids}
 
     out: dict[int, float] = {}
@@ -375,16 +377,35 @@ def _weighted_cosine_score(
 # ---------------------------------------------------------------------------
 
 
+def _entry_for_primary_vector(params: SemanticParameters) -> SemanticSpaceEntry:
+    # Return the space_queries entry whose .space matches
+    # params.primary_vector. SemanticParameters'
+    # _primary_vector_in_space_queries validator guarantees this entry
+    # exists at parse time, so the loop always finds a match in
+    # practice. The raise at the bottom is a safety net against a
+    # validator bypass (e.g., object built programmatically) — a loud
+    # failure beats silently picking the first entry.
+    for entry in params.space_queries:
+        if entry.space == params.primary_vector:
+            return entry
+    raise ValueError(
+        f"primary_vector {params.primary_vector!r} not found in space_queries "
+        f"(populated: {[e.space for e in params.space_queries]!r})"
+    )
+
+
 async def _execute_dealbreaker_d1(
-    spec: SemanticDealbreakerSpec,
+    params: SemanticParameters,
     candidate_ids: set[int],
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
-    # D1: score a pre-built candidate pool. The global probe and the
-    # filtered candidate fetch are independent — gather them.
-    vector_name = VectorName(spec.body.space.value)
-    embedding = await _embed_body(spec.body.content)
+    # D1: score a pre-built candidate pool on the primary_vector
+    # entry. The global probe and the filtered candidate fetch are
+    # independent — gather them.
+    entry = _entry_for_primary_vector(params)
+    vector_name = VectorName(entry.space.value)
+    embedding = await _embed_body(entry.content)
 
     probe, filtered = await asyncio.gather(
         _run_corpus_topn(embedding, vector_name, qdrant_client=qdrant_client),
@@ -408,16 +429,18 @@ async def _execute_dealbreaker_d1(
 
 
 async def _execute_dealbreaker_d2(
-    spec: SemanticDealbreakerSpec,
+    params: SemanticParameters,
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
-    # D2: candidate-generating. One Qdrant call — the top-N probe
-    # doubles as both the calibration sample and the candidate pool.
-    # Cross-dealbreaker scoring is explicitly NOT performed here;
-    # each semantic dealbreaker scores only the movies it retrieved.
-    vector_name = VectorName(spec.body.space.value)
-    embedding = await _embed_body(spec.body.content)
+    # D2: candidate-generating on the primary_vector entry. One Qdrant
+    # call — the top-N probe doubles as both the calibration sample
+    # and the candidate pool. Cross-dealbreaker scoring is explicitly
+    # NOT performed here; each semantic dealbreaker scores only the
+    # movies it retrieved.
+    entry = _entry_for_primary_vector(params)
+    vector_name = VectorName(entry.space.value)
+    embedding = await _embed_body(entry.content)
 
     probe = await _run_corpus_topn(
         embedding, vector_name, qdrant_client=qdrant_client
@@ -433,17 +456,19 @@ async def _execute_dealbreaker_d2(
 
 
 async def _execute_preference_p1(
-    spec: SemanticPreferenceSpec,
+    params: SemanticParameters,
     candidate_ids: set[int],
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
     # P1: score a pre-built pool via raw weighted-sum cosine across
-    # the selected spaces. No elbow calibration.
-    entries = list(spec.space_queries)
+    # every populated space. No elbow calibration. primary_vector is
+    # deliberately ignored — the reranking path consumes the whole
+    # space_queries list regardless.
+    entries = list(params.space_queries)
     vector_names = [VectorName(e.space.value) for e in entries]
     per_space_weights = {
-        vn: PREFERENCE_WEIGHT_VALUES[e.weight]
+        vn: SPACE_WEIGHT_VALUES[e.weight]
         for vn, e in zip(vector_names, entries)
     }
 
@@ -470,19 +495,20 @@ async def _execute_preference_p1(
 
 
 async def _execute_preference_p2(
-    spec: SemanticPreferenceSpec,
+    params: SemanticParameters,
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
-    # P2: candidate-generating. Top-N per space against full corpus,
-    # union = pool. Each top-N probe also doubles as that space's
-    # cosine map for members it naturally retrieved; missing cosines
-    # (candidate in pool via another space's probe) are filled via
-    # targeted HasId lookups.
-    entries = list(spec.space_queries)
+    # P2: candidate-generating across every populated space. Top-N per
+    # space against full corpus, union = pool. Each top-N probe also
+    # doubles as that space's cosine map for members it naturally
+    # retrieved; missing cosines (candidate in pool via another
+    # space's probe) are filled via targeted HasId lookups.
+    # primary_vector is ignored here for the same reason as P1.
+    entries = list(params.space_queries)
     vector_names = [VectorName(e.space.value) for e in entries]
     per_space_weights = {
-        vn: PREFERENCE_WEIGHT_VALUES[e.weight]
+        vn: SPACE_WEIGHT_VALUES[e.weight]
         for vn, e in zip(vector_names, entries)
     }
 
@@ -535,114 +561,112 @@ async def _execute_preference_p2(
 
 
 # ---------------------------------------------------------------------------
-# Public entry points
+# Public entry point
 # ---------------------------------------------------------------------------
 
 
-async def execute_semantic_dealbreaker_query(
-    spec: SemanticDealbreakerSpec,
+async def execute_semantic_query(
+    params: SemanticParameters,
     *,
+    action_role: ActionRole,
     restrict_to_movie_ids: set[int] | None = None,
     qdrant_client: AsyncQdrantClient,
 ) -> EndpointResult:
-    """Execute a SemanticDealbreakerSpec and return scored candidates.
+    """Execute a SemanticParameters payload and return scored candidates.
 
-    restrict_to_movie_ids controls the scenario:
-      - None → D2 (the dealbreaker generates its own candidate pool
-        via a top-N probe on the selected space).
-      - set[int] → D1 (score the supplied pool via global elbow
-        calibration + threshold-plus-flatten).
-      - empty set → return EndpointResult() without firing queries.
+    Two orthogonal signals drive the 2×2 of scenarios:
 
-    Semantic exclusions route through this same function; the
-    orchestrator applies the E_MULT penalty. The executor does not
-    distinguish inclusion from exclusion.
+      action_role == CANDIDATE_IDENTIFICATION → dealbreaker path
+        (uses only the space_queries entry whose .space matches
+        primary_vector; weight is ignored).
+      action_role == CANDIDATE_RERANKING → preference path
+        (uses every space_queries entry with its weight; primary_vector
+        is ignored).
 
-    On transient Qdrant or embedding errors the scenario retries once;
+      restrict_to_movie_ids is None → candidate-generating scenario
+        (D2 or P2): run top-N probe(s) against the full corpus and
+        score the retrieved movies.
+      restrict_to_movie_ids is set[int] → pool-scoring scenario
+        (D1 or P1): score exactly the supplied pool (one ScoredCandidate
+        per supplied ID; absent matches default to 0.0 in
+        build_endpoint_result).
+      restrict_to_movie_ids is empty set → short-circuit with
+        EndpointResult() and no Qdrant traffic.
+
+    Polarity is NOT consulted here. Both positive and negative findings
+    return the same EndpointResult shape; the orchestrator decides
+    whether the IDs/scores feed inclusion_candidates vs exclusion_ids
+    (identification paths) or preference_specs vs downrank_candidates
+    (reranking paths).
+
+    Retry contract: transient Qdrant or embedding errors retry once;
     a second failure returns EndpointResult() rather than raising.
+    Orchestrator-side handling treats "failed" and "no match" the
+    same way.
     """
+    # Validate action_role before the retry loop. A bogus value is a
+    # contract violation, not a transient error — wrapping it in the
+    # try/except below would launder a programmer bug into a silent
+    # empty result with misleading "retrying" logs. Convention
+    # docs/conventions.md §"Preserve retryable exception types"
+    # applies here: non-retryable exceptions must not ride the same
+    # soft-fail path as transient I/O. Also builds the per-branch log
+    # context while we already know which branch we're on, so retry
+    # logs surface only the fields that branch actually consults.
+    if action_role == ActionRole.CANDIDATE_IDENTIFICATION:
+        log_context = f"primary_vector={params.primary_vector.value}"
+    elif action_role == ActionRole.CANDIDATE_RERANKING:
+        log_context = (
+            "spaces="
+            f"{[e.space.value for e in params.space_queries]}"
+        )
+    else:
+        raise ValueError(f"Unhandled action_role: {action_role!r}")
+
     if restrict_to_movie_ids is not None and len(restrict_to_movie_ids) == 0:
         return EndpointResult()
 
     scores: dict[int, float] = {}
     for attempt in range(2):
         try:
-            if restrict_to_movie_ids is not None:
-                scores = await _execute_dealbreaker_d1(
-                    spec, restrict_to_movie_ids, qdrant_client=qdrant_client
-                )
-            else:
-                scores = await _execute_dealbreaker_d2(
-                    spec, qdrant_client=qdrant_client
-                )
+            if action_role == ActionRole.CANDIDATE_IDENTIFICATION:
+                if restrict_to_movie_ids is not None:
+                    scores = await _execute_dealbreaker_d1(
+                        params,
+                        restrict_to_movie_ids,
+                        qdrant_client=qdrant_client,
+                    )
+                else:
+                    scores = await _execute_dealbreaker_d2(
+                        params, qdrant_client=qdrant_client
+                    )
+            else:  # CANDIDATE_RERANKING — already validated above.
+                if restrict_to_movie_ids is not None:
+                    scores = await _execute_preference_p1(
+                        params,
+                        restrict_to_movie_ids,
+                        qdrant_client=qdrant_client,
+                    )
+                else:
+                    scores = await _execute_preference_p2(
+                        params, qdrant_client=qdrant_client
+                    )
             break
         except Exception:
             if attempt == 0:
                 logger.warning(
-                    "Semantic dealbreaker query error on first attempt, "
-                    "retrying (space=%s)",
-                    spec.body.space.value,
+                    "Semantic query error on first attempt, retrying "
+                    "(action_role=%s, %s)",
+                    action_role,
+                    log_context,
                     exc_info=True,
                 )
                 continue
             logger.error(
-                "Semantic dealbreaker query error on retry, returning empty "
-                "(space=%s)",
-                spec.body.space.value,
-                exc_info=True,
-            )
-            return EndpointResult()
-
-    return build_endpoint_result(scores, restrict_to_movie_ids)
-
-
-async def execute_semantic_preference_query(
-    spec: SemanticPreferenceSpec,
-    *,
-    restrict_to_movie_ids: set[int] | None = None,
-    qdrant_client: AsyncQdrantClient,
-) -> EndpointResult:
-    """Execute a SemanticPreferenceSpec and return scored candidates.
-
-    restrict_to_movie_ids controls the scenario:
-      - None → P2 (the preference generates candidates via a per-space
-        top-N probe; union across spaces = candidate pool).
-      - set[int] → P1 (score the supplied pool via per-space filtered
-        cosines, combined as raw weighted-sum).
-      - empty set → return EndpointResult() without firing queries.
-
-    Preferences never use elbow calibration — `is_primary_preference`
-    equivalents are expressed purely through Phase 4c weights, not
-    through score shape. Retry contract matches the dealbreaker path.
-    """
-    if restrict_to_movie_ids is not None and len(restrict_to_movie_ids) == 0:
-        return EndpointResult()
-
-    scores: dict[int, float] = {}
-    for attempt in range(2):
-        try:
-            if restrict_to_movie_ids is not None:
-                scores = await _execute_preference_p1(
-                    spec, restrict_to_movie_ids, qdrant_client=qdrant_client
-                )
-            else:
-                scores = await _execute_preference_p2(
-                    spec, qdrant_client=qdrant_client
-                )
-            break
-        except Exception:
-            if attempt == 0:
-                logger.warning(
-                    "Semantic preference query error on first attempt, "
-                    "retrying (spaces=%s)",
-                    [e.space.value for e in spec.space_queries],
-                    exc_info=True,
-                )
-                continue
-            logger.error(
-                "Semantic preference query error on retry, returning empty "
-                "(spaces=%s)",
-                [e.space.value for e in spec.space_queries],
+                "Semantic query error on retry, returning empty "
+                "(action_role=%s, %s)",
+                action_role,
+                log_context,
                 exc_info=True,
             )
             return EndpointResult()

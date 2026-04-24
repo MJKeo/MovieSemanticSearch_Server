@@ -27,6 +27,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field, constr
 
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.unified_classification import UnifiedClassification
 
 
@@ -43,3 +44,20 @@ class KeywordQuerySpec(BaseModel):
     candidate_shortlist: constr(strip_whitespace=True, min_length=1) = Field(...)
 
     classification: UnifiedClassification = Field(...)
+
+
+# Category-handler wrapper. Direction (inclusion vs exclusion vs
+# preference vs downrank) is supplied by action_role + polarity on
+# the wrapper; KeywordQuerySpec itself stays direction-agnostic.
+class KeywordEndpointParameters(EndpointParameters):
+    parameters: KeywordQuerySpec = Field(
+        ...,
+        description=(
+            "Keyword endpoint payload. Pick the single "
+            "UnifiedClassification member (keyword, concept tag, or "
+            "source-material type) whose concept definition most "
+            "directly covers the requirement. One member per call — "
+            "do NOT stack picks. If no member fits cleanly, pick the "
+            "closest partial match rather than forcing a bad fit."
+        ),
+    )

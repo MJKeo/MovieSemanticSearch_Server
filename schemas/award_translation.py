@@ -23,11 +23,12 @@
 #     Used for all other specs.
 #
 # Direction-agnostic: always expressed as positive presence.
-# Exclusion is a step 4 concern.
+# Exclusion is supplied by the wrapper's polarity field.
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from schemas.award_category_tags import CategoryTag
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import AwardCeremony, AwardOutcome, AwardScoringMode
 
 
@@ -120,3 +121,20 @@ class AwardQuerySpec(BaseModel):
 
     # Year range. Null = any year. Single year: year_from == year_to.
     years: AwardYearFilter | None = None
+
+
+# Category-handler wrapper. Direction flows through action_role +
+# polarity on the wrapper.
+class AwardEndpointParameters(EndpointParameters):
+    parameters: AwardQuerySpec = Field(
+        ...,
+        description=(
+            "Award endpoint payload. Translate the requirement into "
+            "scoring_mode + scoring_mark (the count shape) plus any "
+            "active filters (ceremonies, award_names, category_tags, "
+            "outcome, years). Leave a filter null when the requirement "
+            "does not constrain that axis — null means 'no restriction,' "
+            "not 'match everything.' Generic 'award-winning' with no "
+            "specifics is THRESHOLD / 3, all filters null."
+        ),
+    )

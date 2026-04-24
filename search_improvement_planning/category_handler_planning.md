@@ -240,6 +240,26 @@ user message keeps per-call content freshest. Output schema does
 *not* appear in the prompt — it is enforced by Pydantic via
 `.chat.completions.parse()`.
 
+#### Finalized section table
+
+Single reference for what each section is and what drives its
+content. Core objective and additional objective notes are rendered
+as two adjacent labeled sections (see "Additional objective notes:
+labeled section, not blended" below), so they appear as distinct
+entries here. Few-shot examples are authored per category only —
+there is no bucket-level example bank.
+
+| # | Section | Keyed by |
+|---|---|---|
+| 1 | Role | Shared |
+| 2 | Shared vocabulary | Shared |
+| 3 | Endpoint context | Per endpoint (assembled from the category's endpoint set) |
+| 4 | Core objective | Per bucket |
+| 5 | Additional objective notes | Per category |
+| 6 | Failure-mode guardrails | Per bucket |
+| 7 | Few-shot examples | Per category |
+| 8 | Input payload *(user message)* | Per call |
+
 ### Field-level semantics live on the Pydantic model, not in the prompt
 
 Per-field guidance — what each output field represents, how the LLM
@@ -997,27 +1017,59 @@ and model are passed as kwargs into the handler function, so
 switching to GPT-5.4 mini (or any other) is a call-site change,
 not a code change.
 
-### Dispatcher location
+### Category-handlers module layout (finalized)
 
-The per-coverage-evidence dispatcher lives alongside the
-orchestrator that handles steps 0–2 routing, but in its own
-module — not merged into the existing orchestrator file. Exact
-file layout decided at implementation time.
+All handler-execution code and prompt chunks live under
+`search_v2/stage_3/category_handlers/`. The per-category output
+schema factories and the endpoint-route → wrapper registry moved
+into this module too, so every piece of the step-3 handler stack
+sits in one place; `schemas/` is reserved for data contracts that
+cross the handler boundary (e.g. `EndpointParameters` and its
+per-endpoint subclasses).
 
-### Deferred to implementation time
+```
+search_v2/stage_3/category_handlers/
+  __init__.py
+  handler.py              # runs one category handler on one
+                          # coverage_evidence entry: build prompt,
+                          # call LLM, parse, execute/defer each
+                          # endpoint_parameters, return a
+                          # HandlerResult. Always scoped to a
+                          # single category — fan-out across
+                          # coverage_evidence entries lives one
+                          # layer up in the orchestrator.
+  prompt_builder.py       # assembles the 8-chunk system prompt +
+                          # user message from markdown in prompts/
+                          # keyed off category, bucket, and the
+                          # category's endpoint set.
+  handler_result.py       # HandlerResult dataclass — the four
+                          # return buckets.
+  schema_factories.py     # per-bucket Pydantic output-schema
+                          # factories + get_output_schema(category).
+                          # (Was schemas/handler_outputs.py.)
+  endpoint_registry.py    # EndpointRoute → EndpointParameters
+                          # wrapper map used by schema_factories.
+  prompts/
+    shared/
+      role.md
+      shared_vocabulary.md
+    buckets/
+      {single,mutex,tiered,combo}_objective.md
+      {single,mutex,tiered,combo}_guardrails.md
+    endpoints/
+      {keyword,metadata,semantic,award,franchise,studio,entity}.md
+    categories/
+      cat_NN_<slug>/
+        notes.md          # additional objective notes (§5)
+        examples.md       # few-shot examples (§7) — always per
+                          # category, never per bucket
+```
 
-These don't block design commitment; pick them when we start
-writing code.
-
-- **Handler entry-point interface.** Concrete function signature
-  for the handler (async, input/output types) — shape it against
-  the first handler implementation.
-- **Category registry location and format.** Will live on the
-  `CategoryName` enum (e.g., as class-level methods returning
-  bucket + endpoint set).
-- **Prompt chunk file layout.** Exact paths for
-  `shared_vocabulary.md`, per-endpoint context chunks, and
-  per-bucket core-objective strings.
+`CategoryName.bucket` and `CategoryName.endpoints` already serve
+the "category registry" role on the enum itself — no separate
+registry module. The existing `*_query_execution.py` files in
+`stage_3/` remain the endpoint-execution layer that `handler.py`
+calls once the LLM has emitted parameters.
 
 ---
 

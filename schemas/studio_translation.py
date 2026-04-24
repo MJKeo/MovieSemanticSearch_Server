@@ -18,6 +18,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr
 
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.production_brands import ProductionBrand
 
 
@@ -73,3 +74,20 @@ class StudioQuerySpec(BaseModel):
         min_length=0,
         max_length=3,
     ) | None = Field(default=None)
+
+
+# Category-handler wrapper. Direction flows through action_role +
+# polarity on the wrapper.
+class StudioEndpointParameters(EndpointParameters):
+    parameters: StudioQuerySpec = Field(
+        ...,
+        description=(
+            "Studio endpoint payload. Use 'brand' for umbrella parent-"
+            "brand queries that name a registry ProductionBrand "
+            "(Disney, Warner Bros., A24, etc.). Use 'freeform_names' "
+            "for sub-labels or long-tail studios not in the registry. "
+            "Prefer brand when the query is at the parent-brand level; "
+            "prefer freeform_names when the query names a specific "
+            "sub-label (e.g. 'Touchstone' → freeform, not Disney)."
+        ),
+    )

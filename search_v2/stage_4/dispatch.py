@@ -31,7 +31,7 @@ from qdrant_client import AsyncQdrantClient
 
 from implementation.llms.generic_methods import LLMProvider
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import EndpointRoute
+from schemas.enums import ActionRole, EndpointRoute
 from search_v2.stage_3.award_query_execution import execute_award_query
 from search_v2.stage_3.award_query_generation import generate_award_query
 from search_v2.stage_3.entity_query_execution import execute_entity_query
@@ -42,10 +42,7 @@ from search_v2.stage_3.keyword_query_execution import execute_keyword_query
 from search_v2.stage_3.keyword_query_generation import generate_keyword_query
 from search_v2.stage_3.metadata_query_execution import execute_metadata_query
 from search_v2.stage_3.metadata_query_generation import generate_metadata_query
-from search_v2.stage_3.semantic_query_execution import (
-    execute_semantic_dealbreaker_query,
-    execute_semantic_preference_query,
-)
+from search_v2.stage_3.semantic_query_execution import execute_semantic_query
 from search_v2.stage_3.semantic_query_generation import (
     generate_semantic_dealbreaker_query,
     generate_semantic_preference_query,
@@ -274,14 +271,18 @@ def _build_executor_call(
             spec, restrict_to_movie_ids=restrict_to_movie_ids
         )
     if endpoint == EndpointRoute.SEMANTIC:
-        if item.role == "preference":
-            return execute_semantic_preference_query(
-                spec,
-                restrict_to_movie_ids=restrict_to_movie_ids,
-                qdrant_client=qdrant_client,
-            )
-        return execute_semantic_dealbreaker_query(
+        # Stage 4 still uses the pre-category-handler role strings
+        # ("preference" / "*_dealbreaker"); the semantic executor
+        # speaks ActionRole now. Map at the boundary so the rest of
+        # this dispatcher keeps its existing shape.
+        action_role = (
+            ActionRole.CANDIDATE_RERANKING
+            if item.role == "preference"
+            else ActionRole.CANDIDATE_IDENTIFICATION
+        )
+        return execute_semantic_query(
             spec,
+            action_role=action_role,
             restrict_to_movie_ids=restrict_to_movie_ids,
             qdrant_client=qdrant_client,
         )

@@ -239,6 +239,20 @@ These three categories all route to semantic endpoints but are broken out from C
 
 ---
 
+## Ordinal selection
+
+### 32. Chronological
+**Endpoints:** META.
+**Handles:** release-date ordinal position within a scoped candidate set — "first," "last," "earliest," "latest," "most recent," "the newest one," "the oldest one."
+**Mechanism:** order the candidate pool (scoped by the rest of the query's categories) by `movie_card.release_date` and select the top-N position indicated by the phrasing.
+**Why single-endpoint:** ordinal selection on release date is a pure metadata operation. No other channel carries structured date ordering with the precision needed for position selection.
+**Why split from Cat 10:** Cat 10 treats release date as a *range or decay attribute* ("90s movies," "recent," "before 2000"). Cat 32 treats it as an *ordinal position* ("the newest one," "earliest Scorsese"). Range framings belong in Cat 10; position framings belong here. Different conceptual flavor even though both route to META.release_date — Cat 10 is filter-and-score, Cat 32 is sort-and-pick.
+**Why split from Cat 25:** "most recent" is chronology; "best" / "most acclaimed" is reception superlative. A phrase like "the latest Scorsese" is Cat 32 (chronological ordinal), not Cat 25 (quality superlative).
+
+*(Numbered 32 rather than slotted between Cats 10 and 11 to preserve stable numbering for the rest of the taxonomy.)*
+
+---
+
 ## Fallback
 
 ### 31. Interpretation-required (hard-to-fit)
@@ -272,7 +286,7 @@ category at a single query, and shapes that allow multiple.
 
 **Single endpoint** — only one endpoint is ever applicable. No
 routing decision to make.
-Cats 1, 2, 3, 4, 5, 8, 9, 10, 13, 20, 22, 24, 27, 29, 30, 31.
+Cats 1, 2, 3, 4, 5, 8, 9, 10, 13, 20, 22, 24, 27, 29, 30, 31, 32.
 
 **Mutually exclusive** — two (or more) endpoints could each
 individually answer the question, but they answer *different
@@ -327,6 +341,7 @@ Cats 17, 18, 19, 23, 25, 28.
 | Cultural influence | Cat 25 | Semantic (reception prose) |
 | Still-holds-up | Cat 25 | Semantic (reception prose) |
 | Live trending | Cat 9 | Dedicated endpoint |
+| Chronological ordinal ("newest," "earliest") | Cat 32 | META.release_date sort-and-pick |
 
 ## Composition notes
 

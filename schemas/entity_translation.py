@@ -16,6 +16,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import (
     EntityType,
     PersonCategory,
@@ -238,3 +239,22 @@ class EntityQuerySpec(BaseModel):
             self.alternative_forms = None
 
         return self
+
+
+# Category-handler wrapper. Direction flows through action_role +
+# polarity on the wrapper.
+class EntityEndpointParameters(EndpointParameters):
+    parameters: EntityQuerySpec = Field(
+        ...,
+        description=(
+            "Entity endpoint payload. Resolve the requirement to a "
+            "single target: a named person (actor/director/writer/"
+            "producer/composer or broad_person), a named character, or "
+            "a title pattern. Populate primary_form with the canonical "
+            "surface form, set entity_type accordingly, then fill only "
+            "the type-specific fields that apply (person_category + "
+            "prominence_mode for persons, prominence_mode for "
+            "characters, title_pattern_match_type for title patterns). "
+            "One call = one entity."
+        ),
+    )

@@ -378,24 +378,77 @@ class FitQuality(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Search V2 query understanding (step 2).
+# ---------------------------------------------------------------------------
+
+# Which retrieval endpoint handles a dealbreaker or preference.
+# Each endpoint has its own step 3 LLM (or deterministic function)
+# that translates the description into a query specification.
+# See search_improvement_planning/finalized_search_proposal.md
+# (Step 3: Query Translation) for endpoint definitions.
+class EndpointRoute(StrEnum):
+    ENTITY = "entity"
+    STUDIO = "studio"
+    METADATA = "metadata"
+    AWARDS = "awards"
+    FRANCHISE_STRUCTURE = "franchise_structure"
+    KEYWORD = "keyword"
+    SEMANTIC = "semantic"
+    TRENDING = "trending"
+
+
+# Handler orchestration shape. Determines how many endpoint queries
+# can fire for a category and what the LLM output schema looks like.
+# See search_improvement_planning/category_handler_planning.md
+# §"The four handler types" for definitions.
+#
+#   SINGLE  — exactly one endpoint can fire; no routing decision.
+#   MUTEX   — two+ endpoints, LLM picks one (or none).
+#   TIERED  — same as MUTEX but with a preference bias across
+#             endpoints; priority-ordered endpoint tuple on the
+#             category determines the bias.
+#   COMBO   — any subset of endpoints can fire in parallel; each
+#             contributes independent signal.
+class HandlerBucket(StrEnum):
+    SINGLE = "single"
+    MUTEX = "mutex"
+    TIERED = "tiered"
+    COMBO = "combo"
+
+
+# ---------------------------------------------------------------------------
 # Search V2 step 2 query categorization taxonomy.
 #
 # CategoryName is the canonical vocabulary the step-2 pre-pass LLM picks
 # from when grounding each captured_meaning of a query fragment against a
 # category. Each member carries a descriptive name (the string value
-# emitted to downstream code) and a concept-only description (attributes
-# contained, concepts covered, questions answered) that is injected into
-# the step-2 system prompt. Routing and mechanism detail is intentionally
-# absent — this enum is the LLM's view of the taxonomy, not the
-# dispatcher's.
+# emitted to downstream code), a concept-only description (attributes
+# contained, concepts covered, questions answered) injected into the
+# step-2 system prompt, an ordered list of EndpointRoute values naming
+# the retrieval endpoints the category may dispatch to, and a
+# HandlerBucket identifying the orchestration shape (single / mutex /
+# tiered / combo). Endpoint order is priority order: for tiered
+# categories the first entry is the authoritative tier and later
+# entries are fallbacks; for single-endpoint or combo categories the
+# order reflects the primary channel first.
 # ---------------------------------------------------------------------------
 class CategoryName(str, Enum):
     description: str
+    endpoints: tuple["EndpointRoute", ...]
+    bucket: "HandlerBucket"
 
-    def __new__(cls, value: str, description: str) -> "CategoryName":
+    def __new__(
+        cls,
+        value: str,
+        description: str,
+        endpoints: tuple["EndpointRoute", ...],
+        bucket: "HandlerBucket",
+    ) -> "CategoryName":
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.description = description
+        obj.endpoints = endpoints
+        obj.bucket = bucket
         return obj
 
     CREDIT_TITLE = (
@@ -406,6 +459,8 @@ class CategoryName(str, Enum):
             "cover below-the-line roles (cinematographer, editor, etc.); "
             "those belong to Below-the-line creator."
         ),
+        (EndpointRoute.ENTITY,),
+        HandlerBucket.SINGLE,
     )
     NAMED_CHARACTER = (
         "Named character",
@@ -416,6 +471,8 @@ class CategoryName(str, Enum):
             "patterns (lovable rogue, femme fatale) belong to Character "
             "archetype, not here."
         ),
+        (EndpointRoute.ENTITY,),
+        HandlerBucket.SINGLE,
     )
     STUDIO_BRAND = (
         "Studio / brand",
@@ -425,6 +482,8 @@ class CategoryName(str, Enum):
             "Dreamworks. The entity that made the movie, not its "
             "franchise or intellectual property."
         ),
+        (EndpointRoute.STUDIO,),
+        HandlerBucket.SINGLE,
     )
     FRANCHISE_LINEAGE = (
         "Franchise / universe lineage",
@@ -435,6 +494,8 @@ class CategoryName(str, Enum):
             "'the original, not the remake'. About where a movie sits "
             "inside a named series."
         ),
+        (EndpointRoute.FRANCHISE_STRUCTURE,),
+        HandlerBucket.SINGLE,
     )
     ADAPTATION_SOURCE = (
         "Adaptation source flag",
@@ -445,6 +506,8 @@ class CategoryName(str, Enum):
             "rather than franchise positioning). About WHAT the source "
             "material's medium is, not which franchise."
         ),
+        (EndpointRoute.KEYWORD,),
+        HandlerBucket.SINGLE,
     )
     SPECIFIC_SUBJECT = (
         "Specific subject / element / motif",
@@ -456,6 +519,8 @@ class CategoryName(str, Enum):
             "Distinct from Named character (a specific persona) and "
             "Character archetype (a type pattern)."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.TIERED,
     )
     CHARACTER_ARCHETYPE = (
         "Character archetype",
@@ -466,6 +531,8 @@ class CategoryName(str, Enum):
             "person. Distinct from Kind of story (which is about the "
             "character's arc trajectory, not static type)."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.TIERED,
     )
     AWARDS = (
         "Award records",
@@ -475,6 +542,8 @@ class CategoryName(str, Enum):
             "Ceremony-specific filters and multi-win superlatives. "
             "Structured recognition records."
         ),
+        (EndpointRoute.AWARDS,),
+        HandlerBucket.SINGLE,
     )
     TRENDING = (
         "Trending",
@@ -484,6 +553,8 @@ class CategoryName(str, Enum):
             "current-cadence refresh signal, distinct from static "
             "popularity."
         ),
+        (EndpointRoute.TRENDING,),
+        HandlerBucket.SINGLE,
     )
     STRUCTURED_METADATA = (
         "Structured metadata",
@@ -495,6 +566,8 @@ class CategoryName(str, Enum):
             "(legal/financial origin), budget scale, box-office bucket, "
             "numeric reception score (as a standalone attribute)."
         ),
+        (EndpointRoute.METADATA,),
+        HandlerBucket.SINGLE,
     )
     TOP_LEVEL_GENRE = (
         "Top-level genre",
@@ -504,6 +577,8 @@ class CategoryName(str, Enum):
             "fantasy. The coarse top-level classification, not "
             "sub-genres like 'body horror' or 'cozy mystery'."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.MUTEX,
     )
     CULTURAL_TRADITION = (
         "Cultural tradition / national cinema",
@@ -514,6 +589,8 @@ class CategoryName(str, Enum):
             "Distinct from production country (legal origin) and "
             "filming location (where shooting happened)."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.METADATA),
+        HandlerBucket.MUTEX,
     )
     FILMING_LOCATION = (
         "Filming location",
@@ -523,6 +600,8 @@ class CategoryName(str, Enum):
             "Literal production geography, not legal production "
             "country and not the story's narrative setting."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
     FORMAT_VISUAL = (
         "Format + visual-format specifics",
@@ -533,6 +612,8 @@ class CategoryName(str, Enum):
             "shot, stop-motion). About the form the movie takes, not "
             "its genre."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.TIERED,
     )
     SUB_GENRE = (
         "Sub-genre + story archetype",
@@ -543,6 +624,8 @@ class CategoryName(str, Enum):
             "chase, survival, fish-out-of-water). More specific than "
             "top-level genre; labels an identifiable story pattern."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.TIERED,
     )
     NARRATIVE_DEVICES = (
         "Narrative devices + structural form + craft",
@@ -554,6 +637,8 @@ class CategoryName(str, Enum):
             "('Sorkin-style', 'Tarantino-style'), character-vs-plot "
             "focus. About HOW the story is told."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.TIERED,
     )
     TARGET_AUDIENCE = (
         "Target audience",
@@ -564,6 +649,8 @@ class CategoryName(str, Enum):
             "ARCHETYPE belongs to Kind of story; only the audience "
             "framing lands here."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
+        HandlerBucket.COMBO,
     )
     SENSITIVE_CONTENT = (
         "Sensitive content",
@@ -574,6 +661,8 @@ class CategoryName(str, Enum):
             "bloody', 'violent but not graphic') and hard inclusions / "
             "exclusions ('no gore', 'with nudity')."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
+        HandlerBucket.COMBO,
     )
     SEASONAL_HOLIDAY = (
         "Seasonal / holiday",
@@ -583,6 +672,8 @@ class CategoryName(str, Enum):
             "both 'movie for watching AT this season' and 'movie SET "
             "at this season'."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.COMBO,
     )
     PLOT_EVENTS = (
         "Plot events + narrative setting",
@@ -594,6 +685,8 @@ class CategoryName(str, Enum):
             "place in Tokyo', 'in a small desert town'). Concrete "
             "plot content and narrative time/place."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
     KIND_OF_STORY = (
         "Kind of story / thematic archetype",
@@ -604,6 +697,8 @@ class CategoryName(str, Enum):
             "The overarching thematic concept or character trajectory, "
             "not the literal plot events."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.TIERED,
     )
     VIEWER_EXPERIENCE = (
         "Viewer experience / feel / tone",
@@ -614,6 +709,8 @@ class CategoryName(str, Enum):
             "disturbance intensity, emotional palette. The "
             "during-viewing experience."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
     OCCASION_GOAL = (
         "Occasion / self-experience goal / comfort-watch",
@@ -625,6 +722,8 @@ class CategoryName(str, Enum):
             "('go-to movie', 'feel-better movie'), gateway / "
             "entry-level ('good first anime', 'accessible arthouse')."
         ),
+        (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
+        HandlerBucket.COMBO,
     )
     CRAFT_ACCLAIM = (
         "Craft acclaim",
@@ -637,6 +736,8 @@ class CategoryName(str, Enum):
             "craft belong to Credit + title text or Below-the-line "
             "creator; this category is about the acclaim itself."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
     RECEPTION_QUALITY = (
         "Reception quality + superlative",
@@ -656,6 +757,8 @@ class CategoryName(str, Enum):
             "(Criterion, AFI Top 100, etc.) decomposes into Curated "
             "canon / named list."
         ),
+        (EndpointRoute.SEMANTIC, EndpointRoute.METADATA),
+        HandlerBucket.COMBO,
     )
     POST_VIEWING_RESONANCE = (
         "Post-viewing resonance",
@@ -666,6 +769,8 @@ class CategoryName(str, Enum):
             "Aftertaste and ending type. Distinct from Viewer "
             "experience (during-viewing feel)."
         ),
+        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        HandlerBucket.TIERED,
     )
     SCALE_SCOPE = (
         "Scale / scope / holistic vibe",
@@ -675,6 +780,8 @@ class CategoryName(str, Enum):
             "when X is a vibe rather than a concrete reference. The "
             "holistic identity-level framing."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
     CURATED_CANON = (
         "Curated canon / named list",
@@ -685,6 +792,8 @@ class CategoryName(str, Enum):
             "See Before You Die', film-school canon. A specific "
             "recognized list, not a general 'acclaimed' judgment."
         ),
+        (EndpointRoute.SEMANTIC, EndpointRoute.METADATA),
+        HandlerBucket.COMBO,
     )
     BELOW_THE_LINE = (
         "Below-the-line creator",
@@ -696,6 +805,8 @@ class CategoryName(str, Enum):
             "from Credit + title text, which covers indexed roles "
             "only (actor/director/writer/producer/composer)."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
     SOURCE_MATERIAL_AUTHOR = (
         "Source-material author",
@@ -706,6 +817,8 @@ class CategoryName(str, Enum):
             "The author of the original book / story / comic, who is "
             "NOT a film credit and is NOT the subject depicted."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
     CHRONOLOGICAL = (
         "Chronological",
@@ -722,6 +835,8 @@ class CategoryName(str, Enum):
             "distinct from Reception quality + superlative, which "
             "is about acclaim rather than chronology."
         ),
+        (EndpointRoute.METADATA,),
+        HandlerBucket.SINGLE,
     )
     INTERPRETATION_REQUIRED = (
         "Interpretation-required",
@@ -735,27 +850,9 @@ class CategoryName(str, Enum):
             "Interpretation-required as a placeholder category; "
             "downstream treats no_fit entries as discardable."
         ),
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE,
     )
-
-
-# ---------------------------------------------------------------------------
-# Search V2 query understanding (step 2).
-# ---------------------------------------------------------------------------
-
-# Which retrieval endpoint handles a dealbreaker or preference.
-# Each endpoint has its own step 3 LLM (or deterministic function)
-# that translates the description into a query specification.
-# See search_improvement_planning/finalized_search_proposal.md
-# (Step 3: Query Translation) for endpoint definitions.
-class EndpointRoute(StrEnum):
-    ENTITY = "entity"
-    STUDIO = "studio"
-    METADATA = "metadata"
-    AWARDS = "awards"
-    FRANCHISE_STRUCTURE = "franchise_structure"
-    KEYWORD = "keyword"
-    SEMANTIC = "semantic"
-    TRENDING = "trending"
 
 
 # Whether a dealbreaker is an inclusion (generates candidates,
@@ -912,3 +1009,36 @@ class MetadataAttribute(StrEnum):
     BOX_OFFICE = "box_office"
     POPULARITY = "popularity"
     RECEPTION = "reception"
+
+
+# ---------------------------------------------------------------------------
+# Search V2 category-handler dispatch vocabulary.
+#
+# Every category handler emits one EndpointParameters object per
+# finding. That wrapper tags the finding along two orthogonal axes —
+# action_role and polarity — which together determine which of the
+# four HandlerResult buckets the finding falls into:
+#
+#                               | POSITIVE                | NEGATIVE
+#   ---------------------------+-------------------------+----------------------
+#   CANDIDATE_IDENTIFICATION   | inclusion_candidates    | exclusion_ids
+#   CANDIDATE_RERANKING        | preference_specs        | downrank_candidates
+#
+# See search_improvement_planning/category_handler_planning.md
+# ("From LLM output to return buckets") for the full mapping.
+# ---------------------------------------------------------------------------
+
+
+# Whether the finding generates a candidate set (identification) or
+# adjusts the ranking of an already-assembled set (reranking).
+class ActionRole(StrEnum):
+    CANDIDATE_IDENTIFICATION = "candidate_identification"
+    CANDIDATE_RERANKING = "candidate_reranking"
+
+
+# Whether the finding pushes candidates IN (positive) or OUT / DOWN
+# (negative). Orthogonal to action_role — together they cover the
+# full 2x2 of inclusion / exclusion / preference / downrank.
+class Polarity(StrEnum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"

@@ -1,6 +1,149 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## category_handlers module scaffold + schema-file relocation
+Files: search_v2/stage_3/category_handlers/{__init__,handler,prompt_builder,handler_result,endpoint_registry,schema_factories}.py, search_v2/stage_3/category_handlers/prompts/{shared,buckets,endpoints,categories}/, search_improvement_planning/category_handler_planning.md
+
+### Intent
+Stand up the step-3 category-handler module and finalize its shape
+in the planning doc. All step-3 handler code (schema factories,
+endpoint registry, handler runtime, prompt builder, prompt chunks)
+now lives under `search_v2/stage_3/category_handlers/` rather than
+split between `schemas/` and a future handler package.
+
+### Key Decisions
+- **Module lives under stage_3, not schemas/.** Handlers are
+  execution code, not data contracts. `schemas/` stays reserved
+  for contracts that cross the handler boundary (e.g.
+  `EndpointParameters` + per-endpoint wrappers).
+- **Moved both schema files into the new module.**
+  `schemas/endpoint_registry.py` → `category_handlers/endpoint_registry.py`
+  and `schemas/handler_outputs.py` → `category_handlers/schema_factories.py`
+  (renamed to match the "factories" role). Import in schema_factories
+  updated to reference the sibling. Smoke-tested: all 31 OUTPUT_SCHEMAS
+  still build at import.
+- **No separate category registry module.** `CategoryName.bucket` and
+  `CategoryName.endpoints` already serve that role on the enum —
+  overturning the "Category registry location and format" item in
+  the planning doc's deferred-items list.
+- **Handler scoped to a single category.** `handler.py` never fans
+  out across `coverage_evidence` entries; that lives one layer up
+  in the orchestrator. Simpler contract, easier to test.
+- **Dispatcher vs runtime split rejected.** Earlier sketch had
+  both; in practice it's one "run one handler" function. Fan-out
+  is an orchestrator concern, not a stage-3 one.
+- **Prompt chunk organization by keying axis, not by endpoint.**
+  Four axes from the planning doc (shared / bucket / endpoint /
+  category) become four subfolders under `prompts/`. Few-shot
+  examples are per-category only (user correction — not per-bucket).
+- **HandlerResult as a dataclass, not Pydantic.** Internal container
+  with mutable defaults. No serialization at this boundary.
+
+### Planning doc additions
+- New "Finalized section table" subsection under "Prompt assembly"
+  enumerating the 8 prompt sections and their keying axes.
+- New "Category-handlers module layout (finalized)" subsection
+  under "Pre-implementation setup"; replaces the stale "Dispatcher
+  location" and "Deferred to implementation time" bullets that
+  were resolved in this session.
+
+### Testing Notes
+- Smoke-tested: `OUTPUT_SCHEMAS` builds all 31 schemas after the
+  move; `HandlerResult()` instantiates with empty defaults.
+- `handler.py` and `prompt_builder.py` are intentional stubs — no
+  behavior yet.
+- `prompts/` subdirectories are empty; authoring content is the
+  next task. Git won't track empty dirs, so they re-emerge when
+  their first files are added.
+
+## Category-handler output schemas: dynamic per-category assembly
+Files: schemas/enums.py, schemas/endpoint_registry.py, schemas/handler_outputs.py
+
+### Intent
+Wire up the dynamic output-schema machinery the step-3 category
+handlers will use. Step 3 emits structured output whose shape is
+bucket-level (single / mutex / tiered / combo) and whose endpoint-
+specific atoms come from the seven existing `EndpointParameters`
+wrappers. This commit delivers the building blocks: a `HandlerBucket`
+enum, a `bucket` attribute on every CategoryName, an EndpointRoute→
+wrapper registry, and a handler_outputs module that eagerly builds
+one Pydantic output class per category at import.
+
+### Key Decisions
+- **`HandlerBucket` as a separate enum** (not methods on an existing
+  enum). Keeps the bucket vocabulary addressable independently of
+  CategoryName; factories dispatch on bucket identity, not category
+  count.
+- **`bucket` baked onto CategoryName** alongside `endpoints`.
+  Assignments pulled from
+  `search_improvement_planning/category_handler_planning.md` §"The
+  four handler types" (Cats 1–31); INTERPRETATION_REQUIRED (not in
+  planning doc) defaulted to SINGLE as the fallback category has a
+  single SEMANTIC endpoint.
+- **Registry in a sibling module, not on EndpointRoute**. Wrapper
+  modules already import from `schemas.enums`; attaching wrappers
+  to the enum would create a cycle. `schemas/endpoint_registry.py`
+  owns the import fanout.
+- **TRENDING → None** in the registry. Trending is handled by a
+  deterministic code path, not a handler LLM. Categories whose
+  endpoint list resolves to no wrappers get no entry in
+  OUTPUT_SCHEMAS; `get_output_schema(CategoryName.TRENDING)` raises
+  KeyError by design — callers special-case upstream.
+- **Eager build at module import** instead of `@functools.cache`.
+  32 known keys × cheap `create_model` calls = ~1s once, errors
+  surface at startup, no cold-request penalty. Factory functions
+  are pure; the cache dict lives in the module.
+- **No method on the enum for schema lookup**. The earlier
+  consideration of `CategoryName.output_schema` as a property
+  required a lazy import to dodge circular deps. Went with plain
+  `handler_outputs.get_output_schema(category)` — same ergonomics,
+  zero import gymnastics.
+- **Per-bucket output shape follows planning doc verbatim**:
+  - Single: `requirement_aspects` (with relation_to_endpoint +
+    coverage_gaps), `should_run_endpoint`, `endpoint_parameters?`
+  - Mutex: `requirement_aspects` (with per-endpoint coverage +
+    `best_endpoint` Literal), `endpoint_to_run` Literal over
+    endpoints + "None", `endpoint_parameters?` as Union of wrappers
+  - Tiered: same as Mutex + `performance_vs_bias_analysis` placed
+    between aspects and the final pick, so the model reasons about
+    the bias before committing
+  - Combo: `requirement_aspects`, `overall_endpoint_fits`,
+    `per_endpoint_breakdown` with *named fields per endpoint*
+    (enumerated-not-freeform to prevent silent omission). Each
+    breakdown entry has `should_run_endpoint` + optional wrapper.
+- **Shared Field descriptions as module constants** in
+  handler_outputs.py. Prevents wording drift across four bucket
+  factories. Calibrated for small / instruction-tuned models:
+  phrasal cues, anti-failure-mode framing ("false is a valid and
+  preferred answer when ..."), concrete direction over abstract
+  framing. Follows the same pattern established in
+  schemas/semantic_translation.py's per-space descriptor constants.
+- **`_HandlerOutputBase` carries `ConfigDict(extra="forbid")`** for
+  every dynamically-generated class. OpenAI structured output
+  requires `additionalProperties: false` on every sub-object.
+- **`__module__` set to "schemas.handler_outputs"** on every
+  generated class. Keeps tracebacks and repr pointing somewhere
+  useful rather than pydantic internals.
+
+### Testing Notes
+- All 31 non-TRENDING categories build clean schemas at import.
+- `model_json_schema()` generates for all four bucket shapes
+  (spot-checked: CREDIT_TITLE 6KB, TOP_LEVEL_GENRE 32KB,
+  SPECIFIC_SUBJECT 33KB, TARGET_AUDIENCE 50KB — within OpenAI
+  structured-output limits but worth smoke-testing the largest
+  combos against the live API before production use).
+- Combo's per_endpoint_breakdown field keys are endpoint values
+  (keyword / metadata / semantic / ...), all valid Python
+  identifiers. No sanitization needed today; revisit if any future
+  EndpointRoute value contains hyphens or reserved words.
+- `best_endpoint` Literal includes only the category's candidate
+  endpoints (not "None"); `endpoint_to_run` Literal includes
+  "None" as a valid no-fire outcome.
+- No validator enforcing `should_run_endpoint == (endpoint_parameters
+  is not None)` — relying on handler-side conversion. Add if drift
+  is observed in practice.
+
+
 ## Step 0 (Flow Routing) implementation
 Files: schemas/enums.py, schemas/step_0_flow_routing.py, search_v2/step_0.py
 
@@ -254,3 +397,74 @@ Approach: added `compress_to_dealbreaker_floor(raw) = 0.5 + 0.5 * raw` to result
 Design context: dealbreaker-only scope confirmed with user — compressing both paths would warp preference ranking by inflating weak matches to 0.5.
 
 Testing notes: behavior-boundary spot checks to run in a notebook — trending rank 1→~0.98 (compression of raw ~0.955), rank n→0.5; award THRESHOLD count=1,mark=10→0.55, count≥mark→1.0; release_date in-window→1.0, grace-edge→0.5; runtime ±30min edge→0.5; country pos 1→1.0, pos 2→0.5, pos 3→dropped; popularity/reception raw 0→dropped, raw 0.01→~0.505; semantic sim>=elbow→1.0, sim just above floor→~0.5, sim<=floor→dropped. Preference-path byte-identical behavior preserved (else branches unchanged).
+
+## Category-handler schemas: EndpointParameters wrapper, HandlerResult, unified semantic schema
+Files: schemas/enums.py, schemas/endpoint_parameters.py (new), schemas/semantic_translation.py (rewrite), schemas/keyword_translation.py, schemas/metadata_translation.py, schemas/award_translation.py, schemas/franchise_translation.py, schemas/studio_translation.py, schemas/entity_translation.py
+
+### Intent
+First implementation pass on the category-handler design finalized in `search_improvement_planning/category_handler_planning.md`. Introduces the shared schemas every downstream piece (handler LLM output, dispatcher routing, orchestrator consolidation) depends on. No handler code, factory, dispatcher, or `CategoryName` registry yet — those come in later passes.
+
+### Key Decisions
+- **`ActionRole` + `Polarity` enums added to `schemas/enums.py`.** Their 2×2 product mechanically selects the `HandlerResult` bucket (inclusion_candidates / exclusion_ids / preference_specs / downrank_candidates). Keeping them as two orthogonal axes — rather than a flat 4-value enum — matches how the handler LLM reasons about each finding.
+- **`EndpointParameters` abstract base + concrete per-endpoint subclasses.** Base lives in `schemas/endpoint_parameters.py`; each per-endpoint subclass lives in its own `*_translation.py` and declares a typed `parameters` field. Concrete subclassing (not pydantic generics) to keep OpenAI structured-output JSON schemas flat and clean. Seven wrappers total: keyword / metadata / award / franchise / studio / entity / semantic. Trending deliberately skipped (no translation spec, dispatched deterministically).
+- **Existing `*QuerySpec` classes left untouched.** Reasoning fields stay bundled for now per "keep, revisit once v2 handlers run" decision. Only stale comments about direction/exclusion being a "step 4 concern" were rewritten to reference the wrapper's `polarity` field.
+- **`HandlerResult` defaults to all-empty buckets.** Lets the soft-fail retry path return `HandlerResult()` cleanly when a handler double-fails.
+- **Semantic endpoint unified into one shape.** Replaced `SemanticDealbreakerSpec` (7 spaces, single pick, no weight) and `SemanticPreferenceSpec` (8 spaces, multi, weighted) with a single `SemanticParameters` + `SemanticEndpointParameters` wrapper. Anchor dropped from both paths; 7-space enum (`SemanticSpace`) replaces the old `DealbreakerSpace`/`VectorSpace` pair. `PreferenceSpaceWeight` renamed to `SpaceWeight` for clarity.
+- **`primary_vector` placed LAST in `SemanticParameters`.** Deliberate field-order design: emitting it before `space_queries` pressures the LLM to collapse the list prematurely. Placing it after reframes the pick as a retrospective summary over an already-populated inventory. Guarded by a new `_primary_vector_in_space_queries` validator so the chosen space must match one populated above. Dealbreaker path uses `primary_vector` and ignores weight; preference path uses weights and ignores `primary_vector`. Symmetric shape, no runtime conditional.
+
+### Intentional breakage (not fixed in this pass)
+Deleting the old `SemanticDealbreakerSpec` / `SemanticPreferenceSpec` breaks imports in:
+- `search_v2/stage_3/semantic_query_generation.py`
+- `search_v2/stage_3/semantic_query_execution.py`
+- `search_v2/test_stage_3.ipynb`
+
+These will be rebuilt against `SemanticEndpointParameters` when the new category-handler flow replaces stage_3. Verified via `uv run python -c "import search_v2.stage_3.semantic_query_generation"` — expected ImportError fires.
+
+### Testing Notes
+Smoke-verified via `uv run python`:
+- All new classes import cleanly from their modules.
+- `HandlerResult()` default-constructs with four empty buckets.
+- `SemanticEndpointParameters.model_json_schema()` generates without error.
+- Valid `SemanticParameters` with two entries and matching `primary_vector` constructs.
+- Invalid cases raise `ValidationError`: `primary_vector` not in populated spaces; duplicate space in `space_queries`.
+No unit tests written per test-boundaries rule.
+
+## CategoryName.endpoints attribute + Cat 32 Chronological doc entry
+Files: schemas/enums.py, search_improvement_planning/query_categories.md
+
+### Intent
+`CategoryName` carried a human-readable `description` but no machine-readable dispatch metadata. Downstream category handlers and the step-3 dispatcher had no authoritative source for which `EndpointRoute`(s) a given category may fire or in what priority order. This pass attaches a `.endpoints` tuple to every `CategoryName` value so the taxonomy itself is the source of truth for routing priority.
+
+### Key Decisions
+- **`EndpointRoute` moved above `CategoryName`** in `schemas/enums.py`. Enum members reference `EndpointRoute` at class-body evaluation time, so the dependency had to be declared first. Old location (further down the file with the other step-3 enums) was deleted.
+- **Tuple-constructor extended, not replaced.** `CategoryName.__new__` now takes three positional args `(value, description, endpoints)`; the `description: str` class annotation gains a sibling `endpoints: tuple["EndpointRoute", ...]`. Same tuple-constructor pattern already used for `NarrativeStructureTag` / `LineagePosition` and validated by the "Enum vocabularies for LLM structured output carry prompt-ready descriptions as enum attributes" convention in conventions_draft.md.
+- **Priority ordering, not set.** User specified the list must be priority-ordered even though ordering only strictly matters for tiered categories — "good principle overall" per the request. Tiered cats lead with the canonical tier (KEYWORD before SEMANTIC for the keyword-first tiered family); combo cats lead with the primary channel (SEMANTIC before METADATA for RECEPTION_QUALITY / CURATED_CANON; KEYWORD before METADATA for CULTURAL_TRADITION; KEYWORD → METADATA → SEMANTIC for the gate+inclusion shapes TARGET_AUDIENCE / SENSITIVE_CONTENT).
+- **Semantic sub-spaces consolidated.** The planning doc references ANC / P-EVT / P-ANA / NRT / VWX / CTX / RCP / PRD / INTERP as distinct semantic surfaces; all roll up to `EndpointRoute.SEMANTIC` in the enum per the current endpoint-family design (one semantic endpoint internally dispatches across vector spaces).
+- **CHRONOLOGICAL → METADATA, INTERPRETATION_REQUIRED → SEMANTIC.** Chronological picks an ordinal on `movie_card.release_date` (pure metadata sort). Interpretation-required routes to the LLM semantic fallback per Cat 31 in the planning doc.
+
+### Planning Context
+The planning doc (`search_improvement_planning/query_categories.md`) listed Cats 1–31 but did not contain the CHRONOLOGICAL category that exists in the enum (added when step_2's selection-rule language type collapsed into attributes — see the earlier "Step 2 schema migration: collapse fragment types" entry above). User directed adding Cat 32 to the doc to keep the planning surface in sync with the enum. New "Ordinal selection" section numbered Cat 32 (not slotted between Cats 10 and 11) to preserve stable numbering for the existing 30 categories; justification note in the doc explains the numbering choice. Updated the "single endpoint" orchestration list and the data-gap table to reference Cat 32.
+
+### Testing Notes
+Verified via `uv run python -c "from schemas.enums import CategoryName, EndpointRoute; print(len(CategoryName)); [print(c.name, '->', [e.value for e in c.endpoints]) for c in CategoryName]"` — 32 members load, every one carries a non-empty endpoints list matching the planning-doc mapping. No unit tests written per test-boundaries rule. Downstream category handlers can now iterate `category.endpoints` for dispatch priority instead of maintaining a parallel routing map.
+
+## Semantic executor: align with unified SemanticParameters + action_role dispatch
+Files: search_v2/stage_3/semantic_query_execution.py, search_v2/stage_4/dispatch.py
+
+### Intent
+`schemas/semantic_translation.py` was rewritten to collapse `SemanticDealbreakerSpec` + `SemanticPreferenceSpec` into a single `SemanticParameters` model (with `space_queries` + retrospective `primary_vector`), rename `PreferenceSpaceWeight` → `SpaceWeight`, and drop the anchor space entirely. The executor still spoke the old dual-schema / two-entry-point shape, so every import and every `spec.body.space.value` / `spec.body.content` access broke. This pass re-plumbs the executor around the unified schema and the new category-handler dispatch signal.
+
+### Key Decisions
+- **Single public entry point, not two.** `execute_semantic_query(params, *, action_role, restrict_to_movie_ids, qdrant_client)` replaces the former dealbreaker/preference pair. The caller must pass `action_role` (from the enclosing `SemanticEndpointParameters` wrapper); that selects the dealbreaker vs preference branch inside the executor, while `restrict_to_movie_ids` still picks D1 vs D2 and P1 vs P2 within each branch. Matches the "symmetric shape, no runtime schema conditional" directive in category_handler_planning.md §"Unified semantic schema".
+- **`_entry_for_primary_vector` helper.** Pulled out so the dealbreaker helpers don't re-implement the linear scan. Raises loudly on a primary_vector-without-matching-entry rather than silently picking entry[0] — the schema validator already guarantees correctness, so a raise only fires on validator bypass, which is worth surfacing.
+- **Polarity is NOT consulted in the executor.** Per the planning doc's "From LLM output to return buckets" table, polarity routes at the orchestrator level. The executor returns the same `EndpointResult` shape whether the finding is positive or negative; existing D1/D2/P1/P2 scoring semantics are unchanged.
+- **AnchorBody removed from the `SemanticBody` union** since `SemanticSpace` has 7 non-anchor members — no entry can carry an `AnchorBody` under the new schema.
+- **Stage-4 boundary maps role strings → ActionRole.** `TaggedItem.role` is still the pre-category-handler Literal["inclusion_dealbreaker", "exclusion_dealbreaker", "preference"]. Mapped locally in `dispatch.py` (`"preference" → CANDIDATE_RERANKING`, else `CANDIDATE_IDENTIFICATION`) rather than touching `TaggedItem` — stage 4 has its own in-progress refactor per the planning doc and I don't want to merge concerns.
+- **action_role validation hoisted out of the retry loop.** The initial cut put the `else: raise ValueError(...)` inside the `try/except Exception` block, which laundered a contract violation into a silent empty-result soft-fail with misleading "retrying" logs. Fixed during code review: validate action_role before the retry loop so non-retryable exceptions surface, in line with conventions.md §"Preserve retryable exception types".
+- **Per-branch log context.** The retry/error log lines used to include `primary_vector=` *and* `spaces=` regardless of which branch ran — misleading for the reranking path, which explicitly ignores primary_vector. Now a `log_context` string is built once per branch (identification → just primary_vector; reranking → just spaces) and reused by both the warning and error logs.
+
+### Planning Context
+Follows the "Unified semantic schema" section of `search_improvement_planning/category_handler_planning.md` (lines 910-968): one Pydantic model, anchor excluded in both paths, action_role drives which fields the executor consults (dealbreaker → primary_vector entry only; reranking → all entries with weights). The executor is intentionally still direction-agnostic — polarity becomes the orchestrator's job per the "From LLM output to return buckets" 2×2.
+
+### Testing Notes
+Module imports clean (`python -c "from search_v2.stage_3 import semantic_query_execution"`). `search_v2/stage_3/semantic_query_generation.py` is still broken against the new schema (imports `SemanticDealbreakerSpec` / `SemanticPreferenceSpec`) — that file needs its own rewrite aligned with the category-handler prompt-assembly design and is outside this change's scope. D1/D2/P1/P2 scoring math is byte-identical to before — the change is purely how the executor reads the input, not how it produces the output.

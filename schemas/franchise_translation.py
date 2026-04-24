@@ -40,10 +40,11 @@
 #      target. Does not restrict the match set.
 #
 # Direction-agnostic: always expressed as positive presence.
-# Exclusion is a step 4 concern.
+# Exclusion is supplied by the wrapper's polarity field.
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import (
     FranchiseLaunchScope,
     FranchiseStructuralFlag,
@@ -237,3 +238,21 @@ class FranchiseQuerySpec(BaseModel):
             )
 
         return self
+
+
+# Category-handler wrapper. Direction flows through action_role +
+# polarity on the wrapper.
+class FranchiseEndpointParameters(EndpointParameters):
+    parameters: FranchiseQuerySpec = Field(
+        ...,
+        description=(
+            "Franchise endpoint payload. Populate only the axes the "
+            "requirement targets: franchise/universe names, "
+            "recognized_subgroups, lineage_position, structural_flags, "
+            "launch_scope, and/or prefer_lineage. Multiple populated "
+            "axes are ANDed by execution — a requirement naming both a "
+            "franchise AND a structural flag (e.g. 'Marvel spinoffs') "
+            "must populate both. Leave unused axes null. At least one "
+            "axis must be populated."
+        ),
+    )
