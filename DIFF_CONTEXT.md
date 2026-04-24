@@ -687,3 +687,72 @@ Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py | Si
 
 ## Notebook harness for implicit expectations step
 Files: search_v2/test_search_v2.ipynb | Added a new bottom markdown/code cell pair that runs `run_step_2(query)`, feeds the result into `run_implicit_expectations(query, step_2_response)`, and prints the derived booleans, per-fragment explicit signals, token counts, and full JSON. Validated the notebook remains parseable by loading the `.ipynb` as JSON with Python.
+
+## Category handler runtime driver (handler.py)
+Files: search_v2/stage_3/category_handlers/handler.py
+
+### Intent
+Fill in the runtime driver that runs one category handler on one
+coverage_evidence entry. Closes out the step-3 category-handler stack
+— prompt_builder, schema_factories, endpoint_registry, and per-endpoint
+EndpointParameters wrappers were already in place.
+
+### Key Decisions
+- **TRENDING short-circuits before the no_fit check.** Per user
+  decision — trending is deterministic and the early branch keeps the
+  LLM codepath clear of any trending-specific affordances. no_fit
+  short-circuit sits second as defense-in-depth (dispatch filters
+  these in practice).
+- **Route extraction keyed on bucket shape, not a wrapper→route map.**
+  SINGLE reads `category.endpoints[0]`; MUTEX/TIERED reads
+  `output.endpoint_to_run`; COMBO iterates `per_endpoint_breakdown`'s
+  field names (which are route.value strings by construction in
+  schema_factories). No new registry module needed.
+- **Semantic FILTER+NEGATIVE routes to downrank_candidates, not
+  exclusion_ids.** Override of the base 2×2 in the planning doc —
+  semantic similarity is soft, so a "not scary" match is a gradient
+  downrank rather than a hard set removal. Implemented as an
+  isinstance check on SemanticEndpointParameters in _classify_wrapper.
+- **Additive score consolidation within inclusion_candidates /
+  downrank_candidates.** Multiple fired endpoints (COMBO) can surface
+  the same tmdb_id; the handler sums their scores so the orchestrator
+  sees a single consolidated contribution per ID. exclusion_ids uses
+  set union (natively idempotent).
+- **Parallel endpoint execution with per-endpoint soft-fail.**
+  asyncio.gather(..., return_exceptions=True) wrapped in 20s
+  wait_fors; any exception is logged and the outcome dropped while
+  siblings continue landing.
+- **LLM call retries once.** Matches planning doc §"Error handling".
+  Prompt build sits outside the retry loop — only the network call is
+  re-attempted. Second failure returns an empty HandlerResult rather
+  than raising, consistent with the soft-fail contract.
+- **TIMEOUT_SECONDS is a local constant.** Couldn't import from
+  stage_4/dispatch because that module's import chain still references
+  the pre-unification SemanticDealbreakerSpec. Duplicated the 20.0
+  value with a comment pointing back to dispatch as the intended
+  source of truth once the semantic generator imports are cleaned up.
+
+### Testing Notes
+- Import smoke test: `uv run python -c "from
+  search_v2.stage_3.category_handlers.handler import run_handler"`
+  passes.
+- Unit tests for handler.py are a follow-up step (not in scope for
+  this change per test-boundaries rule).
+- End-to-end validation will cover: SINGLE/MUTEX/TIERED/COMBO each
+  firing, TRENDING short-circuit, NO_FIT short-circuit, LLM timeout
+  → empty result, per-endpoint exception → sibling results still land.
+
+## Implicit expectations: add `both` signal type
+Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py | Expanded `signal_type` from `quality | notability | other` to `quality | notability | both | other` so a single fragment can explicitly cover both axes at once (e.g. "classics"). Updated the system prompt and schema descriptions to teach the new label, kept "prestige" out of the quality examples, and changed boolean derivation so `both` disables both implicit expectations. Re-ran `python3 -m py_compile` on both files successfully.
+
+## Implicit expectations prompt/schema clarification for `both`
+Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py | Strengthened the small-model guidance for `both`: the schema field description now includes contrast cases (`best` = quality only, `hidden gems` = notability only, `prestige` / `arthouse` = other by default), and the system prompt now has an explicit EXAMPLES subsection with positive `both` cases plus tricky near-misses that should not be classified as `both`. Re-ran `python3 -m py_compile` on both files successfully.
+
+## Implicit expectations semantic correction: `best` and `hidden gems` are `both`
+Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py | Corrected the `both` teaching examples after review: `best` and `hidden gems` now count as `both` in both the schema description and the system prompt. Removed `best` from the quality-only examples and `hidden gems` from the notability-only examples, added them to the positive `both` list, and replaced the contrast examples with cleaner single-axis cases (`critically acclaimed`, `blockbuster`, `obscure`). Re-ran `python3 -m py_compile` on both files successfully.
+
+## Implicit expectations redesign: observations-first + ordering analysis
+Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py, search_v2/test_search_v2.ipynb | Reworked the step around a new schema shape: `query_intent_summary`, per-fragment `explicit_signals` with `explicit_axis=quality|notability|both|neither`, a prose `explicit_ordering_axis_analysis`, then four booleans (`explicitly_addresses_*`, `should_apply_*_prior`). Removed the separate `ImplicitExpectationsLLMOutput` model and now parse directly into `ImplicitExpectationsResult`. The prompt was rewritten to follow that field order explicitly, to treat trending/chronology/semantic-extremeness language as `neither` at the fragment level but discuss it in the ordering-analysis field, and to include worked examples for `comedies`, `best comedies`, `hidden gem comedies`, `trending comedies`, `most recent horror movies`, `scariest horror movies`, and `prestige thrillers`. Updated the notebook test cell to print the new fields and cleared its stale output. Validated with `python3 -m py_compile` on both Python files and a JSON parse of `search_v2/test_search_v2.ipynb`.
+
+## Stage 3 handler LLM pinned to gpt-5.4-mini
+Files: search_v2/stage_3/category_handlers/handler.py | Hardcoded the step 3 handler LLM call to always use LLMProvider.OPENAI, model `gpt-5.4-mini`, `reasoning_effort="none"`, `verbosity="low"`. Dropped the `provider` and `model` parameters from `run_handler` and `_run_handler_llm` since the choice is now fixed; no production callers were passing them yet (only notebooks mirrored the flow with their own inline LLM calls).
