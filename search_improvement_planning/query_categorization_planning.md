@@ -18,7 +18,7 @@ For each user query, produce a list of **atomic requirements**.
 Each requirement carries four fields:
 
 1. **Category** — one of the 30 categories from `query_categories.md`,
-   or Cat 30 (Interpretation-required) for true edge cases.
+   or Cat 31 (Interpretation-required) for true edge cases.
 2. **Intent** — `dealbreaker` (candidate generation / hard filter)
    vs `preference` (preference sorting / soft scoring).
 3. **Polarity** — `include` vs `exclude`. The requirement itself is
@@ -84,7 +84,7 @@ across requirements for no practical benefit; additive scoring
 gets the same user outcome with a simpler schema.
 
 ### No interpretation confidence flag
-The catch-all (Cat 30) already handles uncertainty with its
+The catch-all (Cat 31) already handles uncertainty with its
 explicit "confidence-lowered phrasing" instruction. Per-requirement
 confidence is skipped for now as unjustified complexity.
 
@@ -125,19 +125,19 @@ Example — "Classic Tom Hanks comedies from the 90s, not too sappy":
 [
   {category: 1,  intent: dealbreaker, polarity: include,
    hint: "actor credit: Tom Hanks"},
-  {category: 10, intent: dealbreaker, polarity: include,
+  {category: 11, intent: dealbreaker, polarity: include,
    hint: "top-level genre: comedy"},
-  {category: 9,  intent: dealbreaker, polarity: include,
+  {category: 10, intent: dealbreaker, polarity: include,
    hint: "release era: 1990s"},
-  {category: 24, intent: preference,  polarity: include,
+  {category: 25, intent: preference,  polarity: include,
    hint: "'classic' compound → canonical/acclaimed stature"},
-  {category: 21, intent: preference,  polarity: exclude,
+  {category: 22, intent: preference,  polarity: exclude,
    hint: "'not too sappy' — tilt away from sentimental tone"},
 ]
 ```
 
-Note "classic" got split: the era part lands in Cat 9 via the
-"90s" atom already, and the acclaim part becomes its own Cat 24
+Note "classic" got split: the era part lands in Cat 10 via the
+"90s" atom already, and the acclaim part becomes its own Cat 25
 preference. Compound descriptors never warrant their own category.
 
 ---

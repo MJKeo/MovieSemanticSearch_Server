@@ -1,9 +1,13 @@
 # Search V2 — Step 2 (Query Pre-pass) output schema.
 #
-# Single-pass structure: every requirement goes through the same
-# decomposition. There is no separate "problematic" list — atoms that
-# need unpacking show up as multi-entry coverage_evidence with
-# per-category atomic_rewrites, composed into full_rewrite.
+# Every requirement fragment is an attribute: a content-bearing chunk
+# of the query that carries one or more category-grounded atoms.
+# Polarity modifiers ("not", "not too", "preferably") and role
+# markers ("starring", "directed by", "about") are NOT their own
+# fragments — they are nested inside the attribute fragment they bind
+# to, as entries in the modifiers list. This keeps each requirement
+# self-contained so it can be dispatched to its category handler
+# without cross-fragment reassembly.
 #
 # Field order within CoverageEvidence is observations-first:
 #   1. captured_meaning — what atom is being observed (before
@@ -15,21 +19,46 @@
 
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import List
 
 from pydantic import BaseModel, Field
 
-from schemas.enums import CategoryName
+from schemas.enums import CategoryName, FitQuality, LanguageType
 
 
-LanguageType = Literal[
-    "attribute",
-    "selection_rule",
-    "role_marker",
-    "polarity_modifier",
-]
+class Modifier(BaseModel):
+    """A polarity or role-marker phrase that attaches to an attribute
+    fragment and shapes how that attribute is interpreted.
+    """
 
-FitQuality = Literal["clean", "partial", "no_fit"]
+    original_text: str = Field(
+        ...,
+        description=(
+            "The verbatim span from the query that produced this "
+            "modifier (e.g. 'starring', 'not too', 'directed by', "
+            "'preferably'). Preserve wording and typos."
+        ),
+    )
+    effect: str = Field(
+        ...,
+        description=(
+            "One brief phrase stating how this modifier changes the "
+            "adjacent attribute — the binding it creates or the "
+            "sign/strength shift it applies. Written as a terse note "
+            "for the downstream LLM, not a full sentence."
+        ),
+    )
+    type: LanguageType = Field(
+        ...,
+        description=(
+            "POLARITY_MODIFIER if this modifier flips or modulates "
+            "the sign/strength of the attribute ('not', 'not too', "
+            "'without', 'preferably', 'ideally'). ROLE_MARKER if it "
+            "binds the attribute to a specific role or dimension "
+            "('starring', 'directed by', 'about', 'set in', 'based "
+            "on')."
+        ),
+    )
 
 
 class CoverageEvidence(BaseModel):
@@ -93,59 +122,45 @@ class CoverageEvidence(BaseModel):
 
 
 class RequirementFragment(BaseModel):
-    """A contiguous chunk of the query that conveys one thing about
-    the desired results. Preserves the user's exact wording.
+    """A contiguous chunk of the query that conveys one attribute of
+    the desired results. Every fragment is an attribute; polarity
+    modifiers and role markers that bind to it live in the modifiers
+    list. Preserves the user's exact wording.
     """
 
     query_text: str = Field(
         ...,
         description=(
-            "The fragment exactly as it appears in the query, "
-            "preserving wording and typos. Do not paraphrase."
+            "The attribute span exactly as it appears in the query, "
+            "preserving wording and typos. Do not paraphrase. Any "
+            "adjacent role markers or polarity modifiers are NOT "
+            "included here — they go in the modifiers list."
         ),
     )
     description: str = Field(
         ...,
         description=(
             "One sentence describing what this fragment contributes "
-            "to the query. For attributes, describe the trait. For "
-            "selection rules, describe the ordering/filtering. For "
-            "role markers, describe the binding they create. For "
-            "polarity modifiers, describe the sign/strength change."
+            "to the query."
         ),
     )
-    type: LanguageType = Field(
+    modifiers: List[Modifier] = Field(
         ...,
         description=(
-            "One of: attribute, selection_rule, role_marker, "
-            "polarity_modifier. See the prompt for definitions."
+            "Polarity modifiers and role markers that attach to "
+            "this attribute. Empty list when the fragment has none. "
+            "Each entry carries the verbatim span, a brief effect "
+            "note, and the modifier type (POLARITY_MODIFIER or "
+            "ROLE_MARKER)."
         ),
     )
     coverage_evidence: List[CoverageEvidence] = Field(
         ...,
         description=(
-            "For attribute fragments: one entry per category-"
-            "grounded atom this fragment contains. Simple one-axis "
-            "fragments produce one entry; compound fragments "
-            "produce multiple entries (one per implied atom). "
-            "For non-attribute fragments (selection_rule, "
-            "role_marker, polarity_modifier), this list is empty — "
-            "those fragments modify adjacent attributes rather "
-            "than standing alone in the taxonomy."
-        ),
-    )
-    full_rewrite: str = Field(
-        ...,
-        description=(
-            "The fragment rewritten as the sum of its "
-            "atomic_rewrites, smoothed into one readable phrase. "
-            "When coverage_evidence is empty (non-attribute "
-            "fragments), use query_text verbatim or minimally "
-            "smoothed. Every atomic_rewrite from an entry with "
-            "fit_quality in ('clean', 'partial') must appear as a "
-            "recognizable part of full_rewrite — do not drop atoms. "
-            "Entries with fit_quality='no_fit' are discardable and "
-            "do NOT need to appear in full_rewrite."
+            "One entry per category-grounded atom this fragment "
+            "contains. Simple one-axis fragments produce one entry; "
+            "compound descriptors and multi-dimension entities "
+            "produce multiple entries (one per implied atom)."
         ),
     )
 
@@ -165,21 +180,12 @@ class Step2Response(BaseModel):
     requirements: List[RequirementFragment] = Field(
         ...,
         description=(
-            "Every requirement-bearing chunk of the query, with "
+            "Every attribute-bearing chunk of the query, with "
             "original wording preserved. Ignore pure filler "
             "('movies', 'films', 'help me find'). Role markers "
-            "('starring', 'directed by', 'about') and polarity "
-            "modifiers ('not', 'not too', 'without') get their OWN "
-            "fragments — they are signal, not filler."
-        ),
-    )
-    rewritten_query: str = Field(
-        ...,
-        description=(
-            "The full query rewritten as the smoothed composition "
-            "of all fragments' full_rewrites. Preserves original "
-            "specificity. Adds no attributes, selection rules, "
-            "roles, or polarity modifiers beyond what appears in "
-            "the fragments."
+            "('starring', 'directed by') and polarity modifiers "
+            "('not', 'not too') are NOT their own fragments — they "
+            "attach to the adjacent attribute fragment as entries "
+            "in its modifiers list."
         ),
     )

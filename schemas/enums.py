@@ -352,6 +352,32 @@ class QueryAmbiguityLevel(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# Search V2 step 2 modifier discriminator.
+#
+# Every requirement fragment is an attribute. Polarity phrases and
+# role markers are nested inside that attribute as entries in its
+# modifiers list; this enum discriminates which kind of modifier each
+# entry is. Kept to exactly the two kinds that actually bind to an
+# adjacent attribute — standalone fragment types (attribute,
+# selection_rule) are no longer part of this vocabulary.
+# ---------------------------------------------------------------------------
+class LanguageType(StrEnum):
+    POLARITY_MODIFIER = "polarity_modifier"
+    ROLE_MARKER = "role_marker"
+
+
+# Fit of a coverage_evidence entry's category against its
+# captured_meaning. Drives downstream dispatch:
+#   clean / partial  → dispatch to the category handler
+#   no_fit           → pruned before dispatch (observation turned out
+#                      speculative or empty)
+class FitQuality(StrEnum):
+    CLEAN = "clean"
+    PARTIAL = "partial"
+    NO_FIT = "no_fit"
+
+
+# ---------------------------------------------------------------------------
 # Search V2 step 2 query categorization taxonomy.
 #
 # CategoryName is the canonical vocabulary the step-2 pre-pass LLM picks
@@ -622,7 +648,13 @@ class CategoryName(str, Enum):
             "('best horror of the 80s', 'scariest movie ever', "
             "'funniest'). The axis of the superlative ('of the 80s', "
             "'horror') composes into other categories; this one owns "
-            "the superlative / stature framing."
+            "the superlative / stature framing. Award-anchored "
+            "framings ('Oscar-winning', 'BAFTA-nominated', 'Palme d'Or "
+            "winner') do NOT belong here — they decompose into Award "
+            "records. 'Classic' / canonical stature as a general "
+            "judgment lives here; membership in a specific named list "
+            "(Criterion, AFI Top 100, etc.) decomposes into Curated "
+            "canon / named list."
         ),
     )
     POST_VIEWING_RESONANCE = (
@@ -673,6 +705,22 @@ class CategoryName(str, Enum):
             "films', 'Philip K. Dick stories', 'Neil Gaiman works'. "
             "The author of the original book / story / comic, who is "
             "NOT a film credit and is NOT the subject depicted."
+        ),
+    )
+    CHRONOLOGICAL = (
+        "Chronological",
+        (
+            "Release-date ordinal position within a scoped candidate "
+            "set — 'first', 'last', 'earliest', 'latest', 'most "
+            "recent', 'the newest one', 'the oldest one'. Selects by "
+            "chronology (release date ordering), not by scoring "
+            "reception or popularity. Bare era framing — 'recent', "
+            "'newer', 'older', '90s' — is NOT chronological; it is "
+            "an era-range attribute and belongs to Structured "
+            "metadata. Route here only when the phrase picks a "
+            "position ('the newest'), not a range ('newer'). Also "
+            "distinct from Reception quality + superlative, which "
+            "is about acclaim rather than chronology."
         ),
     )
     INTERPRETATION_REQUIRED = (

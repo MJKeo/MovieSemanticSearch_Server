@@ -35,8 +35,8 @@ note when nothing covers cleanly.
 1. **Who made it (person credits)** → **ENT** (actor/director/writer/producer/composer postings).
 2. **Below-the-line creative credits** → **ENT** for composer only. ⚠ Gap: cinematographer, editor, production designer, costume designer have no posting tables; the only way they surface today is incidentally in **RCP** text ("praised cinematography by Deakins") — unreliable for lookup.
 3. **Studio / brand** → **STU** (brand path + freeform fallback).
-4. **Named character** → **ENT** (character postings). Secondary **FRA** when the character *is* the franchise anchor (Batman, Wolverine) — need cross-endpoint coordination.
-5. **Top-level genre** → **META** (genre_ids GIN overlap). Secondary **KW** (genre-flavor families) and **P-ANA** (genre_signatures).
+4. **Named character** → **ENT** (character postings). No franchise fan-out inside this category; when the character is also a franchise anchor (Batman, Wolverine), the step 2 pre-pass emits a separate Franchise-lineage coverage_evidence atom that routes to the franchise category on its own.
+5. **Top-level genre** → **KW** when the requested genre resolves to a keyword tag (authoritative); **P-ANA** (genre_signatures) as the mutually-exclusive fallback for compound / qualifier-laden framings ("dark action," "quiet drama") the vocabulary can't express. META.genre_ids is redundant — every genre it covers is already in the keyword vocabulary.
 6. **Release date / era** → **META** (release_ts).
 7. **Runtime** → **META** (runtime_minutes).
 8. **Maturity rating** → **META** (maturity_rank).
@@ -44,7 +44,7 @@ note when nothing covers cleanly.
 10. **Streaming availability** → **META** (watch_offer_keys).
 11. **Budget scale** → **META** (budget_bucket).
 12. **Box office** → **META** (box_office_bucket).
-13. **Trending** → **META** (popularity_score). ⚠ Gap-ish: no dedicated trending endpoint surfaced in the audit; popularity is a static field, not a "right now" signal unless refreshed.
+13. **Trending** → **TRENDING** (dedicated endpoint backed by Redis `trending:current` hash, refreshed from the TMDB `/trending/movie/week` API). Distinct from **META.popularity_score**, which is static ingest-time notability and not a "right now" signal.
 14. **Formal awards** → **AWD**.
 15. **Curated canon (Criterion, AFI, Sight & Sound, IMDb 250)** → ⚠ **Data gap**. Not encoded as awards, not a METADATA column, not present in the UnifiedClassification vocabulary. Might incidentally surface in **RCP** ("Criterion pick") but not queryable.
 16. **Numeric reception score** → **META** (reception_score).
@@ -52,13 +52,13 @@ note when nothing covers cleanly.
 18. **Visual-format specifics (B&W, 70mm, found-footage, widescreen)** → **KW** for the canonical tags that exist (FOUND_FOOTAGE, BLACK_AND_WHITE, ANIMATION, etc.). Secondary **PRD** for "shot on 16mm" style prose.
 19. **Title text pattern** → **ENT** (title ILIKE path).
 20. **Production country** → **META** (country_of_origin_ids).
-21. **Filming location** → **PRD** (filming_locations field). ⚠ Note: not **META.country_of_origin** — that's legal/financial origin, not where cameras rolled.
+21. **Filming location** → **PRD** (filming_locations field) as single endpoint. META.country_of_origin is deliberately excluded — it's legal/financial origin, not where cameras rolled, and foreign-shot Hollywood productions (The Revenant, Dune, Mission Impossible – Fallout) would be miscounted if it contributed.
 
 ## Murky tier
 
 1. **Franchise membership** → **FRA** (lineage + shared_universe arrays).
-2. **Franchise lineage (sequel/prequel/spinoff/reboot/remake)** → **FRA** (spinoff/crossover/launched_franchise flags). Secondary **KW** (SourceMaterialType.REMAKE for the remake case specifically).
-3. **Cultural tradition (Korean cinema, Bollywood, neorealism)** → **META** (country_of_origin) as base. Secondary **KW** (ConceptTag for "Italian Neorealism"-style schools if present). **P-ANA** can catch prose-level tradition but weakly. ⚠ Partial gap: "cultural tradition" ≠ country; no clean channel for "Hong Kong action" as an aesthetic tradition vs. the literal country code.
+2. **Franchise lineage (sequel/prequel/spinoff/reboot/remake)** → **FRA** (spinoff/crossover/launched_franchise flags) as single endpoint. Remake-as-bare-flag ("give me remakes") is not a lineage question and routes to the adaptation-source category instead; step 2 splits "James Bond remakes" into separate franchise and source-flag atoms.
+3. **Cultural tradition (Korean cinema, Bollywood, neorealism)** → **KW** tradition tag (BOLLYWOOD, KOREAN_CINEMA, ITALIAN_NEOREALISM, etc.) when present — authoritative for the tradition as an aesthetic. Tiered fallback to **META** (country_of_origin + audio_language_ids) when no tag covers the requested tradition; country is a proxy, not a synonym (Hollywood-funded HK action isn't HK by production country, which is why the tag is preferred whenever available).
 4. **Sub-genre** → **KW** (families 1–11 are genre-flavor buckets). Secondary **P-ANA** (genre_signatures).
 5. **Setting time (narrative era)** → **P-EVT** (prose mentions era). Secondary **KW** if period-setting ConceptTags exist. ⚠ Partial gap: no structured "story_era" column, so queries over the 1940s (narrative) vs. 1940s (release) bleed together unless prose carries the weight.
 6. **Setting place (narrative location)** → **P-EVT** (prose). Secondary **KW** (settings ConceptTags if present).
@@ -110,7 +110,7 @@ Flagging so they're not forgotten.
 - **Gateway / entry-level** designation: "good first anime", "accessible arthouse."
 
 **Partial gaps** (captured incidentally but not queryable cleanly):
-- Cultural tradition as distinct from production country (Hong Kong action, Bollywood).
+- Cultural tradition when no dedicated keyword tag exists — fallback to production country is an approximation, not an exact answer (Hong Kong action, Bollywood).
 - Narrative setting time — bleeds into release date when prose doesn't carry it.
 - Cast composition quality ("stacked A-list") — no cross-endpoint cast-popularity aggregate.
 - "Something to say" / thematic weight as a meta-quality.
@@ -119,7 +119,6 @@ Flagging so they're not forgotten.
 - Rewatch value.
 - Cultural influence / historical importance.
 - Still holds up today.
-- Trending *right now* (popularity_score is static, not a live trending feed).
 
 ---
 
