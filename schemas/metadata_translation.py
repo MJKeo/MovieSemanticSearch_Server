@@ -69,7 +69,8 @@ class ReleaseDateTranslation(BaseModel):
 
     @model_validator(mode="after")
     def _validate_dates(self) -> "ReleaseDateTranslation":
-        # Validate first_date is a parseable ISO date.
+        # first_date is load-bearing — there is no graceful recovery
+        # if it fails to parse, so this remains a hard error.
         try:
             first = date.fromisoformat(self.first_date)
         except (TypeError, ValueError):
@@ -80,20 +81,30 @@ class ReleaseDateTranslation(BaseModel):
             DateMatchOperation.BETWEEN.value,
         }
 
-        if is_between:
-            if self.second_date is None:
-                raise ValueError("second_date is required when match_operation is BETWEEN")
-            try:
-                second = date.fromisoformat(self.second_date)
-            except (TypeError, ValueError):
-                raise ValueError(f"second_date is not a valid ISO date: {self.second_date}")
-            # Ensure chronological order.
-            if first > second:
-                self.first_date, self.second_date = self.second_date, self.first_date
-        else:
-            # Discard second_date when not BETWEEN.
+        if not is_between:
+            # Non-BETWEEN ops only consume first_date.
             self.second_date = None
+            return self
 
+        # BETWEEN: if second_date is missing or unparseable, downgrade
+        # match_operation to EXACT against first_date alone rather than
+        # failing the whole metadata call. The user gets a single-day
+        # match instead of a range, which is a strictly weaker signal
+        # but preserves the rest of the query.
+        if self.second_date is None:
+            self.match_operation = DateMatchOperation.EXACT.value
+            return self
+
+        try:
+            second = date.fromisoformat(self.second_date)
+        except (TypeError, ValueError):
+            self.match_operation = DateMatchOperation.EXACT.value
+            self.second_date = None
+            return self
+
+        # Both dates valid — preserve chronological order.
+        if first > second:
+            self.first_date, self.second_date = self.second_date, self.first_date
         return self
 
 
@@ -112,15 +123,22 @@ class RuntimeTranslation(BaseModel):
             NumericalMatchOperation.BETWEEN.value,
         }
 
-        if is_between:
-            if self.second_value is None:
-                raise ValueError("second_value is required when match_operation is BETWEEN")
-            # Ensure ascending order.
-            if self.first_value > self.second_value:
-                self.first_value, self.second_value = self.second_value, self.first_value
-        else:
+        if not is_between:
             self.second_value = None
+            return self
 
+        # BETWEEN with a missing second_value: downgrade to EXACT
+        # against first_value alone rather than failing the whole
+        # metadata call. The user gets a single-value match instead of
+        # a range, which is a strictly weaker signal but preserves the
+        # rest of the query.
+        if self.second_value is None:
+            self.match_operation = NumericalMatchOperation.EXACT.value
+            return self
+
+        # Ensure ascending order when both are present.
+        if self.first_value > self.second_value:
+            self.first_value, self.second_value = self.second_value, self.first_value
         return self
 
 
