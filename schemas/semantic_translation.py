@@ -242,14 +242,82 @@ SemanticSpaceEntry = Union[
 
 
 # ---------------------------------------------------------------------------
+# Merge helpers for duplicate-space recovery.
+#
+# Both validators below prefer recovering from a malformed LLM emission
+# over raising — the alternative is a failed call that costs a retry
+# for a problem we can fix deterministically. The helpers walk the
+# body schema generically so they stay correct as space bodies evolve.
+# ---------------------------------------------------------------------------
+
+
+def _merge_bodies(bodies: list[BaseModel]) -> BaseModel:
+    # Generic merge across any of the seven space body types. List
+    # fields are concatenated with first-occurrence dedupe; prose
+    # str | None fields are joined with ". "; nested BaseModel fields
+    # (TermsSection / TermsWithNegationsSection) recurse so their
+    # inner term lists also concat-dedupe.
+    merged = bodies[0].model_copy()
+    for field_name in type(merged).model_fields:
+        values = [getattr(b, field_name) for b in bodies]
+        sample = next((v for v in values if v is not None), None)
+
+        if isinstance(sample, list):
+            combined: list = []
+            seen: set = set()
+            for v in values:
+                for item in v:
+                    if item not in seen:
+                        seen.add(item)
+                        combined.append(item)
+            setattr(merged, field_name, combined)
+        elif isinstance(sample, BaseModel):
+            non_none = [v for v in values if v is not None]
+            setattr(merged, field_name, _merge_bodies(non_none))
+        else:
+            # Prose str | None — concat non-empty values, preserving
+            # the order entries arrived in.
+            non_empty = [v for v in values if v]
+            setattr(
+                merged,
+                field_name,
+                ". ".join(non_empty) if non_empty else None,
+            )
+    return merged
+
+
+def _merge_entries(entries: list) -> "SemanticSpaceEntry":
+    # Collapse N entries that share a space into one. carries_qualifiers
+    # joins with " | " to keep each duplicate's per-space reasoning
+    # visible; weight resolves to CENTRAL if any duplicate is central
+    # (the stronger signal wins so the merged entry isn't quietly
+    # demoted); content delegates to _merge_bodies.
+    if len(entries) == 1:
+        return entries[0]
+
+    merged = entries[0].model_copy()
+    qualifiers = [e.carries_qualifiers for e in entries if e.carries_qualifiers]
+    merged.carries_qualifiers = " | ".join(qualifiers)
+    merged.weight = (
+        SpaceWeight.CENTRAL
+        if any(e.weight == SpaceWeight.CENTRAL for e in entries)
+        else SpaceWeight.SUPPORTING
+    )
+    merged.content = _merge_bodies([e.content for e in entries])
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Inner payload.
 #
 # Field order: qualifier_inventory -> space_queries -> primary_vector.
 # See the top-of-file comment for why primary_vector is last. The
-# _no_duplicate_spaces validator guards the Σ(w × cos) / Σw
-# downstream sum from double-counting a space; the
-# _primary_vector_in_space_queries validator enforces that the
-# retrospective pick references a space actually populated above.
+# _deduplicate_spaces validator collapses duplicate-space entries by
+# merging their content rather than failing, so the downstream
+# Σ(w × cos) / Σw sum doesn't double-count a space; the
+# _primary_vector_in_space_queries validator falls back to the entry
+# with the most embedding text when the model picks a space it didn't
+# populate.
 # ---------------------------------------------------------------------------
 
 
@@ -299,29 +367,43 @@ class SemanticParameters(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _no_duplicate_spaces(self) -> "SemanticParameters":
-        # SemanticSpace is a str-Enum, so members and their string
-        # values compare equal and share a hash. One set works for both.
-        seen: set = set()
+    def _deduplicate_spaces(self) -> "SemanticParameters":
+        # If the LLM emits multiple entries for the same space, merge
+        # them into one rather than failing — duplicates are
+        # recoverable (concat content, OR the weights, join the
+        # qualifier reasoning) and a hard fail would just trigger a
+        # retry for a benign collision.
+        grouped: dict = {}
+        order: list = []
         for entry in self.space_queries:
-            if entry.space in seen:
-                raise ValueError(
-                    f"duplicate space in space_queries: {entry.space}"
-                )
-            seen.add(entry.space)
+            if entry.space not in grouped:
+                grouped[entry.space] = [entry]
+                order.append(entry.space)
+            else:
+                grouped[entry.space].append(entry)
+
+        if len(order) == len(self.space_queries):
+            return self  # no duplicates, nothing to merge
+
+        self.space_queries = [_merge_entries(grouped[s]) for s in order]
         return self
 
     @model_validator(mode="after")
     def _primary_vector_in_space_queries(self) -> "SemanticParameters":
-        # primary_vector is a retrospective pick over space_queries —
-        # picking a space that wasn't populated above would leave the
-        # dealbreaker path without an entry to execute.
+        # primary_vector must reference a populated space — the
+        # dealbreaker path needs an entry to execute. If the model
+        # picked a space it didn't populate, fall back to the entry
+        # whose content carries the most embedding text (a reasonable
+        # proxy for which space the model invested most signal in).
         populated = {entry.space for entry in self.space_queries}
-        if self.primary_vector not in populated:
-            raise ValueError(
-                f"primary_vector {self.primary_vector} is not among "
-                f"populated space_queries {sorted(s.value for s in populated)}"
-            )
+        if self.primary_vector in populated:
+            return self
+
+        best = max(
+            self.space_queries,
+            key=lambda e: len(e.content.embedding_text()),
+        )
+        self.primary_vector = best.space
         return self
 
 

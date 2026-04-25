@@ -783,3 +783,9 @@ Cell 16 used to import the now-deleted private `_build_endpoint_coroutine` from 
 
 ### Testing Notes
 No automated tests touched per the test-boundaries rule. Verification path: notebook Cell 8 against the queries listed in the plan's verification section (multi-handler, downrank, exclusion-heavy, TRENDING-only, entity-only). Sanity-check the breakdown caps (`preference_contribution ≤ 0.49`, `implicit_prior_contribution ≤ 0.25`) and confirm `used_fallback` matches the query shape.
+
+## Soften SemanticParameters validators to recover instead of fail
+Files: schemas/semantic_translation.py
+Why: Both validators previously raised on duplicate spaces and on a primary_vector that referenced an unpopulated space. These are LLM-emission glitches that we can fix deterministically — failing trades a benign collision for a retry.
+Approach: Replaced `_no_duplicate_spaces` with `_deduplicate_spaces` that groups entries by space (preserving first-seen order) and merges duplicates via two new helpers: `_merge_entries` (joins `carries_qualifiers` with " | ", resolves weight to CENTRAL if any duplicate is central) and `_merge_bodies` (generic schema-walking merge — list fields concat-dedupe with first-occurrence order, prose `str | None` fields join non-empty values with ". ", nested BaseModel fields like TermsSection recurse). Replaced the primary_vector check with a fallback that picks the entry whose `content.embedding_text()` returns the longest string when the model picks an unpopulated space.
+Testing notes: Sanity-checked construction with a duplicate PLOT_EVENTS pair plus an unpopulated primary_vector — collapsed to one entry, weight escalated to CENTRAL, qualifiers/prose joined as expected, primary_vector fell back to the populated space.
