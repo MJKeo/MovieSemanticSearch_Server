@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from schemas.endpoint_parameters import EndpointParameters
+from schemas.enums import CategoryName, EndpointRoute
 
 
 @dataclass
@@ -43,3 +44,16 @@ class HandlerResult:
     # inspecting its concrete EndpointParameters subclass —
     # no separate routing tag needed.
     preference_specs: list[EndpointParameters] = field(default_factory=list)
+
+    # ---- Debug / introspection only ----
+    # Not consumed by the orchestrator's scoring path — these exist
+    # so notebook tooling and post-hoc analysis can see which
+    # category drove this result and which (route, EndpointParameters)
+    # pairs the handler's LLM elected to fire (including those
+    # deferred as preferences). Populated by run_handler; default
+    # values keep direct constructions of HandlerResult() — used as
+    # the soft-fail fallback — backwards compatible.
+    category: CategoryName | None = None
+    fired_endpoints: list[tuple[EndpointRoute, EndpointParameters]] = field(
+        default_factory=list
+    )

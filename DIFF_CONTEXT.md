@@ -1,6 +1,9 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Implicit-prior reranking weights: 80/20 popularity/reception when both active
+Files: search_v2/stage_3/orchestrator.py | When both quality and notability priors are active, the IMPLICIT_PRIOR_CAP (0.25) now splits 80/20 toward popularity (notability) over reception (quality) instead of an even 50/50 — popularity is the dominant implicit cue for default "well-known and well-liked" ranking. Single-axis cases still claim the full cap. Introduced IMPLICIT_POPULARITY_SHARE_BOTH_ACTIVE / IMPLICIT_RECEPTION_SHARE_BOTH_ACTIVE constants.
+
 ## category_handlers module scaffold + schema-file relocation
 Files: search_v2/stage_3/category_handlers/{__init__,handler,prompt_builder,handler_result,endpoint_registry,schema_factories}.py, search_v2/stage_3/category_handlers/prompts/{shared,buckets,endpoints,categories}/, search_improvement_planning/category_handler_planning.md
 
@@ -756,3 +759,27 @@ Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py, sea
 
 ## Stage 3 handler LLM pinned to gpt-5.4-mini
 Files: search_v2/stage_3/category_handlers/handler.py | Hardcoded the step 3 handler LLM call to always use LLMProvider.OPENAI, model `gpt-5.4-mini`, `reasoning_effort="none"`, `verbosity="low"`. Dropped the `provider` and `model` parameters from `run_handler` and `_run_handler_llm` since the choice is now fixed; no production callers were passing them yet (only notebooks mirrored the flow with their own inline LLM calls).
+
+## Stage 3 orchestrator: fan-out, consolidation, fallback paths, final scoring
+Files: search_v2/stage_3/orchestrator.py, search_v2/stage_3/endpoint_executors.py, search_v2/stage_3/category_handlers/handler.py, db/postgres.py, search_v2/test_search_v2.ipynb
+
+### Intent
+Add the layer above `run_handler` that takes a `Step2Response`, dispatches one handler per non-`NO_FIT` `coverage_evidence` atom in parallel with `run_implicit_expectations`, consolidates the four `HandlerResult` buckets, runs deferred preferences against the consolidated pool, and produces a final ranked list of tmdb_ids with per-component score breakdowns. Designed per the §"Handler return contract" / §"Preference handling" sections of `search_improvement_planning/category_handler_planning.md`, with the no-candidate fallback policies negotiated with the user during planning (see plan file `~/.claude/plans/make-a-plan-first-compiled-pearl.md`).
+
+### Key Decisions
+- **Pool-path hierarchy**: inclusion → preferences-as-candidates (corpus-wide) → top-2K by `popularity_score * reception_score` → empty. Each fallback tag surfaces in `Stage3Result.used_fallback`. The "preferences as candidates" path consumes preferences (deferred list emptied) so they don't double-count in the rerank cap; the seed-pool path keeps preference_specs for normal scoring.
+- **Caps**: `PREFERENCE_CAP=0.49` distributed equally across firing preferences; `IMPLICIT_PRIOR_CAP=0.25` split equally across active axes (one active → 0.25, both active → 0.125 each). Inclusion and downrank are uncapped — endpoint scores already arrive in [0.5, 1.0] so additive accumulation across handlers is the intended signal.
+- **Quality vs notability sources**: quality reuses `db.reranking.normalize_reception` (raw IMDB → [0,1] with `None` → 0.5). Notability is `movie_card.popularity_score` directly — it's already sigmoid-normalized to [0,1] (see `db/postgres.py:1053`); `None` → 0.0.
+- **Preference failure policy**: a failed deferred preference contributes 0 to every candidate but still consumes its `0.49 / N` slot. Redistributing the slot to surviving preferences would silently amplify them, which is harder to reason about than a quiet zero.
+- **Implicit-expectations failure policy**: catch in the fan-out wrapper and surface as `None`; both priors then resolve to inactive. Failures shouldn't silently inject ranking signal a user might've explicitly opted out of.
+- **Shared executor dispatch**: extracted route→executor logic out of `handler.py` into a new `search_v2/stage_3/endpoint_executors.py` (public `build_endpoint_coroutine`) so the orchestrator can reuse it for both deferred preferences (with `restrict_to_movie_ids=pool`) and the preferences-as-candidates fallback (`restrict_to_movie_ids=None`). Added `route_for_wrapper` (inverse of `ROUTE_TO_WRAPPER` from the existing `endpoint_registry`) so the orchestrator can dispatch raw `EndpointParameters` instances without an isinstance chain.
+- **New postgres helpers**: `fetch_quality_popularity_seed(limit)` for the no-inclusion seed pool, ordered by `popularity_score * reception_score` with COALESCE-to-0 NULL handling. `fetch_quality_popularity_signals(movie_ids)` for batched implicit-prior signal fetch. The existing `fetch_browse_seed_ids` was popularity-only and explicitly tagged as a placeholder; the new helper uses the product because both signals are now first-class in this pipeline.
+
+### Edge cases (encoded in phase logic)
+Empty step-2, all NO_FIT, all-handlers-fail, inclusion-wiped-by-exclusion, only-exclusion, only-preferences, implicit-LLM-fail, single-preference-timeout, inclusion+exclusion ID overlap, inclusion+downrank ID overlap. Soft-fail throughout; only programmer-error states (unsupported route in dispatch, unknown match_mode/polarity combo) raise.
+
+### Notebook update
+Cell 16 used to import the now-deleted private `_build_endpoint_coroutine` from `handler.py`; updated it to use the public shared helper. Appended one new code cell + markdown header that runs Step 2 → orchestrator end-to-end and prints the fallback path, top-K with per-component scores, and timing.
+
+### Testing Notes
+No automated tests touched per the test-boundaries rule. Verification path: notebook Cell 8 against the queries listed in the plan's verification section (multi-handler, downrank, exclusion-heavy, TRENDING-only, entity-only). Sanity-check the breakdown caps (`preference_contribution ≤ 0.49`, `implicit_prior_contribution ≤ 0.25`) and confirm `used_fallback` matches the query shape.

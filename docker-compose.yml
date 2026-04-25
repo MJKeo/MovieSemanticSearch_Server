@@ -2,6 +2,12 @@ services:
 
     postgres:
       image: postgres:15
+      # Disable JIT: on local Docker (especially Apple Silicon),
+      # LLVM compilation cost dominates execution for medium-cost
+      # queries — observed ~75x slowdown on GIN-array overlap
+      # queries vs. jit=off. Safe to disable for any workload where
+      # individual query cost is well under ~1M.
+      command: postgres -c jit=off
       environment:
         POSTGRES_USER: ${POSTGRES_USER}
         POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

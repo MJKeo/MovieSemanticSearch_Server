@@ -1804,6 +1804,61 @@ async def fetch_browse_seed_ids(
     return [row[0] for row in rows]
 
 
+async def fetch_quality_popularity_seed(
+    *,
+    limit: int,
+) -> list[int]:
+    """Top `limit` movie_ids ordered by popularity * reception product.
+
+    Used by the stage-3 orchestrator's no-inclusion fallback path:
+    when only exclusion fired (no inclusion candidates and no
+    preferences to use as candidate generators), we still need a
+    seed pool that downstream rerankers can prune via exclusion and
+    rerank via preferences / implicit priors. The product ordering
+    yields a "well-known *and* well-received" pool — strict on both
+    axes, unlike a popularity-only seed which leans toward famous
+    but poorly-reviewed films.
+
+    NULL handling: COALESCE both signals to 0 so movies with one
+    missing signal sort to the bottom rather than out of the result
+    set entirely.
+    """
+    query = """
+        SELECT movie_id
+        FROM public.movie_card
+        ORDER BY (COALESCE(popularity_score, 0)
+                  * COALESCE(reception_score, 0)) DESC,
+                 movie_id DESC
+        LIMIT %s
+    """
+    rows = await _execute_read(query, (limit,))
+    return [row[0] for row in rows]
+
+
+async def fetch_quality_popularity_signals(
+    movie_ids: list[int],
+) -> dict[int, tuple[float | None, float | None]]:
+    """Bulk fetch (popularity_score, reception_score) for the implicit prior.
+
+    Returns a dict keyed by movie_id with a (popularity, reception)
+    tuple value. Missing movies are simply absent from the dict;
+    missing column values surface as None and the orchestrator
+    treats them via the existing reception normalizer (None → 0.5
+    neutral) and a straight popularity pass-through (None → 0.0).
+    """
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT movie_id, popularity_score, reception_score
+        FROM public.movie_card
+        WHERE movie_id = ANY(%s::bigint[])
+    """
+
+    rows = await _execute_read(query, (movie_ids,))
+    return {row[0]: (row[1], row[2]) for row in rows}
+
+
 async def fetch_movie_ids_by_term_ids(
     table: PostingTable,
     term_ids: list[int],

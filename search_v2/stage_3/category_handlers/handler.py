@@ -49,19 +49,13 @@ from schemas.enums import (
 )
 from schemas.semantic_translation import SemanticEndpointParameters
 from schemas.step_2 import CoverageEvidence, RequirementFragment
-from search_v2.stage_3.award_query_execution import execute_award_query
 from search_v2.stage_3.category_handlers.handler_result import HandlerResult
 from search_v2.stage_3.category_handlers.prompt_builder import (
     build_system_prompt,
     build_user_message,
 )
 from search_v2.stage_3.category_handlers.schema_factories import get_output_schema
-from search_v2.stage_3.entity_query_execution import execute_entity_query
-from search_v2.stage_3.franchise_query_execution import execute_franchise_query
-from search_v2.stage_3.keyword_query_execution import execute_keyword_query
-from search_v2.stage_3.metadata_query_execution import execute_metadata_query
-from search_v2.stage_3.semantic_query_execution import execute_semantic_query
-from search_v2.stage_3.studio_query_execution import execute_studio_query
+from search_v2.stage_3.endpoint_executors import build_endpoint_coroutine
 from search_v2.stage_3.trending_query_execution import execute_trending_query
 
 logger = logging.getLogger(__name__)
@@ -102,13 +96,15 @@ async def run_handler(
     # Must run even when fit_quality == no_fit because dispatch has
     # already validated the routing before reaching this layer.
     if category == CategoryName.TRENDING:
-        return await _run_trending()
+        result = await _run_trending()
+        result.category = category
+        return result
 
     # Step 0b — no_fit entries carry no actionable signal. Dispatch is
     # expected to filter these out before they reach this module, but
     # defense-in-depth keeps the handler honest if it ever slips past.
     if target_entry.fit_quality == FitQuality.NO_FIT:
-        return HandlerResult()
+        return HandlerResult(category=category)
 
     # Step 1 — build prompt + run LLM with a single retry.
     output = await _run_handler_llm(
@@ -120,17 +116,22 @@ async def run_handler(
         sibling_fragments=sibling_fragments,
     )
     if output is None:
-        return HandlerResult()
+        return HandlerResult(category=category)
 
     # Step 2 — extract the list of (route, wrapper) pairs the LLM
     # elected to fire. Zero fired endpoints is a valid, non-error
     # outcome (the LLM judged nothing to be a good fit).
     fired = _extract_fired_endpoints(category, output)
     if not fired:
-        return HandlerResult()
+        return HandlerResult(category=category)
 
-    # Steps 3-5 — classify, execute in parallel, consolidate.
-    return await _assemble_result(fired, qdrant_client=qdrant_client)
+    # Steps 3-5 — classify, execute in parallel, consolidate. The
+    # final result also carries the category and the full fired
+    # list (including preferences) for notebook / debug inspection.
+    result = await _assemble_result(fired, qdrant_client=qdrant_client)
+    result.category = category
+    result.fired_endpoints = list(fired)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -310,8 +311,11 @@ async def _assemble_result(
         execution_plans.append((route, target_bucket))
         coroutines.append(
             asyncio.wait_for(
-                _build_endpoint_coroutine(
-                    route, wrapper, qdrant_client=qdrant_client
+                build_endpoint_coroutine(
+                    route,
+                    wrapper,
+                    qdrant_client=qdrant_client,
+                    restrict_to_movie_ids=None,
                 ),
                 timeout=TIMEOUT_SECONDS,
             )
@@ -406,52 +410,3 @@ def _land_outcome(
         bucket[sc.movie_id] = bucket.get(sc.movie_id, 0.0) + sc.score
 
 
-# ---------------------------------------------------------------------------
-# Endpoint dispatch
-# ---------------------------------------------------------------------------
-
-
-def _build_endpoint_coroutine(
-    route: EndpointRoute,
-    wrapper: EndpointParameters,
-    *,
-    qdrant_client: AsyncQdrantClient,
-) -> Coroutine[Any, Any, EndpointResult]:
-    # Route → executor dispatch. Mirrors stage_4/dispatch.py but keyed
-    # on the wrapped EndpointParameters instance rather than a
-    # TaggedItem, so we don't have to bridge the stage-4 role taxonomy
-    # (preference / *_dealbreaker) into our (match_mode, polarity)
-    # world. Every executor takes the inner .parameters payload and
-    # restrict_to_movie_ids=None (the handler is candidate-generating;
-    # the orchestrator is the one that restricts against a pool later).
-    params = wrapper.parameters
-
-    if route == EndpointRoute.ENTITY:
-        return execute_entity_query(params, restrict_to_movie_ids=None)
-    if route == EndpointRoute.STUDIO:
-        return execute_studio_query(params, restrict_to_movie_ids=None)
-    if route == EndpointRoute.FRANCHISE_STRUCTURE:
-        return execute_franchise_query(params, restrict_to_movie_ids=None)
-    if route == EndpointRoute.KEYWORD:
-        return execute_keyword_query(params, restrict_to_movie_ids=None)
-    if route == EndpointRoute.METADATA:
-        return execute_metadata_query(params, restrict_to_movie_ids=None)
-    if route == EndpointRoute.AWARDS:
-        return execute_award_query(params, restrict_to_movie_ids=None)
-    if route == EndpointRoute.SEMANTIC:
-        # Semantic executor takes match_mode to pick between the
-        # primary_vector-only FILTER path and the all-spaces TRAIT
-        # path. Handler just passes the wrapper's match_mode through
-        # and trusts the executor's internal dispatch.
-        assert isinstance(wrapper, SemanticEndpointParameters)
-        return execute_semantic_query(
-            params,
-            match_mode=wrapper.match_mode,
-            restrict_to_movie_ids=None,
-            qdrant_client=qdrant_client,
-        )
-
-    # TRENDING should never reach here — it short-circuits in
-    # run_handler before any LLM call. Any other route value would be
-    # a registry/dispatch mismatch worth failing loudly on.
-    raise ValueError(f"Unsupported route for handler execution: {route!r}")
