@@ -1,6 +1,13 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## CLI runner for steps 1-3 of the new search pipeline (run_search.py)
+Files: run_search.py
+Why: No terminal entry point existed for the new search_v2 stack — only notebooks. Tuning needs per-CE LLM-time vs endpoint-exec-time visibility and per-endpoint top-5 inspection that the production orchestrator bundles together.
+Approach: Wraps run_step_1 + run_step_2 (original query only — spins are printed for visibility but not executed) and rebuilds run_stage_3's structure inline so timing/printing can hook between phases. Per-CE loop calls the handler primitives directly (`_run_handler_llm`, `_extract_fired_endpoints`, `build_endpoint_coroutine`) and mirrors handler.py's classification (FILTER+POSITIVE → inclusion, FILTER+NEGATIVE → exclusion w/ semantic-as-downrank override, TRAIT+POSITIVE → preference_specs deferred, TRAIT+NEGATIVE → downrank). Trait+positive endpoints are still executed against the full corpus for diagnostic top-5 only — those scores are NOT folded into HandlerResult to avoid double-counting once `_run_deferred_preferences` re-runs them against the consolidated pool. Post-fan-out reuses orchestrator helpers (`_consolidate`, `_select_pool`, `_run_deferred_preferences`, `_score_pool`, `_resolve_active_priors`) and `fetch_quality_popularity_signals` so the ranked output matches `run_stage_3` exactly.
+Design context: Per-CE diagnostic timing required tearing apart the normally-parallel handler fan-out; sequential execution is fine for a CLI dev tool. Plan file: ~/.claude/plans/create-a-python-script-gleaming-knuth.md.
+Testing notes: End-to-end smoke run requires Postgres/Redis/Qdrant up. Verify ranked top-K matches `run_stage_3(query, step2_resp, qdrant_client=...)` for the same query. Confirm fallback paths render (preferences-only query → `preferences_as_candidates`, exclusion-only → `popularity_quality_seed`).
+
 ## Implicit-prior reranking weights: 80/20 popularity/reception when both active
 Files: search_v2/stage_3/orchestrator.py | When both quality and notability priors are active, the IMPLICIT_PRIOR_CAP (0.25) now splits 80/20 toward popularity (notability) over reception (quality) instead of an even 50/50 — popularity is the dominant implicit cue for default "well-known and well-liked" ranking. Single-axis cases still claim the full cap. Introduced IMPLICIT_POPULARITY_SHARE_BOTH_ACTIVE / IMPLICIT_RECEPTION_SHARE_BOTH_ACTIVE constants.
 
@@ -800,3 +807,15 @@ Approach:
 - Verified db/metadata_scoring.py handles EXACT correctly for both date and runtime (both fall through to the EXACT-match branch).
 - Left untouched (audit conclusion: not gracefully recoverable at this level): StreamingTranslation._validate_has_constraint and FranchiseQuerySpec._validate. Both reject specs with no axis populated — recovering would require lifting handling to the wrapper to treat empty-spec as endpoint-skip, which is a bigger refactor.
 Testing notes: 8-case sanity check covered: implicit-expectations contradictory booleans now accepted, invalid first_date still raises, BETWEEN+missing/unparseable second_date downgrades correctly, BETWEEN swap-order preserved, runtime BETWEEN+missing second_value downgrades, non-BETWEEN drops second_value.
+
+## Parallelize step-3 in run_search.py while preserving per-CE diagnostics
+Files: run_search.py
+Why: The dev CLI's step-3 was sequential by design (interleaved per-CE prints), making its timing numbers overstate stage-3 latency vs production. The "production fans these out in parallel" comment was true — the CLI just hadn't followed suit. Output structure was the only blocker.
+Approach: Decouple "readable output" from "print-as-you-go" by buffering each CE's diagnostic lines into a `list[str]` and flushing in spec order after gather completes. Mirrors the production orchestrator's `_fan_out` pattern at `search_v2/stage_3/orchestrator.py:237-334`:
+- Renamed `_print_top5` → `_format_top5` (now returns `list[str]` instead of printing).
+- New `_run_one_endpoint(route, wrapper, llm_elapsed)` coroutine: executes one endpoint, builds its own block of diagnostic lines, returns `(block, result_or_None)`. Soft-fails on exception by recording the failure block and returning `None`.
+- `_run_one_ce` now takes a `lines: list[str]` parameter — every `print(...)` replaced with `lines.append(...)`. Inner endpoint loop gathered concurrently via `asyncio.gather(*(_run_one_endpoint(r, w, llm_elapsed) for r, w in fired))`. Outcomes walked in original `fired` order so classification and visual order remain deterministic.
+- `_run_ce_loop` builds per-CE specs up front (skipping NO_FIT — matches orchestrator), pre-allocates per-CE `HandlerResult` / fired-triples list / line buffer, gathers all `_run_one_ce` coroutines via `asyncio.gather(..., return_exceptions=True)`. Per-CE handler exceptions get a single "handler raised" line in their buffer and an empty `HandlerResult` substituted (mirrors orchestrator soft-fail). Buffers flushed in canonical spec order after gather.
+Tradeoff accepted: output is no longer streamed — appears in one burst once step-3 finishes. For a dev CLI with 5–15s queries this is fine; if streaming becomes important later, switch to `as_completed` (loses original-order grouping).
+Verified preconditions before refactor: `_run_handler_llm`, `_extract_fired_endpoints`, `build_endpoint_coroutine`, and `execute_trending_query` are all concurrent-safe (pure async, no shared mutable state, AsyncQdrantClient handles parallel searches).
+Testing notes: No tests touched (test-boundaries rule, dev tooling). Verification: run `python run_search.py "<query>"` and confirm Step 1/2/3/4 banners and per-CE block layout are byte-identical to the old version, and that `[total elapsed: ...]` drops when ≥3 CEs are present.
