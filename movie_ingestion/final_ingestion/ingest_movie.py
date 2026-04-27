@@ -33,7 +33,7 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from typing import List, Sequence
-from schemas.enums import LineagePosition
+from schemas.enums import LineagePosition, release_format_id_for_imdb_type
 from schemas.imdb_models import AwardNomination
 from schemas.movie import Movie
 from implementation.llms.generic_methods import generate_vector_embedding
@@ -279,6 +279,11 @@ async def ingest_movie_card(
             else None
         )
 
+        # Map IMDB titleType.id ('movie' / 'tvMovie' / 'short' / 'video' / other)
+        # to a stable int. Anything outside the supported set — or a missing
+        # value — collapses to UNKNOWN (0), which is the column's audit handle.
+        release_format = release_format_id_for_imdb_type(movie.imdb_data.imdb_title_type)
+
         await upsert_movie_card(
             movie_id=movie_id,
             title=title,
@@ -299,6 +304,7 @@ async def ingest_movie_card(
             title_normalized=title_normalized,
             budget_bucket=budget_bucket,
             box_office_bucket=box_office_bucket,
+            release_format=release_format,
             production_company_ids=production_company_ids,
             lineage_entry_ids=lineage_entry_ids,
             shared_universe_entry_ids=shared_universe_entry_ids,

@@ -30,6 +30,15 @@ CREATE TABLE IF NOT EXISTS public.movie_card (
   release_ts          BIGINT,
   runtime_minutes     INT,
   maturity_rank       SMALLINT,
+  -- Release format classification (schemas.enums.ReleaseFormat). 0 =
+  -- UNKNOWN: catch-all for IMDB title types outside the supported set
+  -- (tvSeries, videoGame, etc.) and for movies whose imdb_title_type is
+  -- missing. Defaults to 0 so an ALTER TABLE on the populated table
+  -- materializes every existing row as UNKNOWN until the backfill or a
+  -- re-ingest writes the real value. Going forward Stage 8 ingestion
+  -- always populates this, so a non-zero count here is an audit signal,
+  -- not a "not yet computed" state.
+  release_format      SMALLINT NOT NULL DEFAULT 0,
   genre_ids           INT[] NOT NULL DEFAULT '{}',
   watch_offer_keys    INT[] NOT NULL DEFAULT '{}',
   audio_language_ids  INT[] NOT NULL DEFAULT '{}',

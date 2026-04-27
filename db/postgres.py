@@ -1168,6 +1168,7 @@ async def upsert_movie_card(
     title_normalized: str,
     budget_bucket: Optional[str] = None,
     box_office_bucket: Optional[str] = None,
+    release_format: int = 0,
     production_company_ids: Sequence[int] = (),
     lineage_entry_ids: Sequence[int] = (),
     shared_universe_entry_ids: Sequence[int] = (),
@@ -1200,6 +1201,8 @@ async def upsert_movie_card(
             query-time normalization.
         budget_bucket: Era-adjusted budget classification ('small', 'large', or None for mid-range/unknown).
         box_office_bucket: Box office classification ('hit', 'flop', or None for ambiguous/unknown).
+        release_format: ReleaseFormat int id (schemas.enums.ReleaseFormat). 0 = UNKNOWN
+            (default) for IMDB title types outside the supported set or missing data.
         production_company_ids: lex.production_company IDs this movie credits.
             Empty sequence is allowed (movies with no IMDB production_companies).
         lineage_entry_ids: lex.franchise_entry IDs resolved from the movie's
@@ -1218,11 +1221,11 @@ async def upsert_movie_card(
         movie_id, title, title_normalized, poster_url, release_ts, runtime_minutes,
         maturity_rank, genre_ids, watch_offer_keys, audio_language_ids, country_of_origin_ids,
         source_material_type_ids, keyword_ids, concept_tag_ids, award_ceremony_win_ids,
-        imdb_vote_count, reception_score, budget_bucket, box_office_bucket,
+        imdb_vote_count, reception_score, budget_bucket, box_office_bucket, release_format,
         production_company_ids, lineage_entry_ids, shared_universe_entry_ids, subgroup_entry_ids,
         created_at, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
     ON CONFLICT (movie_id) DO UPDATE SET
         title = EXCLUDED.title,
         title_normalized = EXCLUDED.title_normalized,
@@ -1242,6 +1245,7 @@ async def upsert_movie_card(
         reception_score = EXCLUDED.reception_score,
         budget_bucket = EXCLUDED.budget_bucket,
         box_office_bucket = EXCLUDED.box_office_bucket,
+        release_format = EXCLUDED.release_format,
         production_company_ids = EXCLUDED.production_company_ids,
         lineage_entry_ids = EXCLUDED.lineage_entry_ids,
         shared_universe_entry_ids = EXCLUDED.shared_universe_entry_ids,
@@ -1268,6 +1272,7 @@ async def upsert_movie_card(
         reception_score,
         budget_bucket,
         box_office_bucket,
+        release_format,
         list(production_company_ids),
         list(lineage_entry_ids),
         list(shared_universe_entry_ids),

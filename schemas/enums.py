@@ -168,6 +168,52 @@ class SourceMaterialType(str, Enum):
     TV_ADAPTATION          = ("tv_adaptation", 10)
 
 
+# Release format classification, mirrored from IMDB's titleType.id.
+# UNKNOWN is the catch-all for IMDB title types outside the supported
+# set (tvSeries, videoGame, tvEpisode, etc.) and for missing values; it
+# doubles as the column default in movie_card so newly added rows are
+# always flagged until a backfill or fresh ingest writes the real value.
+# String values match IMDB's titleType.id verbatim so the alias dict
+# below is a direct {imdb_string: member} lookup.
+class ReleaseFormat(str, Enum):
+    release_format_id: int
+
+    def __new__(cls, value: str, release_format_id: int) -> "ReleaseFormat":
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.release_format_id = release_format_id
+        return obj
+
+    UNKNOWN  = ("unknown", 0)
+    MOVIE    = ("movie",   1)
+    TV_MOVIE = ("tvMovie", 2)
+    SHORT    = ("short",   3)
+    VIDEO    = ("video",   4)
+
+
+# O(1) lookup from IMDB titleType.id string to ReleaseFormat member.
+# UNKNOWN is intentionally excluded — it isn't a real IMDB title type,
+# only a sentinel for unsupported / missing values.
+RELEASE_FORMAT_BY_IMDB_TYPE: dict[str, ReleaseFormat] = {
+    m.value: m for m in ReleaseFormat if m is not ReleaseFormat.UNKNOWN
+}
+
+
+def release_format_id_for_imdb_type(imdb_title_type: str | None) -> int:
+    """Map an IMDB titleType.id string to its ReleaseFormat int id.
+
+    Returns ReleaseFormat.UNKNOWN.release_format_id (0) for None and
+    for any value outside the supported set. UNKNOWN is the audit
+    handle for content the search index should not be serving.
+    """
+    if imdb_title_type is None:
+        return ReleaseFormat.UNKNOWN.release_format_id
+    member = RELEASE_FORMAT_BY_IMDB_TYPE.get(imdb_title_type)
+    if member is None:
+        return ReleaseFormat.UNKNOWN.release_format_id
+    return member.release_format_id
+
+
 # ---------------------------------------------------------------------------
 # Binary concept tags for deterministic search retrieval.
 #
