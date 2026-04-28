@@ -14,7 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from schemas.endpoint_parameters import EndpointParameters
-from schemas.enums import CategoryName, EndpointRoute
+from schemas.enums import EndpointRoute
+from schemas.trait_category import CategoryName
 
 
 @dataclass

@@ -39,7 +39,8 @@ from pathlib import Path
 
 import pytest
 
-from schemas.enums import CategoryName, EndpointRoute, HandlerBucket
+from schemas.enums import EndpointRoute, HandlerBucket
+from schemas.trait_category import CategoryName
 from search_v2.stage_3.category_handlers.prompt_builder import (
     build_system_prompt,
 )

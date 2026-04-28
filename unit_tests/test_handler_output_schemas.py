@@ -43,7 +43,8 @@ import pytest
 from pydantic import BaseModel
 
 from schemas.endpoint_parameters import EndpointParameters
-from schemas.enums import CategoryName, EndpointRoute, HandlerBucket
+from schemas.enums import EndpointRoute, HandlerBucket
+from schemas.trait_category import CategoryName
 from search_v2.stage_3.category_handlers.endpoint_registry import ROUTE_TO_WRAPPER
 from search_v2.stage_3.category_handlers.schema_factories import (
     OUTPUT_SCHEMAS,
@@ -131,8 +132,8 @@ class TestOutputSchemasModule:
     def test_get_output_schema_returns_cached_class(self) -> None:
         # Doc: "Build once at process start and cache by category name;
         # don't rebuild per request."
-        a = get_output_schema(CategoryName.CREDIT_TITLE)
-        b = get_output_schema(CategoryName.CREDIT_TITLE)
+        a = get_output_schema(CategoryName.PERSON_CREDIT)
+        b = get_output_schema(CategoryName.PERSON_CREDIT)
         assert a is b
 
     def test_every_schema_subclasses_basemodel(self) -> None:

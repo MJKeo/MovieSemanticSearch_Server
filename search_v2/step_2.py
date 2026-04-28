@@ -28,7 +28,7 @@ from implementation.llms.generic_methods import (
     LLMProvider,
     generate_llm_response_async,
 )
-from schemas.enums import CategoryName
+from schemas.trait_category import CategoryName
 from schemas.step_2 import Step2Response
 
 

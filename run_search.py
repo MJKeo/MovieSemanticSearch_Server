@@ -45,12 +45,12 @@ from db.redis import init_redis, close_redis
 
 # Schemas
 from schemas.enums import (
-    CategoryName,
     EndpointRoute,
     FitQuality,
     MatchMode,
     Polarity,
 )
+from schemas.trait_category import CategoryName
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
 from schemas.semantic_translation import SemanticEndpointParameters

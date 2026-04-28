@@ -3,319 +3,653 @@
 Each category names a conceptual flavor of question AND the concrete
 set of endpoints the dispatcher fans out to when that category fires.
 Categories **compose**: a single user query routinely invokes several
-(e.g. "Tom Hanks comedies from the 90s" hits Cat 1 + Cat 11 + Cat 10).
+(e.g. "Tom Hanks comedies from the 90s" hits Cat 1 + Cat 22 + Cat 12).
 Splits were made wherever a sub-case would call a *different* set of
-endpoint families — per the rule that different endpoint sets =
-different categories.
+endpoint families, OR wherever the handler-stage prompt would have to
+do internal LLM-style branching that step 2 could pre-resolve from the
+trait surface.
 
 **Endpoint-family shorthand.** ENT · FRA · STU · KW · META · AWD ·
-TRENDING · ANC · P-EVT · P-ANA · VWX · CTX · NRT · PRD · RCP · INTERP.
-Semantic sub-spaces (ANC, P-EVT, …) are treated as distinct endpoint
-families for category-split purposes because each one embeds a
-different information surface.
+TRENDING · P-EVT · P-ANA · VWX · CTX · NRT · PRD · RCP · PARAMETRIC.
+Semantic sub-spaces (P-EVT, P-ANA, VWX, CTX, NRT, PRD, RCP) are
+treated as distinct endpoint families for category-split purposes
+because each one embeds a different information surface and is
+phrased to mirror its own ingestion text format (per v3 #18).
+
+**ANC dropped.** The dense_anchor capsule was previously listed as a
+semantic endpoint but is no longer searched directly — it's too vague
+compared to the specific component spaces, which carry sharper signal
+individually. Any capsule-level vibe that previously routed to ANC
+now routes to whichever specific space carries the relevant sub-axis.
+
+---
+
+## Global rules
+
+- **Per-trait step-2 payload:** role (carver/qualifier), polarity
+  (positive/negative), category (1-44), salience (qualifier-only:
+  central/supporting). No `framing_mode` field — salience absorbs
+  spectrum handling: a "kind of about grief" qualifier is just
+  `supporting` salience, and downstream weighting handles the
+  diminished impact correctly.
+- **Categories compose:** a single query routinely fires several.
+  See composition notes at the bottom.
+- **Compound split rule:** if a phrase fits multiple categories, that
+  is a signal it should be decomposed into separate atomic traits.
+  Never invent an umbrella category to absorb a compound.
+- **Derive once.** Any decision step 2 can make confidently from the
+  trait surface should be made there, not re-derived inside a handler.
+  This principle drives the per-attribute split of META (Cats 12-21)
+  and the per-axis split of craft acclaim (Cats 35-37) from the older
+  taxonomy — adding enum values to step 2 is cheaper than forcing the
+  handler to re-classify on every call.
 
 ---
 
 ## Structured / lexical categories
 
-### 1. Credit + title text
+### 1. Person credit
 **Endpoints:** ENT.
-**Handles:** actor, director, writer, producer, composer credits; title substring matches.
-**Mechanism:** normalize → `lex.inv_<role>_postings` intersect (or `movie_card.title_normalized ILIKE` for title).
-**Why single-endpoint:** posting tables are authoritative for indexed roles. No other channel carries reliable proper-noun credit signal — adding semantic fan-out would *dilute* precision, not enrich it.
-**Below-the-line fallthrough:** cinematographer / editor / production designer / costume designer aren't indexed as postings — those queries route to Cat 29 (Below-the-line creator lookup) instead.
+**Handles:** actor, director, writer, producer, composer credits.
+**Mechanism:** normalize → `lex.inv_<role>_postings` intersect.
+**Boundaries:** indexed roles only. Below-the-line creators
+(cinematographer, editor, production designer, costume designer,
+VFX supervisor) → Cat 40. Title-based searches → Cat 2.
 
-### 2. Named character lookup
+### 2. Title text lookup
 **Endpoints:** ENT.
-**Handles:** named-character presence and prominence ("Batman movies," "any Wolverine appearance").
-**Mechanism:** ENT character postings (with CENTRAL/DEFAULT prominence).
-**Why single-endpoint (despite iconic characters being franchise anchors):** the step 2 pre-pass already decomposes queries like "Batman movies" into a Named-character atom AND a Franchise / universe-lineage atom as separate coverage_evidence entries, both routed to their respective categories (Cat 2 and Cat 4). Fanning out to FRA inside Cat 2 itself would double-count the franchise side for queries that mention a franchise-anchor character, while offering nothing for queries where no franchise is implied. Keeping Cat 2 pure to character postings lets the upstream decomposition do the franchise fan-out when it's genuinely asked for.
-**Why split from Cat 1:** characters and person credits share the posting-table retrieval shape, but semantically they are different question-kinds (a persona in the story vs. a name in the credits) and the prominence-mode subsets differ (CENTRAL/DEFAULT for characters, LEAD/SUPPORTING/MINOR/DEFAULT for actors).
+**Handles:** title substring matches ("any movie called Inception,"
+"movies with 'Star' in the title").
+**Mechanism:** `movie_card.title_normalized ILIKE`.
+**Boundaries:** split from Cat 1 because the mechanism (column
+ILIKE) and prompt shape (free string match without role typing)
+differ from posting-table credit lookup. Same input shape (a
+string), different SQL, different precision behavior.
 
-### 3. Studio / brand attribution
+### 3. Named character lookup
+**Endpoints:** ENT.
+**Handles:** named-character presence and prominence ("Batman
+movies," "any Wolverine appearance").
+**Mechanism:** ENT character postings with prominence filter
+(CENTRAL/DEFAULT).
+**Boundaries:** step 2 decomposes "Batman movies" into a character
+trait (Cat 3) AND a franchise trait (Cat 5) separately. Cat 3 itself
+never fans out to franchise — keeping it pure to character postings
+lets the upstream decomposition do the franchise fan-out when the
+query genuinely asks for it. The prominence-mode subset differs
+from Cat 1 (CENTRAL/DEFAULT for characters, LEAD/SUPPORTING/MINOR/
+DEFAULT for actors), which is why this isn't folded into Cat 1.
+
+### 4. Studio / brand attribution
 **Endpoints:** STU.
-**Handles:** production-company and curated-brand queries.
-**Mechanism:** ProductionBrand enum path (brand_id posting, with rename-chain time-bounding) OR freeform token intersect with DF ceiling.
-**Why single-endpoint:** brand rename handling and DF-filtered token intersection are unique to STU; no other channel carries production-company signal with any discipline.
+**Handles:** production company and curated-brand queries (Disney,
+A24, Studio Ghibli, Hammer Films).
+**Mechanism:** ProductionBrand enum path (brand_id posting, with
+rename-chain time-bounding) OR freeform token intersect with DF
+ceiling.
+**Boundaries:** brand rename handling and DF-filtered token
+intersection are unique to STU; no other channel carries
+production-company signal with discipline.
 
-### 4. Franchise / universe lineage
+### 5. Franchise / universe lineage
 **Endpoints:** FRA.
-**Handles:** franchise/universe membership, lineage position (sequel/prequel/spinoff/crossover/launched), mainline-vs-offshoot, reboot/remake positioning.
-**Mechanism:** FRA two-phase token resolution → array overlap on lineage / shared_universe / subgroup. Remake-as-lineage-positioning (e.g. "the original Scarface, not the remake") is handled by the lineage arrays themselves, not by a separate keyword channel.
-**Why single-endpoint:** the step 2 pre-pass decomposes compound phrases like "James Bond remakes" into a franchise atom (Cat 4) and a separate source-flag atom (Cat 5). Cat 4 therefore never sees a bare-remake axis that needs its own keyword channel — that framing lands in Cat 5. Keeping Cat 4 pure to the franchise-lineage surface avoids double-counting the same signal across categories.
+**Handles:** franchise/universe membership, lineage position
+(sequel/prequel/spinoff/crossover/launched), mainline-vs-offshoot,
+reboot/remake positioning.
+**Mechanism:** FRA two-phase token resolution → array overlap on
+lineage / shared_universe / subgroup. Remake-as-lineage-positioning
+("the original Scarface, not the remake") is handled by the lineage
+arrays themselves, not by a separate keyword channel.
+**Boundaries:** when "based on" phrasing names a film franchise as
+the source ("based on Sherlock Holmes books"), the named referent
+stays here (Cat 5) — only when the named referent is a *creator of
+source material* does it route to Cat 41. See Cat 41 for the
+detection rule. Step 2 always splits compound phrases like "James
+Bond remakes" into a franchise trait (Cat 5) + a source-flag trait
+(Cat 6).
 
-### 5. Adaptation source flag
+### 6. Adaptation source flag
 **Endpoints:** KW.
-**Handles:** "novel adaptation," "comic book movie," "based on a true story," "video-game adaptation," "biography," "remake" (as an adaptation flag rather than lineage positioning).
-**Mechanism:** KW (SourceMaterialType family) single-overlap.
-**Why split from Cat 4:** Cat 4 asks "where does this sit in a named franchise?" Cat 5 asks "what's the *origin medium*?" — different conceptual flavor and the primary endpoint differs (FRA vs KW). When both axes are asked simultaneously the query fires both categories.
+**Handles:** "novel adaptation," "comic book movie," "based on a
+true story," "video-game adaptation," "biography," "remake" (as an
+adaptation flag rather than lineage positioning).
+**Mechanism:** KW SourceMaterialType family single-overlap.
+**Boundaries:** composes with Cat 5 (when the named source is a
+franchise) or Cat 41 (when the named source is a creator) — both
+fire alongside Cat 6 when the query names a specific source.
 
-### 6. Specific subject / element / motif presence
-**Endpoints:** P-EVT + KW.
-**Handles:**
-- Real-world subjects: "about JFK," "Titanic movie," "Watergate," "Princess Diana biopic," "Vietnam War."
-- Fictional element / motif presence: "movies with clowns," "zombie movies," "shark movies," "robots."
-- Presence of the *thing* in the story, as distinct from Cat 2 (specific *named* character like Batman) and Cat 7 (character *archetype* like "lovable rogue").
+### 7. Central topic / about-ness
+**Endpoints:** P-EVT + KW (tiered, keyword-first).
+**Handles:** "about JFK," "Titanic movie," "Watergate," "Princess
+Diana biopic," "Vietnam War." The film's central concrete subject —
+the thing the movie *is about*, not just *contains*.
+**Mechanism:** if the subject resolves to a canonical keyword tag
+(BIOGRAPHY, TRUE_STORY, historical-event tags), query KW only and
+stop. If no tag covers the request, or framing is spectrum ("loose
+allegorical biography"), fall back to P-EVT prose.
+**Boundaries:** concrete subjects only (JFK, Vietnam War, Titanic).
+Thematic essence (grief, redemption, found family) → Cat 32. Mere
+presence ("has clowns," "zombie movies") → Cat 8. Subject is the
+*focal point* the film orbits around, not an element that happens
+to appear.
 
-**Mechanism (tiered, keyword-first):** if the subject or motif resolves cleanly to a canonical keyword tag (BIOGRAPHY, TRUE_STORY, ZOMBIE, SHARK, CLOWN, etc.), query KW only and stop. If no tag covers the request, or the request is spectrum-framed ("subtly zombie-themed," "loose allegorical biography"), fall back to Semantic (plot_events prose).
+### 8. Element / motif presence
+**Endpoints:** P-EVT + KW (tiered, keyword-first).
+**Handles:** "has clowns," "zombie movies," "shark movies,"
+"robots," "movies with horses." Concrete element appears in the
+story.
+**Mechanism:** if the motif resolves to a canonical keyword tag
+(ZOMBIE, CLOWN, SHARK, ROBOT), query KW only and stop. If no tag
+covers the request, fall back to P-EVT prose.
+**Boundaries:** "has X" framing, not "about X" (Cat 7). Character
+archetype ("lovable rogue") → Cat 9. Element-presence is binary
+("is this thing in the story?"); subject-of-film (Cat 7) is about
+centrality.
 
-**Why tiered, not fan-out:** for binary "is this thing in the story?" questions a canonical tag is authoritative — Semantic adds noise (partial matches on prose that mentions the motif in passing) without meaningful precision gain. Semantic earns its place only when the vocabulary has no entry for the subject (long-tail) or when the framing isn't binary (spectrum). Running both by default would dilute precise tag hits with semantic near-misses.
+### 9. Character archetype
+**Endpoints:** KW + NRT (tiered, keyword-first).
+**Handles:** "lovable rogue," "love-to-hate villain," "underdog
+protagonist," "femme fatale," "anti-hero," "reluctant hero."
+**Mechanism:** if the archetype matches a canonical ConceptTag
+(ANTI_HERO, FEMALE_LEAD), query KW only and stop. Fallback: NRT
+characterization prose.
+**Boundaries:** archetype = static character type. Character arc /
+trajectory → Cat 32 (story/thematic archetype). Element-presence
+in story → Cat 8.
 
-**Why split from Cat 5:** source-flag (Cat 5) is a yes/no flag about origin medium; subject-presence (Cat 6) is about what's in the story. Different conceptual flavor even when both routes happen to use Keyword.
-
-### 7. Character archetype
-**Endpoints:** KW + Semantic (tiered, keyword-first).
-**Handles:** "lovable rogue," "love-to-hate villain," "underdog protagonist," "femme fatale," "anti-hero," "reluctant hero."
-**Mechanism:** if the archetype matches a canonical ConceptTag (ANTI_HERO, FEMALE_LEAD, etc.), query KW only and stop. If no tag covers the requested archetype, fall back to Semantic (narrative_techniques characterization_methods as primary, plot_events prose for archetypes described in the synopsis).
-**Why tiered, not fan-out:** same logic as Cat 6 — canonical archetype tags are authoritative when present, and running Semantic alongside a clean tag hit only dilutes precision. Semantic is reserved for archetypes the vocabulary doesn't cover.
-**Why split from Cat 6 proper:** subject *presence* is about whether a thing/subject is in the story; character *archetype* is about the character's *type*, which narrative_techniques characterization is designed for.
-**Why split from Cat 21 (kind of story):** character arc = trajectory (plot_analysis.character_arcs); character archetype = static type. Different fallback vector space when the tiered fallback fires.
-
-### 8. Award records
+### 10. Award records
 **Endpoints:** AWD.
-**Handles:** formal wins and nominations; ceremony-specific filters; multi-win superlatives.
-**Mechanism:** `movie_awards` filter with COUNT thresholds; fast path on `award_ceremony_win_ids`.
-**Why single-endpoint:** structured ceremony/outcome data lives only in AWD. Quality-superlative queries that happen to anchor on awards compose this with Cat 25.
+**Handles:** formal wins, nominations, ceremony-specific filters,
+multi-win superlatives.
+**Mechanism:** `movie_awards` filter with COUNT thresholds; fast
+path on `award_ceremony_win_ids`.
+**Boundaries:** structured ceremony/outcome data lives only in AWD.
+Quality-superlative queries that mention awards ("Oscar-winning
+best picture") compose Cat 10 with Cats 38/39 per the compound
+split rule.
 
-### 9. Trending
+### 11. Trending
 **Endpoints:** TRENDING.
 **Handles:** "right now," "trending," "what's everyone watching."
 **Mechanism:** live-refreshed trending signal.
-**Why single-endpoint and why separate from Cat 10:** TRENDING is the only channel with a refresh cadence; META.popularity_score is static ingest-time and misses "right now" semantics entirely.
+**Boundaries:** TRENDING is the only channel with refresh cadence.
+META.popularity_score (used in Cat 38) is static ingest-time and
+misses "right now" semantics entirely.
 
-### 10. Structured single-attribute
-**Endpoints:** META.
-**Handles:** release date / era, runtime, maturity rating (when asked alone, not as a content-sensitivity axis), audio language, streaming platform, budget scale, box office bucket, numeric reception score (when asked alone, not as part of a reception-quality question), production country *as legal/financial origin*.
-**Mechanism:** direct movie_card column predicate with scoring-appropriate shape (decay, tanh, GIN, packed-uint32 decode).
-**Why single-endpoint:** each question lives on an authoritative closed-schema column; fan-out would add noise, not recall.
+---
 
-### 11. Top-level genre
+## Structured single-attribute (META, per attribute)
+
+Each attribute is its own category with one column, one scoring
+shape, and one prompt. Step 2 picks the attribute; the handler
+dispatches deterministically without further LLM judgment. Adding
+ten enum values to step 2's category list is cheaper than forcing
+a unified META handler to re-classify on every call.
+
+### 12. Release date / era
+**Endpoints:** META.release_date.
+**Handles:** date ranges, eras, "90s," "old," "recent," "before
+2000," "in the 2000s," "old-school."
+**Mechanism:** range filter with soft-falloff for vague language
+(per v3 #3); user-preference defaults consulted for "modern" /
+"recent" / "old-school" (per v3 #6).
+**Boundaries:** range/decay framings only. Ordinal position
+("newest," "earliest") → Cat 43.
+
+### 13. Runtime
+**Endpoints:** META.runtime.
+**Handles:** "around 90 minutes," "short," "long," "under 2 hours."
+**Mechanism:** range filter with soft-falloff.
+**System default:** runtime ≥ 60 min floor applied to all queries
+unless the query explicitly asks for shorts (per v3 #2). The
+default is enforced at the dispatcher level, not by Cat 13 firing.
+
+### 14. Maturity rating
+**Endpoints:** META.maturity_rank.
+**Handles:** "PG-13 max," "rated R," "G-rated."
+**Boundaries:** when maturity is a packaged-audience framing
+("family movies") or content-sensitivity framing ("nothing too
+graphic"), it composes with Cat 27 or Cat 28 — Cat 14 still fires
+for the rating ceiling itself, while 27/28 carry the inclusion-
+scoring side.
+
+### 15. Audio language
+**Endpoints:** META.audio_language_ids.
+**Handles:** "in Korean," "Spanish-language," "subtitled."
+
+### 16. Streaming platform
+**Endpoints:** META.providers (packed uint32).
+**Handles:** "on Netflix," "on Hulu," "on Prime."
+**Mechanism:** packed-uint32 decode against the provider key
+encoding written at ingest.
+
+### 17. Budget scale
+**Endpoints:** META.budget_bucket.
+**Handles:** "big-budget," "low-budget," "indie scale."
+
+### 18. Box office bucket
+**Endpoints:** META.box_office_bucket.
+**Handles:** "box office hit," "blockbuster gross," "flop."
+
+### 19. Numeric reception score
+**Endpoints:** META.reception_score (as threshold).
+**Handles:** specific numeric thresholds — "rated above 8," "70%+
+on RT," "5-star."
+**Boundaries:** specific numeric only. Qualitative quality language
+("well-rated," "best") → Cat 38 (general appeal as numeric prior).
+Same column read by both, but framing differs — threshold-filter
+vs additive prior.
+
+### 20. Country of origin
+**Endpoints:** META.country_of_origin.
+**Handles:** "produced in," "American films," "British production."
+**Boundaries:** legal/financial production country only. Filming
+geography → Cat 24. Cultural-tradition framing → Cat 23.
+
+### 21. Media type
+**Endpoints:** META.media_type.
+**Handles:** "TV movies," "video releases," "shorts (when
+explicit)."
+**Boundaries:** does not fire for vanilla "show me movies" — system
+default `media_type = movie` plus Cat 13's 60-min runtime floor
+cover normal cases. Fires only when a non-default media type is
+explicitly requested.
+
+---
+
+## Structured / KW continuing
+
+### 22. Genre
 **Endpoints:** KW + P-ANA (mutually exclusive per query).
-**Handles:** broad genre buckets (horror, action, comedy, sci-fi, drama, romance, animation).
-**Mechanism:** KW genre-family keywords when the query names a canonical genre that resolves cleanly to a keyword member; P-ANA genre_signatures (prose-level genre feel) when the query adds a semantic qualifier the vocabulary can't express ("dark action," "quiet drama").
-**Why mutually exclusive, not fan-out:** the keyword vocabulary already covers every genre in META.genre_ids and more, so META contributes no additional recall — it's strictly redundant. KW is authoritative when the genre exists as a tag; P-ANA is the fallback for compound / qualifier-laden genre framings that don't map to a single tag.
-**Why split from Cat 10:** genre is the one conceptual "genre" question where keyword fan-out is richer than the closed META enum, and the compound cases need semantic prose — neither belongs in the Cat 10 single-column-predicate shape.
+**Handles:** all genre framings, top-level (horror, action, comedy,
+sci-fi, drama, romance, animation) AND sub-genre (body horror,
+neo-noir, cozy mystery, space opera, slasher).
+**Mechanism:** KW genre-family or sub-genre tag if canonical →
+P-ANA `genre_signatures` prose for compound/qualifier-laden ("dark
+action," "quiet drama") or sub-genres without tags.
+**Boundaries:** merged from former top-level and sub-genre cats —
+the top/sub line was too fragile for step 2 to draw reliably, and
+both feed the same fallback space (`genre_signatures`). Story
+archetype ("revenge," "underdog") → Cat 32 instead — that
+distinction *is* sharp at step 2 because archetype names a story
+shape rather than a genre.
 
-### 12. Cultural tradition / national cinema
-**Endpoints:** KW + META (mutually exclusive per query, keyword-first).
-**Handles:** "Korean cinema," "Bollywood," "Hong Kong action," "Italian neorealism," "French New Wave."
-**Mechanism:** first check the keyword vocabulary for a cultural-tradition tag that matches (BOLLYWOOD, KOREAN_CINEMA, ITALIAN_NEOREALISM, etc.). If a tag exists, use it — it's the authoritative signal for the tradition as an aesthetic. If no tag covers the requested tradition, fall back to META.country_of_origin (and META.audio_language_ids where the tradition implies a language) against the plausible top countries for that tradition.
-**Why mutually exclusive, not fan-out:** the two signals answer different questions. KW tags tradition as an aesthetic; META.country_of_origin tags legal/financial origin. If a tradition tag exists, the country column is worse than useless — Hollywood-funded HK action isn't HK by production country. Only when no tag exists does country-of-origin become the best remaining proxy, and at that point the keyword channel has nothing to contribute.
-**Why split from Cat 10:** Cat 10 treats country as the authoritative answer to a "where was it produced?" question. Here country is only a fallback for an aesthetic-tradition question. Different conceptual flavor, different routing rule.
+### 23. Cultural tradition / national cinema
+**Endpoints:** KW + META (mutually exclusive, keyword-first).
+**Handles:** "Korean cinema," "Bollywood," "Hong Kong action,"
+"Italian neorealism," "French New Wave."
+**Mechanism:** KW tradition tag (BOLLYWOOD, KOREAN_CINEMA,
+ITALIAN_NEOREALISM) → META country/language fallback when no tag.
+**Boundaries:** tradition-as-aesthetic, not legal production
+country (Cat 20) or filming geography (Cat 24). If a tradition tag
+exists, the country column is misleading (Hollywood-funded HK
+action isn't HK by production country); only when no tag exists
+does country-of-origin become the best remaining proxy.
 
-### 13. Filming location
-**Endpoints:** Semantic.
-**Handles:** "filmed in New Zealand," "shot on location in Iceland," "Morocco shoots."
-**Mechanism:** Semantic (production_techniques) similarity against the filming_locations prose field — the only channel carrying actual shooting-location data.
-**Why single-endpoint:** META.country_of_origin is the wrong column. It records legal/financial production country, not filming geography. Hollywood-funded films shot abroad (The Revenant in Canada/Argentina, Dune in Jordan and UAE, Mission Impossible – Fallout across Kashmir / UAE / NZ) all carry US country_of_origin and would be invisible to any metadata branch. Rather than lean on a column whose semantics don't match the question, query the one channel that actually tracks filming location.
-**Why split from Cat 12 and Cat 10:** filming location ≠ cultural tradition ≠ legal production country. Three distinct questions that each route to a different primary channel.
+### 24. Filming location
+**Endpoints:** PRD (`filming_locations` prose).
+**Handles:** "filmed in New Zealand," "shot on location in
+Iceland," "Morocco shoots."
+**Mechanism:** PRD prose similarity against the filming_locations
+field — the only channel carrying actual shooting-location data.
+**Boundaries:** META.country_of_origin is the wrong column. It
+records legal/financial production country, not filming geography
+(The Revenant in Canada/Argentina, Dune in Jordan/UAE, Mission
+Impossible — Fallout across Kashmir/UAE/NZ all carry US
+country_of_origin). Distinct from Cat 23 (cultural tradition) and
+Cat 20 (production country).
 
-### 14. Format + visual-format specifics
-**Endpoints:** KW + Semantic (tiered, keyword-first).
-**Handles:** format (documentary, short, anime, mockumentary), visual-format specifics (B&W, 70mm, found-footage, widescreen, handheld).
-**Mechanism:** if the format or visual-format spec matches a canonical tag (DOCUMENTARY, BLACK_AND_WHITE, FOUND_FOOTAGE, ANIMATION, etc.), query KW only and stop. If no tag exists, fall back to Semantic (production_techniques) against prose-level technique descriptions ("shot on 16mm," "single-take long shot," "handheld cinematography").
-**Why tiered, not fan-out:** format tags are authoritative flags — if a movie is tagged DOCUMENTARY, it's a documentary; running Semantic alongside only adds prose near-misses. Semantic is the long-tail catch for technique-level specs that the vocabulary never absorbed.
+### 25. Format + visual-format specifics
+**Endpoints:** KW + PRD (tiered, keyword-first).
+**Handles:** format (documentary, anime, mockumentary), visual-
+format specifics (B&W, 70mm, found-footage, widescreen, handheld).
+**Mechanism:** canonical format/visual-format tag → KW; technique-
+level long-tail without tags → PRD prose.
 
-### 15. Sub-genre + story archetype
-**Endpoints:** KW + Semantic (tiered, keyword-first).
-**Handles:** sub-genre ("body horror," "cozy mystery," "space opera," "neo-noir"), story archetype ("revenge," "underdog," "post-apocalyptic," "heist").
-**Mechanism:** if the sub-genre or archetype matches a curated tag, query KW only and stop. If no tag covers the requested framing, fall back to Semantic (plot_analysis — genre_signatures, conflict_type, character_arcs) for prose nuance.
-**Why tiered, not fan-out:** tags are precise when they exist; Semantic is the safety net for the fuzzy long tail ("cozy mystery" has no tag today even though "mystery" does). Running both by default would mix clean tag hits with semantic noise.
+### 26. Narrative devices + structural form + how-told craft
+**Endpoints:** KW + NRT (tiered, keyword-first).
+**Handles:** plot twist, nonlinear timeline, unreliable narrator,
+single-location, anthology, ensemble, two-hander, POV mechanics,
+character-vs-plot focus, "Sorkin-style" dialogue as craft pattern.
+**Mechanism:** canonical device tag (PLOT_TWIST, NONLINEAR_TIMELINE,
+UNRELIABLE_NARRATOR, SINGLE_LOCATION, ENSEMBLE_CAST) → KW; craft-
+level long-tail → NRT prose.
+**Boundaries:** pacing-as-experience ("slow burn," "frenetic")
+routes to Cat 33, not here — that's experiential, not structural.
+This category is about *how the story is told* at the structural/
+device level.
 
-### 16. Narrative devices + structural form + how-told craft
-**Endpoints:** KW + Semantic (tiered, keyword-first).
-**Handles:** plot twist, nonlinear timeline, unreliable narrator, single-location, anthology, ensemble, two-hander, POV mechanics, character-vs-plot focus, pacing-at-craft-level (slow burn, frenetic), "Sorkin-style" dialogue as craft pattern.
-**Mechanism:** if the device or structural form matches a canonical tag (PLOT_TWIST, NONLINEAR_TIMELINE, UNRELIABLE_NARRATOR, SINGLE_LOCATION, ENSEMBLE_CAST, etc.), query KW only and stop. If no tag covers the request, fall back to Semantic — primarily narrative_techniques (narrative_archetype, delivery, POV, characterization, information control, conflict-stakes), with viewer_experience picking up the pacing-feel side when the framing is experiential ("slow burn").
-**Why tiered, not fan-out:** canonical device tags are definitive — a movie either has a plot twist in its vocabulary profile or it doesn't. Semantic earns its place only for craft questions without a tagged device name ("POV mechanics," "character-vs-plot focus," "Sorkin-style dialogue as a craft pattern"). Running both always would let semantic near-misses leak into clean tag hits.
-**Why a single category (not three):** device, structural form, and how-told craft share the same tiered routing — the question-kind is "how is this told?" regardless of which sub-axis the user framed it on.
+### 27. Target audience
+**Endpoints:** KW + META + CTX (gate + inclusion, query-dependent).
+**Handles:** "family movies," "teen movies," "kids movie," "for
+adults," "watch with the grandparents." The audience being pitched
+to.
+**Mechanism:** META.maturity_rank as hard gate when the audience
+framing implies a maturity ceiling. Within the gated pool, KW
+audience-framing tags + CTX `watch_scenarios` ("watch with kids,"
+"family night") contribute additive inclusion scoring.
+**Boundaries:** packaged-audience framing only. Story archetype
+like coming-of-age → Cat 32. Content-sensitivity ("no gore") →
+Cat 28. Concrete viewing situation → Cat 34.
 
-### 17. Target audience
-**Endpoints:** KW + META + Semantic (gate + inclusion, query-dependent).
-**Handles:** "family movies," "teen movies," "kids movie," "for adults," "something to watch with the grandparents." Specifically the *audience being pitched to*, not the story archetype — coming-of-age is a story archetype and routes to Cat 21 instead.
-**Mechanism:** META.maturity_rank is a hard gate when the audience framing implies a maturity ceiling (family / kids / PG-13 max). Within the gated pool, KW audience-framing tags and Semantic (watch_context watch_scenarios like "watch with kids," "family night") contribute additive inclusion scoring.
-**Why gate + inclusion and not all-fire-always:** the three endpoints serve different roles — META is a filter, KW and Semantic are scorers — and which of KW / Semantic actually fires is query-dependent. A bare "family movie" may only need the maturity gate plus the KW framing tag; "something to watch with my kids on a Saturday night" invokes Semantic watch_context as well. Not every endpoint is always active: the category fans out only the subset the query asks for.
-**Why split from Cat 18:** Cat 18 is about content (gore, nudity) on its own spectrum; Cat 17 is about packaged audience framing. Different fallback spaces when semantic fires.
+### 28. Sensitive content
+**Endpoints:** KW + META + VWX (gate + inclusion, query-dependent).
+**Handles:** "no gore," "not too bloody," "with nudity," "violent
+but not graphic."
+**Mechanism:** META.maturity_rank as gate when a rating ceiling is
+implied. KW content tags score binary presence/absence
+(ANIMAL_DEATH-style flags); VWX `disturbance_profile` scores
+intensity gradient for spectrum-framed asks.
+**Boundaries:** content-on-its-own-spectrum framing. Audience-
+pitch framing → Cat 27.
 
-### 18. Sensitive content
-**Endpoints:** KW + META + Semantic (gate + inclusion, query-dependent).
-**Handles:** "no gore," "not too bloody," "with nudity," "violent but not graphic."
-**Mechanism:** META.maturity_rank is the blunt gate when the query implies a rating ceiling. Within the gated pool, KW content tags score binary presence / absence (ANIMAL_DEATH-style flags), and Semantic (viewer_experience disturbance_profile) scores intensity gradient for spectrum-framed asks ("not too bloody," "violent but not graphic").
-**Why gate + inclusion and not all-fire-always:** the three endpoints carry different question shapes and which one fires depends on how the user framed the ask. "No gore" is pure KW (binary exclusion). "Not too bloody" is pure Semantic (gradient). "Family-friendly" brings in META maturity. Not every endpoint is always active; the category fans out only the subset the query needs.
-**Why split from Cat 17:** Cat 18 scores content on its own intensity spectrum; Cat 17 is about packaged audience framing. The Semantic fallback spaces differ (viewer_experience here vs. watch_context there).
-
-### 19. Seasonal / holiday
-**Endpoints:** KW + Semantic (additive combo).
+### 29. Seasonal / holiday
+**Endpoints:** KW + CTX + P-EVT (additive combo).
 **Handles:** Christmas, Halloween, Thanksgiving, summer-blockbuster.
-**Mechanism:** both fire together. KW via **proxy chains** — the vocabulary has no dedicated seasonal tags, so the LLM rewrites seasonal intent into proxy tags at query-generation time (Halloween → horror + supernatural + spooky + slasher; Christmas → family + heartwarming + snowed-in + winter). Semantic contributes two spaces: watch_context for seasonal viewing framing ("Christmas viewing," "Halloween movie night") and plot_events for seasonal narrative settings ("set on Christmas Eve," "Halloween night"). Scores merge additively — a movie hit by proxy tags and by seasonal watch_context and by narrative setting ranks highest.
-**Why additive, not tiered:** no channel is authoritative. The proxy-tag approach is inherently approximate (Halloween ≠ horror exactly), and the semantic spaces catch real signal the proxy chain misses — especially for less-canonicalized holidays. Running both is the only way to reach acceptable recall on a category with no dedicated vocabulary.
+**Mechanism:** KW via **proxy chains** — the vocabulary has no
+dedicated seasonal tags, so the LLM rewrites seasonal intent into
+proxy tags at query-generation time (Halloween → horror +
+supernatural + spooky + slasher; Christmas → family + heartwarming
++ snowed-in + winter). CTX captures seasonal viewing framing
+("Christmas viewing," "Halloween movie night"). P-EVT captures
+seasonal narrative settings ("set on Christmas Eve," "Halloween
+night"). Scores merge additively.
+**Why additive, not tiered:** no channel is authoritative — proxy
+tags are inherently approximate, and the semantic spaces catch
+real signal the proxy chain misses, especially for less-
+canonicalized holidays.
 
 ---
 
 ## Semantic-driven categories
 
-### 20. Plot events + narrative setting
-**Endpoints:** P-EVT.
-**Handles:** literal plot events ("heist that unravels when a member betrays the crew"), narrative time setting ("set in 1940s Berlin"), narrative place setting ("takes place in Tokyo").
-**Mechanism:** Qdrant cosine against plot_events space; dense prose input.
-**Why single-endpoint:** plot_events is the only space that receives raw synopsis text. Narrative setting time/place have no structured column, so P-EVT prose is the only signal. Other spaces are deliberately plot-free and would undershoot.
+### 30. Plot events
+**Endpoints:** P-EVT (transcript-style query phrasing).
+**Handles:** literal plot events ("a heist crew unravels when a
+member betrays them," "a man wakes up with no memory and tries to
+find his wife's killer").
+**Mechanism:** P-EVT cosine; query phrased transcript-style to
+mirror ingestion text format (per v3 #18).
+**Boundaries:** event prose only. Narrative time/place setting →
+Cat 31 (same vector space, different prompt template).
 
-### 21. Kind of story / thematic archetype
-**Endpoints:** KW + Semantic (tiered, keyword-first for binary framings; semantic-only for spectrum framings).
-**Handles:** "movies about grief," "redemption arcs," "man-vs-nature," "coming-of-age about self-acceptance."
-**Mechanism:** if the ask is binary — "must be about this theme" — and the theme matches a curated ConceptTag (FOUND_FAMILY, CORRUPTION, REDEMPTION), query KW only and stop. If no tag matches the binary request, fall back to Semantic (plot_analysis primary — elevator_pitch, conflict_type, thematic_concepts, character_arcs; anchor for vibe-framed variants). If the framing is inherently spectrum-y ("kind of about grief," "leans redemptive"), skip KW entirely and go straight to Semantic.
-**Why tiered with a spectrum escape hatch:** a canonical theme tag is authoritative for binary "about this" questions; Semantic is the right fallback for themes without a tag. But theme questions frequently arrive with fuzzy framing that no binary tag captures correctly, so the LLM is allowed to skip the tag tier when the ask is a gradient rather than a commitment.
+### 31. Narrative setting (time/place)
+**Endpoints:** P-EVT (descriptive query phrasing).
+**Handles:** narrative time setting ("set in 1940s Berlin"),
+narrative place setting ("takes place in Tokyo," "on a remote
+island").
+**Mechanism:** same P-EVT vector space as Cat 30 with descriptive
+query phrasing ("set in X," "takes place in Y").
+**Boundaries:** split from Cat 30 because the prompt template
+differs — same retrieval space, different query shape. Per the
+derive-once principle, step 2 labels the trait so the handler runs
+the right phrasing template without re-deriving.
 
-### 22. Viewer experience / feel / tone / cognitive demand
-**Endpoints:** VWX + ANC.
-**Handles:** feel to watch, tonal aesthetic (dark, whimsical, gritty), cognitive demand (mindless vs cerebral), realism/stylization mode, tension/disturbance intensity.
-**Mechanism:** VWX primary (emotional_palette, tension, disturbance, sensory_load, cognitive_complexity, tone_self_seriousness) + ANC for multi-axis vibe matches.
-**Why fan out:** VWX is experiential-primary; ANC catches queries where feel blends with identity (e.g. "cozy Sunday vibe" is both feel and identity-level).
+### 32. Story / thematic archetype
+**Endpoints:** KW + P-ANA (tiered, keyword-first).
+**Handles:** "movies about grief," "redemption arcs," "man-vs-
+nature," "underdog stories," "revenge stories," "post-apocalyptic,"
+"coming-of-age about self-acceptance," "sisterly love stories,"
+"friendship stories," "found-family stories."
+**Mechanism:** ConceptTag (REDEMPTION, FOUND_FAMILY, REVENGE,
+CORRUPTION) → P-ANA prose fallback across `elevator_pitch`,
+`conflict_type`, `thematic_concepts`, `character_arcs`.
+**Boundaries:** spectrum framings ("kind of about grief," "leans
+redemptive") handled via salience=supporting downstream weighting,
+not via a separate routing branch. Distinguished from Cat 7 by
+abstraction level — thematic essence here, concrete subject
+there. Distinguished from Cat 9 by static-vs-trajectory —
+character archetype is a static type, story archetype is a story
+shape.
 
-### 23. Occasion / self-experience goal / comfort-watch / gateway
-**Endpoints:** Semantic + KW (additive combo).
-**Handles:**
-- Viewing occasion (date night, background, rainy Sunday).
-- Self-experience goal ("make me cry," "cheer me up," "challenge me," "something mindless").
-- Comfort-watch archetype ("go-to movie," "feel-better movie").
-- Gateway / entry-level ("good first anime," "accessible arthouse").
+### 33. Emotional / experiential
+**Endpoints:** VWX + CTX + RCP + KW (additive combo, handler-driven
+field selection).
+**Handles:** all emotional / experiential / feel framings —
+- During-viewing feel: tone, tonal aesthetic (dark, whimsical,
+  gritty), cognitive demand (mindless vs cerebral),
+  realism/stylization mode, tension/disturbance intensity,
+  emotional palette.
+- Pacing-as-experience: "slow burn," "frenetic."
+- Self-experience goals: "make me cry," "cheer me up," "challenge
+  me," "something mindless."
+- Comfort-watch / gateway: "go-to movie," "feel-better movie,"
+  "good first anime," "accessible arthouse."
+- Post-viewing resonance: "stays with you," "haunting,"
+  "gut-punch ending," "forgettable."
+- Structural ending types: "happy ending," "twist ending,"
+  "downer ending," "ambiguous ending."
 
-**Mechanism:** all applicable channels fire together and merge additively. Semantic contributes three spaces — watch_context primary (watch_scenarios + self_experience_motivations are literally named for these framings), viewer_experience for the emotional-target side ("make me cry" touches emotional_palette directly), and reception for reviewer commentary ("tearjerker," "comfort-rewatch," "accessible arthouse"). KW contributes canonical tags where present (TEARJERKER, FEEL_GOOD).
-**Why additive combo, not tiered:** "make me cry" is the clearest multi-endpoint case — watch_context holds the motivation, viewer_experience holds the emotional match, reception holds the critical "tearjerker" evaluation, and a KW tag adds precision when available. Each channel carries distinct signal; none is authoritative alone.
-**Gap absorbed:** gateway / entry-level.
+**Mechanism:** handler-driven field selection across VWX (full
+surface incl. `ending_aftertaste`, `emotional_palette`, `tension`,
+`disturbance`, `sensory_load`, `cognitive_complexity`,
+`tone_self_seriousness`), CTX (`self_experience_motivations`),
+RCP (emotional reception prose: "tearjerker," "comfort-rewatch,"
+"unforgettable"), KW (TEARJERKER, FEEL_GOOD, HAPPY_ENDING,
+TWIST_ENDING, OPEN_ENDING, SAD_ENDING). Tag-perfect short-circuit
+when an emotional or structural-ending tag maps cleanly to the
+trait.
+**Boundaries:** anything emotional or experiential — before,
+during, or after watching — lives here. The merger is deliberate:
+step 2 is worse at fine emotional disambiguation than the handler-
+stage LLM that has the trait + its full context in front of it.
+Concrete viewing situations ("date night," "rainy Sunday") →
+Cat 34, the sole carve-out because situations are *named events*,
+sharply distinguishable at step 2 from feelings.
 
-### 24. Craft acclaim (visual / music / dialogue)
-**Endpoints:** RCP + PRD + NRT.
-**Handles:** "visually stunning," "killer cinematography," "iconic score," "great soundtrack," "quotable dialogue," "technical marvel," "beautifully shot," "naturalistic dialogue," "memorable theme."
-**Mechanism:** RCP is the primary across all three craft axes (praised_qualities extraction names the axis); PRD contributes for visual/technical when the praise is about production craft ("IMAX-shot," "practical effects"); NRT contributes for dialogue-as-craft-pattern ("Sorkin-style") and other narrative-craft-flavored acclaim. Semantic endpoint internally routes to the relevant vectors based on the query's craft axis.
-**Fallthrough:** if the user names a specific creator (composer, cinematographer), that's Cat 1.
-**Why one category:** all three craft-acclaim flavors route purely to semantic and conceptually cover the same thing ("the movie is praised for a specific craft axis"). Per-axis fan-out variance is internal to semantic dispatch, not a category-split signal.
+### 34. Viewing occasion
+**Endpoints:** CTX (`watch_scenarios`).
+**Handles:** concrete named situations — "date night," "rainy
+Sunday," "long flight," "with kids on Saturday," "background
+watching," "family movie night," "Sunday morning."
+**Boundaries:** split from Cat 33 because viewing occasions are
+concrete *situations*, not feelings. The carve is sharp at step 2:
+named-event surface form vs feeling-or-state surface form.
 
-### 25. Reception qualitative + quality superlative
-**Endpoints:** RCP + META.
-**Handles:** cult / acclaimed / underrated / divisive / overhyped; thematic weight on the acclaim side ("has something to say"); cultural influence ("era-defining"); still-holds-up; cast popularity ("stacked A-list cast"); quality superlatives ("best horror of the 80s," "scariest movie ever," "funniest").
-**Mechanism:** RCP primary (reception_summary, praised/criticized tags) + META.reception_score as global-quality baseline. Axis-of-superlative ("of the 80s," "horror") composes in Cat 10 and/or Cat 15.
-**Why fan out:** RCP carries the qualitative-reception prose; META anchors to a numeric baseline. Both genuinely compose: "cult" is reception-prose heavy but still wants a reception-score prior, and "best X" needs the numeric baseline plus whatever reception language names the axis.
-**Why no AWD here:** if a query mentions formal recognition ("Oscar-winning," "BAFTA-nominated"), the compound split rule decomposes it into Cat 8 alongside Cat 25 rather than folding AWD into Cat 25's default fan-out. Leaving AWD in Cat 25 would duplicate Cat 8 and blur this category's identity (reception prose + numeric baseline, not award records).
-**Gaps absorbed:** cultural influence, still-holds-up, thematic weight (acclaim side), cast popularity, below-the-line creator acclaim (via Cat 29 fallthrough).
+### 35. Visual craft acclaim
+**Endpoints:** RCP + PRD (additive combo).
+**Handles:** "visually stunning," "killer cinematography,"
+"beautifully shot," "IMAX-shot," "practical effects," "technical
+marvel."
+**Mechanism:** RCP `praised_qualities` prose for the acclaim itself
++ PRD prose for the production-craft side ("shot on 70mm,"
+"practical-effects-heavy").
+**Boundaries:** named cinematographer / VFX supervisor → Cat 40
+(reserved for now, returns empty).
 
-### 26. Post-viewing resonance
-**Endpoints:** KW + Semantic (tiered with short-circuit, additive combo otherwise).
-**Handles:** "stays with you," "haunting," "can't stop thinking about it," "gut-punch ending," "forgettable," "happy ending," "twist ending," "ambiguous ending," "downer ending."
-**Mechanism:** if the request maps perfectly onto a canonical ending-type tag — "happy ending" → HAPPY_ENDING, "twist ending" → TWIST_ENDING, "downer ending" → SAD_ENDING, "ambiguous ending" → OPEN_ENDING — query KW only and stop. The tag is definitive for these structural ending questions. If the request is more experiential ("stays with you," "haunting," "gut-punch") or has no matching tag, fire both Semantic (viewer_experience.ending_aftertaste for first-viewing resonance + reception for lasting critical/audience resonance) and any partially-applicable KW tags, merging additively.
-**Why tiered short-circuit plus additive fallback:** ending-type tags are structurally authoritative — no Semantic near-miss should dilute a clean HAPPY_ENDING hit. But "haunting" is inherently experiential and needs Semantic; no single space carries post-viewing resonance alone, so when Semantic fires it fires across multiple spaces at once.
-**Why split from Cat 22:** Cat 22 is during-viewing feel; Cat 26 is post-viewing aftertaste. Different vector space (ending_aftertaste vs. the full viewer_experience surface) and different reception involvement.
+### 36. Music / score acclaim
+**Endpoints:** RCP.
+**Handles:** "iconic score," "great soundtrack," "memorable
+theme," "amazing music."
+**Mechanism:** RCP only — music isn't carried meaningfully by PRD
+or NRT.
+**Boundaries:** named composer → Cat 1 (composer postings).
 
-### 27. Scale / scope / holistic vibe
-**Endpoints:** ANC + P-ANA.
-**Handles:** scale ("epic," "intimate," "sprawling," "small and personal"), multi-axis vibe queries, "movies that feel like X" when X is more vibe than specific.
-**Mechanism:** ANC (identity-level capsule is the natural home for scope and multi-axis vibe) + P-ANA for thematic-archetype corroboration.
-**Why fan out:** ANC is the only plot-light identity space; P-ANA adds thematic context when the vibe has a definable story-kind behind it.
+### 37. Dialogue craft acclaim
+**Endpoints:** RCP + NRT (additive combo).
+**Handles:** "quotable dialogue," "Sorkin-style," "naturalistic
+dialogue," "snappy banter."
+**Mechanism:** RCP `praised_qualities` for the acclaim + NRT for
+dialogue-as-craft-pattern.
+**Boundaries:** "Sorkin-style" can also fire Cat 26 if framed as a
+structural pattern (rapid-fire walk-and-talk as a how-told device)
+rather than as praise.
+
+### 38. General appeal / quality baseline
+**Endpoints:** META.reception_score + META.popularity_score
+(numeric priors).
+**Handles:** qualitative quality language without a specific
+numeric threshold — "well-received," "highly rated," "popular,"
+"best," "great," "highly regarded."
+**Mechanism:** numeric column priors only — additive lift, not
+hard threshold.
+**Boundaries:** specific numeric thresholds → Cat 19. Specific
+praise/criticism prose ("praised for tension," "criticized as
+overhyped") → Cat 39. Quality superlatives ("best horror of the
+80s") fire Cat 38 + Cat 39 + axis cats per the compound split rule.
+
+### 39. Specific praise / criticism
+**Endpoints:** RCP + KW (additive combo).
+**Handles:** reception prose for what people specifically liked or
+disliked, plus canonical reception tags. "Cult," "underrated,"
+"overhyped," "divisive," "praised for its tension," "criticized as
+plodding," "still holds up," "era-defining," "stacked cast,"
+"thematic weight" (acclaim side).
+**Mechanism:** RCP `praised_qualities` / `criticized_qualities`
+prose + KW (CULT_CLASSIC, UNDERRATED, DIVISIVE).
+**Boundaries:** quality-as-prose, not quality-as-numeric. The
+numeric prior side is Cat 38. AWD records ("Oscar-winning") →
+Cat 10 by compound split rule.
 
 ---
 
-## Trick cases (specific enough to handle explicitly rather than fall to the catch-all)
+## Trick / specialized
 
-These three categories all route to semantic endpoints but are broken out from Cat 31 (Interpretation-required) because they're specific enough that an unguided LLM would otherwise scatter them across wrong categories. Listing them explicitly gives dispatch a stable hook.
+### 40. Below-the-line creator lookup
+**Endpoints:** Reserved (returns empty for now).
+**Handles:** cinematographer, editor, production designer, costume
+designer, VFX supervisor — "Roger Deakins movies," "Thelma
+Schoonmaker-edited," "Sandy Powell costumes," "Colleen Atwood
+designs."
+**Status:** category reserved as a deliberate slot. Returns empty
+until postings or a directed semantic-on-credits surface lands.
+Routing here keeps these queries from scattering across wrong cats
+in the meantime.
+**Boundaries:** future mechanism likely RCP (reception prose names
+these creators when noted) + dedicated postings if/when indexed.
+Distinct from Cat 1 because Cat 1 is posting-table-backed and
+would fail silently for non-indexed roles.
 
-### 28. Curated canon / named list membership
-**Endpoints:** Semantic + META (additive combo, interpretation-driven).
-**Handles:** Criterion Collection, AFI Top 100, Sight & Sound greatest-films lists, IMDb Top 250, BFI, National Film Registry, "1001 Movies to See Before You Die," film-school canon.
-**Mechanism:** all three channels fire and merge additively, with the Semantic side interpretation-guided so the LLM decodes what a named list actually implies. Semantic over reception (reviews reference list membership: "a Criterion pick," "AFI-honored") and anchor (identity-level pitch often reflects canonical stature). META.reception_score contributes as a numeric prior because list-member films are overwhelmingly well-received, so the baseline quality score is an independently useful signal.
-**Why additive-with-interpretation, not gate-plus-inclusion:** treating reception_score as a hard floor would reject legitimate list members that score lower than the cutoff (arthouse picks on Sight & Sound, for example). Treating it as an additive prior lets each endpoint contribute what it can — list-citation prose where reviewers name the list, canonical-stature framing where the identity prose reflects it, reception_score as a numeric lift — and interpretation-guided semantic handles the "what does this list *mean*" decoding (e.g. "IMDb Top 250" implies broadly-popular + highly-rated, "Sight & Sound" implies critic-canon + arthouse).
-**Why a distinct category (not Cat 31 fallback):** named lists are stable, recognizable referents. Dispatch benefits from knowing "this is a named-list query" to prompt the semantic LLM to search for list-citation language specifically, rather than generic interpretation.
+### 41. Named source creator
+**Endpoints:** P-EVT + RCP (additive combo).
+**Handles:** named creator of source material — "Stephen King" (in
+"Stephen King novels"), "Tolkien" (in "Tolkien films"), "Shakespeare"
+(in "based on Shakespeare plays"), "Philip K. Dick," "Neil Gaiman,"
+"Jane Austen."
+**Mechanism:** semantic search across P-EVT (synopsis prose names
+the creator: "based on Stephen King's novel") + RCP (reviews cite
+the creator). The named referent stays as one trait — never split
+mid-name ("Stephen King" stays one trait; "Sherlock Holmes" stays
+one trait).
+**Boundaries:** **detection rule for named-referent routing in
+"based on / by / X's <medium>" phrases:**
+- Is the referent a *film franchise*? → Cat 5 (e.g. "Sherlock
+  Holmes books" → Cat 5 + Cat 6).
+- Is the referent a *creator of source material*? → Cat 41 (e.g.
+  "Shakespeare plays" → Cat 41 + Cat 6, "Stephen King novels" →
+  Cat 41 + Cat 6, "based on a comic book" → Cat 6 alone with no
+  named referent).
 
-### 29. Below-the-line creator lookup
-**Endpoints:** RCP + ANC.
-**Handles:** cinematographer, editor, production designer, costume designer, visual-effects supervisor queries — "Roger Deakins movies," "Thelma Schoonmaker-edited," "Sandy Powell costumes," "Colleen Atwood designs."
-**Mechanism:** semantic fallback. Reception text routinely names these creators when their work was noted ("Deakins' cinematography," "edited by Schoonmaker"); ANC identity prose sometimes encodes it too.
-**Why a distinct category (not Cat 1 fallthrough):** Cat 1 is posting-table-backed and fails silently when the role isn't indexed. Lifting this out makes the non-indexed roles visible as a deliberate pattern, not an afterthought.
+This category fires only for named creators, never for franchise
+referents. Step 2 always decomposes the source phrase: the named-
+referent half routes per the rule above; the medium half ("books,"
+"plays," "novels") routes to Cat 6. Cat 1 is film credits — source-
+material creators aren't film credits — so Cat 41 is the only path
+for these names.
 
-### 30. Source-material author / origin-work creator
-**Endpoints:** Semantic.
-**Handles:** "Stephen King adaptations," "Jane Austen movies," "Tolkien films," "Philip K. Dick stories," "Neil Gaiman works."
-**Mechanism:** semantic search across the vectors where an author name would plausibly appear — plot_events (synopsis prose frequently names the author: "based on Stephen King's novel"), reception (reviews cite the author), and anchor if the identity capsule references them. No dedicated keyword channel inside this category.
-**Why single-endpoint semantic:** step 2 decomposes "Stephen King adaptations" into the author atom (Cat 30) AND the adaptation-source atom (Cat 5) as separate coverage_evidence entries. Cat 5 carries SourceMaterialType.NOVEL_ADAPTATION and its own score term; adding the same KW filter inside Cat 30 would double-count what Cat 5 already contributes. With the adaptation-class filter handled upstream by Cat 5's score merge, Cat 30 only needs to answer one question — "which movies' prose actually names this author?" — and Semantic is the only channel where that name will appear.
-**Why a distinct category:** Cat 1 is film credits — source-material authors aren't film credits. Cat 5 is adaptation flag — can't name the author. Cat 6 is subject-depicted — these movies aren't *about* the author. Without explicit routing, the LLM scatters across the wrong three and underdelivers.
+### 42. "Like &lt;media&gt;" reference
+**Endpoints:** PARAMETRIC (re-routes through dispatcher).
+**Handles:** named-work comparison — "like Inception," "similar to
+The Office," "movies that feel like David Lynch," "in the vein of
+Hitchcock thrillers," "like a Coen Brothers movie."
+**Mechanism:** handler extracts 4-6 distinctive traits of the
+named referent (genre, narrative devices, tone, themes, era, etc.)
+and re-emits them as new sub-traits routed through the normal
+dispatcher. Doesn't search corpus directly.
+**Boundaries:** triggers on explicit comparison surface forms only
+— "like X," "similar to Y," "in the vein of Z," "X-style," "feels
+like Q." Vague reference classes without a named comparison target
+("comedians doing drama," "auteur directors") → Cat 44. The
+distinction: Cat 42 expands a single named work; Cat 44 expands a
+class.
 
 ---
 
 ## Ordinal selection
 
-### 32. Chronological
-**Endpoints:** META.
-**Handles:** release-date ordinal position within a scoped candidate set — "first," "last," "earliest," "latest," "most recent," "the newest one," "the oldest one."
-**Mechanism:** order the candidate pool (scoped by the rest of the query's categories) by `movie_card.release_date` and select the top-N position indicated by the phrasing.
-**Why single-endpoint:** ordinal selection on release date is a pure metadata operation. No other channel carries structured date ordering with the precision needed for position selection.
-**Why split from Cat 10:** Cat 10 treats release date as a *range or decay attribute* ("90s movies," "recent," "before 2000"). Cat 32 treats it as an *ordinal position* ("the newest one," "earliest Scorsese"). Range framings belong in Cat 10; position framings belong here. Different conceptual flavor even though both route to META.release_date — Cat 10 is filter-and-score, Cat 32 is sort-and-pick.
-**Why split from Cat 25:** "most recent" is chronology; "best" / "most acclaimed" is reception superlative. A phrase like "the latest Scorsese" is Cat 32 (chronological ordinal), not Cat 25 (quality superlative).
-
-*(Numbered 32 rather than slotted between Cats 10 and 11 to preserve stable numbering for the rest of the taxonomy.)*
+### 43. Chronological ordinal
+**Endpoints:** META.release_date (sort-and-pick).
+**Handles:** release-date ordinal position within a scoped
+candidate set — "first," "last," "earliest," "latest," "most
+recent," "the newest one," "the oldest one."
+**Mechanism:** order the candidate pool (scoped by the rest of
+the query's categories) by `movie_card.release_date` and select
+the top-N position indicated by the phrasing.
+**Boundaries:** ordinal selection only. Range or decay framings
+("90s movies," "recent," "before 2000") → Cat 12. "Most recent"
+is chronology; "best" / "most acclaimed" is reception superlative
+(Cats 38/39). "The latest Scorsese" is Cat 43 + Cat 1.
 
 ---
 
-## Fallback
+## Catch-all
 
-### 31. Interpretation-required (hard-to-fit)
-**Endpoints:** INTERP → routes to {RCP, ANC, CTX}.
-**Handles:** any query the LLM recognizes as real but that doesn't map cleanly to Cats 1–29. No preset primary members — Cats 27, 28, 29 absorbed the previously-known members.
-**Mechanism:** the LLM receives an **explicit interpretation prompt**:
-> This query doesn't fit a structured channel. Identify the user's
-> underlying intent and what signal that intent would incidentally
-> produce in reviewer / viewer / identity text. Construct a best-
-> effort semantic query against whichever of {reception, watch_context,
-> anchor} is most likely to carry that signal. Lean broad rather than
-> narrow, and flag uncertainty.
+### 44. Generic parametric / catch-all
+**Endpoints:** PARAMETRIC (multi-mechanism handler).
+**Handles:** anything that needs interpretation/expansion and
+doesn't fit a structured category. Specifically:
+- **Vague reference classes:** "comedians doing drama," "auteur
+  directors of the 70s," "directors known for long takes," "child
+  actors who became serious."
+- **Named lists / curated canon:** Criterion Collection, AFI Top
+  100, IMDb Top 250, BFI, National Film Registry, Sight & Sound
+  greatest, "1001 Movies to See Before You Die," film-school canon.
+- **Anything else step 2 recognizes as real but underspecified.**
 
-Output is a standard semantic query dispatched to RCP / CTX / ANC.
-**Why a distinct category:** a silent fallback would be invisible —
-we'd have no way to meter fire rate, no hook for the interpretation-
-guidance prompt, and no way to surface appropriate uncertainty in
-the response. Making this an explicit category lets dispatch code
-behave differently (prompt injection + confidence-lowered phrasing).
+**Mechanism:** multi-mechanism — the handler chooses what fits the
+trait. Can fan out to Cat 1 (entity lookup for expanded actor/
+director instances), KW (tag-resolvable expansions of list
+signatures), semantic across spaces, META priors (numeric quality
+lift for canonical-list queries). Doesn't default to semantic-only.
+**Boundaries:** distinct from Cat 42 — Cat 42 expands a *named
+work*; Cat 44 expands a *reference class or named list*. Both are
+parametric; the difference is what gets expanded and how. This is
+the only true catch-all in the taxonomy; the goal is to keep
+shrinking it as recognizable patterns get lifted into dedicated
+cats.
 
 ---
 
 ## Orchestration shapes
 
-Every category runs under one of four shapes, which govern how
-many endpoint queries can fire for that category on a given user
-request. The shapes fall into two groups: shapes that cap the
-category at a single query, and shapes that allow multiple.
+Every category runs under one of four shapes, which govern how many
+endpoint queries can fire for that category on a given user request.
 
 ### At most one query fires
 
 **Single endpoint** — only one endpoint is ever applicable. No
 routing decision to make.
-Cats 1, 2, 3, 4, 5, 8, 9, 10, 13, 20, 22, 24, 27, 29, 30, 31, 32.
+Cats 1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+21, 24, 30, 31, 34, 36, 38, 43.
 
-**Mutually exclusive** — two (or more) endpoints could each
-individually answer the question, but they answer *different
-versions* of it. The query-generation LLM picks whichever matches
-the user's framing and ignores the others. Firing both would mix
-answers to different questions rather than reinforce a single one.
-Cats 11 (canonical genre → Keyword; qualifier-laden genre →
-Semantic), 12 (tradition tag → Keyword; no tag → Metadata fallback).
+**Mutually exclusive** — two endpoints could each individually
+answer the question, but they answer different versions of it. The
+handler picks whichever matches the user's framing.
+Cats 22 (canonical genre → KW; qualifier-laden → P-ANA),
+23 (tradition tag → KW; no tag → META fallback).
 
-**Tiered** — an ordered preference list of endpoints. The LLM
-fires whichever is the first *genuine fit* for the user's phrasing.
-Earlier tiers are authoritative when they apply; later tiers exist
-as fallbacks for cases the earlier tiers can't cleanly express
-(typically spectrum-framed or long-tail asks outside the canonical
-vocabulary).
-Cats 6, 7, 14, 15, 16, 21, 26.
+**Tiered** — an ordered preference list of endpoints. The handler
+fires the first genuine fit; later tiers are fallbacks for cases
+the earlier tiers can't cleanly express.
+Cats 7, 8, 9, 25, 26, 32.
 
 ### More than one query may fire
 
-**Combo** — multiple endpoints apply to the same request and each
-carries distinct, complementary signal that can't be collapsed
-into a single call. All applicable endpoints fire in parallel and
-their outputs populate the handler's return buckets. Combo is
-reserved for categories where forcing a single endpoint would drop
-real signal — either because no single endpoint's data shape fully
-covers the question, or because the question is inherently
-multi-faceted (e.g. seasonal intent spans proxy tags, watch context,
-and narrative setting at once).
-Cats 17, 18, 19, 23, 25, 28.
+**Combo** — multiple endpoints apply and each carries distinct,
+complementary signal that can't be collapsed into a single call.
+All applicable endpoints fire in parallel.
+Cats 27, 28, 29, 33, 35, 37, 39, 41.
+
+### Special
+
+**Parametric / re-route** — the category transforms a trait into
+new sub-traits or invokes multi-mechanism dispatch.
+Cats 42 (re-routes named-work expansion), 44 (multi-mechanism
+catch-all).
+
+**Reserved / no-op** — category is reserved as a routing slot but
+returns empty until backing data lands.
+Cat 40.
 
 ---
 
@@ -323,62 +657,79 @@ Cats 17, 18, 19, 23, 25, 28.
 
 | Gap | Category | How handled |
 |---|---|---|
-| Below-the-line credits (cinematographer, editor, etc.) | Cat 29 | Dedicated category — Semantic |
-| Curated canon (Criterion, AFI, etc.) | Cat 28 | Dedicated category — Semantic + META.reception_score additive combo |
-| Source-material author (Stephen King adaptations, etc.) | Cat 30 | Dedicated category — Semantic only (relies on Cat 5 co-emission) |
-| Gateway / entry-level | Cat 23 | Semantic (watch_context + reception) in additive combo |
-| Cultural tradition | Cat 12 | KW tag first, META country/language fallback |
-| Seasonal | Cat 19 | KW proxy chains + Semantic additive combo |
-| Narrative setting time/place | Cat 20 | Semantic (plot_events prose) |
-| Cast popularity ("stacked cast") | Cat 25 | Semantic (reception prose) |
-| Thematic weight ("has something to say") | Cat 25 (acclaim framing) + Cat 27 (vibe framing) | Framing-dependent routing |
-| Character-vs-plot focus | Cat 16 | Semantic (narrative_techniques) fallback tier |
-| Character archetype ("lovable rogue") | Cat 7 | KW tag first, Semantic fallback |
-| Plot element / motif (clowns, zombies, sharks) | Cat 6 | KW tag first, Semantic fallback |
-| Self-experience goal ("make me cry") | Cat 23 | Semantic + KW additive combo |
-| Scale / scope | Cat 27 | Semantic (anchor + plot_analysis) |
-| Rewatch value | Cat 23 + Cat 25 | Cat 23 for "comfort rewatch" (watch_context), Cat 25 for "holds up on rewatch" (reception prose) |
-| Cultural influence | Cat 25 | Semantic (reception prose) |
-| Still-holds-up | Cat 25 | Semantic (reception prose) |
-| Live trending | Cat 9 | Dedicated endpoint |
-| Chronological ordinal ("newest," "earliest") | Cat 32 | META.release_date sort-and-pick |
+| Below-the-line credits | Cat 40 | Reserved slot, returns empty until data lands |
+| Curated canon (Criterion, AFI) | Cat 44 | Parametric expansion to canonical list signatures |
+| Source-material creator | Cat 41 | Semantic (P-EVT + RCP) for name occurrences |
+| Reference-work comparison ("like X") | Cat 42 | Parametric expansion → re-route |
+| Vague reference class ("comedians doing drama") | Cat 44 | Parametric expansion to instances → re-route |
+| Gateway / entry-level | Cat 33 | Folded into emotional/experiential combo |
+| Cultural tradition | Cat 23 | KW tag → META fallback |
+| Seasonal | Cat 29 | KW proxy chains + CTX + P-EVT additive |
+| Narrative setting time/place | Cat 31 | P-EVT descriptive phrasing |
+| Cast popularity ("stacked cast") | Cat 39 | RCP prose |
+| Thematic weight ("has something to say") | Cat 39 (acclaim) + Cat 32 (vibe) | Framing-dependent |
+| Character-vs-plot focus | Cat 26 | NRT fallback tier |
+| Character archetype | Cat 9 | KW tag → NRT fallback |
+| Element / motif presence | Cat 8 | KW tag → P-EVT fallback |
+| Self-experience goal ("make me cry") | Cat 33 | Combo additive |
+| Comfort-watch / "feel-better movie" | Cat 33 | Combo additive |
+| Post-viewing resonance ("haunting") | Cat 33 | Combo additive |
+| Cultural influence / still-holds-up | Cat 39 | RCP prose |
+| Live trending | Cat 11 | Dedicated endpoint |
+| Chronological ordinal | Cat 43 | META.release_date sort-and-pick |
+| Media type (TV-movie / short / video) | Cat 21 | Dedicated META single-attribute |
+
+---
 
 ## Composition notes
 
 Categories are composable atoms, not mutually exclusive buckets.
-"Tom Hanks comedies from the 90s rated above 8" fires Cat 1 (actor)
-+ Cat 11 (genre — drama/comedy) + Cat 10 (release date + numeric
-reception). "Best horror of the 80s" fires Cat 25 (superlative) +
-Cat 11 (horror) + Cat 10 (date). The dispatcher resolves each
-category independently and merges scores.
+The dispatcher resolves each category independently and merges
+scores under the v3 trait-grouping framework (see
+`v3_trait_identification.md`).
+
+Worked examples:
+- "Tom Hanks comedies from the 90s rated above 8" → Cat 1 (Hanks)
+  + Cat 22 (comedy) + Cat 12 (90s) + Cat 19 (rated above 8).
+- "Best horror of the 80s" → Cat 38 (general appeal) + Cat 39
+  (specific reception prose) + Cat 22 (horror) + Cat 12 (80s).
+- "Stephen King novels from the 90s" → Cat 41 (Stephen King) +
+  Cat 6 (novel adaptation) + Cat 12 (90s).
+- "Movies like Inception with a slow burn" → Cat 42 (Inception
+  expansion) + Cat 33 (slow-burn pacing).
+
+---
 
 ## Compound split rule
 
 **If a phrase or query seems to fit multiple categories, that is a
-signal it should be split into separate atomic requirements.** The
-upstream category-identification step is expected to decompose
-compound phrases into their constituent category firings rather
-than inventing an umbrella category to absorb the compound.
+signal it should be split into separate atomic traits.** Step 2 is
+expected to decompose compound phrases into their constituent
+category firings rather than inventing an umbrella category.
 
-Compound descriptors never warrant their own category — the word
+Compound descriptors never warrant their own category. The word
 "classic" means older + canonical, and the correct handling is to
-fire Cat 10 (release era) + Cat 25 (canonical / acclaimed)
+fire Cat 12 (release era) + Cat 39 (canonical/acclaimed)
 simultaneously. Creating a "Canonical stature" category to hold
-"classic" would just duplicate endpoints already covered by
-Cats 10 and 25 while hiding the compound nature from dispatch.
+"classic" would just duplicate endpoints already covered while
+hiding the compound from dispatch.
 
-Examples:
+Worked examples:
 - "Classic Arnold Schwarzenegger action movies" → Cat 1
-  (Schwarzenegger) + Cat 11 (action) + Cat 10 (older era) +
-  Cat 25 (canonical stature).
-- "Disney classics" → Cat 3 (Disney) + Cat 10 (older era) +
-  Cat 25 (canonical).
-- "Lone female protagonist" → Cat 7 (female-lead archetype) +
-  Cat 16 (single-lead structural form).
-- "Modern classic" → Cat 10 (recent era, narrower range) +
-  Cat 25 (canonical stature).
+  (Schwarzenegger) + Cat 22 (action) + Cat 12 (older era) +
+  Cat 39 (canonical stature).
+- "Disney classics" → Cat 4 (Disney) + Cat 12 (older era) +
+  Cat 39 (canonical stature).
+- "Lone female protagonist" → Cat 9 (female-lead archetype) +
+  Cat 26 (single-lead structural form).
+- "Modern classic" → Cat 12 (recent era, narrower range) +
+  Cat 39 (canonical stature).
+- "Stephen King novels" → Cat 41 (Stephen King) + Cat 6 (novel
+  adaptation).
+- "Sherlock Holmes books" → Cat 5 (Sherlock Holmes franchise) +
+  Cat 6 (book adaptation).
 
 The only time a compound stays bound to a single category is when
 the category explicitly owns the compound — e.g. a named curated
-list ("Criterion Collection") in Cat 28, which *is* the compound
+list ("Criterion Collection") in Cat 44, which *is* the compound
 of "canonical recognition + specific named list."

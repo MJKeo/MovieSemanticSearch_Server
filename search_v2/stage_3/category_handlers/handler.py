@@ -40,13 +40,13 @@ from implementation.llms.generic_methods import (
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import (
-    CategoryName,
     EndpointRoute,
     FitQuality,
     HandlerBucket,
     MatchMode,
     Polarity,
 )
+from schemas.trait_category import CategoryName
 from schemas.semantic_translation import SemanticEndpointParameters
 from schemas.step_2 import CoverageEvidence, RequirementFragment
 from search_v2.stage_3.category_handlers.handler_result import HandlerResult
@@ -99,6 +99,15 @@ async def run_handler(
         result = await _run_trending()
         result.category = category
         return result
+
+    # Step 0a.2 — MEDIA_TYPE short-circuit. MEDIA_TYPE has no LLM
+    # wrapper yet (its translation handler is pending — see
+    # endpoint_registry.ROUTE_TO_WRAPPER) so reaching the LLM codepath
+    # below would crash on a missing schema. Soft-fail to an empty
+    # result for now; when the deterministic media_type codepath lands,
+    # invoke it here the same way TRENDING does.
+    if category == CategoryName.MEDIA_TYPE:
+        return HandlerResult(category=category)
 
     # Step 0b — no_fit entries carry no actionable signal. Dispatch is
     # expected to filter these out before they reach this module, but

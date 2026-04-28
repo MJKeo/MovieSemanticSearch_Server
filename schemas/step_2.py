@@ -23,7 +23,8 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
-from schemas.enums import CategoryName, FitQuality, LanguageType
+from schemas.enums import FitQuality, LanguageType
+from schemas.trait_category import CategoryName
 
 
 class Modifier(BaseModel):

@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Iterable
 from xml.sax.saxutils import escape as xml_escape
 
-from schemas.enums import CategoryName, EndpointRoute, HandlerBucket
+from schemas.enums import EndpointRoute, HandlerBucket
+from schemas.trait_category import CategoryName
 from schemas.step_2 import CoverageEvidence, Modifier, RequirementFragment
 
 
@@ -56,11 +57,17 @@ _BUCKET_GUARDRAILS: dict[HandlerBucket, str] = {
 }
 
 # Endpoint chunks are keyed by EndpointRoute. TRENDING has no LLM
-# codepath and therefore no prompt file, so it is excluded here.
+# codepath and therefore no prompt file. MEDIA_TYPE is a new route
+# whose prompt file has not been authored yet — skip eager load until
+# it lands so module import doesn't break.
+_ENDPOINT_PROMPTLESS: frozenset[EndpointRoute] = frozenset({
+    EndpointRoute.TRENDING,
+    EndpointRoute.MEDIA_TYPE,
+})
 _ENDPOINT_CHUNKS: dict[EndpointRoute, str] = {
     route: _read(_ENDPOINTS_DIR / f"{route.value}.md")
     for route in EndpointRoute
-    if route is not EndpointRoute.TRENDING
+    if route not in _ENDPOINT_PROMPTLESS
 }
 
 
@@ -138,10 +145,11 @@ def build_system_prompt(category: CategoryName) -> str:
     )
 
     # Endpoint context: one chunk per route in the category's priority
-    # order. TRENDING routes are silently skipped (no LLM chunk exists
-    # for them); if that leaves zero endpoints the category has
-    # nothing to dispatch to and the builder must surface the
-    # misconfiguration rather than emit an empty section.
+    # order. Routes in _ENDPOINT_PROMPTLESS (TRENDING, MEDIA_TYPE) are
+    # silently skipped because no LLM chunk exists for them; if that
+    # leaves zero endpoints the category has nothing to dispatch to and
+    # the builder must surface the misconfiguration rather than emit an
+    # empty section.
     endpoint_chunks = [
         _ENDPOINT_CHUNKS[route]
         for route in category.endpoints
