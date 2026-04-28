@@ -283,21 +283,19 @@ class CategoryName(str, Enum):
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
     )
-    BUDGET_SCALE = (
-        "Budget scale",
+    FINANCIAL_SCALE = (
+        "Financial scale",
         (
-            "Budget framings — 'big-budget', 'low-budget', 'indie "
-            "scale', 'shoestring', 'micro-budget', 'studio-scale'."
-        ),
-        (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
-    )
-    BOX_OFFICE = (
-        "Box office bucket",
-        (
-            "Box office framings — 'box office hit', 'blockbuster "
-            "gross', 'flop', 'underperformer', 'sleeper hit', "
-            "'made bank'."
+            "Budget AND box-office framings on a single financial-scale "
+            "axis — 'big-budget', 'low-budget', 'indie scale', "
+            "'shoestring', 'micro-budget', 'studio-scale', 'box office "
+            "hit', 'blockbuster gross', 'flop', 'underperformer', "
+            "'sleeper hit', 'made bank'. Also covers compound framings "
+            "that genuinely bundle both axes ('blockbuster' = big "
+            "budget AND big gross; 'indie hit' = small budget with "
+            "outsized gross). The handler picks the relevant column(s) "
+            "from the trait surface — budget_bucket only, "
+            "box_office_bucket only, or both."
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
