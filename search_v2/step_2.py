@@ -1,13 +1,16 @@
-# Search V2 — Step 2: Query Pre-pass
+# Search V2 — Step 2: Query Pre-pass (v3 schema)
 #
 # Runs the step-2 pre-pass LLM on a raw user query and emits a
-# normalized representation the downstream categorizer can dispatch
-# cleanly. Every requirement fragment is an attribute; polarity
-# phrases ("not too", "preferably") and role markers ("starring",
-# "directed by") attach as nested modifiers inside the attribute
-# they bind to. For every fragment the pre-pass gathers coverage
-# evidence against the category taxonomy (with a per-entry atomic
-# rewrite that reflects any nested modifiers).
+# Step2Response with two top-level fields: span_analysis (per-span
+# identification + decomposition reasoning) and traits (finalized
+# per-trait classification with role / polarity / salience /
+# category). Step 3 (per-category handlers) dispatches on each
+# trait's best_fit_category.
+#
+# The system prompt teaches five fundamentals (atomicity, modifier
+# vs trait, carver vs qualifier, polarity, salience) plus the
+# category taxonomy. Field-level "how to fill" guidance lives in
+# the response schema (schemas/step_2.py), not in the prompt.
 #
 # Model choice is finalized to Gemini 3 Flash (no thinking, modest
 # temperature). The run function does not accept a model parameter —
@@ -35,112 +38,417 @@ from schemas.step_2 import Step2Response
 # ===============================================================
 #                      System prompt
 # ===============================================================
+#
+# Section ordering follows the v3 plan in
+# search_improvement_planning/v3_step_2_planning.md ("Prompt
+# context: trait identification fundamentals"):
+#
+#   task framing → atomicity → modifier vs trait → carver vs
+#   qualifier → polarity → salience → category taxonomy
+#
+# Reasoning-field discipline, out-of-scope reminders, and worked
+# end-to-end examples are deliberately omitted — those
+# responsibilities live in the schema field descriptions or are
+# deferred.
 
 
-_TASK_AND_OUTCOME = """\
-You are the pre-pass step in a movie search pipeline. A raw user \
-query comes in; you emit a normalized representation that a \
-downstream categorizer LLM can dispatch cleanly.
+_TASK_FRAMING = """\
+You are step 2 of a movie-search pipeline. A raw natural-language \
+query comes in. You emit a structured trait analysis that step 3 \
+(per-category handlers) uses to dispatch the actual search.
 
-The downstream categorizer has a fixed taxonomy of categories \
-(listed below, as concepts — not routing rules). It works well \
-when each piece of the query maps cleanly to one category's \
-concept. It works poorly when a phrase bundles multiple meanings, \
-hides atoms behind figurative language, or requires parametric \
-knowledge to unpack. Your job is to:
+Your job is to:
+- identify each content-bearing span in the query
+- decide whether each span stays whole as one trait or splits into \
+  multiple traits
+- for each finalized trait, classify its category, role (carver vs \
+  qualifier), polarity, and (for qualifiers) salience
 
-- explore what the query as a whole is asking for
-- break the query into the smallest attribute-bearing fragments, \
-  preserving exact wording
-- for each fragment, attach any polarity phrases ('not', 'not \
-  too', 'preferably') or role markers ('starring', 'directed by', \
-  'about') that bind to it as entries in the fragment's modifiers \
-  list (see FRAGMENT STRUCTURE)
-- use the rest of the query as clarifying evidence before locking \
-  in readings for ambiguous fragments (see CLARIFYING EVIDENCE)
-- for each fragment, decompose its meaning into one or more \
-  category-grounded atoms via coverage_evidence, with \
-  captured_meaning stated BEFORE the category is named
-
-Your job is NOT:
-- to assign category IDs, endpoints, or routing decisions
-- to decide hard-filter vs preference
-- to decide positive vs negative inclusion
-- to silently correct, paraphrase, or "smooth" the user's intent
-- to invent constraints the user did not state or imply
-- to force-resolve multi-dimension entities by default — preserve \
-  every reading that INDEPENDENTLY holds (e.g. Spider-Man is both \
-  character AND franchise because a Spider-Man franchise really \
-  exists; "Star Wars" is franchise only; "Neo" is character only) \
-  UNLESS another fragment in the query definitionally rules out a \
-  surviving reading (see CLARIFYING EVIDENCE)
-- to generalize specifics ('brother' stays 'brother', not \
-  'sibling'; '1990s' stays '1990s', not 'older')
+The sections below teach the concepts you need: what counts as a \
+trait, what counts as a modifier, how to choose between carver and \
+qualifier, how polarity reads from surface grammar, and how to \
+weight qualifier salience. The category taxonomy at the end is the \
+vocabulary you commit to. Field-level "how to fill this" guidance \
+lives in the response schema itself — read each field's description \
+when filling it.
 
 ---
 
 """
 
-_LANGUAGE_TYPES = """\
-FRAGMENT STRUCTURE — every fragment is an attribute
 
-Every requirement fragment you emit is an attribute: a content-\
-bearing chunk of the query that contributes one or more category-\
-grounded atoms to the search. Ranking-by-chronology language \
-("first", "last", "earliest", "latest", "most recent") is also an \
-attribute and maps to the Chronological category — it is NOT a \
-separate fragment type.
+_ATOMICITY = """\
+TRAIT UNIT IDENTIFICATION (ATOMICITY)
 
-Each fragment carries:
-- query_text: the attribute span exactly as written
-- description: one sentence on what the fragment contributes
-- modifiers: a list of polarity phrases and role markers that \
-  bind to this attribute (empty when none apply)
-- coverage_evidence: the category-grounded atoms (one entry per \
-  atom)
+A trait is the smallest span of the query that carries one coherent \
+classification across role, category, polarity, and salience — with \
+modifier tokens absorbed into it. Splitting is meaning-preserving: \
+split when each piece independently survives as a meaningful trait \
+AND splitting doesn't damage what the user was actually asking for.
 
-MODIFIERS — two kinds, both nested inside the attribute they bind to
+How to think:
+1. Look for explicit conjunctions ("and", "or") between distinct \
+   concepts — strong split signals.
+2. For each potential split, ask: can each piece function as its \
+   own trait, classifying to its own category, with the same \
+   meaning it had inside the parent span?
+3. If yes → split. If pulling a piece out turns the residual into \
+   something the user didn't ask for → don't split.
 
-Polarity phrases and role markers are NOT their own fragments. \
-They attach to the adjacent attribute as entries in its modifiers \
-list. Each modifier entry has:
-- original_text: the verbatim span from the query
-- effect: a brief note on what the modifier does to the attribute
-- type: POLARITY_MODIFIER or ROLE_MARKER
+The deciding factor between "modern classics" (split) and "iconic \
+twist endings" (don't split) is what survives the split:
+- "Modern" + "classics" — each is a real trait the user is asking \
+  about. Two stacked constraints.
+- "Iconic" + "twist endings" — pulling "iconic" out turns it into a \
+  vague "movie is iconic" trait while "twist endings" loses the \
+  scoping. The user wanted iconic-because-of-the-twist, not iconic \
+  AND has a twist. Compound concept stays whole.
 
-1. POLARITY_MODIFIER
-   Language that flips or modulates the sign/strength of the \
-   attribute it attaches to.
-   Examples:
-   - "not", "no", "without" — negation.
-   - "not too", "not very" — soft negation (preference tilt).
-   - "fairly", "somewhat", "kinda" — strength hedging.
-   - "preferably", "ideally" — preference-not-dealbreaker hedging.
-   Polarity can also modify Chronological attributes ("not the \
-   first", "not rarely-seen").
+Boundaries:
+- Bucket-B compounds. Some single concepts route to one category \
+  whose handler fans out internally (the emotional/experiential \
+  category covers tone + pacing + experience goals + post-viewing \
+  resonance from one trait). Don't pre-split — the handler has more \
+  context.
+- Named entities never split mid-name. "Stephen King" is one trait. \
+  "Coen Brothers" (a duo treated as one entity) is one trait. \
+  Multi-name compounds joined by an explicit "and" / "or" — "Hanks \
+  and Streep" — DO split per name.
+- "Based on" phrases always split between the named referent and \
+  the medium ("Stephen King" + "novels" — separate traits routing \
+  to separate categories).
 
-2. ROLE_MARKER
-   A small connective word or short phrase that BINDS the \
-   attribute to a specific role or dimension. Role markers carry \
-   real signal — strip them and the meaning changes.
-   Examples:
-   - "starring" binds an actor credit to a LEAD role (prominence).
-   - "featuring" binds an actor credit to any-role (weaker).
-   - "directed by" binds a person to the director role.
-   - "written by" binds a person to the writer role.
-   - "about" binds a subject to narrative focus ("about grief").
-   - "set in" binds a place or time to narrative setting.
-   - "based on" binds a source to adaptation.
-   Role markers only bind to attribute fragments; they never \
-   modify other modifiers and never appear in isolation.
+Common pitfalls:
+- Splitting on commas / conjunctions reflexively. Read what the \
+  words do, not just the punctuation.
+- Missing the scoped-adjective-creates-compound pattern. "Iconic \
+  twist endings", "lovable rogue protagonist", "morally ambiguous \
+  lead" — front adjective scopes the noun, can't survive standalone \
+  without changing meaning. Keep whole.
+- Pre-splitting Bucket-B compounds. "Slow-burn dread" routes to one \
+  emotional/experiential trait; splitting fragments what the \
+  handler is built to unpack as one.
 
-Pure filler that gets dropped (not a fragment, not a modifier):
-"movies", "films", "a", "the", "and", "some", "any", "I want", \
-"looking for", "help me find", "can you show me", "that", "which". \
-Connective "with" and "about" are judgment calls — "movies with \
-Tom Hanks" drops "with" as filler; "movies about grief" keeps \
-"about" as a ROLE_MARKER on the grief attribute, binding it to \
-narrative focus.
+Examples.
+
+Split:
+- "Modern classics" → "modern" + "classics"
+- "Funny horror movies" → "funny" + "horror"
+- "Movies starring Hanks and Streep" → two person-credit traits
+- "Set in the 90s about grief" → "set in the 90s" + "about grief"
+
+Don't split:
+- "Iconic twist endings" → one trait (scoping is meaning-bearing)
+- "Lone female protagonist" → one trait ("lone" doesn't survive \
+  standalone)
+- "Darkly funny" → one trait ("darkly" reshapes "funny")
+- "Comedians doing serious roles" → one trait
+- "Stephen King" → one trait
+
+---
+
+"""
+
+
+_MODIFIER_VS_TRAIT = """\
+MODIFIER VS TRAIT
+
+A modifier is a token that adjusts polarity or strength of a trait \
+without changing what the trait itself is about. Modifiers absorb \
+into the trait they attach to — they don't become traits of their \
+own. A token that fundamentally reshapes meaning (forming a new \
+compound concept) is NOT a modifier; it's part of the trait, and \
+the whole stays one trait.
+
+The test: does this word change *what the trait is about*, or just \
+*how strongly the user wants it / whether they want it at all*?
+
+- "Not funny" — "not" changes intent (filter out funny things) but \
+  "funny" still means "funny". Modifier.
+- "A bit funny" — "a bit" changes strength but "funny" still means \
+  "funny". Modifier.
+- "Darkly funny" — "darkly" reshapes "funny" into a tonal compound. \
+  Not a modifier; the whole thing is one trait.
+- "Starring Tom Hanks" — "starring" tells the entity handler this \
+  is an actor. Modifier.
+
+Modifiers come in roughly four flavors: polarity setters ("not", \
+"without"), strength/hedge tokens ("ideally", "a bit", "really"), \
+role markers ("starring", "directed by", "based on"), and explicit \
+emphasis tokens ("must", "above all", "especially"). Don't try to \
+memorize an exhaustive list — recognize the principle: it adjusts \
+polarity or strength, doesn't redefine the trait.
+
+The line between a meaning-shaping qualifier ("darkly funny") and \
+a strength modifier ("a bit funny") is whether removing the front \
+token leaves the trait pointing at the same thing. "Funny" alone \
+still points at humor — "a bit" is a modifier. "Funny" alone is \
+not the same trait as "darkly funny" — they're different.
+
+Common pitfalls:
+- Promoting role markers to traits. "Starring", "directed by", \
+  "from the studio of" — all modifiers, not traits.
+- Promoting hedges to traits. "Ideally", "maybe", "kind of" — \
+  salience hints, not standalone traits.
+- Splitting compound modifiers off as traits. "Lone female \
+  protagonist" — "lone" is not its own trait.
+- Treating meaning-shaping qualifiers as modifiers. "Darkly funny" \
+  is one trait, not "funny" with a "darkly" modifier.
+
+Examples.
+
+Modifier (absorbed):
+- "Not too violent" — polarity+strength modifier on "violent"
+- "Ideally a slow-burn" — hedge on "slow-burn"
+- "Starring Tom Hanks" — role marker on the entity
+- "Movies based on a Stephen King novel" — "based on" role marker
+
+Not a modifier (part of compound trait):
+- "Darkly funny" — "darkly" reshapes "funny"
+- "Iconic twist endings" — "iconic" scopes to "twist endings"
+- "Morally ambiguous protagonist" — part of the archetype
+
+---
+
+"""
+
+
+_CARVER_VS_QUALIFIER = """\
+CARVER VS QUALIFIER
+
+- Carver: defines what kinds of movies belong in the result set at \
+  all. Yes/no test ("does this movie have X?"). A movie that fails \
+  is irrelevant, not just ranked lower.
+- Qualifier: orders movies within a pool that other traits have \
+  already carved. Continuous test ("how much X does this movie \
+  have?"). A low-X movie is still a valid result, just ranked below \
+  higher-X ones.
+
+Polarity is orthogonal — both can be positive or negative. Negative \
+carvers exclude; negative qualifiers downrank.
+
+How to think (the guiding principle). For each trait, ask:
+1. Is this trait qualifying another trait in the query? If it's \
+   narrowing, ranking, or steering the pool another trait defines \
+   — qualifier.
+2. Is another trait qualifying this one? If yes, this one is a \
+   carver (it's the one being narrowed).
+3. If it's not qualifying anything and nothing's qualifying it — it \
+   has to define the pool. Carver by default.
+
+This handles "popular movies" / "warm-hug movie" cases naturally: \
+nothing else is in the query, so the trait can't be qualifying \
+anything and isn't being qualified — it must be the carver.
+
+Boundaries:
+- Categorical traits (concrete facts: entities, dates, genres, \
+  settings, formats) tend toward carving — yes/no by nature.
+- Gradient traits (experiential / evaluative qualities: mood, tone, \
+  popularity) tend toward qualifying when categoricals are present \
+  — continuous by nature.
+- The decision is at the trait level, not the atom level. "Like \
+  Eternal Sunshine" decomposes internally into atoms (some \
+  categorical-looking) but the trait is one qualifier; internal \
+  categoricals don't escape and gate independently.
+
+Common pitfalls:
+- Role-flipping on specificity when both are categorical. "Horror \
+  movies set on a submarine" — both categorical, both carve. \
+  Submarine doesn't become "the real carver" while horror drops to \
+  qualifying. Specificity-driven role-flips happen only when the \
+  broad trait is gradient.
+- Letting an ordinal modifier promote a gradient to carver. \
+  "Tarantino's least violent film" — "least violent" is still a \
+  gradient qualifier with an ordinal sort directive on top.
+- Confusing negation-as-carving with negation-as-qualifier-polarity. \
+  "A non-violent crime thriller" — defining the pool by absence; \
+  carving by exclusion. "A rom-com that doesn't feel formulaic" — \
+  ranking direction over a continuous trait; negative qualifier. \
+  Test: if the trait appeared positively in this query, would it \
+  have been carving or qualifying? Same answer when negated.
+- Letting internal atoms of a parametric reference escape. "Like \
+  Eternal Sunshine but set in space" — "like Eternal Sunshine" is \
+  one qualifier; the space-setting is the carver.
+- Same trait, different role via companions. "A feel-good film" — \
+  feel-good carves (alone). "A feel-good comedy" — comedy carves, \
+  feel-good qualifies. Same word, different role.
+- Modifier-binding promoting a gradient to categorical. "A quiet \
+  movie" — "quiet" attached to the whole movie reads gradient. "A \
+  movie with a quiet score" — "quiet" attached to the score is a \
+  categorical fact about a structural element.
+
+Examples.
+
+Carvers:
+- "90s horror starring Anthony Hopkins" — three positive carvers \
+  (date, genre, entity)
+- "A non-violent crime thriller" — "crime thriller" positive carver; \
+  "violent" negative carver (excluding by absence)
+- "A feel-good film" (no other traits) — feel-good carves because \
+  nothing else does
+- "Popular movies" (no other traits) — popular carves
+
+Qualifiers:
+- "Funny horror movies" — horror carves, "funny" qualifies
+- "Dark slow-burn thriller" — thriller carves, "dark" + "slow-burn" \
+  qualify
+- "A rom-com that doesn't feel formulaic" — rom-com carves, \
+  "formulaic" is a negative qualifier
+- "Tarantino's least violent film" — Tarantino carves, "violent" \
+  qualifies (with ordinal sort downstream)
+- "Like Eternal Sunshine but set in space" — space carves, "like \
+  Eternal Sunshine" qualifies
+
+---
+
+"""
+
+
+_POLARITY = """\
+POLARITY
+
+Whether the user wants the trait or wants to avoid it.
+- Positive: user wants the trait
+- Negative: user wants to avoid / penalize the trait
+
+Surface-grammar rule, not intent inference: if a polarity-setter is \
+present on a trait, polarity = negative. No second-guessing of what \
+the user "really" wants.
+
+A polarity-setter is any token that signals filter-out or downrank \
+intent. The principle, not a fixed list: tokens like "not", \
+"without", "no", "avoid", "skip", "minus", "anything but", "spare \
+me", "don't want" — anything reading as "the user is calling out \
+something to keep out or push down". Recognize the function, don't \
+memorize a taxonomy.
+
+"Not too X" is a special case. Read as: polarity=negative, \
+salience=supporting. "Not too funny" means it's not a huge deal if \
+it's somewhat funny, but penalize when strongly present. Negative \
+direction, weak strength.
+
+Distribution scope. When a polarity-setter sits at the front of a \
+coordinated phrase, does it apply to every conjunct?
+- "Or" tends to distribute negation across both conjuncts. "Not too \
+  dark or sad" → both negative.
+- "And" / "but" tends to break distribution. "Dark and funny" — \
+  only "dark" is governed by any preceding negation; "but" signals \
+  a pivot to a contrasting positive.
+
+These are tendencies, not rules. Read the phrase as a person and \
+ask whether the negation reads naturally over each conjunct. If it \
+does, distribute.
+
+Boundaries:
+- Polarity is mechanical from surface grammar. Don't try to rewrite \
+  "movies that aren't boring" into positive intent for "engaging" — \
+  emit polarity=negative on "boring" and let downstream rewrite. \
+  Step 2's job is the surface signal.
+- Polarity setters absorb as modifiers. "Without violence" → one \
+  trait ("violence", polarity=negative), not two.
+
+Common pitfalls:
+- Treating "not too X" as full negation. "Not too long" doesn't \
+  mean "must be short" — it means penalize long, don't kill mildly \
+  long. Polarity=negative, salience=supporting.
+- Trying to memorize a closed list of polarity setters.
+- Inferring polarity from intent rather than surface grammar.
+- Mechanical if-statements for distribution. Read like a person.
+
+Examples.
+
+Positive:
+- "Funny horror" — "funny" positive
+- "A dark, brooding thriller" — both positive
+
+Negative:
+- "Not too violent" — "violent" negative, supporting
+- "Without gore" — "gore" negative
+- "Anything but a romcom" — "romcom" negative
+- "Skip the jump scares" — "jump scares" negative
+- "Not too dark or sad" — both negative (distribution over "or"); \
+  both supporting
+
+Mixed:
+- "A thriller that's tense but not too violent" — "tense" positive \
+  central; "violent" negative supporting
+
+---
+
+"""
+
+
+_SALIENCE = """\
+SALIENCE
+
+Per-qualifier weight on the qualifier side of scoring. Two states:
+- Central: a headline want; the query would feel fundamentally \
+  different without it.
+- Supporting: meaningful but not load-bearing; rounds out the \
+  picture.
+
+Carvers don't get salience (rarity does the weight work for them \
+downstream). Salience is qualifier-only.
+
+How to think (signals, in priority order):
+1. Hedge / "nice to have" language — primary principle. "Ideally", \
+   "if possible", "maybe", "would be nice", "kind of", "a bit". The \
+   user took the time to mark this as soft — incredibly strong \
+   signal that should not be overridden. Hedged → supporting. \
+   Hedges win even when the trait is structurally prominent or \
+   named first.
+2. Necessity language. "Must", "need", "have to", "above all", \
+   "really want". Marks central explicitly when no hedge is present.
+3. Corrective / contrastive structures. "X but Y" — Y after "but" \
+   is often a corrective the user is tracking actively. Lean \
+   central for the corrective.
+4. Order of mention. Earlier-mentioned qualifiers tend more central \
+   than later — first thing out of the user's mouth is often what \
+   they came to the search with.
+5. Headline position (clue, not rule). Qualifiers in the adjective \
+   slot directly modifying the head noun ("slow-burn thriller") \
+   tend central; trailing modifier qualifiers ("a thriller, ideally \
+   slow-burn") tend supporting. A clue, override-able by hedges.
+
+The unifying principle: salience tracks how much investment the \
+user put into the trait — words spent, position chosen, hedge or \
+emphasis added.
+
+Boundaries:
+- Don't force one qualifier in a query to be central. If only one \
+  qualifier exists, salience doesn't matter — a weighted sum of \
+  one item gets 100% regardless. If the only qualifier is hedged, \
+  mark it supporting.
+- Salience is structural-importance, not strength-of-preference. \
+  "I really want a comedy" — "really" is intensity language but \
+  "comedy" is a carver, not a qualifier; salience doesn't apply.
+
+Common pitfalls:
+- Ignoring hedges because the trait is structurally prominent. \
+  "Ideally a slow-burn thriller" — supporting wins despite the \
+  adjective slot.
+- Defaulting all qualifiers to central. Most queries have a mix.
+- Treating salience as how much the user likes the trait. Salience \
+  is about how load-bearing the trait is.
+
+Examples.
+
+Central:
+- "I really need a slow-burn thriller" — "really need" is \
+  necessity language
+- "Above all I want it to be funny, and ideally short" — funny \
+  central; short supporting
+- "A dark and brooding thriller" — both qualifiers in the \
+  adjective slot, no hedges, equal-weight central
+
+Supporting:
+- "Ideally a slow-burn thriller" — "ideally" hedges
+- "A horror movie, maybe with some dark humor" — "maybe with some" \
+  hedges
+- "A thriller, slow-burn would be nice" — "would be nice" hedges
+- "Ideally creepy and atmospheric horror" — both "creepy" and \
+  "atmospheric" are hedged by "ideally"; supporting wins despite \
+  prominence
 
 ---
 
@@ -150,441 +458,53 @@ narrative focus.
 def _build_category_taxonomy_section() -> str:
     """Render the category taxonomy into a prompt-ready block.
 
-    Sourced from the CategoryName enum in schemas.enums so the
-    prompt text and the structured-output vocabulary never drift
-    apart — one edit, both surfaces update.
+    Sourced from the CategoryName enum so the prompt text and the
+    structured-output vocabulary never drift apart — one edit, both
+    surfaces update. Per-category rendering uses five attributes:
+    description (definition), boundary, edge_cases, good_examples,
+    and bad_examples.
     """
     header = (
-        "CATEGORY TAXONOMY — what each category's concept "
-        "definition covers\n\n"
-        "Use these definitions to gather coverage evidence for "
-        "each attribute fragment.\n"
-        "- CLEAN fit: the atom's meaning sits squarely inside the "
-        "category's definition.\n"
-        "- PARTIAL fit: the category covers part of the atom's "
-        "meaning; the rest needs another entry.\n"
-        "- NO_FIT: the captured_meaning was speculative or empty and "
-        "downstream should discard it. Use Interpretation-required "
-        "as the nominal category in this case. Prefer "
-        "Interpretation-required with a clean fit over no_fit "
-        "whenever the meaning is real but not structurally captured.\n"
-        "Category name values must match the taxonomy names below "
-        "exactly.\n\n"
+        "CATEGORY TAXONOMY\n\n"
+        "Use these definitions when you fill `category_candidates` "
+        "and commit `best_fit_category` for each trait. Each entry "
+        "lists the category's definition, its boundary (what's "
+        "adjacent and where the line sits), edge cases that often "
+        "misroute, and short examples of traits that do and don't "
+        "belong here.\n\n"
+        "Category enum values must match the names below exactly.\n\n"
     )
-    blocks = [
-        f"Cat: {cat.value}\n  {cat.description}" for cat in CategoryName
-    ]
-    return header + "\n\n".join(blocks) + "\n\n---\n\n"
+    blocks: list[str] = []
+    for cat in CategoryName:
+        lines = [
+            f"Cat: {cat.value}",
+            f"  Definition: {cat.description}",
+            f"  Boundary: {cat.boundary}",
+        ]
+        if cat.edge_cases:
+            lines.append("  Edge cases:")
+            lines.extend(f"    - {entry}" for entry in cat.edge_cases)
+        if cat.good_examples:
+            lines.append("  Good examples:")
+            lines.extend(f"    - {entry}" for entry in cat.good_examples)
+        if cat.bad_examples:
+            lines.append("  Bad examples:")
+            lines.extend(f"    - {entry}" for entry in cat.bad_examples)
+        blocks.append("\n".join(lines))
+    return header + "\n\n".join(blocks) + "\n"
 
 
 _CATEGORY_TAXONOMY = _build_category_taxonomy_section()
 
 
-_CLARIFYING_EVIDENCE = """\
-CLARIFYING EVIDENCE — check the whole query before locking readings
-
-Before committing to a reading of a fragment — especially \
-multi-dimension entities and other ambiguous terms — scan the \
-rest of the query for fragments that would make a reading \
-*definitionally impossible*, not merely stylistically unusual.
-
-The test is: "could both the reading and the other fragment be \
-simultaneously true of a single movie?"
-
-- If YES, the readings stack. Keep both. Tone, genre, and era \
-  contrasts almost always stack — a movie can be both funny and \
-  horror; both slow and violent; both animated and dark; both \
-  recent and canonical. These are juxtapositions, not \
-  contradictions. Do NOT drop a reading just because the \
-  combination is rare, surprising, or stylistically unusual.
-- If NO, one reading rules the other out by definition. Drop the \
-  ruled-out reading. The usual culprits are *meta-relation* \
-  qualifiers — words that describe a relationship TO another work \
-  rather than a property of the movie itself: spinoffs, prequels, \
-  sequels, reboots, remakes, parodies, sendups, 'inspired by', \
-  'in the style of', 'for fans of'. A spinoff of X cannot BE X; \
-  a parody of X is not X itself; 'inspired by X' is a reference \
-  point, not X.
-
-Apply this narrowly. This is a *reading-narrowing* rule, not a \
-fragment-erasing rule: the fragment still contributes atoms; you \
-are only picking which of its ambiguous readings survive. When \
-you drop a reading for this reason, note it inside the \
-captured_meaning of the surviving entry (e.g. 'franchise \
-membership — the character reading is ruled out by the spinoff \
-qualifier'). Do not silently erase it.
-
-Examples of the test in action:
-- 'funny horror' → keep Top-level genre (horror) AND Viewer \
-  experience (funny tone). Both stack; neither is ruled out.
-- 'horror romantic comedy' → keep all three (horror, romance, \
-  comedy). A movie can simultaneously be all three.
-- 'dark animated feature' → keep both 'animated' (format) and \
-  'dark' (viewer experience). Tone/format stack.
-- Spinoff of a named franchise: keep the franchise reading; drop \
-  the named-character reading if the franchise title is also a \
-  character name, because a spinoff by definition centers someone \
-  other than the original protagonist.
-- 'parody of <franchise>': keep the franchise reference for \
-  composite-semantic purposes; drop any reading that says the \
-  movie IS <franchise>.
-
----
-
-"""
-
-_COVERAGE_EVIDENCE_RULES = """\
-COVERAGE_EVIDENCE — how to decompose each fragment
-
-For every fragment, work through the taxonomy and produce one \
-coverage_evidence entry per category-grounded atom the fragment \
-contains. Each entry has four fields, written in this order:
-
-1. captured_meaning — observation first
-   Describe one aspect of the fragment's meaning in neutral terms, \
-   BEFORE naming a category. State what the user is asking for \
-   along some dimension, independent of any specific category \
-   label. This is the evidence. Example for "watch with my \
-   brother": captured_meaning = "co-viewing context implies a \
-   shared-viewing occasion with a family member".
-   If a reading was ruled out by another fragment (see CLARIFYING \
-   EVIDENCE), record which reading was dropped and why, inside the \
-   captured_meaning of the surviving entry.
-
-2. category_name — decision second
-   Assign the category whose concept definition covers the \
-   captured_meaning. Pick from the CategoryName enum; names must \
-   match the taxonomy exactly. If the meaning is real but no \
-   structured category captures it, use Interpretation-required.
-
-3. fit_quality — self-check
-   'clean' = the category squarely covers captured_meaning. \
-   'partial' = the category covers part but the rest needs \
-   another entry. If a fragment has multiple partial fits, list \
-   one entry per partial fit so the coverage is complete. \
-   'no_fit' = the captured_meaning turned out to be speculative \
-   or empty and no category — including Interpretation-required \
-   — captures it; downstream discards the entry. Prefer \
-   Interpretation-required + 'clean' over 'no_fit' whenever the \
-   meaning is real.
-
-4. atomic_rewrite — atom expression
-   Express the captured_meaning as a category-grounded request, \
-   preserving specifics from the original query. Example: \
-   atomic_rewrite = "for shared viewing with an adult brother" \
-   (not "with a sibling" — preserve the gender specifier). Role \
-   markers and polarity nested in the fragment's modifiers must \
-   be reflected here: e.g., a ROLE_MARKER "starring" on a Tom \
-   Hanks fragment yields atomic_rewrite = "Tom Hanks in a lead \
-   role"; a POLARITY_MODIFIER "not too" on a violent fragment \
-   yields "with a preference against graphic violence". For \
-   entries with fit_quality='no_fit', atomic_rewrite can be a \
-   short placeholder; downstream discards these entries.
-
-How many entries does a fragment get?
-
-- Simple one-axis fragment: one entry.
-  - "horror" → one entry (Top-level genre, clean, "horror").
-- Chronological fragment: one entry against the Chronological \
-  category.
-  - "first" (as in "first Indiana Jones") → one entry \
-    (Chronological, clean, "earliest release-date position within \
-    the scoped candidate set").
-- Compound descriptor: multiple entries, one per axis.
-  - "Disney classic" → two entries: {Studio/brand, clean, \
-    "produced by Disney"} and {Reception quality + superlative, \
-    clean, "widely considered canonical or classic"}.
-- Parametric reference: multiple entries, one per trait the \
-  reference canonically implies.
-  - "like Rocky" → separate entries for the underdog archetype, \
-    the sports/boxing subject, the training-montage device, the \
-    scrappy-protagonist archetype.
-- Implicit bundle: multiple entries, one per implied axis.
-  - "date night movie" → entries for the occasion, the target \
-    audience (two adults), the tone (crowd-pleasing / not too \
-    heavy), maturity. Do NOT invent atoms the bundle does not \
-    canonically imply.
-- Multi-dimension entity: one clean entry per reading that \
-  INDEPENDENTLY holds. A Named character entry requires the \
-  fragment to actually name a persona. A Franchise / universe \
-  lineage entry requires the fragment to actually name a \
-  recognized franchise. A fragment earns BOTH only when it names a \
-  persona that is itself a recognized franchise (Spider-Man, \
-  Barbie, James Bond). A persona without a same-named franchise \
-  ("Neo", "Hermione") gets Named character only. A franchise whose \
-  name is not a persona ("Star Wars", "Jurassic Park") gets \
-  Franchise / universe lineage only. Do NOT invent a franchise to \
-  pair with a character name, or a character to pair with a \
-  franchise name.
-  - "Spider-Man" → {Named character, clean, "Spider-Man"} and \
-    {Franchise / universe lineage, clean, "Spider-Man franchise"}. \
-    Both readings preserved; the categorizer fans out.
-
----
-
-"""
-
-_CHUNKING_RULES = """\
-CHUNKING — how to populate `requirements`
-
-Break the query into the smallest contiguous chunks that each \
-carry one language-type's worth of signal. Preserve the user's \
-exact wording.
-
-- Role markers attach as modifiers on the adjacent attribute; \
-  they are NOT their own fragment. "Starring Tom Hanks" → one \
-  fragment (query_text = "Tom Hanks") with a modifiers entry \
-  {original_text: "starring", effect: "binds actor to a lead \
-  role", type: ROLE_MARKER}. The binding is also reflected in \
-  the Tom Hanks atomic_rewrite ("Tom Hanks in a lead role").
-- Polarity modifiers attach as modifiers on the adjacent \
-  attribute; they are NOT their own fragment. "Not too violent" \
-  → one fragment (query_text = "violent") with a modifiers entry \
-  {original_text: "not too", effect: "soft negation — preference \
-  tilt against graphic violence", type: POLARITY_MODIFIER}. The \
-  polarity is reflected in the violent atomic_rewrite ("with a \
-  preference against graphic violence").
-- Chronological language is its own attribute fragment. "First \
-  Indiana Jones" → two fragments: "first" (attribute, \
-  Chronological) + "Indiana Jones" (attribute, Franchise / \
-  Named character). The chronological fragment carries its own \
-  coverage_evidence.
-- Role-bound qualifier phrases stay together when the qualifier \
-  would be meaningless on its own. "Tom Hanks as a villain" stays \
-  as one attribute fragment because "as a villain" is bound to \
-  the actor. This fragment then has two coverage entries: one for \
-  the actor credit (Credit + title text) and one for the character \
-  archetype (Character archetype), both carrying the binding \
-  ("Tom Hanks playing a villain role").
-- Compound descriptors stay as one attribute fragment ("Disney \
-  classic" is one fragment, two coverage entries).
-- Multi-dimension entities stay as one attribute fragment \
-  ("Spider-Man" is one fragment, two coverage entries — character \
-  and franchise).
-- Pure filler does not become a fragment or a modifier (see \
-  FRAGMENT STRUCTURE).
-- An attribute may carry multiple modifiers. "Not preferably too \
-  violent" → one fragment ("violent") with two modifier entries \
-  (one per polarity phrase); keep each verbatim span separate.
-
----
-
-"""
-
-_ATOMIZATION_PATTERNS = """\
-COMMON ATOMIZATION PATTERNS
-
-Reference list for how to decompose recurring kinds of phrases \
-into category-grounded atoms. Each pattern produces multiple \
-coverage_evidence entries.
-
-1. Compound descriptor (word bundles independent atoms).
-   - "classic" → older era (Structured metadata) + canonical \
-     stature (Reception quality + superlative).
-   - "Disney classic" → Disney (Studio/brand) + older era + \
-     canonical stature.
-   - "modern classic" → recent era + canonical stature.
-   - "Oscar bait" → prestige drama (Sub-genre) + serious tone \
-     (Viewer experience) + prestige / acclaimed-positioning \
-     (Reception quality + superlative). Stylistic framing, not an \
-     actual award claim — "Oscar-winning" instead would route to \
-     Award records, not here.
-
-2. Parametric reference (name compresses many traits).
-   - "like Rocky" → underdog archetype (Character archetype) + \
-     sports/boxing subject (Specific subject) + training-montage \
-     device (Narrative devices) + scrappy protagonist.
-   - "Wes Anderson-style" → symmetrical framing + deadpan tone + \
-     pastel palette + quirky ensemble (each in its category).
-
-3. Role-bound qualifier (qualifier bound to specific entity).
-   - "Tom Hanks as a villain" — two entries: {Credit + title text, \
-     "Tom Hanks playing a villain role"} and {Character archetype, \
-     "movie contains a villain character played by Tom Hanks"}. \
-     Both preserve the binding to Tom Hanks; do NOT decouple.
-
-4. Colloquialism / slang.
-   - "tearjerker" → emotionally heavy experience (Viewer \
-     experience) + sad kind-of-story (Kind of story) + cathartic \
-     goal (Occasion / self-experience goal).
-   - "popcorn flick" → blockbuster sub-genre + light tone + \
-     easy-to-watch occasion.
-
-5. Domain jargon / named movement.
-   - "giallo" → Italian production (Cultural tradition) + horror \
-     genre + stylized violence (Sub-genre) + specific era \
-     (Structured metadata).
-   - "mumblecore" → low-budget indie + naturalistic dialogue \
-     (Narrative devices) + relationship focus (Kind of story).
-
-6. Figurative language.
-   - "gut-punch of a movie" → emotionally devastating (Viewer \
-     experience) + likely dark tone (Viewer experience) + strong \
-     post-viewing resonance (Post-viewing resonance).
-
-7. Implicit bundle (context framing).
-   - "date night movie" → date-night occasion (Occasion) + \
-     two-adult target audience (Target audience) + crowd-pleasing \
-     tone (Viewer experience) + light rather than heavy tone \
-     (Viewer experience).
-   - "watch with my brother" → co-viewing occasion with specific \
-     family member (Occasion) + broad/shared-appeal target \
-     audience (Target audience) + avoids awkward content given \
-     close-family co-viewing (Sensitive content). Preserve \
-     "brother" (not "sibling") in every atomic_rewrite.
-   - "something for my 8-year-old" → kid-appropriate maturity \
-     (Structured metadata or Sensitive content) + family/kids \
-     target audience (Target audience) + age-appropriate content.
-
-8. Temporal relative.
-   - "recent" → last 5 years (Structured metadata). Preserve the \
-     hedge — "roughly the last 5 years". Era-range framing, NOT \
-     chronological ordinal.
-   - "80s throwback" → 1980s era + retro aesthetic.
-
-8b. Chronological ordinal (position within a scoped set).
-   - "first" (as in "first Indiana Jones") → one entry \
-     {Chronological, clean, "earliest release-date position within \
-     the scoped candidate set"}.
-   - "most recent" (as in "most recent Nolan film") → one entry \
-     {Chronological, clean, "latest release-date position within \
-     the scoped candidate set"}.
-   - Always its own attribute fragment — never a modifier on the \
-     adjacent attribute. Scope comes from the other fragments in \
-     the query; this fragment only names the ordinal position.
-
-9. Imprecise quantifier.
-   - "fairly old" → older era as soft preference (Structured \
-     metadata).
-   - "somewhat scary" → horror/thriller (Top-level genre) with \
-     moderate intensity (Sensitive content / Viewer experience).
-
-10. Ambiguous scope.
-    - "family movie" — usually {Target audience: for family \
-      co-viewing}; can also mean {Kind of story: about a family}. \
-      Pick the likely reading; if genuinely ambiguous, include \
-      both as entries.
-
-11. Multi-dimension entity — only when each reading INDEPENDENTLY \
-    holds. Emit a Named character entry only if the fragment names \
-    an actual persona; emit a Franchise / universe lineage entry \
-    only if the fragment names a recognized franchise. Do NOT \
-    invent a franchise around a character, and do NOT invent a \
-    character around a franchise. There are three canonical shapes:
-
-    a. Named persona that is ITSELF a recognized franchise — emit \
-       both.
-       - "Spider-Man" → {Named character, "Spider-Man"} + \
-         {Franchise / universe lineage, "Spider-Man franchise"}.
-       - "Barbie", "James Bond", "Batman" → same shape.
-
-    b. Named persona whose name is NOT a franchise — emit Named \
-       character only. Do not speculate a franchise into existence \
-       just because the name could plausibly title one.
-       - "movies with Neo in it" → {Named character, "Neo"} only. \
-         Neo is a Matrix character; there is no "Neo franchise" — \
-         the franchise is "The Matrix", which is not stated here.
-       - "Hermione movies" → {Named character, "Hermione"} only. \
-         The franchise would be "Harry Potter", not "Hermione".
-
-    c. Franchise whose name is NOT a persona — emit Franchise / \
-       universe lineage only. Do not invent a character named \
-       after the franchise.
-       - "Star Wars movies" → {Franchise / universe lineage, \
-         "Star Wars franchise"} only. "Star Wars" is not a \
-         character.
-       - "Jurassic Park", "Fast & Furious", "Lord of the Rings" → \
-         same shape (franchise only).
-
----
-
-"""
-
-_GROUND_RULES = """\
-GROUND RULES
-
-1. Stay within the user's stated or clearly-implied intent. Make \
-   implicit things explicit; do not invent new constraints.
-2. Small words matter. Role markers ("starring", "directed by", \
-   "about", "set in") and polarity modifiers ("not", "not too", \
-   "without") are signal, not filler — they belong inside the \
-   adjacent attribute's modifiers list.
-3. Chronological language ("first", "last", "earliest", "latest", \
-   "most recent") is its own attribute fragment, mapped to the \
-   Chronological category. It is not a modifier of another \
-   attribute. "Best", "top", "rarely-seen", and other reception- \
-   or popularity-framed superlatives are handled by Reception \
-   quality + superlative or Structured metadata — they are \
-   attributes too, not selection rules.
-4. Multi-dimension entities default to preserving every reading \
-   that INDEPENDENTLY holds as a clean-fit coverage entry. A Named \
-   character reading requires the fragment to name an actual \
-   persona; a Franchise / universe lineage reading requires the \
-   fragment to name an actual recognized franchise. Spider-Man / \
-   Barbie / James Bond are both (persona + same-named franchise); \
-   "Neo" is character only; "Star Wars" is franchise only. Do NOT \
-   invent a franchise to pair with a character name, or a \
-   character to pair with a franchise name. Beyond that, narrow \
-   only when another fragment in the query definitionally rules \
-   out a surviving reading (see CLARIFYING EVIDENCE) — not merely \
-   because the combination is unusual. When narrowing, record the \
-   dropped reading inside the surviving captured_meaning.
-5. Evidence before judgment. Within each coverage_evidence entry, \
-   write captured_meaning before category_name. Do not decide the \
-   category first and rationalize.
-6. Modifier signal must be reflected in atomic_rewrite. A \
-   ROLE_MARKER "starring" on a Tom Hanks fragment must surface as \
-   "Tom Hanks in a lead role"; a POLARITY_MODIFIER "not too" on a \
-   violent fragment must surface as "with a preference against \
-   graphic violence". Specificity preserved: "brother" stays \
-   "brother", "1990s" stays "1990s", "starring" stays "starring" \
-   (or its lead-role equivalent) — never generalized to \
-   "featuring" or "sibling".
-7. Preserve verbatim user language in query_text and in each \
-   modifier's original_text, typos included.
-8. Do not emit category IDs, routing hints, dispatch metadata, or \
-   references to endpoints.
-
----
-
-"""
-
-_OUTPUT_GUIDANCE = """\
-OUTPUT FIELD GUIDANCE
-
-overall_query_intention_exploration — 2 to 4 sentences describing \
-what the query is asking for as a whole.
-
-requirements — list of RequirementFragment. Fields in schema order:
-  query_text: verbatim attribute span (no role markers or polarity \
-    words — those go in modifiers).
-  description: one sentence on what the fragment contributes.
-  modifiers: list of Modifier entries (empty when none apply). \
-    Each entry has:
-      original_text: verbatim span from the query.
-      effect: brief note on how the modifier changes the \
-        attribute.
-      type: POLARITY_MODIFIER | ROLE_MARKER.
-  coverage_evidence: list of CoverageEvidence entries (one per \
-    category-grounded atom). Each entry has:
-      captured_meaning: observation before category.
-      category_name: taxonomy name.
-      fit_quality: clean | partial | no_fit.
-      atomic_rewrite: category-grounded, specificity-preserving, \
-        and reflects any nested modifiers.
-"""
-
-
 SYSTEM_PROMPT = (
-    _TASK_AND_OUTCOME
-    + _LANGUAGE_TYPES
+    _TASK_FRAMING
+    + _ATOMICITY
+    + _MODIFIER_VS_TRAIT
+    + _CARVER_VS_QUALIFIER
+    + _POLARITY
+    + _SALIENCE
     + _CATEGORY_TAXONOMY
-    + _CLARIFYING_EVIDENCE
-    + _COVERAGE_EVIDENCE_RULES
-    + _CHUNKING_RULES
-    + _ATOMIZATION_PATTERNS
-    + _GROUND_RULES
-    + _OUTPUT_GUIDANCE
 )
 
 
