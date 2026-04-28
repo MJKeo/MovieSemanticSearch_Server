@@ -1,6 +1,13 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Cat 6 Character-franchise added; 1:1 trait→category rule made explicit
+Files: search_improvement_planning/query_categories.md
+Why: The existing taxonomy implicitly assumed 1:1 trait→category but couldn't actually handle dual-nature referents (a single name like "Batman" that is inherently both a character and a franchise) without emitting two traits with the same string — which is 1:2, not 1:1. User affirmed 1:1 as the rule and directed adding a dedicated category to absorb the dual-nature case rather than loosening to 1:N.
+Approach: Inserted new Cat 6 "Character-franchise" between old Cat 5 and old Cat 6, with combo orchestration (ENT character postings + FRA lineage in parallel). Added detection rule (named referent that is BOTH a character AND anchors a film franchise — test: does a "List of [X] films" entity exist?). Renumbered all old Cats 6-43 → 7-44; added the 1:1 rule explicitly to Global Rules with Cat 6 as the canonical exception. Updated Cat 3 (now residual: characters who don't anchor a franchise — Yoda, Hermione, Aragorn) and Cat 5 (now residual: franchises without a single anchoring character — MCU, Star Wars, LOTR) boundaries to call out the new routing. Cat 41 (Named source creator) detection rule extended to a 3-way split between Cat 5 / Cat 6 / Cat 41. Old "Batman movies" / "James Bond remakes" / "Sherlock Holmes books" examples reworked since they were wrong under 1:1.
+Design context: Conversation surfaced that the prior taxonomy was relying on duplicating trait text to fake 1:1 — the user called this out as 1:2, not 1:1, and chose the dedicated-category fix over loosening 1:1. The new convention: 1:N trait→category is forbidden; combo orchestration absorbs multi-endpoint cases for a SINGLE referent within ONE category.
+Testing notes: No code yet — taxonomy doc only. Downstream impact lands when the CategoryName enum (schemas/trait_category.py) is extended to add CHARACTER_FRANCHISE and existing values renumber. The earlier 44-cat enum work in DIFF_CONTEXT below predates this revision; member names need a refresh pass when picked up.
+
 ## Trait-category review fixes (test member rename, stale comment, MEDIA_TYPE short-circuit)
 Files: unit_tests/test_handler_output_schemas.py, search_v2/stage_3/category_handlers/prompt_builder.py, search_v2/stage_3/category_handlers/handler.py
 Why: Self-review of the 44-cat refactor surfaced three concrete issues that needed cleanup before commit.
