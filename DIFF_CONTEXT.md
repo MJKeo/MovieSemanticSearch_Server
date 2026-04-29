@@ -1,6 +1,13 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Step 2 LLM-facing guidance cleanup after v3 review
+Files: schemas/step_2.py, search_v2/step_2.py, schemas/trait_category.py, search_v2/stage_3/category_handlers/handler.py
+Why: User reviewed the consistency findings and approved targeted fixes to the Step 2 LLM-facing schema/prompt/category context. The goal is to remove category-number drift, clarify decomposition/role rules, and keep parametric-style reasoning as handler guidance rather than a fake endpoint.
+Approach: Removed category-number language from Step 2 schema examples and replaced it with category names. Corrected `not too` to stay a compound modifier, fixed examples so `query_phrase` excludes modifiers, split `lone female protagonist` into `lone` + `female protagonist`, and tightened role guidance around the question "what other trait does this qualify?" Updated genre guidance so only known subgenre compounds stay whole (`dark comedy`, `body horror`), while modifier+genre phrases like `dark action` split. Since no durable single-category record for `classic` was found, encoded `classic` as `SPECIFIC_PRAISE_CRITICISM` by default, with explicit era words (`old`, `modern`) splitting separately to `RELEASE_DATE`. Cat 42/44 now tell the handler to use outside knowledge for initial expansion while still routing through existing endpoint families; the temporary `PARAMETRIC` route added during this pass was removed. `handler.py` has only incidental trailing blank-line normalization from patching.
+Design context: Follows the v3 one-trait/one-category framing and the user's correction that parametric knowledge is a reasoning mode inside existing endpoint handlers, not a standalone endpoint.
+Testing notes: Import-smoked `Step2Response`, `SYSTEM_PROMPT`, `CategoryName`, and dynamic handler `OUTPUT_SCHEMAS`; no unit tests run per repo test-boundary instructions.
+
 ## Cat 6 Character-franchise added; 1:1 trait→category rule made explicit
 Files: search_improvement_planning/query_categories.md
 Why: The existing taxonomy implicitly assumed 1:1 trait→category but couldn't actually handle dual-nature referents (a single name like "Batman" that is inherently both a character and a franchise) without emitting two traits with the same string — which is 1:2, not 1:1. User affirmed 1:1 as the rule and directed adding a dedicated category to absorb the dual-nature case rather than loosening to 1:N.
@@ -950,3 +957,24 @@ Hasn't been run yet — code changes only. Verification queries from the plan (c
 What to spot-check: `traits[*].purpose_in_query` should contain no category enum names / role labels / polarity labels / salience labels (FORBIDDEN per schema description); `traits[*].role` should match the guiding principle (carver-by-absence, not negative qualifier, on "non-violent"); `traits[*].polarity` should mechanically flip on "not"-distribution; `traits[*].salience` NULL on carvers, SUPPORTING on every hedged qualifier.
 
 System prompt token count is uncertain — legacy prompt dropped 8 large sections but the category taxonomy grew (description → description+boundary+edge_cases+good_examples+bad_examples per category × 44 categories). Net change to be verified empirically.
+
+## v3 step-2 prompt rewrite: review follow-ups
+Files: docs/conventions.md, schemas/step_2.py, search_v2/step_2.py
+
+### Intent
+Address review findings on the v3 step-2 prompt rewrite: (1) bring conventions.md in line with the schema/prompt split actually being used, (2) restore the salience supporting-language cue that was dropped during the hedges-primary reconciliation, (3) drop the cosmetic trailing newline in the taxonomy section.
+
+### Key Decisions
+- **Conventions update: rich field descriptions are an accepted pattern.** Old convention forbade worked examples in `Field(description=...)` outright. New convention names two acceptable patterns per schema (lean fields + system prompt teaches; rich fields as primary how-to-fill surface) and explicitly cites the v3 step-2 schema as the example of the second pattern. Class-docstring prohibition retained — those still leak pipeline internals into JSON schema. Edited via direct user direction (the docs-awareness rule prohibits autonomous modification of conventions.md, but user asked for it explicitly).
+- **Salience asymmetry restored.** Earlier reconciliation removed the "supporting-language cues in purpose_in_query" rule when collapsing the rule list to align with hedges-primary. Without it, a non-hedged structurally-trailing qualifier whose `purpose_in_query` says "rounds out the date-night frame" had no explicit pull toward SUPPORTING. Re-added the rule between hedges and necessity in both surfaces (`schemas/step_2.py` salience field description and `search_v2/step_2.py` `_SALIENCE` section). Updated the necessity and order/position rules to refer to "no SUPPORTING signal" rather than "no hedge" so the priority order is internally consistent.
+- **Taxonomy trailing newline dropped.** `_build_category_taxonomy_section()` no longer adds a trailing `\n`. Cosmetic — Gemini doesn't behave differently with or without it — but matches the asymmetry concern from review.
+
+### Testing Notes
+Same verification queries as the parent rewrite. Now also worth checking that hedged qualifiers AND non-hedged trailing qualifiers both land SUPPORTING when their `purpose_in_query` describes a non-headline role.
+
+## Split cultural status from specific praise/criticism and broaden modifier coverage
+Files: schemas/step_2.py, search_v2/step_2.py, schemas/trait_category.py, search_improvement_planning/query_categories.md, search_v2/stage_3/category_handlers/prompts/shared/input_spec.md, search_v2/stage_3/category_handlers/prompts/categories/additional_objective_notes/cultural_status.md, search_v2/stage_3/category_handlers/prompts/categories/few_shot_examples/cultural_status.md
+Why: User clarified that canonical/cultural reception labels are distinct from aspect-level praise/criticism, and that modifier guidance was too narrow compared with planning docs.
+Approach: Added CategoryName.CULTURAL_STATUS with SEMANTIC + METADATA combo routing, moved classic/cult/underrated/divisive/era-defining/still-holds-up style labels there, and narrowed SPECIFIC_PRAISE_CRITICISM to "praised for X / criticized for Y" aspect-level language. Updated query_categories.md to 45 categories, renumbered the later categories, and removed PARAMETRIC endpoint wording in favor of outside-knowledge analysis feeding ordinary endpoint parameters. Broadened Step 2 and Stage 3 modifier guidance to include range/approximation, comparison/style scope, necessity/emphasis, and role binding, while preserving "not too" as a single compound modifier.
+Design context: Follows v3_step_2_planning.md and v3_trait_identification.md modifier categories, plus the user's explicit route decision that cultural status should use semantic vectors and metadata priors, not a new parametric endpoint.
+Testing notes: No tests run per session boundary. Smoke-verified `schemas.step_2`, `schemas.trait_category`, `search_v2.step_2`, and `schema_factories` import; CategoryName count is 45; CULTURAL_STATUS endpoints are `semantic` + `metadata`; generated Step 2 prompt contains no `PARAMETRIC`; py_compile passed for touched Python files. Attempting to build a Stage 3 category prompt still hits a pre-existing import mismatch (`prompt_builder` imports old `CoverageEvidence`/`Modifier` names from `schemas.step_2`).

@@ -25,12 +25,12 @@ The fragment of the user's query that produced `target_entry`. Sub-fields:
 
 - **`<query_text>`** — the verbatim span of the user's query this fragment covers.
 - **`<description>`** — a short restatement of what the fragment is asking for.
-- **`<modifiers>`** — a list of polarity/role cues bound to the fragment. **These modifiers apply to your `target_entry` atom**: the parent fragment is the linguistic frame around the atom, so a modifier on the fragment shapes how the atom should be interpreted. Each modifier has:
+- **`<modifiers>`** — a list of polarity, salience, role, range, or comparison cues bound to the fragment. **These modifiers apply to your `target_entry` atom**: the parent fragment is the linguistic frame around the atom, so a modifier on the fragment shapes how the atom should be interpreted. Each modifier has:
     - `original_text` — the verbatim span of the modifier in the query.
     - `effect` — a terse note describing how this modifier shifts interpretation (e.g. "negates the following clause", "marks the subject as the director rather than actor").
     - `type` — one of:
         - **`polarity_modifier`** — flips or modulates sign/strength. Examples: *not*, *not too*, *without*, *preferably*, *ideally*.
-        - **`role_marker`** — binds the attribute to a role or dimension. Examples: *starring*, *directed by*, *about*, *set in*, *based on*.
+        - **`role_marker`** — binds the attribute to a role, dimension, range, or comparison frame. Examples: *starring*, *directed by*, *about*, *set in*, *based on*, *around*, *under*, *at least*, *like*, *in the style of*.
 
 The parent fragment does **not** include its full atom list — only the one you are handling, which is surfaced separately above as `<target_entry>`. Any other atoms on this fragment belong to other handler calls.
 

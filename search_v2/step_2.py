@@ -124,7 +124,10 @@ Common pitfalls:
 - Missing the scoped-adjective-creates-compound pattern. "Iconic \
   twist endings", "lovable rogue protagonist", "morally ambiguous \
   lead" — front adjective scopes the noun, can't survive standalone \
-  without changing meaning. Keep whole.
+  without changing meaning. Keep whole. For genre-like phrases, keep \
+  the compound whole only when it is a known subgenre ("dark comedy", \
+  "body horror"); otherwise split the genre from the modifier ("dark \
+  action" → "dark" + "action").
 - Pre-splitting Bucket-B compounds. "Slow-burn dread" routes to one \
   emotional/experiential trait; splitting fragments what the \
   handler is built to unpack as one.
@@ -134,14 +137,16 @@ Examples.
 Split:
 - "Modern classics" → "modern" + "classics"
 - "Funny horror movies" → "funny" + "horror"
+- "Lone female protagonist" → "lone" + "female protagonist"
+- "Dark action" → "dark" + "action" (not a known subgenre)
 - "Movies starring Hanks and Streep" → two person-credit traits
 - "Set in the 90s about grief" → "set in the 90s" + "about grief"
 
 Don't split:
 - "Iconic twist endings" → one trait (scoping is meaning-bearing)
-- "Lone female protagonist" → one trait ("lone" doesn't survive \
-  standalone)
 - "Darkly funny" → one trait ("darkly" reshapes "funny")
+- "Dark comedy" → one trait (known subgenre)
+- "Body horror" → one trait (known subgenre)
 - "Comedians doing serious roles" → one trait
 - "Stephen King" → one trait
 
@@ -153,15 +158,15 @@ Don't split:
 _MODIFIER_VS_TRAIT = """\
 MODIFIER VS TRAIT
 
-A modifier is a token that adjusts polarity or strength of a trait \
-without changing what the trait itself is about. Modifiers absorb \
-into the trait they attach to — they don't become traits of their \
-own. A token that fundamentally reshapes meaning (forming a new \
-compound concept) is NOT a modifier; it's part of the trait, and \
-the whole stays one trait.
+A modifier is a token that changes how to interpret, bind, weight, \
+scope, or limit a trait without becoming an independently retrievable \
+trait itself. Modifiers absorb into the trait they attach to — they \
+don't become traits of their own. A token that fundamentally reshapes \
+meaning (forming a new compound concept) is NOT a modifier; it's part \
+of the trait, and the whole stays one trait.
 
 The test: does this word change *what the trait is about*, or just \
-*how strongly the user wants it / whether they want it at all*?
+*how the user wants that same trait handled*?
 
 - "Not funny" — "not" changes intent (filter out funny things) but \
   "funny" still means "funny". Modifier.
@@ -171,13 +176,22 @@ The test: does this word change *what the trait is about*, or just \
   Not a modifier; the whole thing is one trait.
 - "Starring Tom Hanks" — "starring" tells the entity handler this \
   is an actor. Modifier.
+- "Around 90 minutes" — "around" calibrates the runtime range; \
+  the trait is still the runtime value. Modifier.
+- "Like Inception" — "like" marks a comparison target; the named \
+  referent is the trait, and the comparison frame rides with it. \
+  Modifier.
 
-Modifiers come in roughly four flavors: polarity setters ("not", \
-"without"), strength/hedge tokens ("ideally", "a bit", "really"), \
-role markers ("starring", "directed by", "based on"), and explicit \
-emphasis tokens ("must", "above all", "especially"). Don't try to \
-memorize an exhaustive list — recognize the principle: it adjusts \
-polarity or strength, doesn't redefine the trait.
+Modifiers come in several common flavors: polarity setters ("not", \
+"without", "avoid"), salience / hedge / emphasis tokens ("ideally", \
+"a bit", "really", "must", "above all", "especially"), role or \
+category binding ("starring", "directed by", "about", "set in", \
+"based on", "from the studio of"), range / approximation / ordinal \
+calibration ("around", "under", "at least", "before", "latest", \
+"most recent"), and comparison / style scope ("like", "similar to", \
+"in the vein of", "X-style"). Don't try to memorize an exhaustive \
+list — recognize the principle: it tells downstream reasoning how \
+to handle the attached trait without becoming its own search target.
 
 The line between a meaning-shaping qualifier ("darkly funny") and \
 a strength modifier ("a bit funny") is whether removing the front \
@@ -187,13 +201,18 @@ not the same trait as "darkly funny" — they're different.
 
 Common pitfalls:
 - Promoting role markers to traits. "Starring", "directed by", \
-  "from the studio of" — all modifiers, not traits.
+  "from the studio of", "based on" — all modifiers, not traits.
 - Promoting hedges to traits. "Ideally", "maybe", "kind of" — \
   salience hints, not standalone traits.
-- Splitting compound modifiers off as traits. "Lone female \
-  protagonist" — "lone" is not its own trait.
+- Promoting range words to traits. "Around 90 minutes", "under \
+  two hours", "at least three movies" — the range word shapes the \
+  numeric/ordinal trait.
 - Treating meaning-shaping qualifiers as modifiers. "Darkly funny" \
   is one trait, not "funny" with a "darkly" modifier.
+- Treating every adjective before a noun as a modifier. If the word \
+  has its own category home and names an independent requirement, \
+  split it instead — "lone female protagonist" becomes "lone" + \
+  "female protagonist".
 
 Examples.
 
@@ -202,6 +221,8 @@ Modifier (absorbed):
 - "Ideally a slow-burn" — hedge on "slow-burn"
 - "Starring Tom Hanks" — role marker on the entity
 - "Movies based on a Stephen King novel" — "based on" role marker
+- "Around 90 minutes" — range approximation on runtime
+- "In the style of Hitchcock" — comparison/style scope on the referent
 
 Not a modifier (part of compound trait):
 - "Darkly funny" — "darkly" reshapes "funny"
@@ -235,6 +256,9 @@ How to think (the guiding principle). For each trait, ask:
    carver (it's the one being narrowed).
 3. If it's not qualifying anything and nothing's qualifying it — it \
    has to define the pool. Carver by default.
+
+Shortcut question: what other trait does this one qualify? If you \
+can't answer that, it can't be a qualifier.
 
 This handles "popular movies" / "warm-hug movie" cases naturally: \
 nothing else is in the query, so the trait can't be qualifying \
@@ -397,18 +421,24 @@ How to think (signals, in priority order):
    signal that should not be overridden. Hedged → supporting. \
    Hedges win even when the trait is structurally prominent or \
    named first.
-2. Necessity language. "Must", "need", "have to", "above all", \
-   "really want". Marks central explicitly when no hedge is present.
-3. Corrective / contrastive structures. "X but Y" — Y after "but" \
+2. Supporting-language cues in `purpose_in_query`. Phrases like \
+   "rounds out", "sits in service of", "marginal preference", or \
+   "supports the frame" indicate the trait isn't load-bearing. \
+   Push toward supporting when no hedge already settled the call.
+3. Necessity language. "Must", "need", "have to", "above all", \
+   "really want". Marks central explicitly when no supporting \
+   signal (hedge or supporting-language cue) is present.
+4. Corrective / contrastive structures. "X but Y" — Y after "but" \
    is often a corrective the user is tracking actively. Lean \
    central for the corrective.
-4. Order of mention. Earlier-mentioned qualifiers tend more central \
+5. Order of mention. Earlier-mentioned qualifiers tend more central \
    than later — first thing out of the user's mouth is often what \
    they came to the search with.
-5. Headline position (clue, not rule). Qualifiers in the adjective \
+6. Headline position (clue, not rule). Qualifiers in the adjective \
    slot directly modifying the head noun ("slow-burn thriller") \
    tend central; trailing modifier qualifiers ("a thriller, ideally \
-   slow-burn") tend supporting. A clue, override-able by hedges.
+   slow-burn") tend supporting. A clue, override-able by hedges \
+   and supporting-language cues.
 
 The unifying principle: salience tracks how much investment the \
 user put into the trait — words spent, position chosen, hedge or \
@@ -491,7 +521,7 @@ def _build_category_taxonomy_section() -> str:
             lines.append("  Bad examples:")
             lines.extend(f"    - {entry}" for entry in cat.bad_examples)
         blocks.append("\n".join(lines))
-    return header + "\n\n".join(blocks) + "\n"
+    return header + "\n\n".join(blocks)
 
 
 _CATEGORY_TAXONOMY = _build_category_taxonomy_section()

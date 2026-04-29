@@ -17,11 +17,11 @@ member carries:
 - A tuple of `bad_examples` — short trait surface forms that look
   like they belong here but route elsewhere, with the redirect
   spelled out.
-- An ordered tuple of `EndpointRoute` values naming the retrieval
-  endpoints the category may dispatch to. Endpoint order is priority
-  order: for tiered categories the first entry is the authoritative
-  tier and later entries are fallbacks; for single-endpoint or combo
-  categories the order reflects the primary channel first.
+- An ordered tuple of `EndpointRoute` values naming the route family
+  the category may dispatch to. Endpoint order is priority order:
+  for tiered categories the first entry is the authoritative tier and
+  later entries are fallbacks; for single-endpoint or combo categories
+  the order reflects the primary channel first.
 - A `HandlerBucket` identifying the orchestration shape (single /
   mutex / tiered / combo).
 
@@ -29,7 +29,7 @@ All five text-shaped fields (description, boundary, edge_cases,
 good_examples, bad_examples) are programmatically inserted into the
 step-2 system prompt — wording is kept tight to avoid prompt bloat.
 
-The 43-category list and its underlying granularity principles are
+The 45-category list and its underlying granularity principles are
 documented in `search_improvement_planning/query_categories.md` and
 `search_improvement_planning/v3_category_attributes.md`. Those docs
 are the source of truth for routing semantics; this enum mirrors
@@ -358,10 +358,11 @@ class CategoryName(str, Enum):
         ),
         (
             "Structured ceremony/outcome data only. Qualitative quality without "
-            "award reference → GENERAL_APPEAL. Reception prose ('acclaimed', "
-            "'praised') → SPECIFIC_PRAISE_CRITICISM. Aspirational praise "
-            "('Oscar-worthy') → GENERAL_APPEAL — actual outcome ('won an "
-            "Oscar', 'Oscar-nominated') routes here."
+            "award reference → GENERAL_APPEAL. Broad reputation / canon "
+            "language ('acclaimed', 'classic') → CULTURAL_STATUS. Specific "
+            "aspect praise ('praised for pacing') → SPECIFIC_PRAISE_CRITICISM. "
+            "Aspirational praise ('Oscar-worthy') → GENERAL_APPEAL — actual "
+            "outcome ('won an Oscar', 'Oscar-nominated') routes here."
         ),
         (
             "Any specific ceremony name (Oscars, Cannes, BAFTAs, Globes) paired with "
@@ -369,7 +370,7 @@ class CategoryName(str, Enum):
         ),
         ("Academy Award winners", "Cannes Palme d'Or", "Oscar-nominated for Best Director"),
         (
-            "'highly acclaimed' → SPECIFIC_PRAISE_CRITICISM (no formal award).",
+            "'highly acclaimed' → CULTURAL_STATUS (broad reputation, no formal award).",
             "'Oscar-worthy' → GENERAL_APPEAL (aspirational, not an actual win).",
         ),
         (EndpointRoute.AWARDS,),
@@ -413,13 +414,15 @@ class CategoryName(str, Enum):
         ),
         (
             "Vague terms ('modern', 'recent', 'old-school') route here.",
-            "'Classic' surfaces two traits: 'older era' → here + 'canonical "
-            "reception' → SPECIFIC_PRAISE_CRITICISM.",
+            "'Classic' by itself routes to CULTURAL_STATUS "
+            "(canonical stature). Explicit era words such as 'old' or "
+            "'modern' route here as their own traits.",
         ),
         ("from the 90s", "before 2000", "old-school"),
         (
             "'the newest one' → CHRONOLOGICAL (ordinal).",
             "'trending' → TRENDING (live).",
+            "'classic' → CULTURAL_STATUS (canonical stature, not an era word by itself).",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
@@ -513,7 +516,7 @@ class CategoryName(str, Enum):
         ),
         (
             "Financial axis only. Quality framings ('crowd-pleaser', 'cult flop') "
-            "compose with GENERAL_APPEAL / SPECIFIC_PRAISE_CRITICISM separately — "
+            "compose with GENERAL_APPEAL / CULTURAL_STATUS separately — "
             "those don't fold in here."
         ),
         (
@@ -524,7 +527,7 @@ class CategoryName(str, Enum):
         ),
         ("blockbuster", "indie scale", "low-budget"),
         (
-            "'cult classic' → SPECIFIC_PRAISE_CRITICISM (canonical reception, "
+            "'cult classic' → CULTURAL_STATUS (canonical reception, "
             "no financial axis).",
             "'popular' → GENERAL_APPEAL.",
         ),
@@ -614,6 +617,7 @@ class CategoryName(str, Enum):
         ),
         (
             "Compound 'dark action' splits: GENRE (action) + EMOTIONAL_EXPERIENTIAL (dark).",
+            "Known subgenre compounds stay whole here: 'dark comedy', 'body horror', 'space opera'.",
             "Sub-genre falls back to semantic genre_signatures when no canonical tag exists.",
         ),
         ("horror", "neo-noir", "cozy mystery"),
@@ -621,6 +625,7 @@ class CategoryName(str, Enum):
             "'underdog stories' → STORY_THEMATIC_ARCHETYPE.",
             "'anime' → FORMAT_VISUAL.",
             "'slow burn' → EMOTIONAL_EXPERIENTIAL.",
+            "'dark action' is two traits: 'dark' → EMOTIONAL_EXPERIENTIAL + 'action' → GENRE.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.MUTEX,
@@ -1019,41 +1024,93 @@ class CategoryName(str, Enum):
         ),
         (
             "Qualitative quality without numeric threshold. Specific numeric "
-            "thresholds → NUMERIC_RECEPTION_SCORE. Reception prose ('cult', "
-            "'underrated', 'praised for X') → SPECIFIC_PRAISE_CRITICISM. Live "
-            "trending → TRENDING."
+            "thresholds → NUMERIC_RECEPTION_SCORE. Cultural / canonical status "
+            "('classic', 'cult', 'underrated', 'era-defining') → CULTURAL_STATUS. "
+            "Specific aspect praise/criticism ('praised for X', 'criticized "
+            "for pacing') → SPECIFIC_PRAISE_CRITICISM. Live trending → TRENDING."
         ),
         (
             "'best horror of the 80s' is three traits: 'best' → here + "
             "'horror' → GENRE + 'of the 80s' → RELEASE_DATE.",
+            "'classic' by itself → CULTURAL_STATUS; add a separate "
+            "RELEASE_DATE trait only when an explicit era word is present "
+            "('old classic', 'modern classic').",
         ),
         ("well-received", "highly regarded", "popular"),
         (
             "'rated above 8' → NUMERIC_RECEPTION_SCORE.",
-            "'cult classic' is two traits: 'cult' → SPECIFIC_PRAISE_CRITICISM "
-            "+ 'classic' (older era) → RELEASE_DATE.",
+            "'classic' → CULTURAL_STATUS.",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
     )
+    CULTURAL_STATUS = (
+        "Cultural status / canonical stature",
+        (
+            "Broad reputation, canon, and reception-shape labels — 'classic', "
+            "'cult classic', 'underrated', 'overhyped', 'divisive', "
+            "'era-defining', 'still holds up', 'influential', 'iconic', "
+            "'landmark', 'culturally significant', 'ahead of its time'."
+        ),
+        (
+            "Whole-work cultural position, not a specific part people liked "
+            "or disliked. Specific aspect praise/criticism ('praised for "
+            "tension', 'criticized for pacing') → SPECIFIC_PRAISE_CRITICISM. "
+            "General quality as a numeric prior ('well-received', 'popular') "
+            "→ GENERAL_APPEAL. Formal awards → AWARDS. Named curated lists "
+            "('Criterion Collection', 'AFI Top 100') → GENERIC_CATCHALL."
+        ),
+        (
+            "'classic' by itself lives here as canonical stature; add "
+            "RELEASE_DATE only when an explicit era word is present "
+            "('old classic', 'modern classic').",
+            "'underrated' primarily needs semantic reception/status prose; "
+            "metadata is optional and must not be treated as a simple "
+            "well-received floor.",
+            "'cult', 'divisive', and 'overhyped' describe reception shape, "
+            "not specific praised or criticized qualities.",
+        ),
+        ("classic", "cult classic", "underrated", "still holds up", "era-defining"),
+        (
+            "'praised for tension' → SPECIFIC_PRAISE_CRITICISM.",
+            "'rated above 8' → NUMERIC_RECEPTION_SCORE.",
+            "'Oscar-winning' → AWARDS.",
+            "'Criterion Collection' → GENERIC_CATCHALL.",
+        ),
+        (EndpointRoute.SEMANTIC, EndpointRoute.METADATA),
+        HandlerBucket.COMBO,
+    )
     SPECIFIC_PRAISE_CRITICISM = (
         "Specific praise / criticism",
         (
-            "Reception prose for specific likes/dislikes plus canonical "
-            "reception tags — 'cult', 'underrated', 'overhyped', 'divisive', "
-            "'praised for tension', 'criticized as plodding', 'still holds up', "
-            "'era-defining', 'stacked cast', 'thematic weight'."
+            "Reception prose for specific parts, qualities, or aspects people "
+            "liked or disliked — 'praised for tension', 'criticized as "
+            "plodding', 'praised for performances', 'criticized for weak "
+            "ending', 'loved for its dialogue', 'hated for pacing'."
         ),
         (
-            "Quality-as-prose. Numeric prior → GENERAL_APPEAL. Formal awards "
-            "('Oscar-winning', 'BAFTA-nominated') → AWARDS."
+            "Aspect-level praise/criticism only. Broad cultural status "
+            "('classic', 'cult', 'underrated', 'divisive', 'era-defining', "
+            "'still holds up') → CULTURAL_STATUS. Numeric prior → "
+            "GENERAL_APPEAL. Formal awards ('Oscar-winning', "
+            "'BAFTA-nominated') → AWARDS."
         ),
         (
-            "'Classic' surfaces two traits: 'older era' → RELEASE_DATE + "
-            "'canonical reception' → here.",
+            "Ask 'what other trait does this qualify?' If the answer is a "
+            "specific aspect of the movie (pacing, tension, performances, "
+            "ending, script), it can live here. If the answer is only the "
+            "whole movie's place in the culture, route to CULTURAL_STATUS.",
         ),
-        ("underrated", "cult classic", "still holds up"),
         (
+            "praised for tension",
+            "criticized as plodding",
+            "praised for performances",
+            "criticized for weak ending",
+        ),
+        (
+            "'classic' → CULTURAL_STATUS.",
+            "'cult classic' → CULTURAL_STATUS.",
+            "'underrated' → CULTURAL_STATUS.",
             "'highly rated' → GENERAL_APPEAL.",
             "'Oscar-winning' → AWARDS.",
         ),
@@ -1126,9 +1183,13 @@ class CategoryName(str, Enum):
     LIKE_MEDIA_REFERENCE = (
         "Like <media> reference",
         (
-            "Named-work comparison queries — 'like Inception', 'similar to "
-            "The Office', 'movies that feel like David Lynch', 'in the vein of "
-            "Hitchcock thrillers', 'X-style', 'Coen Brothers movie'."
+            "Named-work comparison queries that require an initial "
+            "outside-knowledge expansion — 'like Inception', "
+            "'similar to The Office', 'movies that feel like David Lynch', "
+            "'in the vein of Hitchcock thrillers', 'X-style', 'Coen Brothers "
+            "movie'. This category signals that ordinary endpoint routing is "
+            "not enough yet: the named referent must be expanded into "
+            "distinctive traits, then re-routed."
         ),
         (
             "Triggers on EXPLICIT comparison surface forms only ('like X', "
@@ -1137,9 +1198,11 @@ class CategoryName(str, Enum):
             "doing drama', 'auteur directors of the 70s') → GENERIC_CATCHALL."
         ),
         (
-            "The named referent's distinctive traits are what get matched, "
-            "not the referent name itself — so 'like Inception' returns "
-            "movies sharing Inception's traits, not literal substring matches.",
+            "Use outside knowledge for an initial expansion before filling "
+            "ordinary endpoint parameters. The named referent's distinctive "
+            "traits are what get matched, not the referent name itself — so "
+            "'like Inception' returns movies sharing Inception's traits, not "
+            "literal substring matches.",
         ),
         (
             "like Inception",
@@ -1179,8 +1242,7 @@ class CategoryName(str, Enum):
         (
             "Ordinal position only. Range/decay framings ('90s', 'recent', "
             "'before 2000') → RELEASE_DATE. Quality superlatives split: "
-            "'best' → GENERAL_APPEAL; 'most acclaimed' → "
-            "SPECIFIC_PRAISE_CRITICISM."
+            "'best' → GENERAL_APPEAL; 'most acclaimed' → CULTURAL_STATUS."
         ),
         (
             "'The latest Scorsese' is two traits: 'latest' → here + "
@@ -1190,7 +1252,7 @@ class CategoryName(str, Enum):
         (
             "'recent movies' → RELEASE_DATE.",
             "'best of all time' is two traits: 'best' → GENERAL_APPEAL + "
-            "'of all time' (canonical reception) → SPECIFIC_PRAISE_CRITICISM.",
+            "'of all time' (canonical reception) → CULTURAL_STATUS.",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
@@ -1203,11 +1265,15 @@ class CategoryName(str, Enum):
     GENERIC_CATCHALL = (
         "Generic parametric catch-all",
         (
-            "Vague reference classes and named curated lists — 'comedians "
-            "doing drama', 'auteur directors of the 70s', 'directors known for "
-            "long takes', 'child actors who became serious', Criterion "
-            "Collection, AFI Top 100, IMDb Top 250, BFI, National Film Registry, "
-            "Sight & Sound greatest, '1001 Movies to See Before You Die'."
+            "Vague reference classes and named curated lists that require an "
+            "initial outside-knowledge expansion — "
+            "'comedians doing drama', 'auteur directors of the 70s', "
+            "'directors known for long takes', 'child actors who became "
+            "serious', Criterion Collection, AFI Top 100, IMDb Top 250, BFI, "
+            "National Film Registry, Sight & Sound greatest, '1001 Movies to "
+            "See Before You Die'. This category signals that the trait needs "
+            "expansion or curated-list knowledge before ordinary endpoint "
+            "routing can happen."
         ),
         (
             "Last resort — used only when no structured category fits. "
@@ -1216,9 +1282,11 @@ class CategoryName(str, Enum):
             "a class or list."
         ),
         (
-            "The vague class or named list is what gets expanded — its "
-            "distinctive traits or curated members drive retrieval, not a "
-            "literal substring match on the trait wording.",
+            "Use outside knowledge for an initial expansion before filling "
+            "ordinary endpoint parameters. The vague class or named list is "
+            "what gets expanded — its distinctive traits or curated members "
+            "drive retrieval, not a literal substring match on the trait "
+            "wording.",
         ),
         ("Criterion Collection", "comedians doing drama", "AFI Top 100"),
         (

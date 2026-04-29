@@ -532,16 +532,27 @@ to [0, 1] unless explicitly noted otherwise:
   discipline. This also reduces cognitive load on the model — fewer
   fields to manage means more reasoning budget for the core task,
   which matters most for weaker-tier models.
-- **No docstrings on Pydantic classes used as LLM
-  `response_format`.** Pydantic class and enum docstrings
-  propagate into the JSON schema `description` field via
-  `model_json_schema()`, which means pipeline internals (model
-  config, index plans, embedding decisions) get sent on every API
-  call. Use `#` comment blocks above the class for developer
-  documentation. `Field(description=...)` values are intentional
-  — these should carry only a compact definitional sentence per
-  field. Worked examples, procedures, and counter-examples belong
-  in the system prompt, never duplicated in field descriptions.
-  Verify with `openai.lib._pydantic.to_strict_json_schema(Model)`
-  that enum `$defs` descriptions are `None` before committing
-  schema changes.
+- **Pydantic schemas as LLM `response_format`: no class docstrings;
+  pick one source of truth for field-level guidance.** Pydantic
+  class and enum docstrings propagate into the JSON schema
+  `description` field via `model_json_schema()` and get sent on
+  every API call — pipeline internals (model config, index plans,
+  embedding decisions) leak through. Use `#` comment blocks above
+  the class for developer documentation instead.
+  `Field(description=...)` values DO get serialized to the LLM and
+  are the primary surface for telling the model how to fill each
+  field. Two acceptable patterns per schema:
+  - **Lean fields + system prompt teaches.** Field descriptions
+    carry one definitional sentence; worked examples, procedures,
+    and counter-examples live in the system prompt.
+  - **Rich fields as the primary how-to-fill surface.** Field
+    descriptions carry full HOW-TO-THINK / FORBIDDEN / EXAMPLES
+    blocks; the system prompt teaches concepts but does not
+    duplicate field-level derivation rules. Used by the v3
+    step-2 schema (`schemas/step_2.py`).
+  Pick one per schema. Don't mix — duplicating worked examples
+  across both surfaces doubles maintenance and inflates per-call
+  token cost. Verify with
+  `openai.lib._pydantic.to_strict_json_schema(Model)` that enum
+  `$defs` descriptions are `None` before committing schema
+  changes.

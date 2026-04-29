@@ -418,4 +418,3 @@ def _land_outcome(
     for sc in outcome.scores:
         bucket[sc.movie_id] = bucket.get(sc.movie_id, 0.0) + sc.score
 
-

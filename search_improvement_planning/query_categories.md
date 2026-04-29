@@ -10,7 +10,7 @@ do internal LLM-style branching that step 2 could pre-resolve from the
 trait surface.
 
 **Endpoint-family shorthand.** ENT · FRA · STU · KW · META · AWD ·
-TRENDING · P-EVT · P-ANA · VWX · CTX · NRT · PRD · RCP · PARAMETRIC.
+TRENDING · P-EVT · P-ANA · VWX · CTX · NRT · PRD · RCP.
 Semantic sub-spaces (P-EVT, P-ANA, VWX, CTX, NRT, PRD, RCP) are
 treated as distinct endpoint families for category-split purposes
 because each one embeds a different information surface and is
@@ -61,7 +61,7 @@ now routes to whichever specific space carries the relevant sub-axis.
 **Mechanism:** normalize → `lex.inv_<role>_postings` intersect.
 **Boundaries:** indexed roles only. Below-the-line creators
 (cinematographer, editor, production designer, costume designer,
-VFX supervisor) → Cat 40. Title-based searches → Cat 2.
+VFX supervisor) → Cat 41. Title-based searches → Cat 2.
 
 ### 2. Title text lookup
 **Endpoints:** ENT.
@@ -120,7 +120,7 @@ route to Cat 6 instead — those names emit one combined character +
 franchise trait, never a Cat 3 + Cat 5 split. Cat 5 covers the
 residual case: franchises whose identity isn't a single character.
 When "based on" phrasing names a *creator of source material*, the
-referent routes to Cat 41 — see Cat 41 for the detection rule.
+referent routes to Cat 42 — see Cat 42 for the detection rule.
 Source-flag composition still applies: "Star Wars novelizations"
 → Cat 5 (Star Wars franchise) + Cat 7 (novel source-flag).
 
@@ -160,7 +160,7 @@ adaptation flag rather than lineage positioning).
 **Mechanism:** KW SourceMaterialType family single-overlap.
 **Boundaries:** composes with Cat 5 (when the named source is a
 character-less franchise), Cat 6 (when the named source is a
-character-anchored franchise), or Cat 41 (when the named source is
+character-anchored franchise), or Cat 42 (when the named source is
 a creator) — any of those fire alongside Cat 7 when the query
 names a specific source.
 
@@ -240,7 +240,7 @@ a unified META handler to re-classify on every call.
 (per v3 #3); user-preference defaults consulted for "modern" /
 "recent" / "old-school" (per v3 #6).
 **Boundaries:** range/decay framings only. Ordinal position
-("newest," "earliest") → Cat 43.
+("newest," "earliest") → Cat 44.
 
 ### 14. Runtime
 **Endpoints:** META.runtime.
@@ -511,7 +511,7 @@ marvel."
 **Mechanism:** RCP `praised_qualities` prose for the acclaim itself
 + PRD prose for the production-craft side ("shot on 70mm,"
 "practical-effects-heavy").
-**Boundaries:** named cinematographer / VFX supervisor → Cat 40
+**Boundaries:** named cinematographer / VFX supervisor → Cat 41
 (reserved for now, returns empty).
 
 ### 36. Music / score acclaim
@@ -541,28 +541,55 @@ numeric threshold — "well-received," "highly rated," "popular,"
 **Mechanism:** numeric column priors only — additive lift, not
 hard threshold.
 **Boundaries:** specific numeric thresholds → Cat 19. Specific
-praise/criticism prose ("praised for tension," "criticized as
-overhyped") → Cat 39. Quality superlatives ("best horror of the
-80s") fire Cat 38 + Cat 39 + axis cats per the compound split rule.
+praise/criticism prose ("praised for tension," "criticized for
+pacing") → Cat 40. Cultural status / broad reception-shape language
+("classic," "cult," "underrated," "era-defining") → Cat 39.
+Quality superlatives ("best horror of the 80s") fire Cat 38 + Cat
+39 + axis cats per the compound split rule.
 
-### 39. Specific praise / criticism
+### 39. Cultural status / canonical stature
+**Endpoints:** RCP + META.reception_score + META.popularity_score
+(additive combo).
+**Handles:** whole-work cultural position, canonical stature, and
+broad reception-shape labels — "classic," "cult classic,"
+"underrated," "overhyped," "divisive," "still holds up,"
+"era-defining," "influential," "landmark," "iconic,"
+"culturally significant," "ahead of its time."
+**Mechanism:** RCP carries the semantic/status shape in
+`reception_summary`, `praised_qualities`, and
+`criticized_qualities`; META supplies a quality or popularity prior
+only when the status framing honestly implies one. "Underrated,"
+"divisive," and "cult" are primarily semantic because the scalar
+columns cannot directly encode a quality-vs-recognition gap or a
+polarized reception shape.
+**Boundaries:** specific aspect-level praise/criticism ("praised
+for tension," "criticized as plodding," "praised for
+performances") → Cat 40. Simple quality/numeric-prior language
+("well-received," "popular") → Cat 38. Formal awards →
+Cat 11. Named curated lists ("Criterion Collection," "AFI Top
+100") → Cat 45. Explicit era words split separately: "old classic"
+and "modern classic" fire Cat 13 + Cat 39; "classic" alone does
+not imply Cat 13.
+
+### 40. Specific praise / criticism
 **Endpoints:** RCP + KW (additive combo).
-**Handles:** reception prose for what people specifically liked or
-disliked, plus canonical reception tags. "Cult," "underrated,"
-"overhyped," "divisive," "praised for its tension," "criticized as
-plodding," "still holds up," "era-defining," "stacked cast,"
-"thematic weight" (acclaim side).
+**Handles:** reception prose for specific parts, qualities, or
+aspects people liked or disliked — "praised for its tension,"
+"criticized as plodding," "praised for performances," "criticized
+for a weak ending," "loved for its dialogue," "hated for pacing."
 **Mechanism:** RCP `praised_qualities` / `criticized_qualities`
-prose + KW (CULT_CLASSIC, UNDERRATED, DIVISIVE).
-**Boundaries:** quality-as-prose, not quality-as-numeric. The
-numeric prior side is Cat 38. AWD records ("Oscar-winning") →
-Cat 11 by compound split rule.
+prose carries the aspect-level like/dislike; KW can fire when the
+praised/criticized aspect corresponds to a canonical concept tag.
+**Boundaries:** broad cultural/reputation labels ("classic,"
+"cult," "underrated," "overhyped," "divisive," "still holds up,"
+"era-defining") → Cat 39. Numeric prior side is Cat 38. AWD
+records ("Oscar-winning") → Cat 11 by compound split rule.
 
 ---
 
 ## Trick / specialized
 
-### 40. Below-the-line creator lookup
+### 41. Below-the-line creator lookup
 **Endpoints:** Reserved (returns empty for now).
 **Handles:** cinematographer, editor, production designer, costume
 designer, VFX supervisor — "Roger Deakins movies," "Thelma
@@ -577,7 +604,7 @@ these creators when noted) + dedicated postings if/when indexed.
 Distinct from Cat 1 because Cat 1 is posting-table-backed and
 would fail silently for non-indexed roles.
 
-### 41. Named source creator
+### 42. Named source creator
 **Endpoints:** P-EVT + RCP (additive combo).
 **Handles:** named creator of source material — "Stephen King" (in
 "Stephen King novels"), "Tolkien" (in "Tolkien films"), "Shakespeare"
@@ -594,39 +621,41 @@ mid-name ("Stephen King" stays one trait).
   → Cat 6 + Cat 7).
 - Is the referent a *character-less film franchise*? → Cat 5
   (e.g. "Star Wars novelizations" → Cat 5 + Cat 7).
-- Is the referent a *creator of source material*? → Cat 41 (e.g.
-  "Shakespeare plays" → Cat 41 + Cat 7, "Stephen King novels" →
-  Cat 41 + Cat 7, "based on a comic book" → Cat 7 alone with no
+- Is the referent a *creator of source material*? → Cat 42 (e.g.
+  "Shakespeare plays" → Cat 42 + Cat 7, "Stephen King novels" →
+  Cat 42 + Cat 7, "based on a comic book" → Cat 7 alone with no
   named referent).
 
 This category fires only for named creators, never for franchise
 referents. Step 2 always decomposes the source phrase: the named-
 referent half routes per the rule above; the medium half ("books,"
 "plays," "novels") routes to Cat 7. Cat 1 is film credits — source-
-material creators aren't film credits — so Cat 41 is the only path
+material creators aren't film credits — so Cat 42 is the only path
 for these names.
 
-### 42. "Like &lt;media&gt;" reference
-**Endpoints:** PARAMETRIC (re-routes through dispatcher).
+### 43. "Like &lt;media&gt;" reference
+**Endpoints:** ENT + KW + RCP/P-EVT/P-ANA/VWX/CTX/NRT/PRD +
+META + FRA + AWD, after initial named-referent analysis.
 **Handles:** named-work comparison — "like Inception," "similar to
 The Office," "movies that feel like David Lynch," "in the vein of
 Hitchcock thrillers," "like a Coen Brothers movie."
-**Mechanism:** handler extracts 4-6 distinctive traits of the
-named referent (genre, narrative devices, tone, themes, era, etc.)
-and re-emits them as new sub-traits routed through the normal
-dispatcher. Doesn't search corpus directly.
+**Mechanism:** the existing endpoint handler uses outside knowledge
+to analyze the named referent, extract 4-6 distinctive traits
+(genre, narrative devices, tone, themes, era, etc.), then fills
+ordinary endpoint parameters for those traits. This is not a
+separate endpoint family and does not search the corpus directly.
 **Boundaries:** triggers on explicit comparison surface forms only
 — "like X," "similar to Y," "in the vein of Z," "X-style," "feels
 like Q." Vague reference classes without a named comparison target
-("comedians doing drama," "auteur directors") → Cat 44. The
-distinction: Cat 42 expands a single named work; Cat 44 expands a
+("comedians doing drama," "auteur directors") → Cat 45. The
+distinction: Cat 43 expands a single named work; Cat 45 expands a
 class.
 
 ---
 
 ## Ordinal selection
 
-### 43. Chronological ordinal
+### 44. Chronological ordinal
 **Endpoints:** META.release_date (sort-and-pick).
 **Handles:** release-date ordinal position within a scoped
 candidate set — "first," "last," "earliest," "latest," "most
@@ -636,15 +665,16 @@ the query's categories) by `movie_card.release_date` and select
 the top-N position indicated by the phrasing.
 **Boundaries:** ordinal selection only. Range or decay framings
 ("90s movies," "recent," "before 2000") → Cat 13. "Most recent"
-is chronology; "best" / "most acclaimed" is reception superlative
-(Cats 38/39). "The latest Scorsese" is Cat 43 + Cat 1.
+is chronology; "best" / "most acclaimed" is reception/status
+superlative (Cats 38/39). "The latest Scorsese" is Cat 44 + Cat 1.
 
 ---
 
 ## Catch-all
 
-### 44. Generic parametric / catch-all
-**Endpoints:** PARAMETRIC (multi-mechanism handler).
+### 45. Generic interpretive / catch-all
+**Endpoints:** ENT + KW + RCP/P-EVT/P-ANA/VWX/CTX/NRT/PRD +
+META + FRA + AWD, chosen by the handler after initial analysis.
 **Handles:** anything that needs interpretation/expansion and
 doesn't fit a structured category. Specifically:
 - **Vague reference classes:** "comedians doing drama," "auteur
@@ -655,14 +685,17 @@ doesn't fit a structured category. Specifically:
   greatest, "1001 Movies to See Before You Die," film-school canon.
 - **Anything else step 2 recognizes as real but underspecified.**
 
-**Mechanism:** multi-mechanism — the handler chooses what fits the
-trait. Can fan out to Cat 1 (entity lookup for expanded actor/
-director instances), KW (tag-resolvable expansions of list
-signatures), semantic across spaces, META priors (numeric quality
-lift for canonical-list queries). Doesn't default to semantic-only.
-**Boundaries:** distinct from Cat 42 — Cat 42 expands a *named
-work*; Cat 44 expands a *reference class or named list*. Both are
-parametric; the difference is what gets expanded and how. This is
+**Mechanism:** multi-mechanism — the existing handler uses outside
+knowledge to choose what fits the trait. It can fill entity
+parameters for expanded actor/director instances, KW for
+tag-resolvable list signatures, semantic spaces for prose
+signatures, META priors for canonical-list queries, FRA for
+franchise implications, or AWD when expansion yields award-shaped
+requirements. It does not default to semantic-only.
+**Boundaries:** distinct from Cat 43 — Cat 43 expands a *named
+work*; Cat 45 expands a *reference class or named list*. Both use
+outside-knowledge analysis before ordinary endpoint parameter
+generation; the difference is what gets expanded and how. This is
 the only true catch-all in the taxonomy; the goal is to keep
 shrinking it as recognizable patterns get lifted into dedicated
 cats.
@@ -679,7 +712,7 @@ endpoint queries can fire for that category on a given user request.
 **Single endpoint** — only one endpoint is ever applicable. No
 routing decision to make.
 Cats 1, 2, 3, 4, 5, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-24, 30, 31, 34, 36, 38, 43.
+24, 30, 31, 34, 36, 38, 44.
 
 **Mutually exclusive** — two endpoints could each individually
 answer the question, but they answer different versions of it. The
@@ -697,18 +730,19 @@ Cats 8, 9, 10, 25, 26, 32.
 **Combo** — multiple endpoints apply and each carries distinct,
 complementary signal that can't be collapsed into a single call.
 All applicable endpoints fire in parallel.
-Cats 6, 27, 28, 29, 33, 35, 37, 39, 41.
+Cats 6, 27, 28, 29, 33, 35, 37, 39, 40, 42, 43, 45.
 
 ### Special
 
-**Parametric / re-route** — the category transforms a trait into
-new sub-traits or invokes multi-mechanism dispatch.
-Cats 42 (re-routes named-work expansion), 44 (multi-mechanism
-catch-all).
+**Outside-knowledge expansion** — the category asks an existing
+handler to use outside knowledge first, then fill ordinary
+endpoint parameters. This is a reasoning mode, not a separate
+endpoint route.
+Cats 43 (named-work expansion), 45 (multi-mechanism catch-all).
 
 **Reserved / no-op** — category is reserved as a routing slot but
 returns empty until backing data lands.
-Cat 40.
+Cat 41.
 
 ---
 
@@ -716,27 +750,27 @@ Cat 40.
 
 | Gap | Category | How handled |
 |---|---|---|
-| Below-the-line credits | Cat 40 | Reserved slot, returns empty until data lands |
-| Curated canon (Criterion, AFI) | Cat 44 | Parametric expansion to canonical list signatures |
-| Source-material creator | Cat 41 | Semantic (P-EVT + RCP) for name occurrences |
-| Reference-work comparison ("like X") | Cat 42 | Parametric expansion → re-route |
-| Vague reference class ("comedians doing drama") | Cat 44 | Parametric expansion to instances → re-route |
+| Below-the-line credits | Cat 41 | Reserved slot, returns empty until data lands |
+| Curated canon (Criterion, AFI) | Cat 45 | Outside-knowledge expansion to canonical list signatures, then ordinary endpoint parameters |
+| Source-material creator | Cat 42 | Semantic (P-EVT + RCP) for name occurrences |
+| Reference-work comparison ("like X") | Cat 43 | Named-referent analysis, then ordinary endpoint parameters |
+| Vague reference class ("comedians doing drama") | Cat 45 | Outside-knowledge expansion to instances, then ordinary endpoint parameters |
 | Character-anchored franchise (Batman, Bond) | Cat 6 | Combo: ENT character postings + FRA lineage |
 | Gateway / entry-level | Cat 33 | Folded into emotional/experiential combo |
 | Cultural tradition | Cat 23 | KW tag → META fallback |
 | Seasonal | Cat 29 | KW proxy chains + CTX + P-EVT additive |
 | Narrative setting time/place | Cat 31 | P-EVT descriptive phrasing |
-| Cast popularity ("stacked cast") | Cat 39 | RCP prose |
-| Thematic weight ("has something to say") | Cat 39 (acclaim) + Cat 32 (vibe) | Framing-dependent |
+| Cast popularity ("stacked cast") | Cat 39 | Cultural status / mainstream-position prose |
+| Thematic weight ("has something to say") | Cat 40 (aspect praise) + Cat 32 (vibe) | Framing-dependent |
 | Character-vs-plot focus | Cat 26 | NRT fallback tier |
 | Character archetype | Cat 10 | KW tag → NRT fallback |
 | Element / motif presence | Cat 9 | KW tag → P-EVT fallback |
 | Self-experience goal ("make me cry") | Cat 33 | Combo additive |
 | Comfort-watch / "feel-better movie" | Cat 33 | Combo additive |
 | Post-viewing resonance ("haunting") | Cat 33 | Combo additive |
-| Cultural influence / still-holds-up | Cat 39 | RCP prose |
+| Cultural influence / still-holds-up | Cat 39 | RCP prose + optional META prior |
 | Live trending | Cat 12 | Dedicated endpoint |
-| Chronological ordinal | Cat 43 | META.release_date sort-and-pick |
+| Chronological ordinal | Cat 44 | META.release_date sort-and-pick |
 | Media type (TV-movie / short / video) | Cat 21 | Dedicated META single-attribute |
 
 ---
@@ -752,10 +786,10 @@ Worked examples:
 - "Tom Hanks comedies from the 90s rated above 8" → Cat 1 (Hanks)
   + Cat 22 (comedy) + Cat 13 (90s) + Cat 19 (rated above 8).
 - "Best horror of the 80s" → Cat 38 (general appeal) + Cat 39
-  (specific reception prose) + Cat 22 (horror) + Cat 13 (80s).
-- "Stephen King novels from the 90s" → Cat 41 (Stephen King) +
+  (cultural status / canonical stature) + Cat 22 (horror) + Cat 13 (80s).
+- "Stephen King novels from the 90s" → Cat 42 (Stephen King) +
   Cat 7 (novel adaptation) + Cat 13 (90s).
-- "Movies like Inception with a slow burn" → Cat 42 (Inception
+- "Movies like Inception with a slow burn" → Cat 43 (Inception
   expansion) + Cat 33 (slow-burn pacing).
 - "Batman movies from the 80s" → Cat 6 (Batman character-
   franchise) + Cat 13 (80s). Note: one trait for Batman, not
@@ -775,12 +809,12 @@ signal it should be split into separate atomic traits.** Step 2 is
 expected to decompose compound phrases into their constituent
 category firings rather than inventing an umbrella category.
 
-Compound descriptors never warrant their own category. The word
-"classic" means older + canonical, and the correct handling is to
-fire Cat 13 (release era) + Cat 39 (canonical/acclaimed)
-simultaneously. Creating a "Canonical stature" category to hold
-"classic" would just duplicate endpoints already covered while
-hiding the compound from dispatch.
+Compound descriptors only stay bound when the category explicitly
+owns the compound — known subgenres like "dark comedy" and "body
+horror" stay whole, while ordinary adjective+genre pairings split.
+"Classic" by itself is not treated as an era word; it routes to
+Cat 39 as cultural/canonical status. Explicit era modifiers split:
+"old classic" and "modern classic" fire Cat 13 + Cat 39.
 
 The single exception is dual-nature *referents* — a single name
 that is inherently both a character and a franchise (Cat 6). That
@@ -789,15 +823,13 @@ gets one trait with one category that fans out internally.
 
 Worked examples:
 - "Classic Arnold Schwarzenegger action movies" → Cat 1
-  (Schwarzenegger) + Cat 22 (action) + Cat 13 (older era) +
-  Cat 39 (canonical stature).
-- "Disney classics" → Cat 4 (Disney) + Cat 13 (older era) +
-  Cat 39 (canonical stature).
+  (Schwarzenegger) + Cat 22 (action) + Cat 39 (canonical stature).
+- "Disney classics" → Cat 4 (Disney) + Cat 39 (canonical stature).
 - "Lone female protagonist" → Cat 10 (female-lead archetype) +
   Cat 26 (single-lead structural form).
 - "Modern classic" → Cat 13 (recent era, narrower range) +
   Cat 39 (canonical stature).
-- "Stephen King novels" → Cat 41 (Stephen King) + Cat 7 (novel
+- "Stephen King novels" → Cat 42 (Stephen King) + Cat 7 (novel
   adaptation).
 - "Sherlock Holmes books" → Cat 6 (Sherlock Holmes character-
   franchise) + Cat 7 (book adaptation). Note: not Cat 5 + Cat 7
@@ -815,6 +847,6 @@ Worked examples:
 
 The only time a compound stays bound to a single category is when
 the category explicitly owns the compound — e.g. a named curated
-list ("Criterion Collection") in Cat 44, which *is* the compound
+list ("Criterion Collection") in Cat 45, which *is* the compound
 of "canonical recognition + specific named list," or a dual-nature
 referent in Cat 6.
