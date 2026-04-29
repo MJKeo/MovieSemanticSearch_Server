@@ -24,6 +24,8 @@ in scoring and filtering.
 | `enums.py` | All enums: `MaturityRating` (with maturity_rank), `StreamingAccessType` (with type_id), `VectorName`/`VectorCollectionName` (8 vector spaces, backed by Qdrant), `RelevanceSize` (NOT_RELEVANT/SMALL/MEDIUM/LARGE), `Genre`, `EntityCategory`, `BudgetSize`, match operation enums. |
 | `languages.py` | Language catalog with IDs for audio language filtering. |
 | `watch_providers.py` | Streaming service catalog with provider IDs. |
+| `countries.py` | `Country` enum with stable integer IDs. Imported by `schemas/movie.py`, `schemas/metadata_translation.py`, and `search_v2/stage_3/metadata_query_execution.py`. |
+| `overall_keywords.py` | `OverallKeyword` enum (225 values). Imported by `schemas/movie.py` and `schemas/unified_classification.py` for the V2 keyword endpoint vocabulary. |
 
 ## Boundaries
 

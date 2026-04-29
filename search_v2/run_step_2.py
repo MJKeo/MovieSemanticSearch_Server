@@ -16,7 +16,7 @@ import asyncio
 import json
 
 from search_v2.step_2 import run_step_2
-from schemas.step_2 import Step2Response
+from schemas.step_2 import QueryAnalysis
 
 
 # Default query used when the user invokes the script with no
@@ -28,34 +28,10 @@ _DEFAULT_QUERY = (
 )
 
 
-def _print_response(response: Step2Response) -> None:
-    """Pretty-print the full Step2Response payload as indented JSON."""
+def _print_response(response: QueryAnalysis) -> None:
+    """Pretty-print the full QueryAnalysis payload as indented JSON."""
     payload = response.model_dump()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
-
-
-def _print_compact_traits(response: Step2Response) -> None:
-    """Print a compact, one-trait-per-block summary of the final trait
-    list — just the fields needed to eyeball the classification at a
-    glance, without wading through reasoning prose."""
-    for i, trait in enumerate(response.traits, start=1):
-        # Modifiers come back as TraitModifier objects; collapse to
-        # just the verbatim text for the compact view.
-        modifier_texts = [m.text for m in trait.modifiers]
-        modifiers_str = (
-            ", ".join(modifier_texts) if modifier_texts else "—"
-        )
-        # Salience is None for carvers; render that as a dash so the
-        # column lines up visually across traits.
-        salience_str = (
-            trait.salience.value if trait.salience is not None else "—"
-        )
-        print(f"  {i}. {trait.query_phrase}")
-        print(f"     modifiers: {modifiers_str}")
-        print(f"     category:  {trait.best_fit_category.value}")
-        print(f"     role:      {trait.role.value}")
-        print(f"     polarity:  {trait.polarity.value}")
-        print(f"     salience:  {salience_str}")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -91,9 +67,6 @@ async def _main_async() -> None:
         f"\n[stats] elapsed={elapsed:.2f}s "
         f"input_tokens={in_tok} output_tokens={out_tok}"
     )
-
-    print("\n[compact traits]")
-    _print_compact_traits(response)
 
 
 def main() -> None:

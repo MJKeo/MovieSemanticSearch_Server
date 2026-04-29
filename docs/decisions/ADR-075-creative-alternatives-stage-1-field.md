@@ -1,7 +1,12 @@
 # [075] — `creative_alternatives` as a separate Stage 1 field for productive sub-angle spins
 
 ## Status
-Active
+Superseded by ADR-076. The original `search_v2/stage_1.py` module and
+its `FlowRoutingResponse.creative_alternatives` field have been replaced
+by the new Step 0 / Step 1 split: `search_v2/step_0.py` carries flow
+routing, and `search_v2/step_1.py` produces two distinct creative spins
+as `Step1Response`. The schema decisions described here informed the
+Step 1 spin design but are no longer the live schema.
 
 ## Context
 The prior `alternative_intents` field was strictly for competing
@@ -60,7 +65,9 @@ Design choices, each explicitly confirmed by user:
   `CreativeSpin`; `_validate_title_for_flow` helper applies to both.
 
 ## References
-- schemas/flow_routing.py
-- search_v2/stage_1.py
-- search_improvement_planning/steps_1_2_improving.md
+- schemas/flow_routing.py (legacy V1 schema, retained for reference)
+- search_v2/step_1.py (active spin-generation module under ADR-076)
+- search_improvement_planning/v3_step_2_rethinking.md (replaces the
+  earlier `steps_1_2_improving.md` planning doc)
+- ADR-076 (five-step query understanding pipeline — supersedes this)
 - ADR-074-stage-2a-interpret-verdict-decompose-first.md

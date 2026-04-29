@@ -62,4 +62,6 @@ section from the enum, eliminating schema/prompt drift.
 ## References
 - schemas/award_category_tags.py
 - ADR-068-award-data-postgres-storage.md
-- search_improvement_planning/finalized_search_proposal.md §Endpoint 3
+- search_improvement_planning/v3_proposed_changes.md (the
+  `finalized_search_proposal.md` referenced in earlier drafts has been
+  superseded by the v3_* planning notes)

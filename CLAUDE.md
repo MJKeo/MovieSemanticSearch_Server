@@ -102,14 +102,15 @@ Fetch display metadata → return JSON
 | `implementation/llms/` | Shared LLM clients and routing for query understanding and metadata generation |
 | `implementation/prompts/` | System prompts for each LLM task |
 | `implementation/misc/` | Utilities: string normalization, SQL LIKE escaping |
-| `implementation/notebooks/` | Jupyter notebooks for exploration, DB rebuilding, and evaluation |
-| `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data), `final_ingestion/` (Postgres + Qdrant upserts) |
-| `unit_tests/` | pytest test suite (59 files); `conftest.py` provides `base_movie_factory` fixture |
+| `schemas/` | Top-level shared Pydantic models, enums, V2 search-side translation schemas, category taxonomy |
+| `search_v2/` | V2 search pipeline: front-end Steps 0/1/2 (Gemini) + back-end Stage 3 (7 endpoints) and Stage 4 (assembly). Includes Jupyter notebooks for exploration. |
+| `movie_ingestion/` | Ingestion pipeline: `tracker.py` (shared state), `tmdb_fetching/` (TMDB export & detail fetch), `tmdb_quality_scoring/` (quality filtering), `imdb_scraping/` (IMDB data), `metadata_generation/` (Stage 6 LLM generation), `final_ingestion/` (Postgres + Qdrant upserts) |
+| `unit_tests/` | pytest test suite (76 files); `conftest.py` provides `base_movie_factory` fixture |
 | `docs/` | Project context, decision records, module summaries, conventions |
 
 ### Vector Search Design
 
-8 named vectors per movie (OpenAI `text-embedding-3-small`, 1536 dims), stored in Qdrant with scalar quantization + memmap:
+8 named vectors per movie (OpenAI `text-embedding-3-large`, 3072 dims, per ADR-066), stored in Qdrant with scalar quantization + memmap:
 - `dense_anchor_vectors` — core thematic summary
 - `plot_events_vectors` — plot + characters
 - `plot_analysis_vectors` — themes, arcs, concepts
@@ -237,8 +238,8 @@ Structured output handling varies by provider:
 - Other providers are routed through provider-specific adapters in
   the same module
 
-OpenAI is also used for embeddings (`text-embedding-3-small`, 1536
-dims).
+OpenAI is also used for embeddings (`text-embedding-3-large`, 3072
+dims, per ADR-066).
 
 ### Cross-Codebase Invariants
 

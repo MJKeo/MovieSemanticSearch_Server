@@ -38,11 +38,12 @@ increase).
 - PostgreSQL 15, Qdrant, Redis 7
 - Single EC2 t3.large instance running all services via Docker
   Compose (2 vCPU, 8 GB RAM)
-- LLM providers: Moonshot/Kimi API for search-time query
-  understanding (structured output); OpenAI gpt-5-mini for
-  ingestion-time metadata generation (finalized after multi-candidate
-  evaluation — see ADR-039, ADR-043); OpenAI text-embedding-3-small
-  (1536 dims) for all embeddings
+- LLM providers: Moonshot/Kimi API for V1 search-time query
+  understanding (structured output); Gemini for V2 search-time query
+  understanding (Steps 0/1/2); OpenAI gpt-5-mini and gpt-5.4-mini for
+  ingestion-time metadata generation (model selected per generator —
+  see ADR-039, ADR-043); OpenAI text-embedding-3-large (3072 dims)
+  for all embeddings (per ADR-066)
 - ~100K movies after quality filtering from ~1M TMDB daily exports
 - US-focused: watch provider data, IMDB proxy geo-targeting, and
   content filtering all assume a US audience
@@ -82,7 +83,9 @@ All stages are operational, crash-safe, and idempotent.
 | implementation/misc/ | String normalization, SQL escaping | — |
 | movie_ingestion/ | Ingestion pipeline (TMDB → IMDB → LLM → embed → ingest) | docs/modules/ingestion.md |
 | api/ | FastAPI application | docs/modules/api.md |
-| unit_tests/ | pytest suite (59 files) | — |
+| schemas/ | Shared Pydantic models, enums, V2 translation schemas | docs/modules/schemas.md |
+| search_v2/ | V2 search pipeline (Steps 0–2 + Stage 3/4) | docs/modules/search_v2.md |
+| unit_tests/ | pytest suite (76 files) | — |
 
 Module docs in docs/modules/ provide concise summaries with
 boundaries, interactions, and gotchas. Decision records in

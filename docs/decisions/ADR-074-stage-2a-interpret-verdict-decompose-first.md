@@ -1,7 +1,12 @@
 # [074] — Stage 2A: `interpret` verdict and decompose-first reasoning flow
 
 ## Status
-Active
+Superseded by ADR-076 (five-step query understanding pipeline). The
+`search_v2/stage_2a.py` module referenced throughout this record has
+been deleted; its responsibilities are now distributed across the new
+Step 0 (flow routing), Step 1 (spin generation), and Step 2 (holistic
+read) modules under `search_v2/`. Retained for historical context on
+the four prompt-content failure modes that motivated the redesign.
 
 ## Context
 Empirical probing of Stage 2A against queries like "Mindless action",
@@ -67,7 +72,13 @@ preservation. None come from probed queries.
   `test_search_v2_stage_2.py` still fails pending the Step 2B rework
   (this ADR covers 2A prompt content only).
 
+**Note (post-supersedure):** the `search_v2/stage_2a.py` module and
+`stage_2::run_stage_2` caller referenced above no longer exist. The
+five-step pipeline (ADR-076) replaced them with `step_0.py` / `step_1.py`
+/ `step_2.py`.
+
 ## References
-- search_improvement_planning/steps_1_2_improving.md
-- search_v2/stage_2a.py
-- docs/decisions/ADR-075 (creative_alternatives field)
+- search_improvement_planning/v3_step_2_rethinking.md (replaces the
+  earlier `steps_1_2_improving.md` planning doc)
+- ADR-076 (five-step query understanding pipeline — supersedes this)
+- docs/decisions/ADR-075 (creative_alternatives field — also superseded)

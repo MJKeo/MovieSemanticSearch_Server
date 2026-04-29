@@ -35,10 +35,12 @@ incompatible with `Movie`'s nested structure.
    N movies using `json_each()`, reusing the existing `_QUERY` column definitions
    and `_build_*` parsers.
 
-`BaseMovie` is retained in `implementation/classes/movie.py` — it is still used
-by the `base_movie_factory` test fixture (`unit_tests/conftest.py`) and legacy
-files (`implementation/vectorize.py`, `implementation/scraping/gather_data.py`).
-It is not imported by the search-side pipeline (`db/`).
+`BaseMovie` is retained in `implementation/classes/movie.py` — its only remaining
+consumer is the `base_movie_factory` test fixture in `unit_tests/conftest.py`.
+The legacy ChromaDB-era files (`implementation/vectorize.py`,
+`implementation/scraping/gather_data.py`) that originally used it have since
+been removed from the codebase. `BaseMovie` is not imported by the search-side
+pipeline (`db/`).
 
 ## Alternatives Considered
 

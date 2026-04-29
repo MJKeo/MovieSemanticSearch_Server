@@ -6,34 +6,22 @@ from when grounding each captured meaning of a query fragment. Each
 member carries:
 
 - A descriptive name (the string value emitted to downstream code).
-- A compact `description` of what the category is about.
-- A `boundary` statement listing what the category does NOT own and
-  the explicit redirects to the categories that DO.
-- A tuple of `edge_cases` — concrete situations where the LLM is
-  most likely to misroute, with the disambiguating cue.
-- A tuple of `good_examples` — short trait surface forms that
-  clearly belong here. Each example is chosen to illustrate a
-  *different* pattern (do not duplicate principles).
-- A tuple of `bad_examples` — short trait surface forms that look
-  like they belong here but route elsewhere, with the redirect
-  spelled out.
-- An ordered tuple of `EndpointRoute` values naming the route family
-  the category may dispatch to. Endpoint order is priority order:
-  for tiered categories the first entry is the authoritative tier and
-  later entries are fallbacks; for single-endpoint or combo categories
-  the order reflects the primary channel first.
-- A `HandlerBucket` identifying the orchestration shape (single /
-  mutex / tiered / combo).
+- A compact `description` of what the category covers.
+- A `boundary` — what the category does NOT own and the explicit
+  redirects to the categories that do.
+- `edge_cases` — concrete misroute traps with the disambiguator.
+- `good_examples` — short trait surface forms that clearly belong.
+- `bad_examples` — surface forms that look like they belong but
+  route elsewhere, with the redirect spelled out.
+- An ordered tuple of `EndpointRoute` values.
+- A `HandlerBucket` identifying the orchestration shape.
 
-All five text-shaped fields (description, boundary, edge_cases,
-good_examples, bad_examples) are programmatically inserted into the
-step-2 system prompt — wording is kept tight to avoid prompt bloat.
+All five text fields are programmatically inserted into the step-2
+system prompt — wording is kept tight to avoid prompt bloat.
 
-The 45-category list and its underlying granularity principles are
-documented in `search_improvement_planning/query_categories.md` and
-`search_improvement_planning/v3_category_attributes.md`. Those docs
-are the source of truth for routing semantics; this enum mirrors
-those definitions in a form the LLM can pick from.
+The 45-category list and granularity principles live in
+`search_improvement_planning/query_categories.md` and
+`search_improvement_planning/v3_category_attributes.md`.
 """
 
 from enum import Enum
@@ -78,21 +66,20 @@ class CategoryName(str, Enum):
 
     PERSON_CREDIT = (
         "Person credit",
-        "Indexed film credits — actor, director, writer, producer, composer.",
+        "Indexed film credits: actor, director, writer, producer, composer.",
         (
-            "Indexed roles only. Cinematographer, editor, production/costume "
-            "designer, VFX supervisor → BELOW_THE_LINE_CREATOR. Title strings "
-            "→ TITLE_TEXT. Source-material authors (novelists, playwrights) "
-            "→ NAMED_SOURCE_CREATOR."
+            "Indexed roles only. Cinematographer/editor/PD/costume/VFX "
+            "→ BELOW_THE_LINE_CREATOR. Title strings → TITLE_TEXT. "
+            "Source authors → NAMED_SOURCE_CREATOR."
         ),
         (
-            "Composer is indexed: 'John Williams score' routes here, not MUSIC_SCORE_ACCLAIM.",
-            "Role markers ('starring', 'directed by') are absorbed into the trait, not split out.",
+            "Composer is indexed (John Williams score → here, not MUSIC_SCORE_ACCLAIM).",
+            "Role markers ('starring', 'directed by') absorb into trait.",
         ),
         ("starring Tom Hanks", "directed by Greta Gerwig", "Hans Zimmer score"),
         (
             "'Roger Deakins-shot' → BELOW_THE_LINE_CREATOR (DP not indexed).",
-            "'Stephen King movies' → NAMED_SOURCE_CREATOR (novelist, not film credit).",
+            "'Stephen King movies' → NAMED_SOURCE_CREATOR (novelist).",
         ),
         (EndpointRoute.ENTITY,),
         HandlerBucket.SINGLE,
@@ -102,21 +89,19 @@ class CategoryName(str, Enum):
         "Substring matches against the movie's title.",
         (
             "Title-string framing only. Person names → PERSON_CREDIT. "
-            "Franchise/character names go to whichever name category fits "
-            "the entity (FRANCHISE_LINEAGE for character-less franchises, "
-            "CHARACTER_FRANCHISE for character-anchored franchises, "
-            "NAMED_CHARACTER for non-anchoring characters) even when the "
-            "name overlaps with title fragments."
+            "Franchise/character names route to their own category "
+            "(FRANCHISE_LINEAGE / CHARACTER_FRANCHISE / NAMED_CHARACTER) "
+            "even when the name overlaps with title text."
         ),
         (
-            "Disambiguator is the framing: 'in the title' / 'called' / 'titled' signals "
-            "this category. Bare names default to entity routing.",
+            "Disambiguator is the framing: 'in the title' / 'called' / "
+            "'titled' fires here. Bare names default to entity routing.",
         ),
         ("any movie called Inception", "movies with 'Star' in the title", "titles starting with The"),
         (
-            "'Star Wars' → FRANCHISE_LINEAGE (franchise framing dominates).",
-            "'Batman' → CHARACTER_FRANCHISE (character-anchored franchise).",
-            "'Tom Hanks' → PERSON_CREDIT (person name).",
+            "'Star Wars' → FRANCHISE_LINEAGE (franchise framing).",
+            "'Batman' → CHARACTER_FRANCHISE.",
+            "'Tom Hanks' → PERSON_CREDIT.",
         ),
         (EndpointRoute.ENTITY,),
         HandlerBucket.SINGLE,
@@ -125,28 +110,24 @@ class CategoryName(str, Enum):
         "Named character",
         (
             "Specific named persona appearing in films but NOT anchoring "
-            "their own film franchise — Yoda, Hermione Granger, Severus "
-            "Snape, Loki, Aragorn."
+            "a film franchise — Yoda, Hermione Granger, Snape, Loki, Aragorn."
         ),
         (
             "Non-anchoring characters only. Character-anchored franchises "
             "(Batman, Bond, Spider-Man, Sherlock Holmes, Harry Potter) → "
             "CHARACTER_FRANCHISE. Static character TYPES (anti-hero, femme "
-            "fatale) → CHARACTER_ARCHETYPE. Actors playing the character → "
-            "PERSON_CREDIT."
+            "fatale) → CHARACTER_ARCHETYPE. Actors → PERSON_CREDIT."
         ),
         (
-            "Detection rule for anchoring vs non-anchoring: does a Wikipedia "
-            "'List of [X] films' entity exist with this character as the "
-            "through-line? Bond/Batman/Spider-Man — yes → CHARACTER_FRANCHISE. "
-            "Yoda/Hermione/Loki — no → here.",
-            "'Yoda in Star Wars' is two traits: 'Yoda' → here + "
-            "'Star Wars' → FRANCHISE_LINEAGE.",
+            "Anchoring test: does a Wikipedia 'List of [X] films' entity "
+            "exist with this character as through-line? Bond/Batman/Spider-Man "
+            "→ yes → CHARACTER_FRANCHISE. Yoda/Hermione/Loki → no → here.",
+            "'Yoda in Star Wars' splits: 'Yoda' here + 'Star Wars' → FRANCHISE_LINEAGE.",
         ),
         ("movies featuring Yoda", "Hermione Granger scenes", "Loki appearances"),
         (
-            "'Batman' → CHARACTER_FRANCHISE (anchors a film franchise).",
-            "'anti-hero protagonist' → CHARACTER_ARCHETYPE (type, not specific name).",
+            "'Batman' → CHARACTER_FRANCHISE (anchors a franchise).",
+            "'anti-hero protagonist' → CHARACTER_ARCHETYPE (type, not name).",
             "'Daniel Radcliffe' → PERSON_CREDIT (actor not character).",
         ),
         (EndpointRoute.ENTITY,),
@@ -156,24 +137,22 @@ class CategoryName(str, Enum):
         "Studio / brand",
         (
             "Production studios and curated brands — Disney, Pixar, A24, "
-            "Studio Ghibli, Blumhouse, Marvel Studios, Dreamworks, Hammer Films."
+            "Studio Ghibli, Blumhouse, Marvel Studios, Dreamworks, Hammer."
         ),
         (
-            "The entity that made the movie. Franchises the studio owns → "
+            "Entity that made the movie. Franchises a studio owns → "
             "FRANCHISE_LINEAGE. Cultural traditions (Bollywood, Korean cinema) "
             "→ CULTURAL_TRADITION."
         ),
         (
-            "Some names are both a studio and a franchise (Marvel = Marvel "
-            "Studios vs the MCU; Disney = the studio vs the Disney character "
-            "canon). Pick the reading that best fits the surrounding query "
-            "context — there is no universal default; lean on whichever entity "
-            "is the more natural referent for the phrasing.",
-            "Pixar is its own brand even though Disney owns it — emit Pixar here.",
+            "Some names are both studio and franchise (Marvel Studios vs MCU; "
+            "Disney studio vs Disney character canon). Pick the reading that "
+            "best fits the surrounding query — no universal default.",
+            "Pixar is its own brand even though Disney owns it.",
         ),
         ("A24 horror", "Studio Ghibli movies", "Blumhouse"),
         (
-            "'Marvel Cinematic Universe' → FRANCHISE_LINEAGE (franchise reading).",
+            "'Marvel Cinematic Universe' → FRANCHISE_LINEAGE.",
             "'Bollywood' → CULTURAL_TRADITION.",
         ),
         (EndpointRoute.STUDIO,),
@@ -182,32 +161,28 @@ class CategoryName(str, Enum):
     FRANCHISE_LINEAGE = (
         "Franchise / universe lineage",
         (
-            "Two things: membership in a character-less named "
-            "franchise/universe (Marvel Cinematic Universe, Star Wars, Lord "
-            "of the Rings, Fast & Furious, Star Trek, Mission Impossible) "
-            "AND lineage positioning (sequel, prequel, spinoff, reboot, "
-            "mainline vs offshoot, original vs remake)."
+            "Two things: membership in a character-less franchise (MCU, "
+            "Star Wars, LOTR, Fast & Furious, Star Trek, Mission Impossible) "
+            "AND lineage positioning (sequel/prequel/spinoff/reboot, mainline "
+            "vs offshoot, original vs remake)."
         ),
         (
             "Lineage POSITIONING fires here regardless of franchise type — "
-            "'Batman spinoffs' splits 'spinoffs' to here even though "
-            "'Batman' itself goes to CHARACTER_FRANCHISE. Character-anchored "
-            "franchise NAMES (Batman, Bond, Spider-Man, Sherlock Holmes, "
-            "Harry Potter) → CHARACTER_FRANCHISE. When a generic medium is "
-            "named alongside a character-less franchise, the phrase splits "
-            "into two traits — e.g. 'Star Wars novelizations' is "
-            "'Star Wars' → here + 'novelizations' → ADAPTATION_SOURCE. "
-            "Source-material creators (Stephen King, Shakespeare) → "
-            "NAMED_SOURCE_CREATOR."
+            "'Batman spinoffs' splits 'spinoffs' to here even though 'Batman' "
+            "→ CHARACTER_FRANCHISE. Character-anchored franchise NAMES (Batman, "
+            "Bond, Spider-Man, Sherlock Holmes, Harry Potter) → CHARACTER_FRANCHISE. "
+            "Generic medium named alongside a character-less franchise splits "
+            "('Star Wars novelizations' → 'Star Wars' here + 'novelizations' → "
+            "ADAPTATION_SOURCE). Source-material creators (Stephen King, "
+            "Shakespeare) → NAMED_SOURCE_CREATOR."
         ),
         (
-            "'The original, not the remake' is lineage positioning here, not ADAPTATION_SOURCE.",
-            "Marvel Cinematic Universe subgroups ('phase 4') and Star Wars subgroups "
-            "('the prequels') route here.",
+            "'The original, not the remake' is lineage positioning here.",
+            "MCU/Star Wars subgroups ('phase 4', 'the prequels') route here.",
         ),
         ("Marvel Cinematic Universe movies", "the Star Wars prequels", "Fast & Furious sequels"),
         (
-            "'Batman' → CHARACTER_FRANCHISE (character-anchored franchise name).",
+            "'Batman' → CHARACTER_FRANCHISE.",
             "'based on a comic book' → ADAPTATION_SOURCE (no named franchise).",
         ),
         (EndpointRoute.FRANCHISE_STRUCTURE,),
@@ -221,27 +196,26 @@ class CategoryName(str, Enum):
             "John Wick, Jason Bourne, Sherlock Holmes, Harry Potter, Barbie."
         ),
         (
-            "Names the anchoring character only. Sequel/prequel/spinoff/"
-            "reboot positioning is a SEPARATE trait → FRANCHISE_LINEAGE. "
-            "Non-anchoring characters (Yoda, Hermione, Loki) → "
-            "NAMED_CHARACTER. Character-less franchises (Star Wars, Lord "
-            "of the Rings, Fast & Furious) → FRANCHISE_LINEAGE."
+            "Names the anchoring character only. Sequel/prequel/spinoff/reboot "
+            "is a SEPARATE trait → FRANCHISE_LINEAGE. Non-anchoring characters "
+            "(Yoda, Hermione, Loki) → NAMED_CHARACTER. Character-less franchises "
+            "(Star Wars, LOTR, Fast & Furious) → FRANCHISE_LINEAGE."
         ),
         (
-            "Detection rule: a Wikipedia 'List of [X] films' entity exists "
-            "with the character as through-line. Bond/Batman/Spider-Man — "
-            "yes. Yoda/Hermione/Loki — no.",
-            "'Sherlock Holmes books' is two traits: 'Sherlock Holmes' → "
-            "here + 'books' → ADAPTATION_SOURCE.",
-            "'Batman spinoffs' is two traits: 'Batman' → here + 'spinoffs' "
-            "→ FRANCHISE_LINEAGE (lineage positioning).",
+            "Anchoring test: 'List of [X] films' Wikipedia entity exists with "
+            "the character as through-line. Bond/Batman/Spider-Man → yes; "
+            "Yoda/Hermione/Loki → no.",
+            "'Sherlock Holmes books' splits: 'Sherlock Holmes' here + 'books' "
+            "→ ADAPTATION_SOURCE.",
+            "'Batman spinoffs' splits: 'Batman' here + 'spinoffs' → "
+            "FRANCHISE_LINEAGE.",
         ),
         ("Batman", "James Bond", "Barbie"),
         (
-            "'Yoda appearances' → NAMED_CHARACTER (non-anchoring).",
-            "'Star Wars movies' → FRANCHISE_LINEAGE (character-less).",
-            "'Daniel Craig as Bond' is two traits: 'Daniel Craig' → "
-            "PERSON_CREDIT + 'Bond' → here.",
+            "'Yoda appearances' → NAMED_CHARACTER.",
+            "'Star Wars movies' → FRANCHISE_LINEAGE.",
+            "'Daniel Craig as Bond' splits: 'Daniel Craig' → PERSON_CREDIT + "
+            "'Bond' here.",
         ),
         (EndpointRoute.ENTITY, EndpointRoute.FRANCHISE_STRUCTURE),
         HandlerBucket.COMBO,
@@ -249,30 +223,28 @@ class CategoryName(str, Enum):
     ADAPTATION_SOURCE = (
         "Adaptation source flag",
         (
-            "Origin medium of the source material — novel, comic book, true "
-            "story, biography, video-game adaptation, remake (as origin medium, "
-            "not lineage positioning)."
+            "Origin medium of source material — novel, comic book, true "
+            "story, biography, video-game adaptation, remake (as origin "
+            "medium, not lineage positioning)."
         ),
         (
             "About WHAT the source medium is. When the query also names a "
             "specific source, the named source becomes a SEPARATE trait — "
-            "the character or franchise routes to CHARACTER_FRANCHISE / "
-            "FRANCHISE_LINEAGE, the creator routes to NAMED_SOURCE_CREATOR. "
-            "Lineage positioning (original vs remake) stays in "
-            "FRANCHISE_LINEAGE."
+            "character/franchise → CHARACTER_FRANCHISE / FRANCHISE_LINEAGE, "
+            "creator → NAMED_SOURCE_CREATOR. Lineage positioning (original "
+            "vs remake) stays in FRANCHISE_LINEAGE."
         ),
         (
-            "'Stephen King novels' is two traits: 'Stephen King' → "
-            "NAMED_SOURCE_CREATOR + 'novels' → here.",
-            "'Sherlock Holmes books' is two traits: 'Sherlock Holmes' "
-            "(book's subject) → CHARACTER_FRANCHISE + 'books' → here.",
-            "'JFK biopic' is two traits: 'JFK' → CENTRAL_TOPIC + "
-            "'biopic' → here.",
+            "'Stephen King novels' splits: 'Stephen King' → NAMED_SOURCE_CREATOR "
+            "+ 'novels' here.",
+            "'Sherlock Holmes books' splits: 'Sherlock Holmes' (book's subject) "
+            "→ CHARACTER_FRANCHISE + 'books' here.",
+            "'JFK biopic' splits: 'JFK' → CENTRAL_TOPIC + 'biopic' here.",
         ),
         ("novel adaptation", "based on a comic book", "based on a true story"),
         (
-            "'the original Star Wars' → FRANCHISE_LINEAGE (lineage position).",
-            "'documentary' → FORMAT_VISUAL (format, not source flag).",
+            "'the original Star Wars' → FRANCHISE_LINEAGE.",
+            "'documentary' → FORMAT_VISUAL.",
         ),
         (EndpointRoute.KEYWORD,),
         HandlerBucket.SINGLE,
@@ -280,23 +252,24 @@ class CategoryName(str, Enum):
     CENTRAL_TOPIC = (
         "Central topic / about-ness",
         (
-            "Concrete subject the film is ABOUT — JFK, Vietnam War, Titanic, "
-            "Watergate, Princess Diana, the moon landing."
+            "Concrete subject the film is ABOUT — JFK, Vietnam War, "
+            "Titanic, Watergate, Princess Diana, the moon landing."
         ),
         (
             "Concrete subjects only. Thematic essence (grief, redemption, "
             "found family) → STORY_THEMATIC_ARCHETYPE. 'Has X' framing → "
-            "ELEMENT_PRESENCE. Narrative time/place setting → NARRATIVE_SETTING."
+            "ELEMENT_PRESENCE. Time/place setting → NARRATIVE_SETTING."
         ),
         (
-            "'About' vs 'has' is the disambiguator: 'movies about sharks' (subject) vs "
-            "'shark movies' (element-presence).",
-            "'Set during Vietnam' is setting → NARRATIVE_SETTING; 'about Vietnam' is centrality.",
+            "'About' vs 'has': 'movies about sharks' (subject) vs 'shark "
+            "movies' (element-presence).",
+            "'Set during Vietnam' is setting → NARRATIVE_SETTING; 'about "
+            "Vietnam' is centrality.",
         ),
         ("about the moon landing", "Watergate movie", "Princess Diana biopic"),
         (
-            "'movies about grief' → STORY_THEMATIC_ARCHETYPE (thematic, not concrete).",
-            "'movies with sharks' → ELEMENT_PRESENCE (presence, not centrality).",
+            "'movies about grief' → STORY_THEMATIC_ARCHETYPE (thematic).",
+            "'movies with sharks' → ELEMENT_PRESENCE (presence).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.TIERED,
@@ -305,16 +278,16 @@ class CategoryName(str, Enum):
         "Element / motif presence",
         (
             "Concrete element appears in the story — 'has clowns', 'zombie "
-            "movies', 'shark movies', 'robots', 'movies with horses', 'has a heist'."
+            "movies', 'shark movies', 'robots', 'with horses', 'has a heist'."
         ),
         (
-            "'Has X' / mere presence framing. Centrality framing → CENTRAL_TOPIC. "
-            "Character types → CHARACTER_ARCHETYPE. Thematic abstraction → "
-            "STORY_THEMATIC_ARCHETYPE. Structural devices → NARRATIVE_DEVICES."
+            "'Has X' / mere presence framing. Centrality → CENTRAL_TOPIC. "
+            "Character types → CHARACTER_ARCHETYPE. Thematic abstraction "
+            "→ STORY_THEMATIC_ARCHETYPE. Structural devices → NARRATIVE_DEVICES."
         ),
         (
-            "Bare-noun 'heist movies' / 'zombie movies' read as element-presence; full plot "
-            "description ('a heist crew unravels…') → PLOT_EVENTS.",
+            "Bare-noun ('heist movies', 'zombie movies') reads as presence; "
+            "full plot description ('a heist crew unravels…') → PLOT_EVENTS.",
         ),
         ("movies with clowns", "zombie movies", "has horses"),
         (
@@ -335,17 +308,17 @@ class CategoryName(str, Enum):
         (
             "Static type only. Specific named personas → NAMED_CHARACTER. "
             "Story shape / character trajectory (redemption arc, coming-of-age) "
-            "→ STORY_THEMATIC_ARCHETYPE. Structural single-lead/ensemble framing "
-            "→ NARRATIVE_DEVICES."
+            "→ STORY_THEMATIC_ARCHETYPE. Single-lead/ensemble framing → "
+            "NARRATIVE_DEVICES."
         ),
         (
-            "'Lone female protagonist' is two traits: 'female protagonist' "
-            "→ here + 'lone' → NARRATIVE_DEVICES (single-lead structural form).",
+            "'Lone female protagonist' splits: 'female protagonist' here + "
+            "'lone' → NARRATIVE_DEVICES.",
         ),
         ("anti-hero protagonist", "femme fatale", "reluctant hero"),
         (
             "'redemption arc' → STORY_THEMATIC_ARCHETYPE (trajectory).",
-            "'ensemble cast' → NARRATIVE_DEVICES (structural).",
+            "'ensemble cast' → NARRATIVE_DEVICES.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.TIERED,
@@ -357,21 +330,21 @@ class CategoryName(str, Enum):
             "Cannes, Sundance, Golden Globes, multi-win superlatives."
         ),
         (
-            "Structured ceremony/outcome data only. Qualitative quality without "
-            "award reference → GENERAL_APPEAL. Broad reputation / canon "
-            "language ('acclaimed', 'classic') → CULTURAL_STATUS. Specific "
-            "aspect praise ('praised for pacing') → SPECIFIC_PRAISE_CRITICISM. "
-            "Aspirational praise ('Oscar-worthy') → GENERAL_APPEAL — actual "
-            "outcome ('won an Oscar', 'Oscar-nominated') routes here."
+            "Structured ceremony/outcome data only. Qualitative quality "
+            "without award reference → GENERAL_APPEAL. Broad reputation "
+            "('acclaimed', 'classic') → CULTURAL_STATUS. Specific aspect "
+            "praise → SPECIFIC_PRAISE_CRITICISM. Aspirational praise "
+            "('Oscar-worthy') → GENERAL_APPEAL — actual outcome ('won an "
+            "Oscar', 'Oscar-nominated') routes here."
         ),
         (
-            "Any specific ceremony name (Oscars, Cannes, BAFTAs, Globes) paired with "
-            "an outcome verb (won/nominated/awarded) is the routing trigger.",
+            "Trigger: ceremony name (Oscars, Cannes, BAFTAs, Globes) + "
+            "outcome verb (won/nominated/awarded).",
         ),
         ("Academy Award winners", "Cannes Palme d'Or", "Oscar-nominated for Best Director"),
         (
-            "'highly acclaimed' → CULTURAL_STATUS (broad reputation, no formal award).",
-            "'Oscar-worthy' → GENERAL_APPEAL (aspirational, not an actual win).",
+            "'highly acclaimed' → CULTURAL_STATUS.",
+            "'Oscar-worthy' → GENERAL_APPEAL (aspirational, not actual win).",
         ),
         (EndpointRoute.AWARDS,),
         HandlerBucket.SINGLE,
@@ -379,8 +352,9 @@ class CategoryName(str, Enum):
     TRENDING = (
         "Trending",
         (
-            "Live 'right now' status — 'trending', 'what's everyone watching', "
-            "'hot this week', 'currently buzzing', 'popular right now'."
+            "Live 'right now' status — 'trending', 'what's everyone "
+            "watching', 'hot this week', 'currently buzzing', 'popular "
+            "right now'."
         ),
         (
             "Live-refreshed signal only. Static popularity → GENERAL_APPEAL. "
@@ -392,7 +366,7 @@ class CategoryName(str, Enum):
         ("trending now", "what's everyone watching", "hot right now"),
         (
             "'popular movies' → GENERAL_APPEAL (static).",
-            "'recent movies' → RELEASE_DATE (release-date range).",
+            "'recent movies' → RELEASE_DATE.",
         ),
         (EndpointRoute.TRENDING,),
         HandlerBucket.SINGLE,
@@ -414,15 +388,14 @@ class CategoryName(str, Enum):
         ),
         (
             "Vague terms ('modern', 'recent', 'old-school') route here.",
-            "'Classic' by itself routes to CULTURAL_STATUS "
-            "(canonical stature). Explicit era words such as 'old' or "
-            "'modern' route here as their own traits.",
+            "'Classic' alone → CULTURAL_STATUS; explicit era words ('old', "
+            "'modern') route here as their own traits.",
         ),
         ("from the 90s", "before 2000", "old-school"),
         (
-            "'the newest one' → CHRONOLOGICAL (ordinal).",
-            "'trending' → TRENDING (live).",
-            "'classic' → CULTURAL_STATUS (canonical stature, not an era word by itself).",
+            "'the newest one' → CHRONOLOGICAL.",
+            "'trending' → TRENDING.",
+            "'classic' → CULTURAL_STATUS (canonical stature, not era word alone).",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
@@ -430,22 +403,22 @@ class CategoryName(str, Enum):
     RUNTIME = (
         "Runtime",
         (
-            "Movie length framings — 'around 90 minutes', 'short', 'long', "
-            "'under 2 hours', 'feature-length', 'epic length'."
+            "Movie length — 'around 90 minutes', 'short', 'long', 'under 2 "
+            "hours', 'feature-length', 'epic length'."
         ),
         (
-            "Fires only when the query mentions duration explicitly — bare "
-            "'movies' carries no runtime trait. Franchise size ('long-running "
-            "series') → FRANCHISE_LINEAGE."
+            "Fires only when duration is explicit — bare 'movies' carries "
+            "no runtime trait. Franchise size ('long-running series') → "
+            "FRANCHISE_LINEAGE."
         ),
         (
-            "'Short films' surfaces two traits: 'short' (length) → here + "
-            "'shorts' (non-default media format) → MEDIA_TYPE.",
+            "'Short films' splits: 'short' (length) here + 'shorts' "
+            "(non-default media format) → MEDIA_TYPE.",
         ),
         ("under 2 hours", "around 90 minutes", "epic length"),
         (
-            "Bare 'movies' — no runtime mention, no firing.",
-            "'long-running franchise' → FRANCHISE_LINEAGE (franchise size).",
+            "Bare 'movies' — no firing.",
+            "'long-running franchise' → FRANCHISE_LINEAGE.",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
@@ -454,18 +427,17 @@ class CategoryName(str, Enum):
         "Maturity rating",
         "Rating ceiling/floor — 'PG-13 max', 'rated R', 'G-rated', 'no NC-17'.",
         (
-            "Fires only when the query explicitly names a rating "
-            "(G/PG/PG-13/R/NC-17). Audience-pitch framing ('family movies') "
-            "→ TARGET_AUDIENCE. Content-sensitivity ('no gore') → "
-            "SENSITIVE_CONTENT. Phrasing like 'PG-13 family movies' is two "
-            "traits: the rating → here, the audience pitch → TARGET_AUDIENCE."
+            "Fires only on an explicit rating (G/PG/PG-13/R/NC-17). Audience "
+            "framing ('family movies') → TARGET_AUDIENCE. Content-sensitivity "
+            "('no gore') → SENSITIVE_CONTENT. 'PG-13 family movies' splits: "
+            "rating here + audience → TARGET_AUDIENCE."
         ),
         (
             "'No R-rated' is a negative-polarity ceiling, still routes here.",
         ),
         ("PG-13 or below", "rated R", "G-rated"),
         (
-            "'family-friendly' → TARGET_AUDIENCE (no explicit rating named).",
+            "'family-friendly' → TARGET_AUDIENCE (no explicit rating).",
             "'no gore' → SENSITIVE_CONTENT.",
         ),
         (EndpointRoute.METADATA,),
@@ -475,9 +447,9 @@ class CategoryName(str, Enum):
         "Audio language",
         "Original audio language — 'in Korean', 'Spanish-language', 'subtitled', 'French-original'.",
         (
-            "Original audio language only. Production country → "
-            "COUNTRY_OF_ORIGIN. Cultural tradition → CULTURAL_TRADITION. A "
-            "Korean-language film may not be Korean-cinema and vice versa."
+            "Original audio only. Production country → COUNTRY_OF_ORIGIN. "
+            "Cultural tradition → CULTURAL_TRADITION. A Korean-language film "
+            "may not be Korean cinema and vice versa."
         ),
         (
             "'Subtitled' implies non-English audio.",
@@ -492,10 +464,10 @@ class CategoryName(str, Enum):
     )
     STREAMING = (
         "Streaming platform",
-        "Movies available on a specific streaming platform — 'on Netflix', 'on Hulu', 'on Prime', 'streaming on Max'.",
+        "Movies on a specific streaming platform — 'on Netflix', 'on Hulu', 'on Prime', 'streaming on Max'.",
         (
-            "Provider availability only. Studio brand (e.g. Disney) → "
-            "STUDIO_BRAND even when the studio owns a service."
+            "Provider availability only. Studio brand (Disney) → STUDIO_BRAND "
+            "even when the studio owns a service."
         ),
         (
             "'Available to stream' without a specific service still routes here as a generic provider gate.",
@@ -511,24 +483,21 @@ class CategoryName(str, Enum):
         "Financial scale",
         (
             "Budget AND box-office magnitude — 'big-budget', 'low-budget', "
-            "'indie scale', 'shoestring', 'blockbuster', 'flop', 'sleeper hit', "
-            "'made bank'."
+            "'indie scale', 'shoestring', 'blockbuster', 'flop', 'sleeper "
+            "hit', 'made bank'."
         ),
         (
-            "Financial axis only. Quality framings ('crowd-pleaser', 'cult flop') "
-            "compose with GENERAL_APPEAL / CULTURAL_STATUS separately — "
-            "those don't fold in here."
+            "Financial axis only. Quality framings ('crowd-pleaser', 'cult "
+            "flop') compose with GENERAL_APPEAL / CULTURAL_STATUS separately."
         ),
         (
-            "Compound terms span both budget and gross: 'blockbuster' "
-            "implies big budget AND big gross; 'indie hit' implies small "
-            "budget AND outsized gross. The trait fires once for the "
-            "financial axis.",
+            "Compound terms span both axes: 'blockbuster' implies big budget "
+            "AND big gross; 'indie hit' implies small budget AND outsized "
+            "gross. Fires once for the financial axis.",
         ),
         ("blockbuster", "indie scale", "low-budget"),
         (
-            "'cult classic' → CULTURAL_STATUS (canonical reception, "
-            "no financial axis).",
+            "'cult classic' → CULTURAL_STATUS (no financial axis).",
             "'popular' → GENERAL_APPEAL.",
         ),
         (EndpointRoute.METADATA,),
@@ -555,19 +524,19 @@ class CategoryName(str, Enum):
     COUNTRY_OF_ORIGIN = (
         "Country of origin",
         (
-            "Legal/financial production country — 'produced in', 'American films', "
-            "'British production', 'Canadian co-production'."
+            "Legal/financial production country — 'produced in', 'American "
+            "films', 'British production', 'Canadian co-production'."
         ),
         (
             "Production country only. Filming geography → FILMING_LOCATION. "
-            "Cultural tradition → CULTURAL_TRADITION. When a tradition tag exists, "
-            "country is misleading (Hollywood-funded HK action carries US "
-            "country_of_origin)."
+            "Cultural tradition → CULTURAL_TRADITION. When a tradition tag "
+            "exists, country is misleading (Hollywood-funded HK action carries "
+            "US country_of_origin)."
         ),
         (
-            "Bare 'French / Korean / Japanese movies' is ambiguous between this, AUDIO_LANGUAGE, "
-            "and CULTURAL_TRADITION — favor CULTURAL_TRADITION for cinema-as-aesthetic phrasing, "
-            "this for explicit production framing.",
+            "Bare 'French/Korean/Japanese movies' is ambiguous between this, "
+            "AUDIO_LANGUAGE, and CULTURAL_TRADITION — favor CULTURAL_TRADITION "
+            "for cinema-as-aesthetic phrasing, this for explicit production framing.",
         ),
         ("produced in France", "American films", "British production"),
         (
@@ -582,12 +551,12 @@ class CategoryName(str, Enum):
         "Non-default media formats — 'TV movies', 'video releases', 'shorts (when explicit)', 'made-for-TV'.",
         (
             "Fires only on explicit non-default request. Bare 'show me "
-            "movies' has no media-type trait. Format like 'documentary' / "
-            "'anime' → FORMAT_VISUAL."
+            "movies' has no media-type trait. Format ('documentary', 'anime') "
+            "→ FORMAT_VISUAL."
         ),
         (
-            "'Short films' surfaces two traits: 'shorts' (non-default media "
-            "format) → here + 'short' (length) → RUNTIME.",
+            "'Short films' splits: 'shorts' (non-default format) here + "
+            "'short' (length) → RUNTIME.",
         ),
         ("TV movies", "shorts", "direct-to-video"),
         (
@@ -605,18 +574,18 @@ class CategoryName(str, Enum):
     GENRE = (
         "Genre",
         (
-            "Top-level and sub-genres — horror, action, comedy, sci-fi, drama, "
-            "romance, animation, thriller, fantasy, western, neo-noir, cozy "
-            "mystery, slasher, space opera, body horror."
+            "Top-level and sub-genres — horror, action, comedy, sci-fi, "
+            "drama, romance, animation, thriller, fantasy, western, neo-noir, "
+            "cozy mystery, slasher, space opera, body horror."
         ),
         (
             "Genre identity. Story archetype ('revenge', 'underdog', 'heist', "
-            "'post-apocalyptic') → STORY_THEMATIC_ARCHETYPE. Format ('documentary', "
-            "'anime') → FORMAT_VISUAL. Pure tonal ('dark', 'whimsical') without "
-            "genre anchor → EMOTIONAL_EXPERIENTIAL."
+            "'post-apocalyptic') → STORY_THEMATIC_ARCHETYPE. Format "
+            "('documentary', 'anime') → FORMAT_VISUAL. Pure tonal ('dark', "
+            "'whimsical') without genre anchor → EMOTIONAL_EXPERIENTIAL."
         ),
         (
-            "Compound 'dark action' splits: GENRE (action) + EMOTIONAL_EXPERIENTIAL (dark).",
+            "'Dark action' splits: action here + dark → EMOTIONAL_EXPERIENTIAL.",
             "Known subgenre compounds stay whole here: 'dark comedy', 'body horror', 'space opera'.",
             "Sub-genre falls back to semantic genre_signatures when no canonical tag exists.",
         ),
@@ -625,7 +594,7 @@ class CategoryName(str, Enum):
             "'underdog stories' → STORY_THEMATIC_ARCHETYPE.",
             "'anime' → FORMAT_VISUAL.",
             "'slow burn' → EMOTIONAL_EXPERIENTIAL.",
-            "'dark action' is two traits: 'dark' → EMOTIONAL_EXPERIENTIAL + 'action' → GENRE.",
+            "'dark action' splits: 'dark' → EMOTIONAL_EXPERIENTIAL + 'action' here.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.MUTEX,
@@ -633,8 +602,8 @@ class CategoryName(str, Enum):
     CULTURAL_TRADITION = (
         "Cultural tradition / national cinema",
         (
-            "Named cinema traditions/movements — Bollywood, Korean cinema, "
-            "Hong Kong action, Italian neorealism, French New Wave, Nordic noir, "
+            "Named cinema traditions — Bollywood, Korean cinema, Hong Kong "
+            "action, Italian neorealism, French New Wave, Nordic noir, "
             "J-horror, Dogme 95."
         ),
         (
@@ -642,8 +611,8 @@ class CategoryName(str, Enum):
             "Audio language → AUDIO_LANGUAGE."
         ),
         (
-            "If a tradition tag exists, country is misleading (Hollywood-funded HK action "
-            "isn't HK by production country).",
+            "If a tradition tag exists, country is misleading (Hollywood-funded "
+            "HK action isn't HK by production country).",
         ),
         ("Bollywood", "Korean cinema", "French New Wave"),
         (
@@ -664,8 +633,8 @@ class CategoryName(str, Enum):
             "Narrative setting ('set in Tokyo') → NARRATIVE_SETTING."
         ),
         (
-            "Production country is the wrong fit — Dune (US production) was "
-            "shot in Jordan/UAE; Mission Impossible Fallout shot across "
+            "Production country is the wrong fit — Dune (US production) shot "
+            "in Jordan/UAE; Mission Impossible Fallout shot across "
             "Kashmir/UAE/NZ.",
         ),
         ("shot in Iceland", "filmed in Morocco", "on location in Vietnam"),
@@ -679,18 +648,19 @@ class CategoryName(str, Enum):
     FORMAT_VISUAL = (
         "Format + visual-format specifics",
         (
-            "Format and visual-format specifics — documentary, anime, "
-            "mockumentary, B&W, 70mm, IMAX, found-footage, widescreen, handheld, "
+            "Format and visual specifics — documentary, anime, mockumentary, "
+            "B&W, 70mm, IMAX, found-footage, widescreen, handheld, "
             "single-take long shot, stop-motion."
         ),
         (
             "Form the movie takes, descriptively. Acclaim framing ('visually "
-            "stunning', '70mm masterpiece') → VISUAL_CRAFT_ACCLAIM. Genre → GENRE. "
-            "Non-default media type ('TV movies') → MEDIA_TYPE."
+            "stunning', '70mm masterpiece') → VISUAL_CRAFT_ACCLAIM. Genre → "
+            "GENRE. Non-default media type ('TV movies') → MEDIA_TYPE."
         ),
         (
-            "Surface form decides between this and VISUAL_CRAFT_ACCLAIM: 'shot on 70mm' "
-            "(descriptive) here vs 'IMAX experience' (acclaim) → VISUAL_CRAFT_ACCLAIM.",
+            "Surface decides between this and VISUAL_CRAFT_ACCLAIM: 'shot on "
+            "70mm' (descriptive) here vs 'IMAX experience' (acclaim) → "
+            "VISUAL_CRAFT_ACCLAIM.",
         ),
         ("documentary", "anime", "found-footage"),
         (
@@ -703,23 +673,23 @@ class CategoryName(str, Enum):
     NARRATIVE_DEVICES = (
         "Narrative devices + structural form + how-told craft",
         (
-            "How the story is structured/told at the craft level — plot twist, "
-            "nonlinear timeline, unreliable narrator, single-location, anthology, "
-            "ensemble, two-hander, POV mechanics, character-vs-plot focus."
+            "How the story is structured/told at the craft level — plot "
+            "twist, nonlinear timeline, unreliable narrator, single-location, "
+            "anthology, ensemble, two-hander, POV mechanics, "
+            "character-vs-plot focus."
         ),
         (
             "Structural devices only. Pacing-as-experience ('slow burn', "
             "'frenetic') → EMOTIONAL_EXPERIENTIAL. Structural ending types "
             "('twist ending', 'happy ending', 'downer ending') ALSO → "
-            "EMOTIONAL_EXPERIENTIAL despite seeming structural. Dialogue acclaim "
-            "→ DIALOGUE_CRAFT_ACCLAIM."
+            "EMOTIONAL_EXPERIENTIAL despite seeming structural. Dialogue "
+            "acclaim → DIALOGUE_CRAFT_ACCLAIM."
         ),
         (
-            "'Plot twist' (mid-story device) here vs 'twist ending' (ending type) → "
+            "'Plot twist' (mid-story device) here vs 'twist ending' → "
             "EMOTIONAL_EXPERIENTIAL.",
-            "'Sorkin-style' as a structural rapid-fire pattern → here; "
-            "as praise for the writing → DIALOGUE_CRAFT_ACCLAIM. The "
-            "surface framing decides which single category it lands in.",
+            "'Sorkin-style' as structural rapid-fire pattern → here; as "
+            "praise → DIALOGUE_CRAFT_ACCLAIM. Surface framing decides.",
         ),
         ("nonlinear timeline", "anthology film", "single-location thriller"),
         (
@@ -732,20 +702,22 @@ class CategoryName(str, Enum):
     TARGET_AUDIENCE = (
         "Target audience",
         (
-            "The audience being pitched to — 'family movies', 'teen movies', "
+            "Audience being pitched to — 'family movies', 'teen movies', "
             "'kids movie', 'for adults', 'watch with the grandparents', "
             "'something for grown-ups'."
         ),
         (
-            "Packaged-audience framing only. Story archetype like coming-of-age "
-            "→ STORY_THEMATIC_ARCHETYPE. Content-sensitivity ('no gore') → "
-            "SENSITIVE_CONTENT. Concrete situation ('date night') → VIEWING_OCCASION."
+            "Packaged-audience framing only. Story archetype like "
+            "coming-of-age → STORY_THEMATIC_ARCHETYPE. Content-sensitivity "
+            "('no gore') → SENSITIVE_CONTENT. Concrete situation ('date "
+            "night') → VIEWING_OCCASION."
         ),
         (
-            "An implicit rating ceiling (e.g. 'family' implying PG) is NOT "
-            "a separate trait — only an explicitly named rating fires "
+            "An implicit rating ceiling ('family' implying PG) is NOT a "
+            "separate trait — only an explicitly named rating fires "
             "MATURITY_RATING.",
-            "Imperative-mood 'watch with X' → VIEWING_OCCASION; attribute-mood 'X movies' here.",
+            "Imperative-mood 'watch with X' → VIEWING_OCCASION; "
+            "attribute-mood 'X movies' here.",
         ),
         ("family-friendly", "teen movies", "for adults"),
         (
@@ -769,7 +741,7 @@ class CategoryName(str, Enum):
             "(no explicit rating) is NOT a separate trait."
         ),
         (
-            "Negative polarity ('no gore', 'not too bloody') is common; the "
+            "Negative polarity ('no gore', 'not too bloody') is common; "
             "trait still fires here regardless of presence/absence framing.",
         ),
         ("no gore", "not too bloody", "no animal harm"),
@@ -787,19 +759,19 @@ class CategoryName(str, Enum):
             "Fourth of July."
         ),
         (
-            "Covers both 'movie for watching AT this season' and 'movie SET at "
-            "this season'. Pure narrative setting on a date ('set on Christmas "
-            "Eve') without seasonal-viewing framing → NARRATIVE_SETTING."
+            "Covers both 'movie for watching AT this season' and 'movie SET "
+            "at this season'. Pure narrative setting on a date ('set on "
+            "Christmas Eve') without seasonal-viewing framing → "
+            "NARRATIVE_SETTING."
         ),
         (
-            "'Christmas action movie' is two traits: 'Christmas' → here + "
-            "'action' → GENRE.",
+            "'Christmas action movie' splits: Christmas here + action → GENRE.",
         ),
         ("Christmas movies", "Halloween viewing", "Thanksgiving family viewing"),
         (
-            "'winter setting' (no holiday framing) → NARRATIVE_SETTING.",
-            "'documentary about Christmas' → CENTRAL_TOPIC (Christmas is the topic, not the watch occasion).",
-            "'snowed-in plot' → PLOT_EVENTS (story event, not seasonal viewing).",
+            "'winter setting' → NARRATIVE_SETTING.",
+            "'documentary about Christmas' → CENTRAL_TOPIC (Christmas is the topic).",
+            "'snowed-in plot' → PLOT_EVENTS.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.COMBO,
@@ -818,13 +790,13 @@ class CategoryName(str, Enum):
             "island after a plane crash'."
         ),
         (
-            "Multi-clause event prose. Bare element nouns ('heist', 'zombie') → "
-            "ELEMENT_PRESENCE. Time/place setting → NARRATIVE_SETTING. Thematic "
-            "essence → STORY_THEMATIC_ARCHETYPE."
+            "Multi-clause event prose. Bare element nouns ('heist', 'zombie') "
+            "→ ELEMENT_PRESENCE. Time/place setting → NARRATIVE_SETTING. "
+            "Thematic essence → STORY_THEMATIC_ARCHETYPE."
         ),
         (
-            "Threshold is descriptive depth: full event description here; bare noun → "
-            "ELEMENT_PRESENCE.",
+            "Threshold is descriptive depth: full event description here; "
+            "bare noun → ELEMENT_PRESENCE.",
         ),
         (
             "a heist crew gets double-crossed",
@@ -841,14 +813,15 @@ class CategoryName(str, Enum):
     NARRATIVE_SETTING = (
         "Narrative setting (time/place)",
         (
-            "Story's narrative time and place — 'set in 1940s Berlin', 'during "
-            "the Cold War', 'takes place in Tokyo', 'in a small desert town', "
-            "'on a remote island', 'medieval Europe'."
+            "Story's narrative time and place — 'set in 1940s Berlin', "
+            "'during the Cold War', 'takes place in Tokyo', 'small desert "
+            "town', 'remote island', 'medieval Europe'."
         ),
         (
-            "'Set in / takes place in / during' framings. Production era ('90s "
-            "movies') → RELEASE_DATE. Filming geography → FILMING_LOCATION. "
-            "Concrete focal subject ('about WWII') → CENTRAL_TOPIC."
+            "'Set in / takes place in / during' framings. Production era "
+            "('90s movies') → RELEASE_DATE. Filming geography → "
+            "FILMING_LOCATION. Concrete focal subject ('about WWII') → "
+            "CENTRAL_TOPIC."
         ),
         (
             "Setting prose lives near plot prose semantically; the routing "
@@ -868,17 +841,18 @@ class CategoryName(str, Enum):
         (
             "Story shape and thematic essence — 'about grief', 'redemption "
             "arcs', 'man-vs-nature', 'underdog stories', 'revenge', "
-            "'post-apocalyptic', 'coming-of-age', 'found-family', 'man-vs-self'."
+            "'post-apocalyptic', 'coming-of-age', 'found-family', "
+            "'man-vs-self'."
         ),
         (
             "Thematic abstraction. Concrete focal subject (JFK, Titanic) → "
-            "CENTRAL_TOPIC. Static character types (anti-hero, femme fatale) → "
-            "CHARACTER_ARCHETYPE."
+            "CENTRAL_TOPIC. Static character types (anti-hero, femme fatale) "
+            "→ CHARACTER_ARCHETYPE."
         ),
         (
-            "Spectrum framings ('kind of about grief', 'leans redemptive') still "
-            "fire here as a single trait with weakened intensity — no separate "
-            "routing branch.",
+            "Spectrum framings ('kind of about grief', 'leans redemptive') "
+            "fire here as one trait with weakened intensity — no separate "
+            "branch.",
             "'Post-apocalyptic' is story shape here, not a genre.",
         ),
         ("redemption arc", "found family", "underdog stories"),
@@ -902,16 +876,16 @@ class CategoryName(str, Enum):
             "'twist ending', 'downer ending', 'ambiguous ending')."
         ),
         (
-            "Anything emotional/experiential — before, during, or after watching. "
-            "Concrete viewing SITUATIONS ('date night') → VIEWING_OCCASION (named "
-            "events, not feelings). Genre identity → GENRE. Mid-story structural "
-            "devices → NARRATIVE_DEVICES."
+            "Anything emotional/experiential — before, during, or after "
+            "watching. Concrete viewing SITUATIONS ('date night') → "
+            "VIEWING_OCCASION (named events, not feelings). Genre → GENRE. "
+            "Mid-story structural devices → NARRATIVE_DEVICES."
         ),
         (
-            "Structural ending types ('twist ending', 'happy ending', 'downer "
-            "ending') live HERE despite being structural — the emotional "
+            "Structural ending types ('twist ending', 'happy ending', "
+            "'downer ending') live HERE despite being structural — emotional "
             "weight is what defines them.",
-            "'Dark action' is two traits: 'action' → GENRE + 'dark' → here.",
+            "'Dark action' splits: action → GENRE + dark here.",
         ),
         ("slow burn", "make me cry", "haunting", "twist ending"),
         (
@@ -925,9 +899,9 @@ class CategoryName(str, Enum):
     VIEWING_OCCASION = (
         "Viewing occasion",
         (
-            "Concrete named viewing situations — 'date night', 'rainy Sunday', "
-            "'long flight', 'with kids on Saturday', 'background watching', "
-            "'family movie night', 'put on while cooking'."
+            "Concrete named viewing situations — 'date night', 'rainy "
+            "Sunday', 'long flight', 'with kids on Saturday', 'background "
+            "watching', 'family movie night', 'put on while cooking'."
         ),
         (
             "Named-event surface form. Feelings/states ('comfort watch', "
@@ -935,8 +909,8 @@ class CategoryName(str, Enum):
             "movies') → TARGET_AUDIENCE."
         ),
         (
-            "Imperative-mood 'watch with X' = this; attribute-mood 'X movies' = "
-            "TARGET_AUDIENCE.",
+            "Imperative-mood 'watch with X' = this; attribute-mood 'X "
+            "movies' = TARGET_AUDIENCE.",
         ),
         ("date night", "rainy Sunday", "long flight"),
         (
@@ -955,12 +929,12 @@ class CategoryName(str, Enum):
         ),
         (
             "Acclaim framing only. Named cinematographer/VFX-supervisor → "
-            "BELOW_THE_LINE_CREATOR. Descriptive format ('shot in B&W', 'shot on "
-            "70mm' without praise) → FORMAT_VISUAL."
+            "BELOW_THE_LINE_CREATOR. Descriptive format ('shot in B&W', "
+            "'shot on 70mm' without praise) → FORMAT_VISUAL."
         ),
         (
-            "'70mm masterpiece' is two traits: 'masterpiece' → here + "
-            "'70mm' → FORMAT_VISUAL.",
+            "'70mm masterpiece' splits: 'masterpiece' here + '70mm' → "
+            "FORMAT_VISUAL.",
         ),
         ("visually stunning", "killer cinematography", "practical effects"),
         (
@@ -973,16 +947,17 @@ class CategoryName(str, Enum):
     MUSIC_SCORE_ACCLAIM = (
         "Music / score acclaim",
         (
-            "Acclaim for the music side — 'iconic score', 'great soundtrack', "
-            "'memorable theme', 'amazing music', 'killer needle drops'."
+            "Acclaim for the music side — 'iconic score', 'great "
+            "soundtrack', 'memorable theme', 'amazing music', 'killer "
+            "needle drops'."
         ),
         (
             "Acclaim only. Named composer (John Williams, Hans Zimmer) is "
             "indexed → PERSON_CREDIT. Genre 'musical' → GENRE."
         ),
         (
-            "'The iconic John Williams score' is two traits: 'John "
-            "Williams' → PERSON_CREDIT + 'iconic score' → here.",
+            "'The iconic John Williams score' splits: 'John Williams' → "
+            "PERSON_CREDIT + 'iconic score' here.",
         ),
         ("iconic score", "memorable theme music", "killer needle drops"),
         (
@@ -1000,12 +975,13 @@ class CategoryName(str, Enum):
         ),
         (
             "Dialogue acclaim only. Structural rapid-fire pattern (as a "
-            "how-told device) → NARRATIVE_DEVICES. Writer credit → PERSON_CREDIT."
+            "how-told device) → NARRATIVE_DEVICES. Writer credit → "
+            "PERSON_CREDIT."
         ),
         (
             "'Sorkin-style' as praise for the writing → here; as a "
-            "structural rapid-fire pattern → NARRATIVE_DEVICES. The "
-            "surface framing decides which single category it lands in.",
+            "structural rapid-fire pattern → NARRATIVE_DEVICES. Surface "
+            "framing decides.",
         ),
         ("snappy dialogue", "quotable lines", "Sorkin-style"),
         (
@@ -1024,17 +1000,18 @@ class CategoryName(str, Enum):
         ),
         (
             "Qualitative quality without numeric threshold. Specific numeric "
-            "thresholds → NUMERIC_RECEPTION_SCORE. Cultural / canonical status "
-            "('classic', 'cult', 'underrated', 'era-defining') → CULTURAL_STATUS. "
-            "Specific aspect praise/criticism ('praised for X', 'criticized "
-            "for pacing') → SPECIFIC_PRAISE_CRITICISM. Live trending → TRENDING."
+            "thresholds → NUMERIC_RECEPTION_SCORE. Cultural / canonical "
+            "status ('classic', 'cult', 'underrated', 'era-defining') → "
+            "CULTURAL_STATUS. Specific aspect praise/criticism ('praised "
+            "for X', 'criticized for pacing') → SPECIFIC_PRAISE_CRITICISM. "
+            "Live trending → TRENDING."
         ),
         (
-            "'best horror of the 80s' is three traits: 'best' → here + "
-            "'horror' → GENRE + 'of the 80s' → RELEASE_DATE.",
-            "'classic' by itself → CULTURAL_STATUS; add a separate "
-            "RELEASE_DATE trait only when an explicit era word is present "
-            "('old classic', 'modern classic').",
+            "'Best horror of the 80s' splits 3 ways: 'best' here + 'horror' "
+            "→ GENRE + 'of the 80s' → RELEASE_DATE.",
+            "'Classic' alone → CULTURAL_STATUS; add a separate RELEASE_DATE "
+            "trait only when an explicit era word is present ('old classic', "
+            "'modern classic').",
         ),
         ("well-received", "highly regarded", "popular"),
         (
@@ -1047,35 +1024,32 @@ class CategoryName(str, Enum):
     CULTURAL_STATUS = (
         "Cultural status / canonical stature",
         (
-            "Broad reputation, canon, and reception-shape labels — 'classic', "
-            "'cult classic', 'underrated', 'overhyped', 'divisive', "
-            "'era-defining', 'still holds up', 'influential', 'iconic', "
-            "'landmark', 'culturally significant', 'ahead of its time'."
+            "Broad reputation, canon, and reception-shape labels — "
+            "'classic', 'cult classic', 'underrated', 'overhyped', "
+            "'divisive', 'era-defining', 'still holds up', 'influential', "
+            "'iconic', 'landmark', 'culturally significant', 'ahead of its "
+            "time'."
         ),
         (
-            "Whole-work cultural position, not a specific part people liked "
-            "or disliked. Specific aspect praise/criticism ('praised for "
-            "tension', 'criticized for pacing') → SPECIFIC_PRAISE_CRITICISM. "
-            "General quality as a numeric prior ('well-received', 'popular') "
-            "→ GENERAL_APPEAL. Formal awards → AWARDS. Named curated lists "
-            "('Criterion Collection', 'AFI Top 100') → GENERIC_CATCHALL."
+            "Whole-work cultural position, not a specific part liked or "
+            "disliked. Specific aspect praise/criticism → "
+            "SPECIFIC_PRAISE_CRITICISM. Numeric prior ('well-received', "
+            "'popular') → GENERAL_APPEAL. Formal awards → AWARDS."
         ),
         (
-            "'classic' by itself lives here as canonical stature; add "
-            "RELEASE_DATE only when an explicit era word is present "
-            "('old classic', 'modern classic').",
-            "'underrated' primarily needs semantic reception/status prose; "
+            "'Classic' alone lives here; add RELEASE_DATE only when an "
+            "explicit era word is present ('old classic', 'modern classic').",
+            "'Underrated' primarily needs semantic reception/status prose; "
             "metadata is optional and must not be treated as a simple "
             "well-received floor.",
-            "'cult', 'divisive', and 'overhyped' describe reception shape, "
-            "not specific praised or criticized qualities.",
+            "'Cult', 'divisive', 'overhyped' describe reception shape, not "
+            "specific praised/criticized qualities.",
         ),
         ("classic", "cult classic", "underrated", "still holds up", "era-defining"),
         (
             "'praised for tension' → SPECIFIC_PRAISE_CRITICISM.",
             "'rated above 8' → NUMERIC_RECEPTION_SCORE.",
             "'Oscar-winning' → AWARDS.",
-            "'Criterion Collection' → GENERIC_CATCHALL.",
         ),
         (EndpointRoute.SEMANTIC, EndpointRoute.METADATA),
         HandlerBucket.COMBO,
@@ -1083,7 +1057,7 @@ class CategoryName(str, Enum):
     SPECIFIC_PRAISE_CRITICISM = (
         "Specific praise / criticism",
         (
-            "Reception prose for specific parts, qualities, or aspects people "
+            "Reception prose for specific parts/qualities/aspects people "
             "liked or disliked — 'praised for tension', 'criticized as "
             "plodding', 'praised for performances', 'criticized for weak "
             "ending', 'loved for its dialogue', 'hated for pacing'."
@@ -1097,9 +1071,9 @@ class CategoryName(str, Enum):
         ),
         (
             "Ask 'what other trait does this qualify?' If the answer is a "
-            "specific aspect of the movie (pacing, tension, performances, "
-            "ending, script), it can live here. If the answer is only the "
-            "whole movie's place in the culture, route to CULTURAL_STATUS.",
+            "specific aspect (pacing, tension, performances, ending, "
+            "script), it can live here. If only the whole movie's place in "
+            "culture → CULTURAL_STATUS.",
         ),
         (
             "praised for tension",
@@ -1125,23 +1099,34 @@ class CategoryName(str, Enum):
     BELOW_THE_LINE_CREATOR = (
         "Below-the-line creator",
         (
-            "Non-indexed creator roles — cinematographer, editor, production "
-            "designer, costume designer, VFX supervisor. 'Roger Deakins', "
-            "'Thelma Schoonmaker-edited', 'Sandy Powell costumes', 'Colleen "
-            "Atwood designs'."
+            "Literal below-the-line credit lookups — cinematographer, "
+            "editor, production designer, costume designer, VFX supervisor. "
+            "'Roger Deakins', 'Thelma Schoonmaker-edited', 'Sandy Powell "
+            "costumes', 'Colleen Atwood designs' framed as a direct credit "
+            "ask."
         ),
         (
             "RESERVED — currently returns empty until backing data lands. "
-            "Routing here keeps these names from misrouting to PERSON_CREDIT "
-            "(which would silently return zero results for non-indexed roles)."
+            "Routing here keeps literal credit lookups from misrouting to "
+            "PERSON_CREDIT (which would silently return zero results for "
+            "non-indexed roles). Stylistic-transfer framings ('Roger "
+            "Deakins-style cinematography', 'Deakins-shot' as praise) are "
+            "resolved parametrically into concrete craft attributes upstream "
+            "and route to VISUAL_CRAFT_ACCLAIM or FORMAT_VISUAL — they do "
+            "not reach this category. Director, writer, actor, producer, "
+            "composer remain at PERSON_CREDIT."
         ),
         (
-            "Director, writer, actor, producer, composer remain at PERSON_CREDIT (indexed).",
+            "Surface form must be a direct credit ask, not a stylistic "
+            "comparison. 'Roger Deakins movies' fires here; 'Roger "
+            "Deakins-style' does not.",
         ),
-        ("Roger Deakins", "Sandy Powell costumes", "Greig Fraser-shot"),
+        ("Roger Deakins movies", "Sandy Powell costumes", "edited by Thelma Schoonmaker"),
         (
             "'Christopher Nolan' → PERSON_CREDIT (director, indexed).",
             "'great cinematography' (no name) → VISUAL_CRAFT_ACCLAIM.",
+            "'Roger Deakins-style cinematography' → resolved upstream into "
+            "concrete craft attributes; routes to VISUAL_CRAFT_ACCLAIM.",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE,
@@ -1149,84 +1134,35 @@ class CategoryName(str, Enum):
     NAMED_SOURCE_CREATOR = (
         "Named source creator",
         (
-            "Named creator of source material being adapted — Stephen King, "
-            "Tolkien, Shakespeare, Philip K. Dick, Neil Gaiman, Jane Austen."
+            "Named creator of source material being adapted — Stephen "
+            "King, Tolkien, Shakespeare, Philip K. Dick, Neil Gaiman, Jane "
+            "Austen."
         ),
         (
             "Source-material authors only. A character-anchored franchise "
-            "named as the source ('Sherlock Holmes books') splits — the "
-            "character → CHARACTER_FRANCHISE, the medium → ADAPTATION_SOURCE; "
+            "named as the source ('Sherlock Holmes books') splits — "
+            "character → CHARACTER_FRANCHISE, medium → ADAPTATION_SOURCE; "
             "Sherlock himself is the book's subject, not its author. A "
-            "character-less franchise named as the source ('Star Wars "
-            "novelizations') → FRANCHISE_LINEAGE for the franchise + "
-            "ADAPTATION_SOURCE for the medium. Generic medium with no named "
-            "creator → ADAPTATION_SOURCE alone. Film credit (director, "
-            "writer, actor) → PERSON_CREDIT."
+            "character-less franchise as source ('Star Wars novelizations') "
+            "→ FRANCHISE_LINEAGE for the franchise + ADAPTATION_SOURCE for "
+            "the medium. Generic medium with no named creator → "
+            "ADAPTATION_SOURCE alone. Film credit (director, writer, "
+            "actor) → PERSON_CREDIT."
         ),
         (
-            "'X's <medium>' phrases split into two traits: the creator → "
-            "here, the medium ('books', 'plays', 'novels') → "
-            "ADAPTATION_SOURCE.",
+            "'X's <medium>' phrases split into two traits: creator here + "
+            "medium ('books', 'plays', 'novels') → ADAPTATION_SOURCE.",
             "A named referent stays as one trait — never split mid-name "
-            "(e.g. 'Stephen King' is one trait, not 'Stephen' + 'King').",
+            "('Stephen King' is one trait).",
         ),
         ("Stephen King novels", "Shakespeare adaptations", "Neil Gaiman"),
         (
-            "'Sherlock Holmes books' is two traits: 'Sherlock Holmes' "
-            "(book's subject, not its author) → CHARACTER_FRANCHISE + "
-            "'books' → ADAPTATION_SOURCE.",
-            "'Christopher Nolan' → PERSON_CREDIT (director, not source author).",
+            "'Sherlock Holmes books' splits: 'Sherlock Holmes' (book's "
+            "subject) → CHARACTER_FRANCHISE + 'books' → ADAPTATION_SOURCE.",
+            "'Christopher Nolan' → PERSON_CREDIT (director).",
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE,
-    )
-    LIKE_MEDIA_REFERENCE = (
-        "Like <media> reference",
-        (
-            "Named-work comparison queries that require an initial "
-            "outside-knowledge expansion — 'like Inception', "
-            "'similar to The Office', 'movies that feel like David Lynch', "
-            "'in the vein of Hitchcock thrillers', 'X-style', 'Coen Brothers "
-            "movie'. This category signals that ordinary endpoint routing is "
-            "not enough yet: the named referent must be expanded into "
-            "distinctive traits, then re-routed."
-        ),
-        (
-            "Triggers on EXPLICIT comparison surface forms only ('like X', "
-            "'similar to Y', 'in the vein of', 'X-style', 'feels like'). Vague "
-            "reference classes WITHOUT a named comparison target ('comedians "
-            "doing drama', 'auteur directors of the 70s') → GENERIC_CATCHALL."
-        ),
-        (
-            "Use outside knowledge for an initial expansion before filling "
-            "ordinary endpoint parameters. The named referent's distinctive "
-            "traits are what get matched, not the referent name itself — so "
-            "'like Inception' returns movies sharing Inception's traits, not "
-            "literal substring matches.",
-        ),
-        (
-            "like Inception",
-            "similar to The Office",
-            "in the vein of Hitchcock",
-            "feels like a Stephen King novel",
-            "like playing The Last of Us",
-        ),
-        (
-            "'comedians doing drama' → GENERIC_CATCHALL.",
-            "'Christopher Nolan movies' → PERSON_CREDIT (direct credit, not comparison).",
-            "'based on a Stephen King novel' is two traits: 'Stephen King' "
-            "→ NAMED_SOURCE_CREATOR + 'novel' → ADAPTATION_SOURCE (an "
-            "adaptation flag, not a stylistic comparison).",
-        ),
-        (
-            EndpointRoute.ENTITY,
-            EndpointRoute.KEYWORD,
-            EndpointRoute.SEMANTIC,
-            EndpointRoute.METADATA,
-            EndpointRoute.FRANCHISE_STRUCTURE,
-            EndpointRoute.AWARDS,
-        ),
-        HandlerBucket.COMBO,
     )
 
     # -----------------------------------------------------------------
@@ -1245,61 +1181,15 @@ class CategoryName(str, Enum):
             "'best' → GENERAL_APPEAL; 'most acclaimed' → CULTURAL_STATUS."
         ),
         (
-            "'The latest Scorsese' is two traits: 'latest' → here + "
-            "'Scorsese' → PERSON_CREDIT.",
+            "'The latest Scorsese' splits: 'latest' here + 'Scorsese' → "
+            "PERSON_CREDIT.",
         ),
         ("the newest one", "earliest film", "most recent release"),
         (
             "'recent movies' → RELEASE_DATE.",
-            "'best of all time' is two traits: 'best' → GENERAL_APPEAL + "
-            "'of all time' (canonical reception) → CULTURAL_STATUS.",
+            "'best of all time' splits: 'best' → GENERAL_APPEAL + 'of all "
+            "time' → CULTURAL_STATUS.",
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE,
-    )
-
-    # -----------------------------------------------------------------
-    # Catch-all
-    # -----------------------------------------------------------------
-
-    GENERIC_CATCHALL = (
-        "Generic parametric catch-all",
-        (
-            "Vague reference classes and named curated lists that require an "
-            "initial outside-knowledge expansion — "
-            "'comedians doing drama', 'auteur directors of the 70s', "
-            "'directors known for long takes', 'child actors who became "
-            "serious', Criterion Collection, AFI Top 100, IMDb Top 250, BFI, "
-            "National Film Registry, Sight & Sound greatest, '1001 Movies to "
-            "See Before You Die'. This category signals that the trait needs "
-            "expansion or curated-list knowledge before ordinary endpoint "
-            "routing can happen."
-        ),
-        (
-            "Last resort — used only when no structured category fits. "
-            "Named WORK comparison ('like Inception', 'Hitchcock-style') → "
-            "LIKE_MEDIA_REFERENCE — that expands a named work; this expands "
-            "a class or list."
-        ),
-        (
-            "Use outside knowledge for an initial expansion before filling "
-            "ordinary endpoint parameters. The vague class or named list is "
-            "what gets expanded — its distinctive traits or curated members "
-            "drive retrieval, not a literal substring match on the trait "
-            "wording.",
-        ),
-        ("Criterion Collection", "comedians doing drama", "AFI Top 100"),
-        (
-            "'like Inception' → LIKE_MEDIA_REFERENCE.",
-            "'horror' → GENRE (clean structured fit).",
-        ),
-        (
-            EndpointRoute.ENTITY,
-            EndpointRoute.KEYWORD,
-            EndpointRoute.SEMANTIC,
-            EndpointRoute.METADATA,
-            EndpointRoute.FRANCHISE_STRUCTURE,
-            EndpointRoute.AWARDS,
-        ),
-        HandlerBucket.COMBO,
     )

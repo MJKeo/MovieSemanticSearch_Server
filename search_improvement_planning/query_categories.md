@@ -24,14 +24,25 @@ now routes to whichever specific space carries the relevant sub-axis.
 
 ---
 
+**v3.1 update — parametric resolution moved into Step 2.** The two
+former parametric-expansion categories (Cat 43 "Like &lt;media&gt;
+reference" and Cat 45 "Generic interpretive / catch-all") have been
+removed. Their work — outside-knowledge expansion of a named work or
+vague reference class — is now done by Step 2's literal test +
+parametric resolution layer (see `v3_step_2_rethinking.md`). After
+resolution, what used to be a Cat 43/45 trait becomes a list of
+concrete attribute traits that route to ordinary categories. The
+numbering preserves gaps at 43 and 45 to keep cross-references with
+prior planning docs intact.
+
 ## Global rules
 
 - **Per-trait step-2 payload:** role (carver/qualifier), polarity
-  (positive/negative), category (1-44), salience (qualifier-only:
-  central/supporting). No `framing_mode` field — salience absorbs
-  spectrum handling: a "kind of about grief" qualifier is just
-  `supporting` salience, and downstream weighting handles the
-  diminished impact correctly.
+  (positive/negative), category (one of the 43 active enum members),
+  salience (qualifier-only: central/supporting). No `framing_mode`
+  field — salience absorbs spectrum handling: a "kind of about grief"
+  qualifier is just `supporting` salience, and downstream weighting
+  handles the diminished impact correctly.
 - **Categories compose:** a single query routinely fires several.
   See composition notes at the bottom.
 - **Compound split rule:** if a phrase fits multiple categories, that
@@ -565,11 +576,14 @@ polarized reception shape.
 **Boundaries:** specific aspect-level praise/criticism ("praised
 for tension," "criticized as plodding," "praised for
 performances") → Cat 40. Simple quality/numeric-prior language
-("well-received," "popular") → Cat 38. Formal awards →
-Cat 11. Named curated lists ("Criterion Collection," "AFI Top
-100") → Cat 45. Explicit era words split separately: "old classic"
-and "modern classic" fire Cat 13 + Cat 39; "classic" alone does
-not imply Cat 13.
+("well-received," "popular") → Cat 38. Formal awards → Cat 11.
+Named curated lists ("Criterion Collection," "AFI Top 100") fail
+Step 2's literal test and are parametrically resolved into their
+constituent attributes — typically a CULTURAL_STATUS trait
+(canonical reception) plus genre/era/origin traits — rather than
+routed as a single list-membership lookup. Explicit era words split
+separately: "old classic" and "modern classic" fire Cat 13 + Cat
+39; "classic" alone does not imply Cat 13.
 
 ### 40. Specific praise / criticism
 **Endpoints:** RCP + KW (additive combo).
@@ -591,18 +605,24 @@ records ("Oscar-winning") → Cat 11 by compound split rule.
 
 ### 41. Below-the-line creator lookup
 **Endpoints:** Reserved (returns empty for now).
-**Handles:** cinematographer, editor, production designer, costume
-designer, VFX supervisor — "Roger Deakins movies," "Thelma
-Schoonmaker-edited," "Sandy Powell costumes," "Colleen Atwood
-designs."
+**Handles:** **literal credit lookups only** —
+cinematographer, editor, production designer, costume designer, VFX
+supervisor named as a direct credit ask: "Roger Deakins movies,"
+"edited by Thelma Schoonmaker," "Sandy Powell costumes."
 **Status:** category reserved as a deliberate slot. Returns empty
 until postings or a directed semantic-on-credits surface lands.
-Routing here keeps these queries from scattering across wrong cats
-in the meantime.
-**Boundaries:** future mechanism likely RCP (reception prose names
-these creators when noted) + dedicated postings if/when indexed.
-Distinct from Cat 1 because Cat 1 is posting-table-backed and
-would fail silently for non-indexed roles.
+Routing here keeps literal credit queries from scattering across
+wrong cats in the meantime.
+**Boundaries:** literal credit asks only. Stylistic-transfer
+framings ("Roger Deakins-style cinematography," "Deakins-shot" as a
+praise/style descriptor) fail Step 2's literal test and are
+parametrically resolved into concrete craft attributes (deep shadow
+contrast, naturalistic light, deliberate compositions) that route
+to Cat 35. Under v3.1 this is a major load-shed: the parametric
+majority of Cat 41's old surface area is gone. Distinct from Cat 1
+because Cat 1 is posting-table-backed and would fail silently for
+non-indexed roles. Future mechanism likely RCP + dedicated postings
+if/when indexed.
 
 ### 42. Named source creator
 **Endpoints:** P-EVT + RCP (additive combo).
@@ -633,23 +653,17 @@ referent half routes per the rule above; the medium half ("books,"
 material creators aren't film credits — so Cat 42 is the only path
 for these names.
 
-### 43. "Like &lt;media&gt;" reference
-**Endpoints:** ENT + KW + RCP/P-EVT/P-ANA/VWX/CTX/NRT/PRD +
-META + FRA + AWD, after initial named-referent analysis.
-**Handles:** named-work comparison — "like Inception," "similar to
-The Office," "movies that feel like David Lynch," "in the vein of
-Hitchcock thrillers," "like a Coen Brothers movie."
-**Mechanism:** the existing endpoint handler uses outside knowledge
-to analyze the named referent, extract 4-6 distinctive traits
-(genre, narrative devices, tone, themes, era, etc.), then fills
-ordinary endpoint parameters for those traits. This is not a
-separate endpoint family and does not search the corpus directly.
-**Boundaries:** triggers on explicit comparison surface forms only
-— "like X," "similar to Y," "in the vein of Z," "X-style," "feels
-like Q." Vague reference classes without a named comparison target
-("comedians doing drama," "auteur directors") → Cat 45. The
-distinction: Cat 43 expands a single named work; Cat 45 expands a
-class.
+### 43. *(removed in v3.1)*
+Was: "Like &lt;media&gt;" reference — outside-knowledge expansion of
+a named work ("like Inception," "in the vein of Hitchcock"). The
+literal test catches these phrases (the literal text doesn't return
+matching movies), and Step 2's parametric resolution expands the
+named referent into 4-6 concrete attribute traits that route to
+ordinary categories (Cat 22, 26, 32, 33, etc.). Keeping this
+category around would be actively harmful: it would give Step 2 an
+escape hatch to dump "like Inception" without resolving, defeating
+the new architecture. See `v3_step_2_rethinking.md` for the full
+flow.
 
 ---
 
@@ -670,35 +684,20 @@ superlative (Cats 38/39). "The latest Scorsese" is Cat 44 + Cat 1.
 
 ---
 
-## Catch-all
-
-### 45. Generic interpretive / catch-all
-**Endpoints:** ENT + KW + RCP/P-EVT/P-ANA/VWX/CTX/NRT/PRD +
-META + FRA + AWD, chosen by the handler after initial analysis.
-**Handles:** anything that needs interpretation/expansion and
-doesn't fit a structured category. Specifically:
-- **Vague reference classes:** "comedians doing drama," "auteur
-  directors of the 70s," "directors known for long takes," "child
-  actors who became serious."
-- **Named lists / curated canon:** Criterion Collection, AFI Top
-  100, IMDb Top 250, BFI, National Film Registry, Sight & Sound
-  greatest, "1001 Movies to See Before You Die," film-school canon.
-- **Anything else step 2 recognizes as real but underspecified.**
-
-**Mechanism:** multi-mechanism — the existing handler uses outside
-knowledge to choose what fits the trait. It can fill entity
-parameters for expanded actor/director instances, KW for
-tag-resolvable list signatures, semantic spaces for prose
-signatures, META priors for canonical-list queries, FRA for
-franchise implications, or AWD when expansion yields award-shaped
-requirements. It does not default to semantic-only.
-**Boundaries:** distinct from Cat 43 — Cat 43 expands a *named
-work*; Cat 45 expands a *reference class or named list*. Both use
-outside-knowledge analysis before ordinary endpoint parameter
-generation; the difference is what gets expanded and how. This is
-the only true catch-all in the taxonomy; the goal is to keep
-shrinking it as recognizable patterns get lifted into dedicated
-cats.
+### 45. *(removed in v3.1)*
+Was: Generic interpretive / catch-all — outside-knowledge expansion
+of vague reference classes ("comedians doing drama") and named
+curated lists (Criterion Collection, AFI Top 100). Same fate as
+Cat 43: these phrases all fail the literal test, and Step 2's
+parametric resolution expands the class or list into concrete
+attribute traits (canonical reception, arthouse leaning,
+international auteur cinema, specific actor instances, etc.) that
+route to ordinary categories. With resolution now upstream, no
+"catch-all" routing slot is needed — and keeping one would let
+Step 2 skip resolution entirely. If resolution itself fails (low
+confidence, no concrete attributes recoverable), the documented
+fallback in `v3_step_2_rethinking.md` is to drop the parametric
+piece and degrade to a related literal trait, not to route here.
 
 ---
 
@@ -730,19 +729,19 @@ Cats 8, 9, 10, 25, 26, 32.
 **Combo** — multiple endpoints apply and each carries distinct,
 complementary signal that can't be collapsed into a single call.
 All applicable endpoints fire in parallel.
-Cats 6, 27, 28, 29, 33, 35, 37, 39, 40, 42, 43, 45.
+Cats 6, 27, 28, 29, 33, 35, 37, 39, 40, 42.
 
 ### Special
-
-**Outside-knowledge expansion** — the category asks an existing
-handler to use outside knowledge first, then fill ordinary
-endpoint parameters. This is a reasoning mode, not a separate
-endpoint route.
-Cats 43 (named-work expansion), 45 (multi-mechanism catch-all).
 
 **Reserved / no-op** — category is reserved as a routing slot but
 returns empty until backing data lands.
 Cat 41.
+
+The "outside-knowledge expansion" shape that previously held Cats
+43 and 45 no longer exists at the category layer. Parametric
+resolution moved into Step 2 (see `v3_step_2_rethinking.md`), so by
+trait-commitment time every trait is concrete and routes through
+ordinary mechanical category fits.
 
 ---
 
@@ -750,11 +749,12 @@ Cat 41.
 
 | Gap | Category | How handled |
 |---|---|---|
-| Below-the-line credits | Cat 41 | Reserved slot, returns empty until data lands |
-| Curated canon (Criterion, AFI) | Cat 45 | Outside-knowledge expansion to canonical list signatures, then ordinary endpoint parameters |
+| Below-the-line credits (literal asks) | Cat 41 | Reserved slot, returns empty until data lands |
+| Below-the-line stylistic transfer ("Deakins-style") | n/a | Step 2 parametric resolution → concrete craft attributes → Cat 35 |
+| Curated canon (Criterion, AFI) | n/a | Step 2 parametric resolution → CULTURAL_STATUS + genre/era/origin attribute traits |
 | Source-material creator | Cat 42 | Semantic (P-EVT + RCP) for name occurrences |
-| Reference-work comparison ("like X") | Cat 43 | Named-referent analysis, then ordinary endpoint parameters |
-| Vague reference class ("comedians doing drama") | Cat 45 | Outside-knowledge expansion to instances, then ordinary endpoint parameters |
+| Reference-work comparison ("like X") | n/a | Step 2 parametric resolution → 4-6 concrete attribute traits → ordinary categories |
+| Vague reference class ("comedians doing drama") | n/a | Step 2 parametric resolution → instance list (PERSON_CREDIT) or attribute list |
 | Character-anchored franchise (Batman, Bond) | Cat 6 | Combo: ENT character postings + FRA lineage |
 | Gateway / entry-level | Cat 33 | Folded into emotional/experiential combo |
 | Cultural tradition | Cat 23 | KW tag → META fallback |
@@ -789,8 +789,13 @@ Worked examples:
   (cultural status / canonical stature) + Cat 22 (horror) + Cat 13 (80s).
 - "Stephen King novels from the 90s" → Cat 42 (Stephen King) +
   Cat 7 (novel adaptation) + Cat 13 (90s).
-- "Movies like Inception with a slow burn" → Cat 43 (Inception
-  expansion) + Cat 33 (slow-burn pacing).
+- "Movies like Inception with a slow burn" → "like Inception"
+  fails the literal test and is parametrically resolved in Step 2
+  into concrete attributes (e.g. nested-timeline structure → Cat 26,
+  identity/grief themes → Cat 32, sci-fi thriller → Cat 22,
+  cerebral-cognitive load → Cat 33), then "slow burn" → Cat 33.
+  No Cat 43 anymore — resolution makes the comparison concrete
+  before commitment.
 - "Batman movies from the 80s" → Cat 6 (Batman character-
   franchise) + Cat 13 (80s). Note: one trait for Batman, not
   Cat 3 + Cat 5 — Cat 6 fans out to ENT + FRA internally.
@@ -846,7 +851,9 @@ Worked examples:
   Batman get exactly one trait.
 
 The only time a compound stays bound to a single category is when
-the category explicitly owns the compound — e.g. a named curated
-list ("Criterion Collection") in Cat 45, which *is* the compound
-of "canonical recognition + specific named list," or a dual-nature
-referent in Cat 6.
+the category explicitly owns the compound — e.g. a dual-nature
+referent (a single name that is inherently both a character and a
+franchise) in Cat 6. Curated-list compounds like "Criterion
+Collection" are no longer absorbed by a catch-all category;
+parametric resolution in Step 2 splits them into their constituent
+attribute traits before category routing.

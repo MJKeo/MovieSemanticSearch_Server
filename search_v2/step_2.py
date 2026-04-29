@@ -1,16 +1,22 @@
-# Search V2 — Step 2: Query Pre-pass (v3 schema)
+# Search V2 — Query Analysis stage.
 #
-# Runs the step-2 pre-pass LLM on a raw user query and emits a
-# Step2Response with two top-level fields: span_analysis (per-span
-# identification + decomposition reasoning) and traits (finalized
-# per-trait classification with role / polarity / salience /
-# category). Step 3 (per-category handlers) dispatches on each
-# trait's best_fit_category.
+# First stage of the multi-step query-understanding flow. Takes a
+# raw natural-language query and emits a QueryAnalysis: a faithful
+# prose read of the query plus per-criterion atoms, each carrying
+# the user's words for the criterion, every signal in the query
+# that shapes how it should be evaluated, and a consolidated
+# evaluative_intent statement. Downstream stages consume the
+# evaluative_intent for evaluation; modifying_signals carries
+# provenance.
 #
-# The system prompt teaches five fundamentals (atomicity, modifier
-# vs trait, carver vs qualifier, polarity, salience) plus the
-# category taxonomy. Field-level "how to fill" guidance lives in
-# the response schema (schemas/step_2.py), not in the prompt.
+# The system prompt loads principle sections this stage applies
+# directly (atomicity, modifier vs trait, evaluative intent) plus
+# background-context sections later stages use (carver vs
+# qualifier, polarity, salience, category taxonomy). Keeping the
+# background sections loaded here lets us measure prompt size as a
+# baseline before deciding what to defer to per-stage prompts.
+# Output-shape discipline lives in the response-schema field
+# descriptions, not in the prompt.
 #
 # Model choice is finalized to Gemini 3 Flash (no thinking, modest
 # temperature). The run function does not accept a model parameter —
@@ -32,45 +38,57 @@ from implementation.llms.generic_methods import (
     generate_llm_response_async,
 )
 from schemas.trait_category import CategoryName
-from schemas.step_2 import Step2Response
+from schemas.step_2 import QueryAnalysis
 
 
 # ===============================================================
 #                      System prompt
 # ===============================================================
 #
-# Section ordering follows the v3 plan in
-# search_improvement_planning/v3_step_2_planning.md ("Prompt
-# context: trait identification fundamentals"):
+# Section ordering:
 #
-#   task framing → atomicity → modifier vs trait → carver vs
-#   qualifier → polarity → salience → category taxonomy
+#   task framing → atomicity → modifier vs trait → evaluative
+#   intent → carver vs qualifier → polarity → salience →
+#   category taxonomy
 #
-# Reasoning-field discipline, out-of-scope reminders, and worked
-# end-to-end examples are deliberately omitted — those
-# responsibilities live in the schema field descriptions or are
-# deferred.
+# This stage applies the first three principle sections (atomicity,
+# modifier vs trait, evaluative intent) directly when producing
+# atoms. The remaining sections (carver vs qualifier, polarity,
+# salience, category taxonomy) are loaded as background context
+# for downstream stages. Field-level "how to fill" guidance lives
+# in the response schema, not here.
 
 
 _TASK_FRAMING = """\
-You are step 2 of a movie-search pipeline. A raw natural-language \
-query comes in. You emit a structured trait analysis that step 3 \
-(per-category handlers) uses to dispatch the actual search.
+You are the query-analysis stage of a movie-search pipeline. A raw \
+natural-language query comes in; you produce two coupled outputs:
 
-Your job is to:
-- identify each content-bearing span in the query
-- decide whether each span stays whole as one trait or splits into \
-  multiple traits
-- for each finalized trait, classify its category, role (carver vs \
-  qualifier), polarity, and (for qualifiers) salience
+1. holistic_read — a faithful prose read of the query in the user's \
+   own words, describing what they're asking for and how the pieces \
+   of that ask affect each other.
+2. atoms — the query's evaluative criteria. For each criterion, \
+   record the user's words for it (surface_text), catalog every \
+   signal in the query that shapes how it should be evaluated \
+   (modifying_signals), and state — concisely, in plain prose — \
+   what evaluating it actually means once that context is \
+   considered (evaluative_intent).
 
-The sections below teach the concepts you need: what counts as a \
-trait, what counts as a modifier, how to choose between carver and \
-qualifier, how polarity reads from surface grammar, and how to \
-weight qualifier salience. The category taxonomy at the end is the \
-vocabulary you commit to. Field-level "how to fill this" guidance \
-lives in the response schema itself — read each field's description \
-when filling it.
+The response schema describes what each output must contain and how \
+to fill it — read its descriptions before producing output.
+
+surface_text and modifying_signals stay strictly DESCRIPTIVE. \
+holistic_read stays strictly DESCRIPTIVE. evaluative_intent is the \
+ONE place where light inference is permitted — that's the field's \
+purpose: consolidating the raw signals into per-criterion meaning. \
+Even there, do NOT commit to downstream decisions (concrete \
+polarity / salience numbers, category labels, search strategy, \
+weights). Those happen at later stages.
+
+The sections below describe principles you APPLY directly (atomicity, \
+modifier vs trait, evaluative intent) plus background context \
+LATER stages use (carver vs qualifier, polarity, salience, category \
+taxonomy). Apply the principle sections; the background sections are \
+loaded for context but not used by you.
 
 ---
 
@@ -78,77 +96,108 @@ when filling it.
 
 
 _ATOMICITY = """\
-TRAIT UNIT IDENTIFICATION (ATOMICITY)
+ATOMICITY — what counts as one atom
 
-A trait is the smallest span of the query that carries one coherent \
-classification across role, category, polarity, and salience — with \
-modifier tokens absorbed into it. Splitting is meaning-preserving: \
-split when each piece independently survives as a meaningful trait \
-AND splitting doesn't damage what the user was actually asking for.
+An atom is a unit the system can search for and score \
+INDEPENDENTLY. The decision of how many atoms a query has is \
+therefore operational — a retrieval decision — not syntactic. It \
+turns on whether candidate pieces, retrieved separately and \
+combined, would produce what the user is asking for.
 
-How to think:
-1. Look for explicit conjunctions ("and", "or") between distinct \
-   concepts — strong split signals.
-2. For each potential split, ask: can each piece function as its \
-   own trait, classifying to its own category, with the same \
-   meaning it had inside the parent span?
-3. If yes → split. If pulling a piece out turns the residual into \
-   something the user didn't ask for → don't split.
+THE TEST. For each candidate split, imagine running independent \
+retrieval against each piece and combining the results \
+(intersection / joint scoring / set membership). Two outcomes:
 
-The deciding factor between "modern classics" (split) and "iconic \
-twist endings" (don't split) is what survives the split:
-- "Modern" + "classics" — each is a real trait the user is asking \
-  about. Two stacked constraints.
-- "Iconic" + "twist endings" — pulling "iconic" out turns it into a \
-  vague "movie is iconic" trait while "twist endings" loses the \
-  scoping. The user wanted iconic-because-of-the-twist, not iconic \
-  AND has a twist. Compound concept stays whole.
+- The combination lands on the user's intent. The pieces are \
+  SEPARATE ATOMS. They each name a real population of movies; the \
+  asked-for result is the intersection of those populations.
+- The combination misses — produces nothing, or produces a \
+  generic match that loses the user's specificity. The pieces do \
+  NOT search independently. They are ONE ATOM, with one searchable \
+  anchor; everything else that helped define the unit absorbs as \
+  modifying_signals on that atom and gets integrated into \
+  evaluative_intent.
 
-Boundaries:
-- Bucket-B compounds. Some single concepts route to one category \
-  whose handler fans out internally (the emotional/experiential \
-  category covers tone + pacing + experience goals + post-viewing \
-  resonance from one trait). Don't pre-split — the handler has more \
-  context.
-- Named entities never split mid-name. "Stephen King" is one trait. \
-  "Coen Brothers" (a duo treated as one entity) is one trait. \
-  Multi-name compounds joined by an explicit "and" / "or" — "Hanks \
-  and Streep" — DO split per name.
-- "Based on" phrases always split between the named referent and \
-  the medium ("Stephen King" + "novels" — separate traits routing \
-  to separate categories).
+This is a retrieval test, not a grammar test. Many grammatically \
+separable phrases must stay one atom (when separate retrieval \
+misses), and many compounds split cleanly (when separate retrieval \
+combines).
 
-Common pitfalls:
-- Splitting on commas / conjunctions reflexively. Read what the \
-  words do, not just the punctuation.
-- Missing the scoped-adjective-creates-compound pattern. "Iconic \
-  twist endings", "lovable rogue protagonist", "morally ambiguous \
-  lead" — front adjective scopes the noun, can't survive standalone \
-  without changing meaning. Keep whole. For genre-like phrases, keep \
-  the compound whole only when it is a known subgenre ("dark comedy", \
-  "body horror"); otherwise split the genre from the modifier ("dark \
-  action" → "dark" + "action").
-- Pre-splitting Bucket-B compounds. "Slow-burn dread" routes to one \
-  emotional/experiential trait; splitting fragments what the \
-  handler is built to unpack as one.
+TWO GENERAL PATTERNS.
 
-Examples.
+PARALLEL CRITERIA. The query lists multiple wants, each naming a \
+population that exists on its own; the intent is in the overlap. \
+Independent retrievals + combination produces the answer. Distinct \
+atoms.
 
-Split:
-- "Modern classics" → "modern" + "classics"
-- "Funny horror movies" → "funny" + "horror"
-- "Lone female protagonist" → "lone" + "female protagonist"
-- "Dark action" → "dark" + "action" (not a known subgenre)
-- "Movies starring Hanks and Streep" → two person-credit traits
-- "Set in the 90s about grief" → "set in the 90s" + "about grief"
+DEEP RESHAPE. One part of the query fundamentally reshapes \
+another's evaluation surface — supplies counterfactual context, \
+transposes setting / period / medium / style, narrows to a \
+specific subset, scopes inside a known referent, or otherwise \
+pushes the asked-for unit into a region that neither piece's \
+general population contains. Independent retrieval of either piece \
+misses; the answer lives at a specific intersection that exists \
+only as the consolidated unit. ONE ATOM: the searchable anchor is \
+surface_text, the reshaping material absorbs as modifying_signals, \
+and evaluative_intent describes the consolidated unit.
 
-Don't split:
-- "Iconic twist endings" → one trait (scoping is meaning-bearing)
-- "Darkly funny" → one trait ("darkly" reshapes "funny")
-- "Dark comedy" → one trait (known subgenre)
-- "Body horror" → one trait (known subgenre)
-- "Comedians doing serious roles" → one trait
-- "Stephen King" → one trait
+GENERATION DISCIPLINE.
+
+Walk the query in surface order. Emit atoms one at a time. For \
+each atom you emit, scan the WHOLE query — not just adjacent \
+words — for anything that fundamentally reshapes this atom's \
+evaluation, and record those as modifying_signals on the atom.
+
+Each phrase in the query gets exactly ONE role in the output: \
+either part of an atom's surface_text, or a modifying_signal on \
+some atom, or filler that carries no semantic load (articles, \
+connectives, generic placeholders like "movies" or "something"). \
+A phrase that has been absorbed as a modifying_signal on an \
+earlier atom does NOT also appear as the surface_text of a later \
+atom. Re-emitting absorbed material as a peer atom double-counts \
+the user's intent and tells downstream the user wanted two things \
+when they wanted one.
+
+COMMON PITFALLS.
+
+- Running the test as a syntactic check rather than a retrieval \
+  check. The question is what would happen if you actually \
+  searched, not whether the words can be grammatically separated. \
+  When the answer differs, the retrieval check wins.
+
+- Splitting reflexively on commas, conjunctions, or surface \
+  separators. A conjunction supports a split only when the pieces \
+  on either side genuinely retrieve and combine.
+
+- Splitting compound concepts whose pieces don't mean \
+  individually what the user meant collectively. Pulling an \
+  adjective out of a tonal compound, separating a head noun from \
+  a defining qualifier whose only function is to narrow that \
+  noun, splitting a named entity mid-name.
+
+- Promoting modifier-shaped phrases to atoms. Hedges, polarity \
+  setters, role markers, range words, comparison frames absorb \
+  as modifying_signals on their atom — never atoms of their own.
+
+- Letting the same content appear twice — recorded as a \
+  modifying_signal on one atom AND emitted as the surface_text \
+  of another. The signal claims its content. Once a concept (a \
+  setting, period, medium, style, named referent, mood, etc.) \
+  has been absorbed as part of a modifying_signal, that concept \
+  does NOT also become a separate atom of its own — even if the \
+  modifying_signal's surface_phrase included surrounding \
+  connective language and the bare concept word would look \
+  atomizable on its own. Signals absorb concepts whole; the \
+  consolidated meaning lives on the host atom's evaluative_intent.
+
+- Failing to absorb when the test says absorb. When one part of \
+  a query supplies context that pushes another part into a \
+  region it doesn't naturally occupy, the second part has been \
+  reshaped — record the reshape as a modifying_signal and do not \
+  emit the reshaping context as its own atom.
+
+ORDERING. Atoms appear in the order their surface anchor appears \
+in the query. Order is load-bearing downstream.
 
 ---
 
@@ -158,76 +207,163 @@ Don't split:
 _MODIFIER_VS_TRAIT = """\
 MODIFIER VS TRAIT
 
-A modifier is a token that changes how to interpret, bind, weight, \
-scope, or limit a trait without becoming an independently retrievable \
-trait itself. Modifiers absorb into the trait they attach to — they \
-don't become traits of their own. A token that fundamentally reshapes \
-meaning (forming a new compound concept) is NOT a modifier; it's part \
-of the trait, and the whole stays one trait.
+A modifier changes how to interpret, bind, weight, or scope a \
+trait without becoming a retrievable trait itself. Modifiers absorb \
+into what they attach to. A token that fundamentally reshapes \
+meaning (forming a new compound concept) is NOT a modifier — it's \
+part of the trait, and the whole stays one unit.
 
-The test: does this word change *what the trait is about*, or just \
-*how the user wants that same trait handled*?
-
-- "Not funny" — "not" changes intent (filter out funny things) but \
-  "funny" still means "funny". Modifier.
-- "A bit funny" — "a bit" changes strength but "funny" still means \
-  "funny". Modifier.
+The test: does this word change WHAT the trait is about, or just \
+HOW the user wants the same trait handled?
+- "Not funny" — "not" changes intent (filter out) but "funny" still \
+  means funny. Modifier.
+- "A bit funny" — "a bit" changes strength; "funny" still means \
+  funny. Modifier.
 - "Darkly funny" — "darkly" reshapes "funny" into a tonal compound. \
-  Not a modifier; the whole thing is one trait.
-- "Starring Tom Hanks" — "starring" tells the entity handler this \
-  is an actor. Modifier.
-- "Around 90 minutes" — "around" calibrates the runtime range; \
-  the trait is still the runtime value. Modifier.
-- "Like Inception" — "like" marks a comparison target; the named \
-  referent is the trait, and the comparison frame rides with it. \
-  Modifier.
+  NOT a modifier; whole is one trait.
+- "Starring Tom Hanks" — "starring" tells the handler this is an \
+  actor. Modifier.
+- "Around 90 minutes" — "around" calibrates the range; trait is the \
+  runtime value. Modifier.
+- "Like Inception" — "like" marks a comparison target; the referent \
+  is the trait, comparison frame rides along. Modifier.
 
-Modifiers come in several common flavors: polarity setters ("not", \
-"without", "avoid"), salience / hedge / emphasis tokens ("ideally", \
-"a bit", "really", "must", "above all", "especially"), role or \
-category binding ("starring", "directed by", "about", "set in", \
-"based on", "from the studio of"), range / approximation / ordinal \
-calibration ("around", "under", "at least", "before", "latest", \
-"most recent"), and comparison / style scope ("like", "similar to", \
-"in the vein of", "X-style"). Don't try to memorize an exhaustive \
-list — recognize the principle: it tells downstream reasoning how \
-to handle the attached trait without becoming its own search target.
+Modifier flavors (recognize the function, don't memorize a list): \
+polarity setters ("not", "without", "avoid"); hedges/emphasis \
+("ideally", "a bit", "really", "must", "above all"); role/category \
+binding ("starring", "directed by", "about", "set in", "based on", \
+"from the studio of"); range/approximation/ordinal ("around", \
+"under", "at least", "before", "latest"); comparison/style scope \
+("like", "similar to", "in the vein of", "X-style").
 
-The line between a meaning-shaping qualifier ("darkly funny") and \
-a strength modifier ("a bit funny") is whether removing the front \
+The line between a meaning-shaping qualifier ("darkly funny") and a \
+strength modifier ("a bit funny") is whether removing the front \
 token leaves the trait pointing at the same thing. "Funny" alone \
-still points at humor — "a bit" is a modifier. "Funny" alone is \
-not the same trait as "darkly funny" — they're different.
+still points at humor — "a bit" is a modifier. "Funny" alone is not \
+the same as "darkly funny" — those are different things.
 
-Common pitfalls:
-- Promoting role markers to traits. "Starring", "directed by", \
-  "from the studio of", "based on" — all modifiers, not traits.
-- Promoting hedges to traits. "Ideally", "maybe", "kind of" — \
-  salience hints, not standalone traits.
-- Promoting range words to traits. "Around 90 minutes", "under \
-  two hours", "at least three movies" — the range word shapes the \
-  numeric/ordinal trait.
-- Treating meaning-shaping qualifiers as modifiers. "Darkly funny" \
-  is one trait, not "funny" with a "darkly" modifier.
-- Treating every adjective before a noun as a modifier. If the word \
-  has its own category home and names an independent requirement, \
-  split it instead — "lone female protagonist" becomes "lone" + \
-  "female protagonist".
+Common pitfalls: promoting role markers, hedges, or range words to \
+traits ("starring", "ideally", "around 90 minutes" never become \
+traits of their own); treating meaning-shaping qualifiers as \
+modifiers ("darkly funny" is one trait, not "funny" with "darkly"); \
+treating every adjective before a noun as a modifier (if it has its \
+own category home and names an independent requirement, split — \
+"lone female protagonist" → "lone" + "female protagonist").
 
 Examples.
+Modifier (absorbed): "not too violent" (polarity+strength on \
+violent); "ideally a slow-burn" (hedge); "starring Tom Hanks" (role \
+marker); "based on a Stephen King novel" (role marker); "around 90 \
+minutes" (range); "in the style of Hitchcock" (comparison scope).
+Not a modifier (compound trait): "darkly funny", "iconic twist \
+endings", "morally ambiguous protagonist".
 
-Modifier (absorbed):
-- "Not too violent" — polarity+strength modifier on "violent"
-- "Ideally a slow-burn" — hedge on "slow-burn"
-- "Starring Tom Hanks" — role marker on the entity
-- "Movies based on a Stephen King novel" — "based on" role marker
-- "Around 90 minutes" — range approximation on runtime
-- "In the style of Hitchcock" — comparison/style scope on the referent
+BEYOND SYNTACTIC MODIFIERS. The flavors above cover the common \
+in-atom modifier shapes — phrases whose form already marks them \
+as qualifying language. ATOMICITY's searchable-unit test can also \
+absorb content phrases that LOOK like they could be their own \
+atom but fail the retrieval test (independent retrieval of the \
+content phrase + the other atom would miss what the user asked \
+for). When the test absorbs a content phrase that way, it is \
+recorded as a modifying_signal on the atom it reshapes, in the \
+same shape as a syntactic modifier (verbatim surface_phrase + \
+concise effect describing what it does). See ATOMICITY for the \
+boundary call.
 
-Not a modifier (part of compound trait):
-- "Darkly funny" — "darkly" reshapes "funny"
-- "Iconic twist endings" — "iconic" scopes to "twist endings"
-- "Morally ambiguous protagonist" — part of the archetype
+---
+
+"""
+
+
+_EVALUATIVE_INTENT = """\
+EVALUATIVE INTENT
+
+For each atom, your job is two things: (1) catalog every signal in \
+the query that shapes how this criterion should be evaluated, and \
+(2) state — concisely, in plain prose — what evaluating this \
+criterion actually means once those signals are integrated.
+
+Mental model. Don't think in terms of a directed graph between \
+atoms. Think per-criterion: for this atom, what in the query \
+reshapes how I'd score movies on it? The reshape can come from \
+anywhere — adjacent qualifying language (hedges, role markers, \
+range words, polarity setters), polarity language elsewhere in the \
+query that distributes onto this criterion, or another criterion \
+whose surface text scopes / transposes / narrows / styles this one. \
+Position in surface order is irrelevant; if it shapes the meaning, \
+it's a signal on this atom.
+
+Recording signals. One entry on this atom's modifying_signals list \
+per signal:
+- surface_phrase. Verbatim user text. For an adjacent qualifier, \
+  just the qualifier phrase ("ideally", "not", "around", "starring"). \
+  For a signal whose effect comes from another part of the query, \
+  the connecting language plus the reference, in the user's words \
+  ("in the 1800s", "than fight club", "but with pirates", "does \
+  horror"). Never a positional pointer or atom index.
+- effect. A few words to a short phrase describing what the signal \
+  DOES to this atom's evaluation. Describe the effect; don't \
+  categorize the signal. Modal-language effects (SOFTENS, HARDENS, \
+  FLIPS POLARITY, CONTRASTS) remain the recommended phrasing for \
+  those cases. For everything else, write what the signal actually \
+  does — "binds to director credit", "transposes setting to a \
+  period", "applies as comparison reference", "narrows to a \
+  subset", "scopes to a specific subject", "used as style \
+  reference, not credit". When none of these flavors fit, use your \
+  own words.
+
+Building evaluative_intent. Once signals are catalogued, write the \
+intent — what scoring movies on this criterion actually means once \
+the signals are integrated. 1-2 sentences. This is the ONE place \
+where light inference is permitted; the field's whole purpose is \
+consolidation.
+
+OPERATIONAL TEST: read your modifying_signals list. For each \
+entry, ask — does my intent statement reflect this signal's effect \
+on the evaluation? Would changing the signal noticeably change the \
+intent? If the answer is no for any signal, the intent has not \
+consolidated that signal — revise. An intent that paraphrases \
+surface_text while ignoring its signals adds nothing useful.
+
+Generalized guidance for common signal shapes:
+- Hedge or softener → intent describes a softened evaluative \
+  direction (preference rather than hard requirement).
+- Negation → intent describes the avoid-direction explicitly.
+- Absorbed reshape (counterfactual context, transposition, \
+  scoping, narrowing) → intent describes the consolidated unit, \
+  not the bare anchor — making explicit how the reshape affects \
+  what counts as a satisfying result.
+- Reference (criterion serves as a comparison anchor rather than \
+  a direct retrieval target) → intent says so, then describes \
+  what kind of scoring against the reference is wanted (which \
+  dimensions are being compared on, in what direction).
+
+Hard guardrails on the intent (these still apply even though \
+inference is allowed):
+- No category labels ("genre", "runtime", "actor", "tone").
+- No concrete polarity / salience numbers — describe direction and \
+  weight in words.
+- No expansion of named things — the user's reference stays as \
+  written.
+- No translation into system vocabulary — don't pick a downstream \
+  channel / vector / endpoint.
+- If the intent is just a rephrase of surface_text, either the \
+  criterion is genuinely simple (fine — say so plainly) or you've \
+  underused the modifying_signals (revisit them).
+
+Common pitfalls:
+- Collapsing two genuinely-distinct criteria into one atom because \
+  they modify each other. They stay separate atoms; the modification \
+  goes on the modified atom's signals list.
+- Promoting modifiers to atoms. Hedges, polarity setters, role \
+  markers, range words, comparison frames belong in modifying_signals.
+- Treating a criterion used as a reference ("darker than fight \
+  club") as if the system had to score against it. The reference is \
+  still a real criterion the user named — keep it as an atom — but \
+  the intent reflects that it's a reference, not a target.
+- Empty modifying_signals on every atom of a parallel-filter query \
+  is the COMMON case. Don't fabricate signals to make the atoms \
+  look connected when the wants are genuinely independent.
 
 ---
 
@@ -238,90 +374,72 @@ _CARVER_VS_QUALIFIER = """\
 CARVER VS QUALIFIER
 
 - Carver: defines what kinds of movies belong in the result set at \
-  all. Yes/no test ("does this movie have X?"). A movie that fails \
-  is irrelevant, not just ranked lower.
-- Qualifier: orders movies within a pool that other traits have \
-  already carved. Continuous test ("how much X does this movie \
-  have?"). A low-X movie is still a valid result, just ranked below \
-  higher-X ones.
+  all. Yes/no test. A movie that fails is excluded, not just ranked \
+  lower.
+- Qualifier: orders movies within a pool other traits already carved. \
+  Continuous test. A low-X movie is still a valid result, ranked \
+  below higher-X ones.
 
-Polarity is orthogonal — both can be positive or negative. Negative \
+Polarity is orthogonal: both can be positive or negative. Negative \
 carvers exclude; negative qualifiers downrank.
 
-How to think (the guiding principle). For each trait, ask:
-1. Is this trait qualifying another trait in the query? If it's \
-   narrowing, ranking, or steering the pool another trait defines \
-   — qualifier.
-2. Is another trait qualifying this one? If yes, this one is a \
-   carver (it's the one being narrowed).
-3. If it's not qualifying anything and nothing's qualifying it — it \
-   has to define the pool. Carver by default.
+How to decide:
+1. Is this trait qualifying another in the query (narrowing/ranking/\
+   steering a pool the other defines)? → qualifier.
+2. Is another trait qualifying this one? → this is a carver.
+3. Neither qualifying nor being qualified? → carver (must be \
+   defining the pool).
 
-Shortcut question: what other trait does this one qualify? If you \
-can't answer that, it can't be a qualifier.
-
-This handles "popular movies" / "warm-hug movie" cases naturally: \
-nothing else is in the query, so the trait can't be qualifying \
-anything and isn't being qualified — it must be the carver.
+Shortcut: what other trait does this one qualify? If you can't \
+answer, it can't be a qualifier. This handles "popular movies" / \
+"warm-hug movie" naturally — nothing else in the query, so the \
+trait must be the carver.
 
 Boundaries:
-- Categorical traits (concrete facts: entities, dates, genres, \
-  settings, formats) tend toward carving — yes/no by nature.
-- Gradient traits (experiential / evaluative qualities: mood, tone, \
-  popularity) tend toward qualifying when categoricals are present \
-  — continuous by nature.
-- The decision is at the trait level, not the atom level. "Like \
-  Eternal Sunshine" decomposes internally into atoms (some \
-  categorical-looking) but the trait is one qualifier; internal \
-  categoricals don't escape and gate independently.
+- Categorical traits (entities, dates, genres, settings, formats) \
+  tend to carve — yes/no by nature.
+- Gradient traits (mood, tone, popularity) tend to qualify when \
+  categoricals are present — continuous by nature.
+- Decision is at trait level, not atom level. "Like Eternal Sunshine" \
+  decomposes internally into atoms (some categorical-looking) but \
+  the trait is one qualifier; internal categoricals don't escape and \
+  gate independently.
 
 Common pitfalls:
 - Role-flipping on specificity when both are categorical. "Horror \
-  movies set on a submarine" — both categorical, both carve. \
-  Submarine doesn't become "the real carver" while horror drops to \
-  qualifying. Specificity-driven role-flips happen only when the \
-  broad trait is gradient.
-- Letting an ordinal modifier promote a gradient to carver. \
-  "Tarantino's least violent film" — "least violent" is still a \
-  gradient qualifier with an ordinal sort directive on top.
+  movies set on a submarine" — both carve; submarine doesn't \
+  demote horror to qualifier.
+- Letting an ordinal modifier promote a gradient. "Tarantino's least \
+  violent film" — violent is still a gradient qualifier with an \
+  ordinal sort on top.
 - Confusing negation-as-carving with negation-as-qualifier-polarity. \
   "A non-violent crime thriller" — defining the pool by absence; \
   carving by exclusion. "A rom-com that doesn't feel formulaic" — \
   ranking direction over a continuous trait; negative qualifier. \
-  Test: if the trait appeared positively in this query, would it \
-  have been carving or qualifying? Same answer when negated.
+  Test: if the trait were positive, would it carve or qualify? Same \
+  answer when negated.
 - Letting internal atoms of a parametric reference escape. "Like \
   Eternal Sunshine but set in space" — "like Eternal Sunshine" is \
-  one qualifier; the space-setting is the carver.
+  one qualifier; space is the carver.
 - Same trait, different role via companions. "A feel-good film" — \
-  feel-good carves (alone). "A feel-good comedy" — comedy carves, \
-  feel-good qualifies. Same word, different role.
-- Modifier-binding promoting a gradient to categorical. "A quiet \
-  movie" — "quiet" attached to the whole movie reads gradient. "A \
-  movie with a quiet score" — "quiet" attached to the score is a \
-  categorical fact about a structural element.
+  feel-good carves alone. "A feel-good comedy" — comedy carves, \
+  feel-good qualifies.
+- Modifier-binding promoting gradient to categorical. "A quiet \
+  movie" reads gradient. "A movie with a quiet score" — "quiet" \
+  attached to the score is a categorical fact about a structural \
+  element.
 
 Examples.
-
-Carvers:
-- "90s horror starring Anthony Hopkins" — three positive carvers \
-  (date, genre, entity)
-- "A non-violent crime thriller" — "crime thriller" positive carver; \
-  "violent" negative carver (excluding by absence)
-- "A feel-good film" (no other traits) — feel-good carves because \
-  nothing else does
-- "Popular movies" (no other traits) — popular carves
-
-Qualifiers:
-- "Funny horror movies" — horror carves, "funny" qualifies
-- "Dark slow-burn thriller" — thriller carves, "dark" + "slow-burn" \
-  qualify
-- "A rom-com that doesn't feel formulaic" — rom-com carves, \
-  "formulaic" is a negative qualifier
-- "Tarantino's least violent film" — Tarantino carves, "violent" \
-  qualifies (with ordinal sort downstream)
-- "Like Eternal Sunshine but set in space" — space carves, "like \
-  Eternal Sunshine" qualifies
+Carvers: "90s horror starring Anthony Hopkins" (3 positive carvers); \
+"a non-violent crime thriller" (positive crime-thriller carver, \
+violent negative carver); "a feel-good film" alone (carves); \
+"popular movies" alone (carves).
+Qualifiers: "funny horror" (horror carves, funny qualifies); "dark \
+slow-burn thriller" (thriller carves, dark + slow-burn qualify); "a \
+rom-com that doesn't feel formulaic" (rom-com carves, formulaic \
+negative qualifier); "Tarantino's least violent film" (Tarantino \
+carves, violent qualifies with ordinal); "like Eternal Sunshine but \
+set in space" (space carves, like-Eternal-Sunshine qualifies).
 
 ---
 
@@ -332,70 +450,50 @@ _POLARITY = """\
 POLARITY
 
 Whether the user wants the trait or wants to avoid it.
-- Positive: user wants the trait
-- Negative: user wants to avoid / penalize the trait
+- Positive: user wants it.
+- Negative: user wants to avoid / penalize it.
 
 Surface-grammar rule, not intent inference: if a polarity-setter is \
-present on a trait, polarity = negative. No second-guessing of what \
-the user "really" wants.
+present, polarity = negative. Don't second-guess what the user \
+"really" wants.
 
-A polarity-setter is any token that signals filter-out or downrank \
-intent. The principle, not a fixed list: tokens like "not", \
-"without", "no", "avoid", "skip", "minus", "anything but", "spare \
-me", "don't want" — anything reading as "the user is calling out \
-something to keep out or push down". Recognize the function, don't \
-memorize a taxonomy.
+Polarity-setters (recognize the function, don't memorize a list): \
+"not", "without", "no", "avoid", "skip", "minus", "anything but", \
+"spare me", "don't want" — anything reading as "the user is calling \
+something out to keep out or push down".
 
-"Not too X" is a special case. Read as: polarity=negative, \
-salience=supporting. "Not too funny" means it's not a huge deal if \
-it's somewhat funny, but penalize when strongly present. Negative \
-direction, weak strength.
+"Not too X" is a special case: polarity=negative, salience=supporting. \
+"Not too funny" means it's not a huge deal if somewhat funny, but \
+penalize when strongly present. Negative direction, weak strength.
 
 Distribution scope. When a polarity-setter sits at the front of a \
-coordinated phrase, does it apply to every conjunct?
-- "Or" tends to distribute negation across both conjuncts. "Not too \
-  dark or sad" → both negative.
-- "And" / "but" tends to break distribution. "Dark and funny" — \
-  only "dark" is governed by any preceding negation; "but" signals \
-  a pivot to a contrasting positive.
-
-These are tendencies, not rules. Read the phrase as a person and \
-ask whether the negation reads naturally over each conjunct. If it \
-does, distribute.
+coordinated phrase:
+- "Or" tends to distribute. "Not too dark or sad" → both negative.
+- "And" / "but" tends to break distribution. "Dark and funny" — only \
+  "dark" governed; "but" pivots to a contrasting positive.
+Tendencies, not rules. Read like a person.
 
 Boundaries:
-- Polarity is mechanical from surface grammar. Don't try to rewrite \
-  "movies that aren't boring" into positive intent for "engaging" — \
-  emit polarity=negative on "boring" and let downstream rewrite. \
-  Step 2's job is the surface signal.
+- Polarity is mechanical from surface grammar. Don't rewrite "movies \
+  that aren't boring" into positive intent for "engaging" — read the \
+  surface signal; downstream interprets it.
 - Polarity setters absorb as modifiers. "Without violence" → one \
-  trait ("violence", polarity=negative), not two.
+  trait ("violence", polarity=negative).
 
-Common pitfalls:
-- Treating "not too X" as full negation. "Not too long" doesn't \
-  mean "must be short" — it means penalize long, don't kill mildly \
-  long. Polarity=negative, salience=supporting.
-- Trying to memorize a closed list of polarity setters.
-- Inferring polarity from intent rather than surface grammar.
-- Mechanical if-statements for distribution. Read like a person.
+Common pitfalls: treating "not too X" as full negation ("not too \
+long" doesn't mean "must be short"); inferring polarity from intent \
+rather than surface grammar; mechanical if-statements for \
+distribution.
 
 Examples.
-
-Positive:
-- "Funny horror" — "funny" positive
-- "A dark, brooding thriller" — both positive
-
-Negative:
-- "Not too violent" — "violent" negative, supporting
-- "Without gore" — "gore" negative
-- "Anything but a romcom" — "romcom" negative
-- "Skip the jump scares" — "jump scares" negative
-- "Not too dark or sad" — both negative (distribution over "or"); \
-  both supporting
-
-Mixed:
-- "A thriller that's tense but not too violent" — "tense" positive \
-  central; "violent" negative supporting
+Positive: "funny horror" (funny positive); "a dark, brooding \
+thriller" (both positive).
+Negative: "not too violent" (violent negative, supporting); "without \
+gore" (gore negative); "anything but a romcom" (romcom negative); \
+"skip the jump scares" (jump scares negative); "not too dark or \
+sad" (both negative, supporting).
+Mixed: "a thriller that's tense but not too violent" — tense \
+positive central; violent negative supporting.
 
 ---
 
@@ -405,80 +503,58 @@ Mixed:
 _SALIENCE = """\
 SALIENCE
 
-Per-qualifier weight on the qualifier side of scoring. Two states:
-- Central: a headline want; the query would feel fundamentally \
-  different without it.
+Per-qualifier weight. Two states:
+- Central: a headline want; the query feels fundamentally different \
+  without it.
 - Supporting: meaningful but not load-bearing; rounds out the \
   picture.
 
-Carvers don't get salience (rarity does the weight work for them \
-downstream). Salience is qualifier-only.
+Carvers don't get salience (rarity does the weight work downstream). \
+Qualifier-only.
 
-How to think (signals, in priority order):
-1. Hedge / "nice to have" language — primary principle. "Ideally", \
-   "if possible", "maybe", "would be nice", "kind of", "a bit". The \
-   user took the time to mark this as soft — incredibly strong \
-   signal that should not be overridden. Hedged → supporting. \
-   Hedges win even when the trait is structurally prominent or \
-   named first.
-2. Supporting-language cues in `purpose_in_query`. Phrases like \
-   "rounds out", "sits in service of", "marginal preference", or \
-   "supports the frame" indicate the trait isn't load-bearing. \
-   Push toward supporting when no hedge already settled the call.
-3. Necessity language. "Must", "need", "have to", "above all", \
-   "really want". Marks central explicitly when no supporting \
-   signal (hedge or supporting-language cue) is present.
-4. Corrective / contrastive structures. "X but Y" — Y after "but" \
-   is often a corrective the user is tracking actively. Lean \
-   central for the corrective.
-5. Order of mention. Earlier-mentioned qualifiers tend more central \
-   than later — first thing out of the user's mouth is often what \
-   they came to the search with.
-6. Headline position (clue, not rule). Qualifiers in the adjective \
-   slot directly modifying the head noun ("slow-burn thriller") \
-   tend central; trailing modifier qualifiers ("a thriller, ideally \
-   slow-burn") tend supporting. A clue, override-able by hedges \
-   and supporting-language cues.
+Signals, priority order:
+1. Hedges ("ideally", "if possible", "maybe", "would be nice", \
+   "kind of", "a bit") — primary signal. The user marked it soft; \
+   supporting wins even when the trait is structurally prominent.
+2. Supporting-language cues in the trait's role read ("rounds out", \
+   "sits in service of", "marginal preference") — push toward \
+   supporting when no hedge settled the call.
+3. Necessity ("must", "need", "have to", "above all", "really \
+   want") — central, when no supporting signal is present.
+4. Corrective/contrastive ("X but Y") — Y after "but" is often a \
+   corrective the user is tracking actively; lean central.
+5. Order of mention — earlier qualifiers tend more central.
+6. Headline position (clue, not rule) — adjective-slot qualifiers \
+   ("slow-burn thriller") tend central; trailing qualifiers ("a \
+   thriller, ideally slow-burn") tend supporting. Override-able by \
+   hedges and supporting-language cues.
 
-The unifying principle: salience tracks how much investment the \
-user put into the trait — words spent, position chosen, hedge or \
-emphasis added.
+Unifying principle: salience tracks how much investment the user put \
+into the trait — words spent, position chosen, hedge or emphasis \
+added.
 
 Boundaries:
-- Don't force one qualifier in a query to be central. If only one \
-  qualifier exists, salience doesn't matter — a weighted sum of \
-  one item gets 100% regardless. If the only qualifier is hedged, \
-  mark it supporting.
-- Salience is structural-importance, not strength-of-preference. \
-  "I really want a comedy" — "really" is intensity language but \
-  "comedy" is a carver, not a qualifier; salience doesn't apply.
+- Don't force one qualifier per query to be central. Single-qualifier \
+  queries get 100% weight regardless. Solo hedged qualifier → \
+  supporting.
+- Salience is structural-importance, not strength-of-preference. "I \
+  really want a comedy" — "really" is intensity but "comedy" is a \
+  carver, not qualifier; salience doesn't apply.
 
-Common pitfalls:
-- Ignoring hedges because the trait is structurally prominent. \
-  "Ideally a slow-burn thriller" — supporting wins despite the \
-  adjective slot.
-- Defaulting all qualifiers to central. Most queries have a mix.
-- Treating salience as how much the user likes the trait. Salience \
-  is about how load-bearing the trait is.
+Common pitfalls: ignoring hedges because the trait is structurally \
+prominent ("ideally a slow-burn thriller" — supporting wins); \
+defaulting all qualifiers to central; treating salience as how much \
+the user likes the trait.
 
 Examples.
-
-Central:
-- "I really need a slow-burn thriller" — "really need" is \
-  necessity language
-- "Above all I want it to be funny, and ideally short" — funny \
-  central; short supporting
-- "A dark and brooding thriller" — both qualifiers in the \
-  adjective slot, no hedges, equal-weight central
-
-Supporting:
-- "Ideally a slow-burn thriller" — "ideally" hedges
-- "A horror movie, maybe with some dark humor" — "maybe with some" \
-  hedges
-- "A thriller, slow-burn would be nice" — "would be nice" hedges
-- "Ideally creepy and atmospheric horror" — both "creepy" and \
-  "atmospheric" are hedged by "ideally"; supporting wins despite \
-  prominence
+Central: "I really need a slow-burn thriller" (necessity); "above \
+all I want it to be funny, and ideally short" (funny central; short \
+supporting); "a dark and brooding thriller" (both adjective-slot, \
+no hedges, equal-weight central).
+Supporting: "ideally a slow-burn thriller" (ideally hedges); "a \
+horror movie, maybe with some dark humor" (maybe with some hedges); \
+"a thriller, slow-burn would be nice" (would be nice hedges); \
+"ideally creepy and atmospheric horror" (both hedged by ideally).
 
 ---
 
@@ -489,37 +565,28 @@ def _build_category_taxonomy_section() -> str:
     """Render the category taxonomy into a prompt-ready block.
 
     Sourced from the CategoryName enum so the prompt text and the
-    structured-output vocabulary never drift apart — one edit, both
-    surfaces update. Per-category rendering uses five attributes:
-    description (definition), boundary, edge_cases, good_examples,
-    and bad_examples.
+    structured-output vocabulary never drift apart. Compact format:
+    one line per field; multi-item fields joined inline rather than
+    bulleted, to keep token count down.
     """
     header = (
         "CATEGORY TAXONOMY\n\n"
-        "Use these definitions when you fill `category_candidates` "
-        "and commit `best_fit_category` for each trait. Each entry "
-        "lists the category's definition, its boundary (what's "
-        "adjacent and where the line sits), edge cases that often "
-        "misroute, and short examples of traits that do and don't "
-        "belong here.\n\n"
-        "Category enum values must match the names below exactly.\n\n"
+        "Vocabulary for LATER pipeline steps; loaded here as "
+        "context. Step 1 does not commit to a category. Enum values "
+        "must match exactly when a downstream step references them.\n\n"
     )
     blocks: list[str] = []
     for cat in CategoryName:
-        lines = [
-            f"Cat: {cat.value}",
-            f"  Definition: {cat.description}",
-            f"  Boundary: {cat.boundary}",
-        ]
+        lines = [f"{cat.name} — {cat.description}"]
+        lines.append(f"  Boundary: {cat.boundary}")
         if cat.edge_cases:
-            lines.append("  Edge cases:")
-            lines.extend(f"    - {entry}" for entry in cat.edge_cases)
+            lines.append("  Edge: " + " | ".join(cat.edge_cases))
         if cat.good_examples:
-            lines.append("  Good examples:")
-            lines.extend(f"    - {entry}" for entry in cat.good_examples)
+            lines.append(
+                "  Good: " + ", ".join(f'"{e}"' for e in cat.good_examples)
+            )
         if cat.bad_examples:
-            lines.append("  Bad examples:")
-            lines.extend(f"    - {entry}" for entry in cat.bad_examples)
+            lines.append("  Bad: " + " | ".join(cat.bad_examples))
         blocks.append("\n".join(lines))
     return header + "\n\n".join(blocks)
 
@@ -531,6 +598,7 @@ SYSTEM_PROMPT = (
     _TASK_FRAMING
     + _ATOMICITY
     + _MODIFIER_VS_TRAIT
+    + _EVALUATIVE_INTENT
     + _CARVER_VS_QUALIFIER
     + _POLARITY
     + _SALIENCE
@@ -555,8 +623,8 @@ _MODEL_KWARGS: dict = {
 }
 
 
-async def run_step_2(query: str) -> tuple[Step2Response, int, int, float]:
-    """Run the step-2 pre-pass LLM on a single query.
+async def run_step_2(query: str) -> tuple[QueryAnalysis, int, int, float]:
+    """Run the query-analysis LLM on a single query.
 
     Args:
         query: the raw user query.
@@ -578,7 +646,7 @@ async def run_step_2(query: str) -> tuple[Step2Response, int, int, float]:
         provider=_PROVIDER,
         user_prompt=user_prompt,
         system_prompt=SYSTEM_PROMPT,
-        response_format=Step2Response,
+        response_format=QueryAnalysis,
         model=_MODEL,
         **_MODEL_KWARGS,
     )
@@ -592,7 +660,7 @@ async def run_step_2(query: str) -> tuple[Step2Response, int, int, float]:
 # ===============================================================
 
 
-def _print_response(response: Step2Response) -> None:
+def _print_response(response: QueryAnalysis) -> None:
     """Pretty-print the structured response for terminal inspection."""
     payload = response.model_dump()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
