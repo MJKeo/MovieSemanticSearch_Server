@@ -1,39 +1,45 @@
 # Query analysis output schema.
 #
-# A single LLM call produces two coupled outputs:
+# A single LLM call produces three coupled outputs:
 # 1. holistic_read: a faithful prose read of the query in the
-#    user's own words, describing what they're asking for and how
-#    the pieces of that ask affect each other.
-# 2. atoms: the query's evaluative criteria, each with the
-#    user's words for it (surface_text), every signal in the query
-#    that shapes how it should be evaluated (modifying_signals),
-#    and a concise prose statement of what evaluating it actually
-#    means once that context is integrated (evaluative_intent).
+#    user's own words.
+# 2. atoms: the descriptive layer — the query's evaluative criteria
+#    as phrased, with the signals shaping each criterion's meaning
+#    and a consolidated 1-2 sentence intent. Atoms record.
+# 3. traits: the committed layer — search-ready units produced by
+#    splitting / deduping atoms and assigning role, polarity, and
+#    salience. Traits commit. Step 3 consumes traits, not atoms.
 #
-# The prose read precedes the atoms and grounds them. surface_text
-# and modifying_signals stay strictly descriptive — recording what
-# is in the query, not committing to downstream interpretations
-# (polarity, salience, category, search strategy). evaluative_intent
-# is the one place where light inference is permitted, because the
-# whole point of that field is consolidating context into meaning.
+# The split keeps each layer's job tight and stops the model
+# conflating description with prescription. surface_text and
+# modifying_signals stay strictly descriptive on atoms;
+# evaluative_intent is the one place light inference is permitted,
+# because that field's whole purpose is consolidating context into
+# meaning. Traits inherit intent from their source atom(s) and add
+# the prescriptive commitments (role / polarity / salience).
 #
 # Design principles:
 # - Minimum context, maximum looseness. Queries are freeform; we
 #   record raw signal and let the LLM consolidate per-criterion.
-# - One unified place for modifier signals. Whether a modifier sat
-#   adjacent to the criterion in the surface text or came from
-#   another part of the query, it lands on the same list.
+# - One unified place for modifier signals. Adjacent and
+#   cross-criterion modifiers land on the same list.
 # - Effects are described, not categorized. surface_phrase + a
-#   freeform effect string carries every modifier shape; no closed
-#   enum to bucket-force into.
+#   freeform effect string carries every modifier shape; controlled
+#   modal vocabulary is recommended where downstream parses tokens.
 # - Intent is the load-bearing semantic field. Downstream consumes
 #   evaluative_intent for evaluation; modifying_signals is provenance.
+# - Atoms describe; traits commit. Role/polarity/salience never
+#   appear on atoms.
 #
 # This schema is the only documentation the LLM gets for the
-# output shape — the system prompt does NOT duplicate this content.
-# Field descriptions are micro-prompts.
+# output shape — the system prompt does NOT duplicate field
+# context. Field descriptions are micro-prompts: compact,
+# information-dense, with NEVER lists where downstream depends on
+# discipline.
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -52,61 +58,53 @@ class ModifyingSignal(BaseModel):
     surface_phrase: str = Field(
         ...,
         description=(
-            "The user's exact words for this signal — verbatim "
-            "substring of the query. For adjacent qualifiers "
+            "Verbatim substring of the query. For adjacent qualifiers "
             "(hedges, polarity words, role markers, range words), "
-            "just that phrase. For signals from elsewhere in the "
-            "query (scoping/transposing another criterion), the "
-            "connecting language plus the reference, in the user's "
-            "words. Never a positional pointer or index."
+            "just that phrase. For signals from elsewhere "
+            "(scoping/transposing another criterion), the connecting "
+            "language plus the reference, in the user's words. Never "
+            "a positional pointer or index."
         ),
     )
     effect: str = Field(
         ...,
         description=(
-            "Concise description of what this signal does to the "
-            "atom's evaluation. A few words to a short phrase, not "
-            "a sentence.\n"
+            "What this signal does to the atom's evaluation, in a few "
+            "words to a short phrase. Describe the effect; don't "
+            "categorize the signal.\n"
             "\n"
-            "DESCRIBE the effect; don't categorize the signal. "
-            "Example flavors (NOT a closed list — use your own "
-            "words when none fit):\n"
-            "- 'softens the requirement' (hedge)\n"
-            "- 'hardens the requirement' (intensifier)\n"
-            "- 'flips polarity' (negation)\n"
-            "- 'contrasts with the prior want' (pivot)\n"
-            "- 'binds to director credit' / 'binds to acting credit'\n"
-            "- 'calibrates upper bound' / 'narrows to early portion'\n"
-            "- 'applies as comparison reference'\n"
-            "- 'transposes setting to a period'\n"
-            "- 'narrows to a subset'\n"
-            "- 'scopes to a specific subject'\n"
-            "- 'used as style reference, not credit'\n"
+            "Example flavors (NOT closed): 'softens the requirement', "
+            "'hardens the requirement', 'flips polarity', 'contrasts "
+            "with the prior want', 'binds to director credit', "
+            "'calibrates upper bound', 'applies as comparison "
+            "reference', 'transposes setting to a period', 'narrows "
+            "to a subset', 'used as style reference, not credit'.\n"
             "\n"
-            "For modal language, the controlled vocabulary SOFTENS "
-            "/ HARDENS / FLIPS POLARITY / CONTRASTS is the "
-            "recommended phrasing. Not enforced — describe what "
-            "the modifier actually does when it doesn't fit those."
+            "For modal language, controlled vocabulary SOFTENS / "
+            "HARDENS / FLIPS POLARITY / CONTRASTS is the recommended "
+            "phrasing — the commit phase parses these tokens to "
+            "assign polarity and salience. Not enforced; describe in "
+            "plain words when no controlled term fits."
         ),
     )
 
 
 # ---------------------------------------------------------------------
-# Atom
+# Atom — descriptive layer
 # ---------------------------------------------------------------------
 
 
 class Atom(BaseModel):
     """One criterion the user wants movies scored against, at the
     granularity they phrased it, plus its consolidated meaning in
-    the query's full context."""
+    the query's full context. Descriptive layer — atoms record;
+    they do not commit to role / polarity / salience."""
 
     surface_text: str = Field(
         ...,
         description=(
             "Exact substring of the original query, with modifying "
-            "language stripped (preserved in modifying_signals).\n"
-            "\n"
+            "language stripped (preserved in modifying_signals). "
             "NEVER paraphrase, expand named things, or substitute "
             "system-shaped synonyms. The reference itself is the "
             "signal; what it evokes belongs to evaluative_intent."
@@ -115,81 +113,217 @@ class Atom(BaseModel):
     modifying_signals: list[ModifyingSignal] = Field(
         default_factory=list,
         description=(
-            "Every signal in the query that shapes how this "
-            "criterion is evaluated.\n"
+            "Every signal in the query that shapes how this criterion "
+            "is evaluated — adjacent qualifying language, polarity "
+            "elsewhere distributing onto this criterion, or content "
+            "phrases elsewhere that fundamentally reshape its "
+            "evaluation (transposing setting/period/medium/style, "
+            "scoping to a subset, supplying counterfactual context, "
+            "narrowing inside a known referent).\n"
             "\n"
-            "Signals can come from anywhere in the query — adjacent "
-            "qualifying language (hedges, role markers, range words, "
-            "polarity setters), polarity language elsewhere that "
-            "distributes onto this criterion, or content phrases "
-            "elsewhere that fundamentally reshape its evaluation "
-            "(transposing setting / period / medium / style, scoping "
-            "to a subset, supplying counterfactual context, narrowing "
-            "inside a known referent). When a content phrase reshapes "
-            "another atom this deeply, it absorbs as a signal here — "
-            "it does NOT also appear as a separate atom. See the "
-            "atomicity guidance in the system prompt for the boundary "
-            "call.\n"
+            "Surface-order position is irrelevant. When a content "
+            "phrase reshapes another atom this deeply, it absorbs as "
+            "a signal here — it does NOT also appear as a separate "
+            "atom (see atomicity in the system prompt).\n"
             "\n"
-            "Surface-order position is irrelevant; if a phrase shapes "
-            "this atom's evaluation, it goes here.\n"
-            "\n"
-            "One entry per signal: verbatim surface_phrase plus a "
-            "concise effect string. No directional graph thinking, "
-            "no positional pointers, no kind enum.\n"
-            "\n"
-            "Empty list is fine and common when criteria are "
-            "genuinely independent. Don't fabricate signals to make "
-            "atoms look connected."
+            "Empty list is fine when criteria are genuinely "
+            "independent. Don't fabricate signals to make atoms look "
+            "connected."
         ),
     )
     evaluative_intent: str = Field(
         ...,
         description=(
-            "Find everything in the query that modifies this "
-            "criterion's meaning, then state — in 1-2 sentences of "
-            "plain prose — its true evaluative intention. What does "
-            "scoring movies on this criterion actually mean once "
-            "that context is integrated?\n"
+            "1-2 sentences of plain prose stating this criterion's "
+            "true evaluative intention once every modifying_signal is "
+            "integrated. What does scoring movies on this criterion "
+            "actually mean in the query's full context?\n"
             "\n"
-            "This is the ONE field where light inference is "
-            "permitted. surface_text and modifying_signals stay "
-            "strictly descriptive; here you consolidate them into "
-            "meaning. A hedge softens → say so in evaluative terms "
-            "('prefer X but tolerate departures'). A negation flips "
-            "polarity → reflect the avoid-direction. A transposing "
-            "criterion → describe the transposed evaluation. A "
-            "criterion used as reference rather than target → say so.\n"
+            "The ONE field where light inference is permitted. A "
+            "hedge softens → say so ('prefer X but tolerate "
+            "departures'). A negation flips polarity → reflect the "
+            "avoid-direction. A transposing modifier → describe the "
+            "transposed evaluation. A reference (not target) → say so.\n"
             "\n"
             "NEVER:\n"
-            "- CATEGORIZE. No system-shaped labels ('genre', "
-            "'runtime', 'actor', 'tone'). The user didn't think in "
-            "those buckets.\n"
-            "- COMMIT TO POLARITY/SALIENCE NUMBERS. Describe "
-            "direction and weight in words; downstream assigns "
-            "concrete values.\n"
-            "- EXPAND NAMED THINGS. Don't unpack what a name 'evokes' "
-            "or 'typically means' — the reference itself is the "
+            "- CATEGORIZE. No system labels ('genre', 'runtime', "
+            "'actor', 'tone').\n"
+            "- COMMIT POLARITY/SALIENCE VALUES. Describe direction "
+            "and weight in words; commitments live on traits.\n"
+            "- EXPAND NAMED THINGS. The reference itself is the "
             "signal.\n"
-            "- TRANSLATE INTO SYSTEM VOCABULARY. Don't pick a "
-            "downstream channel / vector / endpoint — that's the "
-            "next stages' call.\n"
+            "- TRANSLATE INTO SYSTEM VOCABULARY. No downstream "
+            "channel/vector/endpoint.\n"
             "- PARAPHRASE SURFACE_TEXT WHILE IGNORING SIGNALS. If "
-            "modifying_signals is non-empty, the intent MUST reflect "
-            "each signal's effect. Test: would the intent change "
+            "modifying_signals is non-empty, intent MUST reflect each "
+            "signal's effect. Test: would the intent change "
             "noticeably if I removed or altered this signal? If no, "
-            "you haven't integrated it — revise. (When signals is "
-            "empty, plain description is correct.)"
+            "you haven't integrated it — revise. (Empty signals → "
+            "plain description is correct.)"
         ),
     )
-    candidate_internal_split: str | None = Field(
-        default=None,
+    split_exploration: str = Field(
+        ...,
         description=(
-            "Populated ONLY when genuinely uncertain whether this "
-            "is one combined criterion or two distinct ones. Format: "
-            "'<piece A> | <piece B>' using exact substrings of "
-            "surface_text. Downstream verifies. Leave null when "
-            "confident — guessing adds noise."
+            "Always populated. Pure evidence gathering — no verdict.\n"
+            "\n"
+            "Walk through whether this atom could be subdivided into "
+            "smaller pieces, each retrievable independently. For each "
+            "plausible subdivision, describe what each piece would "
+            "retrieve on its own and whether the combined retrieval "
+            "(intersection / joint scoring) would capture what the "
+            "user is asking for at this atom's granularity. Describe "
+            "the analysis only; the commit phase reads this and "
+            "decides whether to split into traits.\n"
+            "\n"
+            "NEVER:\n"
+            "- WRITE A VERDICT. No 'keep whole' / 'split into A and "
+            "B' / 'not split because...' framings. Describe the "
+            "retrieval shapes; the commit phase decides.\n"
+            "- DISMISS THE QUESTION. Even atoms that obviously stay "
+            "whole get analyzed (e.g. single-concept word: state that "
+            "no smaller meaningful unit exists and why)."
+        ),
+    )
+    standalone_check: str = Field(
+        ...,
+        description=(
+            "Always populated. Pure evidence gathering — no verdict.\n"
+            "\n"
+            "Compare this atom's evaluative_intent against the user's "
+            "articulated ask in the holistic_read. Describe HOW (not "
+            "if) retrieving this atom standalone — alone, ignoring "
+            "the other atoms — would relate to the user's articulated "
+            "intent for its part of the query. Always describe; never "
+            "dismiss with 'this is the only criterion' / 'no other "
+            "atom captures this' / 'first mention of X'.\n"
+            "\n"
+            "Walk through:\n"
+            "- What population would standalone retrieval of this "
+            "atom return?\n"
+            "- Does that population correspond to a constraint the "
+            "user articulated as standalone-able, or does the "
+            "standalone reading shift the meaning (introduce a hard "
+            "requirement the user didn't ask for, lose a coupling the "
+            "user did imply, narrow what the user kept loose)?\n"
+            "- When this atom's evaluative_intent integrates context "
+            "from another atom, is that context preserved in the "
+            "standalone retrieval, or does it fall away?\n"
+            "\n"
+            "Reference other atoms by their surface_text when "
+            "describing couplings.\n"
+            "\n"
+            "NEVER:\n"
+            "- WRITE A VERDICT. No 'redundant given X' / 'not "
+            "redundant' / 'standalone is fine'. Describe the "
+            "relationship between standalone retrieval and "
+            "user-articulated intent; the commit phase decides "
+            "whether to merge.\n"
+            "- SHORT-CIRCUIT WITH UNIQUENESS CHECKS. 'Primary subject "
+            "of the query' / 'first mention' / 'no other atom "
+            "captures this domain' / 'distinct concept' are not "
+            "analyses — they're dismissals. Walk through what "
+            "standalone retrieval would actually return.\n"
+            "- APPEAL TO INDEPENDENT RETRIEVABILITY AS A VIRTUE. "
+            "Standalone retrievability is not the goal — fidelity to "
+            "user-articulated intent is. An atom that retrieves "
+            "cleanly on its own can still distort meaning when its "
+            "standalone population isn't what the user asked for.\n"
+            "- USE 'WHILE [COUPLING ACKNOWLEDGED] BUT [STANDALONE "
+            "VALUE]' PATTERNS. If the coupling exists, describe it; "
+            "the existence of independent-retrieval value doesn't "
+            "negate the meaning shift."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------
+# Trait — committed layer
+# ---------------------------------------------------------------------
+
+
+class Trait(BaseModel):
+    """One search-ready unit. Produced by the commit phase from
+    atoms — splits resolved, redundancies deduped, role / polarity /
+    salience committed. Step 3 consumes traits, not atoms."""
+
+    surface_text: str = Field(
+        ...,
+        description=(
+            "Verbatim phrase for this trait. Clean carry-over: the "
+            "source atom's surface_text. After a split: the split "
+            "substring. After a merge of duplicates: the clearer of "
+            "the two source phrasings. Never paraphrase or expand."
+        ),
+    )
+    evaluative_intent: str = Field(
+        ...,
+        description=(
+            "1-2 sentence consolidated meaning, carried from the "
+            "source atom(s). Clean carry-over copies the atom's "
+            "intent verbatim. Split: re-state the relevant slice. "
+            "Merge of duplicates: a single intent reflecting both "
+            "sources' signals. Same NEVER list as "
+            "Atom.evaluative_intent — no categorization, no system "
+            "vocabulary, no concrete polarity / salience numbers."
+        ),
+    )
+    role: Literal["carver", "qualifier"] = Field(
+        ...,
+        description=(
+            "Read from the source atom's evaluative_intent shape. "
+            "CARVER = population-defining; intent names a population "
+            "the user wants narrowed to. QUALIFIER = shaping / "
+            "reference; intent reads candidates against something "
+            "rather than defining them.\n"
+            "\n"
+            "Operational test: if removing this trait from the "
+            "candidate set would FILTER movies (yes/no exclusion), "
+            "it's a carver. If it would DOWNRANK them (continuous, "
+            "low-X movies still valid), it's a qualifier."
+        ),
+    )
+    polarity: Literal["positive", "negative"] = Field(
+        ...,
+        description=(
+            "Read source atom's modifying_signals. Any signal whose "
+            "effect contains FLIPS POLARITY or recognizable negation "
+            "language → negative. Otherwise positive. Hedges and "
+            "intensifiers do NOT change polarity — they affect "
+            "salience."
+        ),
+    )
+    relevance_to_query: str = Field(
+        ...,
+        description=(
+            "Reasoning step before salience. 1-2 sentences walking "
+            "through how this trait sits in the query as a whole: "
+            "hedges or intensifiers on the source atom, position in "
+            "surface order (early/headline vs trailing), how many "
+            "words the user spent on it, whether removing it would "
+            "meaningfully change the ask.\n"
+            "\n"
+            "Read holistically. Modal effect tokens (SOFTENS, "
+            "HARDENS) on modifying_signals are one signal but not "
+            "the whole picture — within-query position and "
+            "structural prominence contribute too. Salience commits "
+            "as the natural conclusion of this reasoning.\n"
+            "\n"
+            "No system vocabulary; no concrete numbers."
+        ),
+    )
+    salience: Literal["central", "supporting"] = Field(
+        ...,
+        description=(
+            "Natural conclusion from relevance_to_query. CENTRAL = "
+            "headline want; the query feels fundamentally different "
+            "without this trait. SUPPORTING = meaningful but rounds "
+            "out an already-defined ask rather than load-bearing.\n"
+            "\n"
+            "Applies to all traits regardless of role. A non-central "
+            "carver acts as a lenient filter — the trait still "
+            "defines its own pool but with softer boundaries; "
+            "downstream code reads salience and adjusts."
         ),
     )
 
@@ -200,9 +334,9 @@ class Atom(BaseModel):
 
 
 class QueryAnalysis(BaseModel):
-    """Combined output of the query analysis stage: a faithful
-    prose read of the query plus per-criterion atoms with
-    consolidated evaluative intent."""
+    """Combined output of the query analysis stage: a faithful prose
+    read, descriptive atoms with consolidated evaluative intent,
+    and committed search-ready traits."""
 
     holistic_read: str = Field(
         ...,
@@ -210,93 +344,105 @@ class QueryAnalysis(BaseModel):
             "Faithfully describe what the user is asking for, in "
             "their own words. Describe how query pieces affect each "
             "other only as far as the user themselves implied. "
-            "Downstream phases commit to structure; your job here "
-            "is description.\n"
+            "Downstream phases commit; your job here is description.\n"
             "\n"
             "NEVER:\n"
-            "- CATEGORIZE. No system-shaped labels ('genre', "
-            "'runtime', 'actor', 'tone'). The user didn't think in "
-            "those buckets.\n"
-            "- EXPAND NAMED THINGS. The reference stays as written. "
-            "Don't unpack what a name 'evokes' or 'typically means' "
-            "— the reference itself is the signal.\n"
-            "- INFER beyond what the user said. No 'i.e.', 'such "
-            "as', 'meaning', or parentheticals explaining what the "
-            "user 'really' meant. Loose terms stay loose — looseness "
-            "is part of what they said.\n"
+            "- CATEGORIZE. No system labels ('genre', 'runtime', "
+            "'actor', 'tone').\n"
+            "- EXPAND NAMED THINGS. The reference stays as written; "
+            "don't unpack what a name 'evokes' or 'typically means'.\n"
+            "- INFER beyond what the user said. No 'i.e.', 'such as', "
+            "'meaning', or parentheticals explaining what they "
+            "'really' meant. Loose terms stay loose.\n"
             "- IMPOSE STRUCTURE THAT ISN'T THERE. Parallel wants are "
-            "parallel — don't pick a 'primary'. Don't apply "
-            "structural labels ('kept whole', 'anchor', 'hybrid', "
-            "'cross') unless the user's phrasing puts that "
-            "relationship on the page.\n"
+            "parallel — don't pick a 'primary'. No structural labels "
+            "('kept whole', 'anchor', 'hybrid', 'cross') unless the "
+            "user's phrasing puts that on the page.\n"
             "\n"
             "DO:\n"
-            "1. List the wants the user named, in exact phrasing. "
-            "Every high-value semantic word appears unchanged.\n"
+            "1. List the wants in exact phrasing. Every high-value "
+            "semantic word appears unchanged.\n"
             "2. For each piece of modal language attached to a want, "
             "name its effect verbatim: SOFTENS (hedges: 'ideally', "
             "'kinda', 'maybe', 'preferably', 'a bit'), HARDENS "
             "(intensifiers: 'really', 'must', 'above all', 'need'), "
             "FLIPS POLARITY (negations: 'not', 'without', 'no', "
             "'avoid', 'skip'), CONTRASTS (pivots: 'but', 'though', "
-            "'yet' turning to a contrasting want). The phrase alone "
-            "isn't the signal; the named effect is.\n"
+            "'yet' turning to a contrasting want).\n"
             "3. Describe how the wants relate, only as plainly as "
-            "the user implied. Independent → say so. One modifies "
-            "another → say which. Mutually dependent → say that. "
-            "Use the user's framing; don't reach for vocabulary they "
-            "didn't use.\n"
+            "the user implied. Use the user's framing.\n"
             "\n"
             "VOICE: plain prose, no enum-style labels. Length scales "
-            "with the query's structure — single-want is one line, "
-            "multi-want is more. Don't pad."
+            "with query structure. Don't pad."
         ),
     )
     atoms: list[Atom] = Field(
         ...,
         description=(
-            "The query's evaluative criteria. Each atom is one "
-            "criterion the user wants scored, at the granularity "
-            "they phrased it.\n"
+            "The query's evaluative criteria as the user phrased "
+            "them — descriptive layer. One atom per distinct "
+            "criterion at the granularity the user asked for.\n"
             "\n"
             "WHEN ONE, WHEN MULTIPLE: a compound stays whole when "
-            "the pieces aren't separately evaluable — when only the "
-            "whole names what the user is judging on, and splitting "
-            "loses their actual ask. Otherwise: distinct evaluative "
-            "criteria → distinct atoms, even within one surface "
-            "phrase.\n"
-            "\n"
-            "Each atom carries three load-bearing fields: "
-            "surface_text (verbatim user words), modifying_signals "
-            "(everything shaping this criterion's evaluation), "
-            "evaluative_intent (consolidated meaning). See each "
-            "field for discipline.\n"
+            "the pieces aren't separately evaluable. Otherwise: "
+            "distinct evaluative criteria → distinct atoms.\n"
             "\n"
             "NEVER:\n"
-            "- PARAPHRASE surface_text. Exact substring of the "
-            "query.\n"
+            "- PARAPHRASE surface_text. Exact substring.\n"
             "- PROMOTE MODIFIERS TO ATOMS. Hedges, polarity setters, "
-            "role markers, range words, comparison frames absorb "
-            "into their host atom as modifying_signals.\n"
-            "- MERGE INDEPENDENTLY-EVALUABLE CRITERIA. When parts "
-            "each name real populations whose intersection is the "
-            "user's intent, they're distinct atoms. (Opposite case "
-            "— pieces that don't retrieve independently — collapses "
-            "to ONE atom under the atomicity test in the system "
-            "prompt, with the dependent part absorbed as a "
+            "role markers, range words, comparison frames absorb as "
+            "modifying_signals.\n"
+            "- MERGE INDEPENDENTLY-EVALUABLE CRITERIA. Parts naming "
+            "real populations whose intersection is the user's intent "
+            "are distinct atoms. (Pieces that don't retrieve "
+            "independently → ONE atom, dependent part absorbed as a "
             "modifying_signal.)\n"
-            "- LET ABSORBED MATERIAL APPEAR TWICE. When a phrase is "
-            "recorded as a modifying_signal, both the phrase AND "
-            "the concept inside it (setting, period, medium, style, "
-            "named referent, mood) are claimed by that signal. "
-            "Neither the phrase nor any bare concept word from it "
-            "becomes a separate atom. Consolidated meaning lives on "
-            "the host atom's evaluative_intent.\n"
+            "- LET ABSORBED MATERIAL APPEAR TWICE. A phrase recorded "
+            "as a modifying_signal claims both the phrase AND the "
+            "concept inside it (setting, period, medium, style, "
+            "named referent, mood). Neither becomes a separate atom.\n"
             "- COMMIT to category, polarity, salience, search "
-            "strategy, or weight at the structural level. Light "
-            "inference allowed only inside evaluative_intent.\n"
+            "strategy, or weight. Light inference allowed only "
+            "inside evaluative_intent. Role / polarity / salience "
+            "commitments belong on traits.\n"
             "\n"
-            "ORDERING: atoms appear in surface-text order from the "
-            "original query. Order is load-bearing downstream."
+            "ORDERING: surface-text order from the original query. "
+            "Order is load-bearing downstream."
+        ),
+    )
+    traits: list[Trait] = Field(
+        ...,
+        description=(
+            "Committed search-ready units. Produced by the commit "
+            "phase from atoms; Step 3 consumes this list.\n"
+            "\n"
+            "Construction (see commit-phase section in system "
+            "prompt for full discipline):\n"
+            "1. Resolve each atom's split_note → split or keep "
+            "whole.\n"
+            "2. Resolve redundancy_note plus catch any forward "
+            "redundancies → dedupe.\n"
+            "3. Assign role from intent shape: population-defining "
+            "→ carver; reference / shaping → qualifier.\n"
+            "4. Assign polarity from effect tokens: any FLIPS "
+            "POLARITY → negative; otherwise positive.\n"
+            "5. Assign salience from effect tokens: HARDENS or no "
+            "modal → central; SOFTENS → supporting.\n"
+            "\n"
+            "NEVER:\n"
+            "- INVENT TRAITS NOT GROUNDED IN ATOMS. Every trait "
+            "traces to one or more source atoms.\n"
+            "- DROP A NON-REDUNDANT ATOM. Splits add traits; merges "
+            "combine. Genuine criteria don't disappear.\n"
+            "- PARAPHRASE during transfer. Carry surface_text and "
+            "evaluative_intent through faithfully; merges pick the "
+            "clearer of the source phrasings.\n"
+            "- COMMIT a category, endpoint, or concrete weight. "
+            "Role / polarity / salience are the only commitments at "
+            "this layer.\n"
+            "\n"
+            "ORDERING: traits appear in the order their source atoms "
+            "appeared. Splits follow source-atom position; merges "
+            "take the earlier source's slot."
         ),
     )
