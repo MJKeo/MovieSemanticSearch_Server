@@ -31,6 +31,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from schemas.enums import Polarity, Role
+
 
 # ---------------------------------------------------------------------
 # Modifying signal
@@ -347,7 +349,7 @@ class Trait(BaseModel):
             "refine?"
         ),
     )
-    role: Literal["carver", "qualifier"] = Field(
+    role: Role = Field(
         ...,
         description=(
             "Conclusion of role_evidence above. CARVER: the trait "
@@ -359,7 +361,7 @@ class Trait(BaseModel):
             "user wants."
         ),
     )
-    polarity: Literal["positive", "negative"] = Field(
+    polarity: Polarity = Field(
         ...,
         description=(
             "Read source atom's modifying_signals. Any signal whose "

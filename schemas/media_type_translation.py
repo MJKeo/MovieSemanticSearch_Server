@@ -30,11 +30,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr
 
 from schemas.endpoint_parameters import (
-    MATCH_MODE_DESCRIPTION,
     POLARITY_DESCRIPTION,
+    ROLE_DESCRIPTION,
     EndpointParameters,
 )
-from schemas.enums import MatchMode, Polarity, ReleaseFormat
+from schemas.enums import Polarity, ReleaseFormat, Role
 
 
 # Subset of ReleaseFormat the LLM is allowed to emit. See the file-
@@ -77,11 +77,11 @@ class MediaTypeQuerySpec(BaseModel):
     ) = Field(...)
 
 
-# Category-handler wrapper. Direction flows through match_mode +
+# Category-handler wrapper. Direction flows through role +
 # polarity on the wrapper. Fields are declared in the order
-# match_mode → parameters → polarity so polarity is emitted last.
+# role → parameters → polarity so polarity is emitted last.
 # See endpoint_parameters.py for the rationale.
 class MediaTypeEndpointParameters(EndpointParameters):
-    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
+    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: MediaTypeQuerySpec = Field(...)
     polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

@@ -11,11 +11,11 @@
 #   3. Extract fired (route, EndpointParameters) pairs from the LLM
 #      output, bucketed by the category's handler shape
 #      (SINGLE / MUTEX / TIERED / COMBO).
-#   4. Stamp match_mode and polarity onto each fired wrapper from
-#      the parent Trait's pre-committed role/polarity. The LLM does
-#      not infer these — they are upstream commitments.
-#   5. Classify each fired wrapper by (match_mode, polarity) into one
-#      of the four return buckets, executing non-preference endpoints
+#   4. Stamp role and polarity onto each fired wrapper from the
+#      parent Trait's pre-committed values. The LLM does not infer
+#      these — they are upstream commitments.
+#   5. Classify each fired wrapper by (role, polarity) into one of
+#      the four return buckets, executing non-preference endpoints
 #      in parallel and deferring preference specs as-is.
 #   6. Consolidate scores additively across endpoints inside
 #      inclusion_candidates / downrank_candidates and unify tmdb_ids
@@ -47,14 +47,18 @@ from schemas.endpoint_result import EndpointResult
 from schemas.enums import (
     EndpointRoute,
     HandlerBucket,
-    MatchMode,
     Polarity,
+    Role,
 )
+from schemas.media_type_translation import MediaTypeEndpointParameters
 from schemas.trait_category import CategoryName
 from schemas.semantic_translation import SemanticEndpointParameters
 from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall
 from search_v2.stage_3.category_handlers.handler_result import HandlerResult
+from search_v2.stage_3.category_handlers.media_type_router import (
+    build_media_type_query_spec,
+)
 from search_v2.stage_3.category_handlers.prompt_builder import (
     build_system_prompt,
     build_user_message,
@@ -109,17 +113,17 @@ async def run_handler(
         result.category = category
         return result
 
-    # Step 0a.2 — MEDIA_TYPE short-circuit. MEDIA_TYPE will be routed
-    # deterministically by code (matching surface phrases against the
-    # ReleaseFormat enum) rather than through the LLM handler. The
-    # deterministic routing path is not yet wired up; until it lands,
-    # soft-fail to an empty result. Reaching the LLM codepath would
-    # crash because MEDIA_TYPE is in prompt_builder._ENDPOINT_PROMPTLESS
-    # and the MEDIA_TYPE category routes only to the MEDIA_TYPE
-    # endpoint, tripping the "no LLM-wrapper endpoints" raise in
-    # build_system_prompt.
+    # Step 0a.2 — MEDIA_TYPE short-circuit. MEDIA_TYPE is routed
+    # deterministically by code (matching Step-3 expressions against
+    # the ReleaseFormat enum) rather than through the LLM handler.
+    # Reaching the LLM codepath would crash because MEDIA_TYPE is in
+    # prompt_builder._ENDPOINT_PROMPTLESS and the MEDIA_TYPE category
+    # routes only to the MEDIA_TYPE endpoint, tripping the "no
+    # LLM-wrapper endpoints" raise in build_system_prompt.
     if category == CategoryName.MEDIA_TYPE:
-        return HandlerResult(category=category)
+        result = await _run_media_type(category_call, trait, qdrant_client)
+        result.category = category
+        return result
 
     # Step 1 — build prompt + run LLM with a single retry.
     output = await _run_handler_llm(
@@ -138,7 +142,7 @@ async def run_handler(
 
     # Step 3 — stamp the trait's pre-committed role/polarity onto
     # each fired wrapper. The LLM emits the rest of the parameters;
-    # match_mode and polarity are upstream commitments.
+    # role and polarity are upstream commitments.
     fired = _stamp_role_and_polarity(fired, trait)
 
     # Steps 4-6 — classify, execute in parallel, consolidate. The
@@ -172,6 +176,31 @@ async def _run_trending() -> HandlerResult:
 
     inclusion = {sc.movie_id: sc.score for sc in result.scores}
     return HandlerResult(inclusion_candidates=inclusion)
+
+
+# ---------------------------------------------------------------------------
+# Step 0a.2 — media type
+# ---------------------------------------------------------------------------
+
+
+async def _run_media_type(
+    category_call: CategoryCall,
+    trait: Trait,
+    qdrant_client: AsyncQdrantClient,
+) -> HandlerResult:
+    spec = build_media_type_query_spec(category_call)
+    if spec is None:
+        return HandlerResult()
+
+    wrapper = MediaTypeEndpointParameters(
+        role=trait.role,
+        parameters=spec,
+        polarity=trait.polarity,
+    )
+    fired = [(EndpointRoute.MEDIA_TYPE, wrapper)]
+    result = await _assemble_result(fired, qdrant_client=qdrant_client)
+    result.fired_endpoints = list(fired)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -283,36 +312,22 @@ def _extract_fired_endpoints(
 # ---------------------------------------------------------------------------
 
 
-# Trait.role and Trait.polarity are pre-committed string literals; the
-# wrappers expect the corresponding enum values. These mappings are
-# the single point of translation so the rest of the handler can
-# treat the wrapper fields as authoritative.
-_ROLE_TO_MATCH_MODE: dict[str, MatchMode] = {
-    "carver": MatchMode.FILTER,
-    "qualifier": MatchMode.TRAIT,
-}
-_POLARITY_TO_ENUM: dict[str, Polarity] = {
-    "positive": Polarity.POSITIVE,
-    "negative": Polarity.NEGATIVE,
-}
-
-
 def _stamp_role_and_polarity(
     fired: list[tuple[EndpointRoute, EndpointParameters]],
     trait: Trait,
 ) -> list[tuple[EndpointRoute, EndpointParameters]]:
-    # Overwrite whatever match_mode / polarity the LLM emitted with
-    # the Trait's committed values. Pydantic model_copy returns a new
+    # Overwrite whatever role / polarity the LLM emitted with the
+    # Trait's committed values. Trait.role and Trait.polarity share
+    # the wrapper's enum types, so the assignment is direct — no
+    # vocabulary mapping needed. Pydantic model_copy returns a new
     # wrapper rather than mutating in place, so the LLM-emitted
     # objects stay untouched (useful when fired_endpoints is exposed
     # for debug inspection).
-    match_mode = _ROLE_TO_MATCH_MODE[trait.role]
-    polarity = _POLARITY_TO_ENUM[trait.polarity]
     return [
         (
             route,
             wrapper.model_copy(
-                update={"match_mode": match_mode, "polarity": polarity}
+                update={"role": trait.role, "polarity": trait.polarity}
             ),
         )
         for route, wrapper in fired
@@ -400,35 +415,35 @@ def _classify_wrapper(wrapper: EndpointParameters) -> str | None:
     # in-handler).
     #
     # The base 2x2 is:
-    #   FILTER + POSITIVE → inclusion_candidates (execute)
-    #   FILTER + NEGATIVE → exclusion_ids       (execute, drop scores)
-    #   TRAIT  + POSITIVE → preference_specs    (defer — no execute)
-    #   TRAIT  + NEGATIVE → downrank_candidates (execute)
+    #   CARVER    + POSITIVE → inclusion_candidates (execute)
+    #   CARVER    + NEGATIVE → exclusion_ids       (execute, drop scores)
+    #   QUALIFIER + POSITIVE → preference_specs    (defer — no execute)
+    #   QUALIFIER + NEGATIVE → downrank_candidates (execute)
     #
-    # Semantic override: a semantic FILTER+NEGATIVE is *not* a hard
+    # Semantic override: a semantic CARVER+NEGATIVE is *not* a hard
     # exclude. Similarity scores are soft by nature, so a "not scary"
     # match is a gradient downrank, not a crisp set removal. Route it
     # to downrank_candidates instead.
-    match_mode = wrapper.match_mode
+    role = wrapper.role
     polarity = wrapper.polarity
 
-    if match_mode == MatchMode.FILTER and polarity == Polarity.POSITIVE:
+    if role == Role.CARVER and polarity == Polarity.POSITIVE:
         return _INCLUSION
-    if match_mode == MatchMode.FILTER and polarity == Polarity.NEGATIVE:
+    if role == Role.CARVER and polarity == Polarity.NEGATIVE:
         if isinstance(wrapper, SemanticEndpointParameters):
             return _DOWNRANK
         return _EXCLUSION
-    if match_mode == MatchMode.TRAIT and polarity == Polarity.POSITIVE:
+    if role == Role.QUALIFIER and polarity == Polarity.POSITIVE:
         return None  # preference spec — deferred
-    if match_mode == MatchMode.TRAIT and polarity == Polarity.NEGATIVE:
+    if role == Role.QUALIFIER and polarity == Polarity.NEGATIVE:
         return _DOWNRANK
 
     # Exhaustive check — both enums are 2-valued, so reaching here means
     # an unexpected enum state. Surface the programmer error rather than
     # silently dropping the finding.
     raise ValueError(
-        f"Unhandled match_mode/polarity combination: "
-        f"match_mode={match_mode!r}, polarity={polarity!r}"
+        f"Unhandled role/polarity combination: "
+        f"role={role!r}, polarity={polarity!r}"
     )
 
 
@@ -455,4 +470,3 @@ def _land_outcome(
     )
     for sc in outcome.scores:
         bucket[sc.movie_id] = bucket.get(sc.movie_id, 0.0) + sc.score
-

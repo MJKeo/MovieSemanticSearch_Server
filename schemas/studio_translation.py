@@ -19,11 +19,11 @@
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr
 
 from schemas.endpoint_parameters import (
-    MATCH_MODE_DESCRIPTION,
     POLARITY_DESCRIPTION,
+    ROLE_DESCRIPTION,
     EndpointParameters,
 )
-from schemas.enums import MatchMode, Polarity
+from schemas.enums import Polarity, Role
 from schemas.production_brands import ProductionBrand
 
 
@@ -81,12 +81,12 @@ class StudioQuerySpec(BaseModel):
     ) | None = Field(default=None)
 
 
-# Category-handler wrapper. Direction flows through match_mode +
+# Category-handler wrapper. Direction flows through role +
 # polarity on the wrapper. Fields are declared in the order
-# match_mode → parameters → polarity so polarity is emitted last.
+# role → parameters → polarity so polarity is emitted last.
 # See endpoint_parameters.py for the rationale.
 class StudioEndpointParameters(EndpointParameters):
-    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
+    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: StudioQuerySpec = Field(
         ...,
         description=(

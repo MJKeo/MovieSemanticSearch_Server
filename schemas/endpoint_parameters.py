@@ -2,16 +2,16 @@
 #
 # Every category handler emits its per-finding decisions as
 # EndpointParameters objects (one concrete subclass per endpoint)
-# and aggregates them into a HandlerResult. The match_mode +
-# polarity pair on every EndpointParameters tags the finding with
-# its intended downstream effect; the handler does not produce
+# and aggregates them into a HandlerResult. The role + polarity
+# pair on every EndpointParameters tags the finding with its
+# intended downstream effect; the handler does not produce
 # separate bucket arrays — HandlerResult is the bucketed shape that
 # the orchestrator folds into the final rerank.
 #
 #               | POSITIVE               | NEGATIVE
 #   ------------+------------------------+-----------------------
-#   FILTER      | inclusion_candidates   | exclusion_ids
-#   TRAIT       | preference_specs       | downrank_candidates
+#   CARVER      | inclusion_candidates   | exclusion_ids
+#   QUALIFIER   | preference_specs       | downrank_candidates
 #
 # The orchestrator routes each preference spec to its endpoint by
 # isinstance-checking its concrete EndpointParameters subclass —
@@ -46,24 +46,24 @@ from pydantic import BaseModel, ConfigDict, Field
 # — so architecture words are either inert tokens or get mis-
 # interpreted. Every sentence here should be graspable from user-
 # intent reasoning alone.
-MATCH_MODE_DESCRIPTION = (
-    "Pick 'filter' for a binary yes/no test that decides whether a "
+ROLE_DESCRIPTION = (
+    "Pick 'carver' for a binary yes/no test that decides whether a "
     "movie belongs in the results at all — a non-matching movie is "
     "dropped entirely. Triggered by 'must', 'only', 'no X', "
     "'without', or a bare attribute assertion ('starring Tom "
     "Hanks', 'horror'). "
-    "Pick 'trait' for a descriptive attribute that colors the "
+    "Pick 'qualifier' for a descriptive attribute that colors the "
     "ranking — a non-matching movie still qualifies, just with a "
     "lower score. Triggered by 'ideally', 'preferably', 'not too', "
     "'a bit', 'would like'. "
-    "Both modes combine with either polarity, so 'filter' does not "
-    "imply removal: 'must star Tom Hanks' is filter+positive, 'no "
-    "horror' is filter+negative, 'preferably funny' is "
-    "trait+positive, 'not too violent' is trait+negative. "
-    "For neutral phrasing: pick filter for categorical attributes "
-    "(genre, franchise, named entity, award) and trait for gradient "
-    "attributes (tone, mood, quality, pacing). When unsure, prefer "
-    "trait — filter is the stronger commitment."
+    "Both roles combine with either polarity, so 'carver' does not "
+    "imply removal: 'must star Tom Hanks' is carver+positive, 'no "
+    "horror' is carver+negative, 'preferably funny' is "
+    "qualifier+positive, 'not too violent' is qualifier+negative. "
+    "For neutral phrasing: pick carver for categorical attributes "
+    "(genre, franchise, named entity, award) and qualifier for "
+    "gradient attributes (tone, mood, quality, pacing). When unsure, "
+    "prefer qualifier — carver is the stronger commitment."
 )
 
 POLARITY_DESCRIPTION = (
@@ -90,7 +90,7 @@ POLARITY_DESCRIPTION = (
 # in the per-endpoint translation modules
 # (schemas/keyword_translation.py, schemas/metadata_translation.py,
 # etc.) and declare the three LLM-facing fields directly —
-# `match_mode`, `parameters`, `polarity` in that order. The base
+# `role`, `parameters`, `polarity` in that order. The base
 # is intentionally empty of those fields: Pydantic v2 preserves
 # base-class field positions under inheritance even when subclasses
 # redeclare, so declaring them here would force the base order on
@@ -102,7 +102,7 @@ POLARITY_DESCRIPTION = (
 # (HandlerResult.preference_specs below).
 #
 # Field ordering rationale: the LLM-facing order is
-# `match_mode → parameters → polarity`. Generating `polarity`
+# `role → parameters → polarity`. Generating `polarity`
 # immediately before `parameters` risks the model pattern-matching
 # on the negative token and inverting the parameter content (the
 # "not Tom Hanks" double-negative failure). Placing `polarity` last
@@ -117,7 +117,7 @@ POLARITY_DESCRIPTION = (
 # Kept at module scope (not on the class) because Pydantic treats
 # any underscore-prefixed class attribute as a ModelPrivateAttr,
 # which is not iterable at subclass-construction time.
-_REQUIRED_FIELD_ORDER: tuple[str, ...] = ("match_mode", "parameters", "polarity")
+_REQUIRED_FIELD_ORDER: tuple[str, ...] = ("role", "parameters", "polarity")
 
 
 class EndpointParameters(BaseModel):
@@ -145,7 +145,7 @@ class EndpointParameters(BaseModel):
             raise TypeError(
                 f"{cls.__name__} declares fields in order {declared_order}; "
                 f"expected {list(_REQUIRED_FIELD_ORDER)}. Reorder the class "
-                "body so `match_mode` precedes `parameters` precedes "
+                "body so `role` precedes `parameters` precedes "
                 "`polarity`."
             )
 

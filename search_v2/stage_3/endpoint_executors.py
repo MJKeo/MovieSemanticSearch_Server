@@ -81,14 +81,14 @@ def build_endpoint_coroutine(
             params, restrict_to_movie_ids=restrict_to_movie_ids
         )
     if route == EndpointRoute.SEMANTIC:
-        # Semantic executor branches on match_mode internally — pass
-        # the wrapper's match_mode through and let it pick between
-        # the primary_vector-only FILTER path and the all-spaces
-        # TRAIT path.
+        # Semantic executor branches on role internally — pass
+        # the wrapper's role through and let it pick between
+        # the primary_vector-only CARVER path and the all-spaces
+        # QUALIFIER path.
         assert isinstance(wrapper, SemanticEndpointParameters)
         return execute_semantic_query(
             params,
-            match_mode=wrapper.match_mode,
+            role=wrapper.role,
             restrict_to_movie_ids=restrict_to_movie_ids,
             qdrant_client=qdrant_client,
         )

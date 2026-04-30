@@ -629,34 +629,36 @@ class MetadataAttribute(StrEnum):
 
 
 # ---------------------------------------------------------------------------
-# Search V2 category-handler dispatch vocabulary.
+# Search V2 trait-role + polarity vocabulary.
 #
-# Every category handler emits one EndpointParameters object per
-# finding. That wrapper tags the finding along two orthogonal axes —
-# match_mode and polarity — which together determine which of the
-# four HandlerResult buckets the finding falls into:
+# Every Trait committed by Step 2 carries a role (carver vs qualifier)
+# and a polarity (positive vs negative). Those two pre-committed
+# values stamp through onto every EndpointParameters wrapper produced
+# by Step 4, where together they determine which of the four
+# HandlerResult buckets the finding falls into:
 #
 #                   | POSITIVE                | NEGATIVE
 #   ----------------+-------------------------+----------------------
-#   FILTER          | inclusion_candidates    | exclusion_ids
-#   TRAIT           | preference_specs        | downrank_candidates
+#   CARVER          | inclusion_candidates    | exclusion_ids
+#   QUALIFIER       | preference_specs        | downrank_candidates
 #
 # See search_improvement_planning/category_handler_planning.md
 # ("From LLM output to return buckets") for the full mapping.
 # ---------------------------------------------------------------------------
 
 
-# Whether the finding is a binary yes/no test that selects which
-# movies pass (FILTER) or a descriptive attribute that colors the
-# ranking of movies that already passed (TRAIT).
-class MatchMode(StrEnum):
-    FILTER = "filter"
-    TRAIT = "trait"
+# Whether the trait gates eligibility (CARVER — a yes/no test that
+# selects which movies pass) or scores/refines within an already-
+# gated population (QUALIFIER — a descriptive attribute that colors
+# the ranking).
+class Role(StrEnum):
+    CARVER = "carver"
+    QUALIFIER = "qualifier"
 
 
-# Whether the finding pushes candidates IN (positive) or OUT / DOWN
-# (negative). Orthogonal to match_mode — together they cover the
-# full 2x2 of inclusion / exclusion / preference / downrank.
+# Whether the trait pushes candidates IN (positive) or OUT / DOWN
+# (negative). Orthogonal to role — together they cover the full
+# 2x2 of inclusion / exclusion / preference / downrank.
 class Polarity(StrEnum):
     POSITIVE = "positive"
     NEGATIVE = "negative"

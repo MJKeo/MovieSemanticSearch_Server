@@ -31,7 +31,7 @@ from qdrant_client import AsyncQdrantClient
 
 from implementation.llms.generic_methods import LLMProvider
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import EndpointRoute, MatchMode
+from schemas.enums import EndpointRoute, Role
 from search_v2.stage_3.award_query_execution import execute_award_query
 from search_v2.stage_3.award_query_generation import generate_award_query
 from search_v2.stage_3.entity_query_execution import execute_entity_query
@@ -273,16 +273,16 @@ def _build_executor_call(
     if endpoint == EndpointRoute.SEMANTIC:
         # Stage 4 still uses the pre-category-handler role strings
         # ("preference" / "*_dealbreaker"); the semantic executor
-        # speaks MatchMode now. Map at the boundary so the rest of
+        # speaks Role now. Map at the boundary so the rest of
         # this dispatcher keeps its existing shape.
-        match_mode = (
-            MatchMode.TRAIT
+        role = (
+            Role.QUALIFIER
             if item.role == "preference"
-            else MatchMode.FILTER
+            else Role.CARVER
         )
         return execute_semantic_query(
             spec,
-            match_mode=match_mode,
+            role=role,
             restrict_to_movie_ids=restrict_to_movie_ids,
             qdrant_client=qdrant_client,
         )

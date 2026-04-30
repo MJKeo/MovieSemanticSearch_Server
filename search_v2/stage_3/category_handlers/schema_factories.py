@@ -83,13 +83,13 @@ _SHOULD_RUN_ENDPOINT_DESC = (
 )
 
 _ENDPOINT_PARAMETERS_SINGLE_DESC = (
-    "The endpoint's parameter payload, carrying match_mode and "
-    "polarity. Leave null when should_run_endpoint is false."
+    "The endpoint's parameter payload, carrying role and polarity. "
+    "Leave null when should_run_endpoint is false."
 )
 
 _ENDPOINT_PARAMETERS_MUTEX_DESC = (
-    "The chosen endpoint's parameter payload, carrying match_mode "
-    "and polarity. Leave null when endpoint_to_run is 'None'."
+    "The chosen endpoint's parameter payload, carrying role and "
+    "polarity. Leave null when endpoint_to_run is 'None'."
 )
 
 _ENDPOINT_TO_RUN_DESC = (

@@ -2,14 +2,14 @@
 #
 # One unified shape (SemanticEndpointParameters) covers both the
 # dealbreaker and preference paths. Which path runs is determined by
-# match_mode on the enclosing EndpointParameters wrapper, not by a
+# role on the enclosing EndpointParameters wrapper, not by a
 # schema-level split:
 #
-#   match_mode == FILTER (dealbreaker)
+#   role == CARVER (dealbreaker)
 #       Use only the space_queries entry whose .space matches
 #       primary_vector. Ignore weight.
 #
-#   match_mode == TRAIT (preference)
+#   role == QUALIFIER (preference)
 #       Use all space_queries entries with their weights
 #       (central/supporting). Ignore primary_vector.
 #
@@ -46,11 +46,11 @@ from typing import Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
 from schemas.endpoint_parameters import (
-    MATCH_MODE_DESCRIPTION,
     POLARITY_DESCRIPTION,
+    ROLE_DESCRIPTION,
     EndpointParameters,
 )
-from schemas.enums import MatchMode, Polarity
+from schemas.enums import Polarity, Role
 from schemas.semantic_bodies import (
     NarrativeTechniquesBody,
     PlotAnalysisBody,
@@ -133,8 +133,8 @@ _WEIGHT_DESC = (
     "not the core ask. A requirement can have multiple central spaces "
     "if two dimensions are equally load-bearing; don't artificially "
     "demote one to supporting just to pick a single central. Only "
-    "consulted in the preference (trait) path — ignored when the "
-    "enclosing wrapper's match_mode is filter."
+    "consulted in the preference (qualifier) path — ignored when the "
+    "enclosing wrapper's role is carver."
 )
 
 _CONTENT_DESC = (
@@ -413,11 +413,11 @@ class SemanticParameters(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-# Fields are declared in the order match_mode → parameters →
+# Fields are declared in the order role → parameters →
 # polarity so polarity is emitted last. See endpoint_parameters.py
 # for the rationale.
 class SemanticEndpointParameters(EndpointParameters):
-    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
+    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: SemanticParameters = Field(
         ...,
         description=(

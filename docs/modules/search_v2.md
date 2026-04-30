@@ -66,12 +66,10 @@ Stage 3 (stage_3/): Endpoint translation + execution (9 endpoints)
   ├── trending_query_execution.py     (deterministic, no LLM call)
   └── media_type_query_execution.py   (closed-enum wrapper + executor in place;
                                        no _query_generation module — MEDIA_TYPE
-                                       will be routed deterministically by code
-                                       matching surface phrases against the
-                                       ReleaseFormat enum, not via an LLM
-                                       handler. Handler short-circuits to an
-                                       empty result until that deterministic
-                                       routing path lands)
+                                       routes deterministically by matching
+                                       Step-3 expressions against the
+                                       non-default ReleaseFormat values, not
+                                       via an LLM handler)
   All executors return EndpointResult (list[ScoredCandidate]).
 
   stage_3/category_handlers/ — new handler scaffolding for the

@@ -17,16 +17,16 @@
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
 from schemas.endpoint_parameters import (
-    MATCH_MODE_DESCRIPTION,
     POLARITY_DESCRIPTION,
+    ROLE_DESCRIPTION,
     EndpointParameters,
 )
 from schemas.enums import (
     EntityType,
-    MatchMode,
     PersonCategory,
     Polarity,
     ProminenceMode,
+    Role,
     SpecificPersonCategory,
     TitlePatternMatchType,
 )
@@ -247,14 +247,14 @@ class EntityQuerySpec(BaseModel):
         return self
 
 
-# Category-handler wrapper. Direction flows through match_mode +
+# Category-handler wrapper. Direction flows through role +
 # polarity on the wrapper. Fields are declared in the order
-# match_mode → parameters → polarity so polarity is emitted last,
+# role → parameters → polarity so polarity is emitted last,
 # avoiding the double-negative failure mode where a negative
 # polarity token would bias parameter content toward inversion.
 # See endpoint_parameters.py for the full rationale.
 class EntityEndpointParameters(EndpointParameters):
-    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
+    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: EntityQuerySpec = Field(
         ...,
         description=(

@@ -28,11 +28,11 @@
 from pydantic import BaseModel, ConfigDict, Field, constr
 
 from schemas.endpoint_parameters import (
-    MATCH_MODE_DESCRIPTION,
     POLARITY_DESCRIPTION,
+    ROLE_DESCRIPTION,
     EndpointParameters,
 )
-from schemas.enums import MatchMode, Polarity
+from schemas.enums import Polarity, Role
 from schemas.unified_classification import UnifiedClassification
 
 
@@ -52,13 +52,13 @@ class KeywordQuerySpec(BaseModel):
 
 
 # Category-handler wrapper. Direction (inclusion vs exclusion vs
-# preference vs downrank) is supplied by match_mode + polarity on
+# preference vs downrank) is supplied by role + polarity on
 # the wrapper; KeywordQuerySpec itself stays direction-agnostic.
-# Fields are declared in the order match_mode → parameters →
+# Fields are declared in the order role → parameters →
 # polarity so polarity is emitted last. See endpoint_parameters.py
 # for the rationale.
 class KeywordEndpointParameters(EndpointParameters):
-    match_mode: MatchMode = Field(..., description=MATCH_MODE_DESCRIPTION)
+    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: KeywordQuerySpec = Field(
         ...,
         description=(

@@ -1,35 +1,35 @@
 # Search V2 — Stage 3 Semantic Endpoint: Query Execution
 #
 # Takes the unified SemanticParameters payload (the inner parameters
-# of a SemanticEndpointParameters wrapper) plus the wrapper's
-# match_mode, runs the corresponding vector search against Qdrant,
-# and returns the scored EndpointResult.
+# of a SemanticEndpointParameters wrapper) plus the wrapper's role,
+# runs the corresponding vector search against Qdrant, and returns
+# the scored EndpointResult.
 #
 # Dispatch is a 2x2 across two orthogonal signals:
 #
 #                   | restrict_to_movie_ids=None | restrict_to_movie_ids=set
 #   ----------------+----------------------------+-----------------------------
-#   FILTER          | D2 (generate candidates)   | D1 (score pool)
-#   TRAIT           | P2 (generate candidates)   | P1 (score pool)
+#   CARVER          | D2 (generate candidates)   | D1 (score pool)
+#   QUALIFIER       | P2 (generate candidates)   | P1 (score pool)
 #
-# FILTER (filter-mode) paths use ONLY the space_queries entry
+# CARVER (dealbreaker) paths use ONLY the space_queries entry
 # whose .space matches primary_vector; weight is ignored. A single
 # space, embedded, probed, and threshold+flattened. D2 reuses the
 # corpus probe as both calibration sample and candidate pool; D1
 # adds a filtered HasId lookup for the supplied pool.
 #
-# TRAIT (trait-mode) paths use ALL space_queries entries with their
-# SpaceWeight (central=2.0, supporting=1.0); primary_vector is
-# ignored. Per-space cosines combine via Σ(w × cos) / Σw. P2 unions
-# per-space top-N probes into a pool then fills missing cosines via
-# HasId; P1 runs one filtered lookup per space against the supplied
-# pool.
+# QUALIFIER (preference) paths use ALL space_queries entries with
+# their SpaceWeight (central=2.0, supporting=1.0); primary_vector
+# is ignored. Per-space cosines combine via Σ(w × cos) / Σw. P2
+# unions per-space top-N probes into a pool then fills missing
+# cosines via HasId; P1 runs one filtered lookup per space against
+# the supplied pool.
 #
 # Polarity is NOT an executor concern. Both positive and negative
 # findings produce the same EndpointResult shape; the orchestrator
 # routes the returned IDs/scores into inclusion_candidates vs
-# exclusion_ids (for filter mode) or preference_specs vs
-# downrank_candidates (for trait mode). See
+# exclusion_ids (for carver role) or preference_specs vs
+# downrank_candidates (for qualifier role). See
 # search_improvement_planning/category_handler_planning.md
 # ("From LLM output to return buckets").
 #
@@ -53,7 +53,7 @@ from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
 from implementation.classes.enums import VectorName
 from implementation.llms.generic_methods import generate_vector_embedding
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import MatchMode
+from schemas.enums import Role
 from schemas.semantic_bodies import (
     NarrativeTechniquesBody,
     PlotAnalysisBody,
@@ -568,7 +568,7 @@ async def _execute_preference_p2(
 async def execute_semantic_query(
     params: SemanticParameters,
     *,
-    match_mode: MatchMode,
+    role: Role,
     restrict_to_movie_ids: set[int] | None = None,
     qdrant_client: AsyncQdrantClient,
 ) -> EndpointResult:
@@ -576,10 +576,10 @@ async def execute_semantic_query(
 
     Two orthogonal signals drive the 2×2 of scenarios:
 
-      match_mode == FILTER → dealbreaker path
+      role == CARVER → dealbreaker path
         (uses only the space_queries entry whose .space matches
         primary_vector; weight is ignored).
-      match_mode == TRAIT → preference path
+      role == QUALIFIER → preference path
         (uses every space_queries entry with its weight; primary_vector
         is ignored).
 
@@ -596,15 +596,15 @@ async def execute_semantic_query(
     Polarity is NOT consulted here. Both positive and negative findings
     return the same EndpointResult shape; the orchestrator decides
     whether the IDs/scores feed inclusion_candidates vs exclusion_ids
-    (filter mode) or preference_specs vs downrank_candidates
-    (trait mode).
+    (carver role) or preference_specs vs downrank_candidates
+    (qualifier role).
 
     Retry contract: transient Qdrant or embedding errors retry once;
     a second failure returns EndpointResult() rather than raising.
     Orchestrator-side handling treats "failed" and "no match" the
     same way.
     """
-    # Validate match_mode before the retry loop. A bogus value is a
+    # Validate role before the retry loop. A bogus value is a
     # contract violation, not a transient error — wrapping it in the
     # try/except below would launder a programmer bug into a silent
     # empty result with misleading "retrying" logs. Convention
@@ -613,15 +613,15 @@ async def execute_semantic_query(
     # soft-fail path as transient I/O. Also builds the per-branch log
     # context while we already know which branch we're on, so retry
     # logs surface only the fields that branch actually consults.
-    if match_mode == MatchMode.FILTER:
+    if role == Role.CARVER:
         log_context = f"primary_vector={params.primary_vector.value}"
-    elif match_mode == MatchMode.TRAIT:
+    elif role == Role.QUALIFIER:
         log_context = (
             "spaces="
             f"{[e.space.value for e in params.space_queries]}"
         )
     else:
-        raise ValueError(f"Unhandled match_mode: {match_mode!r}")
+        raise ValueError(f"Unhandled role: {role!r}")
 
     if restrict_to_movie_ids is not None and len(restrict_to_movie_ids) == 0:
         return EndpointResult()
@@ -629,7 +629,7 @@ async def execute_semantic_query(
     scores: dict[int, float] = {}
     for attempt in range(2):
         try:
-            if match_mode == MatchMode.FILTER:
+            if role == Role.CARVER:
                 if restrict_to_movie_ids is not None:
                     scores = await _execute_dealbreaker_d1(
                         params,
@@ -640,7 +640,7 @@ async def execute_semantic_query(
                     scores = await _execute_dealbreaker_d2(
                         params, qdrant_client=qdrant_client
                     )
-            else:  # TRAIT — already validated above.
+            else:  # QUALIFIER — already validated above.
                 if restrict_to_movie_ids is not None:
                     scores = await _execute_preference_p1(
                         params,
@@ -656,16 +656,16 @@ async def execute_semantic_query(
             if attempt == 0:
                 logger.warning(
                     "Semantic query error on first attempt, retrying "
-                    "(match_mode=%s, %s)",
-                    match_mode,
+                    "(role=%s, %s)",
+                    role,
                     log_context,
                     exc_info=True,
                 )
                 continue
             logger.error(
                 "Semantic query error on retry, returning empty "
-                "(match_mode=%s, %s)",
-                match_mode,
+                "(role=%s, %s)",
+                role,
                 log_context,
                 exc_info=True,
             )
