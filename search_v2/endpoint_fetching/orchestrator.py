@@ -45,9 +45,9 @@ from schemas.enums import FitQuality
 from schemas.implicit_expectations import ImplicitExpectationsResult
 from schemas.step_2 import Step2Response
 from search_v2.implicit_expectations import run_implicit_expectations
-from search_v2.stage_3.category_handlers.handler import run_handler
-from search_v2.stage_3.category_handlers.handler_result import HandlerResult
-from search_v2.stage_3.endpoint_executors import (
+from search_v2.endpoint_fetching.category_handlers.handler import run_handler
+from search_v2.endpoint_fetching.category_handlers.handler_result import HandlerResult
+from search_v2.endpoint_fetching.endpoint_executors import (
     build_endpoint_coroutine,
     route_for_wrapper,
 )

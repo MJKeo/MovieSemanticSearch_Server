@@ -34,7 +34,7 @@ from db.postgres import fetch_keyword_matched_movie_ids
 from schemas.endpoint_result import EndpointResult
 from schemas.keyword_translation import KeywordQuerySpec
 from schemas.unified_classification import UnifiedClassification, entry_for
-from search_v2.stage_3.result_helpers import build_endpoint_result
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 logger = logging.getLogger(__name__)
 

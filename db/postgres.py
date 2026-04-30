@@ -1905,44 +1905,52 @@ async def fetch_movie_ids_by_term_ids(
 #     over lex.studio_token, then GIN && join against movie_card.production_company_ids.
 
 
-async def fetch_movie_ids_by_brand(
-    brand_id: int,
+async def fetch_movie_ids_by_brands(
+    brand_ids: list[int],
     restrict_movie_ids: Optional[set[int]] = None,
 ) -> set[int]:
     """
-    Resolve a ProductionBrand enum brand_id to the set of stamped movie IDs.
+    Resolve one or more ProductionBrand enum brand_ids to stamped movie IDs.
 
-    Reads lex.inv_production_brand_postings. The brand-path score is flat 1.0
-    per matched movie (the prominence column `first_matching_index` is stored
-    but deliberately NOT used — see the studio endpoint design notes for why
-    IMDB ordering is unreliable across regions).
+    Reads lex.inv_production_brand_postings with `brand_id = ANY(...)` so a
+    single SQL round trip covers every brand the executor needs. The
+    brand-path score is flat 1.0 per matched movie (the prominence column
+    `first_matching_index` is stored but deliberately NOT used — see the
+    studio endpoint design notes for why IMDB ordering is unreliable
+    across regions).
 
     Args:
-        brand_id: ProductionBrand.brand_id (SMALLINT). Caller passes the int,
-            not the enum, so this helper stays pure SQL-layer.
+        brand_ids: List of ProductionBrand.brand_id values (SMALLINT).
+            Caller dedupes; an empty list short-circuits to an empty set.
         restrict_movie_ids: Optional candidate-pool restriction for the
             preference / restrict-set path. Applied server-side.
 
     Returns:
-        Set of movie IDs stamped with the given brand at ingest. Empty when
-        the brand has no postings (should be rare for registry brands).
+        Union of movie IDs stamped with any of the given brands at ingest.
+        Empty when none of the brands have postings or when brand_ids
+        itself is empty.
     """
+    if not brand_ids:
+        return set()
     if restrict_movie_ids is not None:
         if not restrict_movie_ids:
             return set()
         query = """
             SELECT movie_id
             FROM lex.inv_production_brand_postings
-            WHERE brand_id = %s AND movie_id = ANY(%s::bigint[])
+            WHERE brand_id = ANY(%s::smallint[])
+              AND movie_id = ANY(%s::bigint[])
         """
-        rows = await _execute_read(query, (brand_id, list(restrict_movie_ids)))
+        rows = await _execute_read(
+            query, (brand_ids, list(restrict_movie_ids))
+        )
     else:
         query = """
             SELECT movie_id
             FROM lex.inv_production_brand_postings
-            WHERE brand_id = %s
+            WHERE brand_id = ANY(%s::smallint[])
         """
-        rows = await _execute_read(query, (brand_id,))
+        rows = await _execute_read(query, (brand_ids,))
     return {row[0] for row in rows}
 
 
@@ -2257,6 +2265,53 @@ async def fetch_movie_ids_with_title_like(
         SELECT movie_id
         FROM public.movie_card
         WHERE title_normalized LIKE %s{restrict_clause}
+    """
+    rows = await _execute_read(query, params)
+    return {row[0] for row in rows}
+
+
+async def fetch_movie_ids_with_titles_matching_any(
+    like_patterns: list[str],
+    restrict_movie_ids: Optional[set[int]] = None,
+) -> set[int]:
+    """Single-query union of multiple LIKE patterns against title_normalized.
+
+    Used when a TitlePatternQuerySpec carries multiple targets — each
+    pattern is OR'd in one query so the executor pays one DB round trip
+    instead of fanning out. Caller prepares each entry exactly as for
+    `fetch_movie_ids_with_title_like` (normalize → escape_like → wrap
+    with '%' for contains, suffix '%' for starts_with, or no wildcards
+    for exact_match — bare LIKE without wildcards collapses to equality
+    once special characters have been escaped).
+
+    Empty `like_patterns` is a programmer error — callers should skip
+    the call entirely when the target list is empty.
+
+    Args:
+        like_patterns: One fully-formed LIKE pattern per target.
+        restrict_movie_ids: Optional candidate-pool filter pushed to
+            the DB (preference-execution path).
+
+    Returns:
+        Set of movie IDs whose normalized title matches any pattern.
+    """
+    if not like_patterns:
+        raise ValueError("like_patterns must be non-empty.")
+
+    params: list = [like_patterns]
+    restrict_clause = ""
+    if restrict_movie_ids:
+        restrict_clause = " AND movie_id = ANY(%s::bigint[])"
+        params.append(list(restrict_movie_ids))
+
+    # `LIKE ANY (text[])` is the Postgres idiom for OR-ing a variable
+    # number of patterns in a single query. Planner can still use
+    # idx_movie_card_title_normalized_trgm for non-anchored patterns
+    # and the _prefix index when every pattern is a starts_with.
+    query = f"""
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE title_normalized LIKE ANY(%s::text[]){restrict_clause}
     """
     rows = await _execute_read(query, params)
     return {row[0] for row in rows}

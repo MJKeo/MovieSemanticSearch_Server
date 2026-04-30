@@ -1,28 +1,31 @@
-# Step 3 metadata endpoint LLM structured output models.
+# Metadata endpoint LLM structured output models.
 #
-# Translates natural-language metadata descriptions from step 2 into
-# structured query parameters. The field matching target_attribute
-# should carry the primary executable payload. Other attribute fields
-# usually remain null, but execution ignores them if they are
-# populated.
+# Whole-call translation: the LLM looks at retrieval_intent and every
+# expression on a single CategoryCall as one coherent picture, then
+# commits to a single ColumnSpec where each of the ten attribute
+# columns is either populated with a literal sub-object or explicit
+# null. Multi-column composition is committed via combine_mode
+# (max | average) — the executor reads the populated fields, scores
+# each independently, then folds per-column scores into one per-movie
+# call score using combine_mode.
 #
-# This is a pure translation layer — the LLM converts descriptions
-# into structured parameters as faithfully as possible. No softening,
-# no gradient logic. Deterministic code in the execution layer handles
-# all softening (generous gates for candidate generation, gradient
-# decay for scoring). The existing db/metadata_scoring.py gradient
-# shapes serve as the primary reference for those decay functions.
+# Field ordering encodes the cognitive scaffold:
+#   1. search_picture     — holistic intent restatement
+#   2. column_candidates  — honest per-column audit (covers / misses)
+#   3. combine_reasoning  — how the eligible columns relate
+#   4. column_spec        — literal commitment, every column explicit
+#   5. combine_mode       — mechanical mapping of combine_reasoning
 #
-# See search_improvement_planning/finalized_search_proposal.md
-# (Endpoint 2: Movie Attributes) for the full design rationale.
-#
-# No class-level docstrings or Field descriptions — all LLM-facing
-# guidance lives in the system prompt. Developer notes live in
-# comments above the class.
+# Schema = micro-prompts; the system prompt is procedural and does
+# not duplicate field-shape rules. Per-sub-object literal-translation
+# rules (date math, runtime comparators, rating-scale direction,
+# streaming-services tracked set, etc.) live on the unchanged
+# sub-object types and on the system prompt.
 
 from __future__ import annotations
 
 from datetime import date
+from enum import StrEnum
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, model_validator
@@ -153,10 +156,8 @@ class MaturityRatingTranslation(BaseModel):
 
 
 # Streaming availability: services and/or access method.
-# Inclusion-only — no exclusion list. Exclusion handling is supplied
-# by the enclosing EndpointParameters wrapper's polarity field;
-# execution code applies downrank/exclusion scoring downstream.
-# At least one of services or preferred_access_type must be populated.
+# Inclusion-only. At least one of services or preferred_access_type
+# must be populated.
 class StreamingTranslation(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -175,7 +176,6 @@ class StreamingTranslation(BaseModel):
 # Audio language: explicit audio-track constraint only.
 # ONLY used when the user explicitly mentions audio/language/dubbed.
 # "French films" → country_of_origin, NOT audio_language.
-# "Foreign films" → country_of_origin, NOT audio_language.
 class AudioLanguageTranslation(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -186,91 +186,205 @@ class AudioLanguageTranslation(BaseModel):
 # The LLM uses parametric knowledge to expand region-level terms
 # ("European movies") into concrete country lists. Execution code
 # applies a position-based gradient on the country_of_origin_ids
-# array (position 1 = 1.0, position 2 = ~0.7-0.8, position 3+ =
-# rapid decay). When multiple countries are requested, the movie's
-# score is the max across all requested countries.
+# array.
 class CountryOfOriginTranslation(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     countries: conlist(Country, min_length=1) = Field(...)
 
 
+# ── Combine mode ──────────────────────────────────────────────────
+
+
+# How execution folds per-column scores into one per-movie call score.
+#   MAX     — substitutable signals (any-one-matching qualifies).
+#   AVERAGE — reinforcing facets (every populated column contributes).
+# Single-populated-column case: mode is mechanically irrelevant; emit
+# AVERAGE.
+class ColumnCombineMode(StrEnum):
+    MAX = "max"
+    AVERAGE = "average"
+
+
+# ── Audit layer ───────────────────────────────────────────────────
+
+
+# Per-column coverage analysis. Surfaces adjacency honestly so the
+# commit step is grounded rather than back-rationalized.
+class ColumnCandidate(BaseModel):
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+
+    column: MetadataAttribute = Field(
+        ...,
+        description="The structured-attribute column under audit.",
+    )
+    what_this_covers: str = Field(
+        ...,
+        description=(
+            "One sentence naming the aspect of search_picture this "
+            "column genuinely owns. Cite the specific intent fragment.\n"
+            "NEVER back-rationalize. NEVER generalize from the "
+            "column's default purpose."
+        ),
+    )
+    what_this_misses: str = Field(
+        ...,
+        description=(
+            "Aspect of search_picture this column does NOT cover, "
+            "naming the column that owns the gap. \"Nothing\" when fit "
+            "is clean and no adjacent column competes.\n"
+            "NEVER hedge without naming. NEVER invent gaps."
+        ),
+    )
+
+
+# ── Commit layer ──────────────────────────────────────────────────
+
+
+# Literal sub-object per attribute column. Each field is required-but-
+# nullable so the LLM commits an explicit decision per column rather
+# than skipping. Population rules (cross-reference to search_picture
+# and column_candidates, minimum-span discipline) live on the parent
+# MetadataTranslationOutput.column_spec field — read that description
+# before populating any field here.
+class ColumnSpec(BaseModel):
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+
+    release_date: Optional[ReleaseDateTranslation] = Field(
+        ...,
+        description="Release-date sub-object or null.",
+    )
+    runtime: Optional[RuntimeTranslation] = Field(
+        ...,
+        description="Runtime sub-object or null.",
+    )
+    maturity_rating: Optional[MaturityRatingTranslation] = Field(
+        ...,
+        description="Maturity-rating sub-object or null.",
+    )
+    streaming: Optional[StreamingTranslation] = Field(
+        ...,
+        description="Streaming-availability sub-object or null.",
+    )
+    audio_language: Optional[AudioLanguageTranslation] = Field(
+        ...,
+        description=(
+            "Audio-track sub-object or null. NEVER infer from country "
+            "or cultural identity — that signal routes to "
+            "country_of_origin."
+        ),
+    )
+    country_of_origin: Optional[CountryOfOriginTranslation] = Field(
+        ...,
+        description="Country-of-origin sub-object or null.",
+    )
+    budget_scale: Optional[BudgetSize] = Field(
+        ...,
+        description="Budget-scale enum or null.",
+    )
+    box_office: Optional[BoxOfficeStatus] = Field(
+        ...,
+        description="Box-office enum or null.",
+    )
+    popularity: Optional[PopularityMode] = Field(
+        ...,
+        description="Popularity enum or null.",
+    )
+    reception: Optional[ReceptionMode] = Field(
+        ...,
+        description="Reception enum or null.",
+    )
+
+
 # ── Top-level output ──────────────────────────────────────────────
 
 
-# Complete step 3 metadata endpoint output. Each field corresponds
-# to one searchable metadata attribute. The LLM identifies one
-# primary target_attribute and should populate that field first.
-# Other fields usually remain null, but execution ignores them if
-# they are present.
-#
-# Field ordering follows cognitive-scaffolding progression:
-#   1. constraint_phrases  — evidence inventory (grounds routing)
-#   2. target_attribute    — single-column routing decision
-#   3. value_intent_label  — brief literal-meaning label (primes sub-object)
-#   4. attribute sub-objects (target one first; extras ignored)
-#
-# Execution code queries ONLY the column identified by
-# target_attribute for candidate generation (dealbreakers) and
-# scoring (preferences). The LLM may still populate other attribute
-# fields for context, but only the target drives the query. This
-# guarantees one metadata item = one column query = one [0, 1] score.
-#
-# The dealbreaker/preference classification is not repeated here —
-# it flows through role + polarity on the enclosing
-# EndpointParameters wrapper (MetadataEndpointParameters). This
-# class itself stays direction-agnostic.
 class MetadataTranslationOutput(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
-    # Evidence inventory. Populated BEFORE target_attribute so that
-    # routing is grounded in actual input text rather than pattern
-    # matching. Distinguishes near-collisions like "French films"
-    # (country signal) vs "French audio" (language signal).
-    constraint_phrases: list[str] = Field(default=[])
+    search_picture: str = Field(
+        ...,
+        description=(
+            "1-2 sentences. Restate retrieval_intent and every "
+            "expression on this CategoryCall as ONE coherent picture "
+            "— what kind of movie the call wants, taken as a whole.\n"
+            "NEVER paraphrase retrieval_intent verbatim. NEVER "
+            "enumerate expressions literally. NEVER name columns."
+        ),
+    )
+    column_candidates: list[ColumnCandidate] = Field(
+        ...,
+        description=(
+            "Honest audit of columns plausible for search_picture, "
+            "with per-column what_this_covers / what_this_misses. "
+            "Surface adjacency where it genuinely competes; drop "
+            "columns whose only contribution is being adjacent.\n"
+            "Local test: \"if I removed this candidate, would the "
+            "commit step lose a real option?\" Padding → drop.\n"
+            "NEVER list every column out of habit. NEVER duplicate "
+            "columns."
+        ),
+    )
+    combine_reasoning: str = Field(
+        ...,
+        description=(
+            "1 sentence. Project forward from column_candidates: of "
+            "the columns you intend to populate in column_spec, do "
+            "they read as SUBSTITUTABLE signals of one concept "
+            "(any-one-matching qualifies) or REINFORCING facets "
+            "(every populated column contributes)? Write \"single "
+            "column\" when only one column will be populated.\n"
+            "Justifies combine_mode below."
+        ),
+    )
+    column_spec: ColumnSpec = Field(
+        ...,
+        description=(
+            "Literal commitment. Populate ONLY columns surfaced in "
+            "column_candidates with substantive what_this_covers; "
+            "explicit null elsewhere. Apply minimum span — null a "
+            "column whose search_picture aspect is fully covered by "
+            "another populated column. Same-column expressions merge "
+            "into ONE populated sub-object (country lists union, "
+            "runtime ranges reconcile, streaming services + access "
+            "pair).\n"
+            "Local test per column: \"if I null this, does "
+            "search_picture lose real intent?\" If no, null it.\n"
+            "NEVER populate a column absent from column_candidates. "
+            "NEVER split same-column expressions across multiple "
+            "fields."
+        ),
+    )
+    combine_mode: ColumnCombineMode = Field(
+        ...,
+        description=(
+            "Mechanical commit of combine_reasoning above. AVERAGE "
+            "when reasoning says \"single column\" or \"reinforcing\"; "
+            "MAX when reasoning says \"substitutable\".\n"
+            "NEVER re-derive from search_picture or column_spec — "
+            "read off combine_reasoning."
+        ),
+    )
 
-    target_attribute: MetadataAttribute = Field(...)
 
-    # Brief literal-meaning label. Populated BETWEEN target_attribute
-    # and the sub-objects to prime match_operation direction, numeric
-    # boundary choice, and list-expansion completeness for the sub-
-    # object that follows. Label form only — not a sentence, not a
-    # justification, not a restatement of sub-object values.
-    value_intent_label: str = Field(..., max_length=80)
-
-    release_date: Optional[ReleaseDateTranslation] = Field(default=None)
-    runtime: Optional[RuntimeTranslation] = Field(default=None)
-    maturity_rating: Optional[MaturityRatingTranslation] = Field(default=None)
-    streaming: Optional[StreamingTranslation] = Field(default=None)
-    audio_language: Optional[AudioLanguageTranslation] = Field(default=None)
-    country_of_origin: Optional[CountryOfOriginTranslation] = Field(default=None)
-    budget_scale: Optional[BudgetSize] = Field(default=None)
-    box_office: Optional[BoxOfficeStatus] = Field(default=None)
-    popularity: Optional[PopularityMode] = Field(default=None)
-    reception: Optional[ReceptionMode] = Field(default=None)
-
-
-# Category-handler wrapper. Direction flows through role +
-# polarity on the wrapper; MetadataTranslationOutput itself stays
-# direction-agnostic. Fields are declared in the order
-# role → parameters → polarity so polarity is emitted last.
-# See endpoint_parameters.py for the rationale.
+# Category-handler wrapper. Direction flows through role + polarity
+# on the wrapper; MetadataTranslationOutput stays direction-agnostic.
+# Open question: whether this wrapper survives the migration to the
+# new Step 3 contract — see the metadata endpoint generator/executor
+# notes.
 class MetadataEndpointParameters(EndpointParameters):
     role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: MetadataTranslationOutput = Field(
         ...,
         description=(
-            "Metadata endpoint payload. Pick the single "
-            "target_attribute the requirement targets (release_date, "
-            "runtime, maturity_rating, streaming, audio_language, "
-            "country_of_origin, budget_scale, box_office, popularity, "
-            "or reception), then populate ONLY that attribute's sub-"
-            "object. Do NOT split a single requirement across two "
-            "attribute fields — if it seems to span two columns, the "
-            "requirement should have been decomposed upstream, not "
-            "merged here. Describe the target concept directly "
-            "regardless of polarity — negation is handled on the "
-            "wrapper's polarity field, never inside these parameters."
+            "Metadata endpoint payload. Whole-call translation: "
+            "retrieval_intent + expressions resolved into one "
+            "ColumnSpec where each of the ten attribute columns is "
+            "either a populated sub-object or explicit null, plus a "
+            "combine_mode controlling multi-column composition. "
+            "Describe the target concept directly regardless of "
+            "polarity — negation is handled on the wrapper's polarity "
+            "field, never inside these parameters."
         ),
     )
     polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

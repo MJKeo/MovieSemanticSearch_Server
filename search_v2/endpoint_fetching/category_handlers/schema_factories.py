@@ -22,7 +22,7 @@ from typing import Callable, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from schemas.endpoint_parameters import EndpointParameters
-from search_v2.stage_3.category_handlers.endpoint_registry import ROUTE_TO_WRAPPER
+from search_v2.endpoint_fetching.category_handlers.endpoint_registry import ROUTE_TO_WRAPPER
 from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.trait_category import CategoryName
 

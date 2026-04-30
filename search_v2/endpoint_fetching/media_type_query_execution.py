@@ -23,7 +23,7 @@ from __future__ import annotations
 from db.postgres import fetch_movie_ids_by_release_format
 from schemas.endpoint_result import EndpointResult
 from schemas.media_type_translation import MediaTypeQuerySpec
-from search_v2.stage_3.result_helpers import build_endpoint_result
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 
 async def execute_media_type_query(

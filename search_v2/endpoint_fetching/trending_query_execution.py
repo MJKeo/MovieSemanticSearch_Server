@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from db.redis import read_trending_scores
 from schemas.endpoint_result import EndpointResult
-from search_v2.stage_3.result_helpers import (
+from search_v2.endpoint_fetching.result_helpers import (
     build_endpoint_result,
     compress_to_dealbreaker_floor,
 )

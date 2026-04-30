@@ -68,7 +68,7 @@ from schemas.semantic_translation import (
     SemanticSpaceEntry,
     SpaceWeight,
 )
-from search_v2.stage_3.result_helpers import build_endpoint_result
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 logger = logging.getLogger(__name__)
 

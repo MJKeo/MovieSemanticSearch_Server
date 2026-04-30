@@ -1,25 +1,32 @@
 # Search V2 — Stage 3 Award Endpoint: Query Execution
 #
-# Takes an AwardQuerySpec (from the step 3 award LLM) and produces an
-# EndpointResult with [0, 1] scores per movie_id. Two data-source paths:
+# Takes an AwardQueryPlan (from the category-handler award LLM) and
+# produces an EndpointResult with [0, 1] scores per movie_id. Each plan
+# contains one or more executable searches plus a combine mode. Each
+# individual search uses one of two data-source paths:
 #
 #   Fast path — movie_card.award_ceremony_win_ids (GIN-indexed SMALLINT[]).
-#     Triggers only when the spec reduces to "has this movie won any
+#     Triggers only when the search reduces to "has this movie won any
 #     non-Razzie prize?": all filter fields null/empty, outcome=WINNER,
-#     scoring_mode=FLOOR, scoring_mark=1. Razzie id is stripped from the
+#     scoring=FLOOR/1. Razzie id is stripped from the
 #     presence check. Outcome=null does NOT qualify — `award_ceremony_win_ids`
 #     only records wins, so routing nomination-inclusive queries through it
 #     would silently drop nomination-only movies. These go to the standard
 #     path instead.
 #
 #   Standard path — COUNT(*) over public.movie_awards grouped by movie_id,
-#     with whichever filter axes the spec populated. The raw count is fed
-#     into the FLOOR or THRESHOLD formula per the spec's scoring_mode and
-#     scoring_mark.
+#     with whichever filter axes the search populated. The raw count is fed
+#     into the FLOOR or THRESHOLD formula per the search's scoring mode/mark.
 #
-# Razzie handling: when spec.ceremonies is null/empty, ceremony_id=10 is
-# excluded from both paths by default. When AwardCeremony.RAZZIE appears in
-# spec.ceremonies, it is included — the user explicitly asked for it.
+# Combine modes:
+#   ANY:     alternatives; final raw score is max(search_scores).
+#   AVERAGE: partial credit; final raw score is the average across all
+#            searches, with missing searches counting as 0.0.
+#
+# Razzie handling: when a search's ceremonies are null/empty,
+# ceremony_id=10 is excluded from both paths by default. When
+# AwardCeremony.RAZZIE appears in ceremonies, it is included — the user
+# explicitly asked for it.
 #
 # Filter axis encoding:
 #   award_names resolve through a token inverted index: each raw name is
@@ -39,10 +46,9 @@
 #     (schemas/award_category_tags.py) lets the LLM pick at any specificity
 #     and the row's tag list contains every ancestor of its leaf concept.
 #
-# Retry contract: transient DB errors are retried once. A second failure
-# yields an empty EndpointResult so the orchestrator can continue rather
-# than hard-failing on a single endpoint. Matches the franchise and entity
-# executors.
+# Retry contract: transient DB errors are retried once per search. A
+# second failure yields an empty score map for that search so the
+# orchestrator can continue rather than hard-failing on a single endpoint.
 #
 # See search_improvement_planning/finalized_search_proposal.md (Endpoint 3:
 # Awards) for the full scoring design, and full_search_capabilities.md
@@ -50,6 +56,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from db.postgres import (
@@ -59,10 +66,18 @@ from db.postgres import (
 )
 from implementation.misc.award_name_text import tokenize_award_string_for_query
 from schemas.award_category_tags import RAZZIE_TAG_IDS, TAG_BY_SLUG
-from schemas.award_translation import AwardQuerySpec
+from schemas.award_translation import (
+    AwardQueryPlan,
+    AwardSearch,
+)
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import AwardCeremony, AwardOutcome, AwardScoringMode
-from search_v2.stage_3.result_helpers import (
+from schemas.enums import (
+    AwardCeremony,
+    AwardCombineMode,
+    AwardOutcome,
+    AwardScoringMode,
+)
+from search_v2.endpoint_fetching.result_helpers import (
     build_endpoint_result,
     compress_to_dealbreaker_floor,
 )
@@ -107,7 +122,7 @@ def _resolve_ceremony_ids(
 ) -> tuple[list[int] | None, bool]:
     """Convert spec ceremony values to ceremony_ids and decide Razzie policy.
 
-    AwardQuerySpec uses use_enum_values=True, so spec.ceremonies is a list
+    AwardFilters uses use_enum_values=True, so spec.ceremonies is a list
     of raw AwardCeremony string values (e.g., "Academy Awards, USA"), not
     enum members. We map each back to its SMALLINT ceremony_id for the SQL
     filter.
@@ -133,8 +148,8 @@ def _resolve_outcome_id(outcome_value: str | None) -> int | None:
     return AwardOutcome(outcome_value).outcome_id
 
 
-def _qualifies_for_fast_path(spec: AwardQuerySpec) -> bool:
-    """Decide whether the spec can use the award_ceremony_win_ids fast path.
+def _qualifies_for_fast_path(search: AwardSearch) -> bool:
+    """Decide whether the search can use the award_ceremony_win_ids fast path.
 
     All of the following must hold:
       - No ceremony, award_name, category, or year filter is active.
@@ -142,22 +157,24 @@ def _qualifies_for_fast_path(spec: AwardQuerySpec) -> bool:
         deliberately routed through movie_awards because
         award_ceremony_win_ids records wins only — firing the fast path on
         outcome=null would silently drop nomination-only movies.
-      - scoring_mode=FLOOR and scoring_mark=1. Any other combination needs
+      - scoring=FLOOR/1. Any other combination needs
         a true row count.
     """
-    if spec.scoring_mode != AwardScoringMode.FLOOR.value:
+    filters = search.filters
+    scoring = search.scoring
+    if scoring.mode != AwardScoringMode.FLOOR.value:
         return False
-    if spec.scoring_mark != 1:
+    if scoring.mark != 1:
         return False
-    if spec.outcome != AwardOutcome.WINNER.value:
+    if filters.outcome != AwardOutcome.WINNER.value:
         return False
-    if spec.ceremonies:
+    if filters.ceremonies:
         return False
-    if spec.award_names:
+    if filters.award_names:
         return False
-    if spec.category_tags:
+    if filters.category_tags:
         return False
-    if spec.years is not None:
+    if filters.years is not None:
         return False
     return True
 
@@ -252,49 +269,52 @@ async def _resolve_award_names_to_entry_ids(
     return all_entry_ids
 
 
+async def _resolve_award_names_to_entry_ids_with_retry(
+    names: list[str] | None,
+) -> set[int] | None:
+    """Resolve award names with the endpoint's retry/soft-failure contract.
+
+    Returns None only when the DB lookup failed twice, telling the caller
+    to soft-fail this search to an empty score map.
+    """
+    for attempt in range(2):
+        try:
+            return await _resolve_award_names_to_entry_ids(names)
+        except Exception:
+            if attempt == 0:
+                logger.warning(
+                    "Award name token DB error on first attempt, retrying",
+                    exc_info=True,
+                )
+                continue
+            logger.error(
+                "Award name token DB error on retry attempt, returning empty result",
+                exc_info=True,
+            )
+            return None
+    return None
+
+
 # ---------------------------------------------------------------------------
-# Public entry point.
+# Single-search execution.
 # ---------------------------------------------------------------------------
 
 
-async def execute_award_query(
-    spec: AwardQuerySpec,
+async def _execute_award_search(
+    search: AwardSearch,
     *,
     restrict_to_movie_ids: set[int] | None = None,
-) -> EndpointResult:
-    """Execute one AwardQuerySpec against the award data sources.
-
-    Single entry point for both dealbreakers and preferences. The
-    restrict_to_movie_ids parameter controls output shape:
-      - None (dealbreaker path) → one ScoredCandidate per naturally matched
-        movie. Non-matches are omitted.
-      - set[int] (preference path) → exactly one ScoredCandidate per supplied
-        ID. Movies that do not appear in the matched set score 0.0.
+) -> dict[int, float]:
+    """Execute one AwardSearch and return raw [0, 1] scores.
 
     Transient DB errors are retried once. The second failure yields an
-    empty EndpointResult so the orchestrator can continue rather than
-    hard-failing on a single endpoint.
-
-    Args:
-        spec: Validated AwardQuerySpec from the step 3 award LLM.
-        restrict_to_movie_ids: Optional candidate-pool restriction. Pass the
-            preference's candidate pool to get one entry per ID; omit for
-            the natural match set (dealbreaker path).
-
-    Returns:
-        EndpointResult with scores in [0, 1] per movie.
+    empty score map for this search so sibling searches can still
+    contribute to the group.
     """
-    # Safety net mirroring the trending executor: an empty candidate pool
-    # on the preference path means nothing can score, so skip the DB round
-    # trip entirely. The orchestrator should short-circuit first, but the
-    # guard costs nothing.
-    if restrict_to_movie_ids is not None and not restrict_to_movie_ids:
-        return EndpointResult()
-
     # ---------------------------------------------------------------------
     # Fast path: generic "has any non-Razzie win" presence check.
     # ---------------------------------------------------------------------
-    if _qualifies_for_fast_path(spec):
+    if _qualifies_for_fast_path(search):
         matched_ids: set[int] = set()
         for attempt in range(2):
             try:
@@ -313,37 +333,38 @@ async def execute_award_query(
                     "Award fast-path DB error on retry attempt, returning empty result",
                     exc_info=True,
                 )
-                return EndpointResult()
+                return {}
         # Fast path always scores matching movies 1.0 — the trigger condition
         # is FLOOR/1, so any presence means count >= 1 means score == 1.0.
-        return build_endpoint_result(
-            {mid: 1.0 for mid in matched_ids},
-            restrict_to_movie_ids,
-        )
+        return {mid: 1.0 for mid in matched_ids}
 
     # ---------------------------------------------------------------------
     # Standard path: COUNT(*) on movie_awards with active filters.
     # ---------------------------------------------------------------------
-    ceremony_ids, exclude_razzie = _resolve_ceremony_ids(spec.ceremonies)
-    outcome_id = _resolve_outcome_id(spec.outcome)
-    category_tag_ids = _resolve_category_tag_ids(spec.category_tags)
-    year_from = spec.years.year_from if spec.years is not None else None
-    year_to = spec.years.year_to if spec.years is not None else None
+    filters = search.filters
+    scoring = search.scoring
+    ceremony_ids, exclude_razzie = _resolve_ceremony_ids(filters.ceremonies)
+    outcome_id = _resolve_outcome_id(filters.outcome)
+    category_tag_ids = _resolve_category_tag_ids(filters.category_tags)
+    year_from = filters.years.year_from if filters.years is not None else None
+    year_to = filters.years.year_to if filters.years is not None else None
 
     # Resolve award_names via token intersection against lex.award_name_token.
     # Surface-form variants (apostrophe style, case, diacritics, "BAFTA" vs
     # "BAFTA Film Award") collapse to shared entry ids automatically —
     # see v2 plan-doc § Award Name Resolution.
-    award_name_entry_ids = await _resolve_award_names_to_entry_ids(
-        spec.award_names
+    award_name_entry_ids = await _resolve_award_names_to_entry_ids_with_retry(
+        filters.award_names
     )
+    if award_name_entry_ids is None:
+        return {}
 
     # Requested-but-empty early-exit, mirroring the franchise executor's
     # contract. If the spec asked for specific prize names and the token
     # intersection resolved to no entry ids, we must NOT silently drop the
     # axis — that would broaden the result. Return empty instead.
-    if spec.award_names and not award_name_entry_ids:
-        return build_endpoint_result({}, restrict_to_movie_ids)
+    if filters.award_names and not award_name_entry_ids:
+        return {}
 
     # The default Razzie exclusion was originally gated only on the
     # ceremonies axis (the only axis that could express Razzie intent
@@ -389,22 +410,100 @@ async def execute_award_query(
                 "Award standard-path DB error on retry attempt, returning empty result",
                 exc_info=True,
             )
-            return EndpointResult()
+            return {}
 
     # Apply the scoring formula to every movie with a non-zero row count.
     # FLOOR with count < mark yields 0.0; those are dropped so the
-    # dealbreaker path does not emit them and the preference path falls
-    # back to the 0.0 default in build_endpoint_result. Dealbreaker-path
-    # survivors are lifted into the [0.5, 1.0] band so every
-    # award-endorsed match respects the uniform stage-3 floor; preference
-    # path keeps the raw ramp to preserve ranking gradient.
+    # final combine step can treat missing entries as zero.
     scores_by_movie: dict[int, float] = {}
     for movie_id, row_count in counts.items():
-        raw = _score_from_count(row_count, spec.scoring_mode, spec.scoring_mark)
+        raw = _score_from_count(row_count, scoring.mode, scoring.mark)
         if raw <= 0.0:
             continue
-        if restrict_to_movie_ids is None:
-            raw = compress_to_dealbreaker_floor(raw)
         scores_by_movie[movie_id] = raw
+
+    return scores_by_movie
+
+
+def _combine_search_scores(
+    plan: AwardQueryPlan,
+    score_maps: list[dict[int, float]],
+    *,
+    restrict_to_movie_ids: set[int] | None,
+) -> dict[int, float]:
+    """Combine raw per-search score maps according to the plan."""
+    if not score_maps:
+        return {}
+
+    if plan.combine == AwardCombineMode.ANY.value:
+        combined: dict[int, float] = {}
+        for score_map in score_maps:
+            for movie_id, score in score_map.items():
+                combined[movie_id] = max(combined.get(movie_id, 0.0), score)
+        return combined
+
+    if plan.combine != AwardCombineMode.AVERAGE.value:
+        raise ValueError(f"Unknown award combine mode: {plan.combine!r}")
+
+    if restrict_to_movie_ids is None:
+        movie_ids = set().union(*(score_map.keys() for score_map in score_maps))
+    else:
+        movie_ids = restrict_to_movie_ids
+
+    search_count = len(score_maps)
+    return {
+        movie_id: sum(score_map.get(movie_id, 0.0) for score_map in score_maps)
+        / search_count
+        for movie_id in movie_ids
+    }
+
+
+# ---------------------------------------------------------------------------
+# Public entry point.
+# ---------------------------------------------------------------------------
+
+
+async def execute_award_query(
+    plan: AwardQueryPlan,
+    *,
+    restrict_to_movie_ids: set[int] | None = None,
+) -> EndpointResult:
+    """Execute an AwardQueryPlan against the award data sources.
+
+    The restrict_to_movie_ids parameter controls output shape:
+      - None (carver/dealbreaker path) → one ScoredCandidate per naturally
+        matched movie. Non-matches and zero-score partials are omitted.
+      - set[int] (qualifier/preference path) → exactly one ScoredCandidate
+        per supplied ID. Movies that do not appear in the matched set score
+        0.0.
+    """
+    # Safety net mirroring the trending executor: an empty candidate pool
+    # on the preference path means nothing can score, so skip the DB round
+    # trip entirely. The orchestrator should short-circuit first, but the
+    # guard costs nothing.
+    if restrict_to_movie_ids is not None and not restrict_to_movie_ids:
+        return EndpointResult()
+
+    score_maps = await asyncio.gather(
+        *(
+            _execute_award_search(
+                search,
+                restrict_to_movie_ids=restrict_to_movie_ids,
+            )
+            for search in plan.searches
+        )
+    )
+    scores_by_movie = _combine_search_scores(
+        plan,
+        score_maps,
+        restrict_to_movie_ids=restrict_to_movie_ids,
+    )
+
+    if restrict_to_movie_ids is None:
+        scores_by_movie = {
+            movie_id: compress_to_dealbreaker_floor(score)
+            for movie_id, score in scores_by_movie.items()
+            if score > 0.0
+        }
 
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

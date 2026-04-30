@@ -55,17 +55,17 @@ from schemas.trait_category import CategoryName
 from schemas.semantic_translation import SemanticEndpointParameters
 from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall
-from search_v2.stage_3.category_handlers.handler_result import HandlerResult
-from search_v2.stage_3.category_handlers.media_type_router import (
+from search_v2.endpoint_fetching.category_handlers.handler_result import HandlerResult
+from search_v2.endpoint_fetching.category_handlers.media_type_router import (
     build_media_type_query_spec,
 )
-from search_v2.stage_3.category_handlers.prompt_builder import (
+from search_v2.endpoint_fetching.category_handlers.prompt_builder import (
     build_system_prompt,
     build_user_message,
 )
-from search_v2.stage_3.category_handlers.schema_factories import get_output_schema
-from search_v2.stage_3.endpoint_executors import build_endpoint_coroutine
-from search_v2.stage_3.trending_query_execution import execute_trending_query
+from search_v2.endpoint_fetching.category_handlers.schema_factories import get_output_schema
+from search_v2.endpoint_fetching.endpoint_executors import build_endpoint_coroutine
+from search_v2.endpoint_fetching.trending_query_execution import execute_trending_query
 
 logger = logging.getLogger(__name__)
 

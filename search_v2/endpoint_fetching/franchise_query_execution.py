@@ -68,7 +68,7 @@ from schemas.enums import (
     LineagePosition,
 )
 from schemas.franchise_translation import FranchiseQuerySpec
-from search_v2.stage_3.result_helpers import build_endpoint_result
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 logger = logging.getLogger(__name__)
 
