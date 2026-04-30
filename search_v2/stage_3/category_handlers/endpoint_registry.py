@@ -22,17 +22,16 @@ from schemas.entity_translation import EntityEndpointParameters
 from schemas.enums import EndpointRoute
 from schemas.franchise_translation import FranchiseEndpointParameters
 from schemas.keyword_translation import KeywordEndpointParameters
+from schemas.media_type_translation import MediaTypeEndpointParameters
 from schemas.metadata_translation import MetadataEndpointParameters
 from schemas.semantic_translation import SemanticEndpointParameters
 from schemas.studio_translation import StudioEndpointParameters
 
 
 # EndpointRoute -> wrapper class, or None for routes with no LLM
-# translation step. TRENDING uses a deterministic code path. MEDIA_TYPE
-# is a new structured-attribute route that does not yet have a
-# translation wrapper authored — mapped to None for now so categories
-# routing to it (currently just MEDIA_TYPE itself) skip the wrapper
-# build until the dedicated schema lands.
+# translation step. TRENDING is the only such route — it uses a
+# deterministic code path and any category that includes TRENDING in
+# its endpoint tuple skips it when assembling its output schema.
 ROUTE_TO_WRAPPER: dict[EndpointRoute, type[EndpointParameters] | None] = {
     EndpointRoute.ENTITY: EntityEndpointParameters,
     EndpointRoute.STUDIO: StudioEndpointParameters,
@@ -42,5 +41,5 @@ ROUTE_TO_WRAPPER: dict[EndpointRoute, type[EndpointParameters] | None] = {
     EndpointRoute.KEYWORD: KeywordEndpointParameters,
     EndpointRoute.SEMANTIC: SemanticEndpointParameters,
     EndpointRoute.TRENDING: None,
-    EndpointRoute.MEDIA_TYPE: None,
+    EndpointRoute.MEDIA_TYPE: MediaTypeEndpointParameters,
 }

@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import functools
 from pathlib import Path
-from typing import Iterable
 from xml.sax.saxutils import escape as xml_escape
 
 from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.trait_category import CategoryName
-from schemas.step_2 import CoverageEvidence, Modifier, RequirementFragment
+from schemas.step_3 import CategoryCall
 
 
 # ── Paths ─────────────────────────────────────────────────────────
@@ -57,9 +56,13 @@ _BUCKET_GUARDRAILS: dict[HandlerBucket, str] = {
 }
 
 # Endpoint chunks are keyed by EndpointRoute. TRENDING has no LLM
-# codepath and therefore no prompt file. MEDIA_TYPE is a new route
-# whose prompt file has not been authored yet — skip eager load until
-# it lands so module import doesn't break.
+# codepath at all. MEDIA_TYPE will be routed deterministically by code
+# (matching surface phrases against the ReleaseFormat enum) rather than
+# through the LLM handler — the deterministic routing path is pending,
+# but in the meantime no prompt is authored and the route is skipped on
+# eager load. Both routes are short-circuited to no-op results inside
+# handler.run_handler, so reaching the LLM codepath for either should
+# never happen.
 _ENDPOINT_PROMPTLESS: frozenset[EndpointRoute] = frozenset({
     EndpointRoute.TRENDING,
     EndpointRoute.MEDIA_TYPE,
@@ -106,10 +109,10 @@ def build_system_prompt(category: CategoryName) -> str:
 
     The result is memoized per ``CategoryName`` — the output is
     deterministic given the category, and callers typically invoke
-    the builder once per coverage_evidence atom inside the same
-    query (many atoms, same category). The memo also removes the
-    per-caller caching burden flagged in the planning doc
-    §"Prompt builder behavior".
+    the builder once per CategoryCall inside the same query (many
+    calls, same category). The memo also removes the per-caller
+    caching burden flagged in the planning doc §"Prompt builder
+    behavior".
 
     Raises:
         ValueError: if ``category`` is ``CategoryName.TRENDING`` —
@@ -203,130 +206,28 @@ def _require_category_chunk(
 # ── User message (per-call XML payload) ───────────────────────────
 
 
-def build_user_message(
-    raw_query: str,
-    overall_query_intention_exploration: str,
-    target_entry: CoverageEvidence,
-    parent_fragment: RequirementFragment,
-    sibling_fragments: list[RequirementFragment],
-) -> str:
+def build_user_message(category_call: CategoryCall) -> str:
     """Serialize the per-call input payload as the XML block the
     handler LLM consumes.
 
-    Structure matches the XML schema in the planning doc and
-    `prompts/shared/input_spec.md`. All user-derived leaf text is
-    XML-escaped via ``xml.sax.saxutils.escape``; modifiers use the
-    fully-tagged nested-element form (not attributes).
-
-    ``parent_fragment`` and ``sibling_fragments`` may be passed
-    verbatim from Step 2 output — the builder serializes only
-    ``query_text``, ``description``, and ``modifiers`` and ignores
-    ``coverage_evidence`` regardless of whether it's populated. The
-    target atom is surfaced separately via ``target_entry``; any
-    other atoms on those fragments belong to other handler calls
-    and simply don't appear in the payload.
+    Two sections only — ``<retrieval_intent>`` and ``<expressions>``
+    — both pulled from the CategoryCall committed by Step 3. The LLM
+    is intentionally not given raw_query, query-level intent
+    framing, sibling traits, or the upstream modifier signals: those
+    are either already folded into ``retrieval_intent`` by Step 3 or
+    deliberately out of scope for this stage (Step 4 translates the
+    committed call; it does not re-interpret the query). Match_mode
+    and polarity are stamped onto the wrapper post-hoc by
+    ``handler.run_handler`` from the parent Trait, so they are not
+    emitted by the LLM either.
     """
 
-    parts = [
-        _wrap_leaf("raw_query", raw_query),
-        _wrap_leaf(
-            "overall_query_intention_exploration",
-            overall_query_intention_exploration,
-        ),
-        _serialize_target_entry(target_entry),
-        _serialize_fragment("parent_fragment", parent_fragment, indent=""),
-        _serialize_siblings(sibling_fragments),
-    ]
-    return "\n".join(parts)
-
-
-def _wrap_leaf(tag: str, text: str) -> str:
-    # Single-line element for scalar text. Escape even though the
-    # typical query is plain ASCII — '&', '<', '>' in a user query
-    # would otherwise break XML parsing on the LLM side.
-    return f"<{tag}>{xml_escape(text)}</{tag}>"
-
-
-def _serialize_target_entry(entry: CoverageEvidence) -> str:
-    # Four sub-fields exactly as described in input_spec.md. Enum
-    # leaves carry their `.value` (e.g. 'clean' / 'partial') so the
-    # text matches the shared-vocabulary definitions literally.
-    lines = [
-        "<target_entry>",
-        f"  <captured_meaning>{xml_escape(entry.captured_meaning)}</captured_meaning>",
-        f"  <category_name>{xml_escape(entry.category_name.value)}</category_name>",
-        f"  <fit_quality>{xml_escape(entry.fit_quality.value)}</fit_quality>",
-        f"  <atomic_rewrite>{xml_escape(entry.atomic_rewrite)}</atomic_rewrite>",
-        "</target_entry>",
-    ]
-    return "\n".join(lines)
-
-
-def _serialize_fragment(
-    tag: str, fragment: RequirementFragment, *, indent: str
-) -> str:
-    # Fragments carry query_text / description / modifiers. The
-    # coverage_evidence list on RequirementFragment is deliberately
-    # not serialized — the per-call target atom is already surfaced
-    # in <target_entry>, and any other atoms belong to other handler
-    # calls.
-    #
-    # ``indent`` is the outer indent applied to the wrapper tag
-    # itself; sub-elements are indented by two additional spaces.
-    # The parent_fragment case uses indent="" (top-level element);
-    # sibling fragments use indent="  " so they nest visually under
-    # the <sibling_fragments> wrapper.
-    inner = indent + "  "
-    modifiers_block = _serialize_modifiers(fragment.modifiers, indent=inner)
-    lines = [
-        f"{indent}<{tag}>",
-        f"{inner}<query_text>{xml_escape(fragment.query_text)}</query_text>",
-        f"{inner}<description>{xml_escape(fragment.description)}</description>",
-        modifiers_block,
-        f"{indent}</{tag}>",
-    ]
-    return "\n".join(lines)
-
-
-def _serialize_modifiers(modifiers: Iterable[Modifier], indent: str) -> str:
-    # Fully-tagged nested form (Option A in the planning doc): every
-    # field on a modifier is its own element. Chosen over attributes
-    # for two reasons: element text parses more reliably on small
-    # models, and escaping is uniform across all leaves.
-    mods = list(modifiers)
-    if not mods:
-        # Keep an explicit empty tag so the LLM sees the slot exists.
-        return f"{indent}<modifiers></modifiers>"
-
-    lines = [f"{indent}<modifiers>"]
-    for modifier in mods:
-        lines.append(f"{indent}  <modifier>")
-        lines.append(f"{indent}    <type>{xml_escape(modifier.type.value)}</type>")
-        lines.append(
-            f"{indent}    <original_text>"
-            f"{xml_escape(modifier.original_text)}"
-            f"</original_text>"
-        )
-        lines.append(
-            f"{indent}    <effect>{xml_escape(modifier.effect)}</effect>"
-        )
-        lines.append(f"{indent}  </modifier>")
-    lines.append(f"{indent}</modifiers>")
-    return "\n".join(lines)
-
-
-def _serialize_siblings(siblings: list[RequirementFragment]) -> str:
-    # An empty list is legitimate (single-fragment queries). Emit an
-    # explicit empty tag so the LLM sees the slot rather than having
-    # to infer absence.
-    if not siblings:
-        return "<sibling_fragments></sibling_fragments>"
-
-    # Inner fragments are indented two spaces so their visual nesting
-    # matches the rest of the XML (target_entry, parent_fragment,
-    # modifiers all indent sub-elements by two).
-    fragment_blocks = "\n".join(
-        _serialize_fragment("fragment", sibling, indent="  ")
-        for sibling in siblings
+    intent = xml_escape(category_call.retrieval_intent)
+    expression_lines = "\n".join(
+        f"  <expression>{xml_escape(expr)}</expression>"
+        for expr in category_call.expressions
     )
-    return f"<sibling_fragments>\n{fragment_blocks}\n</sibling_fragments>"
+    return (
+        f"<retrieval_intent>{intent}</retrieval_intent>\n"
+        f"<expressions>\n{expression_lines}\n</expressions>"
+    )

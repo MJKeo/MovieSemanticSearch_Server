@@ -1,39 +1,25 @@
 # Input spec
 
-On each call, you receive a payload describing one atomic user requirement to decide on, along with surrounding context. The payload is serialized as XML in the user message. This section describes **what each field contains**; decision rules for what to emit in response live elsewhere in this prompt.
+On each call, you receive a payload describing one committed retrieval call to translate into endpoint parameters. The payload is serialized as XML in the user message. The committed call is the source of truth — the upstream stage has already classified the category, decided polarity and match-mode, and folded in any modifier or qualifier context. Your job is to obey the committed brief and produce faithful endpoint parameters; do not re-interpret intent or re-derive routing.
 
-## `<raw_query>`
+## `<retrieval_intent>`
 
-The user's original query, verbatim — word order, phrasing, and typos preserved. All other input fields are downstream restatements derived from this.
+A 1–3 sentence brief authored by the upstream stage specifically for you. Names the dimension(s) being searched, the shape of the search (named-entity match, continuous experiential axis, archetype/iconography, structural attribute, setting/temporal window, etc.), and what the call is trying to discriminate between. For qualifier-source calls the operational meaning of the positioning is folded in (a measurable axis to clear or stay under, a reference to position against, a setting to evaluate inside, a craft template to match). For carver-source calls the population the call gates is named.
 
-## `<overall_query_intention_exploration>`
+This is the document you reason against when choosing endpoint(s) within the category and shaping the parameter prose. The "search shape" language drives endpoint selection; the positioning prose drives numeric thresholds, ranges, and scoping clauses.
 
-A 2–4 sentence gloss from the upstream stage describing what the full query is asking for. Carries framing that colors individual requirements — occasion ("date night"), audience ("for the kids"), overall mood — even when those framings don't appear in the requirement atom itself.
+## `<expressions>`
 
-## `<target_entry>`
+A list of one or more short search-ready phrases — the seeds for endpoint parameters. Each phrase has been distilled into database-vocabulary and traces back to one dimension this call owns. They carry no polarity, no hedges, no comparison framing — those were upstream commitments.
 
-The single atomic requirement this call is responsible for. Exactly one per call. Sub-fields:
+For semantic / vector-bearing endpoints, each expression seeds one subquery; preserve the count (one per dimension is the committed shape) and tighten phrasing only as needed. For structured endpoints (METADATA, MEDIA_TYPE, AWARDS, FRANCHISE_STRUCTURE), each expression maps to a structured field, range, or boundary. For lexical endpoints (ENTITY, STUDIO, KEYWORD), pass the tokens through directly — do not invent additional ones.
 
-- **`<captured_meaning>`** — a neutral, one-sentence observation of the requirement as it appears in the original query, before committing to a category.
-- **`<category_name>`** — the category this requirement has been classified into. Already determined upstream; not something to re-classify.
-- **`<fit_quality>`** — step 2's verdict on how well the category covers this requirement. See the vocabulary section above for interpretation.
-- **`<atomic_rewrite>`** — the captured meaning re-expressed *as a category-grounded request*. Same content as `captured_meaning`, rephrased to foreground the category's lens. Specifics from the original query are preserved rather than generalized: "brother" stays "brother" (not broadened to "sibling"); "1990s" stays "1990s" (not broadened to "older").
+When the call carries multiple expressions, the natural shape is **one endpoint firing with a multi-expression parameter slot**, not multiple firings of the same endpoint.
 
-## `<parent_fragment>`
+## What is intentionally not in the payload
 
-The fragment of the user's query that produced `target_entry`. Sub-fields:
-
-- **`<query_text>`** — the verbatim span of the user's query this fragment covers.
-- **`<description>`** — a short restatement of what the fragment is asking for.
-- **`<modifiers>`** — a list of polarity, salience, role, range, or comparison cues bound to the fragment. **These modifiers apply to your `target_entry` atom**: the parent fragment is the linguistic frame around the atom, so a modifier on the fragment shapes how the atom should be interpreted. Each modifier has:
-    - `original_text` — the verbatim span of the modifier in the query.
-    - `effect` — a terse note describing how this modifier shifts interpretation (e.g. "negates the following clause", "marks the subject as the director rather than actor").
-    - `type` — one of:
-        - **`polarity_modifier`** — flips or modulates sign/strength. Examples: *not*, *not too*, *without*, *preferably*, *ideally*.
-        - **`role_marker`** — binds the attribute to a role, dimension, range, or comparison frame. Examples: *starring*, *directed by*, *about*, *set in*, *based on*, *around*, *under*, *at least*, *like*, *in the style of*.
-
-The parent fragment does **not** include its full atom list — only the one you are handling, which is surfaced separately above as `<target_entry>`. Any other atoms on this fragment belong to other handler calls.
-
-## `<sibling_fragments>`
-
-Every other fragment of the user's query besides the parent fragment (possibly empty if the query is a single fragment). Each has the same sub-fields as `<parent_fragment>` but with no atom list — just the framing, phrasing, and modifier cues. Provides cross-fragment context on what else the user is asking for and which framings have been committed to elsewhere in the query.
+- **The original user query.** You are not re-interpreting; the committed brief is the source of truth.
+- **Query-level intent framing.** Already folded into `retrieval_intent` for whatever bearing it has on this call. Including it again risks pulling in aspects committed to other calls.
+- **Sibling traits / cross-call context.** Cross-trait reasoning was the upstream stage's job. Each call is dispatched independently.
+- **Match-mode and polarity.** Pre-committed by the upstream stage and stamped onto the wrapper after you emit it. Do not include them in your output and do not let polarity bleed into expression phrasing.
+- **Salience.** Affects cross-trait reranking only, which is out of scope for this stage.

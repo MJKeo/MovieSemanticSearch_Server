@@ -2270,4 +2270,577 @@ intent prose; it operates from per-trait commits as designed.
 
 ---
 
+## Experiment 8 — Step 3 inter-attribute information flow rebalance
 
+### Hypothesis
+
+Auditing Step 3's per-attribute reading discipline surfaces five
+related issues, all stemming from the same pattern: each layer
+reads from a too-narrow slice of upstream context, and the prompt
+implicitly licenses lossy compression at every boundary.
+
+1. **`trait_role_analysis` over-leans on `role`.** The current
+   prompt frames `role` as the headline question
+   ("THE TWO QUESTIONS… The role field tells you which"), but the
+   field engineered to constrain dimension scope is
+   `qualifier_relation` — its own schema description literally
+   says "Step 3 consumes this prose directly to constrain its
+   dimension scope". Reading `role` first makes the binary
+   verdict load-bearing when the substantive signal is in the
+   freeform relation prose.
+
+2. **`role_evidence` is currently unused in Step 3.** The
+   rationale for the role commit (continuous-score-only,
+   comparison-reference, population-already-gated) is rich
+   context that helps disambiguate borderline traits and
+   carry-the-load when `qualifier_relation` is `"n/a"`.
+
+3. **`aspects` walks `target_population` AND
+   `trait_role_analysis` equally.** The framing implies they're
+   peer sources, but `target_population` is the natural
+   enumeration source (it names the kind of movies); the role
+   analysis qualifies how to interpret each axis (population vs
+   reference). Equal-weight walking blurs the two jobs.
+
+4. **`dimensions` is permitted to silently drop or merge
+   aspects.** The current rule "two aspects share one
+   searchable check, collapse them" gives the model an out for
+   any aspect that's awkward to translate. Real failure mode in
+   v10: Wes Anderson trait drops "meticulous production design"
+   silently; "darker tone" drops "lack of whimsy". Compression
+   should happen at the call layer (where category routing
+   merges same-category dimensions naturally), not at the
+   dimension layer.
+
+5. **`retrieval_intent` is qualifier-only by description, but
+   Step 4 doesn't branch on role.** The carver/qualifier
+   distinction is orchestrator-side (already committed
+   upstream). For Step 4, retrieval_intent is the handoff field
+   that conveys context the short `expressions` phrases can't
+   carry — it should always be populated as a generic intent
+   overview regardless of role.
+
+### Changes made
+
+**A. Add `role_evidence` to Step 3's user prompt.** Updated
+`_build_user_prompt` in `search_v2/step_3.py` to surface
+role_evidence between role and qualifier_relation. The field is
+informational; gives the role-analysis layer the rationale, not
+just the verdict.
+
+**B. Rewrite `_TRAIT_ROLE_ANALYSIS` with explicit source
+priority.** New ordering:
+  1. `qualifier_relation` (primary — translate operational meaning)
+  2. `role` + `role_evidence` (verdict + rationale; cross-check)
+  3. `contextualized_phrase` + `evaluative_intent` (grounding)
+  4. `anchor_reference` (surface pointer)
+The "two questions" framing now leads with "what should the
+dimensions describe?" (relation-driven) before "retrieve or
+position?" (role-driven).
+
+**C. Reframe `_ASPECT_ENUMERATION` to anchor on
+`target_population`.** Aspects walk `target_population` first
+(the population whose axes need decomposing), and use
+`trait_role_analysis` to qualify whether each axis describes the
+population vs the reference. Drop the "walk both equally"
+framing.
+
+**D. Rewrite `_DIMENSION_INVENTORY` to translate every aspect.**
+Source list is `aspects`; `target_population` and
+`trait_role_analysis` are read only to *understand* each aspect
+more deeply. Every aspect must yield at least one dimension —
+no silent drops, no aspect-merging at this layer. Removed the
+"two aspects share one searchable check, collapse them"
+allowance. Compression happens at category_calls.
+
+**E. Reframe `retrieval_intent` schema description as a generic
+handoff field.** Rewrote `CategoryCall.retrieval_intent` in
+`schemas/step_3.py` so it always populates regardless of role,
+and is explicitly framed as the field that conveys context
+short `expressions` phrases can't carry — what exactly is being
+searched, what shape the search should take. Step 4's success
+depends on this field.
+
+**F. Universal "consider all upstream context" rule.** Added to
+each layer's instructions: read the whole upstream context, do
+not stop early, do not quietly drop signals that resist
+translation. Applied to `trait_role_analysis`, `aspects`,
+`dimensions`, `category_calls`.
+
+If the principles are right, we should see:
+- Qualifier traits with rich `qualifier_relation` (q08 "feels
+  like Fight Club", q09, q23, q31) produce more substantive
+  trait_role_analysis prose that visibly cites the relation.
+- Aspect→dimension coverage tightens: no silent aspect drops
+  on multi-faceted figurative traits (q21 warm hug, q22 feel
+  good, q33 underrated, q34 hidden gem, q42 video game).
+- `retrieval_intent` reads as substantive context for Step 4
+  on every call (carver and qualifier alike), not a thin
+  one-liner on carvers.
+- No regression on simple single-axis traits — overhead from
+  the consider-everything rule shouldn't add bloat where the
+  trait is genuinely simple.
+
+### Observations
+
+Aggregate stats (v10 baseline → v11):
+
+| Metric | v10 | v11 | Δ |
+|---|---|---|---|
+| Traits decomposed | 84 | 86 | +2 (Step 2 LLM variance) |
+| Aspects total | 212 | 206 | -6 |
+| Dimensions total | 157 | 172 | **+15** |
+| Calls total | 144 | 148 | +4 |
+| Aspects→dim drops (count) | 55 | 34 | **−21 (−38%)** |
+| Traits with silent drops | 44/84 (52%) | 32/86 (37%) | **−15pp** |
+| Avg `retrieval_intent` length | 132 chars | 203 chars | **+54%** |
+| `trait_role_analysis` citing relation prose | 0/84 (0%) | 38/86 (44%) | **+44pp** |
+| `trait_role_analysis` substantive (>180 chars) | 76/84 (90%) | 84/86 (98%) | +8pp |
+
+Per-trait observations on canonical cases:
+
+- **q29 wes anderson does horror (Wes Anderson trait).** v10
+  enumerated 5 aspects but emitted only 4 dimensions — "meticulous
+  production design" silently dropped. v11 produces 5 aspects → 5
+  dimensions (clean 1:1), with "meticulous diorama-like production
+  design" preserved as its own dimension routing to Visual craft
+  acclaim. The aspect-preservation discipline visibly fixes the
+  v10 silent-drop failure.
+
+- **q34 hidden gem.** v10: 1 call (CULTURAL_STATUS only), with the
+  "gem" quality aspect bundled into the same expression as the
+  "hidden" status aspect. v11: 2 calls (CULTURAL_STATUS for the
+  underrated/overlooked aspect + General-appeal/quality-baseline
+  for the qualitative-merit aspect). The independent axes
+  ("hidden" and "gem") are now retrieved through their natural
+  category routings instead of being collapsed.
+
+- **q33 underrated.** v10: 2 aspects → 2 dimensions → 1 call. v11:
+  3 aspects → 3 dimensions → 3 calls (CULTURAL_STATUS + General
+  appeal/quality baseline + Financial scale). The
+  quality/visibility/commercial-footprint axes that the original
+  baseline noted as a known FINANCIAL_SCALE leakage failure mode
+  are now treated as legitimate independent axes — the user's
+  prior framing ("aspects should always be preserved") promotes
+  this from "leakage" to "correct decomposition".
+
+- **q21 warm hug.** v10: 3 aspects → 2 dims → 1 call with thin
+  retrieval_intent ("Retrieve movies that score high on emotional
+  safety, coziness, and uplifting resonance to satisfy the 'warm
+  hug' experiential request"). v11: 4 aspects → 3 dims → 1 call
+  with a 2-sentence retrieval_intent that explicitly names what
+  to discriminate against ("...prioritize films that score high
+  on kindness, gentle pacing, and positive resonance,
+  discriminating against high-tension, gritty, or emotionally
+  taxing content").
+
+- **q08 fight club / seven (qualifier-heavy comparison).** Both
+  Fight Club and Seven traits now have 1:1 aspect-to-dimension
+  mapping (down from 4→2 and 3→2 in v10). trait_role_analysis
+  now explicitly cites the qualifier_relation: "This trait is a
+  qualifier where 'Fight Club' serves as a comparative anchor.
+  Dimensions must describe the identifiable attributes of the
+  anchor (Fight Club) to establish the threshold..."
+
+- **q31 "preferably under 2 hours" (simple single-axis trait).**
+  v10: 1 aspect → 1 dim → 1 call. v11: 1 aspect → 1 dim → 1 call.
+  No bloat from the new "consider all upstream context" rule on
+  simple traits. retrieval_intent expanded from one short
+  sentence to two but stayed appropriate.
+
+- **trait_role_analysis citation behavior.** Across all 86 traits,
+  v10 never explicitly cites qualifier_relation in its prose
+  (0/84). v11 does in 38/86 cases (44%) — the new "PRIMARY"
+  framing of qualifier_relation visibly drove the model to
+  treat the field as a load-bearing reference rather than
+  background context. The field's value flipped from inert to
+  load-bearing without changing the field itself, only its
+  framing in the prompt.
+
+- **role_evidence in user prompt.** Now visible to Step 3 across
+  all 86 traits. No regressions traced to its addition; on
+  borderline traits it provides the carver/qualifier rationale
+  that the binary `role` field can't carry.
+
+### Lessons learned
+
+1. **Source priority framing is load-bearing — same pattern as
+   Experiment 7's intent_exploration promotion.** Identical
+   dynamic to v10's "intent_exploration as primary source"
+   reframe: Step 2 had already engineered qualifier_relation
+   specifically as Step 3's input ("Step 3 consumes this prose
+   directly to constrain its dimension scope"), but the v10
+   prompt framed `role` as the headline question. The field was
+   read but not centered; its value was inert. Promoting it to
+   PRIMARY in the prompt — without changing the schema or the
+   field itself — flipped citation rate from 0% to 44%. A
+   schema field's value is in its USE, not its presence; the
+   prompt framing determines whether the model uses it.
+
+2. **Silent drops drop by ~38% with explicit "translate every
+   aspect" framing + removal of the collapse allowance.** v10's
+   prompt licensed "two aspects share one searchable check, they
+   collapse into one dimension"; v11 removed the allowance and
+   added explicit "DROPPED ASPECT is the most common failure
+   mode of this layer" warning. Drop rate fell from 55 aspects
+   to 34, traits-with-drops from 52% to 37%. Not zero, but
+   substantial — and the residual drops are concentrated in
+   2-aspect cases where compression may be legitimate (e.g.
+   "long": runtime + reading-time both fold into one duration
+   check).
+
+3. **Aspect preservation surfaces real multi-category routings
+   the previous version artificially compressed.** q33
+   underrated and q34 hidden gem now produce 2-3 calls instead
+   of 1. The previous baseline filed "FINANCIAL_SCALE leaking
+   alongside CULTURAL_STATUS" as a known failure of CLEAN-FIT
+   discipline. Under the new framing, those are not leakages —
+   they are legitimate decompositions of independent axes
+   (quality vs visibility vs commercial-footprint), and the
+   merge logic that's supposed to combine same-category
+   dimensions still works correctly (v11 q21 warm hug: 3
+   aspects → 3 dims → 1 multi-expression Emotional/experiential
+   call). The previous CLEAN-FIT rule was over-eager; the
+   pre-merge happened at the dimension layer instead of the
+   call layer.
+
+4. **`retrieval_intent` quality lifts dramatically (+54% chars)
+   under the handoff-field framing.** Removing the
+   qualifier-only framing AND explicitly naming retrieval_intent
+   as Step 4's only context source (beyond expressions) shifted
+   the model from one-line restatements to substantive 2-3
+   sentence handoff prose. Several v11 entries now explicitly
+   name what to discriminate against, which the v10 entries
+   never did. The field shape didn't change — only the
+   description's framing of what it's FOR.
+
+5. **No regression on simple single-axis traits.** Cost of the
+   "consider all upstream context" universal rule: token usage
+   per trait rose from ~13.9k → ~14.8k input (+6%) and call
+   counts rose by 4 across 86 traits — small. Single-axis
+   traits like "preferably under 2 hours" stayed at 1
+   aspect/dim/call. The discipline only fires where there's
+   actually more upstream context to consider.
+
+6. **role_evidence integrates cleanly without producing
+   conflicting commitments.** The concern was that surfacing
+   the role rationale alongside qualifier_relation might cause
+   the model to second-guess Step 2's commitments. No evidence
+   of this — trait_role_analysis prose still cites qualifier_-
+   relation as primary; role_evidence shows up as supporting
+   context (especially on carver traits where qualifier_-
+   relation is "n/a"). The prompt's explicit source-priority
+   ladder appears to have prevented the conflict.
+
+7. **The known q34/q33 over-compression failure pattern was
+   actually a symptom of the dimension-layer collapse rule.**
+   The prior CLEAN-FIT TEST tried to enforce single-call
+   discipline at commit time, but the real source of bloat was
+   the "two aspects share one searchable check" allowance at
+   the dimension layer — once collapsed there, the call layer
+   couldn't recover the lost axis. Moving compression entirely
+   to the call layer (where same-category dimensions merge into
+   one multi-expression call) and forbidding it at the
+   dimension layer is the cleaner fix. Same-trait double-routing
+   to one category is still prevented (schema rule); legitimate
+   multi-category routings now surface.
+
+8. **v11 is the cleanest Step 3 result so far.** Aspect drops
+   nearly halved; trait_role_analysis prose visibly cites the
+   primary signal it was always supposed to use; retrieval_-
+   intent is substantively richer in every case examined; no
+   regressions on simple traits or on Step 2 commitments. Worth
+   shipping as the new baseline. Residual silent drops cluster
+   on 2-aspect single-category cases where collapse may
+   actually be legitimate — defer further tightening until a
+   query forces the issue.
+
+---
+
+
+
+## Experiment 9 — Step 2 source-priority audit: three reasoning fields
+
+### Hypothesis
+
+Auditing Step 2's reasoning fields surfaced three fields whose
+upstream sources lacked the explicit PRIMARY / CONTEXTUAL
+GROUNDING / ANTI-SOURCE structure that Experiments 7 and 8
+showed to be load-bearing for `role_evidence` and Step 3's
+`trait_role_analysis`. If the same pattern transfers, we should
+see corresponding shifts in how the fields read their inputs.
+
+1. **`Trait.relevance_to_query` doesn't invoke `intent_exploration`.**
+   Salience is a structural-importance question, and
+   `intent_exploration` already weighs which pieces of the query
+   are headline-shaping vs refining as a side effect of
+   exploring plausible intents. Yet the field's description
+   today hands the model a flat list of within-trait signals
+   (hedges, surface position, words spent, modal tokens) with
+   no priority among them and no reference to the upstream
+   frame. Same dynamic as the pre-Experiment-7 atomicity prompt
+   and the pre-Experiment-8 `trait_role_analysis` prompt — a
+   ready frame source that the field-level prompt doesn't
+   centre.
+
+2. **`Atom.split_exploration` has implicit per-check primaries.**
+   The two checks (forward subdivision / inverse signal-as-
+   population) each have a natural primary source —
+   `evaluative_intent` for forward, `modifying_signals` for
+   inverse — and `surface_text` is an anti-source for both
+   (the absorbed content lives elsewhere). The current prompt
+   states this inline ("walk evaluative_intent, not surface_text
+   alone") rather than as labeled per-check primaries, which is
+   easier to skim past on the inverse check, where silent
+   absorption of population-bearing content originates.
+
+3. **`Atom.evaluative_intent` has no anti-source for `intent_-
+   exploration`.** `intent_exploration` is drafted before atoms
+   in the same response, so it's visible to the model when
+   filling `evaluative_intent`. With nothing telling the model
+   to defer, `evaluative_intent` could collapse the atom's
+   consolidated meaning toward the most-likely intent —
+   removing the standalone-vs-most-likely contrast that
+   `standalone_check` is supposed to surface. Hypothetical
+   failure mode; the experiment doubles as a check on whether
+   it was actually present.
+
+If the pattern holds, we should see:
+- `relevance_to_query` prose pivots to headline-vs-refining
+  vocabulary that comes from the new framing.
+- `split_exploration` inverse halves explicitly walk the
+  signals and discuss them by name.
+- `evaluative_intent` stays close to surface_text + signals
+  with no pre-alignment to `intent_exploration`.
+
+### Changes made
+
+**A. Promote `intent_exploration` to PRIMARY in
+`Trait.relevance_to_query`.** Restructured the schema field
+description and the prompt's `_SALIENCE` section in parallel.
+Old shape: a flat list of within-trait signals (hedges, modal
+tokens, surface position, words spent, removability). New
+shape: PRIMARY = `intent_exploration`'s most-likely
+interpretation (it has already weighed which pieces are
+headline-shaping vs refining); CONTEXTUAL GROUNDING = surface
+position + words spent + SOFTENS / HARDENS tokens on
+modifying_signals + the removability test. The contextual
+sources verify and refine the primary frame; they do not stand
+in for it. Same template as `role_evidence`.
+
+**B. Make `Atom.split_exploration`'s two primaries explicit.**
+Restructured the schema field description and the prompt's
+`SPLIT AND STANDALONE EXPLORATIONS` block. New shape labels each
+check with its primary source — FORWARD (primary:
+evaluative_intent), INVERSE (primary: modifying_signals) — and
+calls out `surface_text` as an anti-source for both. Same
+substance as the pre-existing inline guidance ("walk
+evaluative_intent, not just surface_text"); the change is
+hardening it into the schema's role structure.
+
+**C. Add an anti-source guardrail to `Atom.evaluative_intent`.**
+Schema field description and the prompt's `_EVALUATIVE_INTENT`
+section both gained an explicit "Don't pre-align to
+`intent_exploration`. Sources for this field are surface_text +
+modifying_signals only; the comparison against the query's
+most-likely intent happens in `standalone_check`."
+
+Files modified: `schemas/step_2.py` (three field descriptions);
+`search_v2/step_2.py` (`_ATOMICITY` exploration block,
+`_EVALUATIVE_INTENT` guardrails, `_SALIENCE`).
+
+### Observations
+
+Aggregate stats (v11 baseline → v12, 42-query suite):
+
+| Metric | v11 | v12 | Δ |
+|---|---|---|---|
+| Atoms | 86 | 87 | +1 |
+| Traits | 86 | 87 | +1 |
+| Salience central | 73 | 77 | +4 |
+| Salience supporting | 13 | 10 | −3 |
+| Role carver | 59 | 65 | +6 |
+| Role qualifier | 27 | 22 | −5 |
+| Polarity negative | 14 | 14 | 0 |
+| Step 2 input tokens | 345,805 | 355,213 | +2.7% |
+| Step 2 output tokens | 37,720 | 39,009 | +3.4% |
+| `relevance_to_query` strict frame-cite¹ | 0/86 | 0/87 | — |
+| `relevance_to_query` loose frame vocab² | 31/86 (36%) | 47/87 (54%) | +18pp |
+| `split_exploration` inverse names signals³ | 56/86 (65%) | 58/87 (67%) | +2pp |
+| `evaluative_intent` pre-align phrases | 0/86 | 0/87 | 0 |
+
+¹ Strict citation = mentions `intent_exploration` by name, or
+phrases like "most-likely interpretation" / "the population the
+user wants" / "headline-shaping" / "the exploration step." None
+in either run — the model internalises the frame rather than
+naming it.
+
+² Loose vocabulary = strict signals plus generic salience words
+("headline", "rounding out", "refining"). The +18pp shift here
+is the headline behavioural change.
+
+³ "Names signals" = inverse half of split_exploration mentions
+"signal(s)" / "modifying signal" / "absorbed signal" by name.
+Already at 65% in v11 — hardening to per-check primaries did
+not move the needle materially.
+
+**Salience-commit shifts (the substantive change).** Six trait
+salience flips between v11 and v12; five upward to central, one
+downward to supporting. Per-flip read:
+
+- **q04 "with my mom of course shes 65 cozy mysteries nothing
+  too dark or scary" — `dark` and `scary`.** Both flipped from
+  qualifier/supporting (v11) to **carver/central** (v12). v11
+  read: "the 'too' hedge softens the constraint." v12 read:
+  "critical safety constraint that defines the 'cozy' aspect."
+  **Regression.** The "not too" hedge is the dominant salience
+  signal here; v12 elevates the trait because intent_exploration
+  framed it as defining-the-cozy-population, losing the hedge
+  attentiveness v11 had. Role also flipped (qualifier →
+  carver), which compounds the issue.
+
+- **q30 "ideally a slow burn thriller" — `slow burn`.** Flipped
+  supporting (v11) → central (v12). v11 read: "preceded by the
+  hedge 'ideally', which reduces its structural weight compared
+  to the genre." v12 read: "led with a preference marker,
+  making this a headline characteristic of the request."
+  **Regression.** The v12 model reinterpreted "ideally" as a
+  headline-marker (increase) rather than a softener (decrease).
+
+- **q15 "christmas movie thats actually good not the hallmark
+  kind" — `hallmark kind`.** Flipped qualifier/supporting (v11)
+  → carver/central (v12). v11: "specific negative constraint to
+  help define what the user means by 'actually good'." v12:
+  "exclusion of the 'Hallmark' style is a specific and emphatic
+  part of the user's request." Defensible — emphatic exclusion
+  can carve — but the trait reads more naturally as a refiner
+  of "actually good" than as the population gate.
+
+- **q13 "whats good on netflix when im hungover" — `good`.**
+  Flipped supporting → central. v11: "generic filler for quality
+  that rounds out the more specific platform and mood requests."
+  v12: "user explicitly asks for 'whats good', making quality a
+  headline requirement." Debatable — both reads have merit.
+
+- **q32 "fun 90s sci fi action movie good for friday night" —
+  `good for friday night`.** Flipped central → supporting. v11:
+  "captures the user's ultimate goal." v12: "provides the 'vibe'
+  for the search." The downward flip; v12 is arguably better
+  here — friday-night-vibe is a refiner on the genre population,
+  not a headline.
+
+The pattern: when `intent_exploration`'s frame describes a
+trait as part of the population's definition, v12 commits
+central salience. The within-trait hedge signal (SOFTENS
+tokens, "not too", "ideally") is treated as contextual
+*verification* rather than as a *strength modulator*. v11's
+flat-list framing kept the hedge as a peer signal that could
+pull salience down regardless of how the trait functions
+structurally; v12's primary-source framing inverted that
+priority.
+
+**Other-field outcomes:**
+- `split_exploration` inverse halves do walk signals
+  explicitly in v12 (q02 'long': "the signal 'arent too' is
+  operator-only language"; q08 'darker': "the signal 'than
+  fight club' contains a content phrase 'fight club' which
+  names a population"; q29 'wes anderson': "the signal 'does
+  horror' contains the content phrase 'horror'..."). Quality
+  is comparable to v11 — the discipline was already present at
+  ~65% and didn't move materially. Net neutral.
+- `evaluative_intent` shows no pre-alignment to
+  `intent_exploration` in spot checks. q04 'dark': "Avoid
+  movies with a heavy, grim, or overly serious tone; a light
+  or moderate atmosphere is preferred." — pure
+  signals-plus-anchor consolidation, no most-likely-intent
+  vocabulary. The hypothesised drift wasn't visibly present in
+  v11 either; this change reads as preventive hardening with
+  no cost.
+- Role distribution shifted +6 carver / −5 qualifier. Three
+  of the carver promotions trace back to the same q04 / q15
+  salience-flip queries (q04 dark, q04 scary, q15 hallmark
+  kind), where the new framing also nudged the role from
+  qualifier to carver. The remaining shifts are LLM variance.
+- Atoms 86 → 87: one extra atom on q29 "wes anderson does
+  horror" — the "horror" peer-atom that was already debated as
+  a borderline Step-2-LLM-variance case.
+
+### Lessons learned
+
+1. **Promoting a frame source to PRIMARY for a continuous-
+   quantity field has a downside the role-decision fields
+   don't have.** Experiments 7 and 8 promoted `intent_-
+   exploration` and `qualifier_relation` for **role** decisions
+   (carver vs qualifier) — categorical commitments where the
+   primary frame's binary read maps cleanly to the output
+   binary. Salience is not categorical at heart; it is a
+   continuous strength tempered by hedges. The new framing
+   tells the model that "headline-shaping vs refining" (a
+   binary read of structural function) IS the salience
+   question, but the model then collapses to that binary and
+   loses the within-trait hedge signal that v11's flat-list
+   framing kept dominant. PRIMARY-source promotion is not a
+   universal pattern — it works when the primary source's read
+   shape matches the output's shape, and degrades otherwise.
+
+2. **The hedge-attentiveness regression is structural, not
+   transient.** All three hedged-trait failures (q04 'dark',
+   q04 'scary', q30 'slow burn') share the same shape: a
+   refiner with an explicit hedge ("not too" / "ideally") got
+   re-read as a population-defining headline because intent_-
+   exploration's frame described it as part of what the user
+   wants. Two of these queries appear in the baseline failure
+   suite already (q04 was the test of "not too" handling);
+   v11 had them right.
+
+3. **Frame citation rate is not a useful single metric for
+   this change.** Strict citation rate stayed 0% (the model
+   does not name `intent_exploration` literally), and loose
+   citation rate moved 36% → 54% but is contaminated by
+   generic salience vocabulary the prompt itself uses
+   ("headline", "rounds out"). The substantive metric is
+   per-trait salience commits, where the regressions surface.
+   Future iterations should privilege the commit-level metric
+   over prose-shape metrics for fields whose output is a
+   commitment.
+
+4. **Changes B and C did not move material output.** The
+   per-check primary labelling on `split_exploration` was
+   already implicit in the prompt at ~65% adoption; the
+   relabeling didn't push it. The anti-source guardrail on
+   `evaluative_intent` was preventive — the drift it guards
+   against wasn't visibly present in v11, so v12 looks the
+   same. Both are essentially no-ops at current model
+   behaviour. Keep B (cheap discipline; may matter under model
+   drift); revisit C only if a real pre-align pattern surfaces.
+
+5. **Recommended next step on Change A.** Two paths:
+   - **Refine:** keep `intent_exploration` as the frame for
+     *what the trait is structurally doing in the query*, but
+     re-elevate hedges as the dominant salience-strength
+     modulator. Concretely: reorder the framing so SOFTENS /
+     HARDENS / "not too" / "ideally" pull salience down
+     regardless of structural function, with intent_-
+     exploration setting the frame for headline-vs-refining
+     interpretation. Two-source structure where the primary
+     answers a different question than today.
+   - **Revert:** roll back the `relevance_to_query` schema
+     description and the `_SALIENCE` prompt section to v11.
+     The framing that worked for `role_evidence` does not
+     transfer to salience; cut losses.
+
+   Either path should keep Changes B and C — they did no harm
+   and the discipline is worth preserving. Default
+   recommendation: **revert** Change A. The hedge regressions
+   on q04 and q30 hit canonical baseline-failure-suite cases
+   that v11 had right; refining the framing risks introducing
+   another mis-balance without a clear principled fix.
+
+6. **Negative result is the result.** v11 remains the cleanest
+   Step 2 baseline. Experiment 9 surfaces a useful constraint
+   on the source-priority pattern (point 1) that should
+   inform future field audits — promotions to PRIMARY work
+   for categorical commitments and degrade for continuous-
+   strength commitments.
+
+---

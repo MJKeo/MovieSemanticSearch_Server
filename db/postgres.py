@@ -2033,6 +2033,68 @@ async def fetch_movie_ids_by_production_company_ids(
     return {row[0] for row in rows}
 
 
+# ===================================
+#     MEDIA TYPE ENDPOINT HELPERS
+# ===================================
+#
+# Read helpers dedicated to the step 3 media-type endpoint
+# (search_v2/stage_3/media_type_query_execution.py). The SMALLINT
+# release_format column on public.movie_card is the only data source —
+# values match ReleaseFormat.release_format_id (0=UNKNOWN, 1=MOVIE,
+# 2=TV_MOVIE, 3=SHORT, 4=VIDEO).
+
+
+async def fetch_movie_ids_by_release_format(
+    release_format_ids: list[int],
+    restrict_movie_ids: Optional[set[int]] = None,
+) -> set[int]:
+    """
+    Resolve a list of ReleaseFormat int ids to the matching movie IDs.
+
+    Reads public.movie_card.release_format. Caller passes the int
+    ReleaseFormat.release_format_id values (not enum members) so this
+    helper stays pure SQL-layer; the executor handles the enum →
+    int conversion.
+
+    No index on release_format today — the LLM-facing values (TV_MOVIE,
+    SHORT, VIDEO) are tiny minorities of the catalog so a sequential
+    scan with a SMALLINT filter is acceptable. If this becomes a hot
+    path, a partial index `WHERE release_format <> 1` is the obvious
+    tuning.
+
+    Args:
+        release_format_ids: Non-empty list of ReleaseFormat.release_format_id
+            ints to match. Empty list short-circuits to an empty set.
+        restrict_movie_ids: Optional candidate-pool restriction for the
+            preference / restrict-set path. Applied server-side.
+
+    Returns:
+        Set of movie IDs whose release_format is in the input list.
+    """
+    if not release_format_ids:
+        return set()
+    if restrict_movie_ids is not None:
+        if not restrict_movie_ids:
+            return set()
+        query = """
+            SELECT movie_id
+            FROM public.movie_card
+            WHERE release_format = ANY(%s::smallint[])
+              AND movie_id = ANY(%s::bigint[])
+        """
+        rows = await _execute_read(
+            query, (release_format_ids, list(restrict_movie_ids))
+        )
+    else:
+        query = """
+            SELECT movie_id
+            FROM public.movie_card
+            WHERE release_format = ANY(%s::smallint[])
+        """
+        rows = await _execute_read(query, (release_format_ids,))
+    return {row[0] for row in rows}
+
+
 # ===============================
 #     ENTITY ENDPOINT HELPERS
 # ===============================

@@ -29,6 +29,7 @@ from search_v2.stage_3.category_handlers.endpoint_registry import (
 from search_v2.stage_3.entity_query_execution import execute_entity_query
 from search_v2.stage_3.franchise_query_execution import execute_franchise_query
 from search_v2.stage_3.keyword_query_execution import execute_keyword_query
+from search_v2.stage_3.media_type_query_execution import execute_media_type_query
 from search_v2.stage_3.metadata_query_execution import execute_metadata_query
 from search_v2.stage_3.semantic_query_execution import execute_semantic_query
 from search_v2.stage_3.studio_query_execution import execute_studio_query
@@ -73,6 +74,10 @@ def build_endpoint_coroutine(
         )
     if route == EndpointRoute.AWARDS:
         return execute_award_query(
+            params, restrict_to_movie_ids=restrict_to_movie_ids
+        )
+    if route == EndpointRoute.MEDIA_TYPE:
+        return execute_media_type_query(
             params, restrict_to_movie_ids=restrict_to_movie_ids
         )
     if route == EndpointRoute.SEMANTIC:

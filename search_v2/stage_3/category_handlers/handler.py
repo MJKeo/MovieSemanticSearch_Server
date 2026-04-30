@@ -1,15 +1,19 @@
 # Runtime driver for a single category handler on a single
-# coverage_evidence entry.
+# (CategoryCall, Trait) pair.
 #
 # Responsibilities:
-#   1. Short-circuit TRENDING to its deterministic executor (no LLM).
-#   2. Short-circuit fit_quality=no_fit to an empty HandlerResult.
-#   3. Build the per-category system prompt + user message, call the
-#      handler LLM with the per-category output schema, retry once on
-#      failure.
-#   4. Extract fired (route, EndpointParameters) pairs from the LLM
+#   1. Short-circuit TRENDING and MEDIA_TYPE to deterministic
+#      codepaths (no LLM).
+#   2. Build the per-category system prompt + user message from the
+#      CategoryCall (retrieval_intent + expressions are the entire
+#      LLM input), call the handler LLM with the per-category output
+#      schema, retry once on failure.
+#   3. Extract fired (route, EndpointParameters) pairs from the LLM
 #      output, bucketed by the category's handler shape
 #      (SINGLE / MUTEX / TIERED / COMBO).
+#   4. Stamp match_mode and polarity onto each fired wrapper from
+#      the parent Trait's pre-committed role/polarity. The LLM does
+#      not infer these — they are upstream commitments.
 #   5. Classify each fired wrapper by (match_mode, polarity) into one
 #      of the four return buckets, executing non-preference endpoints
 #      in parallel and deferring preference specs as-is.
@@ -17,8 +21,9 @@
 #      inclusion_candidates / downrank_candidates and unify tmdb_ids
 #      inside exclusion_ids.
 #
-# Scoped to a single category per invocation — fan-out across
-# coverage_evidence entries is the orchestrator's job, one layer up.
+# Scoped to one CategoryCall per invocation — fan-out across calls
+# (a trait may produce multiple) and across traits is the
+# orchestrator's job, one layer up.
 #
 # See search_improvement_planning/category_handler_planning.md for the
 # design rationale (§"Handler return contract" and §"From LLM output
@@ -41,14 +46,14 @@ from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import (
     EndpointRoute,
-    FitQuality,
     HandlerBucket,
     MatchMode,
     Polarity,
 )
 from schemas.trait_category import CategoryName
 from schemas.semantic_translation import SemanticEndpointParameters
-from schemas.step_2 import CoverageEvidence, RequirementFragment
+from schemas.step_2 import Trait
+from schemas.step_3 import CategoryCall
 from search_v2.stage_3.category_handlers.handler_result import HandlerResult
 from search_v2.stage_3.category_handlers.prompt_builder import (
     build_system_prompt,
@@ -77,52 +82,49 @@ TIMEOUT_SECONDS = 20.0
 
 async def run_handler(
     *,
-    category: CategoryName,
-    target_entry: CoverageEvidence,
-    raw_query: str,
-    overall_query_intention_exploration: str,
-    parent_fragment: RequirementFragment,
-    sibling_fragments: list[RequirementFragment],
+    category_call: CategoryCall,
+    trait: Trait,
     qdrant_client: AsyncQdrantClient,
 ) -> HandlerResult:
-    """Run one category handler on one coverage_evidence entry.
+    """Run one category handler on one CategoryCall in the context of
+    its parent Trait.
+
+    The CategoryCall supplies the routing (``category``) and the LLM
+    inputs (``retrieval_intent`` + ``expressions``). The Trait
+    supplies the pre-committed ``role`` and ``polarity`` that get
+    stamped onto every fired wrapper — the LLM does not infer either.
+    Salience is intentionally not read; it only affects cross-trait
+    reranking, which is out of scope for this stage.
 
     Never raises. LLM double-failures and per-endpoint execution
     failures are soft-failed to empty buckets so a single bad handler
     cannot tank the whole query.
     """
+    category = category_call.category
+
     # Step 0a — TRENDING short-circuit. TRENDING has no LLM codepath
     # and the only SINGLE-bucket category that resolves to it is cat 9.
-    # Must run even when fit_quality == no_fit because dispatch has
-    # already validated the routing before reaching this layer.
     if category == CategoryName.TRENDING:
         result = await _run_trending()
         result.category = category
         return result
 
-    # Step 0a.2 — MEDIA_TYPE short-circuit. MEDIA_TYPE has no LLM
-    # wrapper yet (its translation handler is pending — see
-    # endpoint_registry.ROUTE_TO_WRAPPER) so reaching the LLM codepath
-    # below would crash on a missing schema. Soft-fail to an empty
-    # result for now; when the deterministic media_type codepath lands,
-    # invoke it here the same way TRENDING does.
+    # Step 0a.2 — MEDIA_TYPE short-circuit. MEDIA_TYPE will be routed
+    # deterministically by code (matching surface phrases against the
+    # ReleaseFormat enum) rather than through the LLM handler. The
+    # deterministic routing path is not yet wired up; until it lands,
+    # soft-fail to an empty result. Reaching the LLM codepath would
+    # crash because MEDIA_TYPE is in prompt_builder._ENDPOINT_PROMPTLESS
+    # and the MEDIA_TYPE category routes only to the MEDIA_TYPE
+    # endpoint, tripping the "no LLM-wrapper endpoints" raise in
+    # build_system_prompt.
     if category == CategoryName.MEDIA_TYPE:
-        return HandlerResult(category=category)
-
-    # Step 0b — no_fit entries carry no actionable signal. Dispatch is
-    # expected to filter these out before they reach this module, but
-    # defense-in-depth keeps the handler honest if it ever slips past.
-    if target_entry.fit_quality == FitQuality.NO_FIT:
         return HandlerResult(category=category)
 
     # Step 1 — build prompt + run LLM with a single retry.
     output = await _run_handler_llm(
         category=category,
-        target_entry=target_entry,
-        raw_query=raw_query,
-        overall_query_intention_exploration=overall_query_intention_exploration,
-        parent_fragment=parent_fragment,
-        sibling_fragments=sibling_fragments,
+        category_call=category_call,
     )
     if output is None:
         return HandlerResult(category=category)
@@ -134,7 +136,12 @@ async def run_handler(
     if not fired:
         return HandlerResult(category=category)
 
-    # Steps 3-5 — classify, execute in parallel, consolidate. The
+    # Step 3 — stamp the trait's pre-committed role/polarity onto
+    # each fired wrapper. The LLM emits the rest of the parameters;
+    # match_mode and polarity are upstream commitments.
+    fired = _stamp_role_and_polarity(fired, trait)
+
+    # Steps 4-6 — classify, execute in parallel, consolidate. The
     # final result also carries the category and the full fired
     # list (including preferences) for notebook / debug inspection.
     result = await _assemble_result(fired, qdrant_client=qdrant_client)
@@ -175,22 +182,12 @@ async def _run_trending() -> HandlerResult:
 async def _run_handler_llm(
     *,
     category: CategoryName,
-    target_entry: CoverageEvidence,
-    raw_query: str,
-    overall_query_intention_exploration: str,
-    parent_fragment: RequirementFragment,
-    sibling_fragments: list[RequirementFragment],
+    category_call: CategoryCall,
 ) -> BaseModel | None:
     # Prompt build is cheap and deterministic — do it outside the retry
     # loop so a retry only re-attempts the network call.
     system_prompt = build_system_prompt(category)
-    user_message = build_user_message(
-        raw_query=raw_query,
-        overall_query_intention_exploration=overall_query_intention_exploration,
-        target_entry=target_entry,
-        parent_fragment=parent_fragment,
-        sibling_fragments=sibling_fragments,
-    )
+    user_message = build_user_message(category_call)
     response_format = get_output_schema(category)
 
     # Single retry covers transient failures: provider errors, timeout,
@@ -282,7 +279,48 @@ def _extract_fired_endpoints(
 
 
 # ---------------------------------------------------------------------------
-# Steps 3-5 — classify, execute, consolidate
+# Step 3 — stamp role + polarity from the parent Trait
+# ---------------------------------------------------------------------------
+
+
+# Trait.role and Trait.polarity are pre-committed string literals; the
+# wrappers expect the corresponding enum values. These mappings are
+# the single point of translation so the rest of the handler can
+# treat the wrapper fields as authoritative.
+_ROLE_TO_MATCH_MODE: dict[str, MatchMode] = {
+    "carver": MatchMode.FILTER,
+    "qualifier": MatchMode.TRAIT,
+}
+_POLARITY_TO_ENUM: dict[str, Polarity] = {
+    "positive": Polarity.POSITIVE,
+    "negative": Polarity.NEGATIVE,
+}
+
+
+def _stamp_role_and_polarity(
+    fired: list[tuple[EndpointRoute, EndpointParameters]],
+    trait: Trait,
+) -> list[tuple[EndpointRoute, EndpointParameters]]:
+    # Overwrite whatever match_mode / polarity the LLM emitted with
+    # the Trait's committed values. Pydantic model_copy returns a new
+    # wrapper rather than mutating in place, so the LLM-emitted
+    # objects stay untouched (useful when fired_endpoints is exposed
+    # for debug inspection).
+    match_mode = _ROLE_TO_MATCH_MODE[trait.role]
+    polarity = _POLARITY_TO_ENUM[trait.polarity]
+    return [
+        (
+            route,
+            wrapper.model_copy(
+                update={"match_mode": match_mode, "polarity": polarity}
+            ),
+        )
+        for route, wrapper in fired
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Steps 4-6 — classify, execute, consolidate
 # ---------------------------------------------------------------------------
 
 

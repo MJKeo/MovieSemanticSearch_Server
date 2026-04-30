@@ -128,39 +128,63 @@ then the full category taxonomy.
 
 
 _TRAIT_ROLE_ANALYSIS = """\
-TRAIT-ROLE ANALYSIS — what role + qualifier_relation + \
-anchor_reference mean for the dimensions
+TRAIT-ROLE ANALYSIS — translate Step 2's commits into a \
+constraint on what the dimensions list should describe
 
-Before enumerating dimensions, commit a 1-2 sentence analysis. The \
-fields are committed upstream by Step 2 — read them; do not \
-re-derive from evaluative_intent. This step exists because \
-qualifier traits are reliably misread as populations to retrieve \
-when role information stays only in prose, and because \
-qualifier_relation carries query-specific operational meaning the \
-dimension inventory has to honor.
+Before enumerating dimensions, commit a 1-2 sentence analysis \
+that answers, specifically for this trait: WHAT KIND of \
+dimensions belong, and what kind don't? The fields below are \
+committed upstream by Step 2; read them as the source of truth, \
+do not re-derive from evaluative_intent.
 
-THE TWO QUESTIONS your analysis must answer:
+READ ALL OF THE FOLLOWING. Each one carries information the \
+others don't — do not stop at the first signal, do not skip a \
+field because another one looked sufficient. The point of \
+having multiple sources is to triangulate, not to pick one.
 
-(1) RETRIEVE OR POSITION? Does this trait name something the user \
-wants RETRIEVED, or something the user is using to POSITION the \
-retrieval? The role field tells you: carver = retrieve, qualifier \
-= position. Carver traits' dimensions describe the population the \
-user wants narrowed to. Qualifier traits' dimensions describe the \
-reference / anchor / shape the trait positions against — never the \
-population to recommend.
+SOURCE PRIORITY:
 
-(2) IF QUALIFIER, WHAT'S THE OPERATIONAL MEANING? Read the \
-qualifier_relation prose. It describes, in user vocabulary, how \
-this trait positions against the rest of the query. Translate that \
-prose into what KIND of dimensions belong: a measurable axis with \
-a directional threshold; an archetype / iconography / tonal \
-register the candidates need to satisfy; a setting / period / \
-medium the candidates need to evaluate inside; a craft / aesthetic \
+(1) PRIMARY — qualifier_relation. When populated, this is the \
+field Step 2 wrote specifically to constrain your dimension \
+scope. It describes, in freeform user vocabulary, how this \
+trait positions against the rest of the query AND the \
+operational meaning of that role. Translate its prose into what \
+KIND of dimensions belong: a measurable axis with a directional \
+threshold; an archetype / iconography / tonal register the \
+candidates need to satisfy; a setting / period / medium the \
+candidates need to evaluate inside; a craft / aesthetic \
 template the candidates need to match; etc. The relation is \
 freeform; your translation is freeform too — describe what the \
 dimensions need to capture for THIS query, not a slot from a \
-fixed list. retrieval_intent on each call ultimately encodes the \
-operational meaning so Step 4 can act on it.
+fixed list. When qualifier_relation is "n/a", primary signal \
+shifts to the grounding sources (4) below.
+
+(2) VERDICT — role. The binary carver-vs-qualifier commitment.
+- carver: dimensions describe the POPULATION the user wants \
+  retrieved.
+- qualifier: dimensions describe the REFERENCE / ANCHOR / \
+  SHAPE the trait positions against, never the population to \
+  recommend.
+
+(3) RATIONALE — role_evidence. One sentence from Step 2 \
+explaining WHY the role was committed: definitive eligibility \
+gate (carver), or one of the qualifier shapes (continuous-score-\
+only, used as a comparison reference rather than naming the \
+population, or another trait already gates the population this \
+one only refines). Read this even when role looks obvious — for \
+borderline traits and for carvers where qualifier_relation is \
+"n/a" it carries the load that primary doesn't.
+
+(4) GROUNDING — contextualized_phrase + evaluative_intent. The \
+modifier-folded headline identity and the integrated meaning \
+with all modifying signals folded in. Anchor your analysis in \
+what the trait is actually asking for from this specific query, \
+not generic prose about "qualifiers" or "populations". Especially \
+load-bearing when qualifier_relation is "n/a".
+
+(5) SURFACE POINTER — anchor_reference. The verbatim modifier \
+phrase from the original query. Use it to keep the analysis \
+specific to this query's anchor rather than abstract.
 
 IDENTITY VS ATTRIBUTE CATEGORIES — a structural rule that follows \
 from "qualifier means positioning, not retrieval". Some categories \
@@ -197,6 +221,10 @@ a different reader, given only this analysis, write the same kind \
 of dimensions? If no, revise.
 
 NEVER:
+- LEAD WITH role AS THE HEADLINE QUESTION. role is the verdict; \
+  qualifier_relation is the substantive signal that tells you \
+  what the dimensions should describe. Read all sources; don't \
+  stop at the binary.
 - RE-INTERPRET qualifier_relation. Step 2 commit is the source of \
   truth — read it, don't second-guess.
 - DERIVE A DIFFERENT ROLE from evaluative_intent.
@@ -218,10 +246,32 @@ ASPECTS — enumerate every axis the trait calls for, in user-\
 vocabulary, before translating into database-vocabulary
 
 Between the role analysis and the dimension inventory sits an \
-enumeration step. Walk the target_population and \
-trait_role_analysis you just committed and list every \
-distinguishable axis the trait calls for, one short noun-phrase \
-per entry, in the user's own vocabulary.
+enumeration step. Decompose target_population into the \
+independent axes that define it, using trait_role_analysis to \
+qualify whether each axis describes the population (carver) or \
+the reference being positioned against (qualifier).
+
+PRIMARY SOURCE: target_population. It names what kind of movies \
+the trait wants — your job is to break that prose into the \
+distinct, independently-varying axes that compose it. One short \
+noun-phrase per entry, in the user's own vocabulary.
+
+QUALIFYING SOURCE: trait_role_analysis. Read it AFTER you have a \
+candidate aspect list to confirm each axis fits the role-scope \
+constraint. If the analysis says "dimensions describe the \
+reference's identifiable attributes", every aspect must name a \
+reference attribute, not a population trait. If the analysis \
+says "dimensions describe the population to retrieve", aspects \
+name population-defining axes.
+
+READ ALL OF target_population. Do not stop at the first axis you \
+identify. Multi-faceted figurative traits ("hidden gem", "feel-\
+good", "underrated") reliably encode three or more axes — \
+quality + visibility + commercial footprint, or warmth + \
+accessibility + emotional payoff. Walk the prose end to end and \
+list every axis it names, even ones that look adjacent or \
+trivial; the dimension layer cannot recover an axis you didn't \
+enumerate here.
 
 Why this step exists. The next step (dimensions) shifts the work \
 into database-vocabulary — categories, vector spaces, structured \
@@ -273,6 +323,8 @@ NEVER:
 - DUPLICATE the prose of target_population. The prose describes \
   the population whole; the aspect list decomposes it into \
   independent axes.
+- STOP EARLY. Walk all of target_population; missing an axis \
+  here cannot be recovered downstream.
 
 ---
 
@@ -280,7 +332,8 @@ NEVER:
 
 
 _DIMENSION_INVENTORY = """\
-DIMENSION INVENTORY — translating aspects into database-vocabulary
+DIMENSION INVENTORY — translate every aspect into a database-\
+vocabulary check
 
 A dimension is one concrete piece the database can check against \
 a movie: a numeric range or boundary, a structured-attribute \
@@ -289,53 +342,74 @@ check the vector spaces can score against, or a structural plot / \
 narrative attribute. Concrete enough that you could imagine \
 writing the database query from this single dimension.
 
-Dimensions must obey the trait_role_analysis you committed. If \
-the analysis constrained dimensions to describe the reference's \
-identifiable attributes (rather than the population), every \
-dimension here describes reference attributes — slipping in a \
-population-shaped dimension violates the role commitment.
+PRIMARY SOURCE: aspects. Walk the aspects list end to end. For \
+EACH aspect, commit at least one dimension that translates that \
+user-vocabulary axis into a database-vocabulary check. The \
+mapping is at-least-one aspect → at-least-one dimension. Even if \
+two aspects feel like they could share a check, keep them as \
+separate dimensions here; merging happens at the category_calls \
+layer, where same-category dimensions collapse into one multi-\
+expression call. Pre-merging at the dimension layer is how \
+aspects get silently dropped.
 
-GENERATION DISCIPLINE. Walk the aspects list. For each aspect, \
-commit one searchable check that translates the user-vocabulary \
-axis into database-vocabulary. When two aspects share one \
-searchable check (one category cleanly covers both), they collapse \
-into one dimension; when they require different checks (different \
-categories, different vector spaces, different structured fields), \
-they stay as separate dimensions.
+CONTEXTUAL SOURCES: target_population + trait_role_analysis. \
+Read them to understand each aspect more deeply — what does the \
+axis really mean for this query, what kind of database check \
+honors the role-scope constraint? They are NOT additional \
+sources of dimensions; they are interpretation aids for the \
+aspects you already enumerated.
 
-DECOMPOSITION DEPTH IS CATEGORY-AWARE. Before splitting an aspect \
-across multiple dimensions, ask: is there a single category in \
-the taxonomy that already captures this aspect? If YES, that's \
-ONE dimension; the parametric breadth (the multiple ways the \
-aspect expresses itself within that category) belongs inside the \
-call's expressions list, not as separate dimensions. If NO, \
-decompose into facets where each facet routes to a different \
-category.
+ROLE-SCOPE CONSTRAINT. Dimensions must obey the \
+trait_role_analysis. If the analysis constrained dimensions to \
+describe the reference's identifiable attributes (rather than \
+the population), every dimension describes reference attributes \
+— slipping in a population-shaped dimension violates the role \
+commitment.
 
-COVERAGE TESTS:
+COVERAGE IS NON-NEGOTIABLE.
 - Every aspect addressed by at least one dimension. An aspect \
   with no dimension is dropped coverage — the failure mode this \
   whole structure exists to prevent.
 - Every dimension traces back to at least one aspect. A dimension \
   with no aspect is invented — likely smuggling in a population \
   detail the role analysis didn't license.
-- "Could the items I'm considering route to DIFFERENT \
-  categories?" If YES, split into dimensions. If NO — facets of \
-  the same category — keep ONE dimension and let the call's \
-  expressions list carry the breadth.
+- An aspect that resists translation does NOT get silently \
+  dropped. If you genuinely cannot translate it, the aspect \
+  itself was wrong (too abstract, not actually a separate \
+  axis) — revise the aspect list, do not skip it here.
+
+CATEGORY-AWARE PHRASING. When phrasing each dimension's \
+expression, the parametric breadth of one aspect (the multiple \
+ways one axis expresses itself within a single category) belongs \
+inside the eventual call's expressions list. Each dimension \
+still gets its own entry — do not pre-merge dimensions because \
+they look like they'll route to the same category. The \
+category_calls layer handles that merge cleanly; the dimension \
+layer must preserve aspect coverage.
+
+OPERATIONAL TESTS:
+- "For each aspect, can I point to the dimension that addresses \
+  it?" Yes → keep. No → add a dimension; do not delete the \
+  aspect.
+- "For each dimension, which aspect does it translate?" Every \
+  dimension must answer this; un-traceable dimensions are \
+  invented.
 - "Could the database engineer point to the field, table, or \
   vector space they'd score it against?" Yes → keep. No → \
-  decompose further or drop.
+  decompose further or revise the aspect.
 
 COMMON PITFALLS.
 
 - DROPPED ASPECT. The aspect appears in the list above but no \
-  dimension addresses it. Either an aspect resists translation \
-  (in which case revise the aspect itself — too abstract, not \
-  actually a separate axis) or you forgot it.
+  dimension addresses it. Most common failure mode of this \
+  layer — the aspect "resisted translation" so the model quietly \
+  skipped it. Translate it or revise upstream; never skip.
+- PRE-MERGED ASPECTS. Two aspects collapsed into one dimension \
+  because they "feel adjacent". Merging is category_calls' job; \
+  preserve every aspect at the dimension layer.
 - INVENTED DIMENSION. The dimension doesn't trace to any aspect. \
   Likely smuggled in from prior knowledge of the trait's typical \
-  shape rather than from the role analysis.
+  shape rather than from the aspects list.
 - ABSTRACTION UP. Vague gestures ("has the right tone", "feels \
   right") aren't dimensions. Translate into specific checks the \
   database can run.
@@ -344,13 +418,15 @@ COMMON PITFALLS.
   candidates route it.
 - ABSENCE FRAMING. Polarity was committed upstream. Even when the \
   trait is negative, expressions describe presence (the attribute \
-  being avoided). Merge step flips direction; you don't.
+  being avoided). Merge step flips direction; you don't. If an \
+  aspect was framed as absence ("lack of whimsy"), translate it \
+  to the presence form here ("whimsy", flipped at merge time) — \
+  do not drop it.
 - BUNDLING UNRELATED CHECKS into one Dimension.expression. One \
   dimension = one check. Multiple same-category facets aren't \
-  bundling — they belong as separate expressions inside one \
-  multi-expression call (correct shape).
-- PADDING. Don't add dimensions to make a trait look richer than \
-  its aspect list calls for.
+  bundling — they belong as separate dimensions that merge into \
+  one multi-expression call later.
+- PADDING. Don't add dimensions that don't trace to an aspect.
 
 ---
 
@@ -619,11 +695,14 @@ def _build_user_prompt(trait: Trait) -> str:
     identity with modifiers folded in — Step 2's defense against
     shortcut routing on bare surface phrases), surface_text
     (verbatim grounding), evaluative_intent (the semantic seed),
-    role (shapes call framing), qualifier_relation and
-    anchor_reference (drive trait_role_analysis and the identity-
-    vs-attribute principle), polarity (informational — calls
-    express presence regardless), and relevance_to_query (signals
-    how aggressively the trait warrants decomposition).
+    role (the carver/qualifier verdict), role_evidence (one-
+    sentence rationale for the role commit; load-bearing on
+    borderline traits and on carvers where qualifier_relation is
+    "n/a"), qualifier_relation and anchor_reference (drive
+    trait_role_analysis and the identity-vs-attribute principle),
+    polarity (informational — calls express presence regardless),
+    and relevance_to_query (signals how aggressively the trait
+    warrants decomposition).
 
     contextualized_phrase appears AHEAD of surface_text — bare
     surface phrases stripped of their query context invite shortcut
@@ -648,6 +727,7 @@ def _build_user_prompt(trait: Trait) -> str:
         f'- surface_text (verbatim): "{trait.surface_text}"\n'
         f"- evaluative_intent: {trait.evaluative_intent}\n"
         f"- role: {trait.role}\n"
+        f"- role_evidence: {trait.role_evidence}\n"
         f"- qualifier_relation: {trait.qualifier_relation}\n"
         f"- anchor_reference: {trait.anchor_reference}\n"
         f"- polarity: {trait.polarity}    "
