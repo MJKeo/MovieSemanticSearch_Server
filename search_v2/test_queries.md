@@ -668,3 +668,176 @@ proxies (audience score >> popularity). The pipeline may need a
 "hidden gem" precomputed score or a runtime weighting that
 penalizes high-popularity films even when they have great
 reception.
+
+---
+
+## 35. Parody-shape generalization — different anchor entity
+
+**Query:** `spoof of marvel movies`
+
+**Mental model:** Same idiom-shape as #6 (parody of the godfather)
+but the reference is a franchise, not a single film. Hits: The
+Boys (TV — pass), Mystery Men (1999), Sky High, Super (2010),
+Defendor, The Specials. Mystery Men is the cleanest movie pick.
+The user wants comedic deconstructions of superhero tropes, not
+Marvel movies themselves and not generic comedies.
+
+**With backing data:** The test is whether the pipeline treats
+"spoof" as its own retrievable population (comedy/satire films
+that target a genre) AND "marvel movies" as a reference shape
+(superhero genre tropes, MCU-style). Independent retrievals
+intersect; absorbing "spoof" as a modifier loses the comedic
+requirement entirely. Genre = comedy/satire AND `plot_analysis` /
+`production` referencing superhero tropes. Studio filter is
+inverse — explicitly NOT Marvel.
+
+---
+
+## 36. Positioning-operator absorption that should NOT split
+
+**Query:** `horror set in feudal japan`
+
+**Mental model:** Onibaba (1964), Kuroneko (1968), Kwaidan (1965),
+Throne of Blood (Macbeth-shaped, dark but not pure horror),
+Hagazussa-adjacent. The "feudal japan" piece reshapes the horror
+genre into a specific period setting; it doesn't independently
+retrieve as a movie kind a user would ask for ("feudal japan"
+alone is not a watching-want).
+
+**With backing data:** "Set in feudal japan" is a true positioning
+operator — it transposes the horror evaluation surface to a period
+setting. Should absorb as a modifying_signal on "horror" rather
+than emit as a peer atom. Genre = horror AND time period / setting
+metadata = feudal japan (or `plot_events` signal for samurai-era
+Japanese setting). The pipeline must distinguish this case (absorb
+correct) from #35 (absorb wrong). Same surface shape, opposite
+correct call.
+
+---
+
+## 37. Figurative population label + watch context
+
+**Query:** `popcorn flick for friday night`
+
+**Mental model:** "Popcorn flick" is a figurative label for a real
+population — broad-appeal big-spectacle entertainment movies. Top
+Gun: Maverick, Jurassic World, Mission Impossible series, the
+Fast & Furious films, Mad Max: Fury Road. Plus the watching
+context (Friday night = unwind, low cognitive load). Maverick is
+the canonical recent answer.
+
+**With backing data:** Tests whether the pipeline recognizes
+figurative population labels (other than warm hug / feel good) as
+their own carving criteria. `viewer_experience` for "fun,
+spectacle, easy entertainment"; `watch_context` for "Friday night,
+unwind." High reception bias. The risk is the pipeline treating
+"popcorn flick" as a literal popcorn or food query, or stripping
+it as filler.
+
+---
+
+## 38. Implicit-era constraint via "young"
+
+**Query:** `young al pacino crime movie`
+
+**Mental model:** "Young" implies pre-1990 Pacino. The Godfather
+(1972), Serpico (1973), Dog Day Afternoon (1975), Scarface (1983),
+Carlito's Way (1993 — borderline). The intersection of three
+constraints (Pacino + young = early career window + crime genre)
+is dense and high-quality.
+
+**With backing data:** Three atoms: "al pacino" (lexical entity =
+cast credit), "young" (implicit era constraint — needs to resolve
+to a date range based on the named person's career arc), "crime
+movie" (genre). The "young" piece is the interesting one — does
+the pipeline absorb it as a modifying_signal that reshapes the
+date filter on Pacino's filmography, or treat it as a vague hedge?
+A correct read computes era-via-person rather than just hedging
+the credit filter.
+
+---
+
+## 39. Meta-recognition + meta-quality qualifier
+
+**Query:** `oscar bait but actually good`
+
+**Mental model:** "Oscar bait" is a derogatory shorthand for
+prestige films targeting awards via subject (illness, war,
+biopic), gravitas, lead-acting showcase — but the user is asking
+for the population of those films that genuinely deliver. Schindler's
+List, There Will Be Blood, No Country for Old Men, Manchester by
+the Sea, Moonlight, 12 Years a Slave. Excludes formulaic-but-
+hollow prestige (think mid-tier Best Picture nominees).
+
+**With backing data:** Two atoms: "oscar bait" (figurative
+population — prestige-aimed dramas) and "actually good" (quality
+qualifier ranging over the carved set). Tests award-as-population
+recognition (does "oscar bait" route to award metadata + a
+prestige-style cluster?) and tests whether quality language
+("actually good") gets read as a high-reception qualifier rather
+than treated as filler.
+
+---
+
+## 40. Genre-hybrid compound
+
+**Query:** `musical horror`
+
+**Mental model:** Sweeney Todd (2007), Repo! The Genetic Opera,
+Little Shop of Horrors (1986), The Rocky Horror Picture Show,
+Anna and the Apocalypse, The Lure (2015). Tiny intersection but a
+real one. The user wants the hybrid, not "musicals OR horrors."
+
+**With backing data:** The atomicity test in question — "musical
+horror" reads as one compound atom (the population is films that
+are BOTH musical and horror) rather than two parallel atoms whose
+retrieval intersection might miss the named hybrid. Compare to "80s
+action arnold" (#16), where the three pieces genuinely retrieve
+and combine. Here, splitting risks returning generic horror or
+generic musicals. Tests that the pipeline reads compound-genre
+phrases as atoms when the population only exists at the
+intersection.
+
+---
+
+## 41. Pure narrative-outcome description, no entity
+
+**Query:** `movies where the villain wins`
+
+**Mental model:** Se7en, No Country for Old Men, The Empire
+Strikes Back, Chinatown, The Mist, Gone Girl, Prisoners (debatable),
+The Cabin in the Woods. Films where the antagonist's project
+succeeds or the protagonist meaningfully fails. Se7en and No
+Country are the prototypes.
+
+**With backing data:** Pure `plot_events` / `plot_analysis`
+territory — narrative-outcome description with no lexical or
+metadata anchor. Distinct shape from #7 (single trope: time loop)
+in that "villain wins" is a structural plot property, not an event
+or trope. Tests whether the vector spaces have enough resolution
+on outcomes/endings vs general dark-tone or villain-centric films.
+The risk is conflating "villain wins" with "villain is prominent"
+or "ends darkly."
+
+---
+
+## 42. Cross-medium figurative comparison
+
+**Query:** `feels like a video game`
+
+**Mental model:** Films with video-game DNA — kinetic action
+choreography, level-structure pacing, respawn/loop logic, or
+explicit game adaptations done well. Edge of Tomorrow, John Wick
+series, Crank, Hardcore Henry, Scott Pilgrim, Source Code, Free
+Guy. Edge of Tomorrow is the canonical "lives like a video game
+without being one." Excludes literal video-game adaptations
+unless they happen to fit.
+
+**With backing data:** "Video game" is not a movie population — it
+names a non-film medium the user is using as a stylistic /
+experiential reference. Tests how the pipeline handles
+cross-medium analogy: does it route to `narrative_techniques` and
+`viewer_experience` for game-like pacing/structure, or does it
+collapse to a literal video-game-adaptation lexical lookup? The
+right read carries the comparison through to vector space, not to
+metadata.

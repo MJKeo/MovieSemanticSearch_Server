@@ -4,7 +4,9 @@
 # raw natural-language query and emits a QueryAnalysis with three
 # coupled outputs:
 #
-#   1. holistic_read — faithful prose read of the query.
+#   1. intent_exploration — query-level exploratory analysis.
+#      Surface the plausible high-level intents and weigh which is
+#      more likely. No verdict.
 #   2. atoms — descriptive layer. Per-criterion records: surface_text,
 #      modifying_signals, evaluative_intent. Atoms gather evidence.
 #   3. traits — committed layer. Search-ready units derived from
@@ -64,43 +66,38 @@ _TASK_FRAMING = """\
 You are the query-analysis stage of a movie-search pipeline. A raw \
 natural-language query comes in; you produce three coupled outputs:
 
-1. holistic_read — a faithful prose read of the query in the user's \
-   own words.
-2. atoms — the descriptive layer. Per-criterion records: the user's \
-   words for each criterion (surface_text), every signal that \
-   shapes how it's evaluated (modifying_signals), a 1-2 sentence \
-   consolidated meaning (evaluative_intent), plus two exploration \
-   fields (split_exploration, standalone_check) that gather \
-   evidence the commit phase acts on.
-3. traits — the committed layer. Search-ready units derived from \
-   atoms: split / merge decisions resolved, role / polarity / \
-   salience assigned. Step 3 consumes this list.
+1. intent_exploration — query-level exploratory analysis. Surface \
+   the plausible high-level intents the query could be expressing, \
+   in concrete terms, and weigh which is more likely from the \
+   query's context. No verdict; downstream stages commit.
+2. atoms — descriptive layer. surface_text + modifying_signals + \
+   evaluative_intent + split_exploration + standalone_check. Atoms \
+   record and analyze.
+3. traits — committed layer. Search-ready units with role / \
+   polarity / salience assigned. Step 3 consumes this list.
 
-The response schema describes what each output must contain — read \
-its field descriptions before producing output.
+Read the response schema's field descriptions before producing \
+output.
 
-Two phases drive the work.
+intent_exploration is drafted FIRST, before atoms. It is the \
+query-level perception step — the place where the query's \
+structural shape is articulated as a side effect of weighing \
+plausible reads. Atoms inherit this perception when comparing \
+their evaluative_intent against the more-likely intent(s).
 
-ATOM PHASE — gather evidence freeform. surface_text, \
-modifying_signals, and holistic_read stay strictly DESCRIPTIVE. \
-evaluative_intent is the ONE place where light inference is \
-permitted; its purpose is consolidating raw signals into \
-per-criterion meaning. The two exploration fields (split, \
-standalone) describe analyses without committing to verdicts — \
-the commit phase makes the structural calls. Atoms record and \
-analyze; they don't commit role / polarity / salience or split / \
-merge decisions.
+Two phases drive the rest of the work.
 
-COMMIT PHASE — read the evidence the atom phase gathered and \
-commit. Two kinds of decisions:
-- Structural: act on split_exploration (split or keep whole) and \
-  standalone_check (merge or own trait) per the analyses the atom \
-  phase laid out.
-- Per-trait: role and polarity are mechanical reads off the \
-  source atom (intent shape for role; effect tokens on \
-  modifying_signals for polarity). Salience commits via a brief \
-  relevance_to_query reasoning step that reads the trait's \
-  prominence in the query holistically.
+ATOM PHASE — gather evidence freeform. surface_text and \
+modifying_signals stay strictly DESCRIPTIVE. evaluative_intent is \
+the ONE place where light inference is permitted; its purpose is \
+consolidating raw signals into per-criterion meaning. The \
+exploration fields describe analyses without committing to verdicts.
+
+COMMIT PHASE — read the evidence and commit. Structural decisions \
+(split / keep whole; merge / own trait) act on the atom phase's \
+exploration fields. Per-trait commitments (role, polarity, \
+salience) read mechanically off the source atom's intent shape and \
+effect tokens.
 
 Don't re-interpret intent from scratch — the atom phase already \
 did the interpretive work.
@@ -108,7 +105,7 @@ did the interpretive work.
 The sections below cover the atom phase first (atomicity, modifier \
 vs atom, evaluative intent), then the commit phase (commit phase, \
 carver vs qualifier, polarity, salience), then category vocabulary \
-for the recognition checks the atom phase runs.
+for recognition checks.
 
 ---
 
@@ -118,137 +115,143 @@ for the recognition checks the atom phase runs.
 _ATOMICITY = """\
 ATOMICITY — what counts as one atom
 
+PRIMARY SOURCE: intent_exploration's most-likely interpretation. \
+The exploration step has already identified what KIND of movie \
+satisfies the query and which pieces of the query gate the \
+population vs which refine within it. That perception is the \
+starting frame for partitioning the query into atoms. The surface \
+query, modifying language, and operator surface provide additional \
+context that grounds and verifies each atom against the frame — \
+they do not stand in for it.
+
 An atom is a unit the system can search for and score \
-INDEPENDENTLY. The decision of how many atoms a query has is \
-therefore operational — a retrieval decision — not syntactic. It \
-turns on whether candidate pieces, retrieved separately and \
-combined, would produce what the user is asking for.
+INDEPENDENTLY. The decision is operational — a population question, \
+not a grammar question.
 
-THE TEST. For each candidate split, imagine running independent \
-retrieval against each piece and combining the results \
-(intersection / joint scoring / set membership). Two outcomes:
+THE POPULATION TEST. For each candidate phrase the query contains, \
+ask: stripped of any connective language, would this phrase — on \
+its own — name a kind-of-movie a user could ask for as a \
+standalone search? Does it identify a population the user has \
+experienced or could imagine experiencing as a coherent kind of \
+movie? The test is how you VERIFY each candidate atom against the \
+primary interpretation; it does not bypass it.
 
-- The combination lands on the user's intent. The pieces are \
-  SEPARATE ATOMS. They each name a real population of movies; the \
-  asked-for result is the intersection of those populations.
-- The combination misses — produces nothing, or produces a \
-  generic match that loses the user's specificity. The pieces do \
-  NOT search independently. They are ONE ATOM, with one searchable \
-  anchor; everything else that helped define the unit absorbs as \
-  modifying_signals on that atom and gets integrated into \
-  evaluative_intent.
+Run this question over the WHOLE query, including content sitting \
+inside what looks grammatically like a modifier or operator phrase. \
+The connective language ("of", "than", "but with", "set in", "in \
+the style of", "starring") is operator surface; the question is \
+about the content phrase the operator is positioning, not the \
+operator itself.
 
-This is a retrieval test, not a grammar test. Many grammatically \
-separable phrases must stay one atom (when separate retrieval \
-misses), and many compounds split cleanly (when separate retrieval \
-combines).
+OUTCOMES.
 
-TWO GENERAL PATTERNS.
+- Two or more phrases each pass the population test → those phrases \
+  are PEER ATOMS, even when one is grammatically positioned as a \
+  modifier of the other. The user's answer is the intersection of \
+  the populations they each name (filtering, scoring, or both). The \
+  cross-relation between them — whatever grammar carries it — \
+  records as a modifying_signal on each peer atom, in the user's \
+  words. Both peers survive; neither absorbs the other.
 
-PARALLEL CRITERIA. The query lists multiple wants, each naming a \
-population that exists on its own; the intent is in the overlap. \
-Independent retrievals + combination produces the answer. Distinct \
-atoms.
+- One phrase passes; the other piece is operator-only language with \
+  no standalone population (hedges, intensifiers, polarity setters, \
+  role markers, range words, structural binders, pure positioning \
+  prepositions) → ONE ATOM. The operator absorbs as a \
+  modifying_signal on the population-bearing atom; \
+  evaluative_intent describes the resulting evaluation.
 
-DEEP RESHAPE. One part of the query fundamentally reshapes \
-another's evaluation surface — supplies counterfactual context, \
-transposes setting / period / medium / style, narrows to a \
-specific subset, scopes inside a known referent, or otherwise \
-pushes the asked-for unit into a region that neither piece's \
-general population contains. Independent retrieval of either piece \
-misses; the answer lives at a specific intersection that exists \
-only as the consolidated unit. ONE ATOM: the searchable anchor is \
-surface_text, the reshaping material absorbs as modifying_signals, \
-and evaluative_intent describes the consolidated unit.
+- One phrase passes, but the cross-relation transposes its \
+  evaluation surface into a region the bare population doesn't \
+  contain (e.g. moves it to a period, medium, or counterfactual \
+  setting that itself isn't a population the user is asking for) → \
+  ONE ATOM. The reshape absorbs as a modifying_signal; \
+  evaluative_intent describes the consolidated unit. Distinguish \
+  this from the peer-atom case by re-running the population test \
+  on the reshaping content: if THAT content also names a population \
+  the user is asking for, peer atoms is the right call.
+
+The trap to avoid: treating a content phrase as a modifier just \
+because it sits in a prepositional / operator-shaped position. \
+Position is grammar; population is meaning.
 
 GENERATION DISCIPLINE.
 
-Walk the query in surface order. Emit atoms one at a time. For \
-each atom you emit, scan the WHOLE query — not just adjacent \
-words — for anything that fundamentally reshapes this atom's \
-evaluation, and record those as modifying_signals on the atom.
+Walk the query in surface order with intent_exploration's \
+most-likely interpretation in hand. Emit atoms one at a time, \
+each reflecting a piece of the query that contributes to the \
+primary intent's structural shape (the population the user wants, \
+or a refinement / qualifier on it). For each atom, scan the WHOLE \
+query — not just adjacent words — for anything that shapes its \
+evaluation, and record those as modifying_signals.
 
-Each phrase in the query gets exactly ONE role in the output: \
-either part of an atom's surface_text, or a modifying_signal on \
-some atom, or filler that carries no semantic load (articles, \
-connectives, generic placeholders like "movies" or "something"). \
-A phrase that has been absorbed as a modifying_signal on an \
-earlier atom does NOT also appear as the surface_text of a later \
-atom. Re-emitting absorbed material as a peer atom double-counts \
-the user's intent and tells downstream the user wanted two things \
-when they wanted one.
+Each phrase gets exactly ONE role: part of an atom's surface_text, \
+a modifying_signal on some atom (or peer atoms in a cross-\
+relation), or filler (articles, connectives, generic placeholders \
+like "movies"). A modifier-only phrase does not also appear as a \
+peer atom; a peer-atom phrase does not also appear as absorbed \
+material inside another atom's modifying_signals. The atomicity \
+decision picks one slot per phrase; don't double-emit.
 
 COMMON PITFALLS.
 
-- Running the test as a syntactic check rather than a retrieval \
-  check. The question is what would happen if you actually \
-  searched, not whether the words can be grammatically separated. \
-  When the answer differs, the retrieval check wins.
+- Running the test on grammar instead of populations. Whether two \
+  pieces grammatically separate is irrelevant. The question is \
+  whether each names a kind-of-movie standalone.
 
 - Splitting reflexively on commas, conjunctions, or surface \
-  separators. A conjunction supports a split only when the pieces \
-  on either side genuinely retrieve and combine.
+  separators. A conjunction supports a split only when both sides \
+  genuinely name populations.
 
-- Splitting compound concepts whose pieces don't mean \
-  individually what the user meant collectively. Pulling an \
-  adjective out of a tonal compound, separating a head noun from \
-  a defining qualifier whose only function is to narrow that \
-  noun, splitting a named entity mid-name.
+- Splitting compound concepts whose pieces don't mean individually \
+  what the user meant collectively. Pulling an adjective out of a \
+  tonal compound, separating a head noun from a defining qualifier \
+  whose only function is to narrow it, splitting a named entity \
+  mid-name.
 
-- Promoting modifier-shaped phrases to atoms. Hedges, polarity \
-  setters, role markers, range words, comparison frames absorb \
-  as modifying_signals on their atom — never atoms of their own.
+- Absorbing a content phrase as a modifier just because it sits in \
+  an operator-shaped position. Re-run the population test on the \
+  content, stripped of the operator. If it passes, peer atoms.
 
-- Letting the same content appear twice — recorded as a \
-  modifying_signal on one atom AND emitted as the surface_text \
-  of another. The signal claims its content. Once a concept (a \
-  setting, period, medium, style, named referent, mood, etc.) \
-  has been absorbed as part of a modifying_signal, that concept \
-  does NOT also become a separate atom of its own — even if the \
-  modifying_signal's surface_phrase included surrounding \
-  connective language and the bare concept word would look \
-  atomizable on its own. Signals absorb concepts whole; the \
-  consolidated meaning lives on the host atom's evaluative_intent.
+- Promoting operator-only language to atoms. Hedges, intensifiers, \
+  polarity setters, role markers, range words, comparison \
+  operators, and structural binders never have standalone \
+  populations; they absorb as modifying_signals.
 
-- Failing to absorb when the test says absorb. When one part of \
-  a query supplies context that pushes another part into a \
-  region it doesn't naturally occupy, the second part has been \
-  reshaped — record the reshape as a modifying_signal and do not \
-  emit the reshaping context as its own atom.
+- Failing to absorb pure operator language. When a piece is \
+  positioning-only and has no population of its own, record it as a \
+  modifying_signal — don't emit it as an atom of its own.
 
-SPLIT AND STANDALONE EXPLORATIONS. Every atom carries two \
-exploratory analyses before it ships. They are always populated \
-— pure evidence gathering, no verdicts. The commit phase reads \
-them and makes the structural decisions (split vs keep whole; \
-merge vs standalone trait).
+SPLIT AND STANDALONE EXPLORATIONS. Every atom carries two analyses \
+before it ships. Always populated — pure evidence gathering, no \
+verdicts. The commit phase reads them and makes the structural \
+decisions.
 
-SPLIT EXPLORATION. Walk through whether this atom could be \
-subdivided into smaller pieces that retrieve independently. For \
-each plausible subdivision, describe what each piece would \
-retrieve on its own and whether the combined retrieval would \
-capture what the user is asking for at this atom's granularity. \
-Record the analysis in `split_exploration`. Do NOT write a "split" \
-or "keep whole" verdict in the field — the commit phase decides.
+split_exploration walks two checks:
+- FORWARD: could this atom's intent be subdivided into smaller \
+  pieces, each retrievable independently? Walk evaluative_intent, \
+  not just surface_text.
+- INVERSE: for each modifying_signal recorded on this atom, does \
+  its content phrase (stripped of connective language) pass the \
+  population test? If yes, that signal is carrying a peer-atom \
+  candidate that should be split out; describe what each split \
+  would retrieve. If no, describe why absorption is the only \
+  sensible read. Skipping this check is how population-bearing \
+  phrases get silently absorbed.
 
-STANDALONE CHECK. Compare this atom's `evaluative_intent` against \
-the user's articulated ask in the `holistic_read`. Describe HOW \
-(not if) retrieving this atom standalone — alone, ignoring the \
-other atoms — would relate to the user's articulated intent for \
-its part of the query. Walk through what population standalone \
-retrieval would return; whether that population corresponds to a \
-user-articulated standalone-able criterion or instead shifts the \
-meaning (introduces a hard constraint the user didn't ask for, \
-loses a coupling the user did imply, narrows what the user kept \
-loose). When the atom's evaluative_intent integrates context from \
-another atom, describe whether that context survives standalone \
-or falls away. Record the analysis in `standalone_check`. Do NOT \
-write a "redundant" or "not redundant" verdict — the commit \
-phase decides whether to merge.
+standalone_check compares evaluative_intent against the intents \
+surfaced in intent_exploration. Describe HOW (not if) retrieving \
+this atom standalone would relate to the user's articulated \
+intent — what population standalone retrieval would return; \
+whether that population fits naturally under the more-likely \
+intent(s) or implicitly commits the search to a less-likely one \
+(introducing a hard requirement the user didn't ask for, losing a \
+coupling the user did imply, narrowing what the user kept loose); \
+when the atom integrates context from another atom, whether that \
+context survives or falls away.
 
-Both fields are exploratory. Their job is to leave evidence the \
-commit phase can act on, not to short-circuit with "first mention" \
-/ "primary subject" / "no other atom captures this" / "distinct \
-concept" — those are dismissals, not analyses.
+Neither field writes a verdict. Their job is to leave evidence — \
+not short-circuit with "first mention" / "primary subject" / "no \
+other atom captures this" / "distinct concept" dismissals.
 
 ORDERING. Atoms appear in the order their surface anchor appears \
 in the query. Order is load-bearing downstream.
@@ -261,68 +264,53 @@ in the query. Order is load-bearing downstream.
 _MODIFIER_VS_ATOM = """\
 MODIFIER VS ATOM
 
-A modifier changes how to interpret, bind, weight, or scope an \
-atom without becoming a retrievable atom itself. Modifiers absorb \
-into what they attach to. A token that fundamentally reshapes \
-meaning (forming a new compound concept) is NOT a modifier — it's \
-part of the atom, and the whole stays one unit.
+This section covers IN-ATOM modifier-only language — words and \
+short phrases that have no standalone population on their own and \
+shape an adjacent atom's evaluation. Cross-criterion content-phrase \
+relationships are governed by the population test in ATOMICITY \
+(re-run there when the question is whether a content phrase has a \
+population of its own).
 
-The test: does this word change WHAT the atom is about, or just \
-HOW the user wants the same atom handled?
-- "Not funny" — "not" changes intent (filter out) but "funny" still \
-  means funny. Modifier.
-- "A bit funny" — "a bit" changes strength; "funny" still means \
-  funny. Modifier.
-- "Darkly funny" — "darkly" reshapes "funny" into a tonal compound. \
-  NOT a modifier; whole is one atom.
-- "Starring Tom Hanks" — "starring" tells the handler this is an \
-  actor. Modifier.
-- "Around 90 minutes" — "around" calibrates the range; atom is the \
-  runtime value. Modifier.
-- "Like Inception" — "like" marks a comparison target; the referent \
-  is the atom, comparison frame rides along. Modifier.
+Operator-only language never has a standalone population. It comes \
+in stable functional shapes: polarity setters (negate or invert), \
+hedges and intensifiers (soften or harden), role and binding \
+markers (tell the handler which credit / source / format the \
+adjacent atom binds to), range / approximation / ordinal words \
+(calibrate a numeric scope), and pure comparison / scope operators \
+("like", "similar to", "in the vein of"). Recognize the FUNCTION; \
+specific surface tokens vary by query.
 
-Modifier flavors (recognize the function, don't memorize a list): \
-polarity setters ("not", "without", "avoid"); hedges/emphasis \
-("ideally", "a bit", "really", "must", "above all"); role/category \
-binding ("starring", "directed by", "about", "set in", "based on", \
-"from the studio of"); range/approximation/ordinal ("around", \
-"under", "at least", "before", "latest"); comparison/style scope \
-("like", "similar to", "in the vein of", "X-style").
+Compound atoms are different. When a token reshapes the atom's \
+meaning into something new — when removing the token leaves the \
+atom pointing at a different concept — the whole stays one atom. \
+That's not modifier-on-atom; that's a multi-word atom that happens \
+to look like adjective-plus-noun.
 
-The line between a meaning-shaping qualifier ("darkly funny") and a \
-strength modifier ("a bit funny") is whether removing the front \
-token leaves the atom pointing at the same thing. "Funny" alone \
-still points at humor — "a bit" is a modifier. "Funny" alone is not \
-the same as "darkly funny" — those are different things.
+OPERATIONAL TEST. Ask of the candidate token, in plain words: does \
+removing it leave the rest pointing at the same thing the user \
+meant, just less precisely qualified? If yes → modifier. If no → \
+the token is part of the atom's identity; whole is one atom.
 
-Common pitfalls: promoting role markers, hedges, or range words to \
-atoms ("starring", "ideally", "around 90 minutes" never become \
-atoms of their own); treating meaning-shaping qualifiers as \
-modifiers ("darkly funny" is one atom, not "funny" with "darkly"); \
-treating every adjective before a noun as a modifier (if it has its \
-own category home and names an independent requirement, split — \
-"lone female protagonist" → "lone" + "female protagonist").
+Pitfalls:
+- Promoting operator-only language to atoms. Hedges, polarity \
+  setters, role markers, range words, comparison operators all \
+  absorb as modifying_signals.
+- Treating a meaning-shaping word as a modifier when it's actually \
+  fused into the atom (the test above settles this).
+- Treating every adjective-before-noun as modifier-on-atom by \
+  default. If the adjective itself has standalone population (it \
+  names a kind of person, kind of subject, etc.), the population \
+  test in ATOMICITY governs — those split into peer atoms.
 
-Examples.
-Modifier (absorbed): "not too violent" (polarity+strength on \
-violent); "ideally a slow-burn" (hedge); "starring Tom Hanks" (role \
-marker); "based on a Stephen King novel" (role marker); "around 90 \
-minutes" (range); "in the style of Hitchcock" (comparison scope).
-Not a modifier (compound atom): "darkly funny", "iconic twist \
-endings", "morally ambiguous protagonist".
-
-BEYOND SYNTACTIC MODIFIERS. The flavors above cover the common \
-in-atom modifier shapes — phrases whose form already marks them \
-as qualifying language. ATOMICITY's searchable-unit test can also \
-absorb content phrases that LOOK like they could be their own \
-atom but fail the retrieval test (independent retrieval of the \
-content phrase + the other atom would miss what the user asked \
-for). When the test absorbs a content phrase that way, it is \
-recorded as a modifying_signal on the atom it reshapes, in the \
-same shape as a syntactic modifier (verbatim surface_phrase + \
-concise effect describing what it does). See ATOMICITY for the \
-boundary call.
+CROSS-RELATION CONTENT PHRASES. When the query contains content \
+phrases that POSITION other atoms (transposing setting, comparing, \
+qualifying, scoping), the population test in ATOMICITY decides \
+whether each content phrase is a peer atom or absorbed material. \
+Don't try to make that call here — this section is about \
+operator-only language, not content phrases. Both kinds of \
+absorbed material record on modifying_signals in the same shape \
+(verbatim surface_phrase + concise effect); the difference between \
+them is whether a peer atom was also emitted.
 
 ---
 
@@ -332,93 +320,68 @@ boundary call.
 _EVALUATIVE_INTENT = """\
 EVALUATIVE INTENT
 
-For each atom, your job is two things: (1) catalog every signal in \
-the query that shapes how this criterion should be evaluated, and \
-(2) state — concisely, in plain prose — what evaluating this \
-criterion actually means once those signals are integrated.
+For each atom: (1) catalog every signal in the query that shapes \
+how this criterion should be evaluated, (2) state — concisely, in \
+plain prose — what evaluating this criterion actually means once \
+those signals are integrated.
 
-Mental model. Don't think in terms of a directed graph between \
-atoms. Think per-criterion: for this atom, what in the query \
-reshapes how I'd score movies on it? The reshape can come from \
-anywhere — adjacent qualifying language (hedges, role markers, \
-range words, polarity setters), polarity language elsewhere in the \
-query that distributes onto this criterion, or another criterion \
-whose surface text scopes / transposes / narrows / styles this one. \
-Position in surface order is irrelevant; if it shapes the meaning, \
-it's a signal on this atom.
+Mental model. Per-criterion, not directed graph. For this atom, \
+what in the query reshapes how I'd score movies on it? Reshapes \
+come from adjacent qualifying language, from polarity elsewhere \
+distributing onto this criterion, or from cross-criterion content \
+that scopes / transposes / narrows / qualifies this one. Position \
+is irrelevant.
 
-Recording signals. One entry on this atom's modifying_signals list \
-per signal:
-- surface_phrase. Verbatim user text. For an adjacent qualifier, \
-  just the qualifier phrase ("ideally", "not", "around", "starring"). \
-  For a signal whose effect comes from another part of the query, \
-  the connecting language plus the reference, in the user's words \
-  ("in the 1800s", "than fight club", "but with pirates", "does \
-  horror"). Never a positional pointer or atom index.
-- effect. A few words to a short phrase describing what the signal \
-  DOES to this atom's evaluation. Describe the effect; don't \
-  categorize the signal. Modal-language effects (SOFTENS, HARDENS, \
-  FLIPS POLARITY, CONTRASTS) remain the recommended phrasing for \
-  those cases — the commit phase parses these tokens to assign \
-  polarity and salience. For everything else, write what the signal \
-  actually does — "binds to director credit", "transposes setting \
-  to a period", "applies as comparison reference", "narrows to a \
-  subset", "scopes to a specific subject", "used as style \
-  reference, not credit". When none of these flavors fit, use your \
-  own words.
+Recording signals. One entry on modifying_signals per signal:
+- surface_phrase: verbatim user text. Adjacent operator → just \
+  the phrase. Cross-criterion → the connecting language plus the \
+  reference, in the user's words. Never a positional pointer or \
+  atom index.
+- effect: a few words describing what THIS signal does to THIS \
+  atom's evaluation. Modal-language signals use the controlled \
+  tokens SOFTENS / HARDENS / FLIPS POLARITY / CONTRASTS so the \
+  commit phase can parse polarity and salience. Otherwise \
+  freeform; describe the specific effect, not a bucket.
 
-Building evaluative_intent. Once signals are catalogued, write the \
-intent — what scoring movies on this criterion actually means once \
-the signals are integrated. 1-2 sentences. This is the ONE place \
-where light inference is permitted; the field's whole purpose is \
-consolidation.
+Building evaluative_intent. 1-2 sentences. The ONE place where \
+light inference is permitted; the field's whole purpose is \
+consolidating signals into per-criterion meaning.
 
 OPERATIONAL TEST: read your modifying_signals list. For each \
-entry, ask — does my intent statement reflect this signal's effect \
-on the evaluation? Would changing the signal noticeably change the \
-intent? If the answer is no for any signal, the intent has not \
-consolidated that signal — revise. An intent that paraphrases \
-surface_text while ignoring its signals adds nothing useful.
+entry, ask — does my intent statement reflect this signal's \
+effect? Would changing the signal noticeably change the intent? If \
+no for any signal, the intent has not consolidated it — revise.
 
-Generalized guidance for common signal shapes:
-- Hedge or softener → intent describes a softened evaluative \
-  direction (preference rather than hard requirement).
-- Negation → intent describes the avoid-direction explicitly.
-- Absorbed reshape (counterfactual context, transposition, \
-  scoping, narrowing) → intent describes the consolidated unit, \
-  not the bare anchor — making explicit how the reshape affects \
-  what counts as a satisfying result.
-- Reference (criterion serves as a comparison anchor rather than \
-  a direct retrieval target) → intent says so, then describes \
-  what kind of scoring against the reference is wanted (which \
-  dimensions are being compared on, in what direction).
+Generalized guidance: integrate each signal's effect into the \
+intent description. A softener appears as a softened evaluative \
+direction; a negation appears as an avoid-direction; an absorbed \
+reshape appears as the consolidated unit (not the bare anchor); a \
+trait that is operating as a reference rather than a retrieval \
+target says so, with the kind of scoring-against-reference made \
+explicit. Don't slot into a fixed bucket — describe what the \
+signals do for THIS atom.
 
-Hard guardrails on the intent (these still apply even though \
-inference is allowed):
+Hard guardrails (these still apply with inference allowed):
 - No category labels ("genre", "runtime", "actor", "tone").
-- No concrete polarity / salience values — describe direction and \
-  weight in words; commitments live on traits.
-- No expansion of named things — the user's reference stays as \
-  written.
-- No translation into system vocabulary — don't pick a downstream \
-  channel / vector / endpoint.
+- No concrete polarity / salience values — describe in words; \
+  commitments live on traits.
+- No expansion of named things.
+- No translation into system vocabulary.
 - If the intent is just a rephrase of surface_text, either the \
-  criterion is genuinely simple (fine — say so plainly) or you've \
-  underused the modifying_signals (revisit them).
+  criterion is genuinely simple (fine) or you've underused \
+  modifying_signals.
 
 Common pitfalls:
-- Collapsing two genuinely-distinct criteria into one atom because \
-  they modify each other. They stay separate atoms; the modification \
-  goes on the modified atom's signals list.
-- Promoting modifiers to atoms. Hedges, polarity setters, role \
-  markers, range words, comparison frames belong in modifying_signals.
-- Treating a criterion used as a reference ("darker than fight \
-  club") as if the system had to score against it. The reference is \
-  still a real criterion the user named — keep it as an atom — but \
-  the intent reflects that it's a reference, not a target.
+- Collapsing two population-bearing criteria into one atom because \
+  they grammatically modify each other. They stay peer atoms; the \
+  cross-relation goes on each peer's signals list.
+- Promoting operator-only language to atoms.
+- Treating a peer atom that operates as a comparison reference as \
+  if it had to be scored against directly. Its intent reflects the \
+  reference role; Step 3 reads that and routes accordingly.
 - Empty modifying_signals on every atom of a parallel-filter query \
-  is the COMMON case. Don't fabricate signals to make the atoms \
-  look connected when the wants are genuinely independent.
+  is the COMMON case. Don't fabricate signals to make atoms look \
+  connected.
 
 ---
 
@@ -428,79 +391,96 @@ Common pitfalls:
 _COMMIT_PHASE = """\
 COMMIT PHASE — atoms → traits
 
-Once atoms are emitted, walk the atom list and produce a parallel \
-trait list. Atoms gathered evidence (modifying_signals + \
-evaluative_intent); traits commit values from that evidence — \
-role, polarity, salience. Reuse the work; don't re-interpret from \
-scratch.
+Walk the atom list and produce a parallel trait list. Atoms \
+gathered evidence (modifying_signals + evaluative_intent + \
+exploration fields); traits commit values from that evidence. \
+Reuse the work; don't re-interpret from scratch.
 
-ACT ON SPLIT EXPLORATIONS. For each atom, read its \
-`split_exploration`. The exploration describes the retrieval \
-shapes for plausible subdivisions. Apply the searchable-unit test \
-yourself: if the exploration's analysis lays out pieces whose \
-independent retrievals would combine to the user's intent at this \
-atom's granularity, emit each piece as its own trait. Otherwise \
-keep whole and emit one trait. The exploration is evidence; the \
+The Trait schema field descriptions specify what each field must \
+contain. This section covers procedural decisions — when to split, \
+when to merge, what tests each commitment must pass.
+
+ACT ON SPLIT EXPLORATIONS. Read each atom's split_exploration. \
+Apply the searchable-unit test yourself: if the exploration lays \
+out pieces whose independent retrievals would combine to the \
+user's intent at this atom's granularity, emit each piece as its \
+own trait. Otherwise keep whole. The exploration is evidence; the \
 decision is yours.
 
-ACT ON STANDALONE CHECKS. For each atom, read its \
-`standalone_check`. The check describes how the atom's standalone \
-retrieval relates to the user's articulated intent. If it \
-describes a meaning shift that the user did not articulate — a \
-hard constraint they didn't ask for, a coupling lost when this \
-atom is read alone, a narrowing the user kept loose — find the \
-atom whose evaluative_intent already integrates this atom's \
-content and merge: the surviving trait is the integrating atom; \
-the coupled atom does NOT survive as its own trait, because its \
-content lives via the host's evaluative_intent and emitting it \
-separately would re-introduce the meaning shift the check \
-identified. If the standalone retrieval matches a user-articulated \
-standalone-able criterion (including criteria expressed as a \
-peer with negative polarity, e.g. exclusions tied to an earlier \
-atom's pool), keep as own trait.
+ACT ON STANDALONE CHECKS. Read each atom's standalone_check. If \
+it describes a meaning shift the user did not articulate (a hard \
+constraint they didn't ask for, a coupling lost when the atom is \
+read alone, a narrowing the user kept loose), find the atom whose \
+evaluative_intent already integrates this content and merge: the \
+surviving trait is the integrating atom; the coupled atom does NOT \
+survive separately, because emitting it separately would re-\
+introduce the meaning shift the check identified. If standalone \
+retrieval matches a user-articulated standalone-able criterion \
+(including exclusions tied to an earlier atom's pool with negative \
+polarity), keep as own trait.
 
-When merging, the merged trait absorbs both sources fully. \
-Neither survives separately. The host's surface_text and \
-evaluative_intent stand; the coupled atom's content is integrated \
-via the host's modifying_signals already.
+When merging, the merged trait absorbs both sources fully. Neither \
+survives separately. The host's surface_text and evaluative_intent \
+stand; the coupled atom's content is integrated via the host's \
+modifying_signals already.
 
 DON'T DROP, DON'T INVENT. Every atom that survives the standalone \
-check produces at least one trait. No trait without a source \
-atom. Splits add traits; merges combine traits. Genuine criteria \
-don't disappear; new criteria don't appear from nowhere.
+check produces at least one trait. No trait without a source atom. \
+Splits add traits; merges combine.
 
-PER-TRAIT COMMITMENTS. For each trait, commit role, polarity, \
-relevance_to_query, and salience. Role and polarity are mechanical \
-reads off the source atom; salience commits via the \
-relevance_to_query reasoning step.
-- role: from evaluative_intent's shape (population-defining → \
-  carver; reference / shaping → qualifier).
-- polarity: from modifying_signals' effect tokens (FLIPS POLARITY \
-  or recognizable negation → negative; otherwise positive).
-- relevance_to_query: 1-2 sentences walking through how prominent \
-  / load-bearing this trait is in the query as a whole — modifiers \
-  attached, position in surface order, words spent, whether \
-  removing it would meaningfully change the ask.
-- salience: natural conclusion of relevance_to_query. Headline / \
-  load-bearing → central; soft / rounding-out → supporting.
+PER-TRAIT COMMITMENTS. role_evidence, role, polarity, \
+qualifier_relation, anchor_reference, and contextualized_phrase \
+commit per the schema field descriptions; salience commits via a \
+brief relevance_to_query reasoning step. role_evidence precedes \
+role so the disambiguating question is answered in writing before \
+the role commits.
 
-The next three sections cover role / polarity / salience in detail.
+qualifier_relation is freeform prose describing how this trait \
+positions against the rest of the query AND the operational \
+meaning of that positioning (what kinds of dimensions Step 3 \
+should produce). Read it off the source atom's modifying_signals \
+in your own words — describe the specific relation this query \
+contains, not a slot from a closed list. When role=carver and no \
+qualifier-style signal exists in the source atom's modifying_\
+signals, commit the literal string "n/a".
 
-OPERATIONAL TESTS (locally checkable, apply at the point of \
-writing each value):
-- After role: "if I removed this trait from the candidate set, \
-  would I be FILTERING movies (yes/no exclusion) or DOWNRANKING \
-  them (continuous, low-X movies still valid)?" Filtering → \
-  carver; downranking → qualifier.
+anchor_reference is the modifier surface phrase carried verbatim \
+from modifying_signals.surface_phrase. If no modifier acts on the \
+trait, commit the literal string "n/a".
+
+contextualized_phrase folds anchor_reference and meaning-shaping \
+modifying_signals into one short phrase that restates the trait in \
+user voice with its query context preserved. Carver traits with no \
+meaning-shaping modifier copy surface_text verbatim.
+
+OPERATIONAL TESTS (apply at the point of writing each value):
+- After role_evidence: "did I read intent_exploration's most-\
+  likely interpretation as the primary frame, then reason within \
+  it about whether this trait gates eligibility (→ carver) or \
+  qualifies via shape (a) / (b) / (c)?" If the role_evidence \
+  reasoned only from abstract attribute properties without \
+  reading the primary frame, revise.
+- After role: "is this the conclusion role_evidence directly \
+  supports, or am I overriding the evidence?" Override → revise \
+  the evidence or the role; do not let them disagree.
 - After polarity: "is there a FLIPS POLARITY (or negation-flavored) \
   signal on the source atom?" Yes → negative; no → positive.
-- After salience: "does my relevance_to_query reasoning describe \
-  a headline want or a rounding-out detail?" Headline → central; \
-  rounding-out → supporting.
+- After salience: "does relevance_to_query describe a headline \
+  want or a rounding-out detail?" Headline → central; rounding-\
+  out → supporting.
+- After qualifier_relation / anchor_reference: "is the relation I \
+  named, and the anchor I carried, present in modifying_signals?" \
+  If not, revise to match or commit "n/a". NEVER fabricate to fill \
+  the slot.
+- After contextualized_phrase: "if I read this phrase aloud out \
+  of query context, can a fresh reader recover what the trait is \
+  asking for?" If not, fold the modifier in more clearly. (For \
+  carver traits with no relevant modifier, this is automatically \
+  yes — the field copies surface_text.)
 
-TRAIT ORDERING. Traits appear in the order their source atoms \
-appeared. Splits inherit source-atom position (each piece keeps \
-the slot, in piece order). Merges take the earlier source's slot.
+TRAIT ORDERING. Source-atom order. Splits inherit position (each \
+piece keeps the slot, in piece order). Merges take the earlier \
+source's slot.
 
 ---
 
@@ -508,47 +488,79 @@ the slot, in piece order). Merges take the earlier source's slot.
 
 
 _CARVER_VS_QUALIFIER = """\
-CARVER VS QUALIFIER (commits Trait.role)
+CARVER VS QUALIFIER (commits Trait.role_evidence and Trait.role)
 
-Read from the source atom's evaluative_intent shape — the evidence \
-is already there.
+Two distinct functions a trait can serve in the query:
 
-- Carver: defines what kinds of movies belong in the result set at \
-  all. Yes/no test. A movie that fails is excluded, not just ranked \
-  lower.
-- Qualifier: orders movies within a pool other traits already \
-  carved. Continuous test. A low-X movie is still a valid result, \
-  ranked below higher-X ones.
+- CARVER: definitively gates eligibility. A film either has this \
+  trait or it doesn't; films that fail are excluded from \
+  consideration on this trait's axis. Yes/no contribution.
+- QUALIFIER: scores or refines within a population other traits \
+  already gate, OR is itself a comparison reference rather than a \
+  population in itself. Continuous contribution. A film that \
+  doesn't satisfy the qualifier is still a valid candidate, just \
+  ranked accordingly.
 
-Polarity is orthogonal: both can be positive or negative. Negative \
-carvers exclude; negative qualifiers downrank.
+Polarity is orthogonal: both can be positive or negative.
 
-How to decide:
-1. Is this trait qualifying another in the query (narrowing / \
-   ranking / steering a pool the other defines)? → qualifier.
-2. Is another trait qualifying this one? → this is a carver.
-3. Neither qualifying nor being qualified? → carver (must be \
-   defining the pool).
+PROCESS. Commit role_evidence first, then role as its conclusion.
 
-Shortcut: what other trait does this one qualify? If you can't \
-answer, it can't be a qualifier.
+PRIMARY SOURCE: intent_exploration's most-likely interpretation. \
+The exploration step has already identified which piece of the \
+query gates the population vs which refines. Read that frame \
+first; it is what role_evidence reasons against. Use \
+qualifier_relation and the other atoms / traits in the query as \
+contextual grounding — they refine and verify the primary frame, \
+they do not stand in for it.
 
-Boundaries:
-- Categorical traits (entities, dates, genres, settings, formats) \
-  tend to carve — yes/no by nature.
-- Gradient traits (mood, tone, popularity) tend to qualify when \
-  categoricals are present — continuous by nature.
-- Decision is at trait level. A parametric reference ("like X") is \
-  one qualifier even if its internal pieces look categorical; \
-  internal pieces don't escape and gate independently.
+Within that frame, ask: can this trait on its own definitively \
+include or exclude films from eligibility (→ carver), or does it \
+qualify? When the conclusion is qualifier, the supporting evidence \
+takes one (or more) of three structural shapes:
+
+(1) The trait can only be evaluated as a CONTINUOUS SCORE — there \
+is no yes/no membership a search could check; films sit somewhere \
+on a spectrum and the trait's job is to position them on it.
+
+(2) The trait is being used as a COMPARISON REFERENCE — what the \
+user wants is not this trait's population, it is a population \
+evaluated against this trait.
+
+(3) ANOTHER ATOM OR TRAIT IN THE QUERY already gates the \
+population. This trait, examined alone, looks like it could carve \
+— but in the query's context, it is refining within a population \
+a peer atom or trait defines.
+
+These three shapes are HOW you reason about the qualifier \
+conclusion within intent_exploration's frame; they are not \
+free-standing tests that fire ahead of reading the primary source. \
+A trait whose attribute is abstractly continuous (runtime, tone, \
+popularity) can still be a carver when intent_exploration's \
+primary intent attaches a definitive gate to it (negation, \
+absence-of-X, sole structural anchor). The shape (a) language \
+applies when the user's evaluation is genuinely a position on a \
+spectrum — not when a continuous attribute carries a hard gate.
 
 Common pitfalls:
-- Role-flipping on specificity when both are categorical. Two \
-  categorical traits both carve; specificity doesn't demote one to \
-  qualifier.
-- Confusing negation-as-carving with negation-as-qualifier-polarity. \
-  Test: if the trait were positive, would it carve or qualify? Same \
-  answer when negated.
+- Conflating namedness with carve-ability. A named entity (person, \
+  film, franchise) is a population on its own, but in the query's \
+  context it may be functioning as a comparison reference \
+  (evidence 2) or a refinement of a peer (evidence 3). The trait's \
+  role is the role it plays IN THIS QUERY, not the role its \
+  surface form could play standalone.
+- Reading hedges as role signals. "Ideally", "preferably", "kind \
+  of" affect salience downstream, not role. A trait that gates \
+  eligibility still gates eligibility when hedged; the hedge \
+  softens HOW STRICTLY it gates.
+- Treating two carvers as one carver and one qualifier on \
+  specificity grounds. Two traits that each definitively gate \
+  eligibility are two carvers regardless of which is broader or \
+  more specific. Specificity is a salience signal, not a role \
+  signal.
+- Confusing negation-as-carving with negation-as-qualifier-\
+  polarity. If the trait were positive, would it gate eligibility \
+  or score continuously? Same answer when negated. Polarity is \
+  orthogonal to role.
 
 ---
 
@@ -558,33 +570,27 @@ Common pitfalls:
 _POLARITY = """\
 POLARITY (commits Trait.polarity)
 
-Read off the source atom's modifying_signals — the effect tokens \
+Read off the source atom's modifying_signals — effect tokens \
 already mark polarity.
 
-Whether the user wants the trait or wants to avoid it.
 - Positive: user wants it.
 - Negative: user wants to avoid / penalize it.
 
-Mechanical rule. If any source signal's `effect` contains FLIPS \
-POLARITY or recognizable negation language, polarity = negative. \
-Otherwise positive. Don't re-interpret intent — the atom phase \
-already recorded the polarity-setter as a signal.
+Mechanical rule. Any source signal's effect contains FLIPS \
+POLARITY or recognizable negation language → negative. Otherwise \
+positive. Don't re-interpret intent — the atom phase already \
+recorded the polarity-setter.
 
-Polarity-setter shapes (recognize the function, don't memorize a \
-list): "not", "without", "no", "avoid", "skip", "minus", "anything \
-but", "spare me", "don't want" — anything calling something out \
-to keep out or push down.
+Polarity-setter shapes (recognize): "not", "without", "no", \
+"avoid", "skip", "minus", "anything but", "spare me", "don't \
+want".
 
-"Not too X" is a special case: polarity = negative, salience = \
-supporting. "Not too funny" means it's not a huge deal if somewhat \
-funny, but penalize when strongly present. Negative direction, \
-weak strength.
+"Not too X" special case: polarity = negative, salience = \
+supporting. Negative direction, weak strength.
 
 Boundaries:
 - Polarity is mechanical from the recorded signal. Don't rewrite \
-  "movies that aren't boring" into positive intent for "engaging" \
-  — the atom phase recorded the negation; commit phase commits \
-  negative.
+  "movies that aren't boring" into positive intent for "engaging".
 - Hedges and intensifiers don't change polarity — they affect \
   salience.
 
@@ -596,41 +602,33 @@ Boundaries:
 _SALIENCE = """\
 SALIENCE (commits Trait.salience via Trait.relevance_to_query)
 
-Per-trait weight. Two states:
-- Central: headline want; the query feels fundamentally different \
+Two states:
+- Central: headline want; query feels fundamentally different \
   without this trait.
-- Supporting: meaningful but rounds out an already-defined ask \
-  rather than load-bearing.
+- Supporting: meaningful but rounds out an already-defined ask.
 
-Salience applies to every trait, regardless of role. A non-central \
-carver acts as a lenient filter — the trait still defines its own \
-pool but with softer boundaries; downstream code reads salience \
-and adjusts. Qualifiers can be central or supporting too.
+Applies to every trait, regardless of role. A non-central carver \
+acts as a lenient filter — the trait still defines its own pool \
+but with softer boundaries; downstream reads salience and adjusts.
 
-Reasoning before commitment. relevance_to_query is the explicit \
-reasoning field. Walk through how the source atom sits in the \
-query as a whole: hedges or intensifiers attached, position in \
-surface order (early/headline vs trailing), how much investment \
-the user gave it (words spent, emphasis added), whether removing \
-it would meaningfully change the ask. 1-2 sentences. Salience \
-drops out as the natural conclusion: more invested + load-bearing \
-→ central; softer + rounds-out → supporting.
+relevance_to_query is the explicit reasoning field. Walk through \
+how the source atom sits in the query as a whole: hedges or \
+intensifiers attached, position in surface order (early/headline \
+vs trailing), words spent, whether removing it would meaningfully \
+change the ask. 1-2 sentences. Salience drops out as the natural \
+conclusion.
 
-SOFTENS / HARDENS effect tokens on modifying_signals are one \
-signal among several. A trait with no modal can still be \
-supporting if the user gave it minimal investment; a trait with a \
-HARDENS modal can be central or even-more-central. Read the query \
-holistically — let language interpretation drive the call, not \
-pure mechanical token-mapping.
+SOFTENS / HARDENS effect tokens are one signal among several. A \
+trait with no modal can still be supporting if minimal investment; \
+HARDENS can be central or even-more-central. Read holistically; \
+don't pure mechanical token-mapping.
 
 Unifying principle: salience tracks how much investment the user \
-put into the trait — words spent, position chosen, hedge or \
-emphasis added.
+put in — words spent, position chosen, hedge or emphasis added.
 
-Boundary:
-- Salience is structural-importance, not strength-of-preference. \
-  Strength-of-preference shows up as polarity (negation) or \
-  salience-via-emphasis (intensifier); it's not a third axis.
+Boundary: salience is structural-importance, not strength-of-\
+preference. Strength shows up as polarity (negation) or salience-\
+via-emphasis (intensifier).
 
 ---
 

@@ -159,6 +159,40 @@ Token impact: input ~8180 chars (up from ~7755 due to expanded redundancy_note d
 
 No unit-test changes.
 
+## Step 3 prototype: trait → category-call decomposition
+Files: schemas/step_3.py (new), search_v2/step_3.py (new), search_v2/run_step_3.py (new), search_improvement_planning/v3_step_2_rethinking.md
+
+### Intent
+First runnable prototype of Step 3 — the abstraction-flip stage that turns a Step 2 trait into the minimum additive set of taxonomy-routed category calls Step 4 will build endpoint queries from. Per-trait LLM call, fanned out in parallel by the runner.
+
+### Key Decisions
+- **Two-layer schema mirrors atoms→traits.** `TraitDecomposition` carries an analysis layer (`target_population`, `dimensions`, `coverage_audit`) and a commitment layer (`category_calls`). The dimension inventory must precede category routing — same "exploration before decision" pattern Step 2 uses for split / standalone.
+- **Dimensions are the smallest unit of searchability.** Concrete database-vocabulary pieces (a release-date value, tonal expression as the database captures it, a runtime range, a person credit). NEVER list forbids abstraction-up, category-naming, absence framing, and bundling.
+- **`CategoryCall.category` is `CategoryName` (closed enum).** Auto-propagates when the taxonomy adds members; Pydantic v2 + Gemini structured-output constrain the LLM to enum values. Prompt renders each entry keyed by `cat.value` (the string the LLM emits) with `cat.name` shown for log readability.
+- **Step 3 is polarity-agnostic.** Even when `trait.polarity == "negative"`, every call describes presence of the attribute. Polarity flips at merge time. The prompt's `_MINIMUM_SET_AND_POLARITY` section spells out why double-flipping would break the merge contract.
+- **Additive composition only.** Unweighted sum across calls; no per-call weighting, no cross-call interaction model. If calls don't add up to the trait, decomposition is wrong.
+- **Minimum-set discipline.** Most traits → 1 call; parametric traits → a few. Padding dilutes the trait's score sum relative to peers.
+- **Full taxonomy detail (not the trimmed Step 2 view).** New `_build_full_category_taxonomy_section()` renders every category's description, **boundary** (what it does NOT cover, with redirects), edge_cases, good_examples, and bad_examples — the full disambiguation machinery routing decisions need. Step 2's taxonomy section is intentionally trimmed because its job is recognition only; Step 3's job is fitting.
+- **LLM-input contract per trait:** surface_text, evaluative_intent, role, polarity (informational only), and `relevance_to_query` (signals decomposition aggressiveness — central traits earn fuller decomposition). `salience` is NOT shown — code-path only. Atom layer + sibling traits NOT shown — defer until eval shows traits stepping on each other.
+- **Same model as Step 2.** Gemini 3 Flash, thinking disabled, temperature 0.35. Reproducibility wins; provider/model hard-coded in the run function.
+- **Runner shape:** `run_step_3.py` runs Step 2 first, then `asyncio.gather` over traits calling `run_step_3(trait, holistic_read)`. Per-trait elapsed time and token usage printed alongside each decomposition; wall-clock for the fan-out reported as max-of-parallel-calls.
+
+### Planning Context
+Design discussion this session over multiple turns. Plan file: `~/.claude/plans/open-items-adaptive-turing.md`. v3_step_2_rethinking.md design choice #9 updated to include `relevance_to_query` in Step 3's LLM-input contract (committed earlier this turn).
+
+### Testing Notes
+Imports verified clean (`schemas.step_3`, `search_v2.step_3`, `search_v2.run_step_3` all import). System prompt size ~45.6K chars (expected — full taxonomy with boundary/edge_cases/bad_examples is the load-bearing disambiguation machinery for routing).
+
+Smoke-test queries from the plan to run end-to-end:
+- `python -m search_v2.run_step_3` (default sample query)
+- `"John Wick but with kids, not too long"` — split exploration / commit-phase couplings.
+- `"warm hug movie like Paddington"` — parametric figurative + comparison anchor decomposition.
+- `"wes anderson does horror"` — out-of-context creator (multiple categories from one trait).
+
+Manual checks per query: (1) concrete trait → 1 dimension + 1 call to expected category; (2) parametric trait → multiple dimensions covering tone/register/pacing-cluster with audit naming each; (3) `coverage_audit` references every dimension and `category_calls` corresponds 1:1 to categories named in the audit; (4) negative-polarity traits still emit presence-of-attribute calls.
+
+If routing is shaky, iteration target is the taxonomy rendering / boundary prose, not the schema shape. No unit-test changes.
+
 ## Step 2 round 4: exploration-only gates (no embedded verdicts) + standalone_check semantics
 Files: schemas/step_2.py, search_v2/step_2.py, search_improvement_planning/v3_step_2_rethinking.md
 
@@ -192,3 +226,61 @@ Schema imports clean. System prompt size: 35,917 chars (slight increase from exp
 - Per-atom output token cost: explorations are likely longer than the prior verdict-laden notes since dismissal patterns are forbidden; expect output tokens up.
 
 No unit-test changes.
+
+## Step 2 + Step 3 iteration: identity-vs-attribute, category-aware decomposition, contextualized phrase
+Files: schemas/step_2.py, search_v2/step_2.py, search_v2/step_3.py, search_v2/run_step_3.py
+
+### Intent
+Follow-up to the prior Step 3 iteration (qualifier_relation/anchor_reference fields, multi-expression calls, per-dimension candidates). The 34-query eval against /tmp/step3_runs_v2/ surfaced four residual issues, all routing/decomposition discipline rather than schema shape:
+1. Qualifier traits still routed to identity categories (q06 godfather emitted TITLE_TEXT despite trait_role_analysis saying "this trait IS the reference being satirized"). Step 3's category commitment is gospel — there's no recovery downstream — so prose-rescued differentiation in retrieval_intent doesn't save it.
+2. Carver-negative multi-dim traits (q10 phoenix-Joker, q15 hallmark) over-exclude under the orchestrator's default additive scoring; they need intersection-of-calls semantics.
+3. Bare surface_text invites shortcut routing — the model latches on "the godfather" before reading qualifier_relation.
+4. Decomposition depth wasn't category-aware — q11's "DC" came close to per-character dimension explosion.
+
+### Key Decisions
+- **`Trait.contextualized_phrase: str` added** at the bottom of the Trait class (after salience). Step 2 emits a single short phrase that restates the trait with anchor_reference + meaning-shaping signals folded in. Step 3 reads this as the headline trait identity ahead of surface_text. Faithful restatement, no decomposition / parametric expansion / added or dropped details. Carver traits with no relevant modifier copy surface_text. Schema field description carries the construction discipline; Step 2's `_COMMIT_PHASE` adds a short bullet + operational test ("if I read this aloud out of context, can a fresh reader recover the trait?").
+- **Identity-vs-attribute paragraph in Step 3's `_TRAIT_ROLE_ANALYSIS`.** For carver traits both kinds are fair game; for qualifier traits the named entity is a positioning anchor, so identity categories are off-limits — route only to attribute categories that describe what the entity is LIKE. This is a generalized structural rule, not a per-qualifier_relation patch — it follows directly from what "qualifier" means. The 9 identity-flavored categories ("Person credit", "Title text lookup", "Named character", "Studio / brand", "Franchise / universe lineage", "Character-franchise", "Adaptation source flag", "Below-the-line creator", "Named source creator") are listed inline in the prompt rather than maintained as a separate Python constant — no Python code does programmatic enforcement, so a runtime data structure was overkill for what's purely prompt-rendering.
+- **Category-aware decomposition in `_DIMENSION_INVENTORY`.** Replaced the "concrete = 1 dim, parametric = several" heuristic with: decompose only as deep as the existing categories require. If one category captures the trait, that's ONE dimension and parametric expansion lives in the call's expressions list. Decompose into multiple facets only when no single category covers the trait. Operational test: "could the items I'm considering route to DIFFERENT categories?"
+- **CLEAN-FIT TEST in `_CATEGORY_ROUTING`.** When a dimension's candidates list contains an entry with `what_this_misses="nothing"`, commit only that one. The other candidates were adjacency context surfaced for honesty, not parallel routes. Stops adjacent-category leaks (q34 hidden-gem FINANCIAL_SCALE leak).
+- **Carver-negative intersection is purely an orchestrator concern; Step 3 does not dispatch on it.** The orchestrator reads role+polarity directly off the Step 2 Trait and chooses how to compose Step 3's calls (additive sum for positive traits / qualifiers, intersection over calls for carver+negative exclusions). Step 3 always describes presence of attributes; an earlier draft of this iteration prepended an INTERSECTION-MODE preface to the per-trait user prompt, but it was removed — the orchestrator can intersect without Step 3 reciting any signal, and Step 3's normal decomposition already produces co-holding calls (each describing a facet of the same population).
+- **`_build_user_prompt` headline change.** `contextualized_phrase` becomes the first trait line; `surface_text` is demoted to a verbatim grounding line below it. Bare surface phrases stripped of query context invited shortcut routing on q06 (TITLE_TEXT for "the godfather") — the contextualized phrase makes the qualifier framing visible at the top.
+- **Schema unchanged on Step 3.** No new TraitDecomposition fields; the intersection-mode commitment lives in trait_role_analysis prose, where the orchestrator reads it alongside the structured role+polarity it already has.
+
+### Principles Applied
+- **Step 3's category choice is gospel.** Stopped treating retrieval_intent prose as load-bearing for differentiating "retrieve this" from "use as positioning anchor"; the category itself must be right.
+- **Generalized rules over edge-case lists.** Identity-vs-attribute is one principle covering parody / comparison / style / transposition cases (and any future qualifier_relation values), not four enumerated rules.
+- **Programmatic dispatch where conditional sections only apply to a fraction of inputs.** Intersection mode dispatched in `_build_user_prompt` rather than a conditional in the system prompt.
+- **Source-of-truth coupling.** IDENTITY_CATEGORIES set rendered dynamically into the prompt; no risk of drift between the prompt text and the classification.
+
+### Testing Notes
+Smoke tests on 6 priority queries verified (outputs in /tmp/step3_runs_v3/):
+- **q06 "parody of the godfather"**: contextualized_phrase = "parody of the godfather"; godfather trait emits no TITLE_TEXT call — routes to story-thematic archetype + narrative setting + character archetype + emotional-experiential. RESOLVED.
+- **q08 "darker than fight club but funnier than seven"**: both traits route to emotional-experiential only, no TITLE_TEXT for either film. RESOLVED.
+- **q10 "joker but not the joaquin phoenix one"**: trait 2 (carver+negative) trait_role_analysis explicitly commits "intersection-exclusion mode; all calls must co-hold for the exclusion to apply to the specific 2019 Joaquin Phoenix film". Calls: Person:Phoenix + Character:Joker for the orchestrator to intersect. RESOLVED.
+- **q21 "warm hug movie"**: single emotional-experiential call with 3 expressions. NO REGRESSION.
+- **q29 "wes anderson does horror"**: contextualized_phrase = "wes anderson's directorial style applied to horror"; wes anderson trait emits no PERSON_CREDIT — routes to visual-craft acclaim + emotional-experiential + narrative devices. RESOLVED.
+- **q34 "hidden gem"**: still emits FINANCIAL_SCALE alongside CULTURAL_STATUS + GENERAL_APPEAL. Per prior user direction, deferred — not a load-bearing fix for this iteration.
+
+Full 34-query re-run + regression checks (q05, q12, q16, q17 concrete; q24, q25, q32 negative-polarity-presence) deferred to next session. Step 3 system prompt grew from ~52K to ~56K chars; Step 2 prompt grew from ~36K to ~38K chars — modest. No unit-test changes.
+
+## Step 2 + Step 3 schema/prompt compaction
+Files: schemas/step_2.py, schemas/step_3.py, search_v2/step_2.py, search_v2/step_3.py
+
+### Intent
+Prompt-bloat trim across all Step 2 / Step 3 LLM-facing surfaces — schema field descriptions and system-prompt sections — without dropping load-bearing content. Audited against the 16 schema/prompt design principles surfaced in earlier iterations. Per-file line trims: step_2 schema 568→482 (15%), step_3 schema 430→358 (17%), step_2 prompt 820→688 (16%), step_3 prompt 698→618 (11%). All operational tests, NEVER lists, "n/a" sentinel rules, mechanical token-mappings, and exploration→commit phrasing preserved.
+
+### Key Decisions
+- **Principle 9 violation fixed.** `_COMMIT_PHASE` in search_v2/step_2.py used to enumerate per-trait field-shape rules (role / polarity / relevance_to_query / salience / qualifier_relation / anchor_reference / contextualized_phrase) that the schema field descriptions already cover. Replaced with procedural framing only ("These commitments are mechanical reads off the source atom; see schema and the dedicated sections for each"). Removes ~50 lines of duplication and reinforces "schema = micro-prompts; prompt = procedural."
+- **Stale reference fix.** `QueryAnalysis.traits` field description in schemas/step_2.py had a 7-step construction list referencing `split_note` / `redundancy_note` (the field names from rounds 2-3, renamed to `split_exploration` / `standalone_check` in round 4). Replaced with a one-line pointer to the system-prompt commit-phase section.
+- **Trim targets.** Schema headers (design-principles preamble compressed); ModifyingSignal.effect (example flavors trimmed); Atom.standalone_check / split_exploration (meta-commentary cut, NEVER lists kept verbatim); Trait.qualifier_relation / anchor_reference / contextualized_phrase (example lists pruned to 3-4 representative each); QueryAnalysis.* (DO/NEVER lists kept, surrounding prose tightened); _ATOMICITY (pitfall and exploration framing tightened); _MODIFIER_VS_ATOM (redundant Examples block dropped); _EVALUATIVE_INTENT, _CARVER_VS_QUALIFIER, _POLARITY, _SALIENCE (procedural framing tightened); _TRAIT_ROLE_ANALYSIS (role/relation enumeration kept; identity-vs-attribute principle and examples preserved verbatim); _DIMENSION_INVENTORY / _PER_DIMENSION_CANDIDATES / _CATEGORY_ROUTING / _MINIMUM_SET_AND_POLARITY (procedural prose tightened, all operational tests preserved).
+- **No principle-2 change.** `qualifier_relation` and `anchor_reference` retain literal `"n/a"` sentinel rather than `Optional[str]` — the explicit-string design forces commitment vs. silent skip and was deliberate.
+- **Existing examples retained verbatim.** Cultural references (Godfather, Fight Club, Wes Anderson, Tom Hanks, Inception, Hitchcock, Marvel, DC, Stephen King) carried over from prior versions; flagged for the user to audit against eval set per principle 10.
+
+### Principles Applied (vs. checked clean)
+- 1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16: clean — no fixes needed.
+- 8: applied (compaction is the goal).
+- 9: violation found and fixed (commit-phase / schema duplication).
+- 10: flagged but not changed without eval-set diff.
+
+### Testing Notes
+All four files parse cleanly (`ast.parse`). No code paths or import surface changed; field names, types, ordering, and Pydantic constraints unchanged. Smoke-test + 34-query re-run not yet executed — recommend running before treating as final since temperature 0.35 + small-model variance can surface phrasing-sensitivity even when content is preserved.

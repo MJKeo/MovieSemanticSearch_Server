@@ -282,12 +282,16 @@ the whole atoms list in front of it.
 
 **Salience is consumed programmatically post-Step-2, not by
 Step 3.** Step 3 reads role, polarity, surface_text,
-evaluative_intent — the LLM-input contract. `relevance_to_query`
-and `salience` are trait-level metadata for code to act on
-between Step 2 and Step 3 (e.g. lenient-filter handling for
-non-central carvers; preference-score weighting). This loosens
-the Step 3 contract: the LLM doesn't need to decide whether to
-treat a non-central carver differently — that's code's job.
+evaluative_intent, and `relevance_to_query` — the LLM-input
+contract. `relevance_to_query` is included as context (it tells
+the LLM how load-bearing the trait is in the query, which can
+inform how aggressively to decompose it). `salience` is the
+committed conclusion of that reasoning and is trait-level
+metadata for code to act on between Step 2 and Step 3 (e.g.
+lenient-filter handling for non-central carvers; preference-
+score weighting). This loosens the Step 3 contract: the LLM
+doesn't need to decide whether to treat a non-central carver
+differently — that's code's job.
 
 **What the commit phase does NOT do.**
 - No category assignment — Step 3.
@@ -542,13 +546,15 @@ the same searchable-unit and user-intent tests that justify the
 decisions in the first place.
 
 **9. Salience consumed programmatically post-Step-2.** Step 3 is
-fed `role`, `polarity`, `surface_text`, `evaluative_intent` —
-the LLM-input contract. `relevance_to_query` and `salience` are
-trait-level metadata for code to act on between Step 2 and
-Step 3 (lenient-filter handling for non-central carvers,
-preference-score weighting, etc.). This loosens the Step 3
-contract: the LLM doesn't need to reason about salience, and the
-preference-vs-filter distinction lives in code.
+fed `role`, `polarity`, `surface_text`, `evaluative_intent`, and
+`relevance_to_query` — the LLM-input contract.
+`relevance_to_query` is in-prompt context (how load-bearing the
+trait is informs decomposition aggressiveness). `salience` is
+the committed conclusion and is trait-level metadata for code
+to act on between Step 2 and Step 3 (lenient-filter handling for
+non-central carvers, preference-score weighting, etc.). This
+loosens the Step 3 contract: the LLM doesn't need to commit
+salience or decide preference-vs-filter — that lives in code.
 
 ## Implications for the category taxonomy
 
