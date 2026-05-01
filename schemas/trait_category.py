@@ -893,7 +893,7 @@ class CategoryName(str, Enum):
             "'horror' → GENRE.",
             "'nonlinear timeline' → NARRATIVE_DEVICES.",
         ),
-        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
         HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
     )
     VIEWING_OCCASION = (
@@ -1088,7 +1088,7 @@ class CategoryName(str, Enum):
             "'highly rated' → GENERAL_APPEAL.",
             "'Oscar-winning' → AWARDS.",
         ),
-        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
+        (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
 
@@ -1128,7 +1128,7 @@ class CategoryName(str, Enum):
             "'Roger Deakins-style cinematography' → resolved upstream into "
             "concrete craft attributes; routes to VISUAL_CRAFT_ACCLAIM.",
         ),
-        (EndpointRoute.SEMANTIC,),
+        (),
         HandlerBucket.EXPLICIT_NO_OP,
     )
     NAMED_SOURCE_CREATOR = (

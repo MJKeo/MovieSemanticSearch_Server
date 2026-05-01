@@ -1,6 +1,12 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Category endpoint order alignment
+Files: schemas/trait_category.py
+Why: User requested category endpoint tuples be verified against search_improvement_planning/query_categories.md so preferred endpoints appear first, after undoing speculative bucket-name-based ordering changes.
+Approach: Restored the speculative audience-suitability ordering changes and used query_categories.md as the source of truth. Updated Emotional / experiential and Specific praise / criticism to put semantic before keyword because their category docs list semantic reception/experience surfaces before KW support. Updated Below-the-line creator to an empty endpoint tuple because it is explicitly reserved/no-op and returns empty for now.
+Testing notes: Ran a lightweight enum verification script checking the priority-sensitive endpoint tuples and key single-endpoint categories. No unit tests run per test-boundary rule.
+
 ## HandlerBucket enum remap to query bucket taxonomy
 Files: schemas/enums.py, schemas/trait_category.py, docs/modules/schemas.md
 Why: User requested the code-level HandlerBucket enum be changed to the new query-generation buckets from search_improvement_planning/query_buckets.md, and each CategoryName member remapped accordingly, while deliberately leaving downstream bucket consumers unchanged for now.
