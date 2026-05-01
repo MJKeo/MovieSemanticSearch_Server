@@ -53,7 +53,10 @@ from schemas.enums import (
 from schemas.trait_category import CategoryName
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
-from schemas.semantic_translation import SemanticEndpointParameters
+from schemas.semantic_translation import (
+    CarverSemanticEndpointParameters,
+    QualifierSemanticEndpointParameters,
+)
 from schemas.step_2 import CoverageEvidence, RequirementFragment, Step2Response
 
 # Pipeline steps
@@ -211,7 +214,10 @@ def _classify_into_handler_result(
     if match_mode == MatchMode.FILTER and polarity == Polarity.NEGATIVE:
         # Semantic FILTER+NEGATIVE is a soft downrank, not a hard exclude
         # — same override applied in handler.py:_classify_wrapper.
-        if isinstance(wrapper, SemanticEndpointParameters):
+        if isinstance(
+            wrapper,
+            (CarverSemanticEndpointParameters, QualifierSemanticEndpointParameters),
+        ):
             for sc in endpoint_result.scores:
                 result.downrank_candidates[sc.movie_id] = (
                     result.downrank_candidates.get(sc.movie_id, 0.0) + sc.score

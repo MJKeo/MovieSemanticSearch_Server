@@ -773,8 +773,8 @@ class CategoryName(str, Enum):
             "'documentary about Christmas' → CENTRAL_TOPIC (Christmas is the topic).",
             "'snowed-in plot' → PLOT_EVENTS.",
         ),
-        (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
+        HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
     )
 
     # -----------------------------------------------------------------

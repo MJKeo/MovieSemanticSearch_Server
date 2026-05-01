@@ -20,8 +20,16 @@ from qdrant_client import AsyncQdrantClient
 
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
+from schemas.entity_translation import (
+    CharacterQuerySpec,
+    PersonQuerySpec,
+    TitlePatternQuerySpec,
+)
 from schemas.enums import EndpointRoute
-from schemas.semantic_translation import SemanticEndpointParameters
+from schemas.semantic_translation import (
+    CarverSemanticEndpointParameters,
+    QualifierSemanticEndpointParameters,
+)
 from search_v2.endpoint_fetching.award_query_execution import execute_award_query
 from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
     ROUTE_TO_WRAPPER,
@@ -50,12 +58,17 @@ def build_endpoint_coroutine(
     restricts the search to the given pool (orchestrator-time
     deferred preference scoring).
     """
-    params = wrapper.parameters
-
+    # ENTITY is the one route whose `wrapper` IS the spec (the three
+    # per-category specs inherit from EndpointParameters directly,
+    # without an intermediate Entity wrapper). Every other route still
+    # uses the wrapper.parameters indirection.
     if route == EndpointRoute.ENTITY:
         return execute_entity_query(
-            params, restrict_to_movie_ids=restrict_to_movie_ids
+            wrapper, restrict_to_movie_ids=restrict_to_movie_ids
         )
+
+    params = wrapper.parameters
+
     if route == EndpointRoute.STUDIO:
         return execute_studio_query(
             params, restrict_to_movie_ids=restrict_to_movie_ids
@@ -85,7 +98,10 @@ def build_endpoint_coroutine(
         # the wrapper's role through and let it pick between
         # the primary_vector-only CARVER path and the all-spaces
         # QUALIFIER path.
-        assert isinstance(wrapper, SemanticEndpointParameters)
+        assert isinstance(
+            wrapper,
+            (CarverSemanticEndpointParameters, QualifierSemanticEndpointParameters),
+        )
         return execute_semantic_query(
             params,
             role=wrapper.role,
@@ -102,12 +118,21 @@ def build_endpoint_coroutine(
 # needs the route to call build_endpoint_coroutine).
 #
 # Built once at import time. TRENDING is excluded because it has no
-# wrapper; ROUTE_TO_WRAPPER's None values are filtered out here.
+# wrapper; ROUTE_TO_WRAPPER's None values are filtered out here. ENTITY
+# is also absent from ROUTE_TO_WRAPPER (it dispatches per category via
+# endpoint_registry._ENTITY_DISPATCH), so its three concrete specs are
+# registered explicitly below — the orchestrator only sees the spec
+# instances, never a wrapper class, so all three need an entry.
 _WRAPPER_TO_ROUTE: dict[type[EndpointParameters], EndpointRoute] = {
     wrapper_cls: route
     for route, wrapper_cls in ROUTE_TO_WRAPPER.items()
     if wrapper_cls is not None
 }
+_WRAPPER_TO_ROUTE.update({
+    PersonQuerySpec: EndpointRoute.ENTITY,
+    CharacterQuerySpec: EndpointRoute.ENTITY,
+    TitlePatternQuerySpec: EndpointRoute.ENTITY,
+})
 
 
 def route_for_wrapper(wrapper: EndpointParameters) -> EndpointRoute:

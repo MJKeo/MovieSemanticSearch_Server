@@ -1,15 +1,36 @@
-# Cultural status / canonical stature - additional notes
+# Cultural status / canonical stature - additional objective notes
 
-This category covers the movie's broad place in culture, canon, or the reception landscape: "classic", "cult classic", "underrated", "overhyped", "divisive", "still holds up", "era-defining", "influential", "iconic", "landmark", "culturally significant", and "ahead of its time".
+## Target
 
-## Endpoint split
+Handle whole-work cultural position or reputation shape: classic, cult classic, underrated, overhyped, divisive, still holds up, influential, iconic, landmark, era-defining, culturally significant, ahead of its time.
 
-- **SEMANTIC (reception space)** carries the status shape. Use reception prose for the whole-work reputation, canon position, fan/critic split, influence, or durability over time.
-- **METADATA** is only a supporting prior. Fire it when the phrase honestly implies broad quality or popularity ("classic", "iconic", "widely acclaimed"). Skip it, or explain the gap, when the phrase names a shape the scalar cannot encode ("underrated", "divisive", "cult", "overhyped").
+## Semantic Decision
 
-## Boundaries
+Always author the semantic read first. Use `reception` for the movie's broad reputation, canon position, durability, influence, devoted following, critic/audience split, or quality-versus-recognition gap.
 
-- Specific parts people liked or disliked belong to Specific praise / criticism: "praised for tension", "criticized for pacing", "loved for performances".
-- General quality without a cultural-status shape belongs to General appeal: "well-received", "popular", "highly rated".
-- Formal awards belong to Awards. Named curated lists belong to Generic catch-all.
-- "Classic" alone is status, not release era. Only explicit era words split separately: "old classic" and "modern classic" also carry Release date / era.
+Ask:
+- What reputation shape is the user actually asking for?
+- Is it whole-work status, not one praised/criticized component?
+- Does the phrase describe canon/influence/reception shape rather than a simple quality prior?
+
+## Metadata Augmentation
+
+Metadata is a supporting prior only. Fire it when scalar reception or popularity genuinely reinforces the status term.
+
+Ask:
+- Does the status imply broad quality, broad popularity, or both?
+- Would a scalar prior help without changing the semantic status shape?
+- Is the phrase instead a gap or polarization that scalars cannot express?
+
+Good metadata fits: classic, iconic, landmark, culturally significant, widely canonical. Weak or usually no metadata: underrated, overhyped, divisive, cult, ahead of its time.
+
+## Boundary Checks
+
+- Well-received, popular, great, or highly rated without status shape belongs to General appeal.
+- Praised for tension, criticized for pacing, or loved for performances belongs to Specific praise / criticism.
+- Formal wins and nominations belong to Awards.
+- "Classic" alone is not an era. Explicit old/modern wording is a separate Release date trait.
+
+## No-Fire
+
+No-fire when the target is aspect-level praise, simple numeric/general quality, awards, era only, or a named curated list with no resolved status trait.

@@ -1,22 +1,25 @@
-# Search V2 — Stage 3 Entity Endpoint: Query Translation
+# Search V2 — Stage 3 Entity Endpoint: Query Translation (DEAD)
 #
-# Translates one entity dealbreaker or preference from step 2 into a
-# concrete EntityQuerySpec that execution code can run against the
-# lexical posting tables. The LLM is a schema translator, not a
-# re-interpreter: routing and intent have already been resolved
-# upstream. Its job is to (1) identify what kind of entity the
-# description names, (2) produce the correct primary credited form
-# plus any additional credited aliases, (3) pick the correct role
-# table for persons, and (4) set the prominence mode when billing-
-# position scoring is in play.
+# Used to translate one entity dealbreaker or preference into a
+# concrete EntityQuerySpec for the v2 lexical lookup. EntityQuerySpec
+# no longer exists — entity translation now happens per-category in
+# the v3 step-3 handler pipeline (run_handler in
+# search_v2/endpoint_fetching/category_handlers/handler.py), with
+# per-category specs (PersonQuerySpec / CharacterQuerySpec /
+# TitlePatternQuerySpec) selected via
+# endpoint_registry._ENTITY_DISPATCH.
+#
+# The module is kept as a stub because search_v2/reranking/dispatch.py
+# still imports `generate_entity_query`. Calling it now raises
+# NotImplementedError; the module-level prompt strings below are
+# unused and remain for future reference only.
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Step 3 → Endpoint 1: Entity Lookup) for the full design rationale
 # and search_improvement_planning/full_search_capabilities.md
 # (§3 Lexical Schema) for the posting-table infrastructure.
 
-from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
-from schemas.entity_translation import EntityQuerySpec
+from implementation.llms.generic_methods import LLMProvider
 
 # ---------------------------------------------------------------------------
 # System prompt — modular sections concatenated at module level.
@@ -536,66 +539,19 @@ async def generate_entity_query(
     provider: LLMProvider,
     model: str,
     **kwargs,
-) -> tuple[EntityQuerySpec, int, int]:
-    """Translate one entity dealbreaker or preference into an EntityQuerySpec.
-
-    The LLM receives the step 1 intent_rewrite (for disambiguation
-    context) and one step 2 item's description plus route_rationale.
-    It produces the exact query parameters the lexical posting tables
-    need to execute the lookup.
-
-    Args:
-        intent_rewrite: The full concrete statement of what the user is
-            looking for, from step 1.
-        description: The positive-presence statement of the entity
-            requirement to translate (from a Dealbreaker or Preference).
-        route_rationale: The concept-type label from step 2 explaining
-            why this item was routed to the entity endpoint.
-        provider: Which LLM backend to use. No default — callers must
-            choose explicitly so call sites are self-documenting and
-            we can A/B test providers.
-        model: Model identifier for the chosen provider. No default
-            for the same reason as provider.
-        **kwargs: Provider-specific parameters forwarded directly to
-            the underlying LLM call (e.g., reasoning_effort,
-            temperature, budget_tokens).
-
-    Returns:
-        A tuple of (EntityQuerySpec, input_tokens, output_tokens).
-    """
-    # TODO: When the stage-3 orchestrator introduces a shared request
-    # model (one Pydantic class per endpoint call batching all step-2
-    # item fields), move these strip + non-empty checks into that
-    # model via `constr(strip_whitespace=True, min_length=1)` and
-    # delete the manual validation here. Keeps validation co-located
-    # with the data contract instead of duplicated at every entry
-    # point.
-    intent_rewrite = intent_rewrite.strip()
-    description = description.strip()
-    route_rationale = route_rationale.strip()
-    if not intent_rewrite:
-        raise ValueError("intent_rewrite must be a non-empty string.")
-    if not description:
-        raise ValueError("description must be a non-empty string.")
-    if not route_rationale:
-        raise ValueError("route_rationale must be a non-empty string.")
-
-    # Explicit-absence discipline is not needed here — all three inputs
-    # are required. Present them as labeled sections so the model can
-    # keep them distinct.
-    user_prompt = (
-        f"intent_rewrite: {intent_rewrite}\n"
-        f"description: {description}\n"
-        f"route_rationale: {route_rationale}"
+):
+    # The unified EntityQuerySpec this function used to emit no longer
+    # exists. Entity translation now happens per-category through the
+    # v3 step-3 handler pipeline (see
+    # search_v2/endpoint_fetching/category_handlers/handler.py and the
+    # per-category schemas built in
+    # search_v2/endpoint_fetching/category_handlers/schema_factories.py),
+    # which dispatches to PersonQuerySpec / CharacterQuerySpec /
+    # TitlePatternQuerySpec via endpoint_registry._ENTITY_DISPATCH.
+    # Calling this stub is a routing bug — the v2 dispatch should not
+    # be reached for entity items anymore.
+    raise NotImplementedError(
+        "generate_entity_query is dead code: entity translation is "
+        "now handled per-category through the v3 step-3 handler "
+        "pipeline (run_handler in category_handlers/handler.py)."
     )
-
-    response, input_tokens, output_tokens = await generate_llm_response_async(
-        provider=provider,
-        user_prompt=user_prompt,
-        system_prompt=SYSTEM_PROMPT,
-        response_format=EntityQuerySpec,
-        model=model,
-        **kwargs,
-    )
-
-    return response, input_tokens, output_tokens

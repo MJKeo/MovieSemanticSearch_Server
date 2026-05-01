@@ -52,7 +52,10 @@ from schemas.enums import (
 )
 from schemas.media_type_translation import MediaTypeEndpointParameters
 from schemas.trait_category import CategoryName
-from schemas.semantic_translation import SemanticEndpointParameters
+from schemas.semantic_translation import (
+    CarverSemanticEndpointParameters,
+    QualifierSemanticEndpointParameters,
+)
 from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall
 from search_v2.endpoint_fetching.category_handlers.handler_result import HandlerResult
@@ -261,49 +264,76 @@ async def _run_handler_llm(
 # ---------------------------------------------------------------------------
 
 
+# Single-endpoint buckets share the same output schema shape: a
+# `should_run_endpoint` gate plus an `endpoint_parameters` slot for
+# the one wrapper. See schema_factories._build_single.
+_SINGLE_ENDPOINT_BUCKETS: frozenset[HandlerBucket] = frozenset({
+    HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+    HandlerBucket.SINGLE_METADATA_ENDPOINT,
+})
+
+
+# Buckets whose output schema carries one Optional `<route>_parameters`
+# field per candidate endpoint. The fired set is whichever fields are
+# non-null. Reasoning fields (intent prose, opportunity lists) live
+# alongside but do not need to be inspected here. See schema_factories
+# _build_preferred_fallback / _build_semantic_with_augmentation /
+# _build_suitability_combo.
+_PER_ROUTE_PARAMETER_BUCKETS: frozenset[HandlerBucket] = frozenset({
+    HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+    HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
+    HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
+})
+
+
 def _extract_fired_endpoints(
     category: CategoryName,
     output: BaseModel,
 ) -> list[tuple[EndpointRoute, EndpointParameters]]:
     # Route extraction is keyed on the category's bucket. The output
     # schemas built in schema_factories follow a predictable shape per
-    # bucket, so we can reach for named attributes without a Union
-    # dispatch.
+    # bucket family, so we can dispatch on bucket without unioning.
     bucket = category.bucket
 
-    if bucket == HandlerBucket.SINGLE:
+    if bucket in _SINGLE_ENDPOINT_BUCKETS:
         if output.should_run_endpoint and output.endpoint_parameters is not None:
-            # SINGLE-bucket category with a TRENDING endpoint was
-            # already short-circuited in run_handler, so by here the
-            # sole endpoint is guaranteed to be an LLM endpoint.
+            # Single-endpoint categories with a TRENDING endpoint are
+            # short-circuited in run_handler, so the sole endpoint is
+            # guaranteed to be an LLM endpoint by the time we reach here.
             route = category.endpoints[0]
             return [(route, output.endpoint_parameters)]
         return []
 
-    if bucket in (HandlerBucket.MUTEX, HandlerBucket.TIERED):
-        # endpoint_to_run is a Literal over route values plus the
-        # sentinel "None" — see schema_factories._build_mutex_or_tiered.
-        picked = output.endpoint_to_run
-        if picked == "None" or output.endpoint_parameters is None:
-            return []
-        return [(EndpointRoute(picked), output.endpoint_parameters)]
-
-    if bucket == HandlerBucket.COMBO:
-        # per_endpoint_breakdown is a dynamically-built sub-model whose
-        # field names are the route values (route.value). Every candidate
-        # endpoint is present as a field; we iterate and collect the
-        # ones the LLM elected to fire.
-        breakdown = output.per_endpoint_breakdown
+    if bucket in _PER_ROUTE_PARAMETER_BUCKETS:
+        # Walk fields named '<route>_parameters' and collect the ones
+        # the LLM filled. Field name → EndpointRoute via EndpointRoute(
+        # route_value); the `_parameters` suffix is dropped first.
         fired: list[tuple[EndpointRoute, EndpointParameters]] = []
-        for route_value in type(breakdown).model_fields.keys():
-            entry = getattr(breakdown, route_value)
-            if entry.should_run_endpoint and entry.endpoint_parameters is not None:
-                fired.append((EndpointRoute(route_value), entry.endpoint_parameters))
+        for field_name in type(output).model_fields.keys():
+            if not field_name.endswith("_parameters"):
+                continue
+            value = getattr(output, field_name)
+            if value is None:
+                continue
+            route_value = field_name.removesuffix("_parameters")
+            fired.append((EndpointRoute(route_value), value))
         return fired
 
-    # Should never reach — bucket is an exhaustive enum and every
-    # variant is handled above. Raise loudly if a new bucket is ever
-    # added without updating this dispatch.
+    if bucket is HandlerBucket.CHARACTER_FRANCHISE_FANOUT:
+        # The fanout schema emits character_forms / franchise_forms
+        # rather than per-endpoint parameter payloads, and a single
+        # named referent is meant to drive both the ENTITY and
+        # FRANCHISE_STRUCTURE retrievals. Translating the form lists
+        # into the right per-endpoint payloads requires a custom
+        # execution path that does not yet exist in this handler.
+        raise NotImplementedError(
+            f"Handler dispatch for {bucket.value!r} not implemented; "
+            f"the fanout schema requires a custom execution path."
+        )
+
+    # NO_LLM_PURE_CODE / EXPLICIT_NO_OP buckets do not invoke the
+    # handler LLM and therefore should never reach extraction. Any
+    # other bucket appearing here is a programmer error.
     raise ValueError(f"Unhandled handler bucket: {bucket!r}")
 
 
@@ -430,7 +460,10 @@ def _classify_wrapper(wrapper: EndpointParameters) -> str | None:
     if role == Role.CARVER and polarity == Polarity.POSITIVE:
         return _INCLUSION
     if role == Role.CARVER and polarity == Polarity.NEGATIVE:
-        if isinstance(wrapper, SemanticEndpointParameters):
+        if isinstance(
+            wrapper,
+            (CarverSemanticEndpointParameters, QualifierSemanticEndpointParameters),
+        ):
             return _DOWNRANK
         return _EXCLUSION
     if role == Role.QUALIFIER and polarity == Polarity.POSITIVE:

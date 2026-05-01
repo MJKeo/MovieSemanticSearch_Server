@@ -180,10 +180,11 @@ class PersonTarget(BaseModel):
 
 
 # Per-call container. Multi-target = union of distinct people; per-
-# movie score is MAX across targets.
-class PersonQuerySpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+# movie score is MAX across targets. Inherits from EndpointParameters
+# so the orchestrator's isinstance-routing on `preference_specs` can
+# dispatch this directly to the entity executor — there is no
+# wrapping `EntityEndpointParameters` layer.
+class PersonQuerySpec(EndpointParameters):
     query_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
@@ -293,9 +294,9 @@ class CharacterTarget(BaseModel):
     )
 
 
-class CharacterQuerySpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+# Per-call container. See PersonQuerySpec for the rationale behind
+# inheriting from EndpointParameters.
+class CharacterQuerySpec(EndpointParameters):
     query_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
@@ -380,9 +381,9 @@ class TitlePatternTarget(BaseModel):
     )
 
 
-class TitlePatternQuerySpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+# Per-call container. See PersonQuerySpec for the rationale behind
+# inheriting from EndpointParameters.
+class TitlePatternQuerySpec(EndpointParameters):
     query_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
@@ -408,22 +409,9 @@ class TitlePatternQuerySpec(BaseModel):
     )
 
 
-# Category-handler wrapper. The entity executor accepts any of the
-# three category-scoped payload families, so `parameters` is the
-# endpoint's family union. role + polarity are stamped post-LLM-
-# call from the parent Trait, not declared on this schema (see
-# endpoint_parameters.py).
-class EntityEndpointParameters(EndpointParameters):
-    parameters: PersonQuerySpec | CharacterQuerySpec | TitlePatternQuerySpec = Field(
-        ...,
-        description=(
-            "Entity endpoint payload. Emit exactly one of the three "
-            "entity-family query specs: PersonQuerySpec for real "
-            "credited people, CharacterQuerySpec for named fictional "
-            "characters, or TitlePatternQuerySpec for literal title "
-            "text. Describe the target directly regardless of "
-            "polarity — negation is handled on the wrapper's polarity "
-            "field, never inside these parameters."
-        ),
-    )
-
+# No EntityEndpointParameters wrapper exists for this endpoint. The
+# three category-scoped specs above (PersonQuerySpec / CharacterQuerySpec
+# / TitlePatternQuerySpec) are themselves EndpointParameters subclasses
+# and are selected per category by endpoint_registry._ENTITY_DISPATCH.
+# This is the analog of how SEMANTIC dispatches per role — entity
+# dispatches per CategoryName.

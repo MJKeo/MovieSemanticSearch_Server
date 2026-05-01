@@ -496,7 +496,8 @@ class SystemPrior(StrEnum):
 
 # What kind of entity the lookup targets. Determines which posting
 # table(s) are searched and which type-specific fields are populated
-# in the EntityQuerySpec output.
+# in the per-category entity spec output (PersonQuerySpec /
+# CharacterQuerySpec / TitlePatternQuerySpec).
 class EntityType(StrEnum):
     PERSON = "person"
     CHARACTER = "character"
@@ -528,7 +529,7 @@ class SpecificPersonCategory(StrEnum):
 # covering both actor-table searches (person_category is actor or
 # broad_person) and character searches (entity_type is CHARACTER).
 #
-# Valid-mode subsets, enforced by the EntityQuerySpec validator:
+# Valid-mode subsets, enforced by the per-category entity spec validator:
 #   actor-table  → {DEFAULT, LEAD, SUPPORTING, MINOR}
 #   character    → {DEFAULT, CENTRAL}
 #   everything else (director/writer/producer/composer, title_pattern)

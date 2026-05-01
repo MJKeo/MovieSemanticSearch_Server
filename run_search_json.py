@@ -66,7 +66,10 @@ from schemas.enums import (
 from schemas.trait_category import CategoryName
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
-from schemas.semantic_translation import SemanticEndpointParameters
+from schemas.semantic_translation import (
+    CarverSemanticEndpointParameters,
+    QualifierSemanticEndpointParameters,
+)
 from schemas.step_2 import CoverageEvidence, RequirementFragment, Step2Response
 
 from search_v2.step_2 import run_step_2
@@ -225,7 +228,10 @@ def _classify_into_handler_result(
         return
 
     if match_mode == MatchMode.FILTER and polarity == Polarity.NEGATIVE:
-        if isinstance(wrapper, SemanticEndpointParameters):
+        if isinstance(
+            wrapper,
+            (CarverSemanticEndpointParameters, QualifierSemanticEndpointParameters),
+        ):
             for sc in endpoint_result.scores:
                 result.downrank_candidates[sc.movie_id] = (
                     result.downrank_candidates.get(sc.movie_id, 0.0) + sc.score

@@ -10,8 +10,9 @@
 # expose only `parameters` (plus `<endpoint>_retrieval_intent` on
 # the subintent variants). See schemas/endpoint_parameters.py.
 #
-# Three lookup structures, all consulted by the single public
-# accessor get_output_wrapper(endpoint, bucket, *, role=None):
+# Four lookup structures, all consulted by the single public
+# accessor get_output_wrapper(endpoint, bucket, *, role=None,
+# category=None):
 #
 #   ROUTE_TO_WRAPPER             — single-endpoint buckets. The
 #                                   wrapper owns the entire call
@@ -28,15 +29,25 @@
 #   _SEMANTIC_DISPATCH           — semantic only: (role, is_multi)
 #                                   selects between Carver/Qualifier
 #                                   × regular/subintent. Semantic is
-#                                   the only endpoint whose schema
-#                                   shape depends on the Trait's
-#                                   role (Carver and Qualifier have
-#                                   structurally different
-#                                   `parameters`), so it is resolved
-#                                   here at lookup time rather than
-#                                   exposed as a runtime Union that
-#                                   OpenAI's structured-output
-#                                   parse() cannot consume.
+#                                   one of two endpoints whose schema
+#                                   shape depends on something other
+#                                   than (route, bucket); it is
+#                                   resolved here at lookup time
+#                                   rather than exposed as a runtime
+#                                   Union that OpenAI's structured-
+#                                   output parse() cannot consume.
+#   _ENTITY_DISPATCH             — entity only: CategoryName selects
+#                                   between PersonQuerySpec /
+#                                   CharacterQuerySpec /
+#                                   TitlePatternQuerySpec. Same
+#                                   motivation as _SEMANTIC_DISPATCH:
+#                                   per-category narrowing avoids the
+#                                   union-typed wrapper and lets each
+#                                   category receive a tighter schema.
+#                                   Per-category dispatch on a route
+#                                   is now a recognized pattern; new
+#                                   per-category fan-outs should
+#                                   follow this shape.
 #
 # Callers should always go through get_output_wrapper. The maps are
 # importable for inspection / tests but should not be consulted
@@ -63,7 +74,11 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.award_translation import AwardEndpointParameters
-from schemas.entity_translation import EntityEndpointParameters
+from schemas.entity_translation import (
+    CharacterQuerySpec,
+    PersonQuerySpec,
+    TitlePatternQuerySpec,
+)
 from schemas.enums import EndpointRoute, HandlerBucket, Role
 from schemas.franchise_translation import FranchiseEndpointParameters
 from schemas.keyword_translation import (
@@ -82,6 +97,7 @@ from schemas.semantic_translation import (
     QualifierSemanticEndpointSubintentParameters,
 )
 from schemas.studio_translation import StudioEndpointParameters
+from schemas.trait_category import CategoryName
 
 
 # CHARACTER_FRANCHISE_FANOUT does not split into per-endpoint payloads.
@@ -135,8 +151,9 @@ WrapperRef = type[BaseModel] | None
 # and reads parameters directly from retrieval_intent + expressions.
 # SEMANTIC is intentionally absent — handled via _SEMANTIC_DISPATCH
 # inside get_output_wrapper because its schema depends on role.
+# ENTITY is intentionally absent — handled via _ENTITY_DISPATCH
+# because its schema depends on the parent CategoryName.
 ROUTE_TO_WRAPPER: dict[EndpointRoute, WrapperRef] = {
-    EndpointRoute.ENTITY: EntityEndpointParameters,
     EndpointRoute.STUDIO: StudioEndpointParameters,
     EndpointRoute.METADATA: MetadataEndpointParameters,
     EndpointRoute.AWARDS: AwardEndpointParameters,
@@ -166,15 +183,34 @@ ROUTE_TO_SUBINTENT_WRAPPER: dict[EndpointRoute, WrapperRef] = {
 
 
 # (role, is_multi_endpoint_bucket) -> concrete semantic wrapper.
-# Semantic is the only endpoint whose schema shape depends on the
-# parent Trait's role: Carver and Qualifier have structurally
-# different `parameters`. Resolved at lookup time rather than via
-# a runtime Union (which OpenAI's parse() rejects as response_format).
+# Semantic's schema shape depends on the parent Trait's role: Carver
+# and Qualifier have structurally different `parameters`. Resolved at
+# lookup time rather than via a runtime Union (which OpenAI's parse()
+# rejects as response_format).
 _SEMANTIC_DISPATCH: dict[tuple[Role, bool], type[BaseModel]] = {
     (Role.CARVER,    False): CarverSemanticEndpointParameters,
     (Role.QUALIFIER, False): QualifierSemanticEndpointParameters,
     (Role.CARVER,    True):  CarverSemanticEndpointSubintentParameters,
     (Role.QUALIFIER, True):  QualifierSemanticEndpointSubintentParameters,
+}
+
+
+# CategoryName -> concrete entity spec. Entity is the second endpoint
+# whose schema shape depends on something other than (route, bucket):
+# the three entity-family categories each receive a different spec
+# class so the LLM gets a tighter schema than a Union would yield.
+# Resolved at lookup time for the same reason as _SEMANTIC_DISPATCH —
+# the previous approach (a single EntityEndpointParameters whose
+# `parameters` was a Union of the three specs) was steered entirely
+# by the per-category prompt and offered no schema-level narrowing.
+#
+# CHARACTER_FRANCHISE_FANOUT also routes through ENTITY but is
+# short-circuited at the top of get_output_wrapper (its bucket emits
+# one shared schema) so it does not need an entry here.
+_ENTITY_DISPATCH: dict[CategoryName, type[BaseModel]] = {
+    CategoryName.PERSON_CREDIT: PersonQuerySpec,
+    CategoryName.NAMED_CHARACTER: CharacterQuerySpec,
+    CategoryName.TITLE_TEXT: TitlePatternQuerySpec,
 }
 
 
@@ -196,6 +232,7 @@ def get_output_wrapper(
     bucket: HandlerBucket,
     *,
     role: Role | None = None,
+    category: CategoryName | None = None,
 ) -> WrapperRef:
     """Return the LLM output wrapper for `endpoint` under `bucket`.
 
@@ -218,11 +255,15 @@ def get_output_wrapper(
     and would violate the bucket's slice-of-intent contract.
 
     SEMANTIC requires `role` to disambiguate Carver vs Qualifier
-    (their `parameters` shapes differ). `role` is ignored for every
-    other endpoint.
+    (their `parameters` shapes differ). ENTITY requires `category`
+    to disambiguate Person / Character / Title (each category gets
+    a different spec class). Both kwargs are ignored for every other
+    endpoint.
     """
     # Bucket 7: shared concrete schema, irrespective of which
-    # endpoint the dispatch came in on.
+    # endpoint the dispatch came in on. Short-circuited above the
+    # ENTITY / SEMANTIC branches so the per-category / per-role
+    # dispatches do not run for this bucket.
     if bucket is HandlerBucket.CHARACTER_FRANCHISE_FANOUT:
         return CharacterFranchiseFanoutSchema
 
@@ -235,6 +276,31 @@ def get_output_wrapper(
                 "pass the parent Trait's role."
             )
         return _SEMANTIC_DISPATCH[(role, is_multi)]
+
+    if endpoint is EndpointRoute.ENTITY:
+        # ENTITY has no subintent variants — the three specs are
+        # already category-narrowed and there is no multi-endpoint
+        # bucket today that pairs ENTITY with another entity-family
+        # endpoint requiring a slice-of-intent split.
+        if is_multi:
+            raise ValueError(
+                f"ENTITY has no subintent wrapper authored for "
+                f"multi-endpoint bucket {bucket.value!r}. Per-category "
+                f"specs do not yet expose an `entity_retrieval_intent` "
+                f"field; author one before routing this combination."
+            )
+        if category is None:
+            raise ValueError(
+                "ENTITY requires `category` to pick Person / Character "
+                "/ Title spec; pass the parent CategoryName."
+            )
+        spec = _ENTITY_DISPATCH.get(category)
+        if spec is None:
+            raise ValueError(
+                f"No entity spec registered for category "
+                f"{category.name!r}. Add an entry to _ENTITY_DISPATCH."
+            )
+        return spec
 
     if is_multi:
         sub = ROUTE_TO_SUBINTENT_WRAPPER.get(endpoint)

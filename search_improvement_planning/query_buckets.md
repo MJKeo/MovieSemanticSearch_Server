@@ -200,7 +200,6 @@ qualified, spectrum, or long-tail expressions.
 - Cultural tradition / national cinema
 - Format + visual-format specifics
 - Narrative devices + structural form + how-told craft
-- Seasonal / holiday
 - Story / thematic archetype
 - Specific praise / criticism
 
@@ -241,6 +240,7 @@ channels is the explicit design.
 ### Categories
 
 - Emotional / experiential
+- Seasonal / holiday
 - Cultural status / canonical stature
 
 ## Bucket 7: Character-Franchise Fan-Out

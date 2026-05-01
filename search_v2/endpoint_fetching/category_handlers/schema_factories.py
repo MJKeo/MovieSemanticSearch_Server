@@ -5,7 +5,10 @@
 # category-handler LLM produces via structured output; the bucket-level
 # reasoning fields are declared here, and the endpoint-specific
 # parameter payloads come from the sibling endpoint_registry module via
-# get_output_wrapper(endpoint, bucket).
+# get_output_wrapper(endpoint, bucket, role=..., category=...). The
+# `role` kwarg disambiguates SEMANTIC; the `category` kwarg
+# disambiguates ENTITY (Person / Character / Title share the route
+# but emit different spec classes per category).
 #
 # Buckets (see search_improvement_planning/query_buckets.md):
 #   1. NO_LLM_PURE_CODE                          — no schema (deterministic codepath)
@@ -234,7 +237,7 @@ def _build_single_aspect_model(category_name: str) -> type[BaseModel]:
 
 
 def _resolve_wrappers_for_bucket(
-    endpoints: tuple[EndpointRoute, ...],
+    category: CategoryName,
     bucket: HandlerBucket,
     role: Role | None,
 ) -> tuple[tuple[EndpointRoute, Any], ...]:
@@ -242,13 +245,19 @@ def _resolve_wrappers_for_bucket(
     # resolves to None (e.g. TRENDING — no LLM codepath). Preserves the
     # category's declared endpoint order so position-sensitive buckets
     # (Bucket 5: preferred = position 0, fallback = position 1) can
-    # rely on it. SEMANTIC's wrapper depends on `role` (Carver vs
-    # Qualifier — see endpoint_registry._SEMANTIC_DISPATCH); other
-    # endpoints ignore role.
+    # rely on it.
+    #
+    # Two routes need extra context beyond (route, bucket):
+    #   - SEMANTIC: `role` disambiguates Carver vs Qualifier wrappers.
+    #   - ENTITY:   `category` disambiguates Person / Character / Title
+    #               specs (see endpoint_registry._ENTITY_DISPATCH).
+    # All other routes ignore both kwargs.
     pairs: list[tuple[EndpointRoute, Any]] = []
-    for route in endpoints:
+    for route in category.endpoints:
         if route is EndpointRoute.SEMANTIC:
             wrapper = get_output_wrapper(route, bucket, role=role)
+        elif route is EndpointRoute.ENTITY:
+            wrapper = get_output_wrapper(route, bucket, category=category)
         else:
             wrapper = get_output_wrapper(route, bucket)
         if wrapper is not None:
@@ -270,8 +279,7 @@ def _output_class_name(name: str, role: Role | None) -> str:
 
 
 def _no_schema(
-    endpoints: tuple[EndpointRoute, ...],
-    name: str,
+    category: CategoryName,
     bucket: HandlerBucket,
     role: Role | None,
 ) -> type[BaseModel] | None:
@@ -282,22 +290,21 @@ def _no_schema(
 
 
 def _build_single(
-    endpoints: tuple[EndpointRoute, ...],
-    name: str,
+    category: CategoryName,
     bucket: HandlerBucket,
     role: Role | None,
 ) -> type[BaseModel] | None:
     # Buckets 3 & 4 — one endpoint owns the whole call. Categories
     # whose only endpoint has no LLM wrapper (e.g. TRENDING-only) get
     # no schema; they run via a deterministic code path elsewhere.
-    pairs = _resolve_wrappers_for_bucket(endpoints, bucket, role)
+    pairs = _resolve_wrappers_for_bucket(category, bucket, role)
     if not pairs:
         return None
     wrapper = pairs[0][1]
 
-    aspect_model = _build_single_aspect_model(name)
+    aspect_model = _build_single_aspect_model(category.name)
     return create_model(
-        _output_class_name(name, role),
+        _output_class_name(category.name, role),
         __base__=_HandlerOutputBase,
         __module__=__name__,
         requirement_aspects=(list[aspect_model], Field(..., description=_REQUIREMENT_ASPECTS_DESC)),
@@ -307,8 +314,7 @@ def _build_single(
 
 
 def _build_preferred_fallback(
-    endpoints: tuple[EndpointRoute, ...],
-    name: str,
+    category: CategoryName,
     bucket: HandlerBucket,
     role: Role | None,
 ) -> type[BaseModel] | None:
@@ -317,11 +323,11 @@ def _build_preferred_fallback(
     # in order (exploration → preferred intent → preferred params →
     # fallback intent → fallback params) so each endpoint payload sits
     # right after the intent that commits to firing it.
-    pairs = _resolve_wrappers_for_bucket(endpoints, bucket, role)
+    pairs = _resolve_wrappers_for_bucket(category, bucket, role)
     if len(pairs) < 2:
         raise ValueError(
-            f"Category {name} (PREFERRED_REPRESENTATION_FALLBACK) needs "
-            f"≥2 candidate wrappers, resolved to {len(pairs)}."
+            f"Category {category.name} (PREFERRED_REPRESENTATION_FALLBACK) "
+            f"needs ≥2 candidate wrappers, resolved to {len(pairs)}."
         )
 
     preferred_route, preferred_wrapper = pairs[0]
@@ -348,7 +354,7 @@ def _build_preferred_fallback(
     }
 
     return create_model(
-        _output_class_name(name, role),
+        _output_class_name(category.name, role),
         __base__=_HandlerOutputBase,
         __module__=__name__,
         **fields,
@@ -356,8 +362,7 @@ def _build_preferred_fallback(
 
 
 def _build_semantic_with_augmentation(
-    endpoints: tuple[EndpointRoute, ...],
-    name: str,
+    category: CategoryName,
     bucket: HandlerBucket,
     role: Role | None,
 ) -> type[BaseModel] | None:
@@ -366,19 +371,19 @@ def _build_semantic_with_augmentation(
     # a binary or canonical signal semantic blurs across. The schema
     # forces the LLM to enumerate every deterministic candidate via
     # the augmentation_opportunities list (Literal-bounded endpoint_kind).
-    pairs = _resolve_wrappers_for_bucket(endpoints, bucket, role)
+    pairs = _resolve_wrappers_for_bucket(category, bucket, role)
 
     semantic_pairs = [(r, w) for r, w in pairs if r is EndpointRoute.SEMANTIC]
     deterministic_pairs = [(r, w) for r, w in pairs if r is not EndpointRoute.SEMANTIC]
 
     if not semantic_pairs:
         raise ValueError(
-            f"Category {name} (SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT) "
+            f"Category {category.name} (SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT) "
             f"requires SEMANTIC in its endpoint tuple."
         )
     if not deterministic_pairs:
         raise ValueError(
-            f"Category {name} (SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT) "
+            f"Category {category.name} (SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT) "
             f"has no deterministic augmentation candidates — at least "
             f"one non-SEMANTIC endpoint is required."
         )
@@ -389,7 +394,7 @@ def _build_semantic_with_augmentation(
     endpoint_kind_type = Literal[deterministic_values]  # type: ignore[valid-type]
 
     opportunity_model = create_model(
-        f"{_pascal(name)}AugmentationOpportunity",
+        f"{_pascal(category.name)}AugmentationOpportunity",
         __base__=_HandlerOutputBase,
         __module__=__name__,
         endpoint_kind=(endpoint_kind_type, Field(..., description=_AUGMENTATION_ENDPOINT_KIND_DESC)),
@@ -415,7 +420,7 @@ def _build_semantic_with_augmentation(
         )
 
     return create_model(
-        _output_class_name(name, role),
+        _output_class_name(category.name, role),
         __base__=_HandlerOutputBase,
         __module__=__name__,
         **fields,
@@ -423,8 +428,7 @@ def _build_semantic_with_augmentation(
 
 
 def _build_character_franchise_fanout(
-    endpoints: tuple[EndpointRoute, ...],
-    name: str,
+    category: CategoryName,
     bucket: HandlerBucket,
     role: Role | None,
 ) -> type[BaseModel] | None:
@@ -433,20 +437,19 @@ def _build_character_franchise_fanout(
     # that drives both retrieval paths from one named referent.
     # get_output_wrapper handles the bucket-level dispatch and returns
     # CharacterFranchiseFanoutSchema for any endpoint asked under this
-    # bucket; we just hand it back. Role is irrelevant — the schema
-    # has no SEMANTIC slot.
-    if not endpoints:
+    # bucket; we just hand it back. Role and category are irrelevant —
+    # the schema has no SEMANTIC slot and no per-category narrowing.
+    if not category.endpoints:
         return None
-    schema = get_output_wrapper(endpoints[0], bucket)
+    schema = get_output_wrapper(category.endpoints[0], bucket)
     assert isinstance(schema, type) and issubclass(schema, BaseModel), (
-        f"Bucket 7 dispatch returned non-BaseModel for {name}: {schema!r}"
+        f"Bucket 7 dispatch returned non-BaseModel for {category.name}: {schema!r}"
     )
     return schema
 
 
 def _build_suitability_combo(
-    endpoints: tuple[EndpointRoute, ...],
-    name: str,
+    category: CategoryName,
     bucket: HandlerBucket,
     role: Role | None,
 ) -> type[BaseModel] | None:
@@ -455,7 +458,7 @@ def _build_suitability_combo(
     # (Literal-bounded endpoint_kind forces the LLM to address every
     # candidate). No always-fires endpoint here; each fires only when
     # its worth_running flag is True.
-    pairs = _resolve_wrappers_for_bucket(endpoints, bucket, role)
+    pairs = _resolve_wrappers_for_bucket(category, bucket, role)
     if not pairs:
         return None
 
@@ -463,7 +466,7 @@ def _build_suitability_combo(
     endpoint_kind_type = Literal[endpoint_values]  # type: ignore[valid-type]
 
     opportunity_model = create_model(
-        f"{_pascal(name)}CoverageOpportunity",
+        f"{_pascal(category.name)}CoverageOpportunity",
         __base__=_HandlerOutputBase,
         __module__=__name__,
         endpoint_kind=(endpoint_kind_type, Field(..., description=_COVERAGE_ENDPOINT_KIND_DESC)),
@@ -485,7 +488,7 @@ def _build_suitability_combo(
         )
 
     return create_model(
-        _output_class_name(name, role),
+        _output_class_name(category.name, role),
         __base__=_HandlerOutputBase,
         __module__=__name__,
         **fields,
@@ -496,7 +499,7 @@ def _build_suitability_combo(
 
 
 _BucketFactory = Callable[
-    [tuple[EndpointRoute, ...], str, HandlerBucket, Optional[Role]],
+    [CategoryName, HandlerBucket, Optional[Role]],
     Optional[type[BaseModel]],
 ]
 
@@ -533,17 +536,13 @@ def _build_all() -> None:
         if EndpointRoute.SEMANTIC in category.endpoints:
             # Role-dependent schema: build one per role.
             for role in Role:
-                schema = factory(
-                    category.endpoints, category.name, category.bucket, role,
-                )
+                schema = factory(category, category.bucket, role)
                 if schema is not None:
                     OUTPUT_SCHEMAS[(category, role)] = schema
         else:
             # Role-independent schema: build once, store under both
             # role keys for uniform lookup.
-            schema = factory(
-                category.endpoints, category.name, category.bucket, None,
-            )
+            schema = factory(category, category.bucket, None)
             if schema is not None:
                 for role in Role:
                     OUTPUT_SCHEMAS[(category, role)] = schema

@@ -75,9 +75,10 @@ async def translate_item(
     """Run one item's step-3 LLM translation under a 20s timeout.
 
     Returns (spec, llm_ms, status, error_message). Spec is whatever
-    the endpoint's generator emits (EntityQuerySpec, AwardQuerySpec,
-    etc.); callers hand it straight into execute_item without needing
-    to care about the concrete type.
+    the endpoint's generator emits (one of the per-endpoint query
+    spec classes — AwardQuerySpec, KeywordQuerySpec, etc.); callers
+    hand it straight into execute_item without needing to care about
+    the concrete type.
 
     Trending short-circuits: no LLM step exists, so the function
     returns (None, None, "ok", None) synchronously-fast so trending
