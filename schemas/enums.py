@@ -450,6 +450,7 @@ class EndpointRoute(StrEnum):
 # See search_improvement_planning/query_buckets.md for definitions.
 class HandlerBucket(StrEnum):
     NO_LLM_PURE_CODE = "no_llm_pure_code"
+    EXPLICIT_NO_OP = "explicit_no_op"
     SINGLE_NON_METADATA_ENDPOINT = "single_non_metadata_endpoint"
     SINGLE_METADATA_ENDPOINT = "single_metadata_endpoint"
     PREFERRED_REPRESENTATION_FALLBACK = "preferred_representation_fallback"

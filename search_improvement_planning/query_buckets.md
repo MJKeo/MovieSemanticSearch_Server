@@ -26,8 +26,7 @@ about parameters once a category call exists.
 ### What It Represents
 
 Categories whose query generation does not require an LLM decision.
-The runtime can execute them directly, parse them deterministically,
-or return a fixed empty result.
+The runtime can execute them directly or parse them deterministically.
 
 ### Why Split From Other Buckets
 
@@ -39,16 +38,38 @@ more reliable as code than as generated parameters.
 - Trending executes directly with no generated parameters.
 - Media type is parsed from explicit expressions with deterministic
   string/regex logic.
-- Below-the-line creator lookup is a reserved no-op until backing data
-  exists.
 
 ### Categories
 
 - Trending
 - Media type
+
+## Bucket 2: Explicit No-Op
+
+### What It Represents
+
+Categories that intentionally do not execute a query today.
+
+### Why Split From Other Buckets
+
+This is different from pure-code handling. Trending and media type are
+real runtime behaviors that return results. A no-op bucket is an
+explicit declaration that the category is reserved, unsupported, and
+should return nothing until backing data or a real endpoint exists.
+
+### Query-Generation Handling
+
+- Do not build an LLM prompt.
+- Do not execute an endpoint query.
+- Return an empty result for the category.
+- Keep the category in the taxonomy so upstream routing can stay honest
+  instead of misrouting unsupported asks into approximate categories.
+
+### Categories
+
 - Below-the-line creator lookup
 
-## Bucket 2: Single Non-Metadata Endpoint
+## Bucket 3: Single Non-Metadata Endpoint
 
 ### What It Represents
 
@@ -96,7 +117,7 @@ interpretation.
 - Dialogue craft acclaim
 - Named source creator
 
-## Bucket 3: Single Metadata Endpoint
+## Bucket 4: Single Metadata Endpoint
 
 ### What It Represents
 
@@ -134,7 +155,7 @@ or numeric priors rather than search prose.
 - General appeal / quality baseline
 - Chronological ordinal
 
-## Bucket 4: Preferred Representation With Fallback / Gap-Fill
+## Bucket 5: Preferred Representation With Fallback / Gap-Fill
 
 ### What It Represents
 
@@ -183,7 +204,7 @@ qualified, spectrum, or long-tail expressions.
 - Story / thematic archetype
 - Specific praise / criticism
 
-## Bucket 5: Semantic-Preferred With Deterministic Support
+## Bucket 6: Semantic-Preferred With Deterministic Support
 
 ### What It Represents
 
@@ -213,7 +234,7 @@ the main interpretation.
 - Emotional / experiential
 - Cultural status / canonical stature
 
-## Bucket 6: Character-Franchise Fan-Out
+## Bucket 7: Character-Franchise Fan-Out
 
 ### What It Represents
 
@@ -239,7 +260,7 @@ violate the one-trait, one-category rule for dual-nature referents.
 
 - Character-franchise
 
-## Bucket 7: Audience-Suitability Deterministic-First Combo
+## Bucket 8: Audience-Suitability Deterministic-First Combo
 
 ### What It Represents
 

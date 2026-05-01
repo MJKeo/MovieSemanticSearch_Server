@@ -1129,7 +1129,7 @@ class CategoryName(str, Enum):
             "concrete craft attributes; routes to VISUAL_CRAFT_ACCLAIM.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.NO_LLM_PURE_CODE,
+        HandlerBucket.EXPLICIT_NO_OP,
     )
     NAMED_SOURCE_CREATOR = (
         "Named source creator",
