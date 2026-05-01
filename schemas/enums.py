@@ -444,23 +444,18 @@ class EndpointRoute(StrEnum):
     MEDIA_TYPE = "media_type"
 
 
-# Handler orchestration shape. Determines how many endpoint queries
-# can fire for a category and what the LLM output schema looks like.
-# See search_improvement_planning/category_handler_planning.md
-# §"The four handler types" for definitions.
-#
-#   SINGLE  — exactly one endpoint can fire; no routing decision.
-#   MUTEX   — two+ endpoints, LLM picks one (or none).
-#   TIERED  — same as MUTEX but with a preference bias across
-#             endpoints; priority-ordered endpoint tuple on the
-#             category determines the bias.
-#   COMBO   — any subset of endpoints can fire in parallel; each
-#             contributes independent signal.
+# Handler query-generation bucket. Determines the shared instruction
+# shape a category handler uses before endpoint-specific schemas fill in
+# concrete parameters.
+# See search_improvement_planning/query_buckets.md for definitions.
 class HandlerBucket(StrEnum):
-    SINGLE = "single"
-    MUTEX = "mutex"
-    TIERED = "tiered"
-    COMBO = "combo"
+    NO_LLM_PURE_CODE = "no_llm_pure_code"
+    SINGLE_NON_METADATA_ENDPOINT = "single_non_metadata_endpoint"
+    SINGLE_METADATA_ENDPOINT = "single_metadata_endpoint"
+    PREFERRED_REPRESENTATION_FALLBACK = "preferred_representation_fallback"
+    SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT = "semantic_preferred_deterministic_support"
+    CHARACTER_FRANCHISE_FANOUT = "character_franchise_fanout"
+    AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST = "audience_suitability_deterministic_first"
 
 
 # ---------------------------------------------------------------------------

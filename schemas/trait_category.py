@@ -14,7 +14,7 @@ member carries:
 - `bad_examples` — surface forms that look like they belong but
   route elsewhere, with the redirect spelled out.
 - An ordered tuple of `EndpointRoute` values.
-- A `HandlerBucket` identifying the orchestration shape.
+- A `HandlerBucket` identifying the query-generation instruction shape.
 
 All five text fields are programmatically inserted into the step-2
 system prompt — wording is kept tight to avoid prompt bloat.
@@ -82,7 +82,7 @@ class CategoryName(str, Enum):
             "'Stephen King movies' → NAMED_SOURCE_CREATOR (novelist).",
         ),
         (EndpointRoute.ENTITY,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     TITLE_TEXT = (
         "Title text lookup",
@@ -104,7 +104,7 @@ class CategoryName(str, Enum):
             "'Tom Hanks' → PERSON_CREDIT.",
         ),
         (EndpointRoute.ENTITY,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     NAMED_CHARACTER = (
         "Named character",
@@ -131,7 +131,7 @@ class CategoryName(str, Enum):
             "'Daniel Radcliffe' → PERSON_CREDIT (actor not character).",
         ),
         (EndpointRoute.ENTITY,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     STUDIO_BRAND = (
         "Studio / brand",
@@ -156,7 +156,7 @@ class CategoryName(str, Enum):
             "'Bollywood' → CULTURAL_TRADITION.",
         ),
         (EndpointRoute.STUDIO,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     FRANCHISE_LINEAGE = (
         "Franchise / universe lineage",
@@ -186,7 +186,7 @@ class CategoryName(str, Enum):
             "'based on a comic book' → ADAPTATION_SOURCE (no named franchise).",
         ),
         (EndpointRoute.FRANCHISE_STRUCTURE,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     CHARACTER_FRANCHISE = (
         "Character-franchise",
@@ -218,7 +218,7 @@ class CategoryName(str, Enum):
             "'Bond' here.",
         ),
         (EndpointRoute.ENTITY, EndpointRoute.FRANCHISE_STRUCTURE),
-        HandlerBucket.COMBO,
+        HandlerBucket.CHARACTER_FRANCHISE_FANOUT,
     )
     ADAPTATION_SOURCE = (
         "Adaptation source flag",
@@ -247,7 +247,7 @@ class CategoryName(str, Enum):
             "'documentary' → FORMAT_VISUAL.",
         ),
         (EndpointRoute.KEYWORD,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     CENTRAL_TOPIC = (
         "Central topic / about-ness",
@@ -272,7 +272,7 @@ class CategoryName(str, Enum):
             "'movies with sharks' → ELEMENT_PRESENCE (presence).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.TIERED,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     ELEMENT_PRESENCE = (
         "Element / motif presence",
@@ -296,7 +296,7 @@ class CategoryName(str, Enum):
             "'twist ending' → EMOTIONAL_EXPERIENTIAL.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.TIERED,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     CHARACTER_ARCHETYPE = (
         "Character archetype",
@@ -321,7 +321,7 @@ class CategoryName(str, Enum):
             "'ensemble cast' → NARRATIVE_DEVICES.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.TIERED,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     AWARDS = (
         "Award records",
@@ -347,7 +347,7 @@ class CategoryName(str, Enum):
             "'Oscar-worthy' → GENERAL_APPEAL (aspirational, not actual win).",
         ),
         (EndpointRoute.AWARDS,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     TRENDING = (
         "Trending",
@@ -369,7 +369,7 @@ class CategoryName(str, Enum):
             "'recent movies' → RELEASE_DATE.",
         ),
         (EndpointRoute.TRENDING,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.NO_LLM_PURE_CODE,
     )
 
     # -----------------------------------------------------------------
@@ -398,7 +398,7 @@ class CategoryName(str, Enum):
             "'classic' → CULTURAL_STATUS (canonical stature, not era word alone).",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     RUNTIME = (
         "Runtime",
@@ -421,7 +421,7 @@ class CategoryName(str, Enum):
             "'long-running franchise' → FRANCHISE_LINEAGE.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     MATURITY_RATING = (
         "Maturity rating",
@@ -441,7 +441,7 @@ class CategoryName(str, Enum):
             "'no gore' → SENSITIVE_CONTENT.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     AUDIO_LANGUAGE = (
         "Audio language",
@@ -460,7 +460,7 @@ class CategoryName(str, Enum):
             "'made in France' → COUNTRY_OF_ORIGIN.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     STREAMING = (
         "Streaming platform",
@@ -477,7 +477,7 @@ class CategoryName(str, Enum):
             "'Disney movies' → STUDIO_BRAND.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     FINANCIAL_SCALE = (
         "Financial scale",
@@ -501,7 +501,7 @@ class CategoryName(str, Enum):
             "'popular' → GENERAL_APPEAL.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     NUMERIC_RECEPTION_SCORE = (
         "Numeric reception score",
@@ -519,7 +519,7 @@ class CategoryName(str, Enum):
             "'Oscar-worthy' → GENERAL_APPEAL.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     COUNTRY_OF_ORIGIN = (
         "Country of origin",
@@ -544,7 +544,7 @@ class CategoryName(str, Enum):
             "'Korean cinema' → CULTURAL_TRADITION.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     MEDIA_TYPE = (
         "Media type",
@@ -564,7 +564,7 @@ class CategoryName(str, Enum):
             "'documentary' → FORMAT_VISUAL.",
         ),
         (EndpointRoute.MEDIA_TYPE,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.NO_LLM_PURE_CODE,
     )
 
     # -----------------------------------------------------------------
@@ -597,7 +597,7 @@ class CategoryName(str, Enum):
             "'dark action' splits: 'dark' → EMOTIONAL_EXPERIENTIAL + 'action' here.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.MUTEX,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     CULTURAL_TRADITION = (
         "Cultural tradition / national cinema",
@@ -620,7 +620,7 @@ class CategoryName(str, Enum):
             "'in Korean' → AUDIO_LANGUAGE.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA),
-        HandlerBucket.MUTEX,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     FILMING_LOCATION = (
         "Filming location",
@@ -643,7 +643,7 @@ class CategoryName(str, Enum):
             "'American films' → COUNTRY_OF_ORIGIN.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     FORMAT_VISUAL = (
         "Format + visual-format specifics",
@@ -668,7 +668,7 @@ class CategoryName(str, Enum):
             "'horror' → GENRE.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.TIERED,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     NARRATIVE_DEVICES = (
         "Narrative devices + structural form + how-told craft",
@@ -697,7 +697,7 @@ class CategoryName(str, Enum):
             "'twist ending' → EMOTIONAL_EXPERIENTIAL.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.TIERED,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     TARGET_AUDIENCE = (
         "Target audience",
@@ -726,7 +726,7 @@ class CategoryName(str, Enum):
             "'no gore' → SENSITIVE_CONTENT.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
-        HandlerBucket.COMBO,
+        HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
     )
     SENSITIVE_CONTENT = (
         "Sensitive content",
@@ -750,7 +750,7 @@ class CategoryName(str, Enum):
             "'PG-13 only' → MATURITY_RATING.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
-        HandlerBucket.COMBO,
+        HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
     )
     SEASONAL_HOLIDAY = (
         "Seasonal / holiday",
@@ -774,7 +774,7 @@ class CategoryName(str, Enum):
             "'snowed-in plot' → PLOT_EVENTS.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.COMBO,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
 
     # -----------------------------------------------------------------
@@ -808,7 +808,7 @@ class CategoryName(str, Enum):
             "'set in Tokyo' → NARRATIVE_SETTING.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     NARRATIVE_SETTING = (
         "Narrative setting (time/place)",
@@ -834,7 +834,7 @@ class CategoryName(str, Enum):
             "'about JFK' → CENTRAL_TOPIC.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     STORY_THEMATIC_ARCHETYPE = (
         "Story / thematic archetype",
@@ -861,7 +861,7 @@ class CategoryName(str, Enum):
             "'about JFK' → CENTRAL_TOPIC.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.TIERED,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
     EMOTIONAL_EXPERIENTIAL = (
         "Emotional / experiential",
@@ -894,7 +894,7 @@ class CategoryName(str, Enum):
             "'nonlinear timeline' → NARRATIVE_DEVICES.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.COMBO,
+        HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
     )
     VIEWING_OCCASION = (
         "Viewing occasion",
@@ -918,7 +918,7 @@ class CategoryName(str, Enum):
             "'family movies' → TARGET_AUDIENCE.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     VISUAL_CRAFT_ACCLAIM = (
         "Visual craft acclaim",
@@ -942,7 +942,7 @@ class CategoryName(str, Enum):
             "'shot in B&W' → FORMAT_VISUAL.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     MUSIC_SCORE_ACCLAIM = (
         "Music / score acclaim",
@@ -965,7 +965,7 @@ class CategoryName(str, Enum):
             "'musicals' → GENRE.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     DIALOGUE_CRAFT_ACCLAIM = (
         "Dialogue craft acclaim",
@@ -989,7 +989,7 @@ class CategoryName(str, Enum):
             "'rapid-fire structure' → NARRATIVE_DEVICES.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
     GENERAL_APPEAL = (
         "General appeal / quality baseline",
@@ -1019,7 +1019,7 @@ class CategoryName(str, Enum):
             "'classic' → CULTURAL_STATUS.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )
     CULTURAL_STATUS = (
         "Cultural status / canonical stature",
@@ -1052,7 +1052,7 @@ class CategoryName(str, Enum):
             "'Oscar-winning' → AWARDS.",
         ),
         (EndpointRoute.SEMANTIC, EndpointRoute.METADATA),
-        HandlerBucket.COMBO,
+        HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
     )
     SPECIFIC_PRAISE_CRITICISM = (
         "Specific praise / criticism",
@@ -1089,7 +1089,7 @@ class CategoryName(str, Enum):
             "'Oscar-winning' → AWARDS.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.COMBO,
+        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     )
 
     # -----------------------------------------------------------------
@@ -1129,7 +1129,7 @@ class CategoryName(str, Enum):
             "concrete craft attributes; routes to VISUAL_CRAFT_ACCLAIM.",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.NO_LLM_PURE_CODE,
     )
     NAMED_SOURCE_CREATOR = (
         "Named source creator",
@@ -1162,7 +1162,7 @@ class CategoryName(str, Enum):
             "'Christopher Nolan' → PERSON_CREDIT (director).",
         ),
         (EndpointRoute.SEMANTIC,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
     )
 
     # -----------------------------------------------------------------
@@ -1191,5 +1191,5 @@ class CategoryName(str, Enum):
             "time' → CULTURAL_STATUS.",
         ),
         (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE,
+        HandlerBucket.SINGLE_METADATA_ENDPOINT,
     )

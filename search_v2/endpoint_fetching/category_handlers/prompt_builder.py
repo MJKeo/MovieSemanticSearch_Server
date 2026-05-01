@@ -23,6 +23,9 @@ from schemas.award_surface_forms import (
 )
 from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.production_brand_surface_forms import render_brand_registry_for_prompt
+from schemas.semantic_space_selectivity import (
+    render_semantic_selectivity_for_prompt,
+)
 from schemas.streaming_service_surface_forms import (
     render_tracked_streaming_services_for_prompt,
 )
@@ -113,6 +116,9 @@ _ENDPOINT_PLACEHOLDER_RENDERERS: dict[
     },
     EndpointRoute.METADATA: {
         "{{TRACKED_STREAMING_SERVICES}}": render_tracked_streaming_services_for_prompt,
+    },
+    EndpointRoute.SEMANTIC: {
+        "{{SEMANTIC_SELECTIVITY_GUIDANCE}}": render_semantic_selectivity_for_prompt,
     },
 }
 
