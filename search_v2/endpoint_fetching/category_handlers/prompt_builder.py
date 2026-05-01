@@ -63,13 +63,26 @@ _ROLE: str = _read(_SHARED_DIR / "role.md")
 _SHARED_VOCAB: str = _read(_SHARED_DIR / "shared_vocabulary.md")
 _INPUT_SPEC: str = _read(_SHARED_DIR / "input_spec.md")
 
+# Buckets whose categories never reach the handler LLM. NO_LLM_PURE_CODE
+# is fully deterministic (e.g. TRENDING, MEDIA_TYPE), and EXPLICIT_NO_OP
+# is a routing sink that intentionally returns nothing (e.g.
+# BELOW_THE_LINE_CREATOR until backing data lands). Neither has an
+# objective or guardrails .md authored, so we skip them here and the
+# system-prompt builder raises if dispatch ever asks for one.
+_NON_LLM_BUCKETS: frozenset[HandlerBucket] = frozenset({
+    HandlerBucket.NO_LLM_PURE_CODE,
+    HandlerBucket.EXPLICIT_NO_OP,
+})
+
 _BUCKET_OBJECTIVES: dict[HandlerBucket, str] = {
     bucket: _read(_BUCKETS_DIR / f"{bucket.value}_objective.md")
     for bucket in HandlerBucket
+    if bucket not in _NON_LLM_BUCKETS
 }
 _BUCKET_GUARDRAILS: dict[HandlerBucket, str] = {
     bucket: _read(_BUCKETS_DIR / f"{bucket.value}_guardrails.md")
     for bucket in HandlerBucket
+    if bucket not in _NON_LLM_BUCKETS
 }
 
 # Endpoint chunks are keyed by EndpointRoute. TRENDING has no LLM
@@ -173,9 +186,9 @@ _ENDPOINT_CHUNKS: dict[EndpointRoute, str] = {
 def _load_category_chunks(directory: Path) -> dict[CategoryName, str]:
     chunks: dict[CategoryName, str] = {}
     for category in CategoryName:
-        if category is CategoryName.TRENDING:
-            # No LLM handler — build_system_prompt raises for TRENDING
-            # regardless of whether a file exists.
+        if category.bucket in _NON_LLM_BUCKETS:
+            # No LLM handler — build_system_prompt raises for these
+            # categories regardless of whether a file exists on disk.
             continue
         path = directory / f"{category.name.lower()}.md"
         if path.exists():
@@ -207,9 +220,10 @@ def build_system_prompt(category: CategoryName) -> str:
     behavior".
 
     Raises:
-        ValueError: if ``category`` is ``CategoryName.TRENDING`` —
-            TRENDING has no LLM codepath and should be dispatched to
-            a deterministic handler before reaching this function.
+        ValueError: if ``category``'s bucket is ``NO_LLM_PURE_CODE`` or
+            ``EXPLICIT_NO_OP`` — these categories have no LLM codepath
+            and should be dispatched to a deterministic handler (or
+            short-circuited as a no-op) before reaching this function.
         ValueError: if the category's endpoint set resolves to zero
             LLM-wrapper endpoints (e.g. a future category that
             lists only TRENDING). Silently returning an empty
@@ -219,14 +233,18 @@ def build_system_prompt(category: CategoryName) -> str:
             ``examples`` chunk is missing, naming the expected path.
     """
 
-    # TRENDING has no LLM handler — the explicit raise catches the
-    # mistake if dispatch forgets to route it to the deterministic
-    # codepath.
-    if category is CategoryName.TRENDING:
+    # Categories whose bucket is non-LLM or explicit-no-op never reach
+    # the handler LLM (TRENDING / MEDIA_TYPE run deterministic code,
+    # BELOW_THE_LINE_CREATOR is a no-op routing sink). The explicit
+    # raise catches the mistake if dispatch forgets to short-circuit
+    # them before reaching the prompt builder.
+    if category.bucket in _NON_LLM_BUCKETS:
         raise ValueError(
-            "CategoryName.TRENDING has no LLM handler and therefore no "
-            "system prompt. Dispatch should route TRENDING to the "
-            "deterministic codepath before reaching the prompt builder."
+            f"CategoryName.{category.name} has bucket "
+            f"{category.bucket.value!r}, which has no LLM handler and "
+            f"therefore no system prompt. Dispatch should route this "
+            f"category to its deterministic / no-op codepath before "
+            f"reaching the prompt builder."
         )
 
     # Per-category chunks are required. Missing files surface here
