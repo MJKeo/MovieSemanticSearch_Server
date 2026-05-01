@@ -1,60 +1,65 @@
 # Endpoint: Studio (Production Company)
 
-## Purpose
+## What this endpoint does
 
-Translates a production-company requirement into one of two complementary axes:
+Translates a CategoryCall about production companies — `expressions: list[str]` (one phrase per dimension Step 3 routed here) plus `retrieval_intent` — into a `StudioQuerySpec`. The executor runs each `StudioRef` against either the closed-enum brand registry or a freeform IMDB-token resolver, then combines per-ref scores by `scoring_method`.
 
-1. **brand** — A closed enum of 31 curated ProductionBrand values for umbrella / parent-brand queries. Execution reads the ingest-time-stamped `lex.inv_production_brand_postings` keyed by the enum's brand_id, so **time-bounded ownership** (Lucasfilm under Disney only from 2012) and **rename chains** (Twentieth Century Fox → 20th Century Studios) are handled automatically.
-2. **freeform_names** — Up to 3 IMDB surface forms for specific sub-labels and long-tail studios not covered by the registry at umbrella level. Execution normalizes + tokenizes + intersects discriminative tokens against `lex.studio_token`, then joins resulting production_company_ids against `movie_card.production_company_ids`.
+## What does NOT belong here
 
-Exactly one path is set. Both set simultaneously is allowed but only has effect as a brand→freeform fallback when brand returns empty.
-
-## Canonical question
-
-"Is this umbrella-level (and in the registry) or specific-sub-label / long-tail (requires freeform surface forms)?"
-
-## Capabilities
-
-- Umbrella / parent-brand sweep across subsidiaries and historical sub-labels, automatically time-bounded and rename-aware.
-- Specific sub-label match (e.g. "Walt Disney Animation Studios" specifically, rather than the whole Disney catalog).
-- Long-tail / niche / foreign studio match ("Villealfa Filmproductions", "Cannon Films", "Carolco", "Shochiku").
-
-## Boundaries (what does NOT belong here)
-
-- Streaming-platform availability (movies AVAILABLE on Netflix / Amazon / Apple) → metadata streaming. Streamer disambiguation (NETFLIX / AMAZON_MGM / APPLE_STUDIOS as producer vs. watch-provider) was resolved upstream in stage_2b — when an item reaches this endpoint, treat the entity as a producer. For entities that are both producers and streaming platforms, assume the user means the producer.
+- Streaming-platform availability ("movies AVAILABLE on Netflix") → metadata streaming endpoint. Streamer-vs-producer disambiguation was resolved upstream — when an item reaches this endpoint, treat the entity as a producer. `NETFLIX`, `AMAZON_MGM`, `APPLE_STUDIOS` are producer brands here.
 - Named persons → entity endpoint.
 - Named franchises / shared universes → franchise endpoint.
 
-## Brand vs. freeform_names
+## The three commitments
 
-**Use `brand`** when the user is asking at umbrella / parent-brand level and the registry covers that brand. "Umbrella intent" = the whole catalog of this studio's productions, across subsidiaries and historical sub-labels. Examples: "Disney movies", "Warner Bros. films", "A24 indies", "MGM catalog", "Ghibli" (registry covers it), "Marvel Studios films" (its own registry entry AND a member of the DISNEY umbrella — pick `marvel-studios` for the narrow reading, `disney` for the broad reading).
+Each commitment reads off the reasoning prose committed before it.
 
-The brand path respects time-bounded ownership — "Disney" does NOT match Star Wars (1977) even though Lucasfilm is now Disney-owned, because Lucasfilm joined Disney in 2012. Do not reason about this; pick the brand, the data handles the rest.
+1. **Studio inventory** (`exploration` → `studios`) — which distinct studios is the user naming? Two expressions naming the same studio under different aliases collapse to ONE `StudioRef`; two expressions naming different studios become two `StudioRef`s.
+2. **Per-studio routing** (`studio_exploration` → `brand` or `freeform_names`) — for each `StudioRef`, brand (umbrella registry) or freeform (sub-label / long-tail).
+3. **Scoring method** (`exploration` → `scoring_method`) — `ANY` (or-case) or `ALL` (all-of), driven by `retrieval_intent`.
 
-**Use `freeform_names`** when the query names:
-- A specific sub-label not in the registry ("Walt Disney Animation Studios" specifically — the `disney` brand returns the whole Disney catalog; "HBO Documentary Films"; "Fox Searchlight" before its 2020 rename).
-- A long-tail or niche studio absent from the registry.
-- A foreign studio named in its native surface form.
+`retrieval_intent` carries operational context the bare `expressions` strings cannot — read it for the scoring-method commitment AND for any phrasing that disambiguates which level (parent brand vs. sub-label) the user means.
 
-**Choosing surface forms for `freeform_names`.** Emit up to 3 surface forms. The right forms are the variants most likely to appear verbatim in IMDB's `production_companies` credits for films associated with that studio. Good covering set:
-- One condensed / acronym form ("MGM", "HBO", "BBC").
-- One expanded / full form ("Metro-Goldwyn-Mayer", "Home Box Office").
-- One alternate well-known variant when a distinct form exists (remember: if an umbrella brand exists, prefer that path).
+## Brand vs. freeform
 
-Emit fewer than 3 when fewer distinct forms exist. Do NOT pad with spelling/capitalization variants — normalization at execution handles those. Do NOT emit semantic translations ("Japan Broadcasting Corporation" for NHK) unless that translation is a form IMDB actually uses in credits.
+The umbrella-vs-subsidiary call is the most failure-prone decision at this endpoint.
+
+**Brand** is the right path only when the user clearly meant the entire brand's catalog — every subsidiary, every historical sub-label, every era. The brand path auto-handles time-bounded ownership (Lucasfilm joined Disney in 2012, so `disney` does NOT match Star Wars 1977) and rename chains (Twentieth Century Fox → 20th Century Studios). Don't reason about timelines; pick the brand, the data handles it.
+
+**Freeform** is the right path when the user named a sub-label, subsidiary, or long-tail studio — even when it falls under a covered umbrella:
+
+- Sub-labels of a covered brand are NOT the brand. Touchstone ≠ Disney; Fox Searchlight ≠ 20th Century; HBO Documentary Films ≠ HBO; Marvel Television ≠ Marvel Studios.
+- A studio with its own registry entry that is also a member of a larger umbrella reads off the user's specificity: "Marvel Studios films" → `marvel-studios` (the narrower reading); "Disney movies" (which sweeps everything Marvel along with the rest) → `disney`.
+- Long-tail, niche, and foreign studios absent from the registry → freeform with native surface forms IMDB credits use.
+
+When unsure: if no registry brand on the table below covers the user's phrasing at the right level, route freeform.
 
 ## Registry brands
 
-Closed set of brand values, each followed by a sample of IMDB `production_companies` surface forms counting as that brand. The form list is a sample, not exhaustive — umbrella brands cover more strings than shown. Use this table to decide (a) which brand to pick for umbrella queries, and (b) whether a query is actually umbrella-level at all (if no registry brand covers the user's phrasing, use `freeform_names`).
+Closed set of registry brand values, each followed by a sample of IMDB `production_companies` surface forms counting as that brand. The form list is a sample, not exhaustive — umbrella brands cover more strings than shown. Use this table to decide (a) which brand to pick when umbrella applies, and (b) whether the query is umbrella-level at all — when no registry brand covers the phrasing, route freeform.
 
 {{BRAND_REGISTRY}}
 
-## Freeform canonicalization
+## Scoring method — reading retrieval_intent
 
-Each `freeform_name` is treated as a phrase that should match an IMDB `production_companies` string. Execution normalizes (lowercase, diacritic fold, punctuation strip, whitespace collapse, numeric ordinals to word form — `20th` → `twentieth`), splits on whitespace AND hyphens, and intersects the discriminative tokens against the token index. Both sides run the same normalizer — do NOT pre-normalize. Emit the natural surface form the studio is known by.
+`retrieval_intent` is the disambiguator. Patterns:
 
-Emit each form the way IMDB would store it, not the way the user typed it:
-- "WB" rarely appears standalone in IMDB credits — emit "Warner Bros." instead (and use `brand=warner-bros` anyway).
-- "Mouse House" never appears — don't emit it; use `brand=disney`.
-- Hyphenated and spaced variants ("Tri-Star" vs "TriStar") are handled by tokenization; emit the form you believe is most common.
-- Do not include suffixes the studio doesn't use in credits. "A24" is how A24 is credited — don't expand to "A24 Films LLC". "Ghibli" expands to "Studio Ghibli" because that is the credited form.
+- **Set / OR → `ANY`**: we only care if the movie has at least one of the named studios, like an "or" case. Movies score equally high for matching 1+ values. Cues: "like A24, Neon, Mubi"; "any of"; "anything from"; "studios like"; comma-separated alternatives without joining language.
+- **Conjunction / AND → `ALL`**: we care how many named studios a given movie matches. Movies score higher depending on how many values they match. Cues: "co-produced by"; "X and Y partnership"; "both worked on"; "joint production"; "made together".
+
+Ambiguous case — `retrieval_intent` lists studios without joining language ("Pixar, DreamWorks, Illumination movies") — default to `ANY`. The user is more likely sweeping a category than requiring every studio to appear on the same film.
+
+## Surface forms for freeform_names
+
+The slots are for variants of ONE studio most likely to appear verbatim in IMDB's `production_companies` credits. A good covering set:
+
+- Condensed / acronym ("MGM", "HBO", "BBC").
+- Expanded / full ("Metro-Goldwyn-Mayer", "Home Box Office").
+- Alternate well-known variant when a distinct form exists ("Studio Ghibli" alongside "Ghibli").
+
+Pick by what IMDB credits, not by what the user typed:
+
+- "WB" rarely appears standalone in credits → emit "Warner Bros." instead (and prefer `brand=warner-bros` anyway).
+- "Mouse House" never appears in credits → don't emit it; use `brand=disney`.
+- "Ghibli" expands to "Studio Ghibli" because that is the credited form.
+- "Tri-Star" / "TriStar" / "Tristar" all tokenize equivalently — emit the most common form, the executor handles the rest.

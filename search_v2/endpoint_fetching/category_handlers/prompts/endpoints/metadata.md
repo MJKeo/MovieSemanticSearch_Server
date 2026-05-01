@@ -85,7 +85,6 @@ Once a column is chosen, populate its sub-object with the tightest correct liter
 - "On Netflix" → services=[Netflix], access_type=null.
 - "Available to rent" → services=[], access_type=rent.
 - "Netflix subscription" → services=[Netflix], access_type=subscription.
-- "Free to stream" → services={{FREE_STREAMING_SERVICES}}, access_type=null. There is no "free" access type — do not invent one.
 
 **audio_language** — Non-empty list of concrete languages.
 
@@ -103,12 +102,17 @@ When the call's picture spans more than one column, two questions matter and the
 
 ### Are the columns substitutable or reinforcing?
 
-This drives `combine_mode`.
+This drives `scoring_method`.
 
-- **Substitutable signals** — different columns evidencing the same underlying concept; matching on any one qualifies. Example: a "blockbuster" picture might span popularity + box_office + budget_scale where any matching signal counts. → MAX.
-- **Reinforcing facets** — different columns each contributing a necessary aspect of the picture; partial matches partially qualify. Examples: "long 80s movie" (release_date AND runtime), "indie French drama" (country_of_origin AND budget_scale). → AVERAGE.
+- **Substitutable signals** — different columns evidencing the same underlying concept; matching on any one qualifies. Example: a "blockbuster" picture might span popularity + box_office + budget_scale where any matching signal counts. → ANY.
+- **Reinforcing facets** — different columns each contributing a necessary aspect of the picture; partial matches partially qualify. Examples: "long 80s movie" (release_date AND runtime), "indie French drama" (country_of_origin AND budget_scale). → ALL.
 
-When only one column is populated, combine_mode is mechanically irrelevant — emit AVERAGE.
+Definitions:
+
+- **ANY** — we only care if the movie has at least one populated column match, like an "or" case. Movies score equally high for matching 1+ values.
+- **ALL** — we care how many populated columns a given movie matches. Movies score higher depending on how many values they match.
+
+When only one column is populated, scoring_method is mechanically irrelevant — emit ALL.
 
 ### How few columns can carry the picture?
 

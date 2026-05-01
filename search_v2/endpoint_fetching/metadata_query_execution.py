@@ -6,17 +6,17 @@
 #   - Dealbreaker mode (restrict_to_movie_ids=None): apply per-column
 #     gates joined by OR (any single column qualifies a movie for the
 #     candidate pool), score every returned row per populated column,
-#     fold those scores into one combined score using combine_mode,
+#     fold those scores into one combined score using scoring_method,
 #     drop zero-combined movies, and lift survivors into the
 #     dealbreaker floor band [0.5, 1.0].
 #   - Preference mode (restrict_to_movie_ids is a set of ids): pull
 #     every supplied id, score per populated column, fold via
-#     combine_mode. Raw [0, 1] scores are preserved (no compression);
+#     scoring_method. Raw [0, 1] scores are preserved (no compression);
 #     missing ids get 0.0 via build_endpoint_result.
 #
 # The new schema lets the LLM commit a single ColumnSpec where each of
 # the ten attribute columns is independently null-or-populated, plus a
-# combine_mode (max | average). Multi-column composition happens here:
+# scoring_method (ANY | ALL). Multi-column composition happens here:
 # one SQL per call regardless of column count, single round-trip,
 # per-column scoring, then folding. See schemas/metadata_translation.py
 # for the schema itself and the conversation log for the full design
@@ -50,10 +50,10 @@ from schemas.enums import (
     MetadataAttribute,
     PopularityMode,
     ReceptionMode,
+    ScoringMethod,
 )
 from schemas.metadata_translation import (
     AudioLanguageTranslation,
-    ColumnCombineMode,
     ColumnSpec,
     CountryOfOriginTranslation,
     MaturityRatingTranslation,
@@ -195,7 +195,7 @@ def _precompute_streaming_keys(
 # ── Per-column scoring primitives ────────────────────────────────────────
 # Each takes the row's raw column value plus precomputed scoring state
 # and returns a [0, 1] score. No compression here — that's applied once
-# after combine_mode folds per-column scores.
+# after scoring_method folds per-column scores.
 
 
 def _score_release_date(ts: int | None, lo: float, hi: float, grace_days: float) -> float:
@@ -331,7 +331,7 @@ class _ColumnHandler:
         gate_params: positional parameters for gate_sql (in order).
         score: callable that takes the row's value of select_column
             and returns a raw [0, 1] score. Scoring is uncompressed —
-            compression is applied once after combine_mode folds.
+            compression is applied once after scoring_method folds.
         unbounded: True for popularity / reception (no natural gate;
             candidate pool needs ORDER BY + LIMIT when these are the
             only populated columns).
@@ -607,23 +607,23 @@ def _ordered_select_columns(
 
 def _build_unbounded_sort_expr(
     handlers: dict[MetadataAttribute, _ColumnHandler],
-    mode: ColumnCombineMode,
+    mode: ScoringMethod,
 ) -> str:
     """ORDER BY expression for the all-unbounded dealbreaker path.
-    Combines per-handler sort_signal_sql via the combine_mode operator
-    (sum for AVERAGE, GREATEST for MAX). Single-handler case collapses
+    Combines per-handler sort_signal_sql via the scoring_method operator
+    (sum for ALL, GREATEST for ANY). Single-handler case collapses
     to that handler's signal."""
     signals = [h.sort_signal_sql for h in handlers.values()]
     if len(signals) == 1:
         return signals[0]
-    if mode == ColumnCombineMode.MAX:
+    if mode == ScoringMethod.ANY:
         return f"GREATEST({', '.join(signals)})"
     return "(" + " + ".join(signals) + ")"
 
 
 def _build_dealbreaker_sql(
     handlers: dict[MetadataAttribute, _ColumnHandler],
-    mode: ColumnCombineMode,
+    mode: ScoringMethod,
     select_cols: list[str],
 ) -> tuple[str, list]:
     """Compose one SELECT for the dealbreaker path.
@@ -675,7 +675,7 @@ def _score_and_combine(
     rows: list[tuple],
     handlers: dict[MetadataAttribute, _ColumnHandler],
     select_cols: list[str],
-    mode: ColumnCombineMode,
+    mode: ScoringMethod,
 ) -> dict[int, float]:
     """Score each row per populated column, fold into one combined raw
     score per movie, return a {movie_id → combined raw score} map.
@@ -685,13 +685,13 @@ def _score_and_combine(
     handler_indices = [
         (h, col_to_idx[h.select_column]) for h in handlers.values()
     ]
-    is_max = mode == ColumnCombineMode.MAX
+    is_any = mode == ScoringMethod.ANY
 
     out: dict[int, float] = {}
     for row in rows:
         movie_id = int(row[0])
         per_column = [h.score(row[idx]) for h, idx in handler_indices]
-        if is_max:
+        if is_any:
             combined = max(per_column)
         else:
             combined = sum(per_column) / len(per_column)
@@ -711,9 +711,9 @@ async def execute_metadata_query(
 
     The new schema gives us a single ColumnSpec where each of the ten
     attribute columns is independently populated-or-null, plus a
-    combine_mode (max | average). One SQL per call regardless of column
+    scoring_method (ANY | ALL). One SQL per call regardless of column
     count; per-column scoring runs in Python after the fetch; the
-    combine_mode folds per-column scores into one per-movie call score.
+    scoring_method folds per-column scores into one per-movie call score.
 
     Dealbreaker mode (restrict_to_movie_ids=None):
       - OR-joined per-column gates (any column admits the movie); the
@@ -741,7 +741,7 @@ async def execute_metadata_query(
         # invariants make this near-impossible, but the guard is free.
         return build_endpoint_result({}, restrict_to_movie_ids)
 
-    mode = ColumnCombineMode(output.combine_mode)
+    mode = ScoringMethod(output.scoring_method)
     select_cols = _ordered_select_columns(handlers)
 
     if is_dealbreaker:

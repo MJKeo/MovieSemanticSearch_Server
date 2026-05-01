@@ -2416,13 +2416,17 @@ async def fetch_franchise_movie_ids(
 
     Args:
         franchise_name_entry_ids: Pre-resolved entry-id set from the
-            executor's `franchise_or_universe_names` token intersection +
-            cross-name union. None or an empty set = axis not active
-            (the predicate is dropped, not treated as a universal match).
-            The executor normalizes these two forms upstream via
+            executor's `franchise_names` token intersection + cross-name
+            union. None or an empty set = axis not active (the predicate
+            is dropped, not treated as a universal match). The executor
+            normalizes these two forms upstream via
             `franchise_name_entry_ids or None`, so the expected contract
-            is `None` for inactive and a non-empty set for active.
-        subgroup_entry_ids: Same, for the `recognized_subgroups` axis.
+            is `None` for inactive and a non-empty set for active. The
+            executor early-exits to an empty result before calling this
+            helper if a populated `spec.franchise_names` resolves to an
+            empty set, so "axis inactive" here unambiguously means "the
+            spec did not populate this axis."
+        subgroup_entry_ids: Same, for the `subgroup_names` axis.
         lineage_position_id: SMALLINT ID for the desired lineage position
             (from LineagePosition.lineage_position_id). None = not filtered.
         is_spinoff: True = require mfm.is_spinoff = TRUE. False = not filtered.
@@ -2572,63 +2576,118 @@ async def fetch_franchise_movie_ids(
 # ===============================
 #
 # Read helper for the step 3 keyword endpoint
-# (search_v2/stage_3/keyword_query_execution.py). The endpoint selects
-# exactly one UnifiedClassification member, which resolves to a single
-# (backing_column, source_id) pair. Execution is one GIN `&&` overlap
-# against that single column — no cross-column unions, no dual-backing.
+# (search_v2/endpoint_fetching/keyword_query_execution.py). The
+# endpoint commits a finalized list of UnifiedClassification members
+# whose source_ids span up to three movie_card array columns
+# (keyword_ids, source_material_type_ids, concept_tag_ids). Execution
+# fetches a per-movie hit count across those columns; the executor
+# then converts counts into scores via the spec's "any" or "avg"
+# aggregation mode.
 
 
-# Whitelist of columns the keyword executor is allowed to target. The
-# executor must pass one of these via `backing_column`; any other value
-# raises rather than being interpolated into SQL, because the column
-# name goes into the query string directly (psycopg cannot parameterize
-# identifiers). Source of truth is schemas/unified_classification.py.
-_KEYWORD_ALLOWED_COLUMNS: frozenset[str] = frozenset(
-    {"keyword_ids", "source_material_type_ids", "concept_tag_ids"}
-)
-
-
-async def fetch_keyword_matched_movie_ids(
+async def fetch_keyword_hit_counts(
     *,
-    backing_column: str,
-    source_id: int,
+    keyword_source_ids: list[int],
+    source_material_source_ids: list[int],
+    concept_tag_source_ids: list[int],
     restrict_movie_ids: set[int] | None = None,
-) -> set[int]:
-    """Return movie_ids whose `backing_column` array contains `source_id`.
+) -> dict[int, int]:
+    """Per-movie count of how many of the supplied source_ids appear
+    in the movie's classification arrays on movie_card.
 
-    Single-column GIN `&&` overlap against movie_card. `backing_column`
-    is validated against a whitelist because it is interpolated into
-    the SQL text (column names cannot be parameterized); `source_id`
-    is bound as a parameter.
+    The caller groups its committed UnifiedClassification members by
+    backing column and passes each group's source_ids in. Counts are
+    summed across the three columns into one hit count per movie.
+    Movies with zero hits are omitted from the result map.
+
+    A single SQL statement handles all three columns: an OR-of-overlap
+    WHERE clause lets Postgres BitmapOr the GIN indexes, then a
+    cardinality-on-array-intersect expression in the SELECT counts
+    matches per column without needing the `intarray` extension. This
+    keeps the round-trip count to one regardless of how the finalized
+    set distributes across columns.
 
     Args:
-        backing_column: One of "keyword_ids", "source_material_type_ids",
-            "concept_tag_ids". Resolved by the caller via
-            entry_for(member).backing_column.
-        source_id: The ID to look for inside that array column.
+        keyword_source_ids: source_ids whose backing column is
+            keyword_ids. Empty list when no finalized member resolves
+            to that column.
+        source_material_source_ids: source_ids whose backing column
+            is source_material_type_ids. Empty when none.
+        concept_tag_source_ids: source_ids whose backing column is
+            concept_tag_ids. Empty when none.
         restrict_movie_ids: Optional candidate-pool filter. When
-            provided, only movies in this set can appear in the result.
+            provided, only movies in this set can appear in the
+            result.
 
     Returns:
-        Set of movie_ids that have `source_id` in `backing_column`.
+        Mapping of movie_id → hit_count (always > 0). Movies that
+        match none of the supplied source_ids are absent from the
+        map.
     """
-    if backing_column not in _KEYWORD_ALLOWED_COLUMNS:
-        raise ValueError(
-            f"fetch_keyword_matched_movie_ids: unsupported backing_column "
-            f"{backing_column!r}; allowed: {sorted(_KEYWORD_ALLOWED_COLUMNS)}"
-        )
+    # Caller-side bug guard: an all-empty call would emit a WHERE
+    # clause that's always FALSE and waste a round-trip. The executor
+    # validates `finalized_keywords` is non-empty upstream, so this
+    # should be unreachable — return early rather than issue the
+    # query.
+    if not (
+        keyword_source_ids
+        or source_material_source_ids
+        or concept_tag_source_ids
+    ):
+        return {}
 
-    conditions: list[str] = [f"{backing_column} && %s::int[]"]
-    params: list = [[source_id]]
+    # Per-column overlap conditions are GIN-indexable. An empty
+    # source_id list overlaps nothing (`col && ARRAY[]::int[]` is
+    # FALSE), so we can include all three predicates unconditionally
+    # and let Postgres skip the empty ones.
+    where_clauses = [
+        "keyword_ids && %s::int[]",
+        "source_material_type_ids && %s::int[]",
+        "concept_tag_ids && %s::int[]",
+    ]
+
+    # Per-column hit count via cardinality of the intersection.
+    # Avoids the `intarray` extension and works on plain int[].
+    select_count = (
+        "cardinality(ARRAY(SELECT unnest(keyword_ids) "
+        "INTERSECT SELECT unnest(%s::int[]))) "
+        "+ cardinality(ARRAY(SELECT unnest(source_material_type_ids) "
+        "INTERSECT SELECT unnest(%s::int[]))) "
+        "+ cardinality(ARRAY(SELECT unnest(concept_tag_ids) "
+        "INTERSECT SELECT unnest(%s::int[])))"
+    )
+
+    where_sql = "(" + " OR ".join(where_clauses) + ")"
+
+    # psycopg binds %s placeholders positionally, so params must be
+    # in the same order the placeholders appear in the final SQL
+    # string. The SELECT clause's three placeholders come first,
+    # then the WHERE clause's three, then the optional restrict.
+    # Both blocks happen to need the same triple in the same order,
+    # but ordering them by SQL-string position keeps the binding
+    # correct even if the SELECT/WHERE arrays ever diverge.
+    params: list = [
+        keyword_source_ids,           # SELECT cardinality(... unnest(keyword_ids) ... unnest(%s))
+        source_material_source_ids,   # SELECT ... unnest(source_material_type_ids) ... unnest(%s)
+        concept_tag_source_ids,       # SELECT ... unnest(concept_tag_ids) ... unnest(%s)
+        keyword_source_ids,           # WHERE keyword_ids && %s
+        source_material_source_ids,   # WHERE source_material_type_ids && %s
+        concept_tag_source_ids,       # WHERE concept_tag_ids && %s
+    ]
 
     if restrict_movie_ids is not None:
-        conditions.append("movie_id = ANY(%s::bigint[])")
+        where_sql += " AND movie_id = ANY(%s::bigint[])"
         params.append(list(restrict_movie_ids))
 
-    where_clause = " AND ".join(conditions)
-    query = f"SELECT movie_id FROM public.movie_card WHERE {where_clause}"
+    query = (
+        f"SELECT movie_id, {select_count} AS hits "
+        f"FROM public.movie_card "
+        f"WHERE {where_sql}"
+    )
     rows = await _execute_read(query, params)
-    return {row[0] for row in rows}
+    # The WHERE clause guarantees ≥1 column overlap, so `hits` is
+    # always ≥1 here; no zero-filtering needed.
+    return {row[0]: row[1] for row in rows}
 
 
 # ===============================

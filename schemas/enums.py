@@ -600,6 +600,21 @@ class AwardScoringMode(StrEnum):
     THRESHOLD = "threshold"
 
 
+# How multiple executable award searches from one category call combine.
+# ANY: alternatives; a movie's best search score wins.
+# AVERAGE: additive partial credit; missing searches count as 0.0.
+class AwardCombineMode(StrEnum):
+    ANY = "any"
+    AVERAGE = "average"
+
+
+# Shared scoring method for endpoint specs that combine multiple
+# same-call values or dimensions.
+class ScoringMethod(StrEnum):
+    ANY = "ANY"
+    ALL = "ALL"
+
+
 # ---------------------------------------------------------------------------
 # Search V2 metadata endpoint (step 3).
 # ---------------------------------------------------------------------------

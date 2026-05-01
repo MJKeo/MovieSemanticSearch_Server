@@ -1,43 +1,39 @@
 # Step 3 franchise_structure endpoint structured output model.
 #
-# Translates a franchise dealbreaker or preference description from
-# step 2 into a concrete query specification that step 4 can execute
-# against `movie_franchise_metadata`.
+# Receives (from a step-3 CategoryCall): `expressions` — list of
+# short searchable phrases — plus `retrieval_intent` — 1-3 sentence
+# operational context. Wrapper carries role + polarity.
 #
-# Receives: intent_rewrite (step 1) + one item's description and
-# route_rationale (step 2).
+# Cognitive scaffolding: `request_overview` is the single
+# interpretation point. Every axis field below READS from it
+# rather than re-interpreting raw inputs. Without that pivot, axis
+# fields drift independently and contradict each other.
 #
-# See search_improvement_planning/finalized_search_proposal.md
-# (Endpoint 4: Franchise Structure) for the full design rationale.
-#
-# No class-level docstrings or Field descriptions — all LLM-facing
-# guidance lives in the system prompt. Developer notes live in
-# comments above the class. The prompt must import the same
-# canonical-naming, subgroup, spinoff, crossover, and
-# launched_franchise definitions used by the ingest-side franchise
+# No class-level docstrings. Schema = micro-prompts (field-shape
+# rules); the system prompt carries procedural workflow. Canonical-
+# naming, subgroup, spinoff, crossover, and launched_franchise
+# definitions must stay aligned with the ingest-side franchise
 # generator (movie_ingestion/metadata_generation/prompts/franchise.py)
 # so the two LLMs agree on what to write into each slot.
 #
 # Searchable axes (see v2_search_data_improvements.md §Franchise
 # Resolution):
-#   1. franchise_or_universe_names — up to 3 canonical surface forms
-#      resolved through the franchise token inverted index
-#      (`lex.franchise_token`) and matched against both
-#      `movie_card.lineage_entry_ids` AND
-#      `movie_card.shared_universe_entry_ids`. Ingest stores lineage
-#      and shared_universe in separate columns; retrieval OR-combines
-#      them for the match set, then stage-3 uses the lineage-vs-universe
-#      distinction to bias scoring when `prefer_lineage` is set.
-#   2. recognized_subgroups — up to 3 canonical subgroup surface forms
-#      resolved through the same token index and matched against
+#   1. franchise_names — canonical surface forms resolved through the
+#      franchise token inverted index (`lex.franchise_token`) and
+#      matched against `movie_card.lineage_entry_ids` OR
+#      `movie_card.shared_universe_entry_ids`. Pack alt forms of one
+#      franchise AND distinct franchises with shared axes into one
+#      list — the index OR-unions both cases identically.
+#   2. subgroup_names — canonical subgroup surface forms resolved
+#      through the same token index, matched against
 #      `movie_card.subgroup_entry_ids`.
 #   3. lineage_position — SEQUEL / PREQUEL / REMAKE / REBOOT.
-#   4. structural_flags — SPINOFF and/or CROSSOVER.
+#   4. structural_flags — SPINOFF and/or CROSSOVER (AND semantics).
 #   5. launch_scope — FRANCHISE or SUBGROUP.
-#   6. prefer_lineage — bool. Biases stage-3 scoring toward lineage
-#      matches over shared-universe-only matches when the query names
-#      a specific franchise whose main line is the user's apparent
-#      target. Does not restrict the match set.
+#   6. prefer_lineage — bool. Biases scoring toward lineage matches
+#      over shared-universe-only matches when the request commits to
+#      one specific franchise's main line. Does not restrict the
+#      match set.
 #
 # Direction-agnostic: always expressed as positive presence.
 # Exclusion is supplied by the wrapper's polarity field.
@@ -58,145 +54,167 @@ from schemas.enums import (
 )
 
 
-# Step 3 franchise endpoint output.
-#
-# Flat model with nullable per-axis fields. Step 2 sends one
-# distinct concept per call; the LLM populates only the axis (or
-# axes) that concept targets. If more than one field populates
-# (e.g., "Marvel spinoffs" → name + structural_flags=[SPINOFF]),
-# execution treats them as AND, not OR — both conditions must hold.
-#
-# Field ordering (cognitive scaffolding — each reasoning field
-# immediately precedes the decisions it grounds, per the
-# "cognitive-scaffolding field ordering" convention):
-#   concept_analysis              — axis-signal evidence inventory
-#   franchise_or_universe_names   — up to 3 canonical surface forms
-#   recognized_subgroups          — up to 3 subgroup surface forms
-#   lineage_position              — narrative position enum
-#   structural_flags              — spinoff / crossover list
-#   launch_scope                  — franchise vs subgroup launcher
-#   prefer_lineage                — lineage-over-universe scoring bias
+# Field order is cognitive scaffolding — earlier fields ground later
+# ones, and pointer dependencies flow forward only:
+#   request_overview  — interpretation, source-of-truth for axes
+#   franchise_names   — primary lookup
+#   subgroup_names    — independent lookup
+#   lineage_position  — narrative position enum
+#   structural_flags  — structural traits list
+#   launch_scope      — references subgroup_names
+#   prefer_lineage    — references request_overview + retrieval_intent
 class FranchiseQuerySpec(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
-    # Evidence-inventory reasoning. Emitted FIRST, before any axis
-    # field — it scaffolds the presence/absence decision for every
-    # axis that follows. The system prompt teaches the model to
-    # extract signals from `description` first, then use
-    # `intent_rewrite` only to disambiguate vague references from
-    # the description. `route_rationale` is a hint, not evidence.
-    #
-    # Evidence-inventory framing (quote the input, don't justify
-    # the output) is deliberate — it constrains over-inference.
-    # The model cannot assign an axis that has no cited phrase
-    # supporting it. Empty-evidence paths are explicit: "no
-    # franchise name phrase present" is a valid trace, not a
-    # signal to fabricate a name.
-    concept_analysis: constr(strip_whitespace=True, min_length=1) = Field(...)
+    request_overview: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "1-2 compact sentences. Holistic reading of "
+            "retrieval_intent + expressions: what is being requested, "
+            "how many distinct franchises are involved, their common "
+            "aliases / canonical surface forms, and the handling "
+            "posture (umbrella sweep, single specific lineage, "
+            "structural-only, subgroup-only, position-only).\n"
+            "\n"
+            "Source-of-truth for every axis below — axis fields READ "
+            "from this prose, they do not re-derive from raw inputs. "
+            "Decisive commitments only; hedged framings produce "
+            "drifting axes.\n"
+            "\n"
+            "NEVER:\n"
+            "- COPY retrieval_intent verbatim — restate as an "
+            "executable interpretation.\n"
+            "- ENUMERATE the axis values here — that is the next "
+            "step's job. Stay at the interpretation layer."
+        ),
+    )
 
     # --- Name axis ---
-    #
-    # Up to 3 canonical surface forms for the franchise / IP /
-    # shared universe. Each entry is tokenized (whitespace + hyphen
-    # split after shared normalization) and resolved through
-    # `lex.franchise_token` — intra-name token intersection produces
-    # one `franchise_entry_id` set per name, and the across-name
-    # union sweeps the umbrella. Example: emitting
-    # `["marvel cinematic universe", "marvel"]` intersects to the MCU
-    # entry AND unions in every `marvel`-tagged entry (Marvel Comics,
-    # Marvel Knights, etc.) for an umbrella sweep.
-    #
-    # The ingest side stores lineage and shared_universe in separate
-    # columns on `movie_card` (`lineage_entry_ids` and
-    # `shared_universe_entry_ids`), but from this field's perspective
-    # the search space is flat — every match contributes, and the LLM
-    # does NOT pick between them. The lineage-vs-universe distinction
-    # is consumed by the `prefer_lineage` flag below, which biases
-    # scoring rather than restricting the match set.
-    #
-    # Position 1 = the most canonical form for the query's apparent
-    # specificity (broadest for umbrella queries, narrowest for
-    # specific-lineage queries). Add 2-3 entries ONLY when genuinely
-    # different canonical forms are in common use (e.g., "Marvel
-    # Cinematic Universe" + "Marvel"; "The Lord of the Rings" +
-    # "Middle-earth"). Do NOT pad with spelling, punctuation,
-    # hyphenation, diacritic, or digit-vs-word variants — shared
-    # normalization collapses those symmetrically at ingest and
-    # query time.
-    #
-    # Null when the concept is purely structural (e.g., "spinoff
-    # movies", "movies that launched a franchise") with no named
-    # franchise.
-    franchise_or_universe_names: conlist(
+    franchise_names: conlist(
         constr(strip_whitespace=True, min_length=1),
         min_length=1,
-        max_length=3,
-    ) | None = Field(default=None)
+    ) | None = Field(
+        default=None,
+        description=(
+            "Canonical franchise / IP / shared-universe surface forms "
+            "drawn from the franchises and aliases enumerated in "
+            "request_overview. Resolved via shared tokenizer + "
+            "lex.franchise_token, OR-unioned across entries, matched "
+            "against movie_card.lineage_entry_ids OR "
+            "shared_universe_entry_ids.\n"
+            "\n"
+            "Pack every name whose franchise_entry_ids should be "
+            "OR-unioned into one list — alt forms of one franchise, "
+            "distinct franchises with shared axes, or both. The index "
+            "treats them identically.\n"
+            "\n"
+            "Tokenizer (matched at ingest, do NOT pad against): "
+            "lowercase, diacritic fold, punct strip, whitespace + "
+            "hyphen split, ordinal/cardinal digit-to-word, stopword "
+            "drop. Spelling / casing / hyphenation / digit-word "
+            "variants collide automatically.\n"
+            "\n"
+            "Null when request_overview commits to a purely "
+            "structural / subgroup-only / position-only request.\n"
+            "\n"
+            "NEVER:\n"
+            "- INVENT names not present in request_overview.\n"
+            "- PAD with orthographic variants — the tokenizer "
+            "collapses those.\n"
+            "- ADD an umbrella term beside a narrow lineage already "
+            "subsumed by it."
+        ),
+    )
 
     # --- Subgroup axis ---
-    #
-    # Up to 3 canonical subgroup surface forms. Same tokenization +
-    # token-index resolution as the top-level name axis, matched
-    # against `movie_card.subgroup_entry_ids`.
-    #
-    # Independent of `franchise_or_universe_names` — a subgroup-only
-    # spec ("trilogies", "phase one movies") is a valid, complete
-    # query and populates only this field. Execution AND-composes
-    # whichever axes are populated.
-    recognized_subgroups: conlist(
+    subgroup_names: conlist(
         constr(strip_whitespace=True, min_length=1),
         min_length=1,
-        max_length=3,
-    ) | None = Field(default=None)
+    ) | None = Field(
+        default=None,
+        description=(
+            "Canonical subgroup surface forms — phases, sagas, "
+            "trilogies, timelines, director-eras — drawn from "
+            "request_overview. Same tokenizer + token-index "
+            "resolution as franchise_names; matched against "
+            "movie_card.subgroup_entry_ids. Independent of "
+            "franchise_names: subgroup-only requests are valid.\n"
+            "\n"
+            "Only widely-used labels (studio terminology, mainstream "
+            "criticism, established fan vocabulary). Null when "
+            "request_overview commits to no subgroup.\n"
+            "\n"
+            "NEVER:\n"
+            "- INVENT a label.\n"
+            "- RESTATE the parent franchise as a subgroup."
+        ),
+    )
 
     # --- Narrative position ---
-    #
-    # SEQUEL / PREQUEL / REMAKE / REBOOT. Null when the concept does
-    # not reference narrative position.
-    #
-    # Note on REMAKE: the enum value is retained for ingest-side
-    # classification fidelity but is NOT commonly consumed at search
-    # time — broad remake queries route to source material. This field
-    # remains available for the narrow franchise-structural cases that
-    # still belong here.
-    lineage_position: LineagePosition | None = Field(default=None)
+    lineage_position: LineagePosition | None = Field(
+        default=None,
+        description=(
+            "Narrative-position commitment drawn from "
+            "request_overview. Null when no narrative position is "
+            "signaled. REMAKE belongs here only for franchise-"
+            "specific remake concepts; broad remake queries route "
+            "elsewhere upstream."
+        ),
+    )
 
     # --- Structural flags ---
-    #
-    # Optional list of orthogonal structural traits. A single concept
-    # can legitimately request both, though that is rare. Null means
-    # neither trait is asserted.
     structural_flags: conlist(
         FranchiseStructuralFlag,
         min_length=1,
-        max_length=2,
-    ) | None = Field(default=None)
+    ) | None = Field(
+        default=None,
+        description=(
+            "Structural traits drawn from request_overview. AND "
+            "semantics — every flag listed must hold on the matched "
+            "movie. Null when request_overview commits to no "
+            "structural trait."
+        ),
+    )
 
     # --- Launch scope ---
-    #
-    # Distinguishes "launched a franchise" from "launched a subgroup."
-    # Null when launch behavior is not part of the concept.
-    launch_scope: FranchiseLaunchScope | None = Field(default=None)
+    launch_scope: FranchiseLaunchScope | None = Field(
+        default=None,
+        description=(
+            "What the movie launched, drawn from request_overview. "
+            "Null when launch behavior is not part of the request.\n"
+            "\n"
+            "Composes with subgroup_names. SUBGROUP paired with a "
+            "populated subgroup_names narrows to the launcher of "
+            "THAT subgroup; SUBGROUP with subgroup_names null "
+            "matches launchers of any subgroup. FRANCHISE matches "
+            "franchise launchers regardless of subgroup_names."
+        ),
+    )
 
     # --- Lineage preference ---
-    #
-    # When True, stage-3 scores lineage matches at 1.0 and
-    # universe-only matches at 0.75 instead of the default 1.0 for
-    # both. Biases the result set toward the main-line narrative
-    # without excluding broader shared-universe entries. When the
-    # lineage side would return nothing, universe-only matches are
-    # promoted back to 1.0 — the flag biases, it does not reject.
-    #
-    # Default False. The LLM should only set True when the query
-    # names one specific franchise (not an umbrella universe), does
-    # not explicitly invite spinoffs, is not a multi-name umbrella
-    # sweep, and does not pair the name with a subgroup. See the
-    # step 3 franchise generation prompt for the full decision list.
-    #
-    # Coerced to False by the validator when it cannot take effect:
-    # no name axis is populated, or SPINOFF is in structural_flags
-    # (the user explicitly asked for spinoffs).
-    prefer_lineage: bool = Field(default=False)
+    prefer_lineage: bool = Field(
+        default=False,
+        description=(
+            "Scoring bias: lineage matches score 1.0, shared-"
+            "universe-only matches score 0.75. Match set unchanged. "
+            "Default False.\n"
+            "\n"
+            "Read primarily from request_overview's posture — does "
+            "the overview commit to a single specific franchise's "
+            "main line, vs umbrella sweep, vs multi-franchise, vs "
+            "spinoff-affirmative? retrieval_intent is the secondary "
+            "source when the overview is silent on main-line vs "
+            "umbrella posture.\n"
+            "\n"
+            "Set True only when request_overview commits to one "
+            "specific franchise with a clear main line and the "
+            "request does not invite spinoffs, umbrella content, or "
+            "named-subgroup content. Mechanical incompatibilities "
+            "(no franchise_names, multi-name list, SPINOFF flag, "
+            "populated subgroup_names) are coerced to False by the "
+            "validator — commit freely from the overview."
+        ),
+    )
 
     # --- Validators ---
 
@@ -208,31 +226,40 @@ class FranchiseQuerySpec(BaseModel):
             deduped_flags = list(dict.fromkeys(self.structural_flags))
             self.structural_flags = deduped_flags or None
 
-        # Coerce prefer_lineage to False when the flag cannot take effect.
-        # Two incompatible cases, both of which the LLM prompt instructs
-        # against but the validator enforces as a hard guard:
-        #   1. No name axis — nothing to apply lineage preference to.
-        #   2. SPINOFF in structural_flags — the user explicitly asked
-        #      for spinoffs, so upranking lineage would invert the intent.
+        # Soft coercion for prefer_lineage. The LLM commits the flag
+        # from request_overview's posture; mechanical incompatibilities
+        # are silently flipped to False rather than raised, so the LLM
+        # is not asked to track these in-prompt. Cases:
+        #   - no franchise_names (nothing to bias)
+        #   - franchise_names has >1 entry (umbrella / multi-franchise;
+        #     main-line bias is meaningless)
+        #   - SPINOFF in structural_flags (user invited spinoffs;
+        #     biasing lineage would invert the intent)
+        #   - subgroup_names populated (subgroup already disambiguates)
         # StrEnum members compare equal to their string values, so the
-        # membership check handles both enum and post-use_enum_values
-        # string representations.
+        # SPINOFF membership check handles both enum and post-
+        # use_enum_values string representations.
         if self.prefer_lineage:
-            if self.franchise_or_universe_names is None:
-                self.prefer_lineage = False
-            elif (
+            no_name = not self.franchise_names
+            multi_name = (
+                self.franchise_names is not None
+                and len(self.franchise_names) > 1
+            )
+            spinoff_invited = (
                 self.structural_flags is not None
                 and FranchiseStructuralFlag.SPINOFF in self.structural_flags
-            ):
+            )
+            subgroup_present = bool(self.subgroup_names)
+            if no_name or multi_name or spinoff_invited or subgroup_present:
                 self.prefer_lineage = False
 
-        # At least one axis must be populated — otherwise the
-        # endpoint has nothing to search for. All axes are mutually
-        # independent: a subgroup-only spec ("trilogies") is valid,
-        # a structural-only spec ("spinoffs") is valid, etc.
+        # At least one axis must be populated — otherwise the endpoint
+        # has nothing to search for. All axes are mutually independent:
+        # a subgroup-only spec ("trilogies") is valid, a structural-
+        # only spec ("spinoffs") is valid, etc.
         has_any_axis = any([
-            self.franchise_or_universe_names is not None,
-            self.recognized_subgroups is not None,
+            self.franchise_names is not None,
+            self.subgroup_names is not None,
             self.lineage_position is not None,
             self.structural_flags is not None,
             self.launch_scope is not None,
@@ -240,32 +267,31 @@ class FranchiseQuerySpec(BaseModel):
         if not has_any_axis:
             raise ValueError(
                 "FranchiseQuerySpec must populate at least one axis "
-                "(name, subgroup, lineage_position, structural_flags, or launch_scope)"
+                "(franchise_names, subgroup_names, lineage_position, "
+                "structural_flags, or launch_scope)"
             )
 
         return self
 
 
-# Category-handler wrapper. Direction flows through role +
-# polarity on the wrapper. Fields are declared in the order
-# role → parameters → polarity so polarity is emitted last.
-# See endpoint_parameters.py for the rationale.
+# Category-handler wrapper. Direction flows through role + polarity
+# on the wrapper. Fields are declared in the order role → parameters
+# → polarity so polarity is emitted last. See endpoint_parameters.py
+# for the rationale.
 class FranchiseEndpointParameters(EndpointParameters):
     role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: FranchiseQuerySpec = Field(
         ...,
         description=(
-            "Franchise endpoint payload. Populate only the axes the "
-            "requirement targets: franchise/universe names, "
-            "recognized_subgroups, lineage_position, structural_flags, "
-            "launch_scope, and/or prefer_lineage. Multiple populated "
-            "axes are ANDed by execution — a requirement naming both a "
-            "franchise AND a structural flag (e.g. 'Marvel spinoffs') "
-            "must populate both. Leave unused axes null. At least one "
-            "axis must be populated. Describe the target concept "
-            "directly regardless of polarity — negation is handled on "
-            "the wrapper's polarity field, never inside these "
-            "parameters."
+            "Franchise endpoint payload. request_overview commits the "
+            "interpretation of retrieval_intent + expressions; axis "
+            "fields (franchise_names, subgroup_names, "
+            "lineage_position, structural_flags, launch_scope, "
+            "prefer_lineage) read from it. Multiple populated axes "
+            "are ANDed at execution. At least one axis must be "
+            "populated. Describe positively regardless of polarity — "
+            "negation is handled on the wrapper's polarity field, "
+            "never inside these parameters."
         ),
     )
     polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

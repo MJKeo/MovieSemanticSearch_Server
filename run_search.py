@@ -65,13 +65,13 @@ from search_v2.implicit_expectations import run_implicit_expectations
 # and orchestrator.py are intentionally reused: this CLI is a development
 # tool that needs the same internal seams the production orchestrator
 # does, with diagnostic timing added between them.
-from search_v2.stage_3.category_handlers.handler import (
+from search_v2.endpoint_fetching.category_handlers.handler import (
     _run_handler_llm,
     _extract_fired_endpoints,
 )
-from search_v2.stage_3.category_handlers.handler_result import HandlerResult
-from search_v2.stage_3.endpoint_executors import build_endpoint_coroutine
-from search_v2.stage_3.orchestrator import (
+from search_v2.endpoint_fetching.category_handlers.handler_result import HandlerResult
+from search_v2.endpoint_fetching.endpoint_executors import build_endpoint_coroutine
+from search_v2.endpoint_fetching.orchestrator import (
     DEFAULT_TOP_K,
     Stage3Result,
     _consolidate,
@@ -80,7 +80,7 @@ from search_v2.stage_3.orchestrator import (
     _score_pool,
     _select_pool,
 )
-from search_v2.stage_3.trending_query_execution import execute_trending_query
+from search_v2.endpoint_fetching.trending_query_execution import execute_trending_query
 
 
 # ============================================================================

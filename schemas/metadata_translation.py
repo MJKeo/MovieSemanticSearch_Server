@@ -4,17 +4,17 @@
 # expression on a single CategoryCall as one coherent picture, then
 # commits to a single ColumnSpec where each of the ten attribute
 # columns is either populated with a literal sub-object or explicit
-# null. Multi-column composition is committed via combine_mode
-# (max | average) — the executor reads the populated fields, scores
+# null. Multi-column composition is committed via scoring_method
+# (ANY | ALL) — the executor reads the populated fields, scores
 # each independently, then folds per-column scores into one per-movie
-# call score using combine_mode.
+# call score using scoring_method.
 #
 # Field ordering encodes the cognitive scaffold:
 #   1. search_picture     — holistic intent restatement
 #   2. column_candidates  — honest per-column audit (covers / misses)
-#   3. combine_reasoning  — how the eligible columns relate
+#   3. scoring_method_reasoning — how the eligible columns relate
 #   4. column_spec        — literal commitment, every column explicit
-#   5. combine_mode       — mechanical mapping of combine_reasoning
+#   5. scoring_method     — mechanical mapping of scoring_method_reasoning
 #
 # Schema = micro-prompts; the system prompt is procedural and does
 # not duplicate field-shape rules. Per-sub-object literal-translation
@@ -25,7 +25,6 @@
 from __future__ import annotations
 
 from datetime import date
-from enum import StrEnum
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, model_validator
@@ -53,6 +52,7 @@ from schemas.enums import (
     PopularityMode,
     ReceptionMode,
     Role,
+    ScoringMethod,
 )
 
 
@@ -193,19 +193,6 @@ class CountryOfOriginTranslation(BaseModel):
     countries: conlist(Country, min_length=1) = Field(...)
 
 
-# ── Combine mode ──────────────────────────────────────────────────
-
-
-# How execution folds per-column scores into one per-movie call score.
-#   MAX     — substitutable signals (any-one-matching qualifies).
-#   AVERAGE — reinforcing facets (every populated column contributes).
-# Single-populated-column case: mode is mechanically irrelevant; emit
-# AVERAGE.
-class ColumnCombineMode(StrEnum):
-    MAX = "max"
-    AVERAGE = "average"
-
-
 # ── Audit layer ───────────────────────────────────────────────────
 
 
@@ -325,7 +312,7 @@ class MetadataTranslationOutput(BaseModel):
             "columns."
         ),
     )
-    combine_reasoning: str = Field(
+    scoring_method_reasoning: str = Field(
         ...,
         description=(
             "1 sentence. Project forward from column_candidates: of "
@@ -334,7 +321,7 @@ class MetadataTranslationOutput(BaseModel):
             "(any-one-matching qualifies) or REINFORCING facets "
             "(every populated column contributes)? Write \"single "
             "column\" when only one column will be populated.\n"
-            "Justifies combine_mode below."
+            "Justifies scoring_method below."
         ),
     )
     column_spec: ColumnSpec = Field(
@@ -355,14 +342,18 @@ class MetadataTranslationOutput(BaseModel):
             "fields."
         ),
     )
-    combine_mode: ColumnCombineMode = Field(
+    scoring_method: ScoringMethod = Field(
         ...,
         description=(
-            "Mechanical commit of combine_reasoning above. AVERAGE "
-            "when reasoning says \"single column\" or \"reinforcing\"; "
-            "MAX when reasoning says \"substitutable\".\n"
+            "Mechanical commit of scoring_method_reasoning above. ANY when "
+            "reasoning says substitutable: we only care if the movie "
+            "has at least one populated column match, and movies score "
+            "equally high for matching 1+ values. ALL when reasoning "
+            "says \"single column\" or reinforcing: we care how many "
+            "populated columns the movie matches, and movies score "
+            "higher depending on how many values they match.\n"
             "NEVER re-derive from search_picture or column_spec — "
-            "read off combine_reasoning."
+            "read off scoring_method_reasoning."
         ),
     )
 
@@ -381,7 +372,7 @@ class MetadataEndpointParameters(EndpointParameters):
             "retrieval_intent + expressions resolved into one "
             "ColumnSpec where each of the ten attribute columns is "
             "either a populated sub-object or explicit null, plus a "
-            "combine_mode controlling multi-column composition. "
+            "scoring_method controlling multi-column composition. "
             "Describe the target concept directly regardless of "
             "polarity — negation is handled on the wrapper's polarity "
             "field, never inside these parameters."

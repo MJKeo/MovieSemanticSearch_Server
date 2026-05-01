@@ -299,6 +299,12 @@ async def generate_gemini_response_async(
         input_tokens = usage.prompt_token_count
         output_tokens = usage.candidates_token_count
 
+        # Log implicit cache hits — Gemini 2.5+ caches automatically when the
+        # request shares a prefix with a recent call (min 1,024 tokens). The
+        # field is None on a cache miss; coerce to 0 for readable output.
+        cached_tokens = getattr(usage, "cached_content_token_count", None) or 0
+        print(f"[Gemini] cached_content_token_count={cached_tokens} (prompt={input_tokens})")
+
         return parsed, input_tokens, output_tokens
     except Exception as e:
         raise ValueError(f"Gemini async failed to generate response: {e}")

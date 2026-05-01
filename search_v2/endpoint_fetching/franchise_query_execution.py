@@ -8,16 +8,18 @@
 #
 # Two-phase resolution, mirroring the studio freeform path:
 #
-#   Phase 1 — per-name token resolution. Each name in
-#   `franchise_or_universe_names` and each name in `recognized_subgroups`
-#   is tokenized via tokenize_franchise_string (normalize + ordinal +
-#   cardinal + whitespace/hyphen split + FRANCHISE_STOPLIST drop). All
-#   tokens across all names go into a single batched fetch against
+#   Phase 1 — per-name token resolution. Each name in `franchise_names`
+#   and each name in `subgroup_names` is tokenized via
+#   tokenize_franchise_string (normalize + ordinal + cardinal +
+#   whitespace/hyphen split + FRANCHISE_STOPLIST drop). All tokens
+#   across all names go into a single batched fetch against
 #   lex.franchise_token, keeping the Postgres round trip count at 2
 #   regardless of how many names the LLM emitted. Per-name intersection
 #   happens in Python over the shared response. Cross-name union gives
-#   OR semantics across the LLM's surface-form candidates (the umbrella
-#   sweep).
+#   OR semantics across the LLM's surface-form candidates — covering
+#   both umbrella-sweep alt forms ("marvel cinematic universe" +
+#   "marvel") and multi-franchise OR with shared axes ("marvel" + "dc")
+#   in the same operation.
 #
 #   Phase 2 — final resolution. The union entry-id sets (A from
 #   franchise names, B from subgroups) and the structural flags feed
@@ -94,10 +96,15 @@ async def _resolve_names_to_entry_ids(names: list[str] | None) -> set[int]:
          everything", matching the studio freeform executor's Phase-3
          behavior.
       4. Union the per-name sets. Cross-name union is OR semantics for
-         the LLM's multiple surface-form candidates — this is the
-         umbrella-sweep mechanism (e.g. emitting
-         `["marvel cinematic universe", "marvel"]` sweeps MCU PLUS every
-         other `marvel`-tagged entry).
+         the LLM's multiple surface-form candidates and covers two
+         distinct LLM intents identically: umbrella-sweep alt forms of
+         one franchise (e.g. `["marvel cinematic universe", "marvel"]`
+         sweeps MCU PLUS every other `marvel`-tagged entry), and
+         multi-franchise OR with shared axes (e.g. `["marvel", "dc"]`
+         unions both franchises' entry sets). The schema's
+         prefer_lineage validator already coerces the lineage bias off
+         when the names list is multi-entry, so the two cases need not
+         be distinguished here.
 
     Args:
         names: Raw surface forms from the FranchiseQuerySpec (not
@@ -201,22 +208,23 @@ async def execute_franchise_query(
     # Phase 1 — resolve both textual axes to entry-id sets. Run
     # sequentially rather than gather()-ing because the two share the
     # same posting-list fetch pattern and the second call would benefit
-    # from Postgres connection reuse; the wall-clock difference for 1-6
-    # total names is negligible.
+    # from Postgres connection reuse; the wall-clock difference for the
+    # handful of names a typical spec carries is negligible.
     franchise_name_entry_ids = await _resolve_names_to_entry_ids(
-        spec.franchise_or_universe_names
+        spec.franchise_names
     )
-    subgroup_entry_ids = await _resolve_names_to_entry_ids(spec.recognized_subgroups)
+    subgroup_entry_ids = await _resolve_names_to_entry_ids(spec.subgroup_names)
 
-    # Early-exit rule (user directive #3 in the plan). A textual axis
-    # that was *requested* but resolved to an empty entry-id set must
-    # short-circuit to an empty result — the DB helper treats an empty
-    # set as "axis inactive" and skips the predicate, which would
-    # silently broaden the match. "No entries resolved" is not the same
-    # as "axis inactive".
-    if spec.franchise_or_universe_names and not franchise_name_entry_ids:
+    # Edge-case guard: a textual axis that was *requested* but resolved
+    # to an empty entry-id set must short-circuit to an empty result.
+    # The DB helper treats an empty set as "axis inactive" and skips
+    # the predicate, which would silently broaden the match — "no
+    # entries resolved" is NOT the same as "axis inactive". This is
+    # what protects against tokenizer drift between ingest and query
+    # silently producing universe-wide matches.
+    if spec.franchise_names and not franchise_name_entry_ids:
         return build_endpoint_result({}, restrict_to_movie_ids)
-    if spec.recognized_subgroups and not subgroup_entry_ids:
+    if spec.subgroup_names and not subgroup_entry_ids:
         return build_endpoint_result({}, restrict_to_movie_ids)
 
     lineage_matched: set[int] = set()

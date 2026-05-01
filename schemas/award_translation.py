@@ -1,23 +1,16 @@
 # Step 3 awards endpoint structured output model.
 #
-# Translates an award dealbreaker or preference description from step 2
-# into a concrete query specification that step 4 can execute against
-# movie_awards (or the award_ceremony_win_ids fast path on movie_card).
-#
-# Receives: intent_rewrite (step 1) + one item's description and
-# routing hint from step 2.
+# Translates a category-handler award call into one or more concrete
+# searches that the executor can run against movie_awards (or the
+# award_ceremony_win_ids fast path on movie_card).
 #
 # See search_improvement_planning/finalized_search_proposal.md
 # (Endpoint 3: Awards) for the full design rationale.
 #
-# No class-level docstrings or Field descriptions — all LLM-facing
-# guidance lives in the system prompt. Developer notes live in
-# comments above the class.
-#
 # Data sources:
 #   - Fast path: award_ceremony_win_ids GIN array on movie_card.
 #     Used only when: all filter fields are null/empty, outcome is
-#     WINNER, scoring_mode=FLOOR, scoring_mark=1.
+#     WINNER, scoring.mode=FLOOR, scoring.mark=1.
 #     Razzie id stripped unless AwardCeremony.RAZZIE is in ceremonies.
 #   - Standard path: COUNT(*) on movie_awards with active filters.
 #     Used for all other specs.
@@ -35,6 +28,7 @@ from schemas.endpoint_parameters import (
 )
 from schemas.enums import (
     AwardCeremony,
+    AwardCombineMode,
     AwardOutcome,
     AwardScoringMode,
     Polarity,
@@ -58,54 +52,10 @@ class AwardYearFilter(BaseModel):
         return self
 
 
-# Step 3 awards endpoint output.
-#
-# All filter fields are optional — null/empty means no restriction on
-# that axis. Generic "award-winning" is currently represented as
-# THRESHOLD / 3 with all filters null. FLOOR / 1 with all filters null
-# is the generic binary "has at least one non-Razzie win" shape.
-#
-# Field ordering:
-#   concept_analysis    — filter-axis evidence inventory, emitted first
-#   scoring_shape_label — brief intensity-pattern classification (primes mode + mark)
-#   scoring_mode        — FLOOR | THRESHOLD
-#   scoring_mark        — the count value that determines scoring shape
-#   ceremonies          — filter to specific ceremonies (enum strings)
-#   award_names         — filter to specific prize names
-#   category_tags       — filter to specific award categories via the
-#                         3-level tag taxonomy (leaf / mid / group)
-#   outcome             — WINNER | NOMINEE | None (both)
-#   years               — optional year range or single year
-#
-# Razzie handling (execution concern, not schema):
-#   When ceremonies is null/empty, Razzie is excluded from all counts
-#   and filters. When AwardCeremony.RAZZIE is explicitly present in
-#   ceremonies, it is included — the user intentionally asked for it.
-#
-# Scoring:
-#   has_count = COUNT(*) on movie_awards rows matching active filters
-#   FLOOR:     1.0 if has_count >= scoring_mark else 0.0
-#   THRESHOLD: min(has_count, scoring_mark) / scoring_mark
-class AwardQuerySpec(BaseModel):
+# Filters for one executable award search. Null/empty means no
+# restriction on that axis.
+class AwardFilters(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
-
-    # Filter-axis evidence inventory (see system prompt).
-    concept_analysis: str
-
-    # Brief intensity-pattern classification (see system prompt).
-    # Placed before scoring_mode to prime mode + mark decisions.
-    scoring_shape_label: str
-
-    # --- Scoring shape ---
-
-    scoring_mode: AwardScoringMode
-
-    # The count that determines the scoring shape:
-    #   FLOOR:     1.0 if has_count >= scoring_mark else 0.0
-    #   THRESHOLD: min(has_count, scoring_mark) / scoring_mark
-    scoring_mark: int = Field(..., ge=1)
-
-    # --- Filters (null/empty = no restriction on that axis) ---
 
     # AwardCeremony string values. Null and empty list are equivalent —
     # execution treats both as "all non-Razzie ceremonies."
@@ -133,25 +83,60 @@ class AwardQuerySpec(BaseModel):
     years: AwardYearFilter | None = None
 
 
+# Scoring formula for one executable award search.
+class AwardScoring(BaseModel):
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+
+    # FLOOR:     1.0 if has_count >= mark else 0.0
+    # THRESHOLD: min(has_count, mark) / mark
+    mode: AwardScoringMode
+    mark: int = Field(..., ge=1)
+
+
+# One executable COUNT(*)-style award search. Multiple filters inside
+# one search are ANDed across axes and ORed within each list axis.
+class AwardSearch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filters: AwardFilters
+    scoring: AwardScoring
+
+
+# Step 3 awards endpoint output. A category call may become one search
+# when its expressions are parts of one structured award query, or
+# multiple searches when its expressions represent separate award asks.
+class AwardQueryPlan(BaseModel):
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+
+    combine: AwardCombineMode
+    searches: list[AwardSearch] = Field(..., min_length=1)
+
+
+# Backwards-compatible name for older imports while the endpoint prompt
+# surface is migrated to the query-plan terminology.
+AwardQuerySpec = AwardQueryPlan
+
+
 # Category-handler wrapper. Direction flows through role +
 # polarity on the wrapper. Fields are declared in the order
 # role → parameters → polarity so polarity is emitted last.
 # See endpoint_parameters.py for the rationale.
 class AwardEndpointParameters(EndpointParameters):
     role: Role = Field(..., description=ROLE_DESCRIPTION)
-    parameters: AwardQuerySpec = Field(
+    parameters: AwardQueryPlan = Field(
         ...,
         description=(
-            "Award endpoint payload. Translate the requirement into "
-            "scoring_mode + scoring_mark (the count shape) plus any "
-            "active filters (ceremonies, award_names, category_tags, "
-            "outcome, years). Leave a filter null when the requirement "
-            "does not constrain that axis — null means 'no restriction,' "
-            "not 'match everything.' Generic 'award-winning' with no "
-            "specifics is THRESHOLD / 3, all filters null. Describe the "
-            "target concept directly regardless of polarity — negation "
-            "is handled on the wrapper's polarity field, never inside "
-            "these parameters."
+            "Award endpoint payload. Emit one or more executable award "
+            "searches plus a combine mode. Use one search when the "
+            "expressions are parts of a single structured award query; "
+            "use multiple searches when they represent separate award "
+            "asks. Filters are ANDed across axes inside each search and "
+            "ORed within list axes. combine=any takes the best search "
+            "score per movie; combine=average gives partial credit by "
+            "averaging all searches, with missing searches counting as "
+            "0.0. Describe the target concept directly regardless of "
+            "polarity — negation is handled on the wrapper's polarity "
+            "field, never inside these parameters."
         ),
     )
     polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

@@ -1,6 +1,6 @@
 # Search V2 — Stage 4 Studio Endpoint: Query Execution
 #
-# Takes a StudioQuerySpec (one or more StudioRefs + a combine_mode)
+# Takes a StudioQuerySpec (one or more StudioRefs + a scoring_method)
 # and produces an EndpointResult with [0, 1] scores per movie. Single
 # entry point for both carvers (no restrict set — natural match set,
 # scores compressed to [0.5, 1.0]) and qualifiers (restrict set
@@ -20,16 +20,16 @@
 #   cross-company token false-positive; cross-name union gives OR
 #   semantics across the LLM's surface-form variants for one studio.
 #
-# Combine logic (driven by spec.combine_mode):
+# Scoring-method logic:
 #
-#   MAX (any-of / OR) — single batched fetch across the whole call.
+#   ANY (any-of / OR) — single batched fetch across the whole call.
 #   All brand_ids from refs that have a brand are unioned into one
 #   posting query. All freeform_names from refs that have NO brand
 #   (per the brand-wins edge case) are flattened into one token
 #   resolution. Results are unioned; binary scoring means the union
 #   is by construction the per-movie max.
 #
-#   AVERAGE (all-of / AND) — per-ref parallel fetch via asyncio.gather,
+#   ALL (all-of / AND) — per-ref parallel fetch via asyncio.gather,
 #   then evenly weighted mean across all refs. Misses count as 0 in
 #   the numerator, denominator is the ref count — so a movie matching
 #   k of N refs scores k/N. Refs with the same brand_id collapse to
@@ -61,6 +61,7 @@ from implementation.misc.production_company_text import (
     tokenize_company_string,
 )
 from schemas.endpoint_result import EndpointResult
+from schemas.enums import ScoringMethod
 from schemas.studio_translation import StudioQuerySpec, StudioRef
 from search_v2.endpoint_fetching.result_helpers import (
     build_endpoint_result,
@@ -108,7 +109,7 @@ async def _execute_freeform_path(
     "matches everything"). Cross-name union gives OR semantics across
     surface-form variants.
 
-    When called from MAX-mode aggregation, the input list may contain
+    When called from ANY aggregation, the input list may contain
     surface forms drawn from multiple refs that didn't have a brand
     set; cross-ref union is identical in semantics to cross-variant
     union, so flattening is safe — both fold into the same OR.
@@ -160,7 +161,7 @@ async def _execute_freeform_path(
 
 
 # ---------------------------------------------------------------------------
-# Per-ref resolver — used by AVERAGE mode (one fetch per ref, gathered).
+# Per-ref resolver — used by ALL mode (one fetch per ref, gathered).
 # ---------------------------------------------------------------------------
 
 
@@ -180,7 +181,7 @@ async def _resolve_single_ref(
         )
     if ref.freeform_names:
         return await _execute_freeform_path(
-            list(ref.freeform_names), restrict_movie_ids
+            ref.freeform_names, restrict_movie_ids
         )
     # Caller already filters out refs with neither set; reachable only
     # if the upstream filter is bypassed.
@@ -188,15 +189,15 @@ async def _resolve_single_ref(
 
 
 # ---------------------------------------------------------------------------
-# Combine-mode dispatchers.
+# Scoring-method dispatchers.
 # ---------------------------------------------------------------------------
 
 
-async def _execute_max(
+async def _execute_any(
     refs: list[StudioRef],
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """MAX combine — single batched fetch across all refs, per-movie max.
+    """ANY combine — single batched fetch across all refs, per-movie max.
 
     Splits refs into the brand and freeform pools (brand wins per ref)
     and runs the two paths concurrently. The pools are independent
@@ -229,11 +230,11 @@ async def _execute_max(
     return {mid: 1.0 for mid in matched}
 
 
-async def _execute_average(
+async def _execute_all(
     refs: list[StudioRef],
     restrict_movie_ids: set[int] | None,
 ) -> dict[int, float]:
-    """AVERAGE combine — per-ref parallel fetches, evenly weighted mean.
+    """ALL combine — per-ref parallel fetches, evenly weighted mean.
 
     Refs sharing a brand_id collapse to one ref before gather: under
     AND semantics, the same brand listed twice would otherwise inflate
@@ -272,9 +273,7 @@ async def _execute_average(
     if restrict_movie_ids is not None:
         candidate_ids: set[int] = restrict_movie_ids
     else:
-        candidate_ids = set().union(
-            *(s.keys() for s in per_ref_scores)
-        ) if per_ref_scores else set()
+        candidate_ids = set().union(*(s.keys() for s in per_ref_scores))
 
     n = len(deduped_refs)
     return {
@@ -325,10 +324,10 @@ async def execute_studio_query(
     if not valid_refs:
         return build_endpoint_result({}, restrict_to_movie_ids)
 
-    if spec.combine_mode == "MAX":
-        scores_by_movie = await _execute_max(valid_refs, restrict_to_movie_ids)
-    else:  # "AVERAGE"
-        scores_by_movie = await _execute_average(
+    if spec.scoring_method == ScoringMethod.ANY:
+        scores_by_movie = await _execute_any(valid_refs, restrict_to_movie_ids)
+    else:  # ALL
+        scores_by_movie = await _execute_all(
             valid_refs, restrict_to_movie_ids
         )
 

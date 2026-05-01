@@ -11,12 +11,26 @@
 from __future__ import annotations
 
 import functools
+import re
 from pathlib import Path
+from typing import Callable
 from xml.sax.saxutils import escape as xml_escape
 
+from schemas.award_category_tags import render_taxonomy_for_prompt
+from schemas.award_surface_forms import (
+    render_award_name_surface_forms_for_prompt,
+    render_ceremony_mappings_for_prompt,
+)
 from schemas.enums import EndpointRoute, HandlerBucket
-from schemas.trait_category import CategoryName
+from schemas.production_brand_surface_forms import render_brand_registry_for_prompt
+from schemas.streaming_service_surface_forms import (
+    render_tracked_streaming_services_for_prompt,
+)
 from schemas.step_3 import CategoryCall
+from schemas.trait_category import CategoryName
+from schemas.unified_classification_families import (
+    render_classification_registry_for_prompt,
+)
 
 
 # ── Paths ─────────────────────────────────────────────────────────
@@ -67,8 +81,80 @@ _ENDPOINT_PROMPTLESS: frozenset[EndpointRoute] = frozenset({
     EndpointRoute.TRENDING,
     EndpointRoute.MEDIA_TYPE,
 })
+
+
+# Per-endpoint placeholder substitution. Each entry maps a route to
+# the {{TOKEN}} → renderer callable mapping its .md file expects. The
+# renderer is called once at import time and its output replaces the
+# token in the cached chunk, so handler-time prompt builds are pure
+# string concatenation. Renderers are co-located with their data
+# under schemas/ and run their own consistency checks at call time
+# (e.g., every registry member placed in a family, every enum value
+# carrying a display-name + alias entry), so a stale registry fails
+# loudly here rather than silently shipping broken prompts.
+#
+# Routes absent from this map have no placeholders — their .md is
+# loaded verbatim. The leftover-placeholder scan below catches the
+# case where someone adds a new {{TOKEN}} to a .md without
+# registering a renderer here.
+_ENDPOINT_PLACEHOLDER_RENDERERS: dict[
+    EndpointRoute, dict[str, Callable[[], str]]
+] = {
+    EndpointRoute.AWARDS: {
+        "{{CEREMONY_MAPPINGS}}":        render_ceremony_mappings_for_prompt,
+        "{{AWARD_NAME_SURFACE_FORMS}}": render_award_name_surface_forms_for_prompt,
+        "{{CATEGORY_TAG_TAXONOMY}}":    render_taxonomy_for_prompt,
+    },
+    EndpointRoute.STUDIO: {
+        "{{BRAND_REGISTRY}}": render_brand_registry_for_prompt,
+    },
+    EndpointRoute.KEYWORD: {
+        "{{CLASSIFICATION_REGISTRY}}": render_classification_registry_for_prompt,
+    },
+    EndpointRoute.METADATA: {
+        "{{TRACKED_STREAMING_SERVICES}}": render_tracked_streaming_services_for_prompt,
+    },
+}
+
+
+# Permissive — catches any double-brace token regardless of casing or
+# punctuation. Used after substitution to surface unregistered
+# placeholders before they reach the LLM as literal `{{...}}` text.
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^{}]+\}\}")
+
+
+def _load_endpoint_chunk(route: EndpointRoute) -> str:
+    """Read a route's .md file, substitute its registered placeholders,
+    then assert no double-brace tokens remain.
+
+    A registered placeholder that isn't found in the .md raises — the
+    map and the file have drifted. A token that survives substitution
+    raises — someone added a new placeholder without registering a
+    renderer.
+    """
+    text = _read(_ENDPOINTS_DIR / f"{route.value}.md")
+    for token, renderer in _ENDPOINT_PLACEHOLDER_RENDERERS.get(route, {}).items():
+        if token not in text:
+            raise RuntimeError(
+                f"Endpoint chunk {route.value}.md is missing the registered "
+                f"placeholder {token!r}; the .md and the renderer dispatch "
+                f"in prompt_builder._ENDPOINT_PLACEHOLDER_RENDERERS have "
+                f"drifted out of sync."
+            )
+        text = text.replace(token, renderer())
+    leftover = _PLACEHOLDER_PATTERN.search(text)
+    if leftover is not None:
+        raise RuntimeError(
+            f"Endpoint chunk {route.value}.md contains an unregistered "
+            f"placeholder {leftover.group(0)!r} after substitution. Add a "
+            f"renderer to prompt_builder._ENDPOINT_PLACEHOLDER_RENDERERS "
+            f"or remove the placeholder from the .md."
+        )
+    return text
+
+
 _ENDPOINT_CHUNKS: dict[EndpointRoute, str] = {
-    route: _read(_ENDPOINTS_DIR / f"{route.value}.md")
+    route: _load_endpoint_chunk(route)
     for route in EndpointRoute
     if route not in _ENDPOINT_PROMPTLESS
 }

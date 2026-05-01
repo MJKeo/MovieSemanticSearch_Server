@@ -2,93 +2,87 @@
 
 ## Purpose
 
-Translates a franchise requirement into parameters across six axes: five retrieval axes (`franchise_or_universe_names`, `recognized_subgroups`, `lineage_position`, `structural_flags`, `launch_scope`) and one scoring-bias flag (`prefer_lineage`). Canonical names are resolved through a shared tokenizer against an inverted index; structural flags and launch scope are closed enums matched at ingest.
+Translate one upstream `CategoryCall` (whose dimensions routed to franchise) into a `FranchiseQuerySpec` the executor can run against the franchise token index and `movie_card` arrays. The schema specifies the shape of every output field. This prompt covers the *interpretive* and *naming* discipline that selects the values.
 
-## Canonical question
+## Inputs
 
-"Which franchise axes does this requirement signal, and what literal parameter values pin them?"
+The upstream phase has already done the per-trait decomposition. Treat its output as evidence, not as instructions you re-derive:
 
-## Capabilities
+- **`retrieval_intent`** (1–3 sentences) — the primary source of truth for what is being requested. Reread before committing anything.
+- **`expressions`** (list of short phrases) — each phrase traces to one dimension of the same trait, already isolated upstream. Use them to identify which axes the trait targets; do *not* copy them verbatim into the spec without applying the canonical-naming rules below.
 
-- Named franchise / shared-universe lookup (specific lineages AND umbrella shared universes — one axis covers both).
-- Named subgroup lookup (phases, sagas, timelines, trilogies, director-eras — independent of whether a parent franchise is also named).
-- Narrative-position filter (sequel / prequel / remake / reboot).
-- Structural-role filter (spinoff, crossover).
-- Launch-scope filter (launched-a-franchise vs. launched-a-subgroup).
-- Main-line-vs-universe-adjacent scoring bias.
+## Workflow
 
-## Boundaries (what does NOT belong here)
+Two phases, in order. Phase 1 is the only place interpretation happens; Phase 2 is mechanical.
 
-- Named persons (actors, directors, etc.) → entity endpoint.
-- Named production companies / studios (Marvel Studios as producer, not as franchise) → studio endpoint.
+**Phase 1 — commit `request_overview`.** In 1–2 sentences, decide:
+- the handling posture: umbrella sweep, single specific lineage, structural-only, subgroup-only, or position-only;
+- how many distinct franchises are involved and what aliases each carries;
+- which axes the trait actually signals.
+
+The schema's other fields read off this commit. Hedged framings produce drifting axes — commit decisively.
+
+**Phase 2 — populate axes off the overview.** One check per field:
+- Named franchise / IP / shared universe? → `franchise_names`.
+- Named recognized subgroup? → `subgroup_names`.
+- Sequel / prequel / remake / reboot? → `lineage_position`.
+- Spinoff / crossover? → `structural_flags`.
+- Launched a franchise / launched a subgroup? → `launch_scope`.
+- One specific franchise's main line, with no spinoff / umbrella / subgroup invitation? → `prefer_lineage` true. Otherwise false.
+
+A "no" answer leaves the field null.
+
+## What does NOT belong here
+
+- Named persons (actors, directors, writers) → entity endpoint.
+- Production companies / studios *as producers* (Marvel Studios as a company, not Marvel as a franchise) → studio endpoint.
 - Awards → award endpoint.
-- Generic "remake" queries with no franchise context → keyword endpoint (REMAKE classification).
+- Generic "remake" requests with no franchise context → keyword endpoint.
+- Genre, mood, theme, era → not franchise.
 
-## Searchable axes
-
-Every populated axis narrows the result set (AND across axes). Within a list field, OR semantics.
-
-**franchise_or_universe_names** — Named franchise, IP, or shared cinematic universe. Signals: proper-noun franchise references ("James Bond", "Star Wars", "Harry Potter", "Marvel", "Marvel Cinematic Universe", "MonsterVerse"). At ingest a franchise name is stored as either the lineage (specific-title slot) or the shared_universe (umbrella slot) — retrieval covers both from this single field, so do NOT predict which slot the stored value lives in. The lineage-vs-universe distinction drives `prefer_lineage` scoring, not match restriction. Populate whenever a named franchise is part of the requirement; leave null for purely structural or purely subgroup-based requirements.
-
-**recognized_subgroups** — Named subgroup: phase, saga, trilogy, timeline, director-era slice, or other widely-used sub-lineage label. Valid examples: "phase one", "phase three", "infinity saga", "multiverse saga", "kelvin timeline", "snyderverse", "disney live-action remakes", "sequel trilogy", "skywalker saga". Rules:
-- Do not restate the franchise itself as a subgroup.
-- Do not invent labels on the spot — only widely-used ones.
-- Populate whenever the user's requirement actually targets a recognized subgroup, INCLUDING standalone subgroup queries like "trilogies" or "phase one movies" where no parent franchise is named. Independent of `franchise_or_universe_names`.
-
-**lineage_position** — Narrative-position enum: `sequel`, `prequel`, `remake`, `reboot`. Sequel and prequel are the common cases. Remake is rare here; it belongs in this endpoint only for a franchise-specific remake concept, not a broad remake query.
-
-**structural_flags** — Optional list:
-- `spinoff` — the requirement targets branch entries rather than the main trunk.
-- `crossover` — the requirement targets films whose identity is separate known entities or characters meeting or colliding.
-
-**launch_scope** — What the movie launched:
-- `franchise` — the movie launched a franchise.
-- `subgroup` — the movie launched a subgroup inside a broader franchise.
-
-`launch_scope=subgroup` does NOT require a named subgroup. "Movies that launched a subgroup" → `launch_scope=subgroup`, `recognized_subgroups=null`. Populate `recognized_subgroups` only when the user names the subgroup itself.
-
-**prefer_lineage** — Scoring-bias bool. When true, movies matching the query on the lineage side score higher than those matching only on the shared_universe side. Match set is unchanged — spinoffs and universe-adjacent films still appear, just ranked below main-line entries. Default false. Set true ONLY when all of the following hold:
-- Exactly one specific franchise is named (not an umbrella like "Marvel" or "DC"), and that franchise has a main line plus known spinoffs or universe-adjacent entries.
-- The requirement does not explicitly invite spinoffs or universe-adjacent content.
-- `franchise_or_universe_names` is not a multi-name umbrella sweep.
-- `recognized_subgroups` is null — a named subgroup already disambiguates intent; layering `prefer_lineage` on top adds noise.
-
-True examples: "shrek movies" (main Shrek upranked over Puss in Boots); "john wick movies" (main John Wick upranked over The Continental); "toy story movies" (main Toy Story upranked over Forky shorts / Lightyear); "harry potter movies" (main Harry Potter upranked over Fantastic Beasts); "the conjuring movies" (main Conjuring upranked over Annabelle / The Nun).
-
-False examples: "MCU movies" / "marvel movies" (the umbrella IS the request); "DCU movies" / "dc movies" (same); "star wars movies" (umbrella, not single lineage); "middle-earth movies" (umbrella shared universe); "shrek spinoffs" (user asked for the non-lineage side); "harry potter and fantastic beasts" (user invited the shared-universe entries); "marvel phase one movies" (subgroup disambiguates); any entry with two or more names (umbrella sweep by definition).
-
-When in doubt, false. Misclassifying true as false loses a small ranking nudge; misclassifying false as true when the user wanted the umbrella demotes content they wanted.
+Off-domain requests should not have reached you. Where the boundary is fuzzy (e.g., "Marvel" — franchise or studio?), prefer the franchise reading when the request is about *content lineage* and route to studio when it is about *who made it*.
 
 ## Canonical naming
 
-Names resolve through a shared tokenizer + inverted index. Tokenizer: lowercase, diacritic fold, punctuation strip, whitespace collapse, ordinal digit-to-word ("20th" → "twentieth"), cardinal 0–99 digit-to-word ("phase 1" → "phase one"), whitespace+hyphen split, stopword drop ("the of and a in to on my i for at by with"). The same tokenizer ran at ingest — orthographic variants do NOT need enumeration; they collide automatically. Focus alternates on genuinely different canonical forms.
+Names resolve through a shared tokenizer + inverted index that runs identically at ingest and query time. Tokenizer steps, in order: lowercase, diacritic fold, punctuation strip, whitespace collapse, ordinal digit-to-word ("20th" → "twentieth"), cardinal 0–99 digit-to-word ("phase 1" → "phase one"), whitespace + hyphen split, stopword drop (`the of and a in to on my i for at by with`).
 
-Follow the same canonical rules the ingest-side franchise generator uses:
-- Most common, well-known canonical form.
+Because the tokenizer is symmetric, orthographic variants collide automatically — do NOT spend list entries on them. Reserve list entries for genuinely different canonical forms.
+
+Canonical form rules — match the ingest-side franchise generator:
+
+- Most common, well-known form.
 - Lowercase.
-- Spell digits as words.
-- Expand "&" to "and".
-- Expand abbreviations ONLY when the expanded form is also in common use:
-  - "MCU" → "marvel cinematic universe"
-  - "DCEU" → "dc extended universe"
-  - "LOTR" → "the lord of the rings"
+- Digits spelled as words.
+- "&" expanded to "and".
+- Abbreviations expanded only when the expanded form is also in common use:
+  - MCU → "marvel cinematic universe"
+  - DCEU → "dc extended universe"
+  - LOTR → "the lord of the rings"
   - "monsterverse" stays "monsterverse"
   - "x-men" stays "x-men"
-- For director-era subgroup labels, drop first names when the surname alone is the common form:
-  - "Peter Jackson's Lord of the Rings Trilogy" → "jackson lotr trilogy"
-  - "John Carpenter Halloween films" → "carpenter halloween films"
+- For director-era subgroup labels, drop first names when the surname alone is the common form (e.g., Peter Jackson's LOTR trilogy → "jackson lotr trilogy").
 
-**Specificity — umbrella vs narrow:**
-- Umbrella query ("Marvel movies", "Lord of the Rings films") → emit the broad form ("marvel cinematic universe", "the lord of the rings").
-- Narrow lineage inside an umbrella ("Doctor Strange", "Captain America") → emit the narrow form ALONE. Every Doctor Strange film is already MCU; adding "marvel cinematic universe" as a second entry would OR-union the entire MCU back in and over-broaden the query.
+Specificity — umbrella vs. narrow:
 
-**Count rules for `franchise_or_universe_names`:**
-- 1 entry in the common case.
-- 2–3 entries ONLY when genuinely different canonical names are in common use that ingest might plausibly have stored — the extra entries perform an umbrella sweep via across-name union ("marvel cinematic universe" + "marvel" sweeps the MCU proper PLUS every other "marvel"-tagged franchise entry; "the lord of the rings" + "middle-earth").
-- Do NOT pad with spelling, punctuation, casing, hyphenation, diacritic, or digit-vs-word variants — the tokenizer handles those symmetrically.
+- Umbrella request (the broad universe / franchise) → emit the broad canonical form alone.
+- Narrow lineage that already lives inside a known umbrella → emit the narrow form alone. Adding the umbrella as a second entry OR-unions the entire umbrella back in and over-broadens.
 
-**For `recognized_subgroups`:** same rules. Only emit labels that studios, mainstream film criticism, or widely-used fan terminology actually use. Do not invent a subgroup label just because one would be useful.
+Count rules for `franchise_names`:
+
+- One entry is the common case.
+- Multiple entries are correct in two distinct situations that the index treats identically: (a) one franchise that ingest plausibly stored under different canonical forms — umbrella alt-form sweep; (b) several distinct franchises sharing the same axis treatment — multi-franchise OR. Both fit the same list; do not split them across calls.
+- Never pad with spelling, casing, hyphenation, diacritic, or digit-vs-word variants — the tokenizer collapses those.
+
+Same naming and count rules apply to `subgroup_names`. Only emit labels that studios, mainstream film criticism, or established fan terminology actually use.
 
 ## Scope discipline
 
-Populate only the axes the concept actually signals. Do not add extra axes just to describe the franchise more fully. "Sequels" is a `lineage_position` query — not an invitation to guess a franchise name. If an item seems mildly misrouted, recover only the narrowest franchise interpretation literally supported by the description plus minimal context.
+NEVER:
+- Populate an axis the overview did not signal. "Sequels" alone is `lineage_position` — not permission to guess a franchise.
+- Add a franchise name to flesh out a structural-only or subgroup-only request.
+- Pair a narrow lineage with its parent umbrella inside `franchise_names`.
+- Restate a franchise as its own subgroup.
+- Invent a subgroup label not in widespread use.
+- Reach for `prefer_lineage` true when uncertain — false is the safe default. The validator silently coerces true to false in mechanical-incompatibility cases (no name, multi-name list, SPINOFF flag, populated subgroup), so spending interpretive effort on edge cases is wasted.
+
+When the request is mildly off-axis but interpretable, recover only the narrowest reading the inputs literally support. Do not stretch.
