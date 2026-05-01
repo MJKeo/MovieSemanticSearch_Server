@@ -39,19 +39,13 @@ from implementation.classes.enums import (
 )
 from implementation.classes.languages import Language
 from implementation.classes.watch_providers import StreamingService
-from schemas.endpoint_parameters import (
-    POLARITY_DESCRIPTION,
-    ROLE_DESCRIPTION,
-    EndpointParameters,
-)
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import (
     BoxOfficeStatus,
     BudgetSize,
     MetadataAttribute,
-    Polarity,
     PopularityMode,
     ReceptionMode,
-    Role,
     ScoringMethod,
 )
 
@@ -364,7 +358,6 @@ class MetadataTranslationOutput(BaseModel):
 # new Step 3 contract — see the metadata endpoint generator/executor
 # notes.
 class MetadataEndpointParameters(EndpointParameters):
-    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: MetadataTranslationOutput = Field(
         ...,
         description=(
@@ -378,4 +371,118 @@ class MetadataEndpointParameters(EndpointParameters):
             "field, never inside these parameters."
         ),
     )
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)
+
+
+# ── Subintent variant ─────────────────────────────────────────────
+#
+# Used when a single category routes to multiple endpoints and the
+# upstream responsibility-splitting reasoning has already carved out
+# this endpoint's slice of intent into a dedicated field. Same
+# structure as MetadataTranslationOutput, but `search_picture` (the
+# only field that originally read the raw call inputs) reads from
+# `metadata_retrieval_intent` instead. Every other field already
+# reads off downstream artifacts (search_picture / column_candidates
+# / scoring_method_reasoning) and so survives unchanged.
+
+
+class MetadataTranslationOutputSubintent(BaseModel):
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+
+    # `metadata_retrieval_intent` is declared on the parent
+    # MetadataEndpointSubintentParameters wrapper — it is generated
+    # before this spec and every field below reads from it.
+
+    search_picture: str = Field(
+        ...,
+        description=(
+            "1-2 sentences. Restate `metadata_retrieval_intent` as ONE "
+            "coherent picture — what kind of movie the intent wants, "
+            "taken as a whole.\n"
+            "NEVER paraphrase `metadata_retrieval_intent` verbatim. "
+            "NEVER name columns."
+        ),
+    )
+    column_candidates: list[ColumnCandidate] = Field(
+        ...,
+        description=(
+            "Honest audit of columns plausible for search_picture, "
+            "with per-column what_this_covers / what_this_misses. "
+            "Surface adjacency where it genuinely competes; drop "
+            "columns whose only contribution is being adjacent.\n"
+            "Local test: \"if I removed this candidate, would the "
+            "commit step lose a real option?\" Padding → drop.\n"
+            "NEVER list every column out of habit. NEVER duplicate "
+            "columns."
+        ),
+    )
+    scoring_method_reasoning: str = Field(
+        ...,
+        description=(
+            "1 sentence. Project forward from column_candidates: of "
+            "the columns you intend to populate in column_spec, do "
+            "they read as SUBSTITUTABLE signals of one concept "
+            "(any-one-matching qualifies) or REINFORCING facets "
+            "(every populated column contributes)? Write \"single "
+            "column\" when only one column will be populated.\n"
+            "Justifies scoring_method below."
+        ),
+    )
+    column_spec: ColumnSpec = Field(
+        ...,
+        description=(
+            "Literal commitment. Populate ONLY columns surfaced in "
+            "column_candidates with substantive what_this_covers; "
+            "explicit null elsewhere. Apply minimum span — null a "
+            "column whose search_picture aspect is fully covered by "
+            "another populated column. Same-column intent merges "
+            "into ONE populated sub-object (country lists union, "
+            "runtime ranges reconcile, streaming services + access "
+            "pair).\n"
+            "Local test per column: \"if I null this, does "
+            "search_picture lose real intent?\" If no, null it.\n"
+            "NEVER populate a column absent from column_candidates. "
+            "NEVER split same-column intent across multiple fields."
+        ),
+    )
+    scoring_method: ScoringMethod = Field(
+        ...,
+        description=(
+            "Mechanical commit of scoring_method_reasoning above. ANY when "
+            "reasoning says substitutable: we only care if the movie "
+            "has at least one populated column match, and movies score "
+            "equally high for matching 1+ values. ALL when reasoning "
+            "says \"single column\" or reinforcing: we care how many "
+            "populated columns the movie matches, and movies score "
+            "higher depending on how many values they match.\n"
+            "NEVER re-derive from search_picture or column_spec — "
+            "read off scoring_method_reasoning."
+        ),
+    )
+
+
+class MetadataEndpointSubintentParameters(EndpointParameters):
+    metadata_retrieval_intent: str = Field(
+        ...,
+        description=(
+            "What this endpoint specifically needs to be responsible "
+            "for fetching. Read off the prior reasoning fields above "
+            "that split up responsibilities across endpoints, capturing "
+            "only the slice of intent assigned to the metadata endpoint "
+            "(the ten structured-attribute columns: release_date, "
+            "runtime, maturity_rating, streaming, audio_language, "
+            "country_of_origin, budget_scale, box_office, popularity, "
+            "reception). Leave categorical classification, named "
+            "entities, free-form thematic qualifiers, awards, and "
+            "franchise structure to their respective endpoints. Every "
+            "field on this endpoint's `parameters` reads from this "
+            "intent rather than from any other upstream input."
+        ),
+    )
+    parameters: MetadataTranslationOutputSubintent = Field(
+        ...,
+        description=(
+            "Metadata endpoint payload, sourced from "
+            "`metadata_retrieval_intent` rather than from the raw "
+            "call inputs."
+        ),
+    )

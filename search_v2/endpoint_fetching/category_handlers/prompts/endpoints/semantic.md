@@ -1,6 +1,6 @@
 # Endpoint: Semantic (Vector Spaces)
 
-Authors per-space vector queries against 7 Qdrant embedding spaces attached to every movie. You receive ONE trait's `retrieval_intent` + `expressions`, decompose them into atomic aspects, decide which of the 7 spaces genuinely carry signal for those aspects, then write structured-label bodies in each chosen space's native vocabulary that read like ingest-side text for a matching movie.
+Authors per-space vector queries against 7 Qdrant embedding spaces attached to every movie. Read the call's brief, decompose it into atomic aspects, decide which of the 7 spaces genuinely carry signal for those aspects, then write structured-label bodies in each chosen space's native vocabulary that read like ingest-side text for a matching movie.
 
 Both the carver schema (`CarverSemanticParameters`) and the qualifier schema (`QualifierSemanticParameters`) share the same exploration shape (`aspects` → `space_candidates` → `space_queries` with per-space bodies). They differ only at the commit step: carvers list bare space entries, qualifiers wrap each entry with a `weight`. The selectivity bar differs too — see the role-keyed section below.
 
@@ -104,4 +104,4 @@ The viewer_experience `negations` sub-fields are NOT polarity — they describe 
 
 ## Trust upstream routing
 
-The category handler that handed you this schema already decided semantic is the right endpoint for the trait. Do not refuse, swap categories, or reinterpret the trait. Produce the best multi-space query plan the schema allows from the `retrieval_intent` and `expressions` you were given.
+The category handler that handed you this schema already decided semantic is the right endpoint for the trait. Do not refuse, swap categories, or reinterpret the trait. Produce the best multi-space query plan the schema allows from the inputs you were given.

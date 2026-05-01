@@ -21,18 +21,12 @@
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from schemas.award_category_tags import CategoryTag
-from schemas.endpoint_parameters import (
-    POLARITY_DESCRIPTION,
-    ROLE_DESCRIPTION,
-    EndpointParameters,
-)
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import (
     AwardCeremony,
     AwardCombineMode,
     AwardOutcome,
     AwardScoringMode,
-    Polarity,
-    Role,
 )
 
 
@@ -117,12 +111,10 @@ class AwardQueryPlan(BaseModel):
 AwardQuerySpec = AwardQueryPlan
 
 
-# Category-handler wrapper. Direction flows through role +
-# polarity on the wrapper. Fields are declared in the order
-# role → parameters → polarity so polarity is emitted last.
-# See endpoint_parameters.py for the rationale.
+# Category-handler wrapper. role + polarity are stamped post-LLM-
+# call from the parent Trait, not declared on this schema (see
+# endpoint_parameters.py).
 class AwardEndpointParameters(EndpointParameters):
-    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: AwardQueryPlan = Field(
         ...,
         description=(
@@ -139,4 +131,3 @@ class AwardEndpointParameters(EndpointParameters):
             "field, never inside these parameters."
         ),
     )
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

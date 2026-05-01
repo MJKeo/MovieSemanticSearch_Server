@@ -18,12 +18,8 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr
 
-from schemas.endpoint_parameters import (
-    POLARITY_DESCRIPTION,
-    ROLE_DESCRIPTION,
-    EndpointParameters,
-)
-from schemas.enums import Polarity, Role, ScoringMethod
+from schemas.endpoint_parameters import EndpointParameters
+from schemas.enums import ScoringMethod
 from schemas.production_brands import ProductionBrand
 
 
@@ -194,11 +190,10 @@ class StudioQuerySpec(BaseModel):
     )
 
 
-# Category-handler wrapper. Direction flows through role + polarity
-# on the wrapper. Field order is role → parameters → polarity so
-# polarity emits last. See endpoint_parameters.py for the rationale.
+# Category-handler wrapper. role + polarity are stamped post-LLM-
+# call from the parent Trait, not declared on this schema (see
+# endpoint_parameters.py).
 class StudioEndpointParameters(EndpointParameters):
-    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: StudioQuerySpec = Field(
         ...,
         description=(
@@ -210,4 +205,3 @@ class StudioEndpointParameters(EndpointParameters):
             "field, never inside parameters."
         ),
     )
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

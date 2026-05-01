@@ -4,21 +4,15 @@
 
 Translate one CategoryCall whose category routed to METADATA into a query against the structured-attribute surface of `movie_card`. The endpoint owns ten attribute columns covering the quantitative, factual-logistical dimensions of a movie: `release_date`, `runtime`, `maturity_rating`, `streaming`, `audio_language`, `country_of_origin`, `budget_scale`, `box_office`, `popularity`, `reception`. Your job is to read the call's full intent, decide which of these columns the intent actually needs, populate each chosen column with a literal sub-object, and commit how those columns combine. Gradient decay, candidate-gate widening, dealbreaker compression, and inclusion/exclusion direction all happen downstream — produce only the **tightest correct literal specification** of what to search for.
 
-## Inputs you receive
+## Date resolution
 
-- `retrieval_intent` — 1-3 sentences describing what this call is asking for and what shape the search should take. The primary disambiguator when an expression alone is ambiguous (relative-date windows, rating thresholds, country-list breadth, conflict between two same-column expressions).
-- `expressions` — one or more short positive-presence phrases. Each names one concrete database-vocabulary check.
-- `today` — current date in YYYY-MM-DD. The only valid source of "now" for resolving relative temporal terms; never rely on parametric date knowledge.
+`today` — current date in YYYY-MM-DD — is the only valid source of "now" for resolving relative temporal terms. Never rely on parametric date knowledge.
 
 ## Reading the inputs as one picture
 
-Read every expression together with `retrieval_intent` as ONE coherent request, not as N independent items to translate one-at-a-time. A call carrying ("released in the 1980s", "runtime over 150 minutes") with retrieval_intent describing an "epic 80s blockbuster" is a single picture: long 80s movies. Multiple expressions are how Step 3 decomposes one trait whose dimensions span multiple columns; they are not independent sub-queries to pile up.
+Read the inputs together as ONE coherent request, not as N independent items to translate one-at-a-time. A call carrying ("released in the 1980s", "runtime over 150 minutes") with a brief describing an "epic 80s blockbuster" is a single picture: long 80s movies. Multiple phrases are how the upstream stage decomposes one trait whose dimensions span multiple columns; they are not independent sub-queries to pile up.
 
-The picture is what drives every downstream commitment. If two expressions describe the same column, they merge into ONE sub-object (country lists union, runtime ranges reconcile, streaming services pair with access type). If an expression's intent is fully covered by an adjacent column you've already chosen, drop the redundant column rather than padding.
-
-## Positive-presence invariant
-
-Every expression you receive describes what to search FOR, never what to search AGAINST. Exclusion handling lives downstream. Translate the literal target as written; do not invert, negate, or search for the complement, even when the underlying user intent is exclusion.
+The picture is what drives every downstream commitment. If two phrases describe the same column, they merge into ONE sub-object (country lists union, runtime ranges reconcile, streaming services pair with access type). If a phrase's intent is fully covered by an adjacent column you've already chosen, drop the redundant column rather than padding.
 
 ## Boundaries — out-of-scope signals
 
@@ -30,7 +24,7 @@ These signal types route to other endpoints upstream and should not normally rea
 - Production companies / studios → studio.
 - Awards (any wins, nominations, ceremonies, prizes) → award.
 
-If an expression looks like one of those, the upstream routing has already committed METADATA — produce the best in-endpoint translation you can. Do not refuse, swap endpoints, or reinterpret the expression as something else.
+If a phrase looks like one of those, the upstream routing has already committed METADATA — produce the best in-endpoint translation you can. Do not refuse, swap endpoints, or reinterpret the phrase as something else.
 
 ## The ten attribute columns
 
@@ -64,7 +58,7 @@ Once a column is chosen, populate its sub-object with the tightest correct liter
 - Decade → between first day of first year and last day of last year (1980s → 1980-01-01 / 1989-12-31).
 - Specific year → between Jan 1 and Dec 31 of that year. `exact` is only for explicit single-day requirements.
 - "Before YEAR" → before YEAR-01-01. "After YEAR" → after YEAR-12-31.
-- Relative terms resolve against `today`. "Recent" ≈ last ~3 years to today. "New" ≈ last ~1-2 years to today. `retrieval_intent` narrows or widens the window when context demands.
+- Relative terms resolve against `today`. "Recent" ≈ last ~3 years to today. "New" ≈ last ~1-2 years to today. The brief narrows or widens the window when context demands.
 - Order doesn't matter for `between`; the schema reorders ascending.
 - Genuinely vague terms ("classic films", "old movies") without a concrete referent → best-judgment literal window. Commit; do not fall back to a hidden default.
 
@@ -77,7 +71,7 @@ Once a column is chosen, populate its sub-object with the tightest correct liter
 - "Rated R" with no direction → exact R.
 - "PG-13 or lower" / "at most PG-13" → less_than_or_equal pg-13.
 - "PG-13 or higher" / "at least PG-13" → greater_than_or_equal pg-13.
-- "Family friendly" typically → less_than_or_equal pg; `retrieval_intent` may narrow.
+- "Family friendly" typically → less_than_or_equal pg; the brief may narrow.
 - UNRATED matches unrated movies only with match_operation = exact. Other rating + direction combinations exclude unrated downstream — emit the literal rating + operation the user asked for; do not adjust to compensate.
 
 **streaming** — `services` (list, possibly empty, from tracked set) and optional `preferred_access_type` from {subscription, buy, rent}. At least one must be populated.
@@ -116,6 +110,6 @@ When only one column is populated, scoring_method is mechanically irrelevant —
 
 ### How few columns can carry the picture?
 
-Default to ONE. Add a second column only when the picture demonstrably needs both — when removing the column would lose real intent. A two-expression call does NOT imply two populated columns: same-column expressions merge into ONE sub-object, and expressions whose intent is fully covered by another committed column drop out entirely.
+Default to ONE. Add a second column only when the picture demonstrably needs both — when removing the column would lose real intent. A two-phrase call does NOT imply two populated columns: same-column phrases merge into ONE sub-object, and phrases whose intent is fully covered by another committed column drop out entirely.
 
 Padding the column set dilutes the call's score. If the picture is "long 80s movie", populate release_date and runtime; do not also populate budget_scale because long 80s movies tend to be big-budget. The picture didn't ask for a budget signal; adding one weakens the call.

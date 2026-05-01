@@ -29,12 +29,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr
 
-from schemas.endpoint_parameters import (
-    POLARITY_DESCRIPTION,
-    ROLE_DESCRIPTION,
-    EndpointParameters,
-)
-from schemas.enums import Polarity, ReleaseFormat, Role
+from schemas.endpoint_parameters import EndpointParameters
+from schemas.enums import ReleaseFormat
 
 
 # Subset of ReleaseFormat the LLM is allowed to emit. See the file-
@@ -77,11 +73,8 @@ class MediaTypeQuerySpec(BaseModel):
     ) = Field(...)
 
 
-# Category-handler wrapper. Direction flows through role +
-# polarity on the wrapper. Fields are declared in the order
-# role → parameters → polarity so polarity is emitted last.
-# See endpoint_parameters.py for the rationale.
+# Category-handler wrapper. role + polarity are stamped post-LLM-
+# call from the parent Trait, not declared on this schema (see
+# endpoint_parameters.py).
 class MediaTypeEndpointParameters(EndpointParameters):
-    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: MediaTypeQuerySpec = Field(...)
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

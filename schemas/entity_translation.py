@@ -31,12 +31,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr
 
-from schemas.endpoint_parameters import (
-    POLARITY_DESCRIPTION,
-    ROLE_DESCRIPTION,
-    EndpointParameters,
-)
-from schemas.enums import Polarity, Role
+from schemas.endpoint_parameters import EndpointParameters
 
 
 # ---------------------------------------------------------------------
@@ -413,13 +408,12 @@ class TitlePatternQuerySpec(BaseModel):
     )
 
 
-# Category-handler wrapper. Direction flows through role + polarity
-# on the wrapper. The entity executor accepts any of the three
-# category-scoped payload families, so `parameters` is the endpoint's
-# family union. Fields are declared in canonical wrapper order
-# role → parameters → polarity; see endpoint_parameters.py.
+# Category-handler wrapper. The entity executor accepts any of the
+# three category-scoped payload families, so `parameters` is the
+# endpoint's family union. role + polarity are stamped post-LLM-
+# call from the parent Trait, not declared on this schema (see
+# endpoint_parameters.py).
 class EntityEndpointParameters(EndpointParameters):
-    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: PersonQuerySpec | CharacterQuerySpec | TitlePatternQuerySpec = Field(
         ...,
         description=(
@@ -432,5 +426,4 @@ class EntityEndpointParameters(EndpointParameters):
             "field, never inside these parameters."
         ),
     )
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)
 

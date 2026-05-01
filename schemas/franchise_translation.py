@@ -40,17 +40,11 @@
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
-from schemas.endpoint_parameters import (
-    POLARITY_DESCRIPTION,
-    ROLE_DESCRIPTION,
-    EndpointParameters,
-)
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import (
     FranchiseLaunchScope,
     FranchiseStructuralFlag,
     LineagePosition,
-    Polarity,
-    Role,
 )
 
 
@@ -274,12 +268,10 @@ class FranchiseQuerySpec(BaseModel):
         return self
 
 
-# Category-handler wrapper. Direction flows through role + polarity
-# on the wrapper. Fields are declared in the order role → parameters
-# → polarity so polarity is emitted last. See endpoint_parameters.py
-# for the rationale.
+# Category-handler wrapper. role + polarity are stamped post-LLM-
+# call from the parent Trait, not declared on this schema (see
+# endpoint_parameters.py).
 class FranchiseEndpointParameters(EndpointParameters):
-    role: Role = Field(..., description=ROLE_DESCRIPTION)
     parameters: FranchiseQuerySpec = Field(
         ...,
         description=(
@@ -294,4 +286,3 @@ class FranchiseEndpointParameters(EndpointParameters):
             "never inside these parameters."
         ),
     )
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)

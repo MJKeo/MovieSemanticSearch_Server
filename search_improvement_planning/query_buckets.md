@@ -204,30 +204,39 @@ qualified, spectrum, or long-tail expressions.
 - Story / thematic archetype
 - Specific praise / criticism
 
-## Bucket 6: Semantic-Preferred With Deterministic Support
+## Bucket 6: Semantic-Always With Deterministic Augmentation
 
 ### What It Represents
 
-Categories where the primary meaning is best represented by semantic
-prose, but deterministic tags or metadata priors can add useful support
-when they genuinely apply.
+Categories whose meaning is inherently semantic, so the semantic
+endpoint always runs. In addition, any deterministic surface (canonical
+keyword tags, numeric priors, popularity priors) that can catch signals
+the semantic channel handles poorly should run alongside — not instead
+of, but in parallel with, the semantic call.
 
 ### Why Split From Other Buckets
 
-These should not start from deterministic tags. Their meaning is broad,
-evaluative, or experiential enough that forcing a tag-first read would
-flatten the request. Deterministic signals are supporting evidence, not
-the main interpretation.
+This is not a coverage-judgment bucket like Bucket 5. The semantic call
+is not optional and deterministic calls are not fallbacks. Vector search
+is unreliable for binary or canonical attributes (e.g. "feel-good"
+expresses well as semantic prose, but a `HAPPY_ENDING` tag adds a
+crisper signal that semantic blurs across many endings). Running both
+is strictly stronger than running either alone, so redundancy across
+channels is the explicit design.
 
 ### Query-Generation Handling
 
-- Start by generating the semantic query that captures the expression's
+- Always generate the semantic query that captures the expression's
   core meaning.
-- Add deterministic support only when the expression cleanly implies a
-  tag, numeric prior, popularity prior, or other structured signal.
-- Do not let deterministic support override the semantic read.
-- Use the minimum supporting set; absence of a clean deterministic match
-  is not a failure.
+- For each available deterministic surface, ask whether running it
+  alongside the semantic query would catch a binary or canonical signal
+  semantic retrieval tends to flatten. If yes, generate it.
+- Skip a deterministic surface only when no clean signal is implied —
+  not because semantic "already covers it." Overlap with the semantic
+  read is expected and welcome.
+- Do not let deterministic augmentation reshape or shrink the semantic
+  query. Semantic remains the authoritative read; deterministic calls
+  reinforce it.
 
 ### Categories
 
@@ -260,13 +269,15 @@ violate the one-trait, one-category rule for dual-nature referents.
 
 - Character-franchise
 
-## Bucket 8: Audience-Suitability Deterministic-First Combo
+## Bucket 8: Audience-Suitability Redundant Combo
 
 ### What It Represents
 
-Audience-suitability categories where deterministic filters should be
-used as much as possible, then softer inclusion or preference scoring
-fills in the remaining intent.
+Audience-suitability categories whose intent is multi-faceted enough
+that several endpoints can each carry a complementary slice of the same
+suitability concept. Every endpoint with a real signal to add should
+fire — overlap across deterministic gates, inclusion scoring, exclusion
+scoring, and semantic intensity is welcome, not deduplicated.
 
 One category focuses on appeal to a target audience. The other focuses
 on sensitivity or content the user may want to avoid. They share the
@@ -274,24 +285,28 @@ same handler shape.
 
 ### Why Split From Other Buckets
 
-These categories often produce both gate-like constraints and scoring
-signals. They need explicit handling for deterministic filters,
-inclusion candidates, and exclusion candidates rather than ordinary
-single-endpoint or fallback behavior.
+A single suitability concept ("suitable for kids", "no gore") is
+genuinely better served by multiple endpoints firing in parallel than
+by any one of them alone. A maturity-rating ceiling, a wholesome-tone
+semantic query, and an exclusion-keyword scoring signal all measure
+"suitable for kids" from different angles, and combining them is more
+robust than picking the best one. Bucket 8 makes that redundancy the
+default, gated only by whether each endpoint has a real signal to
+contribute.
 
 ### Query-Generation Handling
 
-- Use deterministic gates whenever the expression implies a clear
-  maturity ceiling, content exclusion, or suitability boundary.
-- Generate inclusion scoring for positive audience fit or desired
-  suitability signals.
-- Generate exclusion scoring or filters for content the user wants to
-  avoid.
-- Use semantic intensity or watch-context signals when deterministic
-  filters do not fully capture the request.
-- Preserve polarity: endpoint parameters should represent presence of
-  an attribute; merge logic handles whether that presence helps or
-  hurts.
+- Begin with a high-level scoping pass: read the expression and
+  enumerate every angle the suitability concept exposes (hard
+  ceilings, content categories, tone, watch-context, etc.).
+- For each available endpoint, decide whether it carries a real
+  complementary signal toward this requirement. If yes, fire it.
+  Overlap with another endpoint is not a reason to skip.
+- Skip an endpoint only when it has nothing distinct to contribute —
+  not because another endpoint already partially covers the angle.
+- Preserve polarity: endpoint parameters represent presence of an
+  attribute; the wrapper's polarity field decides whether that
+  presence helps or hurts.
 
 ### Categories
 

@@ -8,9 +8,9 @@ Before emitting, check for these failure modes. In each case, **abstaining (per-
 
 Beyond those, watch for these combination-specific traps:
 
-- **Substituting scoring for a gate (or vice versa).** A clear maturity ceiling or hard exclusion belongs in a gate, not a soft scoring signal. Conversely, a soft preference does not belong in a gate. Match the strength the expression actually carries.
+- **Skipping a real signal because another endpoint already covers it.** Overlap is the point. A maturity gate and a wholesome-tone semantic query both pulling on "suitable for kids" is the design — do not deduplicate them. Skip an endpoint only when it has nothing distinct to add, not when its angle is already partially captured.
+- **Mismatching strength to channel.** A clear maturity ceiling or hard exclusion belongs on a gate. A soft preference belongs on scoring or semantic. Match the strength the expression actually carries — but do not use this as cover for skipping a softer overlapping signal that another endpoint can carry.
 - **Flipping polarity at the parameter level.** Parameters describe presence of an attribute. Whether that presence helps the user is decided when the signals are combined later — do not encode the direction into the parameter itself.
-- **Using semantic intensity to bypass an explicit gate.** When the user states a hard boundary, the gate fires. Adding semantic intensity around the same content does not replace the gate.
 - **Silently skipping a candidate.** Address every candidate endpoint explicitly. Treating any entry as a rubber stamp — fired or skipped without consideration — is the failure this bucket is designed to prevent.
 
-Beyond those: do not fire an endpoint just because it is available — each firing endpoint must carry distinct, complementary signal toward this specific requirement. And do not collapse to a single endpoint out of conservatism when multiple genuinely apply.
+Beyond those: each firing endpoint must carry a real signal toward this specific requirement — overlap with another firing endpoint is welcome, but firing on no signal is not. And do not collapse to a single endpoint out of conservatism when multiple genuinely apply.

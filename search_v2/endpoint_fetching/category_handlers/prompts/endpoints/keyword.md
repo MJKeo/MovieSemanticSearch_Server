@@ -6,7 +6,7 @@ Resolves the parts of the call's intent that map onto the closed UnifiedClassifi
 
 ## What does NOT belong here
 
-Routing already committed this call to the keyword endpoint — do not refuse. But when decomposing `attributes` from `retrieval_intent` + `expressions`, ignore content from these out-of-scope domains rather than coercing it into a registry member:
+Routing already committed this call to the keyword endpoint — do not refuse. But when decomposing `attributes` from the brief, ignore content from these out-of-scope domains rather than coercing it into a registry member:
 
 - Named real entities (persons, characters, franchises, studios) → entity / franchise / studio endpoints.
 - Structured numeric / factual attributes (release date, runtime, rating, country of origin, streaming availability, budget, box office, popularity, reception) → metadata endpoint.
@@ -23,7 +23,7 @@ When a concept could plausibly fit more than one family, compare candidate defin
 
 ## Reading inputs as keyword facets
 
-A single `retrieval_intent` + expression set can carry multiple registry-relevant facets simultaneously. Decompose into one `attribute` per distinct facet — not per expression. Typical combinations:
+A single brief can carry multiple registry-relevant facets simultaneously. Decompose into one `attribute` per distinct facet — not per phrase. Typical combinations:
 
 - Genre + cultural tradition: "scary Hindi films" → two attributes (horror feel; Hindi cinema tradition).
 - Genre + source material: "biographical dramas" → two attributes (drama feel; biographical source).
@@ -56,12 +56,12 @@ Within a family, several members often cover overlapping territory. Four princip
 
 **Mutually exclusive ending / viewer-response pairs.** Members inside families 19 (endings) and 21 (viewer response) are near-mutually-exclusive. "Makes you cry" → `TEARJERKER`. "Leaves you uplifted" → `FEEL_GOOD`. "Unexpected ending" → `PLOT_TWIST`, not a specific ending-type. Cite the input phrase that names the effect, not your own summary.
 
-## Reading retrieval_intent for scoring_method
+## Reading the brief for scoring_method
 
-`scoring_method` is a downstream commitment driven by `retrieval_intent`'s framing of how the finalized members combine.
+`scoring_method` is a downstream commitment driven by the brief's framing of how the finalized members combine.
 
 **ANY.** We only care if the movie has at least one of the finalized members, like an "or" case. Movies score equally high for matching 1+ values. Cues: "any kind of", "some flavor of", "or", "either", listing alternatives, one concept paraphrased several ways.
 
 **ALL.** We care how many finalized members a given movie matches. Movies score higher depending on how many values they match. Cues: "and", "as well as", "both", "needs to be", separate facets each independently named, AND-style coverage requirements.
 
-When `retrieval_intent` is silent on combination — typical for single-attribute calls — ANY is the safe default.
+When the brief is silent on combination — typical for single-attribute calls — ANY is the safe default.

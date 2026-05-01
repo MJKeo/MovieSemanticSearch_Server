@@ -40,12 +40,7 @@ from typing import Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
-from schemas.endpoint_parameters import (
-    POLARITY_DESCRIPTION,
-    ROLE_DESCRIPTION,
-    EndpointParameters,
-)
-from schemas.enums import Polarity, Role
+from schemas.endpoint_parameters import EndpointParameters
 from schemas.semantic_bodies import (
     NarrativeTechniquesBody,
     PlotAnalysisBody,
@@ -547,15 +542,15 @@ class QualifierSemanticParameters(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Endpoint wrappers. role narrowed by Literal so the schema choice
-# carries the role unambiguously. Polarity stays on the wrapper —
-# bodies describe the target concept regardless of polarity, the
-# executor flips at merge time.
+# Endpoint wrappers. The carver/qualifier distinction is carried by
+# the concrete wrapper class itself — the handler picks which to use
+# based on the parent Trait's role before invoking the LLM. role +
+# polarity are stamped post-LLM-call from the Trait, not declared on
+# this schema (see endpoint_parameters.py).
 # ---------------------------------------------------------------------------
 
 
 class CarverSemanticEndpointParameters(EndpointParameters):
-    role: Literal[Role.CARVER] = Field(..., description=ROLE_DESCRIPTION)
     parameters: CarverSemanticParameters = Field(
         ...,
         description=(
@@ -568,11 +563,9 @@ class CarverSemanticEndpointParameters(EndpointParameters):
             "field handles negation."
         ),
     )
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)
 
 
 class QualifierSemanticEndpointParameters(EndpointParameters):
-    role: Literal[Role.QUALIFIER] = Field(..., description=ROLE_DESCRIPTION)
     parameters: QualifierSemanticParameters = Field(
         ...,
         description=(
@@ -585,4 +578,395 @@ class QualifierSemanticEndpointParameters(EndpointParameters):
             "wrapper's polarity field handles negation."
         ),
     )
-    polarity: Polarity = Field(..., description=POLARITY_DESCRIPTION)
+
+
+# ---------------------------------------------------------------------------
+# Subintent variants
+#
+# Used when a single category routes to multiple endpoints and the
+# upstream responsibility-splitting reasoning has already carved out
+# this endpoint's slice of intent into a dedicated field. Same shape
+# as the regular Carver / Qualifier semantic parameters, but every
+# descriptor that originally read from `expressions` /
+# `retrieval_intent` reads from `semantic_retrieval_intent` (declared
+# first on the spec) instead. Sub-types whose descriptors don't
+# reference the raw inputs (SemanticSpaceEntry and its body types)
+# are reused as-is.
+# ---------------------------------------------------------------------------
+
+
+class SpaceCandidateSubintent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space: SemanticSpace = Field(
+        ...,
+        description=(
+            "Vector space whose ingest-side vocabulary plausibly "
+            "carries >=1 entry from `aspects`. List only spaces with "
+            "substantive coverage; do not enumerate all 7 for "
+            "thoroughness."
+        ),
+    )
+    aspects_covered: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "Which entries from `aspects` THIS space owns, written "
+            "holistically. Compose interlocking aspects into one "
+            "phrase — 'darkly funny' is one signal this space "
+            "carries, not two; the embedding lands more accurately "
+            "when composed signals stay composed than when split and "
+            "re-intersected. Read `aspects` (primary: what needs "
+            "covering) and `semantic_retrieval_intent` (discriminative "
+            "anchor when an aspect could surface-match here but the "
+            "intent narrows it elsewhere).\n"
+            "\n"
+            "TEST: if I removed this space from candidates, which "
+            "aspects orphan? Name them.\n"
+            "\n"
+            "NEVER:\n"
+            "- BACK-RATIONALIZE. 'Plausible' isn't coverage. Drop "
+            "the candidate or commit what's substantively owned.\n"
+            "- ENUMERATE 1:1 WITH ASPECTS. Composed aspects fold; "
+            "splitting them defeats the embedding."
+        ),
+    )
+    gap: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "What this space MISSES, defined relative to "
+            "`aspects_covered` above and the full `aspects` list — "
+            "specifically: entries in `aspects` that this space does "
+            "NOT pick up (and which other space catches them), or "
+            "sub-shades inside an aspect that this space's boundary "
+            "redirects elsewhere (occasion → watch_context; craft → "
+            "narrative_techniques; scalar reception → metadata, not "
+            "here). 'nothing' when `aspects_covered` is a clean fit "
+            "for everything in `aspects` this space could plausibly "
+            "carry, with no competing adjacency.\n"
+            "\n"
+            "NEVER:\n"
+            "- HEDGE WITHOUT NAMING. Either 'nothing' or specific gap "
+            "with destination — no middle.\n"
+            "- INVENT GAPS to look thorough.\n"
+            "- RESTATE `aspects_covered` IN NEGATIVE FORM. The gap "
+            "names what's NOT here, not a re-listing of what is."
+        ),
+    )
+
+
+class WeightedSpaceQuerySubintent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    weight: SpaceWeight = Field(
+        ...,
+        description=(
+            "How load-bearing this space's signal is for the trait. "
+            "Read `semantic_retrieval_intent` (primary source: framing "
+            "of what the search positions against) IN LIGHT OF the "
+            "matching `SpaceCandidateSubintent.aspects_covered` for "
+            "`query.space` above (i.e., what this specific space "
+            "actually carries) — mechanical mapping; do not re-derive "
+            "from `aspects` wholesale.\n"
+            "- CENTRAL: semantic_retrieval_intent treats the aspects "
+            "this space carries (per its "
+            "SpaceCandidateSubintent.aspects_covered) as defining "
+            "whether the match holds. Missing this signal = trait "
+            "broken. Multiple central spaces are fine when several "
+            "axes are equally load-bearing.\n"
+            "- SUPPORTING: the aspects this space carries round out "
+            "the experience but aren't load-bearing on their own. "
+            "Trait stays recognizable without it.\n"
+            "\n"
+            "All-supporting is acceptable for broad-and-balanced "
+            "traits — a truthful signal, not a cop-out. If a space "
+            "would be below SUPPORTING (barely-there), drop the entry "
+            "instead of including it.\n"
+            "\n"
+            "TEST: look up the `aspects_covered` on the "
+            "SpaceCandidateSubintent matching `query.space`. Does "
+            "`semantic_retrieval_intent` name those aspects as defining "
+            "the match, or as one contributor among several? Defining "
+            "→ CENTRAL. Contributor → SUPPORTING."
+        ),
+    )
+    query: SemanticSpaceEntry = Field(
+        ...,
+        description=(
+            "Space-targeted body — {space + content}. `space` MUST "
+            "appear in `space_candidates` (any commit to a space "
+            "absent from candidates means exploration was skipped). "
+            "`content` is authored against the rules on the matching "
+            "entry-wrapper class (PlotEventsEntry / "
+            "ViewerExperienceEntry / etc.) — fold every aspect this "
+            "space owns per its SpaceCandidateSubintent.aspects_covered "
+            "into ONE body in the space's ingest-side vocabulary; do "
+            "not split coverage across multiple WeightedSpaceQuery"
+            "Subintent entries with the same `query.space`."
+        ),
+    )
+
+
+_ASPECTS_DESC_SUBINTENT = (
+    "Holistic decomposition of the trait into atoms — distinct axes "
+    "the trait calls for. Read `semantic_retrieval_intent` (the "
+    "framing of what the search positions against, plus the "
+    "dimensions assigned to this endpoint). NOT 1:1 with phrases in "
+    "the intent: one phrase may carry several aspects, several "
+    "phrases may collapse into one. Compose interlocking signals "
+    "into one aspect when they perform better embedded together — "
+    "'darkly funny' is one aspect, not two; the dark and the funny "
+    "are inseparable in the felt experience and a combined cosine "
+    "outperforms two intersected ones.\n"
+    "\n"
+    "TEST per aspect: would removing it change which space ends up "
+    "carrying the trait? Yes → distinct aspect. No → fold.\n"
+    "\n"
+    "NEVER:\n"
+    "- COPY `semantic_retrieval_intent` PHRASING VERBATIM. Decompose "
+    "first.\n"
+    "- SPLIT A COMPOSED SIGNAL that performs better embedded "
+    "together.\n"
+    "- INVENT axes `semantic_retrieval_intent` doesn't signal."
+)
+
+
+_SPACE_CANDIDATES_DESC_SUBINTENT = (
+    "Per-space exploration. One entry per space whose ingest-side "
+    "vocabulary plausibly carries >=1 entry from `aspects`. Read "
+    "`aspects` (primary: what needs covering) and "
+    "`semantic_retrieval_intent` (tiebreaker on near-adjacencies). "
+    "Skip spaces with no real coverage — do not enumerate all 7.\n"
+    "\n"
+    "This list IS the permitted commit set: `space_queries` below "
+    "pulls exclusively from spaces that appear here.\n"
+    "\n"
+    "TEST per candidate: 'if I dropped this candidate, would the "
+    "commit step lose a real routing option?' Yes → keep. No → drop.\n"
+    "\n"
+    "NEVER:\n"
+    "- DUPLICATE A SPACE across candidates.\n"
+    "- LIST A SPACE whose aspects_covered would be hand-waving "
+    "rather than substantively named."
+)
+
+
+_SEMANTIC_RETRIEVAL_INTENT_DESC = (
+    "What this endpoint specifically needs to be responsible for "
+    "fetching. Read off the prior reasoning fields above that split "
+    "up responsibilities across endpoints, capturing only the slice "
+    "of intent assigned to the semantic endpoint (free-form thematic, "
+    "tonal, experiential, narrative-craft, production, or "
+    "specific-aspect reception qualifiers — anything that lands in "
+    "the 7 vector spaces rather than a structured column or a "
+    "registry member). Leave categorical classification, structured "
+    "attributes, named entities, and awards to their respective "
+    "endpoints. Every field on this endpoint's `parameters` reads "
+    "from this intent rather than from any other upstream input."
+)
+
+
+# ---------------------------------------------------------------------------
+# CarverSemanticParametersSubintent — role == CARVER, no weights.
+# ---------------------------------------------------------------------------
+
+
+class CarverSemanticParametersSubintent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # `semantic_retrieval_intent` is declared on the parent
+    # CarverSemanticEndpointSubintentParameters wrapper — it is
+    # generated before this spec and every field below reads from it.
+
+    aspects: conlist(
+        constr(strip_whitespace=True, min_length=1), min_length=1
+    ) = Field(..., description=_ASPECTS_DESC_SUBINTENT)
+    space_candidates: conlist(SpaceCandidateSubintent, min_length=1) = Field(
+        ..., description=_SPACE_CANDIDATES_DESC_SUBINTENT
+    )
+    space_queries: conlist(SemanticSpaceEntry, min_length=1) = Field(
+        ...,
+        description=(
+            "Committed minimum set of LOAD-BEARING spaces to search. "
+            "Pull exclusively from `space_candidates`. Carver "
+            "execution sums elbow-normalized scores across active "
+            "spaces and divides by their count — every active space "
+            "gets equal vote, so adding a marginal space directly "
+            "dilutes the gate. Strict bar: only spaces whose signal "
+            "genuinely decides the trait.\n"
+            "\n"
+            "Fold every aspect a space owns (per its "
+            "SpaceCandidateSubintent.aspects_covered) into ONE entry's "
+            "content. Same-space duplicates merge server-side rather "
+            "than fail; emit cleanly when you can.\n"
+            "\n"
+            "TEST per entry: 'would dropping this space let a "
+            "clearly-wrong movie pass the trait?' Yes → keep. No → "
+            "drop.\n"
+            "\n"
+            "NEVER:\n"
+            "- COMMIT to a space absent from `space_candidates`.\n"
+            "- SPLIT one space's coverage across multiple entries.\n"
+            "- PAD with marginal spaces. Equal-vote scoring means "
+            "every extra space dilutes proportionally."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _drop_empty_and_merge_duplicates(self) -> "CarverSemanticParametersSubintent":
+        # Drop entries whose body produces no embedding text — a
+        # space with all-empty sub-fields contributes nothing but
+        # noise to the elbow-normalize step downstream.
+        kept = [e for e in self.space_queries if e.content.embedding_text().strip()]
+        if not kept:
+            raise ValueError(
+                "space_queries empty after dropping entries with no embedding text"
+            )
+
+        grouped: dict = {}
+        order: list = []
+        for entry in kept:
+            if entry.space not in grouped:
+                grouped[entry.space] = [entry]
+                order.append(entry.space)
+            else:
+                grouped[entry.space].append(entry)
+
+        if len(order) == len(kept):
+            self.space_queries = kept
+            return self
+
+        merged: list = []
+        for space in order:
+            entries = grouped[space]
+            if len(entries) == 1:
+                merged.append(entries[0])
+                continue
+            base = entries[0].model_copy()
+            base.content = _merge_bodies([e.content for e in entries])
+            merged.append(base)
+        self.space_queries = merged
+        return self
+
+
+# ---------------------------------------------------------------------------
+# QualifierSemanticParametersSubintent — role == QUALIFIER, weighted.
+# ---------------------------------------------------------------------------
+
+
+class QualifierSemanticParametersSubintent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # `semantic_retrieval_intent` is declared on the parent
+    # QualifierSemanticEndpointSubintentParameters wrapper — it is
+    # generated before this spec and every field below reads from it.
+
+    aspects: conlist(
+        constr(strip_whitespace=True, min_length=1), min_length=1
+    ) = Field(..., description=_ASPECTS_DESC_SUBINTENT)
+    space_candidates: conlist(SpaceCandidateSubintent, min_length=1) = Field(
+        ..., description=_SPACE_CANDIDATES_DESC_SUBINTENT
+    )
+    space_queries: conlist(WeightedSpaceQuerySubintent, min_length=1) = Field(
+        ...,
+        description=(
+            "Committed set of spaces to search, each with a per-space "
+            "weight. Each entry's `query.space` MUST appear in "
+            "`space_candidates` above; pull exclusively from that "
+            "list. Looser bar than the carver path: SUPPORTING weight "
+            "exists for spaces that round out the match without being "
+            "load-bearing. Drop the entry if signal is below "
+            "SUPPORTING.\n"
+            "\n"
+            "Fold every aspect a space owns (per its "
+            "SpaceCandidateSubintent.aspects_covered for that space) "
+            "into ONE entry's `query.content`; let the merge validator "
+            "catch accidental duplication. Executor takes a normalized "
+            "weighted sum — Σ(w·cos)/Σw — across these entries.\n"
+            "\n"
+            "Weight assignment is read off `semantic_retrieval_intent` "
+            "per the rule on `WeightedSpaceQuerySubintent.weight` — "
+            "see that field's description for the CENTRAL vs "
+            "SUPPORTING test.\n"
+            "\n"
+            "TEST per entry: 'is the signal real enough that omitting "
+            "this space would noticeably degrade the match?' Yes "
+            "(decisive) → CENTRAL. Yes (rounds out) → SUPPORTING. "
+            "No → drop.\n"
+            "\n"
+            "NEVER:\n"
+            "- COMMIT to a space absent from `space_candidates`.\n"
+            "- SPLIT one space's coverage across multiple entries.\n"
+            "- INCLUDE a space whose signal is below SUPPORTING."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _drop_empty_and_merge_duplicates(self) -> "QualifierSemanticParametersSubintent":
+        kept = [
+            wq for wq in self.space_queries
+            if wq.query.content.embedding_text().strip()
+        ]
+        if not kept:
+            raise ValueError(
+                "space_queries empty after dropping entries with no embedding text"
+            )
+
+        grouped: dict = {}
+        order: list = []
+        for wq in kept:
+            space = wq.query.space
+            if space not in grouped:
+                grouped[space] = [wq]
+                order.append(space)
+            else:
+                grouped[space].append(wq)
+
+        if len(order) == len(kept):
+            self.space_queries = kept
+            return self
+
+        merged: list = []
+        for space in order:
+            wqs = grouped[space]
+            if len(wqs) == 1:
+                merged.append(wqs[0])
+                continue
+            # Stronger weight wins on collision; bodies merge.
+            stronger = (
+                SpaceWeight.CENTRAL
+                if any(wq.weight == SpaceWeight.CENTRAL for wq in wqs)
+                else SpaceWeight.SUPPORTING
+            )
+            base_query = wqs[0].query.model_copy()
+            base_query.content = _merge_bodies([wq.query.content for wq in wqs])
+            merged.append(WeightedSpaceQuerySubintent(weight=stronger, query=base_query))
+        self.space_queries = merged
+        return self
+
+
+class CarverSemanticEndpointSubintentParameters(EndpointParameters):
+    semantic_retrieval_intent: constr(
+        strip_whitespace=True, min_length=1
+    ) = Field(..., description=_SEMANTIC_RETRIEVAL_INTENT_DESC)
+    parameters: CarverSemanticParametersSubintent = Field(
+        ...,
+        description=(
+            "Carver semantic payload, sourced from "
+            "`semantic_retrieval_intent` rather than from the raw call "
+            "inputs."
+        ),
+    )
+
+
+class QualifierSemanticEndpointSubintentParameters(EndpointParameters):
+    semantic_retrieval_intent: constr(
+        strip_whitespace=True, min_length=1
+    ) = Field(..., description=_SEMANTIC_RETRIEVAL_INTENT_DESC)
+    parameters: QualifierSemanticParametersSubintent = Field(
+        ...,
+        description=(
+            "Qualifier semantic payload, sourced from "
+            "`semantic_retrieval_intent` rather than from the raw call "
+            "inputs."
+        ),
+    )
