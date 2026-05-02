@@ -1,8 +1,8 @@
 # Search V2 — Stage 3 Semantic Endpoint: Query Execution
 #
-# Single-trait per call. The single `params` argument is a discriminated
-# union of CarverSemanticParameters | QualifierSemanticParameters; the
-# executor branches on isinstance.
+# Single-trait per call. The caller passes the parent trait role
+# explicitly, and `params` must be one of that role's matching semantic
+# parameter shapes (base or subintent).
 #
 # Carver scoring (per spec):
 #   1) Per active space: detect elbow via EWMA + Kneedle + pathology
@@ -18,20 +18,12 @@
 # CENTRAL=2.0, SUPPORTING=1.0. No elbow calibration (the score is the
 # qualifier endpoint's contribution to the global merge).
 #
-# Two scenarios per role, driven by restrict_to_movie_ids:
-#   None      → candidate-generating. Pool is the union of per-space
-#               top-N corpus probes. Carver: no fill (a candidate
-#               outside one space's top-N gets 0 for that space —
-#               clearing the elbow without being in top-N is
-#               implausible; cf. user spec). Qualifier: fill missing
-#               per-space cosines via HasId so the weighted sum is
-#               honest across the union.
-#   set[int]  → score that exact pool. Carver still runs the corpus
-#               probe per space for elbow calibration; per-space
-#               cosines for the pool come from HasId. Qualifier runs
-#               only HasId per space.
-#   set()     → short-circuit; return EndpointResult() with no Qdrant
-#               traffic.
+# Role and restriction mode are a boundary contract:
+#   carver    → restrict_to_movie_ids must be None; candidate-generating
+#               path uses the union of per-space top-N corpus probes.
+#   qualifier → restrict_to_movie_ids must be supplied; scores exactly
+#               that candidate pool. set() short-circuits without
+#               Qdrant traffic because there are no candidates to score.
 #
 # Polarity is NOT consulted here (orchestrator concern). Retry contract
 # matches sibling executors: one transient retry, then return an empty
@@ -53,6 +45,7 @@ from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
 from implementation.classes.enums import VectorName
 from implementation.llms.generic_methods import generate_vector_embedding
 from schemas.endpoint_result import EndpointResult
+from schemas.enums import Role
 from schemas.semantic_bodies import (
     NarrativeTechniquesBody,
     PlotAnalysisBody,
@@ -64,7 +57,9 @@ from schemas.semantic_bodies import (
 )
 from schemas.semantic_translation import (
     CarverSemanticParameters,
+    CarverSemanticParametersSubintent,
     QualifierSemanticParameters,
+    QualifierSemanticParametersSubintent,
     SemanticSpaceEntry,
     SpaceWeight,
     WeightedSpaceQuery,
@@ -75,6 +70,12 @@ from search_v2.endpoint_fetching.result_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+CarverSemanticParams = CarverSemanticParameters | CarverSemanticParametersSubintent
+QualifierSemanticParams = (
+    QualifierSemanticParameters | QualifierSemanticParametersSubintent
+)
+SemanticParams = CarverSemanticParams | QualifierSemanticParams
 
 
 # ---------------------------------------------------------------------------
@@ -573,22 +574,23 @@ async def _execute_qualifier_p2(
 
 
 async def execute_semantic_query(
-    params: CarverSemanticParameters | QualifierSemanticParameters,
+    params: SemanticParams,
     *,
+    role: Role,
     restrict_to_movie_ids: set[int] | None = None,
     qdrant_client: AsyncQdrantClient,
 ) -> EndpointResult:
     """Execute a semantic payload and return scored candidates.
 
-    `params` is the discriminator: an instance of
-    CarverSemanticParameters runs the carver path (elbow + linear-
-    decay + sum/N + [0.5, 1] compression); an instance of
-    QualifierSemanticParameters runs the weighted-sum cosine path.
+    `role` is the discriminator. It must agree with the params family:
+    carver role accepts CarverSemanticParameters or its subintent
+    variant, and qualifier role accepts QualifierSemanticParameters or
+    its subintent variant.
 
-    `restrict_to_movie_ids` chooses scenario:
-      None     → candidate-generating (union of per-space top-N).
-      set[int] → score that pool exactly.
-      set()    → short-circuit; return EndpointResult().
+    Role also determines restriction mode:
+      carver    → restrict_to_movie_ids must be None.
+      qualifier → restrict_to_movie_ids must be supplied; set()
+                  short-circuits to an empty result.
 
     Polarity is NOT consulted here — both positive and negative
     findings return the same EndpointResult shape; the orchestrator
@@ -596,59 +598,69 @@ async def execute_semantic_query(
     preference/downrank buckets per role.
 
     Retry contract: one transient retry, then EndpointResult() rather
-    than raising. Non-retryable errors (TypeError on a bad params
-    type) escape the retry loop deliberately — those are contract
-    violations, not transient I/O.
+    than raising. Contract violations raise AssertionError before the
+    retry loop — they are programmer errors, not transient I/O.
     """
-    # Validate params type up-front. A bogus type is a programmer
-    # error, not transient I/O — must not ride the retry/empty-result
-    # path or it gets laundered into a silent miss.
-    if isinstance(params, CarverSemanticParameters):
+    if role is Role.CARVER:
+        if not isinstance(
+            params, (CarverSemanticParameters, CarverSemanticParametersSubintent)
+        ):
+            raise AssertionError(
+                f"Semantic carver execution received unexpected params type: "
+                f"{type(params).__name__}"
+            )
+        if restrict_to_movie_ids is not None:
+            raise AssertionError(
+                "Semantic carver execution must not receive "
+                "restrict_to_movie_ids."
+            )
         is_carver = True
         log_context = (
             f"role=carver, spaces="
             f"{[e.space.value for e in params.space_queries]}"
         )
-    elif isinstance(params, QualifierSemanticParameters):
+
+    elif role is Role.QUALIFIER:
+        if not isinstance(
+            params,
+            (QualifierSemanticParameters, QualifierSemanticParametersSubintent),
+        ):
+            raise AssertionError(
+                f"Semantic qualifier execution received unexpected params type: "
+                f"{type(params).__name__}"
+            )
+        if restrict_to_movie_ids is None:
+            raise AssertionError(
+                "Semantic qualifier execution requires restrict_to_movie_ids."
+            )
         is_carver = False
         log_context = (
             f"role=qualifier, spaces="
             f"{[wq.query.space.value for wq in params.space_queries]}"
         )
+
     else:
-        raise TypeError(
-            f"Unsupported semantic params type: {type(params).__name__}"
+        raise AssertionError(
+            f"Unsupported semantic role: {role!r}"
         )
 
-    # Empty supplied pool: nothing to score, no Qdrant traffic.
-    if restrict_to_movie_ids is not None and len(restrict_to_movie_ids) == 0:
+    # Empty qualifier pool: nothing to score, no Qdrant traffic.
+    if len(restrict_to_movie_ids or set()) == 0 and role is Role.QUALIFIER:
         return EndpointResult()
 
     scores: dict[int, float] = {}
     for attempt in range(2):
         try:
             if is_carver:
-                if restrict_to_movie_ids is not None:
-                    scores = await _execute_carver_d1(
-                        params,
-                        restrict_to_movie_ids,
-                        qdrant_client=qdrant_client,
-                    )
-                else:
-                    scores = await _execute_carver_d2(
-                        params, qdrant_client=qdrant_client
-                    )
+                scores = await _execute_carver_d2(
+                    params, qdrant_client=qdrant_client
+                )
             else:
-                if restrict_to_movie_ids is not None:
-                    scores = await _execute_qualifier_p1(
-                        params,
-                        restrict_to_movie_ids,
-                        qdrant_client=qdrant_client,
-                    )
-                else:
-                    scores = await _execute_qualifier_p2(
-                        params, qdrant_client=qdrant_client
-                    )
+                scores = await _execute_qualifier_p1(
+                    params,
+                    restrict_to_movie_ids,
+                    qdrant_client=qdrant_client,
+                )
             break
         except Exception:
             if attempt == 0:

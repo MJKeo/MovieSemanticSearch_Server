@@ -23,7 +23,7 @@
 # Schemas are eagerly built at module import so any misconfiguration
 # (missing wrapper, invalid field name, JSON-schema size issue) fails
 # loudly at startup instead of on first request. Access via
-# get_output_schema(category).
+# get_output_schema(category, role).
 #
 # See search_improvement_planning/query_buckets.md for the bucket
 # taxonomy and per-bucket reasoning shape.

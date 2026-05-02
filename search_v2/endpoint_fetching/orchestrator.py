@@ -1,8 +1,8 @@
 # Stage-3 orchestrator.
 #
-# Top of the step-3 stack. Takes the Step-2 response, fans out one
-# run_handler call per non-NO_FIT coverage_evidence atom in parallel
-# with run_implicit_expectations, consolidates the four-bucket
+# Top of the endpoint-fetching stack. Takes committed Step-2 traits
+# plus their Step-3 TraitDecomposition outputs, fans out one
+# run_handler call per CategoryCall, consolidates the four-bucket
 # HandlerResults, decides a candidate-pool path, runs deferred
 # preferences against the pool, and produces a final ranked list with
 # per-movie score breakdowns.
@@ -21,9 +21,9 @@
 # Exclusion is applied after pool selection in every path. Implicit
 # priors apply to every non-empty pool, including the fallbacks.
 #
-# Soft-fail throughout: a single handler / implicit / preference
-# failure must never tank the whole orchestration. Failures surface
-# as empty HandlerResults / None implicit / zero-score preferences.
+# Soft-fail throughout: a single handler / preference failure must
+# never tank the whole orchestration. Failures surface as empty
+# HandlerResults / zero-score preferences.
 
 from __future__ import annotations
 
@@ -41,10 +41,10 @@ from db.postgres import (
 from db.reranking import normalize_reception
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import FitQuality
+from schemas.enums import Role
 from schemas.implicit_expectations import ImplicitExpectationsResult
-from schemas.step_2 import Step2Response
-from search_v2.implicit_expectations import run_implicit_expectations
+from schemas.step_2 import QueryAnalysis, Trait
+from schemas.step_3 import CategoryCall, TraitDecomposition
 from search_v2.endpoint_fetching.category_handlers.handler import run_handler
 from search_v2.endpoint_fetching.category_handlers.handler_result import HandlerResult
 from search_v2.endpoint_fetching.endpoint_executors import (
@@ -130,7 +130,8 @@ class Stage3Result:
 
 async def run_stage_3(
     raw_query: str,
-    step_2_response: Step2Response,
+    query_analysis: QueryAnalysis,
+    trait_decompositions: list[TraitDecomposition],
     *,
     qdrant_client: AsyncQdrantClient,
     top_k: int = DEFAULT_TOP_K,
@@ -139,16 +140,22 @@ async def run_stage_3(
 
     Returns a Stage3Result with the top_k ranked movie_ids and a
     per-movie ScoreBreakdown. Never raises: every failure mode
-    inside the orchestrator (handler errors, implicit-expectations
-    failure, preference timeouts, empty pool) surfaces as either an
-    empty result or a degraded one with the relevant signal absent.
+    inside the orchestrator (handler errors, preference timeouts,
+    empty pool) surfaces as either an empty result or a degraded one
+    with the relevant signal absent.
     """
-    # --- Phase 0: fan-out handlers + implicit_expectations in parallel ---
-    handler_results, implicit_result = await _fan_out(
-        raw_query=raw_query,
-        step_2_response=step_2_response,
+    # `raw_query` is kept in the public signature for call-site
+    # continuity and future diagnostics. The current endpoint-fetching
+    # layer consumes only committed traits and category calls.
+    _ = raw_query
+
+    # --- Phase 0: fan-out category handlers in parallel -----------------
+    handler_results = await _fan_out(
+        query_analysis=query_analysis,
+        trait_decompositions=trait_decompositions,
         qdrant_client=qdrant_client,
     )
+    implicit_result = None
 
     # --- Phase 1: consolidate the four buckets across handlers ----------
     (
@@ -236,102 +243,61 @@ async def run_stage_3(
 
 async def _fan_out(
     *,
-    raw_query: str,
-    step_2_response: Step2Response,
+    query_analysis: QueryAnalysis,
+    trait_decompositions: list[TraitDecomposition],
     qdrant_client: AsyncQdrantClient,
-) -> tuple[list[HandlerResult], ImplicitExpectationsResult | None]:
-    """Fire one run_handler per non-NO_FIT atom + run_implicit_expectations.
+) -> list[HandlerResult]:
+    """Fire one run_handler per Step-3 CategoryCall.
 
     All calls run in a single asyncio.gather with return_exceptions=
-    True. Handler failures land as empty HandlerResult; implicit
-    failure lands as None so the orchestrator treats both priors as
-    inactive.
+    True. Handler failures land as empty HandlerResult.
     """
-    requirements = step_2_response.requirements
-    intent = step_2_response.overall_query_intention_exploration
+    if len(query_analysis.traits) != len(trait_decompositions):
+        raise ValueError(
+            "run_stage_3 requires one TraitDecomposition per committed "
+            f"Trait, in order. Got {len(query_analysis.traits)} traits "
+            f"and {len(trait_decompositions)} decompositions."
+        )
 
-    # Collect (parent_fragment, target_entry) pairs for every
-    # category-bound atom worth dispatching. NO_FIT atoms are filtered
-    # here too — handler.py defends against them, but skipping
-    # upstream avoids the wasted fan-out slot.
-    handler_specs = []
-    for parent in requirements:
-        siblings = [r for r in requirements if r is not parent]
-        for entry in parent.coverage_evidence:
-            if entry.fit_quality == FitQuality.NO_FIT:
-                continue
-            handler_specs.append((parent, siblings, entry))
+    # Collect (trait, category_call) pairs for every category-bound
+    # endpoint translation the Step-3 decomposition committed.
+    handler_specs: list[tuple[Trait, CategoryCall]] = []
+    for trait, decomposition in zip(
+        query_analysis.traits, trait_decompositions, strict=True
+    ):
+        for category_call in decomposition.category_calls:
+            handler_specs.append((trait, category_call))
 
     handler_coros = [
         run_handler(
-            category=entry.category_name,
-            target_entry=entry,
-            raw_query=raw_query,
-            overall_query_intention_exploration=intent,
-            parent_fragment=parent,
-            sibling_fragments=siblings,
+            category_call=category_call,
+            trait=trait,
             qdrant_client=qdrant_client,
         )
-        for (parent, siblings, entry) in handler_specs
+        for trait, category_call in handler_specs
     ]
 
-    # run_implicit_expectations returns a 4-tuple
-    # (response, input_tokens, output_tokens, elapsed). We only need
-    # the response object here — wrap the call so gather sees a
-    # single awaitable.
-    async def _run_implicit():
-        try:
-            response, _in, _out, _elapsed = await run_implicit_expectations(
-                raw_query, step_2_response
-            )
-            return response
-        except Exception as exc:  # noqa: BLE001 — soft-fail by design
-            logger.warning(
-                "implicit_expectations failed; both priors inactive (%r)",
-                exc,
-            )
-            return None
-
-    # Position the implicit slot last so handler_results stays
-    # aligned with handler_specs after we strip exceptions.
-    outcomes = await asyncio.gather(
-        *handler_coros, _run_implicit(), return_exceptions=True
-    )
-
-    *handler_outcomes, implicit_outcome = outcomes
+    outcomes = await asyncio.gather(*handler_coros, return_exceptions=True)
 
     handler_results: list[HandlerResult] = []
-    for outcome, (parent, _siblings, entry) in zip(
-        handler_outcomes, handler_specs
-    ):
+    for outcome, (trait, category_call) in zip(outcomes, handler_specs):
         if isinstance(outcome, BaseException):
             logger.warning(
                 "handler raised; substituting empty HandlerResult "
-                "(category=%s, fragment=%r, error=%r)",
-                entry.category_name.name,
-                parent.query_text,
+                "(category=%s, trait=%r, error=%r)",
+                category_call.category.name,
+                trait.surface_text,
                 outcome,
             )
             # Preserve the category on the soft-fail substitute so
             # downstream introspection (notebook display, debug
             # tooling) can still attribute the empty result to the
             # right category.
-            handler_results.append(HandlerResult(category=entry.category_name))
+            handler_results.append(HandlerResult(category=category_call.category))
         else:
             handler_results.append(outcome)
 
-    if isinstance(implicit_outcome, BaseException):
-        # _run_implicit already swallows exceptions internally, so
-        # reaching here would be a programmer error in the wrapper.
-        logger.warning(
-            "implicit wrapper escaped (%r); both priors inactive",
-            implicit_outcome,
-        )
-        implicit_result = None
-    else:
-        implicit_result = implicit_outcome
-
-    return handler_results, implicit_result
+    return handler_results
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +394,7 @@ async def _run_preferences_as_candidates(
             build_endpoint_coroutine(
                 route_for_wrapper(spec),
                 spec,
+                role=Role.QUALIFIER,
                 qdrant_client=qdrant_client,
                 restrict_to_movie_ids=None,
             ),
@@ -480,6 +447,7 @@ async def _run_deferred_preferences(
             build_endpoint_coroutine(
                 route_for_wrapper(spec),
                 spec,
+                role=Role.QUALIFIER,
                 qdrant_client=qdrant_client,
                 restrict_to_movie_ids=pool,
             ),

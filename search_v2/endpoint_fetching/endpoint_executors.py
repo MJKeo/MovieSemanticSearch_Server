@@ -25,14 +25,17 @@ from schemas.entity_translation import (
     PersonQuerySpec,
     TitlePatternQuerySpec,
 )
-from schemas.enums import EndpointRoute
+from schemas.enums import EndpointRoute, Role
 from schemas.semantic_translation import (
     CarverSemanticEndpointParameters,
+    CarverSemanticEndpointSubintentParameters,
     QualifierSemanticEndpointParameters,
+    QualifierSemanticEndpointSubintentParameters,
 )
 from search_v2.endpoint_fetching.award_query_execution import execute_award_query
 from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
     ROUTE_TO_WRAPPER,
+    ROUTE_TO_SUBINTENT_WRAPPER,
 )
 from search_v2.endpoint_fetching.entity_query_execution import execute_entity_query
 from search_v2.endpoint_fetching.franchise_query_execution import execute_franchise_query
@@ -47,10 +50,15 @@ def build_endpoint_coroutine(
     route: EndpointRoute,
     wrapper: EndpointParameters,
     *,
+    role: Role | None,
     qdrant_client: AsyncQdrantClient,
     restrict_to_movie_ids: set[int] | None,
 ) -> Coroutine[Any, Any, EndpointResult]:
     """Build the awaitable that runs `wrapper`'s endpoint executor.
+
+    `role` is required only for SEMANTIC because semantic execution
+    branches between carver and qualifier scoring at runtime while
+    the endpoint wrapper no longer stores role / polarity fields.
 
     `restrict_to_movie_ids` is forwarded to the executor verbatim:
     None means "search the full corpus" (handler-time candidate
@@ -94,17 +102,24 @@ def build_endpoint_coroutine(
             params, restrict_to_movie_ids=restrict_to_movie_ids
         )
     if route == EndpointRoute.SEMANTIC:
-        # Semantic executor branches on role internally — pass
-        # the wrapper's role through and let it pick between
-        # the primary_vector-only CARVER path and the all-spaces
-        # QUALIFIER path.
+        # Semantic executor branches on role internally — pass the
+        # parent Trait's role through and let it pick between the
+        # primary_vector-only CARVER path and the all-spaces QUALIFIER
+        # path.
         assert isinstance(
             wrapper,
-            (CarverSemanticEndpointParameters, QualifierSemanticEndpointParameters),
+            (
+                CarverSemanticEndpointParameters,
+                QualifierSemanticEndpointParameters,
+                CarverSemanticEndpointSubintentParameters,
+                QualifierSemanticEndpointSubintentParameters,
+            ),
         )
+        if role is None:
+            raise ValueError("SEMANTIC execution requires an explicit role.")
         return execute_semantic_query(
             params,
-            role=wrapper.role,
+            role=role,
             restrict_to_movie_ids=restrict_to_movie_ids,
             qdrant_client=qdrant_client,
         )
@@ -129,9 +144,18 @@ _WRAPPER_TO_ROUTE: dict[type[EndpointParameters], EndpointRoute] = {
     if wrapper_cls is not None
 }
 _WRAPPER_TO_ROUTE.update({
+    wrapper_cls: route
+    for route, wrapper_cls in ROUTE_TO_SUBINTENT_WRAPPER.items()
+    if wrapper_cls is not None
+})
+_WRAPPER_TO_ROUTE.update({
     PersonQuerySpec: EndpointRoute.ENTITY,
     CharacterQuerySpec: EndpointRoute.ENTITY,
     TitlePatternQuerySpec: EndpointRoute.ENTITY,
+    CarverSemanticEndpointParameters: EndpointRoute.SEMANTIC,
+    QualifierSemanticEndpointParameters: EndpointRoute.SEMANTIC,
+    CarverSemanticEndpointSubintentParameters: EndpointRoute.SEMANTIC,
+    QualifierSemanticEndpointSubintentParameters: EndpointRoute.SEMANTIC,
 })
 
 

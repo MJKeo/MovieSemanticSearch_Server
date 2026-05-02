@@ -2,22 +2,19 @@
 # (CategoryCall, Trait) pair.
 #
 # Responsibilities:
-#   1. Short-circuit TRENDING and MEDIA_TYPE to deterministic
-#      codepaths (no LLM).
+#   1. Short-circuit no-LLM buckets: deterministic categories run
+#      their codepaths, explicit no-op categories return empty.
 #   2. Build the per-category system prompt + user message from the
 #      CategoryCall (retrieval_intent + expressions are the entire
 #      LLM input), call the handler LLM with the per-category output
 #      schema, retry once on failure.
 #   3. Extract fired (route, EndpointParameters) pairs from the LLM
-#      output, bucketed by the category's handler shape
-#      (SINGLE / MUTEX / TIERED / COMBO).
-#   4. Stamp role and polarity onto each fired wrapper from the
-#      parent Trait's pre-committed values. The LLM does not infer
-#      these — they are upstream commitments.
-#   5. Classify each fired wrapper by (role, polarity) into one of
+#      output, bucketed by the category's handler shape.
+#   4. Classify each fired wrapper by the parent Trait's committed
+#      role/polarity into one of
 #      the four return buckets, executing non-preference endpoints
 #      in parallel and deferring preference specs as-is.
-#   6. Consolidate scores additively across endpoints inside
+#   5. Consolidate scores additively across endpoints inside
 #      inclusion_candidates / downrank_candidates and unify tmdb_ids
 #      inside exclusion_ids.
 #
@@ -44,17 +41,28 @@ from implementation.llms.generic_methods import (
 )
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
+from schemas.entity_translation import (
+    CharacterProminenceMode,
+    CharacterQuerySpec,
+    CharacterTarget,
+)
 from schemas.enums import (
     EndpointRoute,
     HandlerBucket,
     Polarity,
     Role,
 )
+from schemas.franchise_translation import (
+    FranchiseEndpointParameters,
+    FranchiseQuerySpec,
+)
 from schemas.media_type_translation import MediaTypeEndpointParameters
 from schemas.trait_category import CategoryName
 from schemas.semantic_translation import (
     CarverSemanticEndpointParameters,
+    CarverSemanticEndpointSubintentParameters,
     QualifierSemanticEndpointParameters,
+    QualifierSemanticEndpointSubintentParameters,
 )
 from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall
@@ -98,40 +106,46 @@ async def run_handler(
 
     The CategoryCall supplies the routing (``category``) and the LLM
     inputs (``retrieval_intent`` + ``expressions``). The Trait
-    supplies the pre-committed ``role`` and ``polarity`` that get
-    stamped onto every fired wrapper — the LLM does not infer either.
-    Salience is intentionally not read; it only affects cross-trait
-    reranking, which is out of scope for this stage.
+    supplies the pre-committed ``role`` and ``polarity`` used for
+    runtime bucketing. The LLM does not infer either. Salience is
+    intentionally not read; it only affects cross-trait reranking,
+    which is out of scope for this stage.
 
-    Never raises. LLM double-failures and per-endpoint execution
-    failures are soft-failed to empty buckets so a single bad handler
-    cannot tank the whole query.
+    LLM double-failures and per-endpoint execution failures are
+    soft-failed to empty buckets so a single bad handler cannot tank
+    the whole query. Configuration / programmer errors still raise.
     """
     category = category_call.category
 
-    # Step 0a — TRENDING short-circuit. TRENDING has no LLM codepath
-    # and the only SINGLE-bucket category that resolves to it is cat 9.
-    if category == CategoryName.TRENDING:
-        result = await _run_trending()
-        result.category = category
-        return result
+    # Step 0a — explicit no-op. These categories are valid routing
+    # sinks but have no backing endpoint yet, so they intentionally
+    # produce no candidates rather than reaching prompt/schema lookup.
+    if category.bucket is HandlerBucket.EXPLICIT_NO_OP:
+        return HandlerResult(category=category)
 
-    # Step 0a.2 — MEDIA_TYPE short-circuit. MEDIA_TYPE is routed
-    # deterministically by code (matching Step-3 expressions against
-    # the ReleaseFormat enum) rather than through the LLM handler.
-    # Reaching the LLM codepath would crash because MEDIA_TYPE is in
-    # prompt_builder._ENDPOINT_PROMPTLESS and the MEDIA_TYPE category
-    # routes only to the MEDIA_TYPE endpoint, tripping the "no
-    # LLM-wrapper endpoints" raise in build_system_prompt.
-    if category == CategoryName.MEDIA_TYPE:
-        result = await _run_media_type(category_call, trait, qdrant_client)
-        result.category = category
-        return result
+    # Step 0b — deterministic no-LLM codepaths. Keep this bucket-level
+    # guard explicit so any future no-LLM category must register a
+    # deterministic handler here rather than accidentally falling into
+    # the prompt builder.
+    if category.bucket is HandlerBucket.NO_LLM_PURE_CODE:
+        if category is CategoryName.TRENDING:
+            result = await _run_trending()
+            result.category = category
+            return result
+        if category is CategoryName.MEDIA_TYPE:
+            result = await _run_media_type(category_call, trait, qdrant_client)
+            result.category = category
+            return result
+        raise ValueError(
+            f"Unhandled no-LLM category: CategoryName.{category.name}. "
+            f"Add a deterministic handler before routing this category."
+        )
 
     # Step 1 — build prompt + run LLM with a single retry.
     output = await _run_handler_llm(
         category=category,
         category_call=category_call,
+        role=trait.role,
     )
     if output is None:
         return HandlerResult(category=category)
@@ -143,15 +157,14 @@ async def run_handler(
     if not fired:
         return HandlerResult(category=category)
 
-    # Step 3 — stamp the trait's pre-committed role/polarity onto
-    # each fired wrapper. The LLM emits the rest of the parameters;
-    # role and polarity are upstream commitments.
-    fired = _stamp_role_and_polarity(fired, trait)
-
-    # Steps 4-6 — classify, execute in parallel, consolidate. The
+    # Steps 3-5 — classify, execute in parallel, consolidate. The
     # final result also carries the category and the full fired
     # list (including preferences) for notebook / debug inspection.
-    result = await _assemble_result(fired, qdrant_client=qdrant_client)
+    result = await _assemble_result(
+        fired,
+        trait=trait,
+        qdrant_client=qdrant_client,
+    )
     result.category = category
     result.fired_endpoints = list(fired)
     return result
@@ -196,12 +209,14 @@ async def _run_media_type(
         return HandlerResult()
 
     wrapper = MediaTypeEndpointParameters(
-        role=trait.role,
         parameters=spec,
-        polarity=trait.polarity,
     )
     fired = [(EndpointRoute.MEDIA_TYPE, wrapper)]
-    result = await _assemble_result(fired, qdrant_client=qdrant_client)
+    result = await _assemble_result(
+        fired,
+        trait=trait,
+        qdrant_client=qdrant_client,
+    )
     result.fired_endpoints = list(fired)
     return result
 
@@ -215,12 +230,13 @@ async def _run_handler_llm(
     *,
     category: CategoryName,
     category_call: CategoryCall,
+    role: Role,
 ) -> BaseModel | None:
     # Prompt build is cheap and deterministic — do it outside the retry
     # loop so a retry only re-attempts the network call.
     system_prompt = build_system_prompt(category)
     user_message = build_user_message(category_call)
-    response_format = get_output_schema(category)
+    response_format = get_output_schema(category, role)
 
     # Single retry covers transient failures: provider errors, timeout,
     # invalid structured output. Second failure returns None so the
@@ -320,16 +336,18 @@ def _extract_fired_endpoints(
         return fired
 
     if bucket is HandlerBucket.CHARACTER_FRANCHISE_FANOUT:
-        # The fanout schema emits character_forms / franchise_forms
-        # rather than per-endpoint parameter payloads, and a single
-        # named referent is meant to drive both the ENTITY and
-        # FRANCHISE_STRUCTURE retrievals. Translating the form lists
-        # into the right per-endpoint payloads requires a custom
-        # execution path that does not yet exist in this handler.
-        raise NotImplementedError(
-            f"Handler dispatch for {bucket.value!r} not implemented; "
-            f"the fanout schema requires a custom execution path."
-        )
+        # The fanout schema (CharacterFranchiseFanoutSchema) carries
+        # one shared referent identification plus two parallel form
+        # lists rather than per-route parameter wrappers — the bucket's
+        # design intent is "identify the referent once, fan out to two
+        # retrievals." Translate each non-empty form list into the
+        # ordinary per-endpoint payload the rest of the pipeline
+        # consumes, then let the standard classify/execute/consolidate
+        # path handle scoring exactly as it does for any other multi-
+        # route bucket. Either form list may be empty (the LLM judged
+        # that path not applicable for this referent); both empty is a
+        # valid zero-fired outcome.
+        return _fanout_to_fired_endpoints(output)
 
     # NO_LLM_PURE_CODE / EXPLICIT_NO_OP buckets do not invoke the
     # handler LLM and therefore should never reach extraction. Any
@@ -337,35 +355,76 @@ def _extract_fired_endpoints(
     raise ValueError(f"Unhandled handler bucket: {bucket!r}")
 
 
-# ---------------------------------------------------------------------------
-# Step 3 — stamp role + polarity from the parent Trait
-# ---------------------------------------------------------------------------
+# Stub strings for the per-target / per-spec exploration prose that
+# CharacterQuerySpec and FranchiseQuerySpec require. The fanout schema
+# replaces those LLM-authored reasoning slots with a single shared
+# `referent_form_exploration`, so when we synthesize the downstream
+# specs the only thing we have to fill the remaining exploration slots
+# is the same referent prose (used for query_exploration /
+# character_exploration / request_overview) plus a fixed sentinel for
+# prominence_exploration (the fanout schema does not commit a
+# centrality reading — DEFAULT prominence is the safe fallback).
+# Executors do not read these strings; they exist purely as LLM
+# scaffolding on the spec models, so stubs preserve schema validity
+# without affecting retrieval behavior.
+_FANOUT_PROMINENCE_EXPLORATION_STUB = (
+    "no centrality signal — fanout retrieval does not commit a "
+    "separate prominence reading."
+)
 
 
-def _stamp_role_and_polarity(
-    fired: list[tuple[EndpointRoute, EndpointParameters]],
-    trait: Trait,
+def _fanout_to_fired_endpoints(
+    output: BaseModel,
 ) -> list[tuple[EndpointRoute, EndpointParameters]]:
-    # Overwrite whatever role / polarity the LLM emitted with the
-    # Trait's committed values. Trait.role and Trait.polarity share
-    # the wrapper's enum types, so the assignment is direct — no
-    # vocabulary mapping needed. Pydantic model_copy returns a new
-    # wrapper rather than mutating in place, so the LLM-emitted
-    # objects stay untouched (useful when fired_endpoints is exposed
-    # for debug inspection).
-    return [
-        (
-            route,
-            wrapper.model_copy(
-                update={"role": trait.role, "polarity": trait.polarity}
+    # Adapter for HandlerBucket.CHARACTER_FRANCHISE_FANOUT. Reads the
+    # shared CharacterFranchiseFanoutSchema and emits up to two ordinary
+    # (route, wrapper) pairs so the caller can hand them to the same
+    # classify / execute / consolidate path every other multi-route
+    # bucket uses. See the call site in _extract_fired_endpoints for
+    # rationale.
+    referent: str = output.referent_form_exploration
+    fired: list[tuple[EndpointRoute, EndpointParameters]] = []
+
+    # Character path — collapses every variant into a single target
+    # because the fanout schema treats the referent as one entity. Were
+    # multiple distinct characters meant, the routing layer would have
+    # produced multiple traits / category calls upstream rather than one
+    # shared form list here.
+    character_forms = list(output.character_forms)
+    if character_forms:
+        character_spec = CharacterQuerySpec(
+            query_exploration=referent,
+            targets=[
+                CharacterTarget(
+                    character_exploration=referent,
+                    forms=character_forms,
+                    prominence_exploration=_FANOUT_PROMINENCE_EXPLORATION_STUB,
+                    prominence_mode=CharacterProminenceMode.DEFAULT,
+                )
+            ],
+        )
+        fired.append((EndpointRoute.ENTITY, character_spec))
+
+    # Franchise path — the franchise endpoint is name-axis-driven for
+    # the fanout case. lineage_position / structural_flags / launch_
+    # scope / prefer_lineage are deliberately left unset; the fanout
+    # schema commits no narrative-position or structural reading, so
+    # franchise_names alone is the correct projection.
+    franchise_forms = list(output.franchise_forms)
+    if franchise_forms:
+        franchise_wrapper = FranchiseEndpointParameters(
+            parameters=FranchiseQuerySpec(
+                request_overview=referent,
+                franchise_names=franchise_forms,
             ),
         )
-        for route, wrapper in fired
-    ]
+        fired.append((EndpointRoute.FRANCHISE_STRUCTURE, franchise_wrapper))
+
+    return fired
 
 
 # ---------------------------------------------------------------------------
-# Steps 4-6 — classify, execute, consolidate
+# Steps 3-5 — classify, execute, consolidate
 # ---------------------------------------------------------------------------
 
 
@@ -380,17 +439,20 @@ _EXCLUSION = "exclusion_ids"
 async def _assemble_result(
     fired: list[tuple[EndpointRoute, EndpointParameters]],
     *,
+    trait: Trait,
     qdrant_client: AsyncQdrantClient,
 ) -> HandlerResult:
     result = HandlerResult()
     execution_plans: list[tuple[EndpointRoute, str]] = []
     coroutines: list[Coroutine[Any, Any, EndpointResult]] = []
 
-    # Step 3 — classify each fired wrapper into a target bucket. Trait
-    # positives are deferred (no execution), everything else goes into
+    # Step 3 — classify each fired wrapper into a target bucket. Role
+    # and polarity come from the parent Trait, not the endpoint
+    # wrapper. Qualifier positives are deferred (no execution),
+    # everything else goes into
     # the parallel execution batch.
     for route, wrapper in fired:
-        target_bucket = _classify_wrapper(wrapper)
+        target_bucket = _classify_wrapper(wrapper, trait)
 
         if target_bucket is None:
             # TRAIT + POSITIVE → preference spec, deferred to the
@@ -406,6 +468,7 @@ async def _assemble_result(
                 build_endpoint_coroutine(
                     route,
                     wrapper,
+                    role=trait.role,
                     qdrant_client=qdrant_client,
                     restrict_to_movie_ids=None,
                 ),
@@ -439,7 +502,7 @@ async def _assemble_result(
     return result
 
 
-def _classify_wrapper(wrapper: EndpointParameters) -> str | None:
+def _classify_wrapper(wrapper: EndpointParameters, trait: Trait) -> str | None:
     # Returns the target-bucket tag for a fired wrapper, or None when
     # the wrapper should be deferred as a preference spec (not executed
     # in-handler).
@@ -454,15 +517,20 @@ def _classify_wrapper(wrapper: EndpointParameters) -> str | None:
     # exclude. Similarity scores are soft by nature, so a "not scary"
     # match is a gradient downrank, not a crisp set removal. Route it
     # to downrank_candidates instead.
-    role = wrapper.role
-    polarity = wrapper.polarity
+    role = trait.role
+    polarity = trait.polarity
 
     if role == Role.CARVER and polarity == Polarity.POSITIVE:
         return _INCLUSION
     if role == Role.CARVER and polarity == Polarity.NEGATIVE:
         if isinstance(
             wrapper,
-            (CarverSemanticEndpointParameters, QualifierSemanticEndpointParameters),
+            (
+                CarverSemanticEndpointParameters,
+                QualifierSemanticEndpointParameters,
+                CarverSemanticEndpointSubintentParameters,
+                QualifierSemanticEndpointSubintentParameters,
+            ),
         ):
             return _DOWNRANK
         return _EXCLUSION
