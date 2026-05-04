@@ -444,6 +444,15 @@ class EndpointRoute(StrEnum):
     MEDIA_TYPE = "media_type"
 
 
+# Whether a generated endpoint spec runs as a candidate finder
+# (produces its own pool by membership / top-K) or a pool reranker
+# (scores an existing candidate pool). See
+# search_improvement_planning/search_method_deterministic_logic.md §2.
+class OperationType(StrEnum):
+    CANDIDATE_GENERATOR = "candidate_generator"
+    POOL_RERANKER = "pool_reranker"
+
+
 # Handler query-generation bucket. Determines the shared instruction
 # shape a category handler uses before endpoint-specific schemas fill in
 # concrete parameters.

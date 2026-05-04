@@ -1,8 +1,10 @@
 # Search V2 — Stage 3 Semantic Endpoint: Query Execution
 #
-# Single-trait per call. The caller passes the parent trait role
-# explicitly, and `params` must be one of that role's matching semantic
-# parameter shapes (base or subintent).
+# Single-trait per call. `params` is a unified SemanticParameters (or
+# subintent variant) whose `role` field — committed by the LLM at
+# generation time — tells this executor which scoring path to run.
+# Per-entry weights are always populated on the schema; the carver
+# path ignores them, the qualifier path uses them.
 #
 # Carver scoring (per spec):
 #   1) Per active space: detect elbow via EWMA + Kneedle + pathology
@@ -45,7 +47,6 @@ from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
 from implementation.classes.enums import VectorName
 from implementation.llms.generic_methods import generate_vector_embedding
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import Role
 from schemas.semantic_bodies import (
     NarrativeTechniquesBody,
     PlotAnalysisBody,
@@ -56,13 +57,13 @@ from schemas.semantic_bodies import (
     WatchContextBody,
 )
 from schemas.semantic_translation import (
-    CarverSemanticParameters,
-    CarverSemanticParametersSubintent,
-    QualifierSemanticParameters,
-    QualifierSemanticParametersSubintent,
+    SemanticParameters,
+    SemanticParametersSubintent,
+    SemanticRetrievalShape,
     SemanticSpaceEntry,
     SpaceWeight,
     WeightedSpaceQuery,
+    WeightedSpaceQuerySubintent,
 )
 from search_v2.endpoint_fetching.result_helpers import (
     build_endpoint_result,
@@ -71,11 +72,7 @@ from search_v2.endpoint_fetching.result_helpers import (
 
 logger = logging.getLogger(__name__)
 
-CarverSemanticParams = CarverSemanticParameters | CarverSemanticParametersSubintent
-QualifierSemanticParams = (
-    QualifierSemanticParameters | QualifierSemanticParametersSubintent
-)
-SemanticParams = CarverSemanticParams | QualifierSemanticParams
+SemanticParams = SemanticParameters | SemanticParametersSubintent
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +399,7 @@ def _weighted_cosine_score(
 
 
 async def _execute_carver_d2(
-    params: CarverSemanticParameters,
+    params: SemanticParams,
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
@@ -412,7 +409,10 @@ async def _execute_carver_d2(
     # implausible (the elbow rank sits inside top-N by construction),
     # so the missing-fill query would mostly recover sub-floor
     # cosines that compute to 0 anyway.
-    entries = list(params.space_queries)
+    #
+    # Per-entry weights are present on the unified schema but ignored
+    # here; carver scoring is equal-vote across active spaces.
+    entries = [wq.query for wq in params.space_queries]
     embeddings = await asyncio.gather(*[_embed_body(e.content) for e in entries])
     vector_names = [VectorName(e.space.value) for e in entries]
 
@@ -435,7 +435,7 @@ async def _execute_carver_d2(
 
 
 async def _execute_carver_d1(
-    params: CarverSemanticParameters,
+    params: SemanticParams,
     candidate_ids: set[int],
     *,
     qdrant_client: AsyncQdrantClient,
@@ -443,7 +443,7 @@ async def _execute_carver_d1(
     # Pre-built pool — corpus probe per space is calibration-only.
     # Per-space cosines for the pool come from HasId. Probe and
     # filtered fetch run in parallel per space to keep latency flat.
-    entries = list(params.space_queries)
+    entries = [wq.query for wq in params.space_queries]
     embeddings = await asyncio.gather(*[_embed_body(e.content) for e in entries])
     vector_names = [VectorName(e.space.value) for e in entries]
     n = len(entries)
@@ -478,15 +478,15 @@ async def _execute_carver_d1(
 @dataclass(frozen=True)
 class QualifierInputs:
     # Common unpack of qualifier space_queries shared by P1 and P2.
-    # The merge-validator on QualifierSemanticParameters guarantees
-    # unique spaces, so building a {VectorName: weight} dict is safe.
+    # The merge-validator on SemanticParameters guarantees unique
+    # spaces, so building a {VectorName: weight} dict is safe.
     entries: list[SemanticSpaceEntry]
     vector_names: list[VectorName]
     weights: dict[VectorName, float]
 
 
 def _qualifier_inputs(
-    space_queries: list[WeightedSpaceQuery],
+    space_queries: list[WeightedSpaceQuery] | list[WeightedSpaceQuerySubintent],
 ) -> QualifierInputs:
     entries = [wq.query for wq in space_queries]
     vector_names = [VectorName(e.space.value) for e in entries]
@@ -500,7 +500,7 @@ def _qualifier_inputs(
 
 
 async def _execute_qualifier_p1(
-    params: QualifierSemanticParameters,
+    params: SemanticParams,
     candidate_ids: set[int],
     *,
     qdrant_client: AsyncQdrantClient,
@@ -522,7 +522,7 @@ async def _execute_qualifier_p1(
 
 
 async def _execute_qualifier_p2(
-    params: QualifierSemanticParameters,
+    params: SemanticParams,
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
@@ -576,18 +576,16 @@ async def _execute_qualifier_p2(
 async def execute_semantic_query(
     params: SemanticParams,
     *,
-    role: Role,
     restrict_to_movie_ids: set[int] | None = None,
     qdrant_client: AsyncQdrantClient,
 ) -> EndpointResult:
     """Execute a semantic payload and return scored candidates.
 
-    `role` is the discriminator. It must agree with the params family:
-    carver role accepts CarverSemanticParameters or its subintent
-    variant, and qualifier role accepts QualifierSemanticParameters or
-    its subintent variant.
+    The retrieval shape (carver vs qualifier) is read off
+    `params.role` — committed by the LLM at generation time. The
+    caller no longer passes role explicitly.
 
-    Role also determines restriction mode:
+    Role determines restriction mode:
       carver    → restrict_to_movie_ids must be None.
       qualifier → restrict_to_movie_ids must be supplied; set()
                   short-circuits to an empty result.
@@ -601,51 +599,30 @@ async def execute_semantic_query(
     than raising. Contract violations raise AssertionError before the
     retry loop — they are programmer errors, not transient I/O.
     """
-    if role is Role.CARVER:
-        if not isinstance(
-            params, (CarverSemanticParameters, CarverSemanticParametersSubintent)
-        ):
-            raise AssertionError(
-                f"Semantic carver execution received unexpected params type: "
-                f"{type(params).__name__}"
-            )
+    is_carver = params.role is SemanticRetrievalShape.CARVER
+
+    if is_carver:
         if restrict_to_movie_ids is not None:
             raise AssertionError(
                 "Semantic carver execution must not receive "
                 "restrict_to_movie_ids."
             )
-        is_carver = True
         log_context = (
             f"role=carver, spaces="
-            f"{[e.space.value for e in params.space_queries]}"
+            f"{[wq.query.space.value for wq in params.space_queries]}"
         )
-
-    elif role is Role.QUALIFIER:
-        if not isinstance(
-            params,
-            (QualifierSemanticParameters, QualifierSemanticParametersSubintent),
-        ):
-            raise AssertionError(
-                f"Semantic qualifier execution received unexpected params type: "
-                f"{type(params).__name__}"
-            )
+    else:
         if restrict_to_movie_ids is None:
             raise AssertionError(
                 "Semantic qualifier execution requires restrict_to_movie_ids."
             )
-        is_carver = False
         log_context = (
             f"role=qualifier, spaces="
             f"{[wq.query.space.value for wq in params.space_queries]}"
         )
 
-    else:
-        raise AssertionError(
-            f"Unsupported semantic role: {role!r}"
-        )
-
     # Empty qualifier pool: nothing to score, no Qdrant traffic.
-    if len(restrict_to_movie_ids or set()) == 0 and role is Role.QUALIFIER:
+    if not is_carver and len(restrict_to_movie_ids or set()) == 0:
         return EndpointResult()
 
     scores: dict[int, float] = {}

@@ -39,11 +39,24 @@ Step 2 (step_2.py): Query analysis (combined holistic read + atomization)
   → Feeds Stages 3-5 (reconstruction test, literal test, trait
     commitment) — those stages not yet landed
 
-Steps 0+1 Orchestrator (steps_0_2_orchestrator.py):
-  → asyncio.gather for Step 0 + Step 1 in parallel
-  → Standard-flow branch budget: 3 minus non-standard flows fired
-  → Step 1 failure degrades gracefully (branches drop to original only)
-  → Returns OrchestratorResult + list[Step2Branch]
+Step 3 (step_3.py): Trait decomposition (per-trait LLM call)
+  → TraitDecomposition: target_population + trait_role_analysis +
+    aspects + dimensions + category_calls
+  → One call per committed trait; orchestrator fans out in parallel
+  → Reads qualifier_relation as the carver-vs-qualifier signal
+    (Step 2 no longer commits a binary `role` field)
+
+Full pipeline orchestrator (full_pipeline_orchestrator.py):
+  → run_full_pipeline(query, *, skip_bypass_steps_0_1=False)
+  → Steps 0 + 1 in parallel (or skipped); Step 2 per branch;
+    Step 3 per trait; per-CategoryCall handler-LLM fired immediately
+    as each Step 3 returns (does not wait on sibling traits)
+  → 25s timeout + 1 retry on every individual LLM call
+  → Returns FullPipelineResult: per-branch results with traits
+    carrying polarity/commitment + per-category generated endpoint
+    specs ready for stage-4 execution
+  → Soft-fails per branch / per trait / per CategoryCall; only
+    Step 0 failure is fatal
 ```
 
 ## Back-End Stages (Stage 3 / Stage 4)
@@ -90,7 +103,9 @@ Stage 4 (stage_4/): Assembly & reranking
 | `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response`. Produces two distinct spins plus UI labels. Always exactly two spins. `distinctness` field requires result-set divergence from both original and sibling. |
 | `step_2.py` | Query analysis — combined Stage 1+2 of the 5-stage trait decomposition. `run_step_2()` returns `QueryAnalysis` (holistic_read + atoms with modifying_signals + evaluative_intent). Model hard-coded to Gemini 3 Flash (no thinking, temperature 0.35). System prompt loads sections this stage applies (atomicity, modifier vs trait, evaluative intent) plus background sections later stages use (carver vs qualifier, polarity, salience, category taxonomy). |
 | `run_step_2.py` | CLI runner for step_2. Prints full JSON response + timing + tokens. Default query exercises role markers, polarity, chronological, and multi-dimension entities. |
-| `steps_0_2_orchestrator.py` | Orchestrator for the front half. Parallel Steps 0+1, then Step 2 per branch. Standard-flow branch budget = 3 minus non-standard flows. |
+| `full_pipeline_orchestrator.py` | Unified front-half orchestrator. `run_full_pipeline(query, *, skip_bypass_steps_0_1=False)` runs Steps 0+1 in parallel (or skipped) → Step 2 per branch → Step 3 per trait → per-CategoryCall handler-LLM endpoint-spec generation. Stops short of execution. Returns `FullPipelineResult` with per-branch trait/category/endpoint groupings. 25s timeout + 1 retry per LLM call. |
+| `step_3.py` | Trait decomposition. `run_step_3(trait)` returns `TraitDecomposition`. One LLM call per committed Trait. Reads `qualifier_relation` (with `"n/a"` sentinel) as the carver-vs-qualifier signal — `role` was removed from Step 2. |
+| `endpoint_fetching/category_handlers/output_extractor.py` | `extract_fired_endpoints(category, output)`: per-bucket extraction of `(EndpointRoute, EndpointParameters)` pairs from a handler-LLM structured output. |
 | `implicit_expectations.py` | Implicit-prior state management (quality/notability priors). |
 | `stage_3/category_handlers/` | Category handler module (scaffolded, prompts in progress). `handler.py` is scoped to a single category — fan-out lives one level up. |
 

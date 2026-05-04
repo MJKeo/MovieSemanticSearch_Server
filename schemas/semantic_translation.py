@@ -4,21 +4,28 @@
 # retrieval_intent + expressions, routed to the semantic endpoint)
 # into a multi-vector search plan over the 7 non-anchor Qdrant spaces.
 #
-# Two top-level shapes — CarverSemanticParameters and
-# QualifierSemanticParameters — share the exploration layer
-# (aspects + space_candidates) and diverge only at commitment.
+# Single unified shape — SemanticParameters — is emitted regardless of
+# whether the trait wants carver-style (strict, equal-vote) or
+# qualifier-style (looser, weighted-sum) retrieval. The LLM commits the
+# decision in the `role` field at the top of the schema and every
+# downstream field reads from that commitment:
 #
 #   role == CARVER
-#       space_queries: list[SemanticSpaceEntry]; no weights. Executor
-#       elbow-normalizes each space, applies linear decay over the
-#       10% window below the elbow, sums across active spaces /
-#       count, then compresses [0,1]→[0.5,1] for survivors. Strict
-#       bar: equal-vote scoring means marginal spaces dilute directly.
+#       Strict bar. Executor sums elbow-decayed scores evenly across
+#       active spaces, divides by count, compresses [0,1]→[0.5,1] for
+#       survivors. Per-entry weights are populated for honesty but
+#       ignored at execution; every active space gets equal vote, so
+#       marginal spaces dilute directly.
 #
 #   role == QUALIFIER
-#       space_queries: list[WeightedSpaceQuery]; per-space weight.
-#       Executor takes Σ(w·cos)/Σw across entries. Looser bar:
-#       SUPPORTING weight exists for spaces that round out the match.
+#       Looser bar. Executor takes Σ(w·cos)/Σw across entries with
+#       CENTRAL=2.0 / SUPPORTING=1.0. SUPPORTING weight exists for
+#       spaces that round out the match without being load-bearing.
+#
+# The schema enforces neither selectivity nor weight-vs-role
+# consistency — the runtime takes what the LLM emits and dispatches on
+# `role`. Inconsistent commits (e.g. CARVER + 5 spaces) are an LLM
+# behavior issue, not a schema-level guard.
 #
 # Single-trait calls only. Bundling of multiple semantic-routed
 # traits happens at the orchestrator layer, not here.
@@ -30,8 +37,7 @@
 #
 # Server-side recovery: duplicate-space entries collapse via
 # _merge_bodies (list concat-dedupe, prose ". " join, nested
-# BaseModel recurse). Weight collisions on the qualifier path
-# resolve to CENTRAL.
+# BaseModel recurse). Weight collisions resolve to CENTRAL.
 
 from __future__ import annotations
 
@@ -70,6 +76,17 @@ class SemanticSpace(str, Enum):
 class SpaceWeight(str, Enum):
     CENTRAL = "central"
     SUPPORTING = "supporting"
+
+
+# Semantic-side retrieval-shape enum. Distinct from the (now-removed)
+# Step-2 Role enum: this one lives on the semantic schema and is
+# emitted by the handler LLM per call rather than being inherited from
+# the parent trait. The literal values (carver / qualifier) match the
+# old Role enum's values intentionally so the executor's score-shape
+# vocabulary stays consistent — the difference is *who decides*.
+class SemanticRetrievalShape(str, Enum):
+    CARVER = "carver"
+    QUALIFIER = "qualifier"
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +250,8 @@ SemanticSpaceEntry = Union[
 
 
 # ---------------------------------------------------------------------------
-# Body merge helper. Copied verbatim from the prior implementation —
-# generic walk, list concat-dedupe, prose ". " join, nested BaseModel
-# recurse. Same-space duplicate recovery uses this.
+# Body merge helper. Generic walk, list concat-dedupe, prose ". " join,
+# nested BaseModel recurse. Same-space duplicate recovery uses this.
 # ---------------------------------------------------------------------------
 
 
@@ -268,44 +284,50 @@ def _merge_bodies(bodies: list[BaseModel]) -> BaseModel:
 
 
 # ---------------------------------------------------------------------------
-# WeightedSpaceQuery — qualifier-side wrapper around a space entry.
+# WeightedSpaceQuery — every space entry carries a weight on the
+# unified schema. Executor uses weights on the qualifier path and
+# ignores them on the carver path; the weight is populated honestly
+# regardless of which path the LLM committed to.
 # ---------------------------------------------------------------------------
+
+
+_WEIGHT_DESC = (
+    "How load-bearing this space's signal is for the trait. Read "
+    "`retrieval_intent` (primary source: framing of what the search "
+    "positions against) IN LIGHT OF the matching "
+    "`SpaceCandidate.aspects_covered` for `query.space` above (i.e., "
+    "what this specific space actually carries) — mechanical mapping; "
+    "do not re-derive from `aspects` wholesale.\n"
+    "- CENTRAL: retrieval_intent treats the aspects this space carries "
+    "(per its SpaceCandidate.aspects_covered) as defining whether the "
+    "match holds. Missing this signal = trait broken. Multiple central "
+    "spaces are fine when several axes are equally load-bearing.\n"
+    "- SUPPORTING: the aspects this space carries round out the "
+    "experience but aren't load-bearing on their own. Trait stays "
+    "recognizable without it.\n"
+    "\n"
+    "ALWAYS POPULATED. Weights are read by the executor on the "
+    "qualifier path (Σ(w·cos)/Σw) and IGNORED on the carver path "
+    "(equal-vote scoring). Populate honestly regardless of `role` so "
+    "the data stays interpretable for evaluation and any future shape "
+    "change.\n"
+    "\n"
+    "All-supporting is acceptable for broad-and-balanced traits — a "
+    "truthful signal, not a cop-out. If a space would be below "
+    "SUPPORTING (barely-there), drop the entry instead of including "
+    "it.\n"
+    "\n"
+    "TEST: look up the `aspects_covered` on the SpaceCandidate "
+    "matching `query.space`. Does `retrieval_intent` name those "
+    "aspects as defining the match, or as one contributor among "
+    "several? Defining → CENTRAL. Contributor → SUPPORTING."
+)
 
 
 class WeightedSpaceQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    weight: SpaceWeight = Field(
-        ...,
-        description=(
-            "How load-bearing this space's signal is for the trait. "
-            "Read `retrieval_intent` (primary source: framing of what "
-            "the search positions against) IN LIGHT OF the matching "
-            "`SpaceCandidate.aspects_covered` for `query.space` "
-            "above (i.e., what this specific space actually carries) "
-            "— mechanical mapping; do not re-derive from `aspects` "
-            "wholesale.\n"
-            "- CENTRAL: retrieval_intent treats the aspects this "
-            "space carries (per its SpaceCandidate.aspects_covered) "
-            "as defining whether the match holds. Missing this signal "
-            "= trait broken. Multiple central spaces are fine when "
-            "several axes are equally load-bearing.\n"
-            "- SUPPORTING: the aspects this space carries round out "
-            "the experience but aren't load-bearing on their own. "
-            "Trait stays recognizable without it.\n"
-            "\n"
-            "All-supporting is acceptable for broad-and-balanced "
-            "traits — a truthful signal, not a cop-out. If a space "
-            "would be below SUPPORTING (barely-there), drop the entry "
-            "instead of including it.\n"
-            "\n"
-            "TEST: look up the `aspects_covered` on the SpaceCandidate "
-            "matching `query.space`. Does `retrieval_intent` name "
-            "those aspects as defining the match, or as one "
-            "contributor among several? Defining → CENTRAL. "
-            "Contributor → SUPPORTING."
-        ),
-    )
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC)
     query: SemanticSpaceEntry = Field(
         ...,
         description=(
@@ -324,8 +346,48 @@ class WeightedSpaceQuery(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Shared field descriptions for the two top-level parameters classes.
+# Shared field descriptions for the unified parameters class.
 # ---------------------------------------------------------------------------
+
+
+_ROLE_EXPLORATION_DESC = (
+    "Decide whether this call should retrieve carver-style (strict, "
+    "equal-vote across spaces) or qualifier-style (looser, weighted "
+    "sum). Read `retrieval_intent` (primary) and `expressions`.\n"
+    "\n"
+    "CARVER applies when the trait NAMES THE POPULATION whose "
+    "semantic profile must match — the call describes what to find "
+    "directly ('movies about war', 'feel-good Christmas movies', "
+    "'filmed in Iceland'). Adding a marginal space would let "
+    "clearly-wrong movies past the gate, so the bar is strict and "
+    "every active space gets equal vote at execution.\n"
+    "\n"
+    "QUALIFIER applies when the trait POSITIONS A POPULATION AGAINST "
+    "A REFERENCE / threshold / archetype — the call describes how a "
+    "found movie should compare ('more atmospheric than typical "
+    "period pieces', 'darker than usual rom-com', 'leans more on "
+    "visual symbolism than dialogue'). Adding a space rounds out the "
+    "match instead of diluting it; SUPPORTING-weight signals are "
+    "permitted at execution.\n"
+    "\n"
+    "TEST: 'if I dropped a marginal space from the commit, would "
+    "that leak wrong movies past the gate (carver) or just thin the "
+    "match a little (qualifier)?'\n"
+    "\n"
+    "NEVER:\n"
+    "- HEDGE. Pick one; the choice steers selectivity and weighting "
+    "below.\n"
+    "- RE-DERIVE FROM `aspects`. Aspects are downstream of the same "
+    "intent — they don't add signal for this decision."
+)
+
+
+_ROLE_DESC = (
+    "Mechanical commit of the choice argued in `role_exploration`. "
+    "CARVER if the exploration concluded population-naming; "
+    "QUALIFIER if positioning-against-a-reference. No new reasoning "
+    "at this step — the commit must match the conclusion above."
+)
 
 
 _ASPECTS_DESC = (
@@ -370,94 +432,54 @@ _SPACE_CANDIDATES_DESC = (
     "rather than substantively named."
 )
 
+_SPACE_QUERIES_DESC = (
+    "Committed set of spaces to search, each carrying a weight. Pull "
+    "exclusively from `space_candidates` above. Selectivity bar "
+    "depends on `role`:\n"
+    "\n"
+    "If role == CARVER: STRICT BAR. Carver execution sums elbow-"
+    "decayed scores evenly across active spaces and divides by the "
+    "count — every marginal space directly dilutes the gate. Typical "
+    "1–2 spaces, occasionally 3. Commit only to spaces whose signal "
+    "is genuinely load-bearing for the trait. A third space is "
+    "justified only when each of the three would clearly let a wrong "
+    "movie pass if dropped. Prefer one well-targeted space over two "
+    "thin ones. Per-entry `weight` is populated for honesty but "
+    "ignored at execution.\n"
+    "\n"
+    "If role == QUALIFIER: LOOSER BAR. Qualifier execution takes a "
+    "normalized weighted sum — Σ(w·cos)/Σw across entries. Typical "
+    "2–4 spaces, sometimes more. Additional spaces round out the "
+    "match without diluting load-bearing ones. Drop entries whose "
+    "signal is below SUPPORTING (barely-there) — those just add "
+    "noise.\n"
+    "\n"
+    "Fold every aspect a space owns (per its "
+    "SpaceCandidate.aspects_covered) into ONE entry's `query.content`; "
+    "do not split coverage across multiple entries with the same "
+    "`query.space`. Same-space duplicates merge server-side rather "
+    "than fail; emit cleanly when you can.\n"
+    "\n"
+    "NEVER:\n"
+    "- COMMIT to a space absent from `space_candidates`.\n"
+    "- SPLIT one space's coverage across multiple entries.\n"
+    "- IGNORE the role-keyed selectivity bar — `role` above dictates "
+    "how strict to be."
+)
+
 
 # ---------------------------------------------------------------------------
-# CarverSemanticParameters — role == CARVER, no weights.
+# SemanticParameters — unified shape; LLM commits role at the top.
 # ---------------------------------------------------------------------------
 
 
-class CarverSemanticParameters(BaseModel):
+class SemanticParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    aspects: conlist(
-        constr(strip_whitespace=True, min_length=1), min_length=1
-    ) = Field(..., description=_ASPECTS_DESC)
-    space_candidates: conlist(SpaceCandidate, min_length=1) = Field(
-        ..., description=_SPACE_CANDIDATES_DESC
+    role_exploration: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_ROLE_EXPLORATION_DESC
     )
-    space_queries: conlist(SemanticSpaceEntry, min_length=1) = Field(
-        ...,
-        description=(
-            "Committed minimum set of LOAD-BEARING spaces to search. "
-            "Pull exclusively from `space_candidates`. Carver "
-            "execution sums elbow-normalized scores across active "
-            "spaces and divides by their count — every active space "
-            "gets equal vote, so adding a marginal space directly "
-            "dilutes the gate. Strict bar: only spaces whose signal "
-            "genuinely decides the trait.\n"
-            "\n"
-            "Fold every aspect a space owns (per its "
-            "SpaceCandidate.aspects_covered) into ONE entry's "
-            "content. Same-space duplicates merge server-side rather "
-            "than fail; emit cleanly when you can.\n"
-            "\n"
-            "TEST per entry: 'would dropping this space let a "
-            "clearly-wrong movie pass the trait?' Yes → keep. No → "
-            "drop.\n"
-            "\n"
-            "NEVER:\n"
-            "- COMMIT to a space absent from `space_candidates`.\n"
-            "- SPLIT one space's coverage across multiple entries.\n"
-            "- PAD with marginal spaces. Equal-vote scoring means "
-            "every extra space dilutes proportionally."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _drop_empty_and_merge_duplicates(self) -> "CarverSemanticParameters":
-        # Drop entries whose body produces no embedding text — a
-        # space with all-empty sub-fields contributes nothing but
-        # noise to the elbow-normalize step downstream.
-        kept = [e for e in self.space_queries if e.content.embedding_text().strip()]
-        if not kept:
-            raise ValueError(
-                "space_queries empty after dropping entries with no embedding text"
-            )
-
-        grouped: dict = {}
-        order: list = []
-        for entry in kept:
-            if entry.space not in grouped:
-                grouped[entry.space] = [entry]
-                order.append(entry.space)
-            else:
-                grouped[entry.space].append(entry)
-
-        if len(order) == len(kept):
-            self.space_queries = kept
-            return self
-
-        merged: list = []
-        for space in order:
-            entries = grouped[space]
-            if len(entries) == 1:
-                merged.append(entries[0])
-                continue
-            base = entries[0].model_copy()
-            base.content = _merge_bodies([e.content for e in entries])
-            merged.append(base)
-        self.space_queries = merged
-        return self
-
-
-# ---------------------------------------------------------------------------
-# QualifierSemanticParameters — role == QUALIFIER, weighted.
-# ---------------------------------------------------------------------------
-
-
-class QualifierSemanticParameters(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+    role: SemanticRetrievalShape = Field(..., description=_ROLE_DESC)
     aspects: conlist(
         constr(strip_whitespace=True, min_length=1), min_length=1
     ) = Field(..., description=_ASPECTS_DESC)
@@ -465,40 +487,15 @@ class QualifierSemanticParameters(BaseModel):
         ..., description=_SPACE_CANDIDATES_DESC
     )
     space_queries: conlist(WeightedSpaceQuery, min_length=1) = Field(
-        ...,
-        description=(
-            "Committed set of spaces to search, each with a per-space "
-            "weight. Each entry's `query.space` MUST appear in "
-            "`space_candidates` above; pull exclusively from that "
-            "list. Looser bar than the carver path: SUPPORTING weight "
-            "exists for spaces that round out the match without being "
-            "load-bearing. Drop the entry if signal is below "
-            "SUPPORTING.\n"
-            "\n"
-            "Fold every aspect a space owns (per its "
-            "SpaceCandidate.aspects_covered for that space) into ONE "
-            "entry's `query.content`; let the merge validator catch "
-            "accidental duplication. Executor takes a normalized "
-            "weighted sum — Σ(w·cos)/Σw — across these entries.\n"
-            "\n"
-            "Weight assignment is read off `retrieval_intent` per the "
-            "rule on `WeightedSpaceQuery.weight` — see that field's "
-            "description for the CENTRAL vs SUPPORTING test.\n"
-            "\n"
-            "TEST per entry: 'is the signal real enough that omitting "
-            "this space would noticeably degrade the match?' Yes "
-            "(decisive) → CENTRAL. Yes (rounds out) → SUPPORTING. "
-            "No → drop.\n"
-            "\n"
-            "NEVER:\n"
-            "- COMMIT to a space absent from `space_candidates`.\n"
-            "- SPLIT one space's coverage across multiple entries.\n"
-            "- INCLUDE a space whose signal is below SUPPORTING."
-        ),
+        ..., description=_SPACE_QUERIES_DESC
     )
 
     @model_validator(mode="after")
-    def _drop_empty_and_merge_duplicates(self) -> "QualifierSemanticParameters":
+    def _drop_empty_and_merge_duplicates(self) -> "SemanticParameters":
+        # Drop entries whose body produces no embedding text — a space
+        # with all-empty sub-fields contributes nothing but noise to
+        # both the carver elbow-normalize step and the qualifier
+        # weighted sum.
         kept = [
             wq for wq in self.space_queries
             if wq.query.content.embedding_text().strip()
@@ -522,13 +519,15 @@ class QualifierSemanticParameters(BaseModel):
             self.space_queries = kept
             return self
 
+        # Stronger weight wins on collision; bodies merge. (Even on the
+        # carver path the weight is preserved for inspection; execution
+        # ignores it.)
         merged: list = []
         for space in order:
             wqs = grouped[space]
             if len(wqs) == 1:
                 merged.append(wqs[0])
                 continue
-            # Stronger weight wins on collision; bodies merge.
             stronger = (
                 SpaceWeight.CENTRAL
                 if any(wq.weight == SpaceWeight.CENTRAL for wq in wqs)
@@ -541,41 +540,18 @@ class QualifierSemanticParameters(BaseModel):
         return self
 
 
-# ---------------------------------------------------------------------------
-# Endpoint wrappers. The carver/qualifier distinction is carried by
-# the concrete wrapper class itself — the handler picks which to use
-# based on the parent Trait's role before invoking the LLM. role +
-# polarity are stamped post-LLM-call from the Trait, not declared on
-# this schema (see endpoint_parameters.py).
-# ---------------------------------------------------------------------------
-
-
-class CarverSemanticEndpointParameters(EndpointParameters):
-    parameters: CarverSemanticParameters = Field(
+class SemanticEndpointParameters(EndpointParameters):
+    parameters: SemanticParameters = Field(
         ...,
         description=(
-            "Carver semantic payload. Decompose the trait into "
-            "aspects, explore which spaces plausibly cover them, then "
-            "commit only to spaces whose signal is genuinely load-"
-            "bearing — every active space gets equal vote at scoring, "
-            "so the bar is strict. Describe the target concept "
-            "directly regardless of polarity; the wrapper's polarity "
-            "field handles negation."
-        ),
-    )
-
-
-class QualifierSemanticEndpointParameters(EndpointParameters):
-    parameters: QualifierSemanticParameters = Field(
-        ...,
-        description=(
-            "Qualifier semantic payload. Decompose the trait into "
-            "aspects, explore which spaces plausibly cover them, then "
-            "commit to a weighted set — CENTRAL where retrieval_intent "
-            "names a space's signal as decisive, SUPPORTING where it "
-            "rounds out without being load-bearing. Describe the "
-            "target concept directly regardless of polarity; the "
-            "wrapper's polarity field handles negation."
+            "Semantic payload. Decide retrieval shape (carver vs "
+            "qualifier) in `role_exploration` and commit it in `role`, "
+            "then decompose the trait into aspects, explore which "
+            "spaces plausibly cover them, and commit the weighted "
+            "space set per the role-keyed selectivity bar. Describe "
+            "the target concept directly regardless of polarity; "
+            "polarity is applied downstream by the handler when "
+            "bucketing the finding."
         ),
     )
 
@@ -586,12 +562,11 @@ class QualifierSemanticEndpointParameters(EndpointParameters):
 # Used when a single category routes to multiple endpoints and the
 # upstream responsibility-splitting reasoning has already carved out
 # this endpoint's slice of intent into a dedicated field. Same shape
-# as the regular Carver / Qualifier semantic parameters, but every
-# descriptor that originally read from `expressions` /
-# `retrieval_intent` reads from `semantic_retrieval_intent` (declared
-# first on the spec) instead. Sub-types whose descriptors don't
-# reference the raw inputs (SemanticSpaceEntry and its body types)
-# are reused as-is.
+# as the regular SemanticParameters, but every descriptor that
+# originally read from `expressions` / `retrieval_intent` reads from
+# `semantic_retrieval_intent` (declared on the parent wrapper)
+# instead. Sub-types whose descriptors don't reference the raw inputs
+# (SemanticSpaceEntry and its body types) are reused as-is.
 # ---------------------------------------------------------------------------
 
 
@@ -654,41 +629,45 @@ class SpaceCandidateSubintent(BaseModel):
     )
 
 
+_WEIGHT_DESC_SUBINTENT = (
+    "How load-bearing this space's signal is for the trait. Read "
+    "`semantic_retrieval_intent` (primary source: framing of what "
+    "the search positions against) IN LIGHT OF the matching "
+    "`SpaceCandidateSubintent.aspects_covered` for `query.space` "
+    "above (i.e., what this specific space actually carries) — "
+    "mechanical mapping; do not re-derive from `aspects` wholesale.\n"
+    "- CENTRAL: semantic_retrieval_intent treats the aspects this "
+    "space carries (per its SpaceCandidateSubintent.aspects_covered) "
+    "as defining whether the match holds. Missing this signal = "
+    "trait broken. Multiple central spaces are fine when several "
+    "axes are equally load-bearing.\n"
+    "- SUPPORTING: the aspects this space carries round out the "
+    "experience but aren't load-bearing on their own. Trait stays "
+    "recognizable without it.\n"
+    "\n"
+    "ALWAYS POPULATED. Weights are read by the executor on the "
+    "qualifier path (Σ(w·cos)/Σw) and IGNORED on the carver path "
+    "(equal-vote scoring). Populate honestly regardless of `role` so "
+    "the data stays interpretable for evaluation and any future "
+    "shape change.\n"
+    "\n"
+    "All-supporting is acceptable for broad-and-balanced traits — a "
+    "truthful signal, not a cop-out. If a space would be below "
+    "SUPPORTING (barely-there), drop the entry instead of including "
+    "it.\n"
+    "\n"
+    "TEST: look up the `aspects_covered` on the "
+    "SpaceCandidateSubintent matching `query.space`. Does "
+    "`semantic_retrieval_intent` name those aspects as defining the "
+    "match, or as one contributor among several? Defining → CENTRAL. "
+    "Contributor → SUPPORTING."
+)
+
+
 class WeightedSpaceQuerySubintent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    weight: SpaceWeight = Field(
-        ...,
-        description=(
-            "How load-bearing this space's signal is for the trait. "
-            "Read `semantic_retrieval_intent` (primary source: framing "
-            "of what the search positions against) IN LIGHT OF the "
-            "matching `SpaceCandidateSubintent.aspects_covered` for "
-            "`query.space` above (i.e., what this specific space "
-            "actually carries) — mechanical mapping; do not re-derive "
-            "from `aspects` wholesale.\n"
-            "- CENTRAL: semantic_retrieval_intent treats the aspects "
-            "this space carries (per its "
-            "SpaceCandidateSubintent.aspects_covered) as defining "
-            "whether the match holds. Missing this signal = trait "
-            "broken. Multiple central spaces are fine when several "
-            "axes are equally load-bearing.\n"
-            "- SUPPORTING: the aspects this space carries round out "
-            "the experience but aren't load-bearing on their own. "
-            "Trait stays recognizable without it.\n"
-            "\n"
-            "All-supporting is acceptable for broad-and-balanced "
-            "traits — a truthful signal, not a cop-out. If a space "
-            "would be below SUPPORTING (barely-there), drop the entry "
-            "instead of including it.\n"
-            "\n"
-            "TEST: look up the `aspects_covered` on the "
-            "SpaceCandidateSubintent matching `query.space`. Does "
-            "`semantic_retrieval_intent` name those aspects as defining "
-            "the match, or as one contributor among several? Defining "
-            "→ CENTRAL. Contributor → SUPPORTING."
-        ),
-    )
+    weight: SpaceWeight = Field(..., description=_WEIGHT_DESC_SUBINTENT)
     query: SemanticSpaceEntry = Field(
         ...,
         description=(
@@ -700,10 +679,40 @@ class WeightedSpaceQuerySubintent(BaseModel):
             "ViewerExperienceEntry / etc.) — fold every aspect this "
             "space owns per its SpaceCandidateSubintent.aspects_covered "
             "into ONE body in the space's ingest-side vocabulary; do "
-            "not split coverage across multiple WeightedSpaceQuery"
-            "Subintent entries with the same `query.space`."
+            "not split coverage across multiple "
+            "WeightedSpaceQuerySubintent entries with the same "
+            "`query.space`."
         ),
     )
+
+
+_ROLE_EXPLORATION_DESC_SUBINTENT = (
+    "Decide whether this call should retrieve carver-style (strict, "
+    "equal-vote across spaces) or qualifier-style (looser, weighted "
+    "sum). Read `semantic_retrieval_intent` — the slice of intent "
+    "assigned to this endpoint by the upstream responsibility-"
+    "splitting reasoning.\n"
+    "\n"
+    "CARVER applies when the slice NAMES THE POPULATION whose "
+    "semantic profile must match. Adding a marginal space would let "
+    "clearly-wrong movies past the gate, so the bar is strict and "
+    "every active space gets equal vote at execution.\n"
+    "\n"
+    "QUALIFIER applies when the slice POSITIONS A POPULATION "
+    "AGAINST A REFERENCE / threshold / archetype. Adding a space "
+    "rounds out the match instead of diluting it; SUPPORTING-weight "
+    "signals are permitted at execution.\n"
+    "\n"
+    "TEST: 'if I dropped a marginal space from the commit, would "
+    "that leak wrong movies past the gate (carver) or just thin the "
+    "match a little (qualifier)?'\n"
+    "\n"
+    "NEVER:\n"
+    "- HEDGE. Pick one; the choice steers selectivity and weighting "
+    "below.\n"
+    "- RE-DERIVE FROM `aspects`. Aspects are downstream of the same "
+    "intent — they don't add signal for this decision."
+)
 
 
 _ASPECTS_DESC_SUBINTENT = (
@@ -750,6 +759,38 @@ _SPACE_CANDIDATES_DESC_SUBINTENT = (
 )
 
 
+_SPACE_QUERIES_DESC_SUBINTENT = (
+    "Committed set of spaces to search, each carrying a weight. Pull "
+    "exclusively from `space_candidates` above. Selectivity bar "
+    "depends on `role`:\n"
+    "\n"
+    "If role == CARVER: STRICT BAR. Carver execution sums elbow-"
+    "decayed scores evenly across active spaces and divides by the "
+    "count — every marginal space directly dilutes the gate. Typical "
+    "1–2 spaces, occasionally 3. Commit only to spaces whose signal "
+    "is genuinely load-bearing for the trait. Per-entry `weight` is "
+    "populated for honesty but ignored at execution.\n"
+    "\n"
+    "If role == QUALIFIER: LOOSER BAR. Qualifier execution takes a "
+    "normalized weighted sum — Σ(w·cos)/Σw across entries. Typical "
+    "2–4 spaces, sometimes more. Drop entries whose signal is below "
+    "SUPPORTING.\n"
+    "\n"
+    "Fold every aspect a space owns (per its "
+    "SpaceCandidateSubintent.aspects_covered for that space) into "
+    "ONE entry's `query.content`; do not split coverage across "
+    "multiple entries with the same `query.space`. Same-space "
+    "duplicates merge server-side rather than fail; emit cleanly "
+    "when you can.\n"
+    "\n"
+    "NEVER:\n"
+    "- COMMIT to a space absent from `space_candidates`.\n"
+    "- SPLIT one space's coverage across multiple entries.\n"
+    "- IGNORE the role-keyed selectivity bar — `role` above dictates "
+    "how strict to be."
+)
+
+
 _SEMANTIC_RETRIEVAL_INTENT_DESC = (
     "What this endpoint specifically needs to be responsible for "
     "fetching. Read off the prior reasoning fields above that split "
@@ -765,101 +806,17 @@ _SEMANTIC_RETRIEVAL_INTENT_DESC = (
 )
 
 
-# ---------------------------------------------------------------------------
-# CarverSemanticParametersSubintent — role == CARVER, no weights.
-# ---------------------------------------------------------------------------
-
-
-class CarverSemanticParametersSubintent(BaseModel):
+class SemanticParametersSubintent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # `semantic_retrieval_intent` is declared on the parent
-    # CarverSemanticEndpointSubintentParameters wrapper — it is
-    # generated before this spec and every field below reads from it.
+    # SemanticEndpointSubintentParameters wrapper — it is generated
+    # before this spec and every field below reads from it.
 
-    aspects: conlist(
-        constr(strip_whitespace=True, min_length=1), min_length=1
-    ) = Field(..., description=_ASPECTS_DESC_SUBINTENT)
-    space_candidates: conlist(SpaceCandidateSubintent, min_length=1) = Field(
-        ..., description=_SPACE_CANDIDATES_DESC_SUBINTENT
+    role_exploration: constr(strip_whitespace=True, min_length=1) = Field(
+        ..., description=_ROLE_EXPLORATION_DESC_SUBINTENT
     )
-    space_queries: conlist(SemanticSpaceEntry, min_length=1) = Field(
-        ...,
-        description=(
-            "Committed minimum set of LOAD-BEARING spaces to search. "
-            "Pull exclusively from `space_candidates`. Carver "
-            "execution sums elbow-normalized scores across active "
-            "spaces and divides by their count — every active space "
-            "gets equal vote, so adding a marginal space directly "
-            "dilutes the gate. Strict bar: only spaces whose signal "
-            "genuinely decides the trait.\n"
-            "\n"
-            "Fold every aspect a space owns (per its "
-            "SpaceCandidateSubintent.aspects_covered) into ONE entry's "
-            "content. Same-space duplicates merge server-side rather "
-            "than fail; emit cleanly when you can.\n"
-            "\n"
-            "TEST per entry: 'would dropping this space let a "
-            "clearly-wrong movie pass the trait?' Yes → keep. No → "
-            "drop.\n"
-            "\n"
-            "NEVER:\n"
-            "- COMMIT to a space absent from `space_candidates`.\n"
-            "- SPLIT one space's coverage across multiple entries.\n"
-            "- PAD with marginal spaces. Equal-vote scoring means "
-            "every extra space dilutes proportionally."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _drop_empty_and_merge_duplicates(self) -> "CarverSemanticParametersSubintent":
-        # Drop entries whose body produces no embedding text — a
-        # space with all-empty sub-fields contributes nothing but
-        # noise to the elbow-normalize step downstream.
-        kept = [e for e in self.space_queries if e.content.embedding_text().strip()]
-        if not kept:
-            raise ValueError(
-                "space_queries empty after dropping entries with no embedding text"
-            )
-
-        grouped: dict = {}
-        order: list = []
-        for entry in kept:
-            if entry.space not in grouped:
-                grouped[entry.space] = [entry]
-                order.append(entry.space)
-            else:
-                grouped[entry.space].append(entry)
-
-        if len(order) == len(kept):
-            self.space_queries = kept
-            return self
-
-        merged: list = []
-        for space in order:
-            entries = grouped[space]
-            if len(entries) == 1:
-                merged.append(entries[0])
-                continue
-            base = entries[0].model_copy()
-            base.content = _merge_bodies([e.content for e in entries])
-            merged.append(base)
-        self.space_queries = merged
-        return self
-
-
-# ---------------------------------------------------------------------------
-# QualifierSemanticParametersSubintent — role == QUALIFIER, weighted.
-# ---------------------------------------------------------------------------
-
-
-class QualifierSemanticParametersSubintent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # `semantic_retrieval_intent` is declared on the parent
-    # QualifierSemanticEndpointSubintentParameters wrapper — it is
-    # generated before this spec and every field below reads from it.
-
+    role: SemanticRetrievalShape = Field(..., description=_ROLE_DESC)
     aspects: conlist(
         constr(strip_whitespace=True, min_length=1), min_length=1
     ) = Field(..., description=_ASPECTS_DESC_SUBINTENT)
@@ -867,41 +824,11 @@ class QualifierSemanticParametersSubintent(BaseModel):
         ..., description=_SPACE_CANDIDATES_DESC_SUBINTENT
     )
     space_queries: conlist(WeightedSpaceQuerySubintent, min_length=1) = Field(
-        ...,
-        description=(
-            "Committed set of spaces to search, each with a per-space "
-            "weight. Each entry's `query.space` MUST appear in "
-            "`space_candidates` above; pull exclusively from that "
-            "list. Looser bar than the carver path: SUPPORTING weight "
-            "exists for spaces that round out the match without being "
-            "load-bearing. Drop the entry if signal is below "
-            "SUPPORTING.\n"
-            "\n"
-            "Fold every aspect a space owns (per its "
-            "SpaceCandidateSubintent.aspects_covered for that space) "
-            "into ONE entry's `query.content`; let the merge validator "
-            "catch accidental duplication. Executor takes a normalized "
-            "weighted sum — Σ(w·cos)/Σw — across these entries.\n"
-            "\n"
-            "Weight assignment is read off `semantic_retrieval_intent` "
-            "per the rule on `WeightedSpaceQuerySubintent.weight` — "
-            "see that field's description for the CENTRAL vs "
-            "SUPPORTING test.\n"
-            "\n"
-            "TEST per entry: 'is the signal real enough that omitting "
-            "this space would noticeably degrade the match?' Yes "
-            "(decisive) → CENTRAL. Yes (rounds out) → SUPPORTING. "
-            "No → drop.\n"
-            "\n"
-            "NEVER:\n"
-            "- COMMIT to a space absent from `space_candidates`.\n"
-            "- SPLIT one space's coverage across multiple entries.\n"
-            "- INCLUDE a space whose signal is below SUPPORTING."
-        ),
+        ..., description=_SPACE_QUERIES_DESC_SUBINTENT
     )
 
     @model_validator(mode="after")
-    def _drop_empty_and_merge_duplicates(self) -> "QualifierSemanticParametersSubintent":
+    def _drop_empty_and_merge_duplicates(self) -> "SemanticParametersSubintent":
         kept = [
             wq for wq in self.space_queries
             if wq.query.content.embedding_text().strip()
@@ -931,7 +858,6 @@ class QualifierSemanticParametersSubintent(BaseModel):
             if len(wqs) == 1:
                 merged.append(wqs[0])
                 continue
-            # Stronger weight wins on collision; bodies merge.
             stronger = (
                 SpaceWeight.CENTRAL
                 if any(wq.weight == SpaceWeight.CENTRAL for wq in wqs)
@@ -944,29 +870,18 @@ class QualifierSemanticParametersSubintent(BaseModel):
         return self
 
 
-class CarverSemanticEndpointSubintentParameters(EndpointParameters):
+class SemanticEndpointSubintentParameters(EndpointParameters):
     semantic_retrieval_intent: constr(
         strip_whitespace=True, min_length=1
     ) = Field(..., description=_SEMANTIC_RETRIEVAL_INTENT_DESC)
-    parameters: CarverSemanticParametersSubintent = Field(
+    parameters: SemanticParametersSubintent = Field(
         ...,
         description=(
-            "Carver semantic payload, sourced from "
-            "`semantic_retrieval_intent` rather than from the raw call "
-            "inputs."
-        ),
-    )
-
-
-class QualifierSemanticEndpointSubintentParameters(EndpointParameters):
-    semantic_retrieval_intent: constr(
-        strip_whitespace=True, min_length=1
-    ) = Field(..., description=_SEMANTIC_RETRIEVAL_INTENT_DESC)
-    parameters: QualifierSemanticParametersSubintent = Field(
-        ...,
-        description=(
-            "Qualifier semantic payload, sourced from "
-            "`semantic_retrieval_intent` rather than from the raw call "
-            "inputs."
+            "Semantic payload, sourced from `semantic_retrieval_intent` "
+            "rather than from the raw call inputs. Decide retrieval "
+            "shape (carver vs qualifier) in `role_exploration` and "
+            "commit it in `role`, then decompose into aspects, explore "
+            "which spaces plausibly cover them, and commit the "
+            "weighted space set per the role-keyed selectivity bar."
         ),
     )

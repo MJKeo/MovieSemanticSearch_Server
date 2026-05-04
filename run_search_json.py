@@ -67,8 +67,8 @@ from schemas.trait_category import CategoryName
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
 from schemas.semantic_translation import (
-    CarverSemanticEndpointParameters,
-    QualifierSemanticEndpointParameters,
+    SemanticEndpointParameters,
+    SemanticEndpointSubintentParameters,
 )
 from schemas.step_2 import CoverageEvidence, RequirementFragment, Step2Response
 
@@ -230,7 +230,7 @@ def _classify_into_handler_result(
     if match_mode == MatchMode.FILTER and polarity == Polarity.NEGATIVE:
         if isinstance(
             wrapper,
-            (CarverSemanticEndpointParameters, QualifierSemanticEndpointParameters),
+            (SemanticEndpointParameters, SemanticEndpointSubintentParameters),
         ):
             for sc in endpoint_result.scores:
                 result.downrank_candidates[sc.movie_id] = (

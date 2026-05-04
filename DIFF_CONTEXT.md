@@ -1,6 +1,30 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Add endpoint-spec promotion tier helper
+Files: search_v2/full_pipeline_orchestrator.py, unit_tests/test_full_pipeline_promotion_tiers.py
+Why: Reranker-only fallback needs a deterministic way to rank promotable endpoint specs while preserving negative polarity as never-promote.
+Approach: Added `PromotionTier` as an ordered `IntEnum` with `NEVER_PROMOTE = -1` and tiers 1-7 matching the planning doc. Added `determine_promotion_tier(category, endpoint_spec, polarity)` so route-specific cases like `CULTURAL_STATUS` can split semantic prose (Tier 4) from metadata prior (Tier 7). Candidate-generator specs, negative-polarity specs, and unmapped positive rerankers return `NEVER_PROMOTE`.
+Testing notes: Added table-driven unit coverage for every tier row, candidate-generator non-promotion, negative polarity, unmapped rerankers, and enum ordering. `uv run pytest unit_tests/test_full_pipeline_promotion_tiers.py -v` passed (35 tests).
+
+## Integrate reranker-only fallback tiers for metadata and negative polarity
+Files: search_improvement_planning/search_method_deterministic_logic.md
+Why: The new endpoint-level candidate-generator vs reranker designation creates queries with no candidate-generating calls, including all-negative traits and metadata/semantic-only reranker traits.
+Approach: Extended tier-fallback promotion beyond semantic-only categories. Added Tier 7 for global metadata priors/ordinals (general appeal, cultural status, chronological) so reception/popularity/date priors can seed a pool before emergency fallback. Added Tier NP ("never promote") for negative-polarity calls and unresolved metadata directions; reaching it seeds top 2,000 candidates by default popularity/reception blend, then runs rerankers.
+Testing notes: Documentation/design update only; no tests run.
+
+## Specify neutral top-2000 fallback seed formula
+Files: search_improvement_planning/search_method_deterministic_logic.md
+Why: The Tier NP backup needs a deterministic pool seed, not an underspecified "popularity/reception blend."
+Approach: Defined the fallback fetch as top 2,000 movies by `0.8 * normalized_popularity_score + 0.2 * normalized_reception_score`, with both component scores normalized to `[0, 1]`.
+Testing notes: Documentation/design update only; no tests run.
+
+## Inject default shorts-exclusion MEDIA_TYPE fetch when none present
+Files: search_v2/full_pipeline_orchestrator.py
+Why: Without an explicit MEDIA_TYPE call from any branch/trait, shorts can leak into the result set. Stage-4 still needs a way to fully exclude them by default.
+Approach: After per-trait endpoint generation completes, scan all branches/traits/category_calls for any CategoryName.MEDIA_TYPE call. If none exists, build a single GeneratedEndpointSpec(route=MEDIA_TYPE) with formats=[ReleaseFormat.SHORT] and surface it on FullPipelineResult.auxiliary_endpoint_specs (new field for fetches not attached to a trait). Both the bypass path and the standard path call _build_auxiliary_specs(branches). No execution wired yet — this is a placeholder for stage-4 to globally exclude shorts.
+Testing notes: Verify that a query with an explicit MEDIA_TYPE category-call (e.g. "tv movies", "shorts") emits no auxiliary spec, while a query without any media-type intent surfaces exactly one MEDIA_TYPE/SHORT auxiliary spec.
+
 ## Atomic-form rule + multi-credit-per-film + unbounded character walk
 Files: schemas/entity_translation.py, search_v2/endpoint_fetching/category_handlers/endpoint_registry.py, search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/{person_credit,named_character,character_franchise}.md
 
@@ -743,3 +767,66 @@ Re-ran the three verification queries against the refined surface:
 - "funny zombie movies from the 80s with bill murray" → `funny` at `neutral`, `zombie movies` at `elevated`, `80s` and `bill murray` at `supporting` — Q1 calibration miss is fixed; named entities and release eras no longer auto-trigger `required`.
 - "movies about grief and redemption set in small towns" → `grief` and `redemption` at `elevated`, `small towns` at `neutral`. Coordinate primaries unchanged; trailing setting drifted between supporting and neutral across runs (defensible either way at the boundary).
 - "ideally a fincher psychological thriller from the 90s, nothing too long" → `fincher` and `psychological thriller` at `diminished` (explicit-dominates now pulls them all the way down despite headline structural prominence; the model explicitly cites "the explicit channel fires" in its evidence), `90s` at `supporting`, `long` at `diminished + negative`. Disagreement-resolution issue is fixed.
+
+## Finalize commitment multipliers and rarity tiers in §7
+Files: search_improvement_planning/search_method_deterministic_logic.md
+Why: §7 listed commitment multipliers as approximate starting values and rarity as "log-based transform" without concrete tiers. Needed concrete numbers to implement Step C scoring.
+Approach: Set commitment multipliers on a √e geometric scale (3.0 / 1.75 / 1.0 / 0.6 / 0.35) — chosen so a benchmark "1 REQUIRED + 3 NEUTRAL" query has REQUIRED-only candidates tying with miss-REQUIRED-but-match-all-others candidates (the "soft gate" pivot point). Set rarity as discrete tiers over corpus fraction (ultra-rare/rare/moderate/common/very common at 0.1%/1%/10%/30% boundaries, factors 1.5/1.2/1.0/0.75/0.5) — tiered rather than continuous because trait specificity is naturally coarse and tier boundaries are easier to tune than a continuous slope. Bounded [0.5, 1.5] gives a 3× span — wide enough to weight specific actors above broad genres, narrow enough that rarity refines but doesn't dominate commitment. Also updated §12 open items to reflect that these are set (still tunable via geometric ratio / tier boundaries, no longer TBD).
+
+## Unify carver/qualifier semantic schemas; LLM commits retrieval shape per call
+Files: schemas/semantic_translation.py, search_v2/endpoint_fetching/category_handlers/endpoint_registry.py, search_v2/endpoint_fetching/category_handlers/schema_factories.py, search_v2/endpoint_fetching/semantic_query_execution.py, search_v2/endpoint_fetching/endpoint_executors.py, search_v2/endpoint_fetching/category_handlers/handler.py, search_v2/endpoint_fetching/category_handlers/prompts/endpoints/semantic.md, run_search.py, run_search_json.py
+
+### Intent
+Eliminate the role-keyed schema fork on the semantic endpoint. Previously, `get_output_schema(category, role)` returned `Carver*` vs `Qualifier*` Pydantic classes whose `space_queries` shapes differed (bare entries vs weighted entries). The role decision was inherited from the parent Trait — driven by `qualifier_relation == "n/a"` after the Step-2 schema lost its explicit `role`. That bridge was a heuristic mapping; the LLM looking at the actual call has more information about whether the trait wants strict population-naming retrieval or looser positioning-against-a-reference retrieval. New design: one unified `SemanticParameters` schema with a leading `role_exploration` reasoning field and a committed `role` enum, followed by aspects/space_candidates/space_queries. The executor reads `params.role` at runtime to dispatch between equal-vote (carver) and weighted-sum (qualifier) scoring.
+
+### Key Decisions
+- **New `SemanticRetrievalShape` enum** in `schemas/semantic_translation.py` (CARVER/QUALIFIER). Distinct from the old Step-2 `Role` enum (already removed) — this lives on the semantic-side schema and is emitted by the handler LLM per call.
+- **Per-entry weight is always populated, regardless of role.** Carver execution ignores it; qualifier execution uses CENTRAL=2.0 / SUPPORTING=1.0. Per user direction: "always populated and we choose to ignore when it's not relevant" — keeps the data interpretable for evaluation and avoids an Optional + soft-contract validator.
+- **No selectivity validator.** The 1–2-spaces (carver) vs 2–4-spaces (qualifier) bar is now purely behavioral — surfaced through field descriptions and `{{SEMANTIC_SELECTIVITY_GUIDANCE}}`. Per user: "no vector quantity check that's not helpful." Inconsistent commits (e.g. CARVER + 5 spaces) are an LLM behavior issue, not schema-enforced.
+- **Subintent variant collapses cleanly.** The 4-class surface (`{Carver,Qualifier}{,Subintent}`) became 2 (`SemanticEndpointParameters`, `SemanticEndpointSubintentParameters`).
+- **`get_output_schema(category, role)` keeps its signature** so call sites compile, but the role arg is now ignored — every category builds one schema and stores it under both Role keys. `_output_class_name` drops the Carver/Qualifier suffix; classes are now bare `<Name>Output`.
+- **`execute_semantic_query` no longer takes a `role` kwarg.** It reads `params.role` and dispatches internally. The boundary contract (`restrict_to_movie_ids` required for qualifier, forbidden for carver) is preserved against the LLM-committed role rather than a caller-passed one.
+- **`build_endpoint_coroutine`'s `role` kwarg becomes vestigial for semantic** but is retained on the signature for back-compat. The old `_derive_role` bridge in `full_pipeline_orchestrator` is now functionally unused for semantic but left in place to limit blast radius.
+- **Prompt framing rewritten** in `semantic.md`: replaced the carver/qualifier-schema-as-given framing with "your `role` decision dictates which selectivity profile applies." `{{SEMANTIC_SELECTIVITY_GUIDANCE}}` still renders both profiles every call (the LLM picks which to apply rather than being handed one schema).
+
+### Testing Notes
+- Unit tests in `unit_tests/test_schema_factories.py` reference deleted classes (`CarverSemanticEndpointParameters` etc.) and the dual-suffix class names. They will fail until updated. Per project test-boundary rules these were not modified in this changeset.
+- Notebook imports (`test_search_v2.ipynb`, etc.) likely also reference deleted classes — left to update interactively.
+- LLM-side change: handler-LLM must now commit `role` inside `SemanticParameters` rather than receiving a role-pre-keyed schema. Behavior on "obviously carver" categories (filming location, viewing occasion, etc.) is no longer structurally guaranteed — an evaluation pass on the LLM's role-decision accuracy across the 21 SEMANTIC-bearing categories is the natural follow-up.
+
+## Add operation_type to GeneratedEndpointSpec
+Files: schemas/enums.py, search_v2/full_pipeline_orchestrator.py
+
+### Intent
+Stage-4 execution and final scoring need to know whether each generated endpoint spec runs as a candidate finder (produces a pool) or a pool reranker (scores an existing pool). The distinction is deterministic from `(category, route, parent-trait polarity)` per `search_improvement_planning/search_method_deterministic_logic.md` §2 / §4 / §8. This change adds the field, the deriving helper, and wires assignment at every spec construction site.
+
+### Key Decisions
+- **New `OperationType` StrEnum** (`CANDIDATE_GENERATOR` / `POOL_RERANKER`) lives in `schemas/enums.py` next to `EndpointRoute` since they're paired at every spec.
+- **Field is non-nullable, set at construction.** Initial implementation made it `OperationType | None` with a post-pass (`_assign_operation_types`) that walked every spec on the result. Replaced that with inline assignment at each of the four construction sites because the post-pass added a transient None state the type system couldn't enforce, and the determination is a pure function of inputs already available at construction time. The helper is the single source of truth; every site calls it. Trade-off: `_process_deterministic_category_call` now takes a `polarity` kwarg threaded from the parent trait. Worth it for type-correctness end to end.
+- **Negative-polarity short-circuit** at the top of `_determine_operation_type` returns `POOL_RERANKER` regardless of route. Implements the §4/§8 rule that negative-polarity pool finders orchestrate as pure rerankers — they never add candidates, they only downrank existing union members. Applies even to routes that are already rerankers (semantic, etc.); same answer either way, dead-effort but matches the doc's framing of negative polarity as a global override.
+- **METADATA splits by category.** `GENERAL_APPEAL` (Cat 38 reception/popularity prior), `CULTURAL_STATUS` (Cat 39 popularity prior on the META side), and `CHRONOLOGICAL` (Cat 44 sort-and-pick over `release_date`) → `POOL_RERANKER`. Every other METADATA-routing category → `CANDIDATE_GENERATOR`. The `release_date` column flipping mode between RELEASE_DATE (Cat 13, finder) and CHRONOLOGICAL (Cat 44, reranker) is the cleanest example of why the helper takes both category and route.
+- **MEDIA_TYPE listed under always-finder.** It's the §2 META `media_type` column elevated into its own EndpointRoute in this codebase. Comment in the helper makes the reconciliation explicit.
+- **Auxiliary shorts-exclusion spec hardcodes `CANDIDATE_GENERATOR`.** It has no parent trait, so `_determine_operation_type` doesn't apply. Per user direction, the comment on `_build_shorts_exclusion_spec` now spells out that this is the ONLY true categorical exclusion in the entire pipeline (every user-expressed negative trait is a soft downranker via negative-polarity reranking). The hardcode is intentional and the comment flags that a second auxiliary spec would force revisiting the assumption.
+- **Tier-fallback promotion (§10) deferred.** Per user direction, that override is a follow-up pass; the helper returns the pre-promotion default for SEMANTIC traits. Comment in the SEMANTIC branch flags this.
+
+### Testing Notes
+Smoke checks (not via unit tests per test-boundary rule): construction without `operation_type` now raises `TypeError`; helper returns expected modes for the eight cases enumerated in the plan file (positive RELEASE_DATE/META → finder; positive CHRONOLOGICAL/META → reranker; positive GENERAL_APPEAL/META → reranker; positive PLOT_EVENTS/SEMANTIC → reranker; positive PERSON_CREDIT/ENTITY → finder; positive MEDIA_TYPE → finder; negative MEDIA_TYPE → reranker; negative NUMERIC_RECEPTION_SCORE/META → reranker via short-circuit). End-to-end run of `run_full_pipeline` against a query exercising every endpoint route is the natural follow-up; downstream stage-4 consumers should now read `spec.operation_type` directly with no `None` handling required.
+
+## Drop vestigial Role params; remove carver/qualifier prompt guidance
+Files: search_v2/endpoint_fetching/category_handlers/endpoint_registry.py, search_v2/endpoint_fetching/category_handlers/schema_factories.py, search_v2/endpoint_fetching/endpoint_executors.py, search_v2/endpoint_fetching/category_handlers/handler.py, search_v2/full_pipeline_orchestrator.py, search_v2/endpoint_fetching/category_handlers/prompt_builder.py, search_v2/endpoint_fetching/category_handlers/prompts/endpoints/semantic.md, schemas/semantic_translation.py, schemas/semantic_space_selectivity.py (deleted)
+
+Why: After unifying the semantic schema, the `Role` parameter threaded through `get_output_wrapper` / `get_output_schema` / `build_endpoint_coroutine` / `_run_handler_llm` and the `_derive_role` bridge in the orchestrator were all dead — the LLM commits carver vs qualifier inside `SemanticParameters.role` and the executor reads it from `params`. Likewise the system-prompt guidance about carver vs qualifier (the opening framing paragraph, the "Selectivity bar by role" section, and the always-populated-weight paragraph that duplicated the field description) was redundant with the schema field descriptions and added ~2.4k chars per call.
+
+Approach:
+- `get_output_wrapper(endpoint, bucket, *, category=None)` — dropped `role` kwarg + `_SEMANTIC_DISPATCH` key collapsed from `(Role, bool)` to `bool`.
+- `OUTPUT_SCHEMAS` re-keyed from `dict[(CategoryName, Role), ...]` to `dict[CategoryName, ...]`. `get_output_schema(category)` is the new signature.
+- All bucket factories, `_resolve_wrappers_for_bucket`, `_output_class_name`, and `_BucketFactory` lose the `Role` parameter.
+- `build_endpoint_coroutine` drops `role` kwarg.
+- `_run_handler_llm` drops `role` kwarg; the two call sites in handler.py (one of which passed `role=trait.role` against the now-absent attribute) are updated to no longer pass it.
+- `_derive_role` and the matching `Role` import removed from `full_pipeline_orchestrator.py`. Note: the orchestrator's `_process_llm_category_call` still takes `trait: Trait` so its caller signature stays unchanged; the param is unused inside the function but left to keep this changeset focused.
+- `SemanticEndpointParameters.parameters` description fixed: replaced the misleading "the wrapper's polarity field handles negation" (no such field exists on `EndpointParameters`) with "polarity is applied downstream by the handler when bucketing the finding."
+- `semantic.md`: removed the carver/qualifier framing paragraph, the duplicated always-populated-weight paragraph, and the entire "## Selectivity bar by role" section including the `{{SEMANTIC_SELECTIVITY_GUIDANCE}}` placeholder. Schema field descriptions remain the sole source of role/selectivity guidance.
+- `prompt_builder.py`: removed the `render_semantic_selectivity_for_prompt` import and the `EndpointRoute.SEMANTIC` entry from `_ENDPOINT_PLACEHOLDER_RENDERERS`.
+- `schemas/semantic_space_selectivity.py` deleted (no remaining consumers).
+
+Verification: imports compile, `OUTPUT_SCHEMAS` populates with 40 entries (down from 80 — single-key storage), function signatures inspect-clean (`get_output_schema(category)`, `get_output_wrapper(endpoint, bucket, *, category)`, `build_endpoint_coroutine(route, wrapper, *, qdrant_client, restrict_to_movie_ids)`), semantic prompt clean of "carver" / "qualifier-style" / role-keyed selectivity section, length down ~17% (13.8k → 11.4k chars).

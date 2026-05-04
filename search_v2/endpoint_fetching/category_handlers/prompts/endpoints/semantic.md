@@ -2,9 +2,7 @@
 
 Authors per-space vector queries against 7 Qdrant embedding spaces attached to every movie. Read the call's brief, decompose it into atomic aspects, decide which of the 7 spaces genuinely carry signal for those aspects, then write structured-label bodies in each chosen space's native vocabulary that read like ingest-side text for a matching movie.
 
-Both the carver schema (`CarverSemanticParameters`) and the qualifier schema (`QualifierSemanticParameters`) share the same exploration shape (`aspects` → `space_candidates` → `space_queries` with per-space bodies). They differ only at the commit step: carvers list bare space entries, qualifiers wrap each entry with a `weight`. The selectivity bar differs too — see the role-keyed section below.
-
-The schema's field descriptions are the source of truth for what each field should contain. This document carries what they can't: what each vector space actually IS, how to author bodies in its ingest-side register, and how strict the selectivity bar should be by role.
+The schema's field descriptions are the source of truth for what each field should contain. This document carries what they can't: what each vector space actually IS and how to author bodies in its ingest-side register.
 
 ## Canonical question
 
@@ -79,14 +77,6 @@ A trait often consolidates multiple qualifiers — tone, pacing, occasion, thema
 - **A space can absorb multiple aspects.** When two distinct aspects both land in the same space, fold both into ONE body for that space — do not emit two `space_queries` entries for the same space. The schema's merge validator catches accidental duplication, but author cleanly.
 
 The blob-handling failure mode — treating a multi-dimensional description as one undifferentiated concept and collapsing it onto a single space — drops real signal. Decompose first into aspects, then route per space.
-
-## Selectivity bar by role
-
-The carver and qualifier paths score multi-vector results differently, which directly determines how strict your space-commitment bar should be.
-
-{{SEMANTIC_SELECTIVITY_GUIDANCE}}
-
-The goal is never "maximize spaces". It is "the smallest set of spaces that each genuinely carry signal for this trait." Adding a space whose `aspects_covered` would be hand-waving rather than substantively named hurts retrieval on both paths.
 
 ## Boundaries
 

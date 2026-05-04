@@ -59,10 +59,8 @@ from schemas.franchise_translation import (
 from schemas.media_type_translation import MediaTypeEndpointParameters
 from schemas.trait_category import CategoryName
 from schemas.semantic_translation import (
-    CarverSemanticEndpointParameters,
-    CarverSemanticEndpointSubintentParameters,
-    QualifierSemanticEndpointParameters,
-    QualifierSemanticEndpointSubintentParameters,
+    SemanticEndpointParameters,
+    SemanticEndpointSubintentParameters,
 )
 from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall
@@ -145,7 +143,6 @@ async def run_handler(
     output = await _run_handler_llm(
         category=category,
         category_call=category_call,
-        role=trait.role,
     )
     if output is None:
         return HandlerResult(category=category)
@@ -230,13 +227,12 @@ async def _run_handler_llm(
     *,
     category: CategoryName,
     category_call: CategoryCall,
-    role: Role,
 ) -> BaseModel | None:
     # Prompt build is cheap and deterministic — do it outside the retry
     # loop so a retry only re-attempts the network call.
     system_prompt = build_system_prompt(category)
     user_message = build_user_message(category_call)
-    response_format = get_output_schema(category, role)
+    response_format = get_output_schema(category)
 
     # Single retry covers transient failures: provider errors, timeout,
     # invalid structured output. Second failure returns None so the
@@ -472,7 +468,6 @@ async def _assemble_result(
                 build_endpoint_coroutine(
                     route,
                     wrapper,
-                    role=trait.role,
                     qdrant_client=qdrant_client,
                     restrict_to_movie_ids=None,
                 ),
@@ -529,12 +524,7 @@ def _classify_wrapper(wrapper: EndpointParameters, trait: Trait) -> str | None:
     if role == Role.CARVER and polarity == Polarity.NEGATIVE:
         if isinstance(
             wrapper,
-            (
-                CarverSemanticEndpointParameters,
-                QualifierSemanticEndpointParameters,
-                CarverSemanticEndpointSubintentParameters,
-                QualifierSemanticEndpointSubintentParameters,
-            ),
+            (SemanticEndpointParameters, SemanticEndpointSubintentParameters),
         ):
             return _DOWNRANK
         return _EXCLUSION

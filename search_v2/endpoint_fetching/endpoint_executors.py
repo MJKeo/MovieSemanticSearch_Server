@@ -25,12 +25,10 @@ from schemas.entity_translation import (
     PersonQuerySpec,
     TitlePatternQuerySpec,
 )
-from schemas.enums import EndpointRoute, Role
+from schemas.enums import EndpointRoute
 from schemas.semantic_translation import (
-    CarverSemanticEndpointParameters,
-    CarverSemanticEndpointSubintentParameters,
-    QualifierSemanticEndpointParameters,
-    QualifierSemanticEndpointSubintentParameters,
+    SemanticEndpointParameters,
+    SemanticEndpointSubintentParameters,
 )
 from search_v2.endpoint_fetching.award_query_execution import execute_award_query
 from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
@@ -50,15 +48,15 @@ def build_endpoint_coroutine(
     route: EndpointRoute,
     wrapper: EndpointParameters,
     *,
-    role: Role | None,
     qdrant_client: AsyncQdrantClient,
     restrict_to_movie_ids: set[int] | None,
 ) -> Coroutine[Any, Any, EndpointResult]:
     """Build the awaitable that runs `wrapper`'s endpoint executor.
 
-    `role` is required only for SEMANTIC because semantic execution
-    branches between carver and qualifier scoring at runtime while
-    the endpoint wrapper no longer stores role / polarity fields.
+    For SEMANTIC the carver-vs-qualifier decision is committed by the
+    LLM inside the unified semantic schema's `role` field; the
+    executor reads it from `params` at runtime. Other endpoints have
+    no role-shaped dispatch.
 
     `restrict_to_movie_ids` is forwarded to the executor verbatim:
     None means "search the full corpus" (handler-time candidate
@@ -102,24 +100,14 @@ def build_endpoint_coroutine(
             params, restrict_to_movie_ids=restrict_to_movie_ids
         )
     if route == EndpointRoute.SEMANTIC:
-        # Semantic executor branches on role internally — pass the
-        # parent Trait's role through and let it pick between the
-        # primary_vector-only CARVER path and the all-spaces QUALIFIER
-        # path.
+        # Semantic executor branches on the LLM-committed `role` field
+        # inside `params` (carver vs qualifier).
         assert isinstance(
             wrapper,
-            (
-                CarverSemanticEndpointParameters,
-                QualifierSemanticEndpointParameters,
-                CarverSemanticEndpointSubintentParameters,
-                QualifierSemanticEndpointSubintentParameters,
-            ),
+            (SemanticEndpointParameters, SemanticEndpointSubintentParameters),
         )
-        if role is None:
-            raise ValueError("SEMANTIC execution requires an explicit role.")
         return execute_semantic_query(
             params,
-            role=role,
             restrict_to_movie_ids=restrict_to_movie_ids,
             qdrant_client=qdrant_client,
         )
@@ -152,10 +140,8 @@ _WRAPPER_TO_ROUTE.update({
     PersonQuerySpec: EndpointRoute.ENTITY,
     CharacterQuerySpec: EndpointRoute.ENTITY,
     TitlePatternQuerySpec: EndpointRoute.ENTITY,
-    CarverSemanticEndpointParameters: EndpointRoute.SEMANTIC,
-    QualifierSemanticEndpointParameters: EndpointRoute.SEMANTIC,
-    CarverSemanticEndpointSubintentParameters: EndpointRoute.SEMANTIC,
-    QualifierSemanticEndpointSubintentParameters: EndpointRoute.SEMANTIC,
+    SemanticEndpointParameters: EndpointRoute.SEMANTIC,
+    SemanticEndpointSubintentParameters: EndpointRoute.SEMANTIC,
 })
 
 

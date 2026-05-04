@@ -5,8 +5,8 @@
 # three coupled layers:
 #
 #   1. Trait-role analysis — target_population + trait_role_analysis.
-#      Reads role + qualifier_relation + anchor_reference (committed
-#      by Step 2) and commits what those mean for the dimensions.
+#      Reads qualifier_relation + anchor_reference (committed by
+#      Step 2) and commits what those mean for the dimensions.
 #   2. Dimension inventory + per-dimension category candidates.
 #      Each dimension is the smallest searchable piece in database-
 #      vocabulary; each carries a freeform list of plausible
@@ -71,11 +71,11 @@ from schemas.trait_category import CategoryName
 _TASK_FRAMING = """\
 You are the trait-decomposition stage of a movie-search pipeline. \
 The previous stage committed a list of traits (search-ready units \
-with role, polarity, salience, qualifier_relation, and \
-anchor_reference assigned). Take ONE trait and turn it into the \
-minimum number of taxonomy-routed CATEGORY CALLS the search \
-backend can execute against, each owning one or more concrete \
-searchable expressions.
+with polarity, qualifier_relation, anchor_reference, commitment, \
+and contextualized_phrase assigned). Take ONE trait and turn it \
+into the minimum number of taxonomy-routed CATEGORY CALLS the \
+search backend can execute against, each owning one or more \
+concrete searchable expressions.
 
 This is the abstraction-flip in the pipeline. Earlier stages \
 worked in user-vocabulary; the next stage works in endpoint-\
@@ -85,9 +85,9 @@ semantic intent into database-shaped retrieval intents.
 You produce a TraitDecomposition with these coupled layers:
 
 1. TRAIT-ROLE ANALYSIS — target_population + trait_role_analysis. \
-   Read role / qualifier_relation / anchor_reference mechanically \
-   off the user prompt and commit what they mean for what the \
-   dimensions describe. Pre-dimension; constrains the inventory.
+   Read qualifier_relation / anchor_reference mechanically off the \
+   user prompt and commit what they mean for what the dimensions \
+   describe. Pre-dimension; constrains the inventory.
 2. ASPECTS — flat list enumerating every distinguishable axis the \
    trait calls for, in user-vocabulary. Sits between the prose \
    role analysis and the database-vocabulary dimensions; \
@@ -144,74 +144,63 @@ having multiple sources is to triangulate, not to pick one.
 
 SOURCE PRIORITY:
 
-(1) PRIMARY — qualifier_relation. When populated, this is the \
-field Step 2 wrote specifically to constrain your dimension \
-scope. It describes, in freeform user vocabulary, how this \
-trait positions against the rest of the query AND the \
-operational meaning of that role. Translate its prose into what \
-KIND of dimensions belong: a measurable axis with a directional \
-threshold; an archetype / iconography / tonal register the \
-candidates need to satisfy; a setting / period / medium the \
-candidates need to evaluate inside; a craft / aesthetic \
-template the candidates need to match; etc. The relation is \
-freeform; your translation is freeform too — describe what the \
-dimensions need to capture for THIS query, not a slot from a \
-fixed list. When qualifier_relation is "n/a", primary signal \
-shifts to the grounding sources (4) below.
+(1) PRIMARY — qualifier_relation. The field Step 2 wrote \
+specifically to constrain your dimension scope. Its value is \
+either the literal sentinel "n/a" or substantive prose:
 
-(2) VERDICT — role. The binary carver-vs-qualifier commitment.
-- carver: dimensions describe the POPULATION the user wants \
-  retrieved.
-- qualifier: dimensions describe the REFERENCE / ANCHOR / \
-  SHAPE the trait positions against, never the population to \
-  recommend.
+- "n/a" means no positioning relationship: the trait names a \
+  population to retrieve. Dimensions describe what that population \
+  shares — attributes / identity / both, as the trait calls for.
+- Substantive prose means a positioning relationship: the trait \
+  positions against a reference rather than naming a population. \
+  The prose describes, in freeform user vocabulary, what KIND of \
+  dimensions belong — a measurable axis with a directional \
+  threshold; an archetype / iconography / tonal register the \
+  candidates need to satisfy; a setting / period / medium the \
+  candidates need to evaluate inside; a craft / aesthetic template \
+  the candidates need to match; etc. Translate the prose into your \
+  trait_role_analysis. The relation is freeform; your translation \
+  is freeform too — describe what the dimensions need to capture \
+  for THIS query, not a slot from a fixed list.
 
-(3) RATIONALE — role_evidence. One sentence from Step 2 \
-explaining WHY the role was committed: definitive eligibility \
-gate (carver), or one of the qualifier shapes (continuous-score-\
-only, used as a comparison reference rather than naming the \
-population, or another trait already gates the population this \
-one only refines). Read this even when role looks obvious — for \
-borderline traits and for carvers where qualifier_relation is \
-"n/a" it carries the load that primary doesn't.
+(2) GROUNDING — contextualized_phrase + evaluative_intent. The \
+modifier-folded headline identity and the integrated meaning with \
+all modifying signals folded in. Anchor your analysis in what the \
+trait is actually asking for from this specific query, not generic \
+prose about "positioning" or "populations". Especially load-bearing \
+when qualifier_relation is "n/a" — primary signal shifts here.
 
-(4) GROUNDING — contextualized_phrase + evaluative_intent. The \
-modifier-folded headline identity and the integrated meaning \
-with all modifying signals folded in. Anchor your analysis in \
-what the trait is actually asking for from this specific query, \
-not generic prose about "qualifiers" or "populations". Especially \
-load-bearing when qualifier_relation is "n/a".
-
-(5) SURFACE POINTER — anchor_reference. The verbatim modifier \
+(3) SURFACE POINTER — anchor_reference. The verbatim modifier \
 phrase from the original query. Use it to keep the analysis \
 specific to this query's anchor rather than abstract.
 
 IDENTITY VS ATTRIBUTE CATEGORIES — a structural rule that follows \
-from "qualifier means positioning, not retrieval". Some categories \
-retrieve the named entity itself: PERSON_CREDIT, TITLE_TEXT_LOOKUP, \
+from "positioning means not-retrieval". Some categories retrieve \
+the named entity itself: PERSON_CREDIT, TITLE_TEXT_LOOKUP, \
 NAMED_CHARACTER, STUDIO/BRAND, FRANCHISE/UNIVERSE_LINEAGE, \
 CHARACTER_FRANCHISE, ADAPTATION_SOURCE_FLAG, BELOW_THE_LINE_CREATOR, \
 NAMED_SOURCE_CREATOR. Others describe attributes a film can have \
 (genre, emotional/experiential, narrative setting, story/thematic \
 archetype, visual-craft acclaim, etc.).
 
-Carver traits: identity OR attribute categories are both fair \
-game — the user IS asking for the entity. The role analysis \
-commits "dimensions describe the population", and the population \
-can be defined by an identity category (the user wants credits / \
-title / studio / character / franchise / source) or by attribute \
-categories (the user wants a kind of movie described by its \
-qualities), or by both.
+Traits whose qualifier_relation is "n/a": identity OR attribute \
+categories are both fair game — the user IS asking for the entity. \
+The role analysis commits "dimensions describe the population", \
+and the population can be defined by an identity category (the \
+user wants credits / title / studio / character / franchise / \
+source) or by attribute categories (the user wants a kind of \
+movie described by its qualities), or by both.
 
-Qualifier traits: the named entity is a positioning anchor, not a \
+Traits whose qualifier_relation describes a positioning \
+relationship: the named entity is a positioning anchor, not a \
 retrieval target. Committing an identity category for that entity \
 puts the anchor itself in the result pool — never what a \
-qualifier asks for. Route only to ATTRIBUTE categories that \
-describe what the entity is LIKE: archetype, tonal register, \
+positioning trait asks for. Route only to ATTRIBUTE categories \
+that describe what the entity is LIKE: archetype, tonal register, \
 visual craft, narrative shape, iconography, setting. The named \
-entity itself never becomes a call's expression for a qualifier \
+entity itself never becomes a call's expression for a positioning \
 trait — only its describable attributes do. This rule follows \
-directly from what "qualifier" means; it inherits to every \
+directly from what "positioning" means; it inherits to every \
 qualifier_relation, including ones the prompt has never seen \
 before.
 
@@ -221,15 +210,15 @@ a different reader, given only this analysis, write the same kind \
 of dimensions? If no, revise.
 
 NEVER:
-- LEAD WITH role AS THE HEADLINE QUESTION. role is the verdict; \
-  qualifier_relation is the substantive signal that tells you \
-  what the dimensions should describe. Read all sources; don't \
-  stop at the binary.
 - RE-INTERPRET qualifier_relation. Step 2 commit is the source of \
   truth — read it, don't second-guess.
-- DERIVE A DIFFERENT ROLE from evaluative_intent.
-- COMMIT AN IDENTITY CATEGORY for a qualifier trait's named \
-  entity. The entity is being positioned against, not retrieved.
+- RE-DERIVE THE POSITIONING STANCE from evaluative_intent. \
+  qualifier_relation is the source of truth for whether this trait \
+  names a population or positions against a reference — read it, \
+  don't re-derive it from intent.
+- COMMIT AN IDENTITY CATEGORY for a trait whose qualifier_relation \
+  describes a positioning relationship. The entity is being \
+  positioned against, not retrieved.
 - SLOT THE QUALIFIER_RELATION INTO A FIXED VOCABULARY. There is \
   no closed list of relation types; describe what THIS query's \
   relation operationally requires.
@@ -248,8 +237,8 @@ vocabulary, before translating into database-vocabulary
 Between the role analysis and the dimension inventory sits an \
 enumeration step. Decompose target_population into the \
 independent axes that define it, using trait_role_analysis to \
-qualify whether each axis describes the population (carver) or \
-the reference being positioned against (qualifier).
+qualify whether each axis describes the population to retrieve \
+or the reference being positioned against.
 
 PRIMARY SOURCE: target_population. It names what kind of movies \
 the trait wants — your job is to break that prose into the \
@@ -498,18 +487,19 @@ retrieval_intent must contain. Procedural notes:
   dimension's expression (verbatim, lightly tightened, or \
   recognizably the same check). Never split into multiple same-\
   category calls.
-- retrieval_intent: when source trait is a qualifier, encode how \
-  Step 4 should treat the retrieval — as the reference being \
+- retrieval_intent: when the trait positions against a reference \
+  (qualifier_relation describes a positioning relationship), encode \
+  how Step 4 should treat the retrieval — as the reference being \
   positioned against, as a threshold candidates must clear, etc. \
   Per the trait_role_analysis you committed.
 
-CARVER VS QUALIFIER (read off role analysis):
-- Carver: dimensions describe the population. Calls describe the \
-  population to score against.
-- Qualifier: dimensions describe the reference / shape. Calls \
-  describe the reference being positioned against, NOT a result \
-  pool of their own. retrieval_intent must encode the qualifier's \
-  operational meaning.
+READ TRAIT_ROLE_ANALYSIS:
+- When dimensions describe the population to retrieve → calls \
+  describe the population to score against.
+- When dimensions describe a reference / shape being positioned \
+  against → calls describe the reference, NOT a result pool of \
+  their own; retrieval_intent must encode the positioning's \
+  operational meaning per the analysis.
 
 OPERATIONAL TESTS:
 - COVERAGE. Each dimension owned by exactly one call's \
@@ -527,9 +517,11 @@ OPERATIONAL TESTS:
 - POLARITY-DISCIPLINE. Does this call describe presence? Reject \
   any expression or retrieval_intent that includes negation / \
   absence — polarity is upstream.
-- ROLE-CONSISTENCY. Does framing match trait_role_analysis? \
-  Carver → population. Qualifier → reference / shape with \
-  retrieval_intent encoding operational meaning.
+- POSITIONING-CONSISTENCY. Does framing match what \
+  trait_role_analysis committed? Population-naming analysis → \
+  calls describe the population. Reference-positioning analysis → \
+  calls describe the reference + retrieval_intent encodes the \
+  operational meaning.
 
 ---
 
@@ -687,22 +679,21 @@ def _build_user_prompt(trait: Trait) -> str:
     step needs is already encoded in the trait's fields. The
     query-level intent_exploration prose is deliberately NOT
     surfaced here: it lives at Step 2 where it shapes the per-trait
-    commits (atom partitioning, role_evidence). Sending query-level
-    prose down would risk leaking other-trait interpretations into
-    this trait's routing.
+    commits. Sending query-level prose down would risk leaking
+    other-trait interpretations into this trait's routing.
 
     The LLM gets the trait's contextualized_phrase (headline trait
     identity with modifiers folded in — Step 2's defense against
     shortcut routing on bare surface phrases), surface_text
     (verbatim grounding), evaluative_intent (the semantic seed),
-    role (the carver/qualifier verdict), role_evidence (one-
-    sentence rationale for the role commit; load-bearing on
-    borderline traits and on carvers where qualifier_relation is
-    "n/a"), qualifier_relation and anchor_reference (drive
+    qualifier_relation and anchor_reference (drive
     trait_role_analysis and the identity-vs-attribute principle),
-    polarity (informational — calls express presence regardless),
-    and relevance_to_query (signals how aggressively the trait
-    warrants decomposition).
+    and polarity (informational — calls express presence regardless).
+
+    `commitment` is intentionally NOT passed: it weights how the
+    trait scores in the final query, but Step 3 acts identically on
+    every trait regardless of importance level — decomposition
+    discipline applies uniformly.
 
     contextualized_phrase appears AHEAD of surface_text — bare
     surface phrases stripped of their query context invite shortcut
@@ -711,28 +702,24 @@ def _build_user_prompt(trait: Trait) -> str:
 
     The qualifier_relation and anchor_reference fields are printed
     verbatim including the literal "n/a" sentinel — Step 3 reads
-    "n/a" as an explicit "no qualifier-style relation here" signal,
-    so we never conditionally hide them.
+    "n/a" on qualifier_relation as an explicit "no positioning
+    relationship; trait names a population to retrieve" signal, so
+    we never conditionally hide it.
 
     Polarity is informational at this layer. Step 3 always
     describes presence of attributes; how the orchestrator composes
-    calls (additive sum for positive traits and qualifiers,
-    intersection over calls for carver+negative exclusions) is
-    entirely orchestrator-side and does not need Step 3 to commit
-    anything different in its decomposition.
+    calls is entirely orchestrator-side and does not need Step 3 to
+    commit anything different in its decomposition.
     """
     return (
         "Trait to decompose:\n"
         f'- contextualized_phrase: "{trait.contextualized_phrase}"\n'
         f'- surface_text (verbatim): "{trait.surface_text}"\n'
         f"- evaluative_intent: {trait.evaluative_intent}\n"
-        f"- role: {trait.role}\n"
-        f"- role_evidence: {trait.role_evidence}\n"
         f"- qualifier_relation: {trait.qualifier_relation}\n"
         f"- anchor_reference: {trait.anchor_reference}\n"
         f"- polarity: {trait.polarity}    "
         "(informational — calls express presence regardless)\n"
-        f"- relevance_to_query: {trait.relevance_to_query}\n"
     )
 
 

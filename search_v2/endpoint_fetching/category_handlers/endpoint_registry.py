@@ -1,18 +1,19 @@
-# Maps each (endpoint, bucket) — and for SEMANTIC, role — to the
-# concrete Pydantic class the step-3 handler LLM emits as its
-# response_format. Used by the sibling schema_factories module to
-# dynamically build per-category output schemas from a category's
-# bucket + endpoint tuple.
+# Maps each (endpoint, bucket) to the concrete Pydantic class the
+# step-3 handler LLM emits as its response_format. Used by the
+# sibling schema_factories module to dynamically build per-category
+# output schemas from a category's bucket + endpoint tuple.
 #
-# Important: role + polarity are NOT in any wrapper schema. The
-# upstream Trait (committed in step-3) owns both, and the handler
-# stamps them onto the wrapper after the LLM call. Wrapper classes
-# expose only `parameters` (plus `<endpoint>_retrieval_intent` on
-# the subintent variants). See schemas/endpoint_parameters.py.
+# Important: polarity is NOT in any wrapper schema. The upstream
+# Trait owns it, and the handler stamps it onto the wrapper after
+# the LLM call. Wrapper classes expose only `parameters` (plus
+# `<endpoint>_retrieval_intent` on the subintent variants). The
+# semantic carver-vs-qualifier decision is committed by the LLM
+# inside the unified `SemanticParameters.role` field rather than
+# being inherited from the parent Trait. See
+# schemas/endpoint_parameters.py + schemas/semantic_translation.py.
 #
 # Four lookup structures, all consulted by the single public
-# accessor get_output_wrapper(endpoint, bucket, *, role=None,
-# category=None):
+# accessor get_output_wrapper(endpoint, bucket, *, category=None):
 #
 #   ROUTE_TO_WRAPPER             — single-endpoint buckets. The
 #                                   wrapper owns the entire call
@@ -26,16 +27,14 @@
 #                                   descriptor reads from that
 #                                   field rather than from raw
 #                                   inputs.
-#   _SEMANTIC_DISPATCH           — semantic only: (role, is_multi)
-#                                   selects between Carver/Qualifier
-#                                   × regular/subintent. Semantic is
-#                                   one of two endpoints whose schema
-#                                   shape depends on something other
-#                                   than (route, bucket); it is
-#                                   resolved here at lookup time
-#                                   rather than exposed as a runtime
-#                                   Union that OpenAI's structured-
-#                                   output parse() cannot consume.
+#   _SEMANTIC_DISPATCH           — semantic only: is_multi selects
+#                                   between regular and subintent
+#                                   variants. The carver-vs-qualifier
+#                                   split is no longer schema-level —
+#                                   the LLM commits the retrieval
+#                                   shape inside the unified schema's
+#                                   `role` field, and the executor
+#                                   branches on it at runtime.
 #   _ENTITY_DISPATCH             — entity only: CategoryName selects
 #                                   between PersonQuerySpec /
 #                                   CharacterQuerySpec /
@@ -79,7 +78,7 @@ from schemas.entity_translation import (
     PersonQuerySpec,
     TitlePatternQuerySpec,
 )
-from schemas.enums import EndpointRoute, HandlerBucket, Role
+from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.franchise_translation import FranchiseEndpointParameters
 from schemas.keyword_translation import (
     KeywordEndpointParameters,
@@ -91,10 +90,8 @@ from schemas.metadata_translation import (
     MetadataEndpointSubintentParameters,
 )
 from schemas.semantic_translation import (
-    CarverSemanticEndpointParameters,
-    CarverSemanticEndpointSubintentParameters,
-    QualifierSemanticEndpointParameters,
-    QualifierSemanticEndpointSubintentParameters,
+    SemanticEndpointParameters,
+    SemanticEndpointSubintentParameters,
 )
 from schemas.studio_translation import StudioEndpointParameters
 from schemas.trait_category import CategoryName
@@ -215,7 +212,8 @@ WrapperRef = type[BaseModel] | None
 # Single-endpoint-bucket map. The wrapper here owns the entire call
 # and reads parameters directly from retrieval_intent + expressions.
 # SEMANTIC is intentionally absent — handled via _SEMANTIC_DISPATCH
-# inside get_output_wrapper because its schema depends on role.
+# inside get_output_wrapper because its schema also has a subintent
+# variant for multi-endpoint buckets.
 # ENTITY is intentionally absent — handled via _ENTITY_DISPATCH
 # because its schema depends on the parent CategoryName.
 ROUTE_TO_WRAPPER: dict[EndpointRoute, WrapperRef] = {
@@ -247,16 +245,16 @@ ROUTE_TO_SUBINTENT_WRAPPER: dict[EndpointRoute, WrapperRef] = {
 }
 
 
-# (role, is_multi_endpoint_bucket) -> concrete semantic wrapper.
-# Semantic's schema shape depends on the parent Trait's role: Carver
-# and Qualifier have structurally different `parameters`. Resolved at
-# lookup time rather than via a runtime Union (which OpenAI's parse()
-# rejects as response_format).
-_SEMANTIC_DISPATCH: dict[tuple[Role, bool], type[BaseModel]] = {
-    (Role.CARVER,    False): CarverSemanticEndpointParameters,
-    (Role.QUALIFIER, False): QualifierSemanticEndpointParameters,
-    (Role.CARVER,    True):  CarverSemanticEndpointSubintentParameters,
-    (Role.QUALIFIER, True):  QualifierSemanticEndpointSubintentParameters,
+# is_multi_endpoint_bucket -> concrete semantic wrapper. Both
+# variants embed a unified SemanticParameters whose `role` field
+# (carver / qualifier) is committed by the LLM per call; the
+# executor reads that field at runtime. The subintent variant adds
+# `semantic_retrieval_intent` on the wrapper so every parameter
+# descriptor reads from the slice-of-intent assigned to this
+# endpoint by upstream responsibility-splitting reasoning.
+_SEMANTIC_DISPATCH: dict[bool, type[BaseModel]] = {
+    False: SemanticEndpointParameters,
+    True:  SemanticEndpointSubintentParameters,
 }
 
 
@@ -296,7 +294,6 @@ def get_output_wrapper(
     endpoint: EndpointRoute,
     bucket: HandlerBucket,
     *,
-    role: Role | None = None,
     category: CategoryName | None = None,
 ) -> WrapperRef:
     """Return the LLM output wrapper for `endpoint` under `bucket`.
@@ -319,28 +316,23 @@ def get_output_wrapper(
     wrapper's descriptors read raw retrieval_intent + expressions
     and would violate the bucket's slice-of-intent contract.
 
-    SEMANTIC requires `role` to disambiguate Carver vs Qualifier
-    (their `parameters` shapes differ). ENTITY requires `category`
-    to disambiguate Person / Character / Title (each category gets
-    a different spec class). Both kwargs are ignored for every other
-    endpoint.
+    SEMANTIC returns the unified wrapper (or its subintent variant);
+    the LLM commits carver vs qualifier inside the schema's `role`
+    field. ENTITY requires `category` to disambiguate Person /
+    Character / Title (each category gets a different spec class);
+    the `category` kwarg is ignored for every non-ENTITY endpoint.
     """
     # Bucket 7: shared concrete schema, irrespective of which
     # endpoint the dispatch came in on. Short-circuited above the
-    # ENTITY / SEMANTIC branches so the per-category / per-role
-    # dispatches do not run for this bucket.
+    # ENTITY / SEMANTIC branches so the per-category dispatch does
+    # not run for this bucket.
     if bucket is HandlerBucket.CHARACTER_FRANCHISE_FANOUT:
         return CharacterFranchiseFanoutSchema
 
     is_multi = bucket in _MULTI_ENDPOINT_BUCKETS
 
     if endpoint is EndpointRoute.SEMANTIC:
-        if role is None:
-            raise ValueError(
-                "SEMANTIC requires `role` to pick Carver vs Qualifier; "
-                "pass the parent Trait's role."
-            )
-        return _SEMANTIC_DISPATCH[(role, is_multi)]
+        return _SEMANTIC_DISPATCH[is_multi]
 
     if endpoint is EndpointRoute.ENTITY:
         # ENTITY has no subintent variants — the three specs are

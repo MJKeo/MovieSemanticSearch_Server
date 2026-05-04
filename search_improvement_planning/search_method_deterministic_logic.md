@@ -363,13 +363,13 @@ trait_weight = commitment_multiplier × rarity_factor
 
 ### Commitment multiplier
 
-| Commitment | Multiplier (starting value, tunable) |
-|---|---|
-| `required`   | ≈ 3.0  |
-| `elevated`   | ≈ 1.8  |
-| `neutral`    | 1.0    |
-| `supporting` | ≈ 0.6  |
-| `diminished` | ≈ 0.35 |
+| Commitment   | Multiplier |
+|--------------|-----------:|
+| `required`   | 3.0        |
+| `elevated`   | 1.75       |
+| `neutral`    | 1.0        |
+| `supporting` | 0.6        |
+| `diminished` | 0.35       |
 
 The scale is asymmetric by construction: explicit signals (REQUIRED,
 DIMINISHED) reach the extremes because the user named the strength
@@ -377,10 +377,20 @@ themselves; structural signals (ELEVATED, SUPPORTING) reach the
 inner half-step because they reflect inferred prominence rather
 than expressed strength; NEUTRAL sits at 1.0 as the true middle.
 
+The values form an approximately geometric scale with ratio √e ≈
+1.65 per step (log-space gaps of ≈ 0.5 between adjacent levels).
+This means each level is "noticeably more important than the one
+below" by a constant factor rather than a constant absolute
+amount, which matches how commitment intuitively scales.
+
 The required multiplier is the lever that gives required traits
 real teeth without making them de facto hard gates. Set too low
 and the system ignores strong user constraints; set too high and
 missing a required trait categorically excludes the candidate.
+3.0 is calibrated so that in a benchmark query with 1 REQUIRED
+trait and 3 NEUTRAL traits, a candidate that matches REQUIRED but
+nothing else ties a candidate that misses REQUIRED but matches
+all three neutrals — the "soft gate" pivot point.
 
 ### Rarity factor
 
@@ -400,6 +410,29 @@ promotion elevates a reranker to candidate-generating duty, the
 trait must be explicitly tagged so the rarity calculation uses
 the semantic rule (1.0-scoring movies) rather than the finder
 rule (matched candidates).
+
+**Rarity tiers.** The log-based transform is implemented as
+discrete tiers over corpus fraction. Tiered (rather than
+continuous) because the natural granularity of trait specificity
+is coarse — a specific actor, a niche keyword, a broad genre, a
+near-universal descriptor — and tiers are easier to tune
+empirically by shifting boundaries than by retuning a slope.
+Corpus size N ≈ 150K movies.
+
+| Tier        | Corpus fraction | df range (N ≈ 150K) | Rarity factor |
+|-------------|----------------:|--------------------:|--------------:|
+| Ultra-rare  | < 0.1%          | < 150               | 1.5           |
+| Rare        | 0.1% – 1%       | 150 – 1,500         | 1.2           |
+| Moderate    | 1% – 10%        | 1,500 – 15,000      | 1.0           |
+| Common      | 10% – 30%       | 15,000 – 45,000     | 0.75          |
+| Very common | > 30%           | > 45,000            | 0.5           |
+
+Bounded [0.5, 1.5] — a 3× span between the rarest and most-common
+traits. Wide enough that a specific actor outweighs a broad genre
+on rarity alone, narrow enough that rarity refines but does not
+dominate commitment. Combined with commitment, the full
+`commitment × rarity` weight ranges from 0.175 (diminished × very
+common) to 4.5 (required × ultra-rare).
 
 ---
 
@@ -471,7 +504,14 @@ The criterion for tier assignment:
 
 Categories that score high on all three (concrete subjects,
 settings, plot events) belong in the top tier. Categories that
-score low (vibes, watch-context fit) belong in the bottom tier.
+score low (vibes, watch-context fit) belong near the bottom. Some
+rerankers are never promotable: negative-polarity calls describe
+what to penalize, not what to fetch, and some signals only make
+sense once an independent pool already exists.
+
+Promotion tiers apply only to **positive-polarity reranker calls**.
+Negative-polarity calls are always Tier NP (never promote), even
+when the underlying endpoint would normally be a pool finder.
 
 ### Tier 1 — Concrete fact / specific identifier
 
@@ -536,38 +576,78 @@ reach fallback. When they do, they promote ahead of vibes.
 
 Pool-finder mode produces "movies with this feel across all
 genres / eras" — broad, noisy, rarely the right starting set.
-Promote only if literally no higher tier fired.
+Promote only if literally no higher content tier fired.
 
 | Category | Endpoint(s) |
 |---|---|
 | Cat 33 — Emotional / experiential | VWX + CTX + RCP |
 | Cat 34 — Viewing occasion | CTX |
 
+### Tier 7 — Global metadata priors / ordinals
+
+These are corpus-level ordering signals, not content identifiers.
+They are still promotable before the emergency fallback because
+they can produce a coherent default pool for queries like "best
+movies," "popular movies," or "newest movies." Promotion means
+selecting the top-K candidates by the targeted metadata direction,
+then letting every remaining reranker score that pool.
+
+| Category | Endpoint / column | Promotion shape |
+|---|---|---|
+| Cat 38 — General appeal / quality baseline | META.reception_score / META.popularity_score | Top-K by requested prior direction |
+| Cat 39 — Cultural status / canonical stature | META.popularity_score and/or RCP | Prefer RCP if present in the fired calls; otherwise top-K by popularity prior |
+| Cat 44 — Chronological ordinal | META.release_date | Top-K by requested chronological direction |
+
+### Tier NP — Never promote
+
+These calls are pure rerankers only. If promotion reaches this tier
+without any prior tier producing candidates, do **not** promote them.
+Instead seed the pool with a neutral corpus prior: the top 2,000
+movies by `0.8 * normalized_popularity_score + 0.2 *
+normalized_reception_score`, with both component scores normalized
+to `[0, 1]`, then run all rerankers against that seeded pool.
+
+| Case | Why never promote |
+|---|---|
+| Any negative-polarity endpoint call | The call names what to penalize, not what to search for. Promoting "no horror" would fetch horror movies, which is backwards. |
+| Positive-polarity metadata reranker with no usable direction | A prior without a resolved direction cannot define a meaningful pool. |
+
 ### Promotion rule
 
 When no candidate-generating trait exists in the query:
 
-1. Find the highest-tier semantic category present in the trait
-   set.
-2. That category's primary semantic endpoint promotes to
-   candidate-finder duty.
-3. If that promotion produces at least one candidate, stop. The
+1. Ignore every negative-polarity endpoint call for promotion.
+   They remain rerankers.
+2. Find the highest-tier positive-polarity reranker category
+   present in the trait set. If none exists, go directly to Tier
+   NP and seed the neutral fallback pool.
+3. That category's primary promotable endpoint or metadata column
+   promotes to candidate-finder duty.
+4. If that promotion produces at least one candidate, stop. The
    promoted category(s) are the **minimum set** needed.
-4. If it produces zero candidates, walk down to the next tier
+5. If it produces zero candidates, walk down to the next tier
    and add it to the promoted set. Continue until at least one
-   candidate is produced or all tiers are exhausted.
-5. If multiple categories tie at the same top tier, all of them
+   candidate is produced or Tier NP is reached.
+6. If multiple categories tie at the same top tier, all of them
    promote (each contributes its top-K), pools union.
-6. Mark all promoted traits as **semantic-promoted** so the
-   rarity calculation uses the semantic rule (1.0-scoring movies
-   per §7).
-7. Re-enter Step C with the updated trait set.
+7. If promotion reaches Tier NP without candidates, seed the pool
+   with the top 2,000 movies by `0.8 *
+   normalized_popularity_score + 0.2 *
+   normalized_reception_score`, with both component scores
+   normalized to `[0, 1]`. This is the "we need something to
+   rerank" fallback, not a trait match.
+8. Mark all semantic-promoted traits as **semantic-promoted** so
+   the rarity calculation uses the semantic rule (1.0-scoring
+   movies per §7). Metadata-promoted traits use the metadata
+   rarity/count rule for the selected top-K or threshold shape.
+9. Re-enter Step C with the updated trait set.
 
 The intent: the broadest signals do the least narrowing work.
 Promoting the highest tier first means setting / topic / plot
 prose (which produce sharp, content-defined pools) carve the
-candidate set, and vibes / occasion (which would produce broad,
-fuzzy pools) only ever rerank.
+candidate set, vibes / occasion only promote when no sharper
+content signal exists, and global priors promote only before the
+neutral top-2K seed would otherwise be needed.
 
 ### Worked example
 
@@ -613,8 +693,8 @@ already shaped by the right axis.
 | All categories in a candidate-generating trait return 0 | The trait contributes 0 candidates and 0 score across the board. Other candidate-generating traits proceed normally. |
 | All candidate-generating traits across the query return 0 | Union is empty. **Return empty results.** Do not run pure-reranker traits, do not fall back to tier promotion. ("If something truly doesn't exist, then it doesn't exist.") |
 | No candidate-generating traits exist in the query (every trait is structurally pure-reranker) | Enter tier-fallback promotion (§10). Structurally distinct from the empty-result case above — this is "we have no way to find candidates," not "no candidates exist." |
-| Tier-fallback promotion produces 0 from the highest tier | Walk down to the next tier and add it to the promoted set. Continue until at least one candidate exists. |
-| All tiers promoted and still 0 | Return empty results. |
+| Tier-fallback promotion produces 0 from the highest tier | Walk down to the next tier and add it to the promoted set. Continue until at least one candidate exists or Tier NP is reached. |
+| Promotion reaches Tier NP without candidates | Seed the pool with the top 2,000 movies by `0.8 * normalized_popularity_score + 0.2 * normalized_reception_score`, with both component scores normalized to `[0, 1]`, then run the pure rerankers against that pool. |
 | Semantic reranker fetch with no clear elbow / very small / very noisy result | Use the elbow-normalization fallback shape (TBD — see §12). |
 | Trait with multiple semantic fetches needing rarity (semantic-promoted case) | Rarity = (count of movies scoring 1.0 on **at least one** of those semantic fetches) / corpus size. |
 | Cat 33 / Bucket 6 with KW present and tag matches | KW pool-finds; semantic rerankers refine within the KW result. The semantic long-tail outside the KW pool does not enter (precision-over-recall by design). |
@@ -627,16 +707,18 @@ already shaped by the right axis.
 
 ## 12. Open items to tune empirically
 
-- **Commitment multipliers.** Starting values: required ≈ 3.0,
-  elevated ≈ 1.8, neutral = 1.0, supporting ≈ 0.6, diminished ≈ 0.35.
-  Needs eval-data tuning to find values where required has real
-  teeth without becoming a de facto hard gate, and where the
-  asymmetric spread (explicit at the extremes, structural at the
-  inner half-step) actually discriminates well-investigated traits
-  from trailing refinements in real queries.
-- **Rarity transform shape.** Log-IDF or equivalent; bounded so
-  common traits don't go to 0. Exact shape depends on the
-  distribution of trait frequencies in the corpus.
+- **Commitment multipliers.** Set per §7 (3.0 / 1.75 / 1.0 / 0.6 /
+  0.35) on a √e geometric scale. Eval-data tuning may shift the
+  geometric ratio (try √2 if required dominates too aggressively,
+  e if it doesn't bite hard enough), but the asymmetric spread
+  (explicit at extremes, structural at inner half-step) is fixed
+  by design.
+- **Rarity tier boundaries.** Set per §7 at 0.1% / 1% / 10% / 30%
+  of corpus, with factors 1.5 / 1.2 / 1.0 / 0.75 / 0.5. Boundaries
+  are decade-spaced over corpus fraction; tune by shifting
+  boundaries (e.g. tighten ultra-rare to 0.05% if specific-actor
+  traits over-dominate) or by widening the [0.5, 1.5] bounds if
+  the 3× span is too compressed.
 - **Per-endpoint candidate-generation top-K sizes.** For finders
   this is a hit-list cap; for promoted semantic traits it's
   effectively determined by elbow normalization. Need empirical
