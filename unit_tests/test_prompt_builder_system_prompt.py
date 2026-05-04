@@ -90,7 +90,12 @@ def expected_chunks() -> dict:
     endpoint = {
         route: _read(_PROMPTS_DIR / "endpoints" / f"{route.value}.md")
         for route in EndpointRoute
-        if route is not EndpointRoute.TRENDING
+        if route
+        not in {
+            EndpointRoute.TRENDING,
+            EndpointRoute.MEDIA_TYPE,
+            EndpointRoute.NEUTRAL_SEED,
+        }
     }
     notes = {
         category: _read(

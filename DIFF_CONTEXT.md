@@ -7,6 +7,12 @@ Why: Reranker-only fallback needs a deterministic way to rank promotable endpoin
 Approach: Added `PromotionTier` as an ordered `IntEnum` with `NEVER_PROMOTE = -1` and tiers 1-7 matching the planning doc. Added `determine_promotion_tier(category, endpoint_spec, polarity)` so route-specific cases like `CULTURAL_STATUS` can split semantic prose (Tier 4) from metadata prior (Tier 7). Candidate-generator specs, negative-polarity specs, and unmapped positive rerankers return `NEVER_PROMOTE`.
 Testing notes: Added table-driven unit coverage for every tier row, candidate-generator non-promotion, negative polarity, unmapped rerankers, and enum ordering. `uv run pytest unit_tests/test_full_pipeline_promotion_tiers.py -v` passed (35 tests).
 
+## Centralize neutral reranker seed formula in Postgres helper
+Files: db/postgres.py, search_v2/full_pipeline_orchestrator.py, unit_tests/test_neutral_reranker_seed.py
+Why: The neutral top-2000 seed formula was duplicated between the orchestrator constants/comment and the DB helper, creating drift risk.
+Approach: Made `db/postgres.py` the source of truth with `NEUTRAL_RERANKER_SEED_LIMIT`, `NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT = 0.8`, and `NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT = 0.2`. `fetch_neutral_reranker_seed_ids()` now defaults to the shared limit and parameterizes SQL with those constants. Removed the duplicate orchestrator constants; the neutral seed spec comment now points to the DB helper.
+Testing notes: No tests run per user instruction; updated the existing neutral seed test expectations to assert against the DB constants.
+
 ## Integrate reranker-only fallback tiers for metadata and negative polarity
 Files: search_improvement_planning/search_method_deterministic_logic.md
 Why: The new endpoint-level candidate-generator vs reranker designation creates queries with no candidate-generating calls, including all-negative traits and metadata/semantic-only reranker traits.

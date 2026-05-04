@@ -394,3 +394,4 @@ async def test_fetch_browse_seed_ids_uses_popularity_ordering() -> None:
     query, params = mock_execute.await_args.args
     assert "ORDER BY popularity_score DESC NULLS LAST, movie_id DESC" in query
     assert params == (3,)
+

@@ -19,6 +19,11 @@ from schemas.imdb_models import AwardNomination
 from schemas.metadata import FranchiseOutput
 
 
+NEUTRAL_RERANKER_SEED_LIMIT = 2000
+NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT = 0.8
+NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT = 0.2
+
+
 class PostingTable(Enum):
     """Supported posting tables for lexical matching and exclusion resolution."""
     ACTOR = "lex.inv_actor_postings"
@@ -1837,6 +1842,51 @@ async def fetch_quality_popularity_seed(
         LIMIT %s
     """
     rows = await _execute_read(query, (limit,))
+    return [row[0] for row in rows]
+
+
+async def fetch_neutral_reranker_seed_ids(
+    *,
+    limit: int = NEUTRAL_RERANKER_SEED_LIMIT,
+) -> list[int]:
+    """Top `limit` movie_ids for reranker-only fallback seeding.
+
+    Orders by the deterministic neutral prior:
+
+        NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT
+            * normalized_popularity_score
+      + NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT
+            * normalized_reception_score
+
+    `popularity_score` is already stored on a [0, 1] scale.
+    `reception_score` is stored on a 0-100 scale, so normalize by
+    dividing by 100 and clamp both components defensively.
+    """
+    query = """
+        SELECT movie_id
+        FROM public.movie_card
+        ORDER BY (
+            %s * COALESCE(
+                LEAST(1.0, GREATEST(0.0, popularity_score)),
+                0.0
+            )
+            +
+            %s * COALESCE(
+                LEAST(1.0, GREATEST(0.0, reception_score / 100.0)),
+                0.0
+            )
+        ) DESC,
+        movie_id DESC
+        LIMIT %s
+    """
+    rows = await _execute_read(
+        query,
+        (
+            NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT,
+            NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT,
+            limit,
+        ),
+    )
     return [row[0] for row in rows]
 
 

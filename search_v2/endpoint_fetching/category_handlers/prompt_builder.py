@@ -83,16 +83,15 @@ _BUCKET_GUARDRAILS: dict[HandlerBucket, str] = {
 }
 
 # Endpoint chunks are keyed by EndpointRoute. TRENDING has no LLM
-# codepath at all. MEDIA_TYPE will be routed deterministically by code
-# (matching surface phrases against the ReleaseFormat enum) rather than
-# through the LLM handler — the deterministic routing path is pending,
-# but in the meantime no prompt is authored and the route is skipped on
-# eager load. Both routes are short-circuited to no-op results inside
-# handler.run_handler, so reaching the LLM codepath for either should
-# never happen.
+# codepath at all. MEDIA_TYPE routes deterministically by code
+# (matching surface phrases against the ReleaseFormat enum).
+# NEUTRAL_SEED is a fallback candidate-pool seed, not a translated
+# user trait. None of these routes should ever reach the LLM
+# codepath, so they have no endpoint prompt chunks.
 _ENDPOINT_PROMPTLESS: frozenset[EndpointRoute] = frozenset({
     EndpointRoute.TRENDING,
     EndpointRoute.MEDIA_TYPE,
+    EndpointRoute.NEUTRAL_SEED,
 })
 
 

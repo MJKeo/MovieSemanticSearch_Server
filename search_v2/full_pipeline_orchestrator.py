@@ -126,8 +126,8 @@ BranchKind = Literal["original", "spin_1", "spin_2"]
 class GeneratedEndpointSpec:
     """One executable endpoint spec ready for stage-4 execution.
 
-    `params` is None for routes that take no parameters (TRENDING is
-    the only such route today). The downstream executor routes by
+    `params` is None for routes that take no parameters (TRENDING
+    and NEUTRAL_SEED today). The downstream executor routes by
     `route` and knows whether to read `params`.
 
     `operation_type` is set at construction by every code path that
@@ -669,12 +669,74 @@ def _build_shorts_exclusion_spec() -> GeneratedEndpointSpec:
     )
 
 
+def _build_neutral_seed_spec() -> GeneratedEndpointSpec:
+    # Marker spec for the reranker-only fallback. Stage 4 executes
+    # this route via db.postgres.fetch_neutral_reranker_seed_ids(),
+    # which owns the seed size and weighted popularity/reception
+    # formula.
+    return GeneratedEndpointSpec(
+        route=EndpointRoute.NEUTRAL_SEED,
+        params=None,
+        operation_type=OperationType.CANDIDATE_GENERATOR,
+    )
+
+
 def _build_auxiliary_specs(
     branches: list[Step2BranchResult],
 ) -> list[GeneratedEndpointSpec]:
     if _has_media_type_call(branches):
         return []
     return [_build_shorts_exclusion_spec()]
+
+
+def _apply_reranker_only_candidate_fallback(
+    branches: list[Step2BranchResult],
+) -> list[GeneratedEndpointSpec]:
+    """Promote minimum-tier rerankers or emit the neutral seed spec.
+
+    Runs only when every trait-derived endpoint spec is currently a
+    reranker. This function deliberately ignores auxiliary specs
+    (shorts exclusion, neutral seed) so only user-derived calls decide
+    whether fallback promotion is needed.
+    """
+    endpoint_refs: list[
+        tuple[CategoryName, GeneratedEndpointSpec, Polarity]
+    ] = []
+    for branch in branches:
+        for trait in branch.traits:
+            for category_call in trait.category_calls:
+                for spec in category_call.generated_specs:
+                    endpoint_refs.append(
+                        (category_call.category, spec, trait.polarity)
+                    )
+
+    if not endpoint_refs:
+        return []
+
+    if any(
+        spec.operation_type is OperationType.CANDIDATE_GENERATOR
+        for _, spec, _ in endpoint_refs
+    ):
+        return []
+
+    tiered_refs = [
+        (determine_promotion_tier(category, spec, polarity), spec)
+        for category, spec, polarity in endpoint_refs
+    ]
+    promotable_tiers = [
+        tier for tier, _ in tiered_refs
+        if tier is not PromotionTier.NEVER_PROMOTE
+    ]
+
+    if not promotable_tiers:
+        return [_build_neutral_seed_spec()]
+
+    lowest_tier = min(promotable_tiers)
+    for tier, spec in tiered_refs:
+        if tier is lowest_tier:
+            spec.operation_type = OperationType.CANDIDATE_GENERATOR
+
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -714,6 +776,7 @@ def _determine_operation_type(
         EndpointRoute.KEYWORD,
         EndpointRoute.TRENDING,
         EndpointRoute.MEDIA_TYPE,
+        EndpointRoute.NEUTRAL_SEED,
     ):
         return OperationType.CANDIDATE_GENERATOR
 
@@ -858,7 +921,10 @@ async def run_full_pipeline(
         # No fan-out needed for a single branch — skip gather's
         # task-scheduling overhead.
         branch_list = [await _run_branch("original", query, "Original Query")]
-        auxiliary = _build_auxiliary_specs(branch_list)
+        auxiliary = (
+            _apply_reranker_only_candidate_fallback(branch_list)
+            + _build_auxiliary_specs(branch_list)
+        )
         return FullPipelineResult(
             query=query,
             skipped_steps_0_1=True,
@@ -915,7 +981,10 @@ async def run_full_pipeline(
             *(_run_branch(kind, q, label) for kind, q, label in branch_plan)
         )
 
-    auxiliary = _build_auxiliary_specs(branches)
+    auxiliary = (
+        _apply_reranker_only_candidate_fallback(branches)
+        + _build_auxiliary_specs(branches)
+    )
     return FullPipelineResult(
         query=query,
         skipped_steps_0_1=False,
