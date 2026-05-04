@@ -579,4 +579,15 @@ async def execute_entity_query(
             f"Unsupported entity spec type: {type(spec).__name__}"
         )
 
+    # Drop 0.0-score entries. Character scoring can produce organic
+    # zeros (CENTRAL at billing_position >= 9, DEFAULT at the very
+    # bottom of the cast); a "match" with no value contradicts the
+    # natural-match-set contract. Safe in preference mode too — a
+    # missing key in scores_by_movie produces ScoredCandidate(mid,
+    # 0.0) via build_endpoint_result's .get(mid, 0.0), identical to
+    # a 0.0-valued entry.
+    scores_by_movie = {
+        mid: score for mid, score in scores_by_movie.items() if score > 0.0
+    }
+
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

@@ -1,10 +1,10 @@
 # Search V2 — Stage 4 Studio Endpoint: Query Execution
 #
 # Takes a StudioQuerySpec (one or more StudioRefs + a scoring_method)
-# and produces an EndpointResult with [0, 1] scores per movie. Single
-# entry point for both carvers (no restrict set — natural match set,
-# scores compressed to [0.5, 1.0]) and qualifiers (restrict set
-# provided — one entry per supplied ID, raw scores in [0, 1]).
+# and produces an EndpointResult with raw [0, 1] scores per movie.
+# `restrict_to_movie_ids` controls only output shape: None returns the
+# natural match set; set[int] returns one entry per supplied ID with
+# 0.0 for misses. No band compression is applied here.
 #
 # Resolution paths per ref (mirror of the previous schema):
 #
@@ -43,9 +43,7 @@
 #     empty (deliberate; the LLM is expected to commit at the ref level
 #     rather than rely on executor fallback).
 #
-# Scoring band: carver scores compress to [0.5, 1.0] via
-# compress_to_dealbreaker_floor — only non-zero raw scores are lifted,
-# zeros are dropped. Qualifier scores stay raw in [0, 1].
+# Scoring band: raw [0, 1] in both modes. No band compression.
 
 from __future__ import annotations
 
@@ -63,10 +61,7 @@ from implementation.misc.production_company_text import (
 from schemas.endpoint_result import EndpointResult
 from schemas.enums import ScoringMethod
 from schemas.studio_translation import StudioQuerySpec, StudioRef
-from search_v2.endpoint_fetching.result_helpers import (
-    build_endpoint_result,
-    compress_to_dealbreaker_floor,
-)
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 
 # DF-ceiling for the freeform path. Tokens whose `doc_frequency` in
@@ -294,13 +289,16 @@ async def execute_studio_query(
 ) -> EndpointResult:
     """Execute one StudioQuerySpec.
 
-    The restrict_to_movie_ids parameter controls output shape:
-      - None (carver path) → one ScoredCandidate per naturally matched
-        movie. Non-zero raw scores are lifted into [0.5, 1.0] via
-        compress_to_dealbreaker_floor; zero-score movies are dropped.
-      - set[int] (qualifier path) → exactly one ScoredCandidate per
-        supplied ID, with raw [0, 1] scores. Movies absent from the
-        match set score 0.0.
+    The restrict_to_movie_ids parameter controls only output shape:
+      - None → one ScoredCandidate per naturally matched movie
+        (non-matches omitted).
+      - set[int] → exactly one ScoredCandidate per supplied ID, with
+        0.0 for non-matches.
+
+    Scoring is the same in both cases: raw [0, 1] gradient with no
+    band compression. ANY mode emits 1.0 per match; ALL mode emits
+    k/N where k is the number of refs hit and N is the deduped ref
+    count.
 
     Args:
         spec: Validated StudioQuerySpec from the Step 4 studio LLM.
@@ -309,10 +307,6 @@ async def execute_studio_query(
     Returns:
         EndpointResult with per-movie scores.
     """
-    # Empty restrict pool: nothing to score, skip the DB round trip.
-    if restrict_to_movie_ids is not None and not restrict_to_movie_ids:
-        return EndpointResult()
-
     # Reject refs with neither brand nor freeform_names BEFORE any
     # fetch runs. The schema permits this combination (no model
     # validator) so the executor is the gate.
@@ -330,14 +324,5 @@ async def execute_studio_query(
         scores_by_movie = await _execute_all(
             valid_refs, restrict_to_movie_ids
         )
-
-    # Carver compression: raw [0, 1] → [0.5, 1.0]. Zeros drop out so a
-    # carver call's match set carries only positive endorsements.
-    if restrict_to_movie_ids is None:
-        scores_by_movie = {
-            mid: compress_to_dealbreaker_floor(score)
-            for mid, score in scores_by_movie.items()
-            if score > 0.0
-        }
 
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)

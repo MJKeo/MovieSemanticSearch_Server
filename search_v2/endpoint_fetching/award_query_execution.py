@@ -77,10 +77,7 @@ from schemas.enums import (
     AwardOutcome,
     AwardScoringMode,
 )
-from search_v2.endpoint_fetching.result_helpers import (
-    build_endpoint_result,
-    compress_to_dealbreaker_floor,
-)
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 logger = logging.getLogger(__name__)
 
@@ -470,20 +467,18 @@ async def execute_award_query(
 ) -> EndpointResult:
     """Execute an AwardQueryPlan against the award data sources.
 
-    The restrict_to_movie_ids parameter controls output shape:
-      - None (carver/dealbreaker path) → one ScoredCandidate per naturally
-        matched movie. Non-matches and zero-score partials are omitted.
-      - set[int] (qualifier/preference path) → exactly one ScoredCandidate
-        per supplied ID. Movies that do not appear in the matched set score
-        0.0.
-    """
-    # Safety net mirroring the trending executor: an empty candidate pool
-    # on the preference path means nothing can score, so skip the DB round
-    # trip entirely. The orchestrator should short-circuit first, but the
-    # guard costs nothing.
-    if restrict_to_movie_ids is not None and not restrict_to_movie_ids:
-        return EndpointResult()
+    The restrict_to_movie_ids parameter controls only output shape:
+      - None → one ScoredCandidate per naturally matched movie
+        (non-matches and zero-score partials are omitted at the
+        per-search level by `_execute_award_search`).
+      - set[int] → exactly one ScoredCandidate per supplied ID, with
+        0.0 for non-matches.
 
+    Scoring is the same in both cases: raw [0, 1] gradient with no
+    band compression. Per-search scoring emits FLOOR (binary 1.0) or
+    THRESHOLD (count/mark fraction); the combine step takes max (ANY)
+    or mean (AVERAGE).
+    """
     score_maps = await asyncio.gather(
         *(
             _execute_award_search(
@@ -498,12 +493,5 @@ async def execute_award_query(
         score_maps,
         restrict_to_movie_ids=restrict_to_movie_ids,
     )
-
-    if restrict_to_movie_ids is None:
-        scores_by_movie = {
-            movie_id: compress_to_dealbreaker_floor(score)
-            for movie_id, score in scores_by_movie.items()
-            if score > 0.0
-        }
 
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)
