@@ -1,19 +1,37 @@
-# Shared route → executor dispatch for stage-3 endpoint parameters.
+# Shared GeneratedEndpointSpec → executor dispatch for stage-3.
 #
 # Two callers need the same logic: handler.py (which fires whichever
 # endpoints the per-category LLM elected) and orchestrator.py (which
 # fires deferred preference_specs against the consolidated candidate
 # pool, and also runs preferences against the full corpus when
-# inclusion produces nothing). Both want the same mapping from
-# EndpointRoute to its execute_*_query coroutine and the same way of
-# unpacking the EndpointParameters wrapper.
+# inclusion produces nothing). Both hand a GeneratedEndpointSpec to
+# build_endpoint_coroutine and want the same operation-type-aware
+# gating, the same EndpointRoute → execute_*_query mapping, and the
+# same way of unpacking the EndpointParameters wrapper.
 #
-# TRENDING is intentionally absent — it has no LLM codepath and the
-# trending executor is invoked directly elsewhere. Reaching this
+# Pre-dispatch gates (applied uniformly to every route):
+#   1. POOL_RERANKER + falsy restrict_to_movie_ids → empty result.
+#      A reranker with no pool has nothing to rerank.
+#   2. spec.params is None → log a warning + empty result. Upstream
+#      should never produce a None-params spec for an executable
+#      route; surfacing it here keeps stage-4 robust to upstream
+#      regressions instead of AttributeError-ing inside an executor.
+#   3. CANDIDATE_GENERATOR → restrict_to_movie_ids is locally rebound
+#      to None so finders never accidentally narrow to a pool. The
+#      caller's set is never mutated.
+#
+# TRENDING is intentionally absent from the dispatch — it has no LLM
+# codepath and the trending executor is invoked directly elsewhere.
+# It's also the one route where params=None is a legitimate output of
+# run_query_generation (see handler._generate_deterministic_specs);
+# routing TRENDING through this dispatcher would fire a spurious
+# None-params warning on every call. Callers must special-case
+# TRENDING before calling build_endpoint_coroutine — reaching this
 # dispatch with a TRENDING route is a programmer error.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Coroutine
 
 from qdrant_client import AsyncQdrantClient
@@ -25,7 +43,7 @@ from schemas.entity_translation import (
     PersonQuerySpec,
     TitlePatternQuerySpec,
 )
-from schemas.enums import EndpointRoute
+from schemas.enums import EndpointRoute, OperationType
 from schemas.semantic_translation import (
     SemanticEndpointParameters,
     SemanticEndpointSubintentParameters,
@@ -35,35 +53,88 @@ from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
     ROUTE_TO_WRAPPER,
     ROUTE_TO_SUBINTENT_WRAPPER,
 )
+from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
+    GeneratedEndpointSpec,
+)
 from search_v2.endpoint_fetching.entity_query_execution import execute_entity_query
 from search_v2.endpoint_fetching.franchise_query_execution import execute_franchise_query
 from search_v2.endpoint_fetching.keyword_query_execution import execute_keyword_query
 from search_v2.endpoint_fetching.media_type_query_execution import execute_media_type_query
 from search_v2.endpoint_fetching.metadata_query_execution import execute_metadata_query
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 from search_v2.endpoint_fetching.semantic_query_execution import execute_semantic_query
 from search_v2.endpoint_fetching.studio_query_execution import execute_studio_query
 
 
+logger = logging.getLogger(__name__)
+
+
+async def _empty_endpoint_result(
+    restrict_to_movie_ids: set[int] | None,
+) -> EndpointResult:
+    """Resolve to an empty EndpointResult shaped to the requested
+    restrict-mode (omit non-matches in dealbreaker mode; one zero-scored
+    entry per pool ID in preference mode)."""
+    return build_endpoint_result({}, restrict_to_movie_ids)
+
+
 def build_endpoint_coroutine(
-    route: EndpointRoute,
-    wrapper: EndpointParameters,
+    spec: GeneratedEndpointSpec,
     *,
     qdrant_client: AsyncQdrantClient,
     restrict_to_movie_ids: set[int] | None,
 ) -> Coroutine[Any, Any, EndpointResult]:
-    """Build the awaitable that runs `wrapper`'s endpoint executor.
+    """Build the awaitable that runs `spec`'s endpoint executor.
+
+    Operation-type-aware gating is applied here so every route benefits
+    uniformly:
+
+      - POOL_RERANKER with no candidate pool (None or empty set) →
+        empty-result coroutine. A reranker with nothing to rerank has
+        no work to do; running the underlying executor would either
+        fall back to a full-corpus scan (wrong semantics for a
+        reranker) or just emit an empty result anyway.
+
+      - Missing `spec.params` → log a warning and return an empty
+        result. Upstream (handler / orchestrator) should never produce
+        a None-params spec for an executable route, but surfacing it
+        here keeps stage-4 robust to upstream regressions instead of
+        AttributeError-ing inside an executor.
+
+      - CANDIDATE_GENERATOR specs always search the full corpus —
+        passing a `restrict_to_movie_ids` to a finder is a category
+        error (it would silently constrain candidate generation to a
+        pre-existing pool). We override to None locally so callers
+        can't accidentally narrow a finder; the caller's set is never
+        mutated.
 
     For SEMANTIC the carver-vs-qualifier decision is committed by the
     LLM inside the unified semantic schema's `role` field; the
     executor reads it from `params` at runtime. Other endpoints have
     no role-shaped dispatch.
-
-    `restrict_to_movie_ids` is forwarded to the executor verbatim:
-    None means "search the full corpus" (handler-time candidate
-    generation; preference-against-corpus fallback). A non-None set
-    restricts the search to the given pool (orchestrator-time
-    deferred preference scoring).
     """
+    if (
+        spec.operation_type == OperationType.POOL_RERANKER
+        and not restrict_to_movie_ids
+    ):
+        return _empty_endpoint_result(restrict_to_movie_ids)
+
+    if spec.params is None:
+        logger.warning(
+            "build_endpoint_coroutine: spec.params is None for "
+            "route=%s; returning empty result.",
+            spec.route.value,
+        )
+        return _empty_endpoint_result(restrict_to_movie_ids)
+
+    # Candidate generators always run against the full corpus. Local
+    # rebind only — the caller's restrict set is left untouched.
+    if spec.operation_type == OperationType.CANDIDATE_GENERATOR:
+        restrict_to_movie_ids = None
+
+    route = spec.route
+    wrapper = spec.params
+
     # ENTITY is the one route whose `wrapper` IS the spec (the three
     # per-category specs inherit from EndpointParameters directly,
     # without an intermediate Entity wrapper). Every other route still

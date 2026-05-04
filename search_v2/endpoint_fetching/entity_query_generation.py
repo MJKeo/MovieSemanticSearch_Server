@@ -3,7 +3,7 @@
 # Used to translate one entity dealbreaker or preference into a
 # concrete EntityQuerySpec for the v2 lexical lookup. EntityQuerySpec
 # no longer exists — entity translation now happens per-category in
-# the v3 step-3 handler pipeline (run_handler in
+# the v3 step-3 handler pipeline (run_query_generation in
 # search_v2/endpoint_fetching/category_handlers/handler.py), with
 # per-category specs (PersonQuerySpec / CharacterQuerySpec /
 # TitlePatternQuerySpec) selected via
@@ -553,5 +553,5 @@ async def generate_entity_query(
     raise NotImplementedError(
         "generate_entity_query is dead code: entity translation is "
         "now handled per-category through the v3 step-3 handler "
-        "pipeline (run_handler in category_handlers/handler.py)."
+        "pipeline (run_query_generation in category_handlers/handler.py)."
     )

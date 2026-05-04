@@ -24,9 +24,10 @@
 #     no traits decomposed for that branch.
 #   - Step 3 failure (per-trait) → trait surfaces with step_3_error
 #     and an empty category_calls list.
-#   - Handler-LLM failure (per-CategoryCall) → call surfaces with
-#     handler_error and an empty generated_specs list. Does not tank
-#     sibling CategoryCalls or sibling traits.
+#   - Handler query-generation failure (per-CategoryCall) → expected
+#     handler-LLM double-failures soft-fail inside the handler to an
+#     empty generated_specs list; unexpected generation errors surface
+#     with handler_error. Neither tanks sibling CategoryCalls or traits.
 #
 # LLM-call discipline: every individual LLM call (Steps 0, 1, 2, 3,
 # and the per-CategoryCall handler call) is wrapped with a 25-second
@@ -44,16 +45,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel
-
-from implementation.llms.generic_methods import (
-    LLMProvider,
-    generate_llm_response_async,
-)
-from schemas.endpoint_parameters import EndpointParameters
 from schemas.enums import (
     EndpointRoute,
-    HandlerBucket,
     OperationType,
     Polarity,
     ReleaseFormat,
@@ -68,18 +61,11 @@ from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall
 from schemas.trait_category import CategoryName
 
-from search_v2.endpoint_fetching.category_handlers.media_type_router import (
-    build_media_type_query_spec,
+from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
+    GeneratedEndpointSpec,
 )
-from search_v2.endpoint_fetching.category_handlers.output_extractor import (
-    extract_fired_endpoints,
-)
-from search_v2.endpoint_fetching.category_handlers.prompt_builder import (
-    build_system_prompt,
-    build_user_message,
-)
-from search_v2.endpoint_fetching.category_handlers.schema_factories import (
-    get_output_schema,
+from search_v2.endpoint_fetching.category_handlers.handler import (
+    run_query_generation,
 )
 from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
@@ -102,16 +88,6 @@ TIMEOUT_SECONDS = 25.0
 LLM_MAX_ATTEMPTS = 2
 
 
-# Handler-LLM provider config. Mirrors the values in the original
-# handler.py to keep model/cost behavior unchanged after the refactor.
-_HANDLER_LLM_PROVIDER = LLMProvider.OPENAI
-_HANDLER_LLM_MODEL = "gpt-5.4-mini"
-_HANDLER_LLM_KWARGS: dict = {
-    "reasoning_effort": "none",
-    "verbosity": "low",
-}
-
-
 # Step 2 branch identifiers. Match the labels the upstream UI uses so
 # downstream consumers can surface them directly.
 BranchKind = Literal["original", "spin_1", "spin_2"]
@@ -123,26 +99,6 @@ BranchKind = Literal["original", "spin_1", "spin_2"]
 
 
 @dataclass
-class GeneratedEndpointSpec:
-    """One executable endpoint spec ready for stage-4 execution.
-
-    `params` is None for routes that take no parameters (TRENDING
-    and NEUTRAL_SEED today). The downstream executor routes by
-    `route` and knows whether to read `params`.
-
-    `operation_type` is set at construction by every code path that
-    builds a spec — there is no orchestrator-level post-pass.
-    Trait-derived specs derive it from `_determine_operation_type`
-    using `(category, route, parent-trait polarity)`; the auxiliary
-    shorts-exclusion spec hardcodes CANDIDATE_GENERATOR.
-    """
-
-    route: EndpointRoute
-    params: EndpointParameters | None
-    operation_type: OperationType
-
-
-@dataclass
 class CategoryCallWithEndpoints:
     """One Step-3 CategoryCall paired with its generated endpoint specs.
 
@@ -150,9 +106,9 @@ class CategoryCallWithEndpoints:
     its bucket fans out (e.g. SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT
     fires semantic + augmentation; CHARACTER_FRANCHISE_FANOUT fires
     entity + franchise). `generated_specs` is empty when the handler
-    LLM judged nothing to fire, the call's category was EXPLICIT_NO_OP,
-    or the handler call failed (in which case `handler_error` carries
-    the failure reason).
+    judged nothing to fire, the call's category was EXPLICIT_NO_OP, or
+    the handler LLM soft-failed. `handler_error` is reserved for
+    unexpected generation errors that escape the handler.
     """
 
     category: CategoryName
@@ -436,10 +392,11 @@ async def _decompose_and_generate(
 
 
 # ---------------------------------------------------------------------------
-# Per-CategoryCall — dispatches by the category's HandlerBucket. Three
-# paths: explicit no-op, no-LLM deterministic codepath, LLM call.
-# Always returns a CategoryCallWithEndpoints; failures land as empty
-# generated_specs with handler_error populated.
+# Per-CategoryCall — delegates category-specific endpoint-spec
+# generation to category_handlers.handler. Always returns a
+# CategoryCallWithEndpoints. Expected handler-LLM double-failures
+# return empty specs from the handler; unexpected generation errors
+# populate handler_error here.
 # ---------------------------------------------------------------------------
 
 
@@ -450,124 +407,19 @@ async def _process_category_call(
     branch_label: str,
 ) -> CategoryCallWithEndpoints:
     category = category_call.category
-    bucket = category.bucket
-
-    # Path 1 — categories that have no backing endpoint. Emit an
-    # empty result so downstream traceability still records the
-    # routing decision.
-    if bucket is HandlerBucket.EXPLICIT_NO_OP:
-        return CategoryCallWithEndpoints(
-            category=category,
-            expressions=list(category_call.expressions),
-            retrieval_intent=category_call.retrieval_intent,
-            generated_specs=[],
-        )
-
-    # Path 2 — deterministic, no-LLM categories. Each has a known
-    # codepath that translates the call (or its expressions) into a
-    # concrete endpoint spec without touching the LLM. Polarity is
-    # threaded in so the deterministic dispatch can stamp
-    # operation_type at spec construction.
-    if bucket is HandlerBucket.NO_LLM_PURE_CODE:
-        return _process_deterministic_category_call(
-            category_call, polarity=trait.polarity
-        )
-
-    # Path 3 — LLM-driven categories. Build the schema, call the
-    # handler LLM, and translate the structured output into fired
-    # (route, EndpointParameters) pairs.
-    return await _process_llm_category_call(
-        category_call, trait, branch_label=branch_label
-    )
-
-
-def _process_deterministic_category_call(
-    category_call: CategoryCall,
-    *,
-    polarity: Polarity,
-) -> CategoryCallWithEndpoints:
-    # Pure-code dispatch for the no-LLM categories. New deterministic
-    # categories added in the future MUST land here explicitly so
-    # they do not accidentally fall through to the LLM path.
-    category = category_call.category
-
-    if category is CategoryName.TRENDING:
-        # Trending takes no parameters at all — the executor reads
-        # only its restrict_to_movie_ids argument. Emit a zero-param
-        # marker so downstream knows to fire the trending route.
-        return CategoryCallWithEndpoints(
-            category=category,
-            expressions=list(category_call.expressions),
-            retrieval_intent=category_call.retrieval_intent,
-            generated_specs=[
-                GeneratedEndpointSpec(
-                    route=EndpointRoute.TRENDING,
-                    params=None,
-                    operation_type=_determine_operation_type(
-                        category, EndpointRoute.TRENDING, polarity
-                    ),
-                )
-            ],
-        )
-
-    if category is CategoryName.MEDIA_TYPE:
-        spec = build_media_type_query_spec(category_call)
-        if spec is None:
-            # The call named only formats the spec cannot represent
-            # (e.g. plain feature-length MOVIE) — emit nothing.
-            return CategoryCallWithEndpoints(
-                category=category,
-                expressions=list(category_call.expressions),
-                retrieval_intent=category_call.retrieval_intent,
-                generated_specs=[],
-            )
-        wrapper = MediaTypeEndpointParameters(parameters=spec)
-        return CategoryCallWithEndpoints(
-            category=category,
-            expressions=list(category_call.expressions),
-            retrieval_intent=category_call.retrieval_intent,
-            generated_specs=[
-                GeneratedEndpointSpec(
-                    route=EndpointRoute.MEDIA_TYPE,
-                    params=wrapper,
-                    operation_type=_determine_operation_type(
-                        category, EndpointRoute.MEDIA_TYPE, polarity
-                    ),
-                )
-            ],
-        )
-
-    raise ValueError(
-        f"Unhandled NO_LLM_PURE_CODE category: CategoryName.{category.name}. "
-        f"Add a deterministic handler before routing this category."
-    )
-
-
-async def _process_llm_category_call(
-    category_call: CategoryCall,
-    trait: Trait,
-    *,
-    branch_label: str,
-) -> CategoryCallWithEndpoints:
-    category = category_call.category
-
-    # Prompt build is cheap and deterministic — done outside the
-    # retry so a retry only re-invokes the network call.
-    system_prompt = build_system_prompt(category)
-    user_message = build_user_message(category_call)
-    response_format = get_output_schema(category)
-
-    label = f"handler[{branch_label}/{category.name}]"
     try:
-        output = await _call_with_retry(
-            lambda: _generate_handler_response(
-                system_prompt=system_prompt,
-                user_message=user_message,
-                response_format=response_format,
-            ),
-            label=label,
+        generated_specs = await run_query_generation(
+            category_call=category_call,
+            trait=trait,
         )
     except Exception as exc:  # noqa: BLE001 — soft-fail per call
+        logger.error(
+            "handler query generation failed; returning empty specs "
+            "(branch=%s, category=%s, error=%r)",
+            branch_label,
+            category.name,
+            exc,
+        )
         return CategoryCallWithEndpoints(
             category=category,
             expressions=list(category_call.expressions),
@@ -576,43 +428,12 @@ async def _process_llm_category_call(
             handler_error=repr(exc),
         )
 
-    fired = extract_fired_endpoints(category, output)
     return CategoryCallWithEndpoints(
         category=category,
         expressions=list(category_call.expressions),
         retrieval_intent=category_call.retrieval_intent,
-        generated_specs=[
-            GeneratedEndpointSpec(
-                route=route,
-                params=params,
-                operation_type=_determine_operation_type(
-                    category, route, trait.polarity
-                ),
-            )
-            for route, params in fired
-        ],
+        generated_specs=generated_specs,
     )
-
-
-async def _generate_handler_response(
-    *,
-    system_prompt: str,
-    user_message: str,
-    response_format: type[BaseModel],
-) -> BaseModel:
-    # Thin wrapper around generate_llm_response_async that drops the
-    # token counts the orchestrator does not surface today. Returns
-    # only the parsed structured-output instance so the retry helper's
-    # generic T is a clean BaseModel rather than a tuple.
-    response, _, _ = await generate_llm_response_async(
-        provider=_HANDLER_LLM_PROVIDER,
-        user_prompt=user_message,
-        system_prompt=system_prompt,
-        response_format=response_format,
-        model=_HANDLER_LLM_MODEL,
-        **_HANDLER_LLM_KWARGS,
-    )
-    return response
 
 
 # ---------------------------------------------------------------------------
@@ -737,77 +558,6 @@ def _apply_reranker_only_candidate_fallback(
             spec.operation_type = OperationType.CANDIDATE_GENERATOR
 
     return []
-
-
-# ---------------------------------------------------------------------------
-# Operation-type derivation. Per
-# search_improvement_planning/search_method_deterministic_logic.md §2,
-# every generated endpoint spec runs as either a candidate finder or a
-# pool reranker, and the choice is deterministic from
-# (category, route, parent-trait polarity). Called inline at every spec
-# construction site so GeneratedEndpointSpec.operation_type is set the
-# moment the spec exists — no post-pass, no transient None.
-# ---------------------------------------------------------------------------
-
-
-def _determine_operation_type(
-    category: CategoryName,
-    route: EndpointRoute,
-    polarity: Polarity,
-) -> OperationType:
-    # Negative-polarity pool finders never add candidates to the pool —
-    # they orchestrate as pure rerankers per §4/§8 of
-    # search_method_deterministic_logic.md. Short-circuit before the
-    # route table so the negative case wins regardless of the route's
-    # normal mode.
-    if polarity is Polarity.NEGATIVE:
-        return OperationType.POOL_RERANKER
-
-    # Always candidate finder — discrete-membership signals that
-    # compose cleanly under intersection / union / additive sum.
-    # MEDIA_TYPE is listed here because it's the META `media_type`
-    # column elevated into its own EndpointRoute in this codebase;
-    # §2 of the doc lists `media_type` under META pool-finder columns.
-    if route in (
-        EndpointRoute.ENTITY,
-        EndpointRoute.STUDIO,
-        EndpointRoute.AWARDS,
-        EndpointRoute.FRANCHISE_STRUCTURE,
-        EndpointRoute.KEYWORD,
-        EndpointRoute.TRENDING,
-        EndpointRoute.MEDIA_TYPE,
-        EndpointRoute.NEUTRAL_SEED,
-    ):
-        return OperationType.CANDIDATE_GENERATOR
-
-    # Always pool reranker today. Tier-fallback promotion (§10) can
-    # later elevate individual SEMANTIC traits to candidate-finder
-    # duty when no candidate-generating trait exists anywhere in the
-    # query — that override is a query-global decision applied
-    # downstream, not here.
-    if route is EndpointRoute.SEMANTIC:
-        return OperationType.POOL_RERANKER
-
-    # METADATA splits by category — the targeted column sets the
-    # mode (§2). Reranker columns are continuous priors (reception /
-    # popularity prior) or sort-and-pick (CHRONOLOGICAL on
-    # release_date); everything else is a soft-falloff filter that
-    # produces a pool.
-    if route is EndpointRoute.METADATA:
-        if category in (
-            CategoryName.GENERAL_APPEAL,
-            CategoryName.CULTURAL_STATUS,
-            CategoryName.CHRONOLOGICAL,
-        ):
-            return OperationType.POOL_RERANKER
-        return OperationType.CANDIDATE_GENERATOR
-
-    # Defensive: every current EndpointRoute is covered above. This
-    # raise protects against silent miscategorization if a new route
-    # lands without an entry in this helper.
-    raise ValueError(
-        f"Unhandled endpoint route for operation_type: {route}"
-    )
 
 
 _SEMANTIC_PROMOTION_TIERS: dict[CategoryName, PromotionTier] = {

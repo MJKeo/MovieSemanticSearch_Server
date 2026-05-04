@@ -1,6 +1,12 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Respect restrict pools for temporary TRENDING execution
+Files: search_v2/endpoint_fetching/category_handlers/handler.py
+Why: `run_query_execution()` special-cases TRENDING because the route has no params wrapper and cannot go through `build_endpoint_coroutine()`, but it was hardcoding `restrict_to_movie_ids=None`. That bypassed the same operation-type rules the shared dispatcher applies to every other route.
+Approach: Added the minimal inline gating to the TRENDING branch: pool rerankers with no candidate pool return without running, candidate generators locally reset `restrict_to_movie_ids` to `None`, and otherwise the existing pool is passed into `execute_trending_query()`.
+Testing notes: No tests run per project test-boundary instruction.
+
 ## Add endpoint-spec promotion tier helper
 Files: search_v2/full_pipeline_orchestrator.py, unit_tests/test_full_pipeline_promotion_tiers.py
 Why: Reranker-only fallback needs a deterministic way to rank promotable endpoint specs while preserving negative polarity as never-promote.
@@ -836,3 +842,17 @@ Approach:
 - `schemas/semantic_space_selectivity.py` deleted (no remaining consumers).
 
 Verification: imports compile, `OUTPUT_SCHEMAS` populates with 40 entries (down from 80 — single-key storage), function signatures inspect-clean (`get_output_schema(category)`, `get_output_wrapper(endpoint, bucket, *, category)`, `build_endpoint_coroutine(route, wrapper, *, qdrant_client, restrict_to_movie_ids)`), semantic prompt clean of "carver" / "qualifier-style" / role-keyed selectivity section, length down ~17% (13.8k → 11.4k chars).
+
+## Refactor category handler into query generation and temporary execution
+Files: search_v2/endpoint_fetching/category_handlers/{handler.py,generated_endpoint_spec.py,prompt_builder.py,handler_result.py}, search_v2/full_pipeline_orchestrator.py, search_v2/endpoint_fetching/entity_query_generation.py, docs/modules/search_v2.md, docs/conventions_draft.md
+
+Why: `category_handlers/handler.py` still implemented the stale HandlerResult bucketing/execution model and was bypassed by `full_pipeline_orchestrator.py`, which duplicated query-generation logic inline.
+Approach: Added a shared `GeneratedEndpointSpec` dataclass module and moved initial operation-type derivation into `handler.py` as `determine_operation_type()`. Replaced old `run_handler()` with `run_query_generation(category_call, trait) -> list[GeneratedEndpointSpec]`, covering explicit no-op, TRENDING/MEDIA_TYPE deterministic generation, handler-LLM generation, fired-endpoint extraction via `output_extractor.py`, and soft-fail-to-empty behavior for handler LLM double failures. Added temporary `run_query_execution(spec) -> None`, executing only TRENDING and MEDIA_TYPE with logged soft failures and no-oping other routes. Simplified the orchestrator to delegate per-CategoryCall spec generation to `run_query_generation()` while keeping query-global reranker fallback/promotion logic in the orchestrator. Removed the unused category-handler `HandlerResult` file and stale comments/docs naming `run_handler`.
+Design context: Keeps reranker-only fallback query-global, preserves list cardinality for category calls that emit zero/one/many endpoint specs, and leaves full stage-4 execution shape unresolved except for deterministic temporary hooks.
+Testing notes: Did not read, edit, or run unit tests per project boundary. `uv run python -m py_compile search_v2/endpoint_fetching/category_handlers/handler.py search_v2/endpoint_fetching/category_handlers/generated_endpoint_spec.py search_v2/full_pipeline_orchestrator.py run_orchestrator.py` passed. Import smoke for handler, orchestrator, and run_orchestrator passed. Inline non-test checks confirmed TRENDING generation returns one no-param candidate-generator spec, MEDIA_TYPE shorts generation returns one candidate-generator spec, negative MEDIA_TYPE generation returns a pool-reranker spec, and positive SEMANTIC defaults to pool-reranker.
+
+## Centralize operation-type-aware gating in build_endpoint_coroutine
+Files: search_v2/endpoint_fetching/endpoint_executors.py, search_v2/endpoint_fetching/category_handlers/handler.py, run_search.py, run_search_json.py
+Why: Pool rerankers with no candidate pool, missing-params specs, and finders that mistakenly receive a restrict pool all need uniform handling — pushing this into every executor would duplicate gating logic.
+Approach: Changed `build_endpoint_coroutine` to take a `GeneratedEndpointSpec` (instead of separate `route`/`wrapper`). Added three pre-dispatch gates: (1) POOL_RERANKER + falsy `restrict_to_movie_ids` → empty `_empty_endpoint_result` coroutine; (2) `spec.params is None` → log warning + empty result; (3) CANDIDATE_GENERATOR → locally rebind `restrict_to_movie_ids = None` so finders never accidentally narrow to a pool (caller's set never mutated). Wired `run_query_execution` to delegate every non-TRENDING route through `build_endpoint_coroutine`, taking `qdrant_client` and `restrict_to_movie_ids` as new kwargs and dropping the explicit MEDIA_TYPE special case (now handled by the dispatcher). Updated diagnostic CLIs (`run_search.py`, `run_search_json.py`) to construct `GeneratedEndpointSpec(operation_type=CANDIDATE_GENERATOR)` at the call site — they always pass restrict=None so behavior is unchanged.
+Testing notes: Did not modify tests per boundary. `python -m py_compile` passed for all four files; imports of `endpoint_executors` and `handler` succeed. Diagnostic CLIs hit a pre-existing `MatchMode` import error unrelated to this change (the symbol was already removed from `schemas/enums.py`).

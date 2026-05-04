@@ -320,9 +320,9 @@ def build_user_message(category_call: CategoryCall) -> str:
     are either already folded into ``retrieval_intent`` by Step 3 or
     deliberately out of scope for this stage (Step 4 translates the
     committed call; it does not re-interpret the query). Match_mode
-    and polarity are stamped onto the wrapper post-hoc by
-    ``handler.run_handler`` from the parent Trait, so they are not
-    emitted by the LLM either.
+    and polarity are applied post-hoc by
+    ``handler.run_query_generation`` from the parent Trait, so they
+    are not emitted by the LLM either.
     """
 
     intent = xml_escape(category_call.retrieval_intent)

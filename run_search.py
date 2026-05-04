@@ -48,6 +48,7 @@ from schemas.enums import (
     EndpointRoute,
     FitQuality,
     MatchMode,
+    OperationType,
     Polarity,
 )
 from schemas.trait_category import CategoryName
@@ -73,6 +74,9 @@ from search_v2.endpoint_fetching.category_handlers.handler import (
     _extract_fired_endpoints,
 )
 from search_v2.endpoint_fetching.category_handlers.handler_result import HandlerResult
+from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
+    GeneratedEndpointSpec,
+)
 from search_v2.endpoint_fetching.endpoint_executors import build_endpoint_coroutine
 from search_v2.endpoint_fetching.orchestrator import (
     DEFAULT_TOP_K,
@@ -283,9 +287,21 @@ async def _run_one_endpoint(
     """
     exec_start = time.perf_counter()
     try:
+        # Diagnostic CLI runs every fired endpoint as a candidate
+        # generator against the full corpus (restrict=None). We hard-
+        # code CANDIDATE_GENERATOR rather than calling
+        # determine_operation_type because the latter would short-
+        # circuit any negative-polarity wrapper to POOL_RERANKER, and
+        # the new gating in build_endpoint_coroutine returns empty for
+        # rerankers without a pool — that would mask the wrapper's
+        # diagnostic output. CANDIDATE_GENERATOR keeps the "show me
+        # what this endpoint would surface from scratch" framing.
         endpoint_result = await build_endpoint_coroutine(
-            route,
-            wrapper,
+            GeneratedEndpointSpec(
+                route=route,
+                params=wrapper,
+                operation_type=OperationType.CANDIDATE_GENERATOR,
+            ),
             qdrant_client=qdrant_client,
             restrict_to_movie_ids=None,
         )

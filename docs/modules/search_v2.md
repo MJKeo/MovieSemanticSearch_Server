@@ -87,7 +87,7 @@ Stage 3 (stage_3/): Endpoint translation + execution (9 endpoints)
 
   stage_3/category_handlers/ — new handler scaffolding for the
     step-2-routed path. In progress:
-    handler.py, prompt_builder.py, handler_result.py,
+    handler.py, generated_endpoint_spec.py, prompt_builder.py,
     endpoint_registry.py, schema_factories.py, prompts/
 
 Stage 4 (stage_4/): Assembly & reranking

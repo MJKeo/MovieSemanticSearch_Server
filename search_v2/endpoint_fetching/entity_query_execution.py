@@ -2,10 +2,10 @@
 #
 # Public entry point: `execute_entity_query(spec, *, restrict_to_movie_ids)`.
 # Dispatches on spec type — PersonQuerySpec | CharacterQuerySpec |
-# TitlePatternQuerySpec — and returns an EndpointResult with [0, 1]
-# scores per matched movie_id. Works uniformly for both dealbreakers
-# (restrict=None — return naturally matched movies) and preferences
-# (restrict=set[int] — return one entry per supplied ID, 0.0 for misses).
+# TitlePatternQuerySpec — and returns an EndpointResult with raw
+# [0, 1] scores per matched movie_id. The restrict argument controls
+# only output shape: None returns the natural match set;
+# set[int] returns one entry per supplied ID with 0.0 for misses.
 #
 # The executor is direction-agnostic. Role and polarity live on the
 # Trait that owns this call, are stamped onto the result by the
@@ -31,13 +31,11 @@
 #   - PersonCategory.UNKNOWN unions all five role tables with even
 #     weight (no primary-table bias). MAX-merge across tables.
 #
-# Dealbreaker-floor compression ([0.5, 1.0] band — see
-# docs/conventions.md §Scoring Conventions) is applied at the public
-# entry point ONCE, after per-target merge, and only when
-# `restrict_to_movie_ids is None` (dealbreaker path). Preference-mode
-# results (restrict provided) keep the raw [0, 1] gradient so ranking
-# retains full resolution across weak and strong matches. Per-row
-# scorers and per-target merges therefore work in raw [0, 1] space.
+# Per-row scorers, per-target merges, and the public entry point all
+# operate in raw [0, 1] space. No dealbreaker-floor compression is
+# applied here — operation-type-aware band shaping lives upstream
+# (or downstream of stage-3) and entity scoring stays a plain
+# gradient regardless of candidate-generator vs pool-reranker mode.
 
 from __future__ import annotations
 
@@ -70,10 +68,7 @@ from schemas.entity_translation import (
     TitlePatternQuerySpec,
     TitlePatternTarget,
 )
-from search_v2.endpoint_fetching.result_helpers import (
-    build_endpoint_result,
-    compress_to_dealbreaker_floor,
-)
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +196,8 @@ def _actor_prominence_score(
     """Score a single actor credit row under the given prominence mode.
 
     Uses the proposal's zone-based formulas with sqrt-adaptive cutoffs
-    to compute a raw [0, 1] value. Dealbreaker-floor compression is
-    applied later (at the spec-level entry point) only when in
-    dealbreaker mode — preference mode keeps the raw gradient.
+    to compute a raw [0, 1] value. No band compression is applied —
+    callers always receive raw scores.
     """
     cutoffs = _zone_cutoffs(cast_size)
 
@@ -233,8 +227,7 @@ def _actor_prominence_score(
 #     same way whether the cast is 8 or 80.
 #   DEFAULT — character is a filter with a gentle prominence
 #     preference. Linear ramp from 1.0 at the top of the character
-#     cast to 0.0 at the bottom; dealbreaker-mode compression
-#     subsequently lifts the tail to 0.5.
+#     cast to 0.0 at the bottom.
 #
 # See search_improvement_planning/character_scoring_revamp.md
 # §"Scoring Formulas" for the curve tables.
@@ -247,8 +240,7 @@ def _character_score_central(billing_position: int) -> float:
     Positions 1 and 2 both score 1.0 (handles alias edges like
     "Peter Parker" / "Spider-Man" where the requested character
     appears second on its cast edge). Beyond position 2, decay 0.15
-    per step until the raw value reaches 0; dealbreaker-mode
-    compression then pins floor-band tails at 0.5.
+    per step until the raw value reaches 0.
     """
     return max(0.0, 1.0 - 0.15 * max(0, billing_position - 2))
 
@@ -277,8 +269,8 @@ def _character_prominence_score(
     """Score a single character credit row under the given mode.
 
     Dispatches to the mode-specific raw scorer and returns the raw
-    [0, 1] value. Dealbreaker-floor compression is applied later (at
-    the spec-level entry point) only when in dealbreaker mode.
+    [0, 1] value. No band compression is applied — callers always
+    receive raw scores.
     """
     return _CHARACTER_MODE_SCORERS[mode](billing_position, character_cast_size)
 
@@ -549,15 +541,17 @@ async def execute_entity_query(
     isinstance — the LLM's category routing already picked the right
     spec family upstream, so we just match on it here.
 
-    `restrict_to_movie_ids` controls both output shape AND scoring:
-      - None (dealbreaker / handler-time path) → return one
-        ScoredCandidate per naturally matched movie, non-matches
-        omitted, scores compressed into the [0.5, 1.0] dealbreaker
-        floor band per docs/conventions.md.
-      - set[int] (preference path) → return exactly one ScoredCandidate
-        per supplied ID, with 0.0 for non-matches, scores kept on the
-        raw [0, 1] gradient so preference ranking retains full
-        resolution across weak and strong matches.
+    `restrict_to_movie_ids` controls only the output shape:
+      - None → return one ScoredCandidate per naturally matched
+        movie, non-matches omitted (the natural match set).
+      - set[int] → return exactly one ScoredCandidate per supplied
+        ID, with 0.0 for non-matches (the supplied pool, scored).
+
+    Scoring is the same in both cases: raw [0, 1] gradient with
+    no band compression. Per-row scorers (actor zone formulas,
+    character billing decay, binary 1.0 for non-actor / title-
+    pattern roles) emit raw values; per-target MAX-merge preserves
+    them; the public entry point returns them unmodified.
 
     Returns an empty EndpointResult when forms / patterns normalize to
     nothing or when exact-match dictionary resolution finds nothing —
@@ -567,8 +561,8 @@ async def execute_entity_query(
         spec: Validated PersonQuerySpec, CharacterQuerySpec, or
             TitlePatternQuerySpec from the per-category handler LLM.
         restrict_to_movie_ids: Optional candidate-pool restriction.
-            Pass the preference's candidate pool to get one entry per
-            ID; omit to get the natural match set for dealbreakers.
+            Pass a pool to get one entry per ID; omit to get the
+            natural match set.
     """
     if isinstance(spec, PersonQuerySpec):
         scores_by_movie = await _execute_person_spec(spec, restrict_to_movie_ids)
@@ -584,16 +578,5 @@ async def execute_entity_query(
         raise TypeError(
             f"Unsupported entity spec type: {type(spec).__name__}"
         )
-
-    # Dealbreaker-floor compression applies once, after merge, only on
-    # the dealbreaker path. Binary-score paths (non-actor roles, title
-    # patterns) emit 1.0 which compresses to 1.0 (no-op); the actor
-    # and character paths emit raw [0, 1] values that get lifted into
-    # [0.5, 1.0] here. Preference mode keeps raw scores untouched.
-    if restrict_to_movie_ids is None:
-        scores_by_movie = {
-            movie_id: compress_to_dealbreaker_floor(score)
-            for movie_id, score in scores_by_movie.items()
-        }
 
     return build_endpoint_result(scores_by_movie, restrict_to_movie_ids)
