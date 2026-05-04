@@ -355,21 +355,26 @@ def _extract_fired_endpoints(
     raise ValueError(f"Unhandled handler bucket: {bucket!r}")
 
 
-# Stub strings for the per-target / per-spec exploration prose that
-# CharacterQuerySpec and FranchiseQuerySpec require. The fanout schema
-# replaces those LLM-authored reasoning slots with a single shared
-# `referent_form_exploration`, so when we synthesize the downstream
-# specs the only thing we have to fill the remaining exploration slots
-# is the same referent prose (used for query_exploration /
-# character_exploration / request_overview) plus a fixed sentinel for
-# prominence_exploration (the fanout schema does not commit a
-# centrality reading — DEFAULT prominence is the safe fallback).
+# The fanout schema carries two parallel walks rather than the
+# per-target / per-spec exploration prose the downstream specs were
+# designed around. When we synthesize CharacterQuerySpec and
+# FranchiseQuerySpec we wire each side's walk into the equivalent
+# exploration slot on the downstream spec; query_exploration on
+# CharacterQuerySpec restates the character-side context (single
+# target by design) and prominence_exploration is filled with a fixed
+# sentinel because the fanout schema does not commit a centrality
+# reading — DEFAULT prominence is the safe fallback.
 # Executors do not read these strings; they exist purely as LLM
-# scaffolding on the spec models, so stubs preserve schema validity
-# without affecting retrieval behavior.
+# scaffolding on the spec models, so a stub or a copy preserves
+# schema validity without affecting retrieval behavior.
 _FANOUT_PROMINENCE_EXPLORATION_STUB = (
     "no centrality signal — fanout retrieval does not commit a "
     "separate prominence reading."
+)
+
+_FANOUT_CHARACTER_QUERY_EXPLORATION_STUB = (
+    "single referent — fanout retrieval emits one CharacterTarget "
+    "per call by design."
 )
 
 
@@ -382,7 +387,6 @@ def _fanout_to_fired_endpoints(
     # classify / execute / consolidate path every other multi-route
     # bucket uses. See the call site in _extract_fired_endpoints for
     # rationale.
-    referent: str = output.referent_form_exploration
     fired: list[tuple[EndpointRoute, EndpointParameters]] = []
 
     # Character path — collapses every variant into a single target
@@ -393,10 +397,10 @@ def _fanout_to_fired_endpoints(
     character_forms = list(output.character_forms)
     if character_forms:
         character_spec = CharacterQuerySpec(
-            query_exploration=referent,
+            query_exploration=_FANOUT_CHARACTER_QUERY_EXPLORATION_STUB,
             targets=[
                 CharacterTarget(
-                    character_exploration=referent,
+                    character_exploration=output.character_form_exploration,
                     forms=character_forms,
                     prominence_exploration=_FANOUT_PROMINENCE_EXPLORATION_STUB,
                     prominence_mode=CharacterProminenceMode.DEFAULT,
@@ -414,7 +418,7 @@ def _fanout_to_fired_endpoints(
     if franchise_forms:
         franchise_wrapper = FranchiseEndpointParameters(
             parameters=FranchiseQuerySpec(
-                request_overview=referent,
+                request_overview=output.franchise_form_exploration,
                 franchise_names=franchise_forms,
             ),
         )

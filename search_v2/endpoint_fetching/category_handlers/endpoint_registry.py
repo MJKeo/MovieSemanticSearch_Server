@@ -102,41 +102,106 @@ from schemas.trait_category import CategoryName
 
 # CHARACTER_FRANCHISE_FANOUT does not split into per-endpoint payloads.
 # A single named referent drives both the character and the franchise
-# retrieval, so the bucket emits one shared schema (referent
-# identification + the form-name lists each path consumes) rather than
-# two endpoint-specific wrappers. get_output_wrapper returns this class
-# for either ENTITY or FRANCHISE_STRUCTURE under this bucket.
+# retrieval, so the bucket emits one shared schema with two parallel
+# walks — one for the character side (per-film cast credits), one for
+# the franchise side (series / universe / umbrella titles). The two
+# walks are independent because their target indexes are different
+# (cast-list strings vs. franchise titles), but they share the same
+# referent. get_output_wrapper returns this class for either ENTITY or
+# FRANCHISE_STRUCTURE under this bucket.
 class CharacterFranchiseFanoutSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    referent_form_exploration: str = Field(
+    # Mirrors CharacterTarget.character_exploration in
+    # schemas/entity_translation.py — same film-walk template, same
+    # spartan tone, same "queried form is often not the dominant
+    # credit" warning. Kept in sync so the bucket-7 and bucket-3 paths
+    # produce equivalent character-side reasoning.
+    character_form_exploration: str = Field(
         ...,
         description=(
-            "Identify the named referent and walk through the surface "
-            "forms it appears under — alternate spellings, localizations, "
-            "in-universe variants, named subgroups. This is the single "
-            "shared identification step both retrieval paths consume. "
-            "Use the user's own terms; do not invent forms not implied "
-            "by the expression or general knowledge of the referent."
+            "Fill in this template exactly. No commentary outside it.\n"
+            "\n"
+            "Films: <the most popular / relevant films featuring this "
+            "character, with year — walk enough to surface every "
+            "distinct credited form>\n"
+            "Credit per film:\n"
+            "  - <film>: <every form this character is credited under "
+            "in that film's cast block, comma-separated, one identity "
+            "per entry>\n"
+            "  - ...\n"
+            "Distinct forms: <deduped union of all credit-per-film "
+            "entries, comma-separated, most common form first>\n"
+            "\n"
+            "A 'form' is a single atomic identity — one name per form. "
+            "If a literal cast-list credit bundles multiple identities "
+            "(slash-combined names, or alternate identities listed "
+            "together), split it into its underlying single-identity "
+            "components when listing the film's credited forms. "
+            "Retrieval is exact string match against atomic credit "
+            "entries; bundled strings match nothing.\n"
+            "\n"
+            "Skip a film if you can't recall the credit — absence "
+            "beats fabrication. Skip scene quotes, fan nicknames, "
+            "and descriptive phrases; only credited names.\n"
+            "\n"
+            "A character may be credited under several distinct forms "
+            "within a single film, and under different forms across "
+            "reboots or incarnations. Walk widely enough to surface "
+            "every distinct form; emitting only the queried form "
+            "silently drops every film credited differently."
         ),
     )
     character_forms: list[str] = Field(
         ...,
         description=(
-            "Every name, alias, or spelling the character is known by — "
-            "feeds the character-presence retrieval. Include "
-            "localizations and aliases a viewer might use; exclude "
-            "franchise/universe titles that do not name the character "
-            "directly."
+            "Every atomic name from character_form_exploration's "
+            "'Distinct forms' line. Most common form first; rest are "
+            "aliases of the SAME character. Retrieval is exact-string "
+            "MAX across forms — extras cost ~0, omissions silently "
+            "drop films. Bias toward inclusion of any atomic form "
+            "grounded in a specific film credit.\n"
+            "\n"
+            "Skip generic role labels and descriptive phrases — only "
+            "identifiable names. Skip diacritic / casing / "
+            "punctuation / hyphenation variants — normalization "
+            "handles those. Empty list is valid when the referent "
+            "has no real character-side presence (franchise-only)."
+        ),
+    )
+    franchise_form_exploration: str = Field(
+        ...,
+        description=(
+            "Fill in this template exactly. No commentary outside it.\n"
+            "\n"
+            "Series: <named film series / franchise titles for this "
+            "referent, comma-separated>\n"
+            "Umbrella: <broader shared-universe or umbrella label if "
+            "applicable, else 'none'>\n"
+            "Subgroups: <named phases / sagas / trilogies the referent "
+            "anchors, comma-separated, else 'none'>\n"
+            "Distinct forms: <deduped franchise / series / universe / "
+            "umbrella titles, comma-separated>\n"
+            "\n"
+            "Spartan: terse, no prose. Use only widely-recognized "
+            "labels (studio terminology, mainstream criticism, "
+            "established fan vocabulary). Do not invent series names. "
+            "Do not list character aliases here — those go on the "
+            "character side."
         ),
     )
     franchise_forms: list[str] = Field(
         ...,
         description=(
-            "Every name the franchise / universe / series is known by — "
-            "feeds the franchise-lineage retrieval. Include alternate "
-            "titles and umbrella series names; exclude character aliases "
-            "that are not also franchise titles."
+            "Every distinct franchise / series / universe / umbrella "
+            "title from franchise_form_exploration's Distinct forms "
+            "line. Includes alternate titles and umbrella series "
+            "names; excludes character aliases.\n"
+            "\n"
+            "Empty list is valid when the referent is character-only "
+            "(no anchored film series). Avoid orthographic variants — "
+            "the franchise tokenizer collapses casing / punctuation / "
+            "hyphenation."
         ),
     )
 

@@ -14,9 +14,12 @@ Fire when the named referent is both:
 - the through-line of a character-centered film franchise, series, or
   universe
 
-Character forms are credited persona strings for that referent. Franchise
-forms are franchise, series, universe, or umbrella title strings for that
-same referent. Keep both form sets narrow to the shared referent.
+Character forms are credited persona strings for that referent. Walk
+the referent's notable films and recall the exact cast-list string
+used in each — different incarnations across reboots, civilian or
+legal names, longer forms vary by film. Franchise forms are franchise,
+series, universe, or umbrella title strings for that same referent.
+Keep both form sets narrow to the shared referent.
 
 Use central character framing when the request asks for that character's
 movies or story. Use default only for appearance-style wording that still

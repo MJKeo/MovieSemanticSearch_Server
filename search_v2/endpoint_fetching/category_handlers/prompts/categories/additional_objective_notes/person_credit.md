@@ -17,3 +17,9 @@ No-fire when the target is a fictional character, title text, studio,
 franchise, source-material author without film-credit framing, or a
 style-transfer phrase rather than a literal credit.
 
+The same person is often credited under several strings — stage name
+vs. legal name, longer "with-middle-name" forms — and a missed credit
+silently drops every film that uses it. Walk notable films and emit
+the credits actually used across them, not just the queried surface
+form.
+

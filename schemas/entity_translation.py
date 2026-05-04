@@ -92,19 +92,35 @@ class PersonTarget(BaseModel):
     person_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "Two sentences. (1) Who this person is and which credit-"
-            "string forms might appear on real cast/crew listings — "
-            "primary common form, legal names rarely used publicly, "
-            "stage names or mononyms, longer-vs-shorter credit "
-            "variants. (2) Which role this person is predominantly "
-            "known for (actor, director, writer, producer, composer); "
-            "'not sure' is a valid answer. Describe; do not commit.\n"
+            "Fill in this template exactly. No commentary outside it.\n"
             "\n"
-            "NEVER:\n"
-            "- INVENT forms from feel. If you have no real reason to "
-            "believe a variant appears in credits, leave it out.\n"
-            "- ROLE-GUESS to fill sentence (2). 'Not sure' is the "
-            "signal that triggers UNKNOWN downstream — use it."
+            "Films: <3-5 notable films this person worked on, with year>\n"
+            "Credit per film:\n"
+            "  - <film>: <every form this person is billed under in that "
+            "film's cast/crew block, comma-separated, one identity per "
+            "entry>\n"
+            "  - ...\n"
+            "Distinct forms: <deduped union of all credit-per-film "
+            "entries, comma-separated, most common form first>\n"
+            "Predominant role: <actor | director | writer | producer | "
+            "composer | not sure>\n"
+            "\n"
+            "A 'form' is a single atomic identity — one name per form. "
+            "If a literal credit bundles multiple identities (slash-"
+            "combined names, or a stage name embedded inside a legal "
+            "name), split it into its underlying single-identity "
+            "components when listing the film's credited forms. "
+            "Retrieval is exact string match against atomic credit "
+            "entries; bundled strings match nothing.\n"
+            "\n"
+            "Skip a film if you can't recall the credit — absence "
+            "beats fabrication. 'Not sure' on role triggers UNKNOWN "
+            "downstream; use it instead of guessing.\n"
+            "\n"
+            "The queried surface form is often NOT the dominant "
+            "credit — a stage or alternate name may not appear as "
+            "the primary credit on most cast blocks. Walk widely "
+            "enough to surface every distinct credited form."
         ),
     )
 
@@ -113,24 +129,18 @@ class PersonTarget(BaseModel):
     ) = Field(
         ...,
         description=(
-            "Every credited string variant for THIS one person, "
-            "drawn from the name inventory in person_exploration's "
-            "first sentence. Most common credited form first; "
-            "remaining entries are aliases of the SAME person. "
-            "Retrieval takes MAX score across forms — extra forms "
-            "that match nothing cost ~0; omitting a real one "
-            "silently drops every film that uses it. Bias toward "
-            "inclusion.\n"
+            "Every atomic name from person_exploration's 'Distinct "
+            "forms' line for THIS one person. Most common form "
+            "first; rest are aliases of the SAME person. Retrieval "
+            "is exact-string MAX across forms — extras cost ~0, "
+            "omissions silently drop films. Bias toward inclusion "
+            "of any atomic form grounded in a specific film credit.\n"
             "\n"
-            "NEVER:\n"
-            "- LIST A DIFFERENT PERSON. Different people are "
-            "different targets, not aliases.\n"
-            "- LIST DESCRIPTIVE PHRASES, scene quotes, or fan "
-            "nicknames that never appear on a credit block.\n"
-            "- LIST DIACRITIC / CASING / PUNCTUATION / HYPHENATION "
-            "variants — shared normalization handles those.\n"
-            "- INVENT middle names or suffixes the person does not "
-            "credit under."
+            "Different people → separate targets, not aliases. Skip "
+            "descriptive phrases, scene quotes, and fan nicknames — "
+            "only credited names. Skip diacritic / casing / "
+            "punctuation / hyphenation variants — normalization "
+            "handles those."
         ),
     )
 
@@ -138,28 +148,23 @@ class PersonTarget(BaseModel):
         ...,
         description=(
             "Posting table to query. Pick a specific role when "
-            "retrieval_intent or the expression names or strongly "
-            "implies it, OR when person_exploration committed to a "
-            "predominant role. Pick UNKNOWN only when "
-            "person_exploration ended in 'not sure' — UNKNOWN unions "
-            "all five tables with even weight and is a fallback, not "
-            "a default.\n"
+            "retrieval_intent or expression names/implies it, or when "
+            "person_exploration committed to one. UNKNOWN only when "
+            "exploration ended in 'not sure' — it unions all five "
+            "tables evenly and is a fallback, not a default.\n"
             "\n"
-            "Local test: 'if I removed this commitment, which table "
-            "would the executor hit?' If the answer is 'all five "
-            "evenly' and that wasn't your intent, you picked UNKNOWN "
-            "by mistake."
+            "Local test: would I want all five tables hit evenly? If "
+            "no, UNKNOWN is wrong."
         ),
     )
 
     prominence_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "One sentence. Quote the prominence language in "
-            "retrieval_intent or the expression that signals a "
-            "LEAD / SUPPORTING / MINOR band, or state 'no prominence "
-            "signal'. Explore first; do not justify a mode you have "
-            "already picked."
+            "Spartan: quote the prominence language in "
+            "retrieval_intent or expression signaling LEAD / "
+            "SUPPORTING / MINOR, or state 'no prominence signal'. "
+            "Quote first; do not justify a mode already picked."
         ),
     )
 
@@ -167,14 +172,12 @@ class PersonTarget(BaseModel):
         ...,
         description=(
             "Billing-band score. DEFAULT = no prominence language "
-            "present (typical case). LEAD = explicit leading-role "
-            "language quoted in prominence_exploration. SUPPORTING / "
-            "MINOR = explicit supporting / cameo language quoted in "
-            "prominence_exploration. Fame of the person is not a "
-            "LEAD signal.\n"
+            "(typical). LEAD / SUPPORTING / MINOR = explicit "
+            "leading / supporting / cameo language quoted in "
+            "prominence_exploration. Fame is not a LEAD signal.\n"
             "\n"
-            "Local test: 'did prominence_exploration quote a phrase "
-            "that pins this band?' If no, the answer is DEFAULT."
+            "Local test: did prominence_exploration quote a phrase "
+            "pinning this band? If no, DEFAULT."
         ),
     )
 
@@ -188,17 +191,14 @@ class PersonQuerySpec(EndpointParameters):
     query_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "One sentence. Read retrieval_intent and every expression "
-            "and state whether they describe ONE person, MULTIPLE "
-            "distinct people, or one person under several name "
-            "variants. N expressions does NOT imply N targets — "
-            "variants of one person collapse into one target's "
-            "`forms`; only genuinely different people become "
-            "separate targets.\n"
+            "Spartan: state whether retrieval_intent and expressions "
+            "name ONE person, MULTIPLE distinct people, or one "
+            "person under several variants. N expressions ≠ N "
+            "targets — variants collapse into one target's `forms`; "
+            "different people become separate targets.\n"
             "\n"
-            "Local test: 'are these names the same individual under "
-            "different credits, or different individuals?' Same → "
-            "one target. Different → multiple targets."
+            "Local test: same individual or different? Same → one "
+            "target. Different → multiple."
         ),
     )
 
@@ -227,19 +227,36 @@ class CharacterTarget(BaseModel):
     character_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "One sentence. Who this character is and which "
-            "credit-string forms film cast lists might use across "
-            "their appearances — most common cast-list form, "
-            "secret-identity / civilian / legal-name pairings, "
-            "alternate-incarnation names from spin-offs or reboots, "
-            "longer-vs-shorter variants. Describe the form "
-            "inventory; do not commit.\n"
+            "Fill in this template exactly. No commentary outside it.\n"
             "\n"
-            "NEVER:\n"
-            "- INVENT cast-list strings from feel. Stick to forms "
-            "you have real reason to believe appear in credits.\n"
-            "- LIST SCENE QUOTES, fan nicknames, or descriptive "
-            "phrases — they do not appear on a credit block."
+            "Films: <the most popular / relevant films featuring this "
+            "character, with year — walk enough to surface every "
+            "distinct credited form>\n"
+            "Credit per film:\n"
+            "  - <film>: <every form this character is credited under "
+            "in that film's cast block, comma-separated, one identity "
+            "per entry>\n"
+            "  - ...\n"
+            "Distinct forms: <deduped union of all credit-per-film "
+            "entries, comma-separated, most common form first>\n"
+            "\n"
+            "A 'form' is a single atomic identity — one name per form. "
+            "If a literal cast-list credit bundles multiple identities "
+            "(slash-combined names, or alternate identities listed "
+            "together), split it into its underlying single-identity "
+            "components when listing the film's credited forms. "
+            "Retrieval is exact string match against atomic credit "
+            "entries; bundled strings match nothing.\n"
+            "\n"
+            "Skip a film if you can't recall the credit — absence "
+            "beats fabrication. Skip scene quotes, fan nicknames, "
+            "and descriptive phrases; only credited names.\n"
+            "\n"
+            "A character may be credited under several distinct forms "
+            "within a single film, and under different forms across "
+            "reboots or incarnations. Walk widely enough to surface "
+            "every distinct form; emitting only the queried form "
+            "silently drops every film credited differently."
         ),
     )
 
@@ -248,48 +265,44 @@ class CharacterTarget(BaseModel):
     ) = Field(
         ...,
         description=(
-            "Every credited string variant for THIS one character, "
-            "drawn from the form inventory in character_exploration. "
-            "Most common cast-list form first; remaining entries are "
-            "aliases of the SAME character. Retrieval takes MAX score "
-            "across forms — extras cost ~0, omissions silently drop "
-            "films. Bias toward inclusion, but only for IDENTIFIABLE "
-            "strings.\n"
+            "Every atomic name from character_exploration's 'Distinct "
+            "forms' line for THIS one character. Most common form "
+            "first; rest are aliases of the SAME character. "
+            "Retrieval is exact-string MAX across forms — extras "
+            "cost ~0, omissions silently drop films. Bias toward "
+            "inclusion of any atomic form grounded in a specific "
+            "film credit.\n"
             "\n"
-            "NEVER:\n"
-            "- LIST A DIFFERENT CHARACTER. Different characters are "
-            "different targets.\n"
-            "- LIST GENERIC ROLE LABELS ('the cop', 'the wizard') "
-            "or descriptive phrases — only identifiable name strings "
-            "that would appear on a real credit block.\n"
-            "- LIST DIACRITIC / CASING / PUNCTUATION / HYPHENATION "
-            "variants — shared normalization handles those."
+            "Different characters → separate targets, not aliases. "
+            "Skip generic role labels and descriptive phrases — only "
+            "identifiable names. Skip diacritic / casing / "
+            "punctuation / hyphenation variants — normalization "
+            "handles those."
         ),
     )
 
     prominence_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "One sentence. Quote the centrality language in "
-            "retrieval_intent or the expression that signals "
-            "subject-of-film framing (possessive title subject, "
-            "story-of, centers-on), or state 'no centrality signal'. "
-            "Explore first; do not justify a mode."
+            "Spartan: quote the centrality language in "
+            "retrieval_intent or expression signaling subject-of-"
+            "film framing (possessive title subject, story-of, "
+            "centers-on), or state 'no centrality signal'. Quote "
+            "first; do not justify a mode."
         ),
     )
 
     prominence_mode: CharacterProminenceMode = Field(
         ...,
         description=(
-            "Centrality score. DEFAULT = the character is named "
-            "without centrality language (typical case). CENTRAL = "
-            "explicit subject-of-film language quoted in "
-            "prominence_exploration. Fame of the character is not a "
-            "CENTRAL signal.\n"
+            "Centrality score. DEFAULT = named without centrality "
+            "language (typical). CENTRAL = explicit subject-of-film "
+            "language quoted in prominence_exploration. Fame is not "
+            "a CENTRAL signal.\n"
             "\n"
-            "Local test: 'did prominence_exploration quote a phrase "
-            "framing this character as the film's subject?' If no, "
-            "the answer is DEFAULT."
+            "Local test: did prominence_exploration quote a phrase "
+            "framing this character as the film's subject? If no, "
+            "DEFAULT."
         ),
     )
 
@@ -300,17 +313,14 @@ class CharacterQuerySpec(EndpointParameters):
     query_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "One sentence. Read retrieval_intent and every "
-            "expression and state whether they describe ONE "
-            "character, MULTIPLE distinct characters, or one "
-            "character under several name variants. N expressions "
-            "does NOT imply N targets — variants of one character "
-            "collapse into one target's `forms`; only genuinely "
-            "different characters become separate targets.\n"
+            "Spartan: state whether retrieval_intent and expressions "
+            "name ONE character, MULTIPLE distinct characters, or "
+            "one character under several variants. N expressions ≠ "
+            "N targets — variants collapse into one target's "
+            "`forms`; different characters become separate targets.\n"
             "\n"
-            "Local test: 'is this the same character under different "
-            "credit strings, or a different character?' Same → one "
-            "target. Different → multiple targets."
+            "Local test: same character or different? Same → one "
+            "target. Different → multiple."
         ),
     )
 
@@ -336,32 +346,27 @@ class TitlePatternTarget(BaseModel):
     pattern_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "One sentence. Quote the language in retrieval_intent or "
-            "the expression that signals which kind of title match "
-            "the user wants — substring-anywhere, title-prefix, or "
-            "exact full-title equality. Explore first; do not name "
-            "match_type yet.\n"
+            "Spartan: quote the language in retrieval_intent or "
+            "expression signaling the match kind — substring-"
+            "anywhere, title-prefix, or exact full-title equality. "
+            "Quote first; do not name match_type yet.\n"
             "\n"
-            "NEVER:\n"
-            "- DEFAULT TO CONTAINS without checking. STARTS_WITH and "
-            "EXACT_MATCH have specific signals; missing them is the "
-            "failure mode."
+            "Do not default to CONTAINS without checking. "
+            "STARTS_WITH and EXACT_MATCH have specific signals; "
+            "missing them is the failure mode."
         ),
     )
 
     pattern: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "Literal text fragment to match. Draw the exact "
-            "characters from the language pattern_exploration "
-            "quoted; strip any framing words the user wrapped the "
-            "fragment in.\n"
+            "Literal text fragment to match. Draw exact characters "
+            "from the language pattern_exploration quoted; strip "
+            "framing words the user wrapped the fragment in.\n"
             "\n"
-            "NEVER:\n"
-            "- ADD '%' OR '_' wildcards — the executor handles LIKE "
-            "escaping.\n"
-            "- WRAP IN QUOTES — the user's quotes are not part of "
-            "the search text."
+            "No '%' or '_' wildcards — executor handles LIKE "
+            "escaping. No surrounding quotes — the user's quotes "
+            "are not part of the search text."
         ),
     )
 
@@ -369,14 +374,13 @@ class TitlePatternTarget(BaseModel):
         ...,
         description=(
             "How `pattern` is compared. CONTAINS = appears anywhere "
-            "in the title (typical case). STARTS_WITH = title begins "
-            "with the pattern. EXACT_MATCH = entire title equals "
-            "the pattern. Pick the value matching the language "
-            "quoted in pattern_exploration.\n"
+            "(typical). STARTS_WITH = title begins with pattern. "
+            "EXACT_MATCH = entire title equals pattern. Pick the "
+            "value matching the language pattern_exploration "
+            "quoted.\n"
             "\n"
-            "Local test: 'did pattern_exploration quote language "
-            "specific to this match_type?' If no, CONTAINS is the "
-            "safe choice."
+            "Local test: did pattern_exploration quote language "
+            "specific to this match_type? If no, CONTAINS."
         ),
     )
 
@@ -387,15 +391,14 @@ class TitlePatternQuerySpec(EndpointParameters):
     query_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "One sentence. Read retrieval_intent and every "
-            "expression and state whether they describe ONE pattern "
-            "or MULTIPLE distinct ones (e.g. a list of words, any of "
-            "which would qualify). N expressions does NOT imply N "
-            "targets.\n"
+            "Spartan: state whether retrieval_intent and expressions "
+            "name ONE pattern or MULTIPLE distinct ones (e.g. a list "
+            "of words any of which would qualify). N expressions ≠ "
+            "N targets.\n"
             "\n"
-            "Local test: 'does each expression name a separate match "
-            "the user would accept on its own?' Yes → multiple "
-            "targets. No → one target."
+            "Local test: does each expression name a separate match "
+            "the user would accept on its own? Yes → multiple. No → "
+            "one."
         ),
     )
 
