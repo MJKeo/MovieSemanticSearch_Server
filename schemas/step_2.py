@@ -10,12 +10,12 @@
 #    (consolidated meaning; the one place light inference is
 #    permitted). Plus split_exploration / standalone_check —
 #    evidence the commit phase reads. Atoms record.
-# 3. traits — committed layer. Splits / dedupes resolved; role,
-#    polarity, salience committed. Step 3 consumes traits.
+# 3. traits — committed layer. Splits / dedupes resolved; polarity
+#    and commitment committed. Step 3 consumes traits.
 #
 # Design principles:
-# - Atoms describe; traits commit. Role / polarity / salience
-#   never appear on atoms.
+# - Atoms describe; traits commit. Polarity / commitment never
+#   appear on atoms.
 # - One list for modifier signals (adjacent or cross-criterion —
 #   conceptually the same thing).
 # - Effects described, not categorized. Controlled modal tokens
@@ -31,19 +31,19 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from schemas.enums import Polarity, Role
+from schemas.enums import Polarity
 
 
 # ---------------------------------------------------------------------
 # Modifying signal
 # ---------------------------------------------------------------------
+#
+# One signal from the query that shapes how an atom is evaluated.
+# Adjacent qualifiers and cross-criterion modifiers live on the same
+# list.
 
 
 class ModifyingSignal(BaseModel):
-    """One signal from the query that shapes how an atom is
-    evaluated. Adjacent qualifiers and cross-criterion modifiers
-    live on the same list."""
-
     surface_phrase: str = Field(
         ...,
         description=(
@@ -62,7 +62,7 @@ class ModifyingSignal(BaseModel):
             "don't slot it into a closed bucket.\n"
             "\n"
             "Modal-language signals use controlled vocabulary so the "
-            "commit phase can parse polarity / salience: SOFTENS, "
+            "commit phase can parse polarity / commitment: SOFTENS, "
             "HARDENS, FLIPS POLARITY, CONTRASTS. Recommended where "
             "they fit; freeform otherwise.\n"
             "\n"
@@ -80,12 +80,13 @@ class ModifyingSignal(BaseModel):
 # ---------------------------------------------------------------------
 
 
-class Atom(BaseModel):
-    """One criterion the user wants movies scored against, at the
-    granularity they phrased it, plus its consolidated meaning in
-    the query's full context. Descriptive — atoms record; they do
-    not commit role / polarity / salience."""
+# One criterion the user wants movies scored against, at the
+# granularity they phrased it, plus its consolidated meaning in the
+# query's full context. Descriptive — atoms record; they do not
+# commit polarity / commitment.
 
+
+class Atom(BaseModel):
     surface_text: str = Field(
         ...,
         description=(
@@ -248,11 +249,12 @@ class Atom(BaseModel):
 # ---------------------------------------------------------------------
 
 
-class Trait(BaseModel):
-    """One search-ready unit. Produced by the commit phase from
-    atoms — splits resolved, redundancies deduped, role / polarity /
-    salience committed. Step 3 consumes traits, not atoms."""
+# One search-ready unit. Produced by the commit phase from atoms —
+# splits resolved, redundancies deduped, polarity and commitment
+# committed. Step 3 consumes traits, not atoms.
 
+
+class Trait(BaseModel):
     surface_text: str = Field(
         ...,
         description=(
@@ -292,9 +294,10 @@ class Trait(BaseModel):
             "scope, so be specific enough that a fresh reader could "
             "tell what kinds of dimensions belong and which don't.\n"
             "\n"
-            "When role=carver and no qualifier-style relationship "
-            "exists in the signals, write the literal string \"n/a\". "
-            "Step 3 reads \"n/a\" as an explicit no-relation signal.\n"
+            "When no qualifier-style relationship exists in the "
+            "source atom's modifying_signals, write the literal "
+            "string \"n/a\". Step 3 reads \"n/a\" as an explicit "
+            "no-relation signal.\n"
             "\n"
             "NEVER:\n"
             "- SLOT INTO A FIXED VOCABULARY. There is no closed list "
@@ -329,38 +332,6 @@ class Trait(BaseModel):
             "- LEAVE BLANK. Substantive phrase or literal \"n/a\"."
         ),
     )
-    role_evidence: str = Field(
-        ...,
-        description=(
-            "One sentence. Read intent_exploration's most-likely "
-            "interpretation as the primary source — it has already "
-            "identified which piece of the query gates the "
-            "population vs which refines. Use qualifier_relation "
-            "(committed above) and the other atoms / traits in the "
-            "query as contextual grounding for that frame. Against "
-            "this primary frame, can this trait on its own "
-            "definitively include or exclude films from eligibility "
-            "(→ carver), or does it qualify because (a) it can only "
-            "be evaluated as a continuous score rather than a "
-            "yes/no membership, (b) it is used as a comparison "
-            "reference rather than naming the population the user "
-            "wants, or (c) another atom or trait in the query "
-            "already gates the population this one would only "
-            "refine?"
-        ),
-    )
-    role: Role = Field(
-        ...,
-        description=(
-            "Conclusion of role_evidence above. CARVER: the trait "
-            "definitively gates eligibility — its presence or "
-            "absence determines whether a film qualifies as a "
-            "candidate. QUALIFIER: the trait scores or refines "
-            "within a population other traits gate, OR is itself a "
-            "comparison reference rather than the population the "
-            "user wants."
-        ),
-    )
     polarity: Polarity = Field(
         ...,
         description=(
@@ -368,34 +339,130 @@ class Trait(BaseModel):
             "effect contains FLIPS POLARITY or recognizable "
             "negation language → negative. Otherwise positive. "
             "Hedges and intensifiers do NOT change polarity — they "
-            "affect salience."
+            "affect commitment."
         ),
     )
-    relevance_to_query: str = Field(
+    commitment_evidence: str = Field(
         ...,
         description=(
-            "1-2 sentences walking through how this trait sits in "
-            "the query: hedges or intensifiers attached, position "
-            "in surface order (early/headline vs trailing), words "
-            "spent, whether removing it would meaningfully change "
-            "the ask. Modal effect tokens (SOFTENS, HARDENS) are "
-            "one signal but not the whole picture — within-query "
-            "position and structural prominence contribute too. "
-            "Salience commits as the natural conclusion. No system "
-            "vocabulary; no concrete numbers."
-        ),
-    )
-    salience: Literal["central", "supporting"] = Field(
-        ...,
-        description=(
-            "Natural conclusion from relevance_to_query. CENTRAL = "
-            "headline want; query feels fundamentally different "
-            "without it. SUPPORTING = meaningful but rounds out an "
-            "already-defined ask.\n"
+            "Always populated. Evidence gathering, no verdict. "
+            "Surveys two signal channels so `commitment` below "
+            "commits as the natural conclusion rather than a "
+            "default-fill.\n"
             "\n"
-            "Applies to all traits regardless of role. A "
-            "non-central carver acts as a lenient filter; "
-            "downstream reads salience and adjusts."
+            "(1) EXPLICIT signals — walk the source atom's "
+            "modifying_signals for language whose function is to "
+            "fix the trait's strength. Strong-assertion language "
+            "takes several recognizable shapes: phrasing that names "
+            "an inviolable constraint or non-negotiable; phrasing "
+            "that frames the trait as a precondition for the "
+            "candidate being a viable watch at all (access, "
+            "language, format, or viewer-fit gates) rather than a "
+            "preference within the space of viable watches; "
+            "phrasing that asserts an exclusion (the trait names "
+            "something out of scope) rather than expressing a "
+            "preference against (something to be downranked). "
+            "Soft-framing language takes one shape: phrasing whose "
+            "function is to soften the trait's claim on the result "
+            "and invite the system to set it aside in exchange for "
+            "matches on other axes. Recognize the FUNCTION of the "
+            "language; specific surface tokens vary by query. "
+            "Polarity is committed above; reading it here helps "
+            "tell exclusion-assertion from preference-against.\n"
+            "\n"
+            "(2) STRUCTURAL signals — walk surface position "
+            "(headline / leading vs. trailing), content load (bulk "
+            "of the query's words vs. modest), positioning per "
+            "qualifier_relation and anchor_reference (does this "
+            "trait name the population the query is asking for, "
+            "refine a population a peer defines, or sit coordinate "
+            "with peers), and the removability test against "
+            "intent_exploration's most-likely interpretation (would "
+            "removing the trait collapse the structural ask, narrow "
+            "it without collapse, or leave a refinement falling "
+            "away).\n"
+            "\n"
+            "CHANNEL PRECEDENCE. The explicit channel dominates. "
+            "When it fires, the trait commits at the level the "
+            "explicit signal names (REQUIRED for strong assertion, "
+            "DIMINISHED for soft framing) regardless of where "
+            "structural prominence sits. The structural channel "
+            "sets the level only when the explicit channel is "
+            "silent. Note explicitly which channel is doing the "
+            "work for this trait so `commitment` reads cleanly.\n"
+            "\n"
+            "NEVER:\n"
+            "- WRITE A VERDICT. Survey the channels and stop. "
+            "Picking the level is `commitment`'s job.\n"
+            "- TREAT EXPLICIT-SIGNAL LANGUAGE AS A CLOSED LIST. "
+            "Recognize the FUNCTION (asserting / softening); "
+            "specific surface tokens vary by query.\n"
+            "- DEFAULT-FILL. If a channel is silent, say so "
+            "explicitly — silence is itself evidence the next "
+            "channel must speak to.\n"
+            "- USE SYSTEM VOCABULARY. No category / endpoint / "
+            "channel names."
+        ),
+    )
+    commitment: Literal[
+        "required", "elevated", "neutral", "supporting", "diminished"
+    ] = Field(
+        ...,
+        description=(
+            "Natural conclusion of `commitment_evidence` above. "
+            "Five levels on a single importance axis. The extreme "
+            "levels (REQUIRED, DIMINISHED) commit only when the "
+            "explicit channel fires — the user has said something "
+            "out loud about the trait's strength. The middle three "
+            "levels (ELEVATED, NEUTRAL, SUPPORTING) commit on the "
+            "structural channel when the explicit channel is "
+            "silent.\n"
+            "\n"
+            "REQUIRED — the explicit channel reports strong-"
+            "assertion language: an inviolable constraint, a "
+            "precondition for the candidate being a viable watch "
+            "at all, or an asserted exclusion. Carries the largest "
+            "weight in final score and reranking; reward or "
+            "penalty direction is set by polarity.\n"
+            "\n"
+            "ELEVATED — explicit channel silent. The query's "
+            "structure presents the trait as the load-bearing axis "
+            "the search is fundamentally about; removing it would "
+            "change what kind of movie is being asked for rather "
+            "than how that movie is qualified.\n"
+            "\n"
+            "NEUTRAL — explicit channel silent and structural "
+            "prominence reads balanced. Co-equal criterion among "
+            "peers; the query would be narrower without it but "
+            "would not collapse.\n"
+            "\n"
+            "SUPPORTING — explicit channel silent. Structural "
+            "prominence reads as a refinement on a population other "
+            "traits define; trailing position, modest content load.\n"
+            "\n"
+            "DIMINISHED — the explicit channel reports soft-framing "
+            "language: phrasing that softens the trait's claim and "
+            "invites the system to set it aside in exchange for "
+            "matches on other axes. Includes the \"not too X\" "
+            "special case (explicit dampener on a negative-polarity "
+            "direction commits diminished + negative — softened "
+            "preference against, not assertion against).\n"
+            "\n"
+            "NEVER:\n"
+            "- COMMIT REQUIRED OR DIMINISHED WITHOUT AN EXPLICIT "
+            "SIGNAL. Both extremes require the user to have said "
+            "something out loud about the trait's strength. Strong "
+            "structural prominence alone commits ELEVATED, not "
+            "REQUIRED. Structural triviality alone commits "
+            "SUPPORTING, not DIMINISHED.\n"
+            "- DEFAULT-FILL TO NEUTRAL. Neutral commits when the "
+            "explicit channel is silent and structural prominence "
+            "reads balanced — not when the explicit channel is "
+            "silent and the structural channel pointed elsewhere.\n"
+            "- LET STRUCTURAL PROMINENCE OVERRIDE EXPLICIT FRAMING. "
+            "When the explicit channel fires, the level it names "
+            "commits regardless of where the structural channel "
+            "would have landed."
         ),
     )
     contextualized_phrase: str = Field(
@@ -419,8 +486,8 @@ class Trait(BaseModel):
             "comparison framing, qualifier role, etc.).\n"
             "- Result is one short phrase. Faithful restatement, "
             "not interpretation.\n"
-            "- Carver traits with no meaning-shaping modifier copy "
-            "surface_text verbatim.\n"
+            "- When no meaning-shaping modifier acts on the trait, "
+            "copy surface_text verbatim.\n"
             "\n"
             "TEST: read the phrase aloud out of query context. Can "
             "a fresh reader recover what the trait is asking for? "
@@ -441,13 +508,13 @@ class Trait(BaseModel):
 # ---------------------------------------------------------------------
 # Top-level response
 # ---------------------------------------------------------------------
+#
+# Combined output: query-level intent exploration, descriptive atoms
+# with consolidated evaluative intent, and committed search-ready
+# traits.
 
 
 class QueryAnalysis(BaseModel):
-    """Combined output: query-level intent exploration, descriptive
-    atoms with consolidated evaluative intent, and committed
-    search-ready traits."""
-
     intent_exploration: str = Field(
         ...,
         description=(
@@ -518,10 +585,10 @@ class QueryAnalysis(BaseModel):
             "phrase doesn't get a peer-atom version; a peer-atom "
             "phrase doesn't get a duplicate inside another atom's "
             "modifying_signals as if it were absorbed.\n"
-            "- COMMIT category, polarity, salience, search "
+            "- COMMIT category, polarity, commitment, search "
             "strategy, or weight. Light inference allowed only "
-            "inside evaluative_intent. Role / polarity / salience "
-            "belong on traits.\n"
+            "inside evaluative_intent. Polarity / commitment belong "
+            "on traits.\n"
             "\n"
             "ORDERING: surface-text order from the original query. "
             "Order is load-bearing downstream."
@@ -544,7 +611,7 @@ class QueryAnalysis(BaseModel):
             "evaluative_intent through faithfully; merges pick the "
             "clearer of the source phrasings.\n"
             "- COMMIT a category, endpoint, or concrete weight. "
-            "Role / polarity / salience are the only commitments at "
+            "Polarity / commitment are the only commitments at "
             "this layer.\n"
             "\n"
             "ORDERING: traits appear in the order their source "

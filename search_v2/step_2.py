@@ -10,7 +10,7 @@
 #   2. atoms — descriptive layer. Per-criterion records: surface_text,
 #      modifying_signals, evaluative_intent. Atoms gather evidence.
 #   3. traits — committed layer. Search-ready units derived from
-#      atoms with role / polarity / salience committed. Step 3
+#      atoms with polarity and commitment committed. Step 3
 #      consumes traits.
 #
 # The prompt walks two phases:
@@ -18,8 +18,7 @@
 #   ATOM PHASE — descriptive evidence gathering
 #     atomicity → modifier vs atom → evaluative intent
 #   COMMIT PHASE — read evidence, commit per trait
-#     commit phase wrapper → carver vs qualifier (role)
-#                          → polarity → salience
+#     commit phase wrapper → polarity → commitment
 #   CATEGORY VOCABULARY — recognize-only; full taxonomy at Step 3
 #
 # Output-shape discipline lives in the response-schema field
@@ -58,7 +57,7 @@ from schemas.step_2 import QueryAnalysis
 #
 #   task framing
 #   ATOM PHASE   — atomicity → modifier vs atom → evaluative intent
-#   COMMIT PHASE — commit phase → carver vs qualifier → polarity → salience
+#   COMMIT PHASE — commit phase → polarity → commitment
 #   CATEGORY VOCABULARY (recognition-only)
 
 
@@ -73,8 +72,8 @@ natural-language query comes in; you produce three coupled outputs:
 2. atoms — descriptive layer. surface_text + modifying_signals + \
    evaluative_intent + split_exploration + standalone_check. Atoms \
    record and analyze.
-3. traits — committed layer. Search-ready units with role / \
-   polarity / salience assigned. Step 3 consumes this list.
+3. traits — committed layer. Search-ready units with polarity \
+   and commitment assigned. Step 3 consumes this list.
 
 Read the response schema's field descriptions before producing \
 output.
@@ -95,17 +94,18 @@ exploration fields describe analyses without committing to verdicts.
 
 COMMIT PHASE — read the evidence and commit. Structural decisions \
 (split / keep whole; merge / own trait) act on the atom phase's \
-exploration fields. Per-trait commitments (role, polarity, \
-salience) read mechanically off the source atom's intent shape and \
-effect tokens.
+exploration fields. Per-trait commitments (polarity, commitment) \
+read mechanically off the source atom's intent shape and effect \
+tokens, with commitment surveying both explicit phrasing signals \
+and structural-prominence signals before settling on a level.
 
 Don't re-interpret intent from scratch — the atom phase already \
 did the interpretive work.
 
 The sections below cover the atom phase first (atomicity, modifier \
 vs atom, evaluative intent), then the commit phase (commit phase, \
-carver vs qualifier, polarity, salience), then category vocabulary \
-for recognition checks.
+polarity, commitment), then category vocabulary for recognition \
+checks.
 
 ---
 
@@ -340,7 +340,7 @@ Recording signals. One entry on modifying_signals per signal:
 - effect: a few words describing what THIS signal does to THIS \
   atom's evaluation. Modal-language signals use the controlled \
   tokens SOFTENS / HARDENS / FLIPS POLARITY / CONTRASTS so the \
-  commit phase can parse polarity and salience. Otherwise \
+  commit phase can parse polarity and commitment. Otherwise \
   freeform; describe the specific effect, not a bucket.
 
 Building evaluative_intent. 1-2 sentences. The ONE place where \
@@ -363,7 +363,7 @@ signals do for THIS atom.
 
 Hard guardrails (these still apply with inference allowed):
 - No category labels ("genre", "runtime", "actor", "tone").
-- No concrete polarity / salience values — describe in words; \
+- No concrete polarity / commitment values — describe in words; \
   commitments live on traits.
 - No expansion of named things.
 - No translation into system vocabulary.
@@ -428,21 +428,23 @@ DON'T DROP, DON'T INVENT. Every atom that survives the standalone \
 check produces at least one trait. No trait without a source atom. \
 Splits add traits; merges combine.
 
-PER-TRAIT COMMITMENTS. role_evidence, role, polarity, \
-qualifier_relation, anchor_reference, and contextualized_phrase \
-commit per the schema field descriptions; salience commits via a \
-brief relevance_to_query reasoning step. role_evidence precedes \
-role so the disambiguating question is answered in writing before \
-the role commits.
+PER-TRAIT COMMITMENTS. qualifier_relation, anchor_reference, \
+polarity, commitment_evidence, commitment, and \
+contextualized_phrase commit per the schema field descriptions. \
+The commitment cluster sits at the tail of the trait: polarity \
+commits first (mechanical from FLIPS POLARITY signals), then \
+commitment_evidence surveys both signal channels without writing a \
+verdict, then commitment commits as the natural conclusion of that \
+evidence.
 
 qualifier_relation is freeform prose describing how this trait \
 positions against the rest of the query AND the operational \
 meaning of that positioning (what kinds of dimensions Step 3 \
 should produce). Read it off the source atom's modifying_signals \
 in your own words — describe the specific relation this query \
-contains, not a slot from a closed list. When role=carver and no \
-qualifier-style signal exists in the source atom's modifying_\
-signals, commit the literal string "n/a".
+contains, not a slot from a closed list. When no qualifier-style \
+signal exists in the source atom's modifying_signals, commit the \
+literal string "n/a".
 
 anchor_reference is the modifier surface phrase carried verbatim \
 from modifying_signals.surface_phrase. If no modifier acts on the \
@@ -450,117 +452,38 @@ trait, commit the literal string "n/a".
 
 contextualized_phrase folds anchor_reference and meaning-shaping \
 modifying_signals into one short phrase that restates the trait in \
-user voice with its query context preserved. Carver traits with no \
-meaning-shaping modifier copy surface_text verbatim.
+user voice with its query context preserved. When no meaning-\
+shaping modifier acts on the trait, copy surface_text verbatim.
 
 OPERATIONAL TESTS (apply at the point of writing each value):
-- After role_evidence: "did I read intent_exploration's most-\
-  likely interpretation as the primary frame, then reason within \
-  it about whether this trait gates eligibility (→ carver) or \
-  qualifies via shape (a) / (b) / (c)?" If the role_evidence \
-  reasoned only from abstract attribute properties without \
-  reading the primary frame, revise.
-- After role: "is this the conclusion role_evidence directly \
-  supports, or am I overriding the evidence?" Override → revise \
-  the evidence or the role; do not let them disagree.
 - After polarity: "is there a FLIPS POLARITY (or negation-flavored) \
   signal on the source atom?" Yes → negative; no → positive.
-- After salience: "does relevance_to_query describe a headline \
-  want or a rounding-out detail?" Headline → central; rounding-\
-  out → supporting.
+- After commitment_evidence: "did I read the explicit channel \
+  first and note whether it fires, then read the structural \
+  channel only as the fallback? Did I name which channel is doing \
+  the work for this trait, without picking a level at the end?" \
+  If the evidence consulted both channels symmetrically, or wrote \
+  a verdict, revise.
+- After commitment: "is this the natural conclusion of \
+  commitment_evidence rather than a default-fill? If the explicit \
+  channel fired, did the level commit at REQUIRED or DIMINISHED \
+  regardless of where structural prominence sat? If the explicit \
+  channel was silent, did the level fall to ELEVATED, NEUTRAL, or \
+  SUPPORTING based on structural prominence alone?" REQUIRED and \
+  DIMINISHED never commit without an explicit signal.
 - After qualifier_relation / anchor_reference: "is the relation I \
   named, and the anchor I carried, present in modifying_signals?" \
   If not, revise to match or commit "n/a". NEVER fabricate to fill \
   the slot.
 - After contextualized_phrase: "if I read this phrase aloud out \
   of query context, can a fresh reader recover what the trait is \
-  asking for?" If not, fold the modifier in more clearly. (For \
-  carver traits with no relevant modifier, this is automatically \
+  asking for?" If not, fold the modifier in more clearly. (When no \
+  meaning-shaping modifier acts on the trait, this is automatically \
   yes — the field copies surface_text.)
 
 TRAIT ORDERING. Source-atom order. Splits inherit position (each \
 piece keeps the slot, in piece order). Merges take the earlier \
 source's slot.
-
----
-
-"""
-
-
-_CARVER_VS_QUALIFIER = """\
-CARVER VS QUALIFIER (commits Trait.role_evidence and Trait.role)
-
-Two distinct functions a trait can serve in the query:
-
-- CARVER: definitively gates eligibility. A film either has this \
-  trait or it doesn't; films that fail are excluded from \
-  consideration on this trait's axis. Yes/no contribution.
-- QUALIFIER: scores or refines within a population other traits \
-  already gate, OR is itself a comparison reference rather than a \
-  population in itself. Continuous contribution. A film that \
-  doesn't satisfy the qualifier is still a valid candidate, just \
-  ranked accordingly.
-
-Polarity is orthogonal: both can be positive or negative.
-
-PROCESS. Commit role_evidence first, then role as its conclusion.
-
-PRIMARY SOURCE: intent_exploration's most-likely interpretation. \
-The exploration step has already identified which piece of the \
-query gates the population vs which refines. Read that frame \
-first; it is what role_evidence reasons against. Use \
-qualifier_relation and the other atoms / traits in the query as \
-contextual grounding — they refine and verify the primary frame, \
-they do not stand in for it.
-
-Within that frame, ask: can this trait on its own definitively \
-include or exclude films from eligibility (→ carver), or does it \
-qualify? When the conclusion is qualifier, the supporting evidence \
-takes one (or more) of three structural shapes:
-
-(1) The trait can only be evaluated as a CONTINUOUS SCORE — there \
-is no yes/no membership a search could check; films sit somewhere \
-on a spectrum and the trait's job is to position them on it.
-
-(2) The trait is being used as a COMPARISON REFERENCE — what the \
-user wants is not this trait's population, it is a population \
-evaluated against this trait.
-
-(3) ANOTHER ATOM OR TRAIT IN THE QUERY already gates the \
-population. This trait, examined alone, looks like it could carve \
-— but in the query's context, it is refining within a population \
-a peer atom or trait defines.
-
-These three shapes are HOW you reason about the qualifier \
-conclusion within intent_exploration's frame; they are not \
-free-standing tests that fire ahead of reading the primary source. \
-A trait whose attribute is abstractly continuous (runtime, tone, \
-popularity) can still be a carver when intent_exploration's \
-primary intent attaches a definitive gate to it (negation, \
-absence-of-X, sole structural anchor). The shape (a) language \
-applies when the user's evaluation is genuinely a position on a \
-spectrum — not when a continuous attribute carries a hard gate.
-
-Common pitfalls:
-- Conflating namedness with carve-ability. A named entity (person, \
-  film, franchise) is a population on its own, but in the query's \
-  context it may be functioning as a comparison reference \
-  (evidence 2) or a refinement of a peer (evidence 3). The trait's \
-  role is the role it plays IN THIS QUERY, not the role its \
-  surface form could play standalone.
-- Reading hedges as role signals. "Ideally", "preferably", "kind \
-  of" affect salience downstream, not role. A trait that gates \
-  eligibility still gates eligibility when hedged; the hedge \
-  softens HOW STRICTLY it gates.
-- Treating two carvers as one carver and one qualifier on \
-  specificity grounds. Two traits that each definitively gate \
-  eligibility are two carvers regardless of which is broader or \
-  more specific. Specificity is a salience signal, not a role \
-  signal.
-- Confusing negation-as-carving with negation-as-qualifier-\
-  polarity. If the trait were positive, would it gate eligibility \
-  or score continuously? Same answer when negated. Polarity is \
-  orthogonal to role.
 
 ---
 
@@ -585,50 +508,129 @@ Polarity-setter shapes (recognize): "not", "without", "no", \
 "avoid", "skip", "minus", "anything but", "spare me", "don't \
 want".
 
-"Not too X" special case: polarity = negative, salience = \
-supporting. Negative direction, weak strength.
+"Not too X" special case: polarity = negative, commitment = \
+diminished. Softened preference against, not assertion against.
 
 Boundaries:
 - Polarity is mechanical from the recorded signal. Don't rewrite \
   "movies that aren't boring" into positive intent for "engaging".
 - Hedges and intensifiers don't change polarity — they affect \
-  salience.
+  commitment.
 
 ---
 
 """
 
 
-_SALIENCE = """\
-SALIENCE (commits Trait.salience via Trait.relevance_to_query)
+_COMMITMENT = """\
+COMMITMENT (commits Trait.commitment via Trait.commitment_evidence)
 
-Two states:
-- Central: headline want; query feels fundamentally different \
-  without this trait.
-- Supporting: meaningful but rounds out an already-defined ask.
+Five levels on a single importance axis. The axis applies to every \
+trait regardless of polarity; reward or penalty direction is set \
+by polarity, weight magnitude is set by commitment.
 
-Applies to every trait, regardless of role. A non-central carver \
-acts as a lenient filter — the trait still defines its own pool \
-but with softer boundaries; downstream reads salience and adjusts.
+LEVELS.
 
-relevance_to_query is the explicit reasoning field. Walk through \
-how the source atom sits in the query as a whole: hedges or \
-intensifiers attached, position in surface order (early/headline \
-vs trailing), words spent, whether removing it would meaningfully \
-change the ask. 1-2 sentences. Salience drops out as the natural \
-conclusion.
+- REQUIRED — explicit channel fires with strong-assertion language. \
+  Largest weight in final score and reranking.
+- ELEVATED — explicit channel silent; structural prominence reads \
+  the trait as the load-bearing axis the search is fundamentally \
+  about. Removing it would change WHAT KIND of movie the query is \
+  asking for, not how that movie is qualified.
+- NEUTRAL — explicit channel silent; structural prominence reads \
+  balanced. Co-equal criterion among peers.
+- SUPPORTING — explicit channel silent; structural prominence \
+  reads as a refinement on a population other traits define.
+- DIMINISHED — explicit channel fires with soft-framing language. \
+  Lowest weight.
 
-SOFTENS / HARDENS effect tokens are one signal among several. A \
-trait with no modal can still be supporting if minimal investment; \
-HARDENS can be central or even-more-central. Read holistically; \
-don't pure mechanical token-mapping.
+TWO SIGNAL CHANNELS. commitment_evidence surveys both, but they \
+are not equal. The explicit channel dominates: when it fires, the \
+trait commits at the level the explicit signal names regardless of \
+where structural prominence sits. The structural channel sets the \
+level only when the explicit channel is silent. This precedence is \
+load-bearing — it is the difference between expressed and inferred \
+strength.
 
-Unifying principle: salience tracks how much investment the user \
-put in — words spent, position chosen, hedge or emphasis added.
+(1) EXPLICIT signals. Walk the source atom's modifying_signals for \
+language whose function is to fix the trait's strength.
 
-Boundary: salience is structural-importance, not strength-of-\
-preference. Strength shows up as polarity (negation) or salience-\
-via-emphasis (intensifier).
+Strong-assertion language takes several recognizable shapes — \
+phrasing that names an inviolable constraint or non-negotiable; \
+phrasing that frames the trait as a precondition for the candidate \
+being a viable watch at all (an access, language, format, or \
+viewer-fit gate) rather than a preference within the space of \
+viable watches; phrasing that asserts an exclusion (the trait \
+names something out of scope) rather than expressing a preference \
+against (something to be downranked). The common thread is that \
+the trait is positioned as defining the boundary of viable \
+candidates, not as scoring within that boundary.
+
+Soft-framing language takes one shape — phrasing whose function is \
+to soften the trait's claim on the result and invite the system to \
+set it aside in exchange for matches on other axes. Bonus-framing, \
+idealization, conditionality, hedging.
+
+Recognize the FUNCTION; specific surface tokens vary by query. \
+Polarity (committed above) helps tell exclusion-assertion from \
+preference-against — both attach to negative polarity, but the \
+former asserts X is out of scope while the latter ranks X-bearing \
+candidates lower.
+
+(2) STRUCTURAL signals. Consulted only when the explicit channel \
+is silent. Walk surface position (headline / leading vs. trailing), \
+content load (bulk of the query's words vs. modest), positioning \
+per qualifier_relation and anchor_reference (does the trait name \
+the population the query is asking for, refine a population a peer \
+defines, or sit coordinate with peers), and the removability test \
+against intent_exploration's most-likely interpretation (would \
+removing the trait collapse the structural ask, narrow it without \
+collapse, or leave a refinement falling away). Headline / load-\
+bearing → ELEVATED. Trailing refinement → SUPPORTING. Equal \
+billing among peers → NEUTRAL.
+
+RECOGNIZING REQUIRED AND DIMINISHED. Both extremes are reserved \
+for traits where the user has expressed something explicit about \
+the trait's strength. The explicit signal does not have to take \
+the canonical "must" or "ideally" form — the recognition is by \
+function, not surface token. Phrasings that declare a non-\
+negotiable, name a watching precondition, or assert an exclusion \
+all count as strong-assertion language even without "must." \
+Phrasings that soften, idealize, or frame as a bonus all count as \
+soft-framing language even without "ideally." Without an explicit \
+signal of either kind, the trait cannot commit to either extreme — \
+strong implicit prominence commits ELEVATED, structural triviality \
+commits SUPPORTING.
+
+BOUNDARIES.
+
+- Commitment is not polarity. Negation flips polarity; it does \
+  not lower the commitment level. An asserted exclusion at full \
+  strength commits REQUIRED + negative; a softened exclusion \
+  commits DIMINISHED + negative.
+- Commitment is not atomicity. Atomicity decides whether a phrase \
+  is a peer atom or absorbs into another atom's modifying_signals. \
+  Once a trait exists, commitment weights it. A modifier-only \
+  phrase that absorbs into a peer never gets its own commitment \
+  because it never becomes a trait.
+- Generic intensification is not strong assertion. A HARDENS \
+  effect token that emphasizes without asserting inviolability, \
+  declaring a precondition, or asserting an exclusion does not \
+  commit REQUIRED. The explicit signal must function as one of \
+  those three shapes.
+- Structural prominence does not override expressed framing. A \
+  trait the user explicitly hedged commits DIMINISHED even when \
+  it sits at the head of the query; a trait the user explicitly \
+  asserted as inviolable commits REQUIRED even when it sits in \
+  trailing position.
+
+Unifying principle: commitment tracks how strongly the user has \
+attached themselves to the trait. The explicit channel reads what \
+they said out loud about the trait's strength; the structural \
+channel reads how much they invested in it (words spent, position \
+chosen, what the query loses if the trait is removed). When the \
+user has spoken, that is the answer. When the user has not, the \
+investment is.
 
 ---
 
@@ -674,9 +676,8 @@ SYSTEM_PROMPT = (
     + _MODIFIER_VS_ATOM
     + _EVALUATIVE_INTENT
     + _COMMIT_PHASE
-    + _CARVER_VS_QUALIFIER
     + _POLARITY
-    + _SALIENCE
+    + _COMMITMENT
     + _CATEGORY_VOCABULARY
 )
 
