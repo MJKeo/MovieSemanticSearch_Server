@@ -1,35 +1,66 @@
 # Search V2 — Stage 3 Semantic Endpoint: Query Execution
 #
-# Single-trait per call. `params` is a unified SemanticParameters (or
-# subintent variant) whose `role` field — committed by the LLM at
-# generation time — tells this executor which scoring path to run.
-# Per-entry weights are always populated on the schema; the carver
-# path ignores them, the qualifier path uses them.
+# Single-trait per call. `params` is a unified SemanticParameters
+# (or subintent variant) whose `role` field commits the trait's
+# semantic shape: carver (population-naming, "does this movie have
+# X?") or qualifier (positioning-against-reference, "how X are
+# these movies relative to each other?").
 #
-# Carver scoring (per spec):
-#   1) Per active space: detect elbow via EWMA + Kneedle + pathology
-#      fallback. Floor is uniformly elbow * 0.9 (10%-below-elbow decay
-#      window).
-#   2) Per active space, per movie: linear decay sim ↦ raw ∈ [0, 1].
-#      No per-space compression — that happens once at the end.
-#   3) Sum raw across active spaces / N → avg ∈ [0, 1].
-#      avg == 0 → DROP (movie failed every space's threshold).
-#      avg  > 0 → final = 0.5 + 0.5 * avg ∈ (0.5, 1].
+# Role drives BOTH axes of scoring:
 #
-# Qualifier scoring: weighted-sum cosine — Σ(w·cos)/Σw with
-# CENTRAL=2.0, SUPPORTING=1.0. No elbow calibration (the score is the
-# qualifier endpoint's contribution to the global merge).
+#   Within-space normalization
+#     carver                → corpus-calibrated elbow decay to [0, 1].
+#                             "Does this movie clear the global bar?"
+#     qualifier (restrict)  → pool-relative rescale to [0, 1] (top ×
+#                             0.85 → 1.0, linear to pool min → 0.0).
+#                             The reference is the supplied pool itself.
+#     qualifier (promoted)  → corpus-calibrated elbow decay (same as
+#                             carver) because there is no upstream pool
+#                             to be relative against. Promoted-qualifier
+#                             only happens via tier-fallback when no
+#                             candidate-generating trait exists in the
+#                             query (orchestrator concern).
 #
-# Role and restriction mode are a boundary contract:
-#   carver    → restrict_to_movie_ids must be None; candidate-generating
-#               path uses the union of per-space top-N corpus probes.
-#   qualifier → restrict_to_movie_ids must be supplied; scores exactly
-#               that candidate pool. set() short-circuits without
-#               Qdrant traffic because there are no candidates to score.
+#   Cross-space combination
+#     carver                → max() across active spaces. Each call
+#                             asks one question that may surface in any
+#                             of several spaces; one strong signal is
+#                             sufficient evidence. ANDs across distinct
+#                             questions are split into separate traits
+#                             upstream, so the within-call combiner is
+#                             OR-shaped, not AND-shaped.
+#     qualifier (any mode)  → Σ(w·score)/Σw with CENTRAL=2.0 and
+#                             SUPPORTING=1.0. Preserves the LLM's
+#                             commitment about which spaces are
+#                             load-bearing.
 #
-# Polarity is NOT consulted here (orchestrator concern). Retry contract
-# matches sibling executors: one transient retry, then return an empty
-# EndpointResult rather than raising.
+# Restriction × role dispatch:
+#   carver + restrict      → probe(corpus, calibration) ‖ HasId(scoring)
+#                            in parallel per space; elbow-decay HasId
+#                            cosines against the probe-derived
+#                            calibration; max-combine across spaces.
+#   carver + no restrict   → probe per space serves as both calibration
+#                            sample AND candidate pool; elbow-decay
+#                            probe cosines; max-combine across spaces.
+#   qualifier + restrict   → HasId per space; pool-relative rescale per
+#                            space; weighted-sum combine.
+#   qualifier promoted     → probe per space serves as calibration AND
+#                            pool; elbow-decay; weighted-sum combine.
+#   restrict=set() (any role)  → normalized to None and dispatched
+#                                 as candidate generator. The
+#                                 orchestrator is the source of truth
+#                                 for generator-vs-reranker routing;
+#                                 empty-set arrival here is treated
+#                                 as a leak, not a meaningful signal.
+#
+# All scores live truthfully in [0, 1]. No [0.5, 1] dealbreaker
+# compression on any path. No drop-on-zero — a candidate missing every
+# space lands at 0 naturally and contributes nothing downstream via
+# the "missing positive = opportunity cost" rule.
+#
+# Polarity is NOT consulted here (orchestrator concern). Retry
+# contract: one transient retry, then return an empty EndpointResult
+# rather than raising.
 
 from __future__ import annotations
 
@@ -65,10 +96,7 @@ from schemas.semantic_translation import (
     WeightedSpaceQuery,
     WeightedSpaceQuerySubintent,
 )
-from search_v2.endpoint_fetching.result_helpers import (
-    build_endpoint_result,
-    compress_to_dealbreaker_floor,
-)
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +108,7 @@ SemanticParams = SemanticParameters | SemanticParametersSubintent
 # ---------------------------------------------------------------------------
 
 # Top-N corpus probe. Doubles as elbow calibration sample and (for
-# candidate-generating scenarios) the candidate pool.
+# carver-no-restrict / qualifier-promoted) the candidate pool.
 CORPUS_PROBE_LIMIT = 2000
 
 # Pathology detector for elbow calibration. Fires when the top-N
@@ -93,18 +121,29 @@ PATHOLOGY_ELBOW_RATIO = 0.85
 MIN_PROBE_SIZE = 20
 
 # Linear-decay window: floor = elbow * FLOOR_FRACTION_OF_ELBOW.
-# A movie 9.99% below the elbow gets close-to-0 raw decay; 10% below
-# is the cliff. Per the carver scoring spec.
 FLOOR_FRACTION_OF_ELBOW = 0.9
 
 # EWMA smoothing for the cosine curve before Kneedle.
 EWMA_SPAN_DIVISOR = 100
 EWMA_SPAN_FLOOR = 5
 
-# If the first detected knee sits earlier than this rank AND a later
-# knee exists, skip forward — guards against outlier-driven early
-# knees pinching the elbow too tight.
+# Kneedle outlier guard: skip an early knee in favor of a later one
+# when the early rank looks outlier-driven.
 RANK_10_SAFEGUARD = 10
+
+# Qualifier pool-relative rescale: cosines are normalized to [0, 1]
+# across the pool (min → 0, max → 1); any normalized value ≥ this
+# ratio is clamped to 1.0. Operating in normalized space (rather
+# than as a fraction of raw top cosine) keeps the formula
+# cosine-agnostic — the top-band semantics hold even when the pool
+# straddles or sits entirely below zero.
+QUALIFIER_TOP_RATIO = 0.85
+
+# Below this raw-cosine spread, the qualifier rescale would amplify
+# numerical noise into apparent ranking. Emit all 1.0 for that space
+# instead — the signal didn't differentiate this pool, so let
+# weighted-sum and trait_weight downstream handle it.
+QUALIFIER_UNIFORM_SPREAD_EPSILON = 0.01
 
 # Must match the ingestion-side embedding model (see
 # movie_ingestion/final_ingestion/ingest_movie.py).
@@ -138,14 +177,14 @@ SemanticBody = Union[
 
 @dataclass(frozen=True)
 class SpaceCalibration:
-    # Per-space scoring calibration produced from a corpus probe.
+    # Per-space elbow calibration produced from a corpus probe.
     #
-    # Normal mode: elbow/floor define the linear-decay window per the
-    # carver scoring spec (floor = elbow * 0.9). pass_through_raw
+    # Normal mode: elbow/floor define the linear-decay window
+    # (floor = elbow * FLOOR_FRACTION_OF_ELBOW). pass_through_raw
     # signals the Path B fallback — when the probe yields max_sim <= 0
-    # (no usable signal in this space), the per-space scorer uses raw
-    # cosine clamped to [0, 1] instead of running elbow decay against
-    # a manufactured threshold.
+    # (no usable signal), the per-space scorer uses raw cosine
+    # clamped to [0, 1] instead of running elbow decay against a
+    # manufactured threshold.
     elbow: float
     floor: float
     pass_through_raw: bool = False
@@ -214,7 +253,7 @@ async def _run_filtered_score(
 
 
 # ---------------------------------------------------------------------------
-# Elbow detection + linear-decay scoring
+# Elbow detection (used by carver paths and qualifier-promoted)
 # ---------------------------------------------------------------------------
 
 
@@ -242,10 +281,6 @@ def _detect_elbow_and_floor(similarities: list[float]) -> SpaceCalibration:
     #     floor = elbow * 0.9.
     #   - Otherwise: Kneedle elbow at the picked rank's raw cosine,
     #     floor = elbow * 0.9.
-    #
-    # Floor is uniformly derived from the elbow (10%-below window)
-    # per spec — the prior second-knee-floor logic is gone.
-
     if not similarities:
         return _PASS_THROUGH
 
@@ -320,16 +355,15 @@ def _pathology_fallback(max_sim: float, *, reason: str) -> SpaceCalibration:
     return SpaceCalibration(elbow=elbow, floor=elbow * FLOOR_FRACTION_OF_ELBOW)
 
 
-def _per_space_raw_decay(sim: float, calib: SpaceCalibration) -> float:
-    # Carver per-space raw score in [0, 1]. NO per-space [0.5, 1]
-    # compression — combination across spaces happens first, then
-    # compression once at the end.
+def _elbow_decay(sim: float, calib: SpaceCalibration) -> float:
+    # Per-space score in [0, 1] via linear decay against the corpus-
+    # calibrated elbow window.
     #
     # Path B (pass_through_raw): no usable threshold; clamp raw
     # cosine to [0, 1].
     # Normal mode:
-    #   sim >= elbow → 1.0  (we don't reward "more above elbow" per spec)
-    #   sim <= floor → 0.0  (excluded from the average)
+    #   sim >= elbow → 1.0  (we don't reward "more above elbow")
+    #   sim <= floor → 0.0
     #   in window    → linear decay (sim - floor) / (elbow - floor)
     if calib.pass_through_raw:
         return max(0.0, min(1.0, sim))
@@ -343,228 +377,260 @@ def _per_space_raw_decay(sim: float, calib: SpaceCalibration) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Score combiners
+# Pool-relative rescale (qualifier + restrict)
 # ---------------------------------------------------------------------------
 
 
-def _carver_combine(
+def _pool_relative_rescale(cosines: dict[int, float]) -> dict[int, float]:
+    # Rescale candidate-pool cosines into [0, 1] purely relative to
+    # the pool itself. The reference IS the pool — qualifier asks
+    # "how X are these movies among themselves," not "do they clear
+    # a global bar."
+    #
+    # Shape:
+    #   1. Linear-normalize raw cosines into [0, 1] over the pool
+    #      range: pool_min → 0.0, pool_max → 1.0.
+    #   2. Anything with normalized value ≥ QUALIFIER_TOP_RATIO is
+    #      clamped to 1.0; everything below carries its normalized
+    #      value as its score.
+    # Operating in normalized space makes the rule cosine-agnostic:
+    # the top-band semantics hold even when the pool straddles or
+    # sits entirely below zero.
+    #
+    # Uniform-spread guard: if max - min < ε the space carries no
+    # discriminating signal for this pool, and rescale would amplify
+    # numerical noise into apparent ranking. Emit all 1.0 instead;
+    # the weighted-sum combiner across spaces and the trait_weight
+    # machinery downstream handle the "this signal didn't
+    # differentiate" case correctly.
+    if not cosines:
+        return {}
+    values = list(cosines.values())
+    top = max(values)
+    bottom = min(values)
+    spread = top - bottom
+
+    if spread < QUALIFIER_UNIFORM_SPREAD_EPSILON:
+        return {mid: 1.0 for mid in cosines}
+
+    out: dict[int, float] = {}
+    for mid, c in cosines.items():
+        normalized = (c - bottom) / spread
+        out[mid] = 1.0 if normalized >= QUALIFIER_TOP_RATIO else normalized
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Cross-space combiners
+# ---------------------------------------------------------------------------
+
+
+def _max_combine(
     movie_ids: Iterable[int],
-    per_space_raw: dict[VectorName, dict[int, float]],
+    per_space_scores: dict[VectorName, dict[int, float]],
 ) -> dict[int, float]:
-    # Carver final score: sum per-space raw decays / N active spaces,
-    # then compress (0, 1] → (0.5, 1] via the shared dealbreaker-band
-    # helper. Movies whose sum is exactly 0 (failed every space's
-    # threshold) are DROPPED, not floored.
-    n = len(per_space_raw)
-    if n == 0:
+    # Carver: each space asks the same question with different
+    # evidence types. One strong signal is sufficient — take the max
+    # across active spaces. Missing-from-space contributes 0 (no
+    # entry → no evidence from that space, but other spaces can
+    # carry the answer). Candidates that score 0 across every space
+    # land at 0 naturally and contribute nothing downstream via the
+    # "missing positive = opportunity cost" rule.
+    if not per_space_scores:
         return {}
     out: dict[int, float] = {}
     for mid in movie_ids:
-        mid_int = int(mid)
-        total = 0.0
-        for cos_map in per_space_raw.values():
-            total += cos_map.get(mid_int, 0.0)
-        avg = total / n
-        if avg <= 0.0:
-            continue
-        out[mid_int] = compress_to_dealbreaker_floor(avg)
+        best = 0.0
+        for space_map in per_space_scores.values():
+            v = space_map.get(mid, 0.0)
+            if v > best:
+                best = v
+        out[mid] = best
     return out
 
 
-def _weighted_cosine_score(
+def _weighted_sum_combine(
     movie_ids: Iterable[int],
-    per_space_cosines: dict[VectorName, dict[int, float]],
+    per_space_scores: dict[VectorName, dict[int, float]],
     per_space_weights: dict[VectorName, float],
 ) -> dict[int, float]:
-    # Qualifier final score: Σ(w · cos) / Σw across active spaces.
-    # Missing per-space cosine = 0.0 (a candidate present in the
-    # union pool but absent from one space's score map contributes
-    # 0 for that space rather than being dropped).
+    # Qualifier: Σ(w · score) / Σw across active spaces. CENTRAL
+    # spaces are load-bearing and dominate; SUPPORTING spaces round
+    # out the match. Missing per-space score = 0.0 (a candidate in
+    # the pool but absent from one space's score map contributes 0
+    # for that space rather than being dropped).
     total_weight = sum(per_space_weights.values())
     if total_weight <= 0.0:
-        return {int(mid): 0.0 for mid in movie_ids}
+        return {mid: 0.0 for mid in movie_ids}
     out: dict[int, float] = {}
     for mid in movie_ids:
-        mid_int = int(mid)
         numerator = 0.0
         for space, weight in per_space_weights.items():
-            numerator += weight * per_space_cosines.get(space, {}).get(mid_int, 0.0)
-        out[mid_int] = max(0.0, min(1.0, numerator / total_weight))
+            numerator += weight * per_space_scores.get(space, {}).get(mid, 0.0)
+        out[mid] = max(0.0, min(1.0, numerator / total_weight))
     return out
 
 
 # ---------------------------------------------------------------------------
-# Carver scenarios
-# ---------------------------------------------------------------------------
-
-
-async def _execute_carver_d2(
-    params: SemanticParams,
-    *,
-    qdrant_client: AsyncQdrantClient,
-) -> dict[int, float]:
-    # No restrict — pool is the union of per-space top-N probes.
-    # NO fill: a movie absent from one space's top-N is treated as 0
-    # for that space. Clearing the elbow without being in top-N is
-    # implausible (the elbow rank sits inside top-N by construction),
-    # so the missing-fill query would mostly recover sub-floor
-    # cosines that compute to 0 anyway.
-    #
-    # Per-entry weights are present on the unified schema but ignored
-    # here; carver scoring is equal-vote across active spaces.
-    entries = [wq.query for wq in params.space_queries]
-    embeddings = await asyncio.gather(*[_embed_body(e.content) for e in entries])
-    vector_names = [VectorName(e.space.value) for e in entries]
-
-    probes = await asyncio.gather(*[
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, vector_names)
-    ])
-
-    per_space_raw: dict[VectorName, dict[int, float]] = {}
-    candidate_pool: set[int] = set()
-    for vn, probe in zip(vector_names, probes):
-        calib = _detect_elbow_and_floor([cos for _, cos in probe])
-        space_map: dict[int, float] = {}
-        for mid, cos in probe:
-            space_map[mid] = _per_space_raw_decay(cos, calib)
-            candidate_pool.add(mid)
-        per_space_raw[vn] = space_map
-
-    return _carver_combine(candidate_pool, per_space_raw)
-
-
-async def _execute_carver_d1(
-    params: SemanticParams,
-    candidate_ids: set[int],
-    *,
-    qdrant_client: AsyncQdrantClient,
-) -> dict[int, float]:
-    # Pre-built pool — corpus probe per space is calibration-only.
-    # Per-space cosines for the pool come from HasId. Probe and
-    # filtered fetch run in parallel per space to keep latency flat.
-    entries = [wq.query for wq in params.space_queries]
-    embeddings = await asyncio.gather(*[_embed_body(e.content) for e in entries])
-    vector_names = [VectorName(e.space.value) for e in entries]
-    n = len(entries)
-
-    # Single gather across 2N tasks: N probes + N filtered fetches.
-    tasks = [
-        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, vector_names)
-    ] + [
-        _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
-        for emb, vn in zip(embeddings, vector_names)
-    ]
-    results = await asyncio.gather(*tasks)
-    probes, filtered_maps = results[:n], results[n:]
-
-    per_space_raw: dict[VectorName, dict[int, float]] = {}
-    for vn, probe, filtered in zip(vector_names, probes, filtered_maps):
-        calib = _detect_elbow_and_floor([cos for _, cos in probe])
-        per_space_raw[vn] = {
-            mid: _per_space_raw_decay(cos, calib)
-            for mid, cos in filtered.items()
-        }
-
-    return _carver_combine(candidate_ids, per_space_raw)
-
-
-# ---------------------------------------------------------------------------
-# Qualifier scenarios
+# Per-call inputs unpack
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class QualifierInputs:
-    # Common unpack of qualifier space_queries shared by P1 and P2.
-    # The merge-validator on SemanticParameters guarantees unique
-    # spaces, so building a {VectorName: weight} dict is safe.
+class _CallInputs:
+    # Common unpack of params.space_queries shared by all four
+    # execution scenarios. The merge-validator on SemanticParameters
+    # guarantees unique spaces, so building a {VectorName: weight}
+    # dict is safe. weights are populated regardless of role —
+    # carver paths ignore them, qualifier paths read them.
     entries: list[SemanticSpaceEntry]
     vector_names: list[VectorName]
     weights: dict[VectorName, float]
 
 
-def _qualifier_inputs(
+def _unpack_inputs(
     space_queries: list[WeightedSpaceQuery] | list[WeightedSpaceQuerySubintent],
-) -> QualifierInputs:
+) -> _CallInputs:
     entries = [wq.query for wq in space_queries]
     vector_names = [VectorName(e.space.value) for e in entries]
     weights = {
         vn: SPACE_WEIGHT_VALUES[wq.weight]
         for wq, vn in zip(space_queries, vector_names)
     }
-    return QualifierInputs(
-        entries=entries, vector_names=vector_names, weights=weights
-    )
+    return _CallInputs(entries=entries, vector_names=vector_names, weights=weights)
 
 
-async def _execute_qualifier_p1(
-    params: SemanticParams,
+# ---------------------------------------------------------------------------
+# Execution scenarios
+# ---------------------------------------------------------------------------
+
+
+async def _execute_carver_restricted(
+    inputs: _CallInputs,
+    embeddings: list[list[float]],
     candidate_ids: set[int],
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
-    # Pre-built pool — one HasId per space, no corpus probe needed
-    # (qualifier scoring doesn't use the elbow).
-    inputs = _qualifier_inputs(list(params.space_queries))
-    embeddings = await asyncio.gather(
-        *[_embed_body(e.content) for e in inputs.entries]
-    )
-    per_space_lookups = await asyncio.gather(*[
+    # Carver acting as a reranker on a supplied pool. Two parallel
+    # fetches per space:
+    #   - Corpus probe: sole purpose is elbow calibration. The
+    #     filtered candidate pool is too small / too biased to
+    #     calibrate against itself, so we always anchor the
+    #     threshold against the corpus's natural distribution.
+    #   - HasId on candidate_ids: produces the per-candidate
+    #     cosines we score against the probe-derived calibration.
+    # Per-candidate score = elbow decay of HasId cosine; combined
+    # across spaces via max().
+    n = len(inputs.entries)
+    tasks = [
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
+        for emb, vn in zip(embeddings, inputs.vector_names)
+    ] + [
         _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
-    ])
-    per_space_cosines = dict(zip(inputs.vector_names, per_space_lookups))
-    return _weighted_cosine_score(
-        candidate_ids, per_space_cosines, inputs.weights
-    )
+    ]
+    results = await asyncio.gather(*tasks)
+    probes, filtered_maps = results[:n], results[n:]
+
+    per_space_scores: dict[VectorName, dict[int, float]] = {}
+    for vn, probe, filtered in zip(inputs.vector_names, probes, filtered_maps):
+        calib = _detect_elbow_and_floor([cos for _, cos in probe])
+        per_space_scores[vn] = {
+            mid: _elbow_decay(cos, calib) for mid, cos in filtered.items()
+        }
+
+    return _max_combine(candidate_ids, per_space_scores)
 
 
-async def _execute_qualifier_p2(
-    params: SemanticParams,
+async def _execute_carver_unrestricted(
+    inputs: _CallInputs,
+    embeddings: list[list[float]],
     *,
     qdrant_client: AsyncQdrantClient,
 ) -> dict[int, float]:
-    # Candidate-generating — top-N per space, union = pool. Missing
-    # cosines (in pool via another space's probe but absent from
-    # this space's) get filled via HasId so the weighted sum is
-    # honest across the union.
-    inputs = _qualifier_inputs(list(params.space_queries))
-    embeddings = await asyncio.gather(
-        *[_embed_body(e.content) for e in inputs.entries]
-    )
+    # Carver acting as a candidate generator. A single corpus probe
+    # per space serves as both the calibration sample and the
+    # candidate pool. A movie absent from one space's top-N
+    # contributes 0 to that space's max input — clearing the elbow
+    # while missing top-N is implausible by construction (the elbow
+    # rank sits inside top-N).
     probes = await asyncio.gather(*[
         _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
         for emb, vn in zip(embeddings, inputs.vector_names)
     ])
 
-    per_space_cosines: dict[VectorName, dict[int, float]] = {
-        vn: dict(probe) for vn, probe in zip(inputs.vector_names, probes)
+    per_space_scores: dict[VectorName, dict[int, float]] = {}
+    candidate_pool: set[int] = set()
+    for vn, probe in zip(inputs.vector_names, probes):
+        calib = _detect_elbow_and_floor([cos for _, cos in probe])
+        space_map: dict[int, float] = {}
+        for mid, cos in probe:
+            space_map[mid] = _elbow_decay(cos, calib)
+            candidate_pool.add(mid)
+        per_space_scores[vn] = space_map
+
+    return _max_combine(candidate_pool, per_space_scores)
+
+
+async def _execute_qualifier_restricted(
+    inputs: _CallInputs,
+    embeddings: list[list[float]],
+    candidate_ids: set[int],
+    *,
+    qdrant_client: AsyncQdrantClient,
+) -> dict[int, float]:
+    # Qualifier acting as a reranker on a supplied pool. HasId per
+    # space produces raw cosines; pool-relative rescale converts
+    # them into a [0, 1] ranking purely internal to the pool. No
+    # corpus probe — the question "how X are these movies?" is
+    # answered relative to the supplied pool, not to the corpus.
+    # Cross-space combine is weighted-sum so CENTRAL/SUPPORTING
+    # structure shapes the final ranking.
+    per_space_lookups = await asyncio.gather(*[
+        _run_filtered_score(emb, vn, candidate_ids, qdrant_client=qdrant_client)
+        for emb, vn in zip(embeddings, inputs.vector_names)
+    ])
+    per_space_scores: dict[VectorName, dict[int, float]] = {
+        vn: _pool_relative_rescale(cos_map)
+        for vn, cos_map in zip(inputs.vector_names, per_space_lookups)
     }
-    candidate_ids: set[int] = set().union(
-        *(cos_map.keys() for cos_map in per_space_cosines.values())
+    return _weighted_sum_combine(
+        candidate_ids, per_space_scores, inputs.weights
     )
-    if not candidate_ids:
-        return {}
 
-    # Fill only spaces that have at least one missing ID.
-    fill_tasks: list = []
-    fill_targets: list[VectorName] = []
-    for emb, vn in zip(embeddings, inputs.vector_names):
-        missing = candidate_ids - per_space_cosines[vn].keys()
-        if missing:
-            fill_tasks.append(
-                _run_filtered_score(emb, vn, missing, qdrant_client=qdrant_client)
-            )
-            fill_targets.append(vn)
-    if fill_tasks:
-        fills = await asyncio.gather(*fill_tasks)
-        for vn, fill in zip(fill_targets, fills):
-            per_space_cosines[vn].update(fill)
 
-    return _weighted_cosine_score(
-        candidate_ids, per_space_cosines, inputs.weights
+async def _execute_qualifier_promoted(
+    inputs: _CallInputs,
+    embeddings: list[list[float]],
+    *,
+    qdrant_client: AsyncQdrantClient,
+) -> dict[int, float]:
+    # Qualifier promoted to candidate generator via tier-fallback.
+    # Per-space corpus probe acts as both calibration AND pool
+    # because there is no upstream pool to be relative against —
+    # within-space normalization degrades to absolute (corpus
+    # elbow). Cross-space combine stays weighted-sum: the trait
+    # still expresses CENTRAL/SUPPORTING structure that should not
+    # be flattened by the orchestration's promotion of a qualifier
+    # into pool-defining duty.
+    probes = await asyncio.gather(*[
+        _run_corpus_topn(emb, vn, qdrant_client=qdrant_client)
+        for emb, vn in zip(embeddings, inputs.vector_names)
+    ])
+
+    per_space_scores: dict[VectorName, dict[int, float]] = {}
+    candidate_pool: set[int] = set()
+    for vn, probe in zip(inputs.vector_names, probes):
+        calib = _detect_elbow_and_floor([cos for _, cos in probe])
+        space_map: dict[int, float] = {}
+        for mid, cos in probe:
+            space_map[mid] = _elbow_decay(cos, calib)
+            candidate_pool.add(mid)
+        per_space_scores[vn] = space_map
+
+    return _weighted_sum_combine(
+        candidate_pool, per_space_scores, inputs.weights
     )
 
 
@@ -581,63 +647,75 @@ async def execute_semantic_query(
 ) -> EndpointResult:
     """Execute a semantic payload and return scored candidates.
 
-    The retrieval shape (carver vs qualifier) is read off
-    `params.role` — committed by the LLM at generation time. The
-    caller no longer passes role explicitly.
+    Dispatch on (role, restrict-presence):
 
-    Role determines restriction mode:
-      carver    → restrict_to_movie_ids must be None.
-      qualifier → restrict_to_movie_ids must be supplied; set()
-                  short-circuits to an empty result.
+      role=CARVER, restrict supplied   → carver-restricted (reranker):
+          probe ‖ HasId per space, elbow decay, max combine.
+      role=CARVER, restrict=None       → carver-unrestricted (candidate
+          generator): probe per space serves as pool, elbow decay, max
+          combine.
+      role=QUALIFIER, restrict supplied → qualifier-restricted
+          (reranker): HasId per space, pool-relative rescale,
+          weighted-sum combine.
+      role=QUALIFIER, restrict=None    → qualifier-promoted via
+          tier-fallback (candidate generator): probe per space serves
+          as pool, elbow decay, weighted-sum combine.
+
+    Empty restrict (set()) is normalized to None — the orchestrator
+    is the source of truth for candidate-generator vs reranker
+    dispatch.
 
     Polarity is NOT consulted here — both positive and negative
     findings return the same EndpointResult shape; the orchestrator
     routes IDs/scores into inclusion/exclusion or
     preference/downrank buckets per role.
 
-    Retry contract: one transient retry, then EndpointResult() rather
-    than raising. Contract violations raise AssertionError before the
-    retry loop — they are programmer errors, not transient I/O.
+    Retry contract: one transient retry, then EndpointResult()
+    rather than raising.
     """
     is_carver = params.role is SemanticRetrievalShape.CARVER
 
-    if is_carver:
-        if restrict_to_movie_ids is not None:
-            raise AssertionError(
-                "Semantic carver execution must not receive "
-                "restrict_to_movie_ids."
-            )
-        log_context = (
-            f"role=carver, spaces="
-            f"{[wq.query.space.value for wq in params.space_queries]}"
-        )
-    else:
-        if restrict_to_movie_ids is None:
-            raise AssertionError(
-                "Semantic qualifier execution requires restrict_to_movie_ids."
-            )
-        log_context = (
-            f"role=qualifier, spaces="
-            f"{[wq.query.space.value for wq in params.space_queries]}"
-        )
+    # Candidate-generator vs reranker dispatch is decided by the
+    # orchestrator (build_endpoint_coroutine) before this call. If
+    # an empty restrict set leaks through, treat it as None and run
+    # as candidate generator rather than re-deciding here.
+    if restrict_to_movie_ids is not None and len(restrict_to_movie_ids) == 0:
+        restrict_to_movie_ids = None
 
-    # Empty qualifier pool: nothing to score, no Qdrant traffic.
-    if not is_carver and len(restrict_to_movie_ids or set()) == 0:
-        return EndpointResult()
+    inputs = _unpack_inputs(list(params.space_queries))
+
+    log_context = (
+        f"role={'carver' if is_carver else 'qualifier'}, "
+        f"restrict={'yes' if restrict_to_movie_ids is not None else 'no'}, "
+        f"spaces={[vn.value for vn in inputs.vector_names]}"
+    )
 
     scores: dict[int, float] = {}
     for attempt in range(2):
         try:
+            embeddings = await asyncio.gather(
+                *[_embed_body(e.content) for e in inputs.entries]
+            )
             if is_carver:
-                scores = await _execute_carver_d2(
-                    params, qdrant_client=qdrant_client
-                )
+                if restrict_to_movie_ids is None:
+                    scores = await _execute_carver_unrestricted(
+                        inputs, embeddings, qdrant_client=qdrant_client
+                    )
+                else:
+                    scores = await _execute_carver_restricted(
+                        inputs, embeddings, restrict_to_movie_ids,
+                        qdrant_client=qdrant_client,
+                    )
             else:
-                scores = await _execute_qualifier_p1(
-                    params,
-                    restrict_to_movie_ids,
-                    qdrant_client=qdrant_client,
-                )
+                if restrict_to_movie_ids is None:
+                    scores = await _execute_qualifier_promoted(
+                        inputs, embeddings, qdrant_client=qdrant_client
+                    )
+                else:
+                    scores = await _execute_qualifier_restricted(
+                        inputs, embeddings, restrict_to_movie_ids,
+                        qdrant_client=qdrant_client,
+                    )
             break
         except Exception:
             if attempt == 0:

@@ -1,6 +1,42 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Semantic executor review fixes
+Files: search_v2/endpoint_fetching/semantic_query_execution.py, docs/modules/search_v2.md
+Why: Self-review of the semantic executor rewrite caught a negative-cosine edge case in the qualifier rescale, surfaced an executor-side empty-set short-circuit that duplicated orchestrator logic, and noted the module doc still implied universal [0.5, 1] dealbreaker compression.
+Approach:
+- Rewrote `_pool_relative_rescale` to be cosine-agnostic. New shape: linear-normalize cosines into [0, 1] over the pool range (min→0, max→1), then clamp anything ≥ QUALIFIER_TOP_RATIO (=0.85 in normalized space) to 1.0; everything below carries its normalized value. Old formula computed a ceiling at `top × 0.85` which broke for negative top cosines (ceiling landed above top, leaving the 1.0 band empty). Uniform-spread guard preserved unchanged.
+- Replaced the qualifier+empty-restrict short-circuit with a "normalize empty restrict to None" pre-step at the top of `execute_semantic_query`. Per orchestrator contract, candidate-generator vs reranker dispatch is decided in build_endpoint_coroutine; an empty set arriving here is a leak, not a meaningful signal, so we treat it as None and run the candidate-generator path.
+- Dropped redundant `int(mid)` casts in `_max_combine` / `_weighted_sum_combine` (callers already pass `set[int]`).
+- Updated docs/modules/search_v2.md "Dealbreaker Score Floor" with a callout that semantic emits raw [0, 1] on every path now.
+Testing notes: Inline rescale/combiner sanity checks (positive, negative, zero-straddling, uniform, cutoff boundary, missing-from-space) ran clean. Existing semantic unit tests likely need updates given (a) negative-cosine output now lands top→1.0 instead of top→<1.0; (b) qualifier rescale shape (normalized-value-as-score below cutoff vs old "rescale into [0, ceiling]" behavior) produces different intermediate scores; (c) qualifier+empty-restrict no longer short-circuits.
+
+## Rework semantic executor: role drives both within-space norm and cross-space combine
+Files: search_v2/endpoint_fetching/semantic_query_execution.py
+
+### Intent
+Realign semantic execution with the absolute-vs-relative split that `role` actually expresses. Carver names a population ("does this movie have X?") so its within-space normalization needs an absolute corpus-calibrated bar; qualifier positions against a reference ("how X are these movies relative to each other?") so its within-space normalization is purely pool-relative. The cross-space combiner also keys off role: carver max() (one-strong-signal-is-enough — ANDs across distinct questions are split into separate traits upstream), qualifier weighted sum with CENTRAL=2.0 / SUPPORTING=1.0.
+
+### Key Decisions
+- Four execution scenarios keyed on (role, restrict-presence):
+  carver+restrict → corpus probe ‖ HasId per space, elbow decay, max combine.
+  carver+no restrict → corpus probe = pool, elbow decay, max combine.
+  qualifier+restrict → HasId per space, pool-relative rescale, weighted sum.
+  qualifier+no restrict → tier-fallback promoted: corpus probe = pool, elbow decay, weighted sum.
+  Both role/restrict assertion errors removed — carver+restrict and qualifier+no-restrict are now legal modes (the latter only via orchestrator-level tier-fallback promotion).
+- Carver combiner switched from average-with-drop+compress to plain max(). User clarified each semantic call asks one question with possibly-uneven evidence across spaces, so OR-shaped combination is correct; AND across distinct questions happens at the trait/orchestrator level.
+- Dropped [0.5, 1] dealbreaker compression on the carver path. Scores live in [0, 1] truthfully; ScoredCandidate already accepts that range.
+- Dropped drop-on-zero rule. A candidate scoring 0 across every space lands at 0 naturally and contributes nothing downstream via "missing positive = opportunity cost" (search_method_deterministic_logic.md §6/§8).
+- New `_pool_relative_rescale` helper: top × 0.85 → 1.0, linear decay to pool min → 0.0, with uniform-spread guard (max−min < 0.01 → all 1.0) to avoid amplifying numerical noise into apparent ranking when a space carries no differentiating signal for the pool.
+- Elbow detection (Kneedle + EWMA + pathology fallback + Path B pass-through) preserved unchanged — it remains the right calibration for any path with a corpus probe.
+- `compress_to_dealbreaker_floor` import removed; helper itself left in result_helpers.py for other endpoints.
+
+### Planning Context
+Design converged through conversation on search_improvement_planning/search_method_deterministic_logic.md. Key reframes during the discussion: (1) the planning doc's "always pool reranker + always elbow normalize on top × 0.85" model conflated within-space and cross-space concerns and used pool-local calibration where corpus-local was needed; (2) role isn't dead — it earns its keep when split across the two axes; (3) ANDs across distinct questions are decomposed upstream into separate traits, so within-call combination is OR-shaped (max), not AND-shaped (average-with-drop).
+
+### Testing Notes
+Per project test-boundary instruction, no tests run. Behavior changes that affect callers/tests: (a) executor now legally accepts carver+restrict and qualifier+no-restrict instead of asserting; (b) carver scores are no longer compressed into [0.5, 1]; (c) carver no longer drops candidates that fail every space (they appear with score 0); (d) qualifier output now lives in [0, 1] post-rescale instead of being raw weighted cosines. Downstream merge/orchestration code that assumed any of (a)–(d) needs a look.
+
 ## Respect restrict pools for temporary TRENDING execution
 Files: search_v2/endpoint_fetching/category_handlers/handler.py
 Why: `run_query_execution()` special-cases TRENDING because the route has no params wrapper and cannot go through `build_endpoint_coroutine()`, but it was hardcoding `restrict_to_movie_ids=None`. That bypassed the same operation-type rules the shared dispatcher applies to every other route.

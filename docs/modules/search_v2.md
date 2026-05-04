@@ -183,6 +183,14 @@ Preference paths keep raw `[0, 1]` scoring. Country-of-origin uses a
 3-bucket position score (1.0 / 0.5 / dropped) rather than exponential
 decay for the dealbreaker path.
 
+**Exception: `semantic_query_execution.py` emits raw `[0, 1]` on every
+path** (carver candidate-generator, carver reranker, qualifier
+reranker, qualifier promoted). The dealbreaker compression was dropped
+when the executor was reworked so that `role` drives within-space
+normalization (corpus-calibrated elbow for carver/qualifier-promoted,
+pool-relative rescale for qualifier+restrict) and cross-space
+combination (`max()` for carver, `Σ(w·score)/Σw` for qualifier).
+
 ## Key Patterns
 
 - **Positive-presence invariant**: all step-3 endpoint specs express
