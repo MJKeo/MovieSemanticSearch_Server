@@ -639,14 +639,19 @@ async def _step_4_summary(
         lines.append("### query_intent_summary")
         lines.append(impl.query_intent_summary)
         lines.append("")
-        quality_on = impl.should_apply_quality_prior
-        popularity_on = impl.should_apply_notability_prior
+        quality_desc = (
+            f"{impl.quality_prior.direction}/{impl.quality_prior.strength}"
+        )
+        popularity_desc = (
+            f"{impl.popularity_prior.direction}/"
+            f"{impl.popularity_prior.strength}"
+        )
     else:
-        quality_on = False
-        popularity_on = False
+        quality_desc = "none/none"
+        popularity_desc = "none/none"
     lines.append(
-        f"_implicit priors: quality={'on' if quality_on else 'off'}  "
-        f"popularity={'on' if popularity_on else 'off'}_"
+        f"_implicit priors: quality={quality_desc}  "
+        f"popularity={popularity_desc}_"
     )
     lines.append("")
 

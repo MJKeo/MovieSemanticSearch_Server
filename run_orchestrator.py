@@ -170,6 +170,64 @@ def _print_auxiliary_specs(result: FullPipelineResult) -> None:
         _print_endpoint_spec(spec, indent="  ")
 
 
+def _print_implicit_expectations(result: FullPipelineResult) -> None:
+    if not result.branches:
+        return
+    branch = result.branches[0]
+    print()
+    print("=" * 72)
+    print("IMPLICIT PRIOR POLICY")
+    print("=" * 72)
+
+    if branch.implicit_expectations_error is not None:
+        print(f"implicit_expectations_error: {branch.implicit_expectations_error}")
+        return
+
+    policy = branch.implicit_expectations
+    if policy is None:
+        print("(no implicit-prior policy result)")
+        return
+
+    print(f"query_intent_summary: {policy.query_intent_summary}")
+    print()
+    print("explicit_signals:")
+    for signal in policy.explicit_signals:
+        print(
+            f'  - "{signal.query_span}" -> axis={signal.explicit_axis}, '
+            f"direction={signal.direction}, coverage={signal.coverage}"
+        )
+        print(f"    description: {signal.normalized_description}")
+        print(f"    evidence: {signal.strength_evidence}")
+
+    ordering = policy.ordering_axis_analysis
+    print()
+    print("ordering_axis_analysis:")
+    print(f"  primary_ordering_axis: {ordering.primary_ordering_axis}")
+    print(f"  suppresses_quality_prior: {ordering.suppresses_quality_prior}")
+    print(f"  suppresses_popularity_prior: {ordering.suppresses_popularity_prior}")
+    print(f"  axis_description: {ordering.axis_description}")
+
+    specificity = policy.query_specificity_analysis
+    print()
+    print("query_specificity_analysis:")
+    print(f"  explicit_trait_pressure: {specificity.explicit_trait_pressure}")
+    print(f"  prior_room: {specificity.prior_room}")
+    print(f"  specificity_summary: {specificity.specificity_summary}")
+
+    print()
+    print("final_prior_decisions:")
+    print(
+        f"  quality: direction={policy.quality_prior.direction}, "
+        f"strength={policy.quality_prior.strength}"
+    )
+    print(f"    rationale: {policy.quality_prior.rationale}")
+    print(
+        f"  popularity: direction={policy.popularity_prior.direction}, "
+        f"strength={policy.popularity_prior.strength}"
+    )
+    print(f"    rationale: {policy.popularity_prior.rationale}")
+
+
 def _print_full_result(result: FullPipelineResult) -> None:
     if not result.branches:
         print("\nNo branches produced — nothing to display.")
@@ -189,6 +247,7 @@ def _print_full_result(result: FullPipelineResult) -> None:
         _print_trait(trait)
         print()
     _print_auxiliary_specs(result)
+    _print_implicit_expectations(result)
 
 
 async def _print_ranked_results(
@@ -231,6 +290,12 @@ async def _print_ranked_results(
         cards = await fetch_movie_cards([mid for mid, _ in top])
         cards_by_id = {c["movie_id"]: c for c in cards}
 
+        print(
+            "| # | final | boost | pos | neg | title (year) | tmdb_id |"
+        )
+        print(
+            "|---|------:|------:|----:|----:|--------------|--------:|"
+        )
         for rank, (movie_id, score) in enumerate(top, start=1):
             card = cards_by_id.get(movie_id)
             if card is None:
@@ -245,19 +310,22 @@ async def _print_ranked_results(
                 )
             # Stage 4 produces a parallel breakdown per movie_id —
             # split the §9 sum into its positive and negative halves
-            # so the source of a candidate's standing is visible at a
-            # glance without re-deriving from raw trait scores.
+            # and records the implicit-prior multiplicative boost
+            # applied by the full orchestrator's post-rerank pass.
             breakdown = br.score_breakdowns.get(movie_id)
             if breakdown is None:
-                breakdown_str = ""
+                pos = 0.0
+                neg = 0.0
+                boost_pct = 0.0
             else:
-                breakdown_str = (
-                    f"  [pos={breakdown.positive_total:+.4f} "
-                    f"neg={breakdown.negative_total:+.4f}]"
-                )
+                pos = breakdown.positive_total
+                neg = breakdown.negative_total
+                boost_pct = breakdown.implicit_prior_boost * 100.0
+            safe_title = title.replace("|", "\\|")
             print(
-                f"  #{rank:<3d}  score={score:+.4f}{breakdown_str}  "
-                f"{title} ({year})  tmdb_id={movie_id}"
+                f"| {rank} | {score:+.4f} | {boost_pct:.1f}% | "
+                f"{pos:+.4f} | {neg:+.4f} | {safe_title} ({year}) | "
+                f"{movie_id} |"
             )
 
 

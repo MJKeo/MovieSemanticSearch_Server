@@ -83,15 +83,18 @@ from schemas.franchise_translation import FranchiseEndpointParameters
 from schemas.keyword_translation import (
     KeywordEndpointParameters,
     KeywordEndpointSubintentParameters,
+    KeywordWalk,
 )
 from schemas.media_type_translation import MediaTypeEndpointParameters
 from schemas.metadata_translation import (
     MetadataEndpointParameters,
     MetadataEndpointSubintentParameters,
+    MetadataWalk,
 )
 from schemas.semantic_translation import (
     SemanticEndpointParameters,
     SemanticEndpointSubintentParameters,
+    SemanticWalk,
 )
 from schemas.studio_translation import StudioEndpointParameters
 from schemas.trait_category import CategoryName
@@ -258,6 +261,26 @@ _SEMANTIC_DISPATCH: dict[bool, type[BaseModel]] = {
 }
 
 
+# Per-endpoint walk classes — the registry/space/column-grounded
+# analysis layer that lives at the bucket level in multi-endpoint
+# buckets (5/6/8). Emitted BEFORE the bucket-level
+# coverage_assignments commitment so the LLM walks concrete
+# candidates (registry members, vector spaces, structured columns)
+# before committing whether and how to fire each endpoint.
+#
+# Endpoints absent from this map have no walk class authored — they
+# are not currently routed to multi-endpoint buckets, or their
+# routing is deterministic / shape-special (TRENDING, MEDIA_TYPE,
+# CHARACTER_FRANCHISE_FANOUT). Adding a new multi-endpoint route to a
+# bucket requires authoring a walk class first; the schema factory
+# raises if it asks for one and finds nothing.
+ROUTE_TO_WALK: dict[EndpointRoute, type[BaseModel]] = {
+    EndpointRoute.KEYWORD: KeywordWalk,
+    EndpointRoute.SEMANTIC: SemanticWalk,
+    EndpointRoute.METADATA: MetadataWalk,
+}
+
+
 # CategoryName -> concrete entity spec. Entity is the second endpoint
 # whose schema shape depends on something other than (route, bucket):
 # the three entity-family categories each receive a different spec
@@ -372,3 +395,21 @@ def get_output_wrapper(
         return sub
 
     return ROUTE_TO_WRAPPER.get(endpoint)
+
+
+def get_walk_class(endpoint: EndpointRoute) -> type[BaseModel] | None:
+    """Return the bucket-level walk class for `endpoint`, or None.
+
+    Walks live at the bucket level in multi-endpoint buckets (5/6/8)
+    and carry the registry/space/column-grounded analysis the LLM
+    runs before the coverage_assignments commitment phase. Endpoints
+    that don't appear in ROUTE_TO_WALK have no walk authored — they
+    aren't currently routed to multi-endpoint buckets, or their
+    routing is deterministic.
+
+    The schema factory uses this to assemble the per-endpoint walk
+    fields on a multi-endpoint bucket schema. Raises (via the caller)
+    when a multi-endpoint bucket declares a route with no walk class
+    — the bucket can't be assembled until one is authored.
+    """
+    return ROUTE_TO_WALK.get(endpoint)

@@ -663,22 +663,26 @@ async def _step_4_summary(
 
     print(f"\n[used_fallback: {stage3_result.used_fallback}]")
 
-    # Implicit priors. `quality` is the reception prior, `notability` is
-    # the popularity prior — names match ImplicitExpectationsResult's
-    # should_apply_* fields. Both are inactive when the implicit-
+    # Implicit priors. `quality` is the reception prior, `popularity`
+    # is the notability prior. Both are inactive when the implicit-
     # expectations LLM call failed (implicit_expectations is None).
     impl = stage3_result.implicit_expectations
     if impl is not None:
         print(f"\n[query_intent_summary]")
         print(f"  {impl.query_intent_summary}")
-        quality_on = impl.should_apply_quality_prior
-        popularity_on = impl.should_apply_notability_prior
+        quality_desc = (
+            f"{impl.quality_prior.direction}/{impl.quality_prior.strength}"
+        )
+        popularity_desc = (
+            f"{impl.popularity_prior.direction}/"
+            f"{impl.popularity_prior.strength}"
+        )
     else:
-        quality_on = False
-        popularity_on = False
+        quality_desc = "none/none"
+        popularity_desc = "none/none"
     print(
-        f"[implicit priors: quality={'on' if quality_on else 'off'}  "
-        f"popularity={'on' if popularity_on else 'off'}]"
+        f"[implicit priors: quality={quality_desc}  "
+        f"popularity={popularity_desc}]"
     )
 
     # Final ranked table.

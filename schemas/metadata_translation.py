@@ -9,12 +9,33 @@
 # each independently, then folds per-column scores into one per-movie
 # call score using scoring_method.
 #
-# Field ordering encodes the cognitive scaffold:
-#   1. search_picture     — holistic intent restatement
-#   2. column_candidates  — honest per-column audit (covers / misses)
-#   3. scoring_method_reasoning — how the eligible columns relate
-#   4. column_spec        — literal commitment, every column explicit
-#   5. scoring_method     — mechanical mapping of scoring_method_reasoning
+# Two shapes coexist in this file:
+#
+# 1. SINGLE-ENDPOINT shape (MetadataTranslationOutput /
+#    MetadataEndpointParameters) — used by buckets 3/4 when metadata
+#    owns the entire call. Field ordering encodes the cognitive
+#    scaffold: search_picture → column_candidates →
+#    scoring_method_reasoning → column_spec → scoring_method.
+#    Untouched by the walk-then-commit refactor.
+#
+# 2. MULTI-ENDPOINT shape (MetadataWalk +
+#    MetadataTranslationOutputSubintent /
+#    MetadataEndpointSubintentParameters) — used by buckets 5/6/8.
+#    Split across two classes that live in different positions of the
+#    bucket schema:
+#       a. MetadataWalk — the column-grounded analysis layer
+#          (`column_candidates`). Lives at the bucket level, emitted
+#          BEFORE the coverage_assignments commitment so the LLM walks
+#          the columns concretely before committing.
+#       b. MetadataTranslationOutputSubintent — thin commitment-only
+#          spec (`scoring_method_reasoning` + `column_spec` +
+#          `scoring_method`). Lives inside the per-endpoint
+#          metadata_parameters slot, populated only when
+#          coverage_assignments delegates a slice to this endpoint.
+#    `search_picture` does NOT survive into the multi-endpoint shape:
+#    the bucket-level `coverage_assignments[kind=metadata].slice_description`
+#    plus `metadata_retrieval_intent` already supply the holistic
+#    restatement of intent.
 #
 # Schema = micro-prompts; the system prompt is procedural and does
 # not duplicate field-shape rules. Per-sub-object literal-translation
@@ -25,9 +46,17 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from typing import Annotated, Callable, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, conlist, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    conlist,
+    field_validator,
+    model_validator,
+)
 
 from implementation.classes.countries import Country
 from implementation.classes.enums import (
@@ -48,6 +77,41 @@ from schemas.enums import (
     ReceptionMode,
     ScoringMethod,
 )
+
+
+# ── ISO-code field types and validation helpers ───────────────────
+#
+# The LLM-facing schema speaks ISO codes for languages and countries
+# (see AudioLanguageTranslation / CountryOfOriginTranslation below for
+# the rationale — OpenAI's 1000-enum-per-schema cap forced us off the
+# full 334+262 enum surface). The Annotated types pin a strict
+# canonical-case `pattern` into the JSON schema sent to OpenAI, so the
+# structured-output decoder is constrained to emit lowercase 2-letter
+# language codes and uppercase 2-letter country codes. The validators
+# below then only need to verify each pattern-conformant code resolves
+# to a real registry member.
+
+_LangISOCode = Annotated[str, StringConstraints(pattern=r"^[a-z]{2}$")]
+_CountryISOCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
+
+
+def _validate_iso_codes(
+    codes: list[str],
+    from_iso: Callable[[str], Optional[object]],
+    kind: str,
+) -> list[str]:
+    # Validates that each ISO code resolves to a real registry member.
+    # Pattern-level format validation already ran upstream via
+    # StringConstraints, so unknown-code rejection is the only job here.
+    # Unknown codes raise ValueError → ValidationError, which the
+    # handler retry path treats as a parse failure and reissues the
+    # LLM call.
+    for code in codes:
+        if from_iso(code) is None:
+            raise ValueError(
+                f"Unknown ISO {kind} code: {code!r}"
+            )
+    return codes
 
 
 # ── Sub-objects for complex attributes ────────────────────────────
@@ -170,10 +234,35 @@ class StreamingTranslation(BaseModel):
 # Audio language: explicit audio-track constraint only.
 # ONLY used when the user explicitly mentions audio/language/dubbed.
 # "French films" → country_of_origin, NOT audio_language.
+#
+# The LLM emits ISO 639-1 codes (lowercase 2-letter, e.g. "en", "fr",
+# "ja"). Codes are stored as-is on the model and resolved to Language
+# enum members at the executor edge via Language.from_iso(). We use
+# ISO codes rather than the full enum-as-Literal because OpenAI
+# structured outputs cap a schema at 1000 enum values; the 334-member
+# Language enum was eating ~half the budget on its own. Long-tail
+# languages without an ISO 639-1 code are unreachable here by design;
+# omit the column when the requested audio language has no code rather
+# than picking a near-match (audio language is an explicit constraint,
+# so a wrong match is worse than no match).
 class AudioLanguageTranslation(BaseModel):
-    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
-    languages: conlist(Language, min_length=1) = Field(...)
+    languages: conlist(_LangISOCode, min_length=1) = Field(
+        ...,
+        description=(
+            "ISO 639-1 language codes (lowercase, 2 letters). Use 'en' "
+            "not 'eng' or 'English', 'fr' not 'fre' or 'French'. When "
+            "the requested audio language has no ISO 639-1 code, omit "
+            "the column entirely — do not substitute a near-match, "
+            "since audio language is an explicit user constraint."
+        ),
+    )
+
+    @field_validator("languages", mode="after")
+    @classmethod
+    def _check_iso_codes(cls, value: list[str]) -> list[str]:
+        return _validate_iso_codes(value, Language.from_iso, "639-1 language")
 
 
 # Country of origin: one or more target countries.
@@ -181,17 +270,41 @@ class AudioLanguageTranslation(BaseModel):
 # ("European movies") into concrete country lists. Execution code
 # applies a position-based gradient on the country_of_origin_ids
 # array.
+#
+# Same ISO-code contract as AudioLanguageTranslation: LLM emits ISO
+# 3166-1 alpha-2 codes (uppercase, 2 letters), resolved to Country
+# enum at the executor edge via Country.from_iso().
 class CountryOfOriginTranslation(BaseModel):
-    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
-    countries: conlist(Country, min_length=1) = Field(...)
+    countries: conlist(_CountryISOCode, min_length=1) = Field(
+        ...,
+        description=(
+            "ISO 3166-1 alpha-2 country codes (uppercase, 2 letters). "
+            "Use 'US' not 'USA' or 'United States', 'GB' not 'UK', "
+            "'KR' for South Korea, 'KP' for North Korea. Retired entities "
+            "(Yugoslavia, USSR, Czechoslovakia) are unreachable via this "
+            "field — pick the closest current country or omit the column."
+        ),
+    )
+
+    @field_validator("countries", mode="after")
+    @classmethod
+    def _check_iso_codes(cls, value: list[str]) -> list[str]:
+        return _validate_iso_codes(value, Country.from_iso, "3166-1 alpha-2 country")
 
 
 # ── Audit layer ───────────────────────────────────────────────────
 
 
 # Per-column coverage analysis. Surfaces adjacency honestly so the
-# commit step is grounded rather than back-rationalized.
+# commit step is grounded rather than back-rationalized. Reused by
+# both the single-endpoint MetadataTranslationOutput.column_candidates
+# (where the prior search_picture field is the holistic intent
+# restatement) and the multi-endpoint MetadataWalk.column_candidates
+# (where the call's retrieval_intent in the user message plays that
+# role) — descriptions reference "the call's intent" generically so
+# the same class works in both positions.
 class ColumnCandidate(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -202,7 +315,7 @@ class ColumnCandidate(BaseModel):
     what_this_covers: str = Field(
         ...,
         description=(
-            "One sentence naming the aspect of search_picture this "
+            "One sentence naming the aspect of the call's intent this "
             "column genuinely owns. Cite the specific intent fragment.\n"
             "NEVER back-rationalize. NEVER generalize from the "
             "column's default purpose."
@@ -211,7 +324,7 @@ class ColumnCandidate(BaseModel):
     what_this_misses: str = Field(
         ...,
         description=(
-            "Aspect of search_picture this column does NOT cover, "
+            "Aspect of the call's intent this column does NOT cover, "
             "naming the column that owns the gap. \"Nothing\" when fit "
             "is clean and no adjacent column competes.\n"
             "NEVER hedge without naming. NEVER invent gaps."
@@ -373,57 +486,86 @@ class MetadataEndpointParameters(EndpointParameters):
     )
 
 
-# ── Subintent variant ─────────────────────────────────────────────
+# ── Multi-endpoint walk + thin commitment ─────────────────────────
 #
-# Used when a single category routes to multiple endpoints and the
-# upstream responsibility-splitting reasoning has already carved out
-# this endpoint's slice of intent into a dedicated field. Same
-# structure as MetadataTranslationOutput, but `search_picture` (the
-# only field that originally read the raw call inputs) reads from
-# `metadata_retrieval_intent` instead. Every other field already
-# reads off downstream artifacts (search_picture / column_candidates
-# / scoring_method_reasoning) and so survives unchanged.
+# Used when the metadata endpoint is one of several contending for
+# the call's intent (buckets 5/6/8). Two classes that live in
+# DIFFERENT positions of the bucket schema:
+#
+#   - MetadataWalk lives at the bucket level, emitted BEFORE the
+#     coverage_assignments commitment phase. It carries the
+#     column-grounded audit of how the metadata endpoint could cover
+#     the call's retrieval_intent. Forces concrete column awareness
+#     before any commitment.
+#   - MetadataTranslationOutputSubintent lives inside the per-endpoint
+#     metadata_parameters slot, populated only when
+#     coverage_assignments delegates a slice to this endpoint.
+#     Carries just the commitment layer — scoring_method_reasoning +
+#     column_spec + scoring_method.
+#
+# `search_picture` is dropped: in the multi-endpoint flow,
+# `coverage_assignments[kind=metadata].slice_description` and the
+# wrapper's `metadata_retrieval_intent` already supply the holistic
+# restatement of what this endpoint is asked to retrieve.
+
+
+class MetadataWalk(BaseModel):
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+
+    # Reuses the shared ColumnCandidate class: its descriptors talk
+    # about "the call's intent" generically so the same class fits
+    # both the single-endpoint context (where search_picture is the
+    # restatement) and the walk context (where the user-message
+    # retrieval_intent + expressions play that role).
+    column_candidates: list[ColumnCandidate] = Field(
+        ...,
+        description=(
+            "Column-grounded audit of how the metadata endpoint could "
+            "cover the call's intent. One entry per column whose "
+            "definition plausibly carries part of the call (read the "
+            "call's `retrieval_intent` + `expressions` in the user "
+            "message), with concrete what_this_covers / "
+            "what_this_misses prose.\n"
+            "\n"
+            "This is the GROUNDED walk that precedes the bucket-level "
+            "coverage_assignments commitment. Surface every column "
+            "with substantive coverage so the commitment phase reads "
+            "off real candidates rather than abstract optimism. An "
+            "empty list (no column meaningfully fits) is a valid "
+            "signal that the metadata endpoint has nothing useful — "
+            "the commitment phase is allowed to leave the call unowned "
+            "by metadata.\n"
+            "\n"
+            "TEST per candidate: 'if I dropped this, would the commit "
+            "step lose a real option?' Padding → drop.\n"
+            "\n"
+            "NEVER list every column out of habit. NEVER duplicate "
+            "columns."
+        ),
+    )
 
 
 class MetadataTranslationOutputSubintent(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
-    # `metadata_retrieval_intent` is declared on the parent
-    # MetadataEndpointSubintentParameters wrapper — it is generated
-    # before this spec and every field below reads from it.
+    # Thin commitment-only spec for multi-endpoint contexts. The
+    # column-grounded analysis (`column_candidates`) has been lifted up
+    # to MetadataWalk at the bucket level — populated BEFORE
+    # coverage_assignments so the commitment phase is grounded in
+    # concrete column candidates. `search_picture` is dropped because
+    # `metadata_retrieval_intent` (on the wrapper) plus
+    # `coverage_assignments[kind=metadata].slice_description` already
+    # capture the holistic restatement.
 
-    search_picture: str = Field(
-        ...,
-        description=(
-            "1-2 sentences. Restate `metadata_retrieval_intent` as ONE "
-            "coherent picture — what kind of movie the intent wants, "
-            "taken as a whole.\n"
-            "NEVER paraphrase `metadata_retrieval_intent` verbatim. "
-            "NEVER name columns."
-        ),
-    )
-    column_candidates: list[ColumnCandidate] = Field(
-        ...,
-        description=(
-            "Honest audit of columns plausible for search_picture, "
-            "with per-column what_this_covers / what_this_misses. "
-            "Surface adjacency where it genuinely competes; drop "
-            "columns whose only contribution is being adjacent.\n"
-            "Local test: \"if I removed this candidate, would the "
-            "commit step lose a real option?\" Padding → drop.\n"
-            "NEVER list every column out of habit. NEVER duplicate "
-            "columns."
-        ),
-    )
     scoring_method_reasoning: str = Field(
         ...,
         description=(
-            "1 sentence. Project forward from column_candidates: of "
-            "the columns you intend to populate in column_spec, do "
-            "they read as SUBSTITUTABLE signals of one concept "
-            "(any-one-matching qualifies) or REINFORCING facets "
-            "(every populated column contributes)? Write \"single "
-            "column\" when only one column will be populated.\n"
+            "1 sentence. Project forward to column_spec: of the "
+            "columns you intend to populate, do they read as "
+            "SUBSTITUTABLE signals of one concept (any-one-matching "
+            "qualifies) or REINFORCING facets (every populated column "
+            "contributes)? Write \"single column\" when only one "
+            "column will be populated.\n"
             "Justifies scoring_method below."
         ),
     )
@@ -431,17 +573,18 @@ class MetadataTranslationOutputSubintent(BaseModel):
         ...,
         description=(
             "Literal commitment. Populate ONLY columns surfaced in "
-            "column_candidates with substantive what_this_covers; "
-            "explicit null elsewhere. Apply minimum span — null a "
-            "column whose search_picture aspect is fully covered by "
-            "another populated column. Same-column intent merges "
-            "into ONE populated sub-object (country lists union, "
-            "runtime ranges reconcile, streaming services + access "
-            "pair).\n"
-            "Local test per column: \"if I null this, does "
-            "search_picture lose real intent?\" If no, null it.\n"
-            "NEVER populate a column absent from column_candidates. "
-            "NEVER split same-column intent across multiple fields."
+            "the bucket-level `metadata_walk.column_candidates` above "
+            "with substantive what_this_covers; explicit null "
+            "elsewhere. Apply minimum span — null a column whose "
+            "intent fragment is fully covered by another populated "
+            "column. Same-column intent merges into ONE populated "
+            "sub-object (country lists union, runtime ranges "
+            "reconcile, streaming services + access pair).\n"
+            "Local test per column: \"if I null this, does the "
+            "assigned slice lose real intent?\" If no, null it.\n"
+            "NEVER populate a column absent from "
+            "metadata_walk.column_candidates. NEVER split same-column "
+            "intent across multiple fields."
         ),
     )
     scoring_method: ScoringMethod = Field(
@@ -454,8 +597,8 @@ class MetadataTranslationOutputSubintent(BaseModel):
             "says \"single column\" or reinforcing: we care how many "
             "populated columns the movie matches, and movies score "
             "higher depending on how many values they match.\n"
-            "NEVER re-derive from search_picture or column_spec — "
-            "read off scoring_method_reasoning."
+            "NEVER re-derive from column_spec — read off "
+            "scoring_method_reasoning."
         ),
     )
 
@@ -464,25 +607,30 @@ class MetadataEndpointSubintentParameters(EndpointParameters):
     metadata_retrieval_intent: str = Field(
         ...,
         description=(
-            "What this endpoint specifically needs to be responsible "
-            "for fetching. Read off the prior reasoning fields above "
-            "that split up responsibilities across endpoints, capturing "
-            "only the slice of intent assigned to the metadata endpoint "
-            "(the ten structured-attribute columns: release_date, "
+            "The slice of the call's intent this endpoint owns, "
+            "committed by the bucket-level coverage_assignments above "
+            "(the entry whose endpoint_kind matches metadata). Restate "
+            "the assigned slice_description here so the commitment "
+            "below has a single, self-contained pointer.\n"
+            "\n"
+            "Scope: the ten structured-attribute columns (release_date, "
             "runtime, maturity_rating, streaming, audio_language, "
             "country_of_origin, budget_scale, box_office, popularity, "
             "reception). Leave categorical classification, named "
             "entities, free-form thematic qualifiers, awards, and "
             "franchise structure to their respective endpoints. Every "
             "field on this endpoint's `parameters` reads from this "
-            "intent rather than from any other upstream input."
+            "intent (and from the upstream metadata_walk) rather than "
+            "from any other input."
         ),
     )
     parameters: MetadataTranslationOutputSubintent = Field(
         ...,
         description=(
-            "Metadata endpoint payload, sourced from "
-            "`metadata_retrieval_intent` rather than from the raw "
-            "call inputs."
+            "Metadata endpoint thin commitment payload. Reads off "
+            "`metadata_retrieval_intent` (the assigned slice) and the "
+            "bucket-level `metadata_walk.column_candidates` (the "
+            "grounded audit above) to commit column_spec + "
+            "scoring_method."
         ),
     )

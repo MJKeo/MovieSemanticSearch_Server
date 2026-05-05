@@ -14,10 +14,14 @@
 #   2. EXPLICIT_NO_OP                            — no schema
 #   3. SINGLE_NON_METADATA_ENDPOINT              — single-endpoint, includes requirement_aspects
 #   4. SINGLE_METADATA_ENDPOINT                  — single-endpoint, includes requirement_aspects
-#   5. PREFERRED_REPRESENTATION_FALLBACK         — preferred + (optional) fallback split
-#   6. SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT  — semantic always + per-deterministic augmentation
+#   5. PREFERRED_REPRESENTATION_FALLBACK         — walk-then-commit (preferred + fallback)
+#   6. SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT  — walk-then-commit (semantic + deterministic support)
 #   7. CHARACTER_FRANCHISE_FANOUT                — single shared schema (no per-endpoint payloads)
-#   8. AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST  — every candidate endpoint with worth_running gate
+#   8. AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST  — walk-then-commit (every candidate endpoint)
+#
+# Buckets 5/6/8 share one shape: per-endpoint grounded walks → coverage
+# commitment (assignments + intentionally_uncovered) → thin per-endpoint
+# params. See _build_walk_then_commit.
 #
 # Schemas are eagerly built at module import so any misconfiguration
 # (missing wrapper, invalid field name, JSON-schema size issue) fails
@@ -37,6 +41,7 @@ from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.trait_category import CategoryName
 from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
     get_output_wrapper,
+    get_walk_class,
 )
 
 
@@ -86,126 +91,119 @@ _ENDPOINT_PARAMETERS_SINGLE_DESC = (
     "Leave null when should_run_endpoint is false."
 )
 
-# Bucket 5 — preferred / fallback
-_PREFERRED_COVERAGE_EXPLORATION_DESC = (
-    "Walk through how the preferred representation could cover this "
-    "requirement before committing. Name what it cleanly handles, what "
-    "it half-handles, and what it cannot reach. Stay in prose — do not "
-    "jump to parameters yet."
+# Buckets 5/6/8 — walk-then-commit shape (one shared factory).
+#
+# Phase 1: per-endpoint grounded walks. One `{route}_walk` field per
+# declared endpoint, holding the registry/space/column-grounded
+# analysis lifted out of the per-endpoint subintent params. Emitted
+# BEFORE the commitment phase so the LLM walks concrete candidates
+# before deciding who fires.
+#
+# Phase 2: coverage commitment. `coverage_assignments` delegates
+# slices to specific endpoints; `intentionally_uncovered` names what
+# the call asks for that no declared endpoint can cleanly serve.
+# Both grounded in the walks above.
+#
+# Phase 3: per-endpoint thin params. One Optional `{route}_parameters`
+# slot per declared endpoint, populated iff coverage_assignments
+# contains an entry for that endpoint.
+
+_WALK_DESC_TEMPLATE = (
+    "Grounded walk for the {route} endpoint. Read the call's "
+    "retrieval_intent + expressions (in the user message) and surface "
+    "what {route} could concretely cover, with explicit "
+    "covers/misses prose grounded in the {grounded_in}. This is "
+    "the analysis layer the commitment phase below draws from — "
+    "abstract optimism about the endpoint's general fitness is not "
+    "useful here, only concrete candidates. An empty / no-match walk "
+    "is a valid signal that {route} has nothing to offer for this "
+    "call; the commitment phase is allowed to leave the call unowned "
+    "by {route}."
 )
 
-_PREFERRED_INTENT_DESC = (
-    "What the preferred endpoint should retrieve, in plain language. "
-    "Name the endpoint and describe its slice. This is the official "
-    "commitment to the preferred half of the split, written before "
-    "the parameter payload below is filled."
+_WALK_GROUNDING: dict[EndpointRoute, str] = {
+    EndpointRoute.KEYWORD: "UnifiedClassification registry",
+    EndpointRoute.SEMANTIC: "7 vector spaces",
+    EndpointRoute.METADATA: "10 structured-attribute columns",
+}
+
+
+def _walk_desc_for(route: EndpointRoute) -> str:
+    grounded_in = _WALK_GROUNDING.get(route, "endpoint's domain")
+    return _WALK_DESC_TEMPLATE.format(
+        route=route.value, grounded_in=grounded_in
+    )
+
+
+_COVERAGE_ASSIGNMENT_ENDPOINT_KIND_DESC = (
+    "Which declared endpoint this assignment delegates a slice to. "
+    "Must be one of the routes whose grounded walk appears above on "
+    "this bucket schema."
 )
 
-_FALLBACK_INTENT_DESC = (
-    "What the fallback endpoint should retrieve, or null when the "
-    "preferred representation fully covers and the fallback is not "
-    "needed. When set, name the endpoint and describe only the part "
-    "the preferred representation cannot reach — do not duplicate "
-    "what the preferred call already handles."
+_COVERAGE_ASSIGNMENT_SLICE_DESCRIPTION_DESC = (
+    "The slice of the call's intent this endpoint owns, written "
+    "specifically enough that the per-endpoint parameters below can "
+    "translate it without re-reading the upstream retrieval_intent. "
+    "Pulled from the matching endpoint's grounded walk above — name "
+    "what the walk concretely surfaced (registry members / vector "
+    "spaces / columns) and what aspect(s) of the call's intent they "
+    "address. This string flows to the wrapper's "
+    "<endpoint>_retrieval_intent field as the per-endpoint "
+    "commitment record."
 )
 
-_PREFERRED_PARAMETERS_DESC = (
-    "Parameter payload for the preferred endpoint. Fill it whenever "
-    "preferred_intent commits to firing the preferred representation; "
-    "leave null only when the preferred representation has nothing to "
-    "contribute and the requirement falls entirely on the fallback."
+_COVERAGE_ASSIGNMENTS_DESC = (
+    "Coverage commitment phase. One entry per declared endpoint "
+    "that should fire, naming the slice of the call's intent it "
+    "owns. Read every endpoint walk above and decide who fires on "
+    "what. Multiple assignments are fine when the call is genuinely "
+    "compound and several endpoints catch distinct facets; a single "
+    "assignment is the natural shape when one endpoint cleanly owns "
+    "the call.\n"
+    "\n"
+    "EMPTY is a valid outcome when no declared endpoint cleanly fits "
+    "and the call is better unowned than served by a poor fit.\n"
+    "\n"
+    "Priority order (the order endpoints appear in the bucket "
+    "schema, top to bottom) is a tiebreaker only — when two "
+    "endpoints could cover the same slice equally well, prefer the "
+    "earlier one. The walks themselves are order-independent.\n"
+    "\n"
+    "NEVER:\n"
+    "- DELEGATE TO AN ENDPOINT WHOSE WALK SHOWS NO CLEAN FIT. The "
+    "walks are the audit; assignments must be readable off them.\n"
+    "- DUPLICATE AN ENDPOINT (one assignment per endpoint kind).\n"
+    "- SPLIT ONE SLICE ACROSS ENDPOINTS to look thorough; let the "
+    "endpoint that owns the slice own it cleanly."
 )
 
-_FALLBACK_PARAMETERS_DESC = (
-    "Parameter payload for the fallback endpoint. Fill it whenever "
-    "fallback_intent is non-null; leave null otherwise."
+_INTENTIONALLY_UNCOVERED_DESC = (
+    "Aspects of the call's intent that no declared endpoint can "
+    "cleanly serve, named explicitly. Forces the commitment phase to "
+    "be honest about gaps rather than fabricating shallow coverage. "
+    "Empty list is correct when coverage_assignments cleanly handle "
+    "the whole call.\n"
+    "\n"
+    "An entry here is a deliberate trade-off — better to leave "
+    "an aspect unserved than to ship a poor-fit assignment. Reviewers "
+    "read this list to understand what the bucket consciously walked "
+    "away from.\n"
+    "\n"
+    "NEVER:\n"
+    "- HEDGE. Either an aspect is owned (in coverage_assignments) or "
+    "intentionally not (here).\n"
+    "- LIST AN ASPECT THAT'S ALREADY OWNED by some assignment."
 )
 
-# Bucket 6 — semantic + deterministic augmentation
-_SEMANTIC_INTENT_DESC = (
-    "What the semantic endpoint should retrieve, in plain language. "
-    "The semantic call always fires for this bucket; this field "
-    "commits the prose query and gives the deterministic decisions "
-    "below a stable reference for what the semantic read covers."
-)
-
-_AUGMENTATION_OPPORTUNITIES_DESC = (
-    "For each non-semantic candidate endpoint, decide whether it "
-    "carries a binary or canonical signal that semantic retrieval "
-    "blurs across. List one entry per candidate — addressing every "
-    "one explicitly is the failure mode this bucket guards against. "
-    "Overlap with the semantic read is welcome; skip only when no "
-    "clean deterministic signal is implied."
-)
-
-_AUGMENTATION_ENDPOINT_KIND_DESC = (
-    "Which deterministic candidate this entry is about. Every "
-    "category-declared deterministic endpoint should appear in the "
-    "list once — do not omit any."
-)
-
-_AUGMENTATION_SIGNAL_DESCRIPTION_DESC = (
-    "What this endpoint could deterministically catch (a named tag, "
-    "a pinned number, a popularity prior). Be specific — vague "
-    "descriptions are a sign no clean signal exists."
-)
-
-_AUGMENTATION_WORTH_RUNNING_DESC = (
-    "True when this endpoint should fire alongside the semantic call. "
-    "Skip only when no clean deterministic signal is implied — not "
-    "because semantic 'already covers it.'"
-)
-
-_SEMANTIC_PARAMETERS_DESC = (
-    "Parameter payload for the semantic endpoint. Filled by default — "
-    "leave null only when the entire bucket abstains because the "
-    "requirement is too ambiguous or out of scope."
-)
-
-_AUGMENTATION_PARAMETERS_DESC = (
-    "Parameter payload for this deterministic endpoint. Fill it when "
-    "its augmentation_opportunities entry has worth_running=True; "
-    "leave null otherwise."
-)
-
-# Bucket 8 — audience-suitability combo
-_SUITABILITY_OVERVIEW_DESC = (
-    "High-level scoping pass: enumerate every angle the suitability "
-    "concept exposes — hard ceilings, content categories the user "
-    "wants more of, content categories to avoid, tone, watch-context. "
-    "This is the opportunity inventory the per-endpoint decisions "
-    "below draw from."
-)
-
-_COVERAGE_OPPORTUNITIES_DESC = (
-    "For each candidate endpoint, decide whether it carries a real "
-    "complementary slice of the suitability inventory. List one entry "
-    "per candidate — silent skipping is the failure mode this bucket "
-    "exists to prevent. Overlap with another endpoint's slice is "
-    "welcome; skip only when this endpoint has nothing distinct to add."
-)
-
-_COVERAGE_ENDPOINT_KIND_DESC = (
-    "Which candidate endpoint this entry is about. Every "
-    "category-declared candidate should appear in the list once."
-)
-
-_COVERAGE_OPPORTUNITY_DESCRIPTION_DESC = (
-    "What this endpoint could contribute to the suitability "
-    "requirement — a hard maturity ceiling, a tag for content to "
-    "include or exclude, a tone or watch-context query. Be specific."
-)
-
-_COVERAGE_WORTH_RUNNING_DESC = (
-    "True when this endpoint should fire. Overlap with another "
-    "endpoint's slice is welcome — skip only when this endpoint has "
-    "nothing distinct to add."
-)
-
-_SUITABILITY_PARAMETERS_DESC = (
-    "Parameter payload for this endpoint. Fill it when its "
-    "coverage_opportunities entry has worth_running=True; leave null "
-    "otherwise."
+_THIN_PARAMETERS_DESC_TEMPLATE = (
+    "Thin commitment payload for the {route} endpoint. Fill it iff "
+    "coverage_assignments above contains an entry whose endpoint_kind "
+    "is {route!r}; null otherwise. The wrapper's "
+    "`{route}_retrieval_intent` mirrors the matching assignment's "
+    "slice_description; the inner parameters draw on that intent and "
+    "the upstream `{route}_walk` analysis to commit the route-specific "
+    "translation."
 )
 
 
@@ -298,108 +296,102 @@ def _build_single(
     )
 
 
-def _build_preferred_fallback(
+def _build_walk_then_commit(
     category: CategoryName,
     bucket: HandlerBucket,
 ) -> type[BaseModel] | None:
-    # Bucket 5 — first endpoint is the preferred representation,
-    # second is the fallback. The reasoning fields commit to the split
-    # in order (exploration → preferred intent → preferred params →
-    # fallback intent → fallback params) so each endpoint payload sits
-    # right after the intent that commits to firing it.
+    # Buckets 5/6/8 share one shape — three sequential phases at the
+    # bucket level that together replace the bucket-specific
+    # coverage-reasoning fields used previously:
+    #
+    #   Phase 1: per-endpoint walks. For each declared endpoint, a
+    #   `{route}_walk` field holds the registry/space/column-grounded
+    #   analysis (KeywordWalk / SemanticWalk / MetadataWalk).
+    #   Surfaces concrete candidates BEFORE any commitment.
+    #
+    #   Phase 2: coverage commitment. `coverage_assignments` (a list
+    #   of CoverageAssignment with Literal-bounded endpoint_kind)
+    #   delegates slices to specific endpoints; `intentionally_uncovered`
+    #   names aspects no declared endpoint can cleanly serve.
+    #
+    #   Phase 3: per-endpoint thin params. One Optional
+    #   `{route}_parameters` per declared endpoint, populated iff a
+    #   matching coverage_assignments entry exists.
+    #
+    # Field declaration order matches that phase ordering — which
+    # matters because Pydantic structured output emits top-down, so
+    # the LLM walks all endpoints concretely before committing to who
+    # fires. This is the structural fix for the prior design's
+    # "abstract commitment before grounded walk" failure mode.
     pairs = _resolve_wrappers_for_bucket(category, bucket)
-    if len(pairs) < 2:
-        raise ValueError(
-            f"Category {category.name} (PREFERRED_REPRESENTATION_FALLBACK) "
-            f"needs ≥2 candidate wrappers, resolved to {len(pairs)}."
-        )
+    if not pairs:
+        return None
 
-    preferred_route, preferred_wrapper = pairs[0]
-    fallback_route, fallback_wrapper = pairs[1]
+    # Build the per-category CoverageAssignment with a Literal of the
+    # declared route values. Same dynamic-Literal pattern that the
+    # prior augmentation/coverage opportunity models used; lifted up
+    # to the new shared shape.
+    declared_route_values = tuple(r.value for r, _ in pairs)
+    endpoint_kind_type = Literal[declared_route_values]  # type: ignore[valid-type]
 
-    fields: dict[str, tuple] = {
-        "preferred_coverage_exploration": (
+    coverage_assignment_model = create_model(
+        f"{_pascal(category.name)}CoverageAssignment",
+        __base__=_HandlerOutputBase,
+        __module__=__name__,
+        endpoint_kind=(
+            endpoint_kind_type,
+            Field(..., description=_COVERAGE_ASSIGNMENT_ENDPOINT_KIND_DESC),
+        ),
+        slice_description=(
             str,
-            Field(..., description=_PREFERRED_COVERAGE_EXPLORATION_DESC),
+            Field(..., description=_COVERAGE_ASSIGNMENT_SLICE_DESCRIPTION_DESC),
         ),
-        "preferred_intent": (str, Field(..., description=_PREFERRED_INTENT_DESC)),
-        f"{preferred_route.value}_parameters": (
-            Optional[preferred_wrapper],
-            Field(default=None, description=_PREFERRED_PARAMETERS_DESC),
-        ),
-        "fallback_intent": (
-            Optional[str],
-            Field(default=None, description=_FALLBACK_INTENT_DESC),
-        ),
-        f"{fallback_route.value}_parameters": (
-            Optional[fallback_wrapper],
-            Field(default=None, description=_FALLBACK_PARAMETERS_DESC),
-        ),
-    }
-
-    return create_model(
-        _output_class_name(category.name),
-        __base__=_HandlerOutputBase,
-        __module__=__name__,
-        **fields,
     )
 
+    fields: dict[str, tuple] = {}
 
-def _build_semantic_with_augmentation(
-    category: CategoryName,
-    bucket: HandlerBucket,
-) -> type[BaseModel] | None:
-    # Bucket 6 — semantic always fires; each non-semantic candidate is
-    # a deterministic augmentation that may also fire when it carries
-    # a binary or canonical signal semantic blurs across. The schema
-    # forces the LLM to enumerate every deterministic candidate via
-    # the augmentation_opportunities list (Literal-bounded endpoint_kind).
-    pairs = _resolve_wrappers_for_bucket(category, bucket)
-
-    semantic_pairs = [(r, w) for r, w in pairs if r is EndpointRoute.SEMANTIC]
-    deterministic_pairs = [(r, w) for r, w in pairs if r is not EndpointRoute.SEMANTIC]
-
-    if not semantic_pairs:
-        raise ValueError(
-            f"Category {category.name} (SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT) "
-            f"requires SEMANTIC in its endpoint tuple."
-        )
-    if not deterministic_pairs:
-        raise ValueError(
-            f"Category {category.name} (SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT) "
-            f"has no deterministic augmentation candidates — at least "
-            f"one non-SEMANTIC endpoint is required."
+    # Phase 1: per-endpoint grounded walks. Every declared multi-
+    # endpoint route must have a walk class registered — without it
+    # the bucket cannot be assembled. Failing loud at import time
+    # surfaces the missing walk before it ever reaches a request.
+    for route, _ in pairs:
+        walk_cls = get_walk_class(route)
+        if walk_cls is None:
+            raise ValueError(
+                f"Category {category.name} (bucket {bucket.value!r}) "
+                f"declares route {route.value!r}, but no walk class is "
+                f"registered in endpoint_registry.ROUTE_TO_WALK. Author "
+                f"a {route.value.title()}Walk class in the matching "
+                f"translation file before routing this combination to "
+                f"a multi-endpoint bucket."
+            )
+        fields[f"{route.value}_walk"] = (
+            walk_cls,
+            Field(..., description=_walk_desc_for(route)),
         )
 
-    semantic_route, semantic_wrapper = semantic_pairs[0]
-
-    deterministic_values = tuple(r.value for r, _ in deterministic_pairs)
-    endpoint_kind_type = Literal[deterministic_values]  # type: ignore[valid-type]
-
-    opportunity_model = create_model(
-        f"{_pascal(category.name)}AugmentationOpportunity",
-        __base__=_HandlerOutputBase,
-        __module__=__name__,
-        endpoint_kind=(endpoint_kind_type, Field(..., description=_AUGMENTATION_ENDPOINT_KIND_DESC)),
-        signal_description=(str, Field(..., description=_AUGMENTATION_SIGNAL_DESCRIPTION_DESC)),
-        worth_running=(bool, Field(..., description=_AUGMENTATION_WORTH_RUNNING_DESC)),
+    # Phase 2: coverage commitment.
+    fields["coverage_assignments"] = (
+        list[coverage_assignment_model],
+        Field(..., description=_COVERAGE_ASSIGNMENTS_DESC),
+    )
+    fields["intentionally_uncovered"] = (
+        list[str],
+        Field(..., description=_INTENTIONALLY_UNCOVERED_DESC),
     )
 
-    fields: dict[str, tuple] = {
-        "semantic_intent": (str, Field(..., description=_SEMANTIC_INTENT_DESC)),
-        "augmentation_opportunities": (
-            list[opportunity_model],
-            Field(..., description=_AUGMENTATION_OPPORTUNITIES_DESC),
-        ),
-        f"{semantic_route.value}_parameters": (
-            Optional[semantic_wrapper],
-            Field(default=None, description=_SEMANTIC_PARAMETERS_DESC),
-        ),
-    }
-    for det_route, det_wrapper in deterministic_pairs:
-        fields[f"{det_route.value}_parameters"] = (
-            Optional[det_wrapper],
-            Field(default=None, description=_AUGMENTATION_PARAMETERS_DESC),
+    # Phase 3: per-endpoint thin params, one Optional per declared
+    # route. Names match the existing `{route}_parameters` pattern so
+    # output_extractor's per-route field walk picks them up unchanged.
+    for route, wrapper in pairs:
+        fields[f"{route.value}_parameters"] = (
+            Optional[wrapper],
+            Field(
+                default=None,
+                description=_THIN_PARAMETERS_DESC_TEMPLATE.format(
+                    route=route.value
+                ),
+            ),
         )
 
     return create_model(
@@ -430,52 +422,6 @@ def _build_character_franchise_fanout(
     return schema
 
 
-def _build_suitability_combo(
-    category: CategoryName,
-    bucket: HandlerBucket,
-) -> type[BaseModel] | None:
-    # Bucket 8 — every candidate endpoint contributes one Optional
-    # parameter slot plus one entry in the coverage_opportunities list
-    # (Literal-bounded endpoint_kind forces the LLM to address every
-    # candidate). No always-fires endpoint here; each fires only when
-    # its worth_running flag is True.
-    pairs = _resolve_wrappers_for_bucket(category, bucket)
-    if not pairs:
-        return None
-
-    endpoint_values = tuple(r.value for r, _ in pairs)
-    endpoint_kind_type = Literal[endpoint_values]  # type: ignore[valid-type]
-
-    opportunity_model = create_model(
-        f"{_pascal(category.name)}CoverageOpportunity",
-        __base__=_HandlerOutputBase,
-        __module__=__name__,
-        endpoint_kind=(endpoint_kind_type, Field(..., description=_COVERAGE_ENDPOINT_KIND_DESC)),
-        opportunity_description=(str, Field(..., description=_COVERAGE_OPPORTUNITY_DESCRIPTION_DESC)),
-        worth_running=(bool, Field(..., description=_COVERAGE_WORTH_RUNNING_DESC)),
-    )
-
-    fields: dict[str, tuple] = {
-        "suitability_overview": (str, Field(..., description=_SUITABILITY_OVERVIEW_DESC)),
-        "coverage_opportunities": (
-            list[opportunity_model],
-            Field(..., description=_COVERAGE_OPPORTUNITIES_DESC),
-        ),
-    }
-    for route, wrapper in pairs:
-        fields[f"{route.value}_parameters"] = (
-            Optional[wrapper],
-            Field(default=None, description=_SUITABILITY_PARAMETERS_DESC),
-        )
-
-    return create_model(
-        _output_class_name(category.name),
-        __base__=_HandlerOutputBase,
-        __module__=__name__,
-        **fields,
-    )
-
-
 # ── Dispatch table ────────────────────────────────────────────────
 
 
@@ -490,10 +436,10 @@ _BUCKET_FACTORIES: dict[HandlerBucket, _BucketFactory] = {
     HandlerBucket.EXPLICIT_NO_OP: _no_schema,
     HandlerBucket.SINGLE_NON_METADATA_ENDPOINT: _build_single,
     HandlerBucket.SINGLE_METADATA_ENDPOINT: _build_single,
-    HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK: _build_preferred_fallback,
-    HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT: _build_semantic_with_augmentation,
+    HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK: _build_walk_then_commit,
+    HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT: _build_walk_then_commit,
     HandlerBucket.CHARACTER_FRANCHISE_FANOUT: _build_character_franchise_fanout,
-    HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST: _build_suitability_combo,
+    HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST: _build_walk_then_commit,
 }
 
 

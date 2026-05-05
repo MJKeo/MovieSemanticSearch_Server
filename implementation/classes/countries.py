@@ -1,6 +1,7 @@
 """Country enum for movie production/release countries."""
 
 from enum import Enum
+from typing import Optional
 from implementation.misc.helpers import normalize_string
 
 
@@ -9,17 +10,37 @@ class Country(Enum):
 
     Includes current sovereign states, dependent territories, and historical
     entities retained for cataloging older films.
+
+    `iso_code` is ISO 3166-1 alpha-2 (e.g. "US", "FR") when one exists. It is
+    None for retired entities (Yugoslavia, USSR, etc.) which have no alpha-2
+    code, and for the secondary PALESTINE entry which would collide with
+    PALESTINIAN_TERRITORIES on "PS". The LLM-facing metadata schema speaks
+    ISO codes; entries with `iso_code is None` are unreachable from that
+    schema by design (long-tail, essentially never user-queried).
     """
 
     country_id: int
     value: str
+    iso_code: Optional[str]
 
     def __new__(cls, country_id: int, value: str) -> "Country":
         """Create a Country enum member with an ID and display value."""
         obj = object.__new__(cls)
         obj._value_ = value
         obj.country_id = country_id
+        # iso_code is attached after class body via _NAME_TO_ISO_CODE
+        # below; doing it via a side-table avoids touching every enum
+        # tuple line.
+        obj.iso_code = None
         return obj
+
+    @classmethod
+    def from_iso(cls, code: str) -> Optional["Country"]:
+        """Resolve an ISO 3166-1 alpha-2 code (case-insensitive) to a
+        Country enum member. Returns None for unknown codes."""
+        if not code:
+            return None
+        return _COUNTRY_BY_ISO_CODE.get(code.strip().upper())
 
     # Current countries and territories
     ANDORRA = (1, "Andorra")
@@ -286,6 +307,309 @@ class Country(Enum):
     YUGOSLAVIA = (260, "Yugoslavia")
     FEDERAL_REPUBLIC_OF_YUGOSLAVIA = (261, "Federal Republic of Yugoslavia")
     ZAIRE = (262, "Zaire")
+
+
+# ISO 3166-1 alpha-2 codes per Country member. Stored as a side-table
+# rather than a third tuple element so the 262 enum-tuple lines above
+# stay readable and untouched. Loop below stamps `iso_code` onto each
+# member at module import. Members absent from this map (or mapped to
+# None) keep `iso_code = None` set in `__new__`. Retired entities
+# (Yugoslavia, USSR, etc.) deliberately have no alpha-2 because ISO
+# 3166-1 doesn't assign one — they fall back to the display-name
+# lookup path for non-LLM callers.
+_COUNTRY_NAME_TO_ISO: dict[str, Optional[str]] = {
+    "ANDORRA": "AD",
+    "UNITED_ARAB_EMIRATES": "AE",
+    "AFGHANISTAN": "AF",
+    "ANTIGUA_AND_BARBUDA": "AG",
+    "ANGUILLA": "AI",
+    "ALBANIA": "AL",
+    "ARMENIA": "AM",
+    "NETHERLANDS_ANTILLES": "AN",
+    "ANGOLA": "AO",
+    "ANTARCTICA": "AQ",
+    "ARGENTINA": "AR",
+    "AMERICAN_SAMOA": "AS",
+    "AUSTRIA": "AT",
+    "AUSTRALIA": "AU",
+    "ARUBA": "AW",
+    "ALAND_ISLANDS": "AX",
+    "AZERBAIJAN": "AZ",
+    "BOSNIA_AND_HERZEGOVINA": "BA",
+    "BARBADOS": "BB",
+    "BANGLADESH": "BD",
+    "BELGIUM": "BE",
+    "BURKINA_FASO": "BF",
+    "BULGARIA": "BG",
+    "BAHRAIN": "BH",
+    "BURUNDI": "BI",
+    "BENIN": "BJ",
+    "ST_BARTHELEMY": "BL",
+    "BERMUDA": "BM",
+    "BRUNEI": "BN",
+    "BOLIVIA": "BO",
+    "CARIBBEAN_NETHERLANDS": "BQ",
+    "BRAZIL": "BR",
+    "BAHAMAS": "BS",
+    "BHUTAN": "BT",
+    "BOUVET_ISLAND": "BV",
+    "BOTSWANA": "BW",
+    "BELARUS": "BY",
+    "BELIZE": "BZ",
+    "CANADA": "CA",
+    "COCOS_KEELING_ISLANDS": "CC",
+    "CONGO_KINSHASA": "CD",
+    "CENTRAL_AFRICAN_REPUBLIC": "CF",
+    "CONGO_BRAZZAVILLE": "CG",
+    "SWITZERLAND": "CH",
+    "COTE_DIVOIRE": "CI",
+    "COOK_ISLANDS": "CK",
+    "CHILE": "CL",
+    "CAMEROON": "CM",
+    "CHINA": "CN",
+    "COLOMBIA": "CO",
+    "COSTA_RICA": "CR",
+    "CUBA": "CU",
+    "CAPE_VERDE": "CV",
+    "CURACAO": "CW",
+    "CHRISTMAS_ISLAND": "CX",
+    "CYPRUS": "CY",
+    "CZECHIA": "CZ",
+    "GERMANY": "DE",
+    "DJIBOUTI": "DJ",
+    "DENMARK": "DK",
+    "DOMINICA": "DM",
+    "DOMINICAN_REPUBLIC": "DO",
+    "ALGERIA": "DZ",
+    "ECUADOR": "EC",
+    "ESTONIA": "EE",
+    "EGYPT": "EG",
+    "WESTERN_SAHARA": "EH",
+    "ERITREA": "ER",
+    "SPAIN": "ES",
+    "ETHIOPIA": "ET",
+    "FINLAND": "FI",
+    "FIJI": "FJ",
+    "FALKLAND_ISLANDS": "FK",
+    "MICRONESIA": "FM",
+    "FAROE_ISLANDS": "FO",
+    "FRANCE": "FR",
+    "GABON": "GA",
+    "UNITED_KINGDOM": "GB",
+    "GRENADA": "GD",
+    "GEORGIA": "GE",
+    "FRENCH_GUIANA": "GF",
+    "GUERNSEY": "GG",
+    "GHANA": "GH",
+    "GIBRALTAR": "GI",
+    "GREENLAND": "GL",
+    "GAMBIA": "GM",
+    "GUINEA": "GN",
+    "GUADELOUPE": "GP",
+    "EQUATORIAL_GUINEA": "GQ",
+    "GREECE": "GR",
+    "SOUTH_GEORGIA_AND_SOUTH_SANDWICH_ISLANDS": "GS",
+    "GUATEMALA": "GT",
+    "GUAM": "GU",
+    "GUINEA_BISSAU": "GW",
+    "GUYANA": "GY",
+    "HONG_KONG": "HK",
+    "HEARD_AND_MCDONALD_ISLANDS": "HM",
+    "HONDURAS": "HN",
+    "CROATIA": "HR",
+    "HAITI": "HT",
+    "HUNGARY": "HU",
+    "INDONESIA": "ID",
+    "IRELAND": "IE",
+    "ISRAEL": "IL",
+    "ISLE_OF_MAN": "IM",
+    "INDIA": "IN",
+    "BRITISH_INDIAN_OCEAN_TERRITORY": "IO",
+    "IRAQ": "IQ",
+    "IRAN": "IR",
+    "ICELAND": "IS",
+    "ITALY": "IT",
+    "JERSEY": "JE",
+    "JAMAICA": "JM",
+    "JORDAN": "JO",
+    "JAPAN": "JP",
+    "KENYA": "KE",
+    "KYRGYZSTAN": "KG",
+    "CAMBODIA": "KH",
+    "KIRIBATI": "KI",
+    "COMOROS": "KM",
+    "ST_KITTS_AND_NEVIS": "KN",
+    "NORTH_KOREA": "KP",
+    "SOUTH_KOREA": "KR",
+    "KUWAIT": "KW",
+    "CAYMAN_ISLANDS": "KY",
+    "KAZAKHSTAN": "KZ",
+    "LAOS": "LA",
+    "LEBANON": "LB",
+    "ST_LUCIA": "LC",
+    "LIECHTENSTEIN": "LI",
+    "SRI_LANKA": "LK",
+    "LIBERIA": "LR",
+    "LESOTHO": "LS",
+    "LITHUANIA": "LT",
+    "LUXEMBOURG": "LU",
+    "LATVIA": "LV",
+    "LIBYA": "LY",
+    "MOROCCO": "MA",
+    "MONACO": "MC",
+    "MOLDOVA": "MD",
+    "MONTENEGRO": "ME",
+    "ST_MARTIN": "MF",
+    "MADAGASCAR": "MG",
+    "MARSHALL_ISLANDS": "MH",
+    "NORTH_MACEDONIA": "MK",
+    "MALI": "ML",
+    "MYANMAR": "MM",
+    "MONGOLIA": "MN",
+    "MACAO": "MO",
+    "NORTHERN_MARIANA_ISLANDS": "MP",
+    "MARTINIQUE": "MQ",
+    "MAURITANIA": "MR",
+    "MONTSERRAT": "MS",
+    "MALTA": "MT",
+    "MAURITIUS": "MU",
+    "MALDIVES": "MV",
+    "MALAWI": "MW",
+    "MEXICO": "MX",
+    "MALAYSIA": "MY",
+    "MOZAMBIQUE": "MZ",
+    "NAMIBIA": "NA",
+    "NEW_CALEDONIA": "NC",
+    "NIGER": "NE",
+    "NORFOLK_ISLAND": "NF",
+    "NIGERIA": "NG",
+    "NICARAGUA": "NI",
+    "NETHERLANDS": "NL",
+    "NORWAY": "NO",
+    "NEPAL": "NP",
+    "NAURU": "NR",
+    "NIUE": "NU",
+    "NEW_ZEALAND": "NZ",
+    "OMAN": "OM",
+    "PANAMA": "PA",
+    "PERU": "PE",
+    "FRENCH_POLYNESIA": "PF",
+    "PAPUA_NEW_GUINEA": "PG",
+    "PHILIPPINES": "PH",
+    "PAKISTAN": "PK",
+    "POLAND": "PL",
+    "ST_PIERRE_AND_MIQUELON": "PM",
+    "PITCAIRN_ISLANDS": "PN",
+    "PUERTO_RICO": "PR",
+    "PALESTINIAN_TERRITORIES": "PS",
+    "PORTUGAL": "PT",
+    "PALAU": "PW",
+    "PARAGUAY": "PY",
+    "QATAR": "QA",
+    "REUNION": "RE",
+    "ROMANIA": "RO",
+    "SERBIA": "RS",
+    "RUSSIA": "RU",
+    "RWANDA": "RW",
+    "SAUDI_ARABIA": "SA",
+    "SOLOMON_ISLANDS": "SB",
+    "SEYCHELLES": "SC",
+    "SUDAN": "SD",
+    "SWEDEN": "SE",
+    "SINGAPORE": "SG",
+    "ST_HELENA": "SH",
+    "SLOVENIA": "SI",
+    "SVALBARD_AND_JAN_MAYEN": "SJ",
+    "SLOVAKIA": "SK",
+    "SIERRA_LEONE": "SL",
+    "SAN_MARINO": "SM",
+    "SENEGAL": "SN",
+    "SOMALIA": "SO",
+    "SURINAME": "SR",
+    "SAO_TOME_AND_PRINCIPE": "ST",
+    "EL_SALVADOR": "SV",
+    "SYRIA": "SY",
+    "ESWATINI": "SZ",
+    "TURKS_AND_CAICOS_ISLANDS": "TC",
+    "CHAD": "TD",
+    "FRENCH_SOUTHERN_TERRITORIES": "TF",
+    "TOGO": "TG",
+    "THAILAND": "TH",
+    "TAJIKISTAN": "TJ",
+    "TOKELAU": "TK",
+    "TIMOR_LESTE": "TL",
+    "TURKMENISTAN": "TM",
+    "TUNISIA": "TN",
+    "TONGA": "TO",
+    "TURKEY": "TR",
+    "TRINIDAD_AND_TOBAGO": "TT",
+    "TUVALU": "TV",
+    "TAIWAN": "TW",
+    "TANZANIA": "TZ",
+    "UKRAINE": "UA",
+    "UGANDA": "UG",
+    "US_OUTLYING_ISLANDS": "UM",
+    "UNITED_STATES": "US",
+    "URUGUAY": "UY",
+    "UZBEKISTAN": "UZ",
+    "VATICAN_CITY": "VA",
+    "ST_VINCENT_AND_GRENADINES": "VC",
+    "VENEZUELA": "VE",
+    "BRITISH_VIRGIN_ISLANDS": "VG",
+    "US_VIRGIN_ISLANDS": "VI",
+    "VIETNAM": "VN",
+    "VANUATU": "VU",
+    "WALLIS_AND_FUTUNA": "WF",
+    "SAMOA": "WS",
+    # XK is the de facto alpha-2 used by IANA, EU, and major orgs for
+    # Kosovo. Not officially assigned by ISO but universally recognized.
+    "KOSOVO": "XK",
+    # PALESTINE shares the ISO entity with PALESTINIAN_TERRITORIES; the
+    # latter owns "PS" in the reverse map. PALESTINE remains addressable
+    # only via display-name lookup.
+    "PALESTINE": None,
+    "YEMEN": "YE",
+    "MAYOTTE": "YT",
+    "SOUTH_AFRICA": "ZA",
+    "ZAMBIA": "ZM",
+    "ZIMBABWE": "ZW",
+    # Historical entities — no ISO 3166-1 alpha-2 (ISO 3166-3 has 4-letter
+    # codes for some, but mixing lengths breaks the LLM-facing pattern).
+    "BURMA": None,
+    "CZECHOSLOVAKIA": None,
+    "SERBIA_AND_MONTENEGRO": None,
+    "EAST_GERMANY": None,
+    "SOVIET_UNION": None,
+    "NORTH_VIETNAM": None,
+    "KOREA": None,
+    "SIAM": None,
+    "WEST_GERMANY": None,
+    "YUGOSLAVIA": None,
+    "FEDERAL_REPUBLIC_OF_YUGOSLAVIA": None,
+    "ZAIRE": None,
+}
+
+# Stamp iso_code onto each member at import. Done after the class
+# body so we can reference Country members by name.
+for _name, _iso in _COUNTRY_NAME_TO_ISO.items():
+    Country[_name].iso_code = _iso
+
+# Reverse lookup: ISO alpha-2 → Country. Built once at import; used by
+# Country.from_iso(). Collisions would silently drop earlier entries,
+# so we assert uniqueness to surface bugs at import time rather than
+# at LLM-output parse time.
+_COUNTRY_BY_ISO_CODE: dict[str, Country] = {}
+for _country in Country:
+    _code = _country.iso_code
+    if _code is None:
+        continue
+    if _code in _COUNTRY_BY_ISO_CODE:
+        raise RuntimeError(
+            f"Duplicate ISO code {_code!r} in Country: "
+            f"{_COUNTRY_BY_ISO_CODE[_code].name} and {_country.name}"
+        )
+    _COUNTRY_BY_ISO_CODE[_code] = _country
+
 
 _COUNTRY_ALIASES: dict[str, Country] = {
     "Antigua and Barbuda": Country.ANTIGUA_AND_BARBUDA,

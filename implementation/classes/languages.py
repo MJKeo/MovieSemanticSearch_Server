@@ -1,20 +1,43 @@
 """Language enum for movie audio languages."""
 
 from enum import Enum
+from typing import Optional
 from implementation.misc.helpers import normalize_string
 
+
 class Language(Enum):
-    """Enum of supported audio languages with stable numeric IDs."""
+    """Enum of supported audio languages with stable numeric IDs.
+
+    `iso_code` is ISO 639-1 (e.g. "en", "fr") when one exists. ISO 639-1
+    only covers ~180 languages; the long tail of regional / aboriginal /
+    sign / constructed languages in this enum has no 639-1 code and gets
+    `iso_code = None`. The LLM-facing metadata schema speaks ISO 639-1;
+    entries without a code are unreachable from that schema by design
+    (they cover <1% of real audio-language queries).
+    """
 
     language_id: int
     value: str
+    iso_code: Optional[str]
 
     def __new__(cls, language_id: int, value: str) -> "Language":
         """Create a Language enum member with an ID and display value."""
         obj = object.__new__(cls)
         obj._value_ = value
         obj.language_id = language_id
+        # iso_code is attached after the class body via _LANGUAGE_NAME_TO_ISO
+        # below; doing it via a side-table avoids touching every enum
+        # tuple line.
+        obj.iso_code = None
         return obj
+
+    @classmethod
+    def from_iso(cls, code: str) -> Optional["Language"]:
+        """Resolve an ISO 639-1 code (case-insensitive) to a Language
+        enum member. Returns None for unknown codes."""
+        if not code:
+            return None
+        return _LANGUAGE_BY_ISO_CODE.get(code.strip().lower())
 
     ABKHAZIAN = (1, "Abkhazian")
     ABORIGINAL = (2, "Aboriginal")
@@ -350,6 +373,193 @@ class Language(Enum):
     YORUBA = (332, "Yoruba")
     YUPIK = (333, "Yupik")
     ZULU = (334, "Zulu")
+
+
+# ISO 639-1 codes per Language member. Side-table to avoid touching the
+# 334 enum-tuple lines above. ISO 639-1 covers ~180 languages; the rest
+# (regional, aboriginal, sign, constructed, ancient, and stateless
+# varieties like Cantonese / Min Nan / Hakka that ISO collapses under
+# "zh") are mapped to None and remain reachable only via display-name
+# lookup. None entries are intentionally not exhaustively listed below
+# — `__new__` initializes iso_code=None, and only members with a valid
+# code appear in this dict.
+#
+# Notes on judgment calls:
+#   - GAELIC → "gd" (Scottish Gaelic); IRISH_GAELIC → "ga".
+#   - CENTRAL_KHMER → "km" (Khmer is the canonical 639-1).
+#   - IBO → "ig" (Igbo).
+#   - NDEBELE → "nd" (North Ndebele; the enum has only one Ndebele).
+#   - SAAMI → "se" (Northern Sami; default for the family).
+#   - TIGRIGNA → "ti" (Tigrinya).
+#   - TONGA_TONGA_ISLANDS → "to".
+#   - SERBO_CROATIAN → "sh" (deprecated 639-1 but still in IANA registry).
+#   - PASHTU → "ps".
+#   - PEUL / PULAR map to None to avoid colliding with FULAH on "ff".
+#   - MANDARIN / CANTONESE / HAKKA / MIN_NAN / HOKKIEN map to None;
+#     Chinese-family code "zh" belongs to CHINESE only.
+#   - DARI / FLEMISH map to None; their canonical 639-1 codes (fa, nl)
+#     are owned by PERSIAN / DUTCH respectively.
+_LANGUAGE_NAME_TO_ISO: dict[str, str] = {
+    "ABKHAZIAN": "ab",
+    "AFRIKAANS": "af",
+    "AKAN": "ak",
+    "ALBANIAN": "sq",
+    "AMHARIC": "am",
+    "ARABIC": "ar",
+    "ARAGONESE": "an",
+    "ARMENIAN": "hy",
+    "ASSAMESE": "as",
+    "AYMARA": "ay",
+    "AZERBAIJANI": "az",
+    "BAMBARA": "bm",
+    "BASHKIR": "ba",
+    "BASQUE": "eu",
+    "BELARUSIAN": "be",
+    "BENGALI": "bn",
+    "BOSNIAN": "bs",
+    "BRETON": "br",
+    "BULGARIAN": "bg",
+    "BURMESE": "my",
+    "CATALAN": "ca",
+    "CENTRAL_KHMER": "km",
+    "CHECHEN": "ce",
+    "CHINESE": "zh",
+    "CORNISH": "kw",
+    "CORSICAN": "co",
+    "CREE": "cr",
+    "CROATIAN": "hr",
+    "CZECH": "cs",
+    "DANISH": "da",
+    "DUTCH": "nl",
+    "DZONGKHA": "dz",
+    "ENGLISH": "en",
+    "ESPERANTO": "eo",
+    "ESTONIAN": "et",
+    "EWE": "ee",
+    "FAROESE": "fo",
+    "FINNISH": "fi",
+    "FRENCH": "fr",
+    "FULAH": "ff",
+    "GAELIC": "gd",
+    "GALICIAN": "gl",
+    "GEORGIAN": "ka",
+    "GERMAN": "de",
+    "GREEK": "el",
+    "GREENLANDIC": "kl",
+    "GUARANI": "gn",
+    "GUJARATI": "gu",
+    "HAITIAN": "ht",
+    "HAUSA": "ha",
+    "HEBREW": "he",
+    "HINDI": "hi",
+    "HUNGARIAN": "hu",
+    "IBO": "ig",
+    "ICELANDIC": "is",
+    "INDONESIAN": "id",
+    "INUKTITUT": "iu",
+    "INUPIAQ": "ik",
+    "IRISH_GAELIC": "ga",
+    "ITALIAN": "it",
+    "JAPANESE": "ja",
+    "KANNADA": "kn",
+    "KAZAKH": "kk",
+    "KIKUYU": "ki",
+    "KINYARWANDA": "rw",
+    "KIRUNDI": "rn",
+    "KOREAN": "ko",
+    "KURDISH": "ku",
+    "KYRGYZ": "ky",
+    "LAO": "lo",
+    "LATIN": "la",
+    "LATVIAN": "lv",
+    "LINGALA": "ln",
+    "LITHUANIAN": "lt",
+    "LUXEMBOURGISH": "lb",
+    "MACEDONIAN": "mk",
+    "MALAGASY": "mg",
+    "MALAY": "ms",
+    "MALAYALAM": "ml",
+    "MALTESE": "mt",
+    "MAORI": "mi",
+    "MARATHI": "mr",
+    "MARSHALLESE": "mh",
+    "MONGOLIAN": "mn",
+    "NAVAJO": "nv",
+    "NDEBELE": "nd",
+    "NEPALI": "ne",
+    "NORWEGIAN": "no",
+    "NYANJA": "ny",
+    "OCCITAN": "oc",
+    "OJIBWA": "oj",
+    "ORIYA": "or",
+    "PASHTU": "ps",
+    "PERSIAN": "fa",
+    "POLISH": "pl",
+    "PORTUGUESE": "pt",
+    "PUNJABI": "pa",
+    "QUECHUA": "qu",
+    "ROMANIAN": "ro",
+    "ROMANSH": "rm",
+    "RUSSIAN": "ru",
+    "SAAMI": "se",
+    "SAMOAN": "sm",
+    "SANSKRIT": "sa",
+    "SARDINIAN": "sc",
+    "SERBIAN": "sr",
+    "SERBO_CROATIAN": "sh",
+    "SHONA": "sn",
+    "SINDHI": "sd",
+    "SINHALA": "si",
+    "SLOVAK": "sk",
+    "SLOVENIAN": "sl",
+    "SOMALI": "so",
+    "SOTHO": "st",
+    "SPANISH": "es",
+    "SWAHILI": "sw",
+    "SWEDISH": "sv",
+    "TAGALOG": "tl",
+    "TAJIK": "tg",
+    "TAMIL": "ta",
+    "TATAR": "tt",
+    "TELUGU": "te",
+    "THAI": "th",
+    "TIBETAN": "bo",
+    "TIGRIGNA": "ti",
+    "TONGA_TONGA_ISLANDS": "to",
+    "TSONGA": "ts",
+    "TSWANA": "tn",
+    "TURKISH": "tr",
+    "TURKMEN": "tk",
+    "UKRAINIAN": "uk",
+    "URDU": "ur",
+    "UZBEK": "uz",
+    "VIETNAMESE": "vi",
+    "WELSH": "cy",
+    "WOLOF": "wo",
+    "XHOSA": "xh",
+    "YIDDISH": "yi",
+    "YORUBA": "yo",
+    "ZULU": "zu",
+}
+
+# Stamp iso_code onto each member at import.
+for _name, _iso in _LANGUAGE_NAME_TO_ISO.items():
+    Language[_name].iso_code = _iso
+
+# Reverse lookup: ISO 639-1 → Language. Asserts uniqueness so collisions
+# surface at import time rather than silently shadowing earlier members.
+_LANGUAGE_BY_ISO_CODE: dict[str, Language] = {}
+for _language in Language:
+    _code = _language.iso_code
+    if _code is None:
+        continue
+    if _code in _LANGUAGE_BY_ISO_CODE:
+        raise RuntimeError(
+            f"Duplicate ISO code {_code!r} in Language: "
+            f"{_LANGUAGE_BY_ISO_CODE[_code].name} and {_language.name}"
+        )
+    _LANGUAGE_BY_ISO_CODE[_code] = _language
+
 
 LANGUAGE_BY_NORMALIZED_NAME: dict[str, Language] = {
     normalize_string(language.value): language

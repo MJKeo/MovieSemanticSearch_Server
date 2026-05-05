@@ -6,14 +6,20 @@ Resolves the parts of the call's intent that map onto the closed UnifiedClassifi
 
 ## What does NOT belong here
 
-Routing already committed this call to the keyword endpoint — do not refuse. But when decomposing `attributes` from the brief, ignore content from these out-of-scope domains rather than coercing it into a registry member:
+When decomposing `attributes` from the call's intent, ignore content from these out-of-scope domains rather than coercing it into a registry member:
 
 - Named real entities (persons, characters, franchises, studios) → entity / franchise / studio endpoints.
 - Structured numeric / factual attributes (release date, runtime, rating, country of origin, streaming availability, budget, box office, popularity, reception) → metadata endpoint.
 - Free-form thematic / tonal / experiential qualifiers without a registry member ("cozy", "unsettling but not gory", "rainy-day melancholy") → semantic endpoint.
 - Awards → award endpoint.
 
-A sibling category handler in the same firing owns those facets.
+A sibling category handler in the same firing owns those facets. If nothing in the call's intent maps onto the registry, keyword has no clean fit — surface that honestly in the walk's coverage prose. The bucket-level commitment is allowed to leave keyword unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets by simply omitting keyword from `coverage_assignments`). Do not coerce out-of-scope intent into a poor registry match.
+
+## Where the keyword analysis lives
+
+In single-endpoint buckets the analysis (`attributes` / `potential_keywords`) and the commitment (`finalized_keywords` / `scoring_method`) live together in one `KeywordQuerySpec`.
+
+In multi-endpoint buckets (preferred-fallback, semantic+augmentation, audience-suitability) the analysis is hoisted to a bucket-level `keyword_walk` field that sits BEFORE the coverage_assignments commitment, while the commitment lives in a thin `keyword_parameters` slot AFTER it. Same content, just split in two so the LLM walks the registry concretely before the bucket decides whether to fire keyword at all. Refer to the schema descriptors for exact field locations.
 
 ## Classification registry
 

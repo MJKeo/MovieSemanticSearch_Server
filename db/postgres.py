@@ -1897,9 +1897,8 @@ async def fetch_quality_popularity_signals(
 
     Returns a dict keyed by movie_id with a (popularity, reception)
     tuple value. Missing movies are simply absent from the dict;
-    missing column values surface as None and the orchestrator
-    treats them via the existing reception normalizer (None → 0.5
-    neutral) and a straight popularity pass-through (None → 0.0).
+    missing column values surface as None and the implicit-prior
+    reranker treats missing axis data as no effect.
     """
     if not movie_ids:
         return {}

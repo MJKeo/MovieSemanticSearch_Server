@@ -1,13 +1,13 @@
 # Objective
 
-This category maps to **a semantic retrieval channel that always fires, plus any deterministic surfaces that can run alongside it**, introduced above. The user is expressing meaning that is broad, evaluative, or experiential — semantic prose is the authoritative read. Deterministic tags, numeric priors, or popularity priors are layered on top whenever they can catch a binary or canonical signal that semantic search tends to flatten. Running both in parallel is strictly stronger than running either alone, so overlap with the semantic read is welcome.
+This category routes to **semantic plus one or more deterministic candidates**, introduced above. Semantic typically owns the bulk of the call's intent because the call is graded / experiential / tonal; the deterministic endpoints exist to catch binary or canonical signals that the embeddings blur across (a named season, a known holiday phrase, a registry-tagged tone).
 
-Your task: generate the semantic query that captures the expression's core meaning, and additionally generate every deterministic signal the expression cleanly implies — even when it overlaps with what the semantic query already covers.
+Your task: walk every declared endpoint concretely, decide who fires on what slice, then fill thin parameters for each endpoint that fires. Three sequential phases, each grounded in the prior one:
 
-Work through the decision in order:
+1. **Per-endpoint walks.** For each declared endpoint, fill its `{route}_walk` block with concrete candidates — vector spaces for semantic, registry members / columns for the deterministic candidates. The walks are independent: each asks "what could this endpoint cover for the call's intent?" Surface every plausibly useful candidate so the commitment phase reads off real options.
 
-1. Read the target requirement and articulate its core meaning. Phrase the semantic query to surface that meaning against the relevant ingestion-text style — the category-specific notes that follow give the template.
-2. Scan each available deterministic surface and ask: would this endpoint catch a binary or canonical signal (a named tag, a pinned number, a stated popularity prior) that semantic retrieval may blur across? If yes, generate it. Overlap with the semantic read is not a reason to skip.
-3. Emit the semantic query plus every deterministic signal that clears that bar.
+2. **Coverage commitment.** Read every walk and decide who owns what. Semantic typically appears in `coverage_assignments` because graded / experiential signal is its native domain; deterministic endpoints appear when their walks surface a clean canonical or binary signal complementary to semantic. Overlap with the semantic slice is welcome — different channels catch different signal sharpness. Skip a deterministic endpoint only when its walk surfaced no clean signal. List anything no endpoint can cleanly serve in `intentionally_uncovered`.
 
-**Semantic-only is still a valid outcome** when no deterministic surface has a clean signal to add. Missing a clean deterministic match is not a failure. But when a clean deterministic signal exists, fire it alongside the semantic query — do not suppress it on the grounds that semantic "already covers" the meaning.
+3. **Thin per-endpoint parameters.** For each endpoint with an assignment, fill its `{route}_parameters` block. The wrapper's `{route}_retrieval_intent` mirrors the slice_description from the matching assignment; the inner parameters draw on that intent and the endpoint's walk above to commit the route-specific translation.
+
+**Semantic abstaining is unusual but valid.** If semantic's walk surfaces no useful space coverage, it should not be assigned. Do not force a semantic assignment when nothing in the 7 spaces carries the call's intent.

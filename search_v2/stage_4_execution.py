@@ -139,12 +139,16 @@ class ScoreBreakdown:
     the polarity sign already applied (negative traits use sign = -1),
     so the value is ≤ 0.
 
-    By construction `positive_total + negative_total` equals the
-    score paired with the same movie_id in `BranchRankedResults.ranked`.
+    Before implicit-prior post-reranking, `positive_total +
+    negative_total` equals the score paired with the same movie_id in
+    `BranchRankedResults.ranked`. When the full orchestrator applies
+    implicit priors, `implicit_prior_boost` records the multiplicative
+    boost fraction applied on top of that base relevance score.
     """
 
     positive_total: float
     negative_total: float
+    implicit_prior_boost: float = 0.0
 
 
 @dataclass

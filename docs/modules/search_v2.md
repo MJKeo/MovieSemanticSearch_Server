@@ -49,14 +49,17 @@ Step 3 (step_3.py): Trait decomposition (per-trait LLM call)
 Full pipeline orchestrator (full_pipeline_orchestrator.py):
   → run_full_pipeline(query, *, skip_bypass_steps_0_1=False)
   → Steps 0 + 1 in parallel (or skipped); Step 2 per branch;
-    Step 3 per trait; per-CategoryCall handler-LLM fired immediately
-    as each Step 3 returns (does not wait on sibling traits)
+    implicit-prior policy per branch runs from Step-2 committed traits
+    in parallel with Step 3 per trait; per-CategoryCall handler-LLM
+    fired immediately as each Step 3 returns (does not wait on sibling
+    traits)
   → 25s timeout + 1 retry on every individual LLM call
   → After Step 3 + handler-LLM, applies the reranker-only candidate
     fallback (promotes tier-1+ rerankers or emits a NEUTRAL_SEED spec)
     and the default shorts-exclusion auxiliary, then calls
     stage_4_execution.execute_branches to actually fire endpoints and
-    rank candidates per branch.
+    rank candidates per branch. The full orchestrator then applies the
+    implicit-prior multiplicative post-rerank when active.
   → Returns FullPipelineResult: per-branch trait/category/endpoint
     specs (`branches`) + auxiliary specs + per-branch ranked candidate
     lists (`branch_results: list[BranchRankedResults]`).
@@ -105,6 +108,31 @@ supporting=0.6 / diminished=0.35`. Rarity tiers (corpus N≈150K):
 
 A cand-gen trait contributes 0 to candidates it didn't generate
 (opportunity cost, §8) — missing positive ≠ active subtraction.
+
+### Implicit-prior post-rerank
+
+`search_v2.implicit_expectations` runs after Step 2 and consumes
+`QueryAnalysis.intent_exploration` plus the committed Step-2 traits.
+It does not rediscover criteria from the raw query. Its output records
+per-trait prior-axis evidence, an explicit ordering-axis analysis,
+query specificity / prior room, and final quality/popularity
+`PriorDecision`s.
+
+The full orchestrator applies active priors after Stage 4 base scoring:
+
+```
+boost = quality_cap * quality_signal + popularity_cap * popularity_signal
+prior_base = positive_total if positive_total > 0 else 1.0
+boosted_score = base_score + prior_base * boost
+```
+
+Boost caps are `quality: 0 / 0.025 / 0.06 / 0.10` and
+`popularity: 0 / 0.05 / 0.12 / 0.20` for
+`none / light / normal / strong`. Inverse directions use
+`1 - normalized_signal`. Missing reception or popularity data has no
+effect on the boost. The neutral `prior_base = 1.0` fallback lets
+pure-negative queries (for example, "not scary") still use implicit
+priors for ordering without magnifying negative penalties.
 
 ### Negative-trait scoring (gate × noisy-OR, three-bin)
 

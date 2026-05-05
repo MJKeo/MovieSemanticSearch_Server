@@ -1,6 +1,38 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Walk-then-commit refactor for multi-endpoint handler buckets
+Files: schemas/keyword_translation.py, schemas/semantic_translation.py, schemas/metadata_translation.py, search_v2/endpoint_fetching/category_handlers/endpoint_registry.py, search_v2/endpoint_fetching/category_handlers/schema_factories.py, search_v2/endpoint_fetching/category_handlers/prompts/buckets/*.md (6 files), search_v2/endpoint_fetching/category_handlers/prompts/endpoints/{keyword,semantic,metadata}.md
+
+### Intent
+Fix a structural failure mode in multi-endpoint handler buckets (5: PREFERRED_REPRESENTATION_FALLBACK, 6: SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT, 8: AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST). Pydantic structured-output emits fields top-down; the prior schemas put prose coverage reasoning (`preferred_coverage_exploration`, `preferred_intent`, `augmentation_opportunities`, `coverage_opportunities`) BEFORE the registry/space/column-grounded analysis layer that lived inside each endpoint's subintent params. The LLM committed abstractly, then discovered contradictions in the grounded walk too late. Concrete failure: `clown horror movies` → `Element / motif presence` shipped `keyword_parameters.finalized_keywords=["COMEDY"]` while its own `potential_keywords` coverage prose said "Not covered." Inverted the order and split each multi-endpoint subintent param into a bucket-level grounded walk + thin commitment-only params; commitment now sits between them, grounded in the walks above.
+
+### Key Decisions
+- **Three-phase shape**: per-endpoint `{route}_walk` (analysis lifted from old subintent params) → `coverage_assignments: list[CoverageAssignment]` + `intentionally_uncovered: list[str]` → per-endpoint Optional `{route}_parameters` (thin commitment). One `_build_walk_then_commit` factory replaces `_build_preferred_fallback`, `_build_semantic_with_augmentation`, `_build_suitability_combo`. CoverageAssignment is a per-category dynamic class with `endpoint_kind: Literal[*declared_route_values]` (same dynamic-Literal pattern as the prior augmentation/coverage opportunity models).
+- **Walk classes**: `KeywordWalk` (attributes + potential_keywords), `SemanticWalk` (aspects + space_candidates), `MetadataWalk` (column_candidates only). Registered in new `ROUTE_TO_WALK` dict in endpoint_registry; the factory raises if a multi-endpoint bucket declares a route with no walk class.
+- **Thin subintent params**: `KeywordQuerySpecSubintent` keeps `finalized_keywords` + `scoring_method`; `SemanticParametersSubintent` keeps `role_exploration` + `role` + `space_queries` (role stays paired with role_exploration because they're semantic-internal commitment, not space-grounded analysis); `MetadataTranslationOutputSubintent` keeps `scoring_method_reasoning` + `column_spec` + `scoring_method`. `search_picture` is dropped from metadata's subintent shape — `coverage_assignments[kind=metadata].slice_description` plus the wrapper's `metadata_retrieval_intent` already supply the holistic restatement.
+- **Class names kept**: `KeywordEndpointSubintentParameters` etc. retain their identifiers (now thinned). Avoids cascading renames across `endpoint_registry`, `endpoint_executors._WRAPPER_TO_ROUTE`, `run_search.py`, `run_search_json.py`. File-level docstrings updated to describe the walk-vs-thin contract.
+- **`{route}_retrieval_intent` stays on the per-endpoint wrapper** (not lifted to bucket level). Per user direction: it represents the slice this endpoint owns, written off `coverage_assignments[endpoint_kind={route}].slice_description`. Walks read off the upstream `CategoryCall.retrieval_intent` from the user-message XML, not from any schema field.
+- **`min_length=1` on inner thin-spec lists kept**: if commitment says don't fire, the thin params are null and never instantiated, so the constraint never bites. Forms a clean "if firing, must commit grounded" invariant.
+- Inner-class collapse: `AttributeAnalysisSubintent` and `SpaceCandidateSubintent` deleted (replaced by reuse of shared `AttributeAnalysis` and `SpaceCandidate` whose descriptors already reference the user-message inputs the walks read). `WeightedSpaceQuerySubintent` retained because its descriptors still differ (reference `semantic_walk.space_candidates` vs `space_candidates` sibling).
+- ColumnCandidate descriptor language softened from "search_picture" to "the call's intent" so the same class works in both single-endpoint (where search_picture is the prior sibling) and multi-endpoint walk (where the call's retrieval_intent plays that role) contexts. No content drift.
+
+### Planning Context
+Plan file at `~/.claude/plans/ok-this-all-makes-humming-hanrahan.md`. User clarifications during planning: (a) test_schema_factories.py was already broken at import (references nonexistent CarverSemanticEndpointSubintentParameters / QualifierSemanticEndpointSubintentParameters) — left broken, flagged for separate pass; (b) per-category prompt files in additional_objective_notes/ and few_shot_examples/ untouched per user — they don't carry old-schema JSON, output shape is conveyed by descriptors on the schemas themselves; (c) keep `{route}_retrieval_intent` on the wrapper as the slice commitment record, not at the bucket level.
+
+### Verification
+End-to-end test on the failing case: `python -m search_v2.run_query_generation "clown horror movies"` → "clown" trait → `Element / motif presence` (PREFERRED_REPRESENTATION_FALLBACK):
+- Pre-refactor: `keyword_parameters.finalized_keywords=["COMEDY"]` despite coverage prose saying "Not covered."
+- Post-refactor: `coverage_assignments=[]`, `intentionally_uncovered=["clowns as a notable element"]`, `keyword_parameters=null`, `semantic_parameters=null`. Handler abstains cleanly.
+
+Buckets 3, 4 (single-endpoint), 7 (CHARACTER_FRANCHISE_FANOUT), and the no-LLM buckets verified to still build their schemas correctly. All 40 OUTPUT_SCHEMAS load at module import.
+
+### Testing Notes
+- `unit_tests/test_schema_factories.py` already broken at import pre-refactor (stale CarverSemantic/QualifierSemantic imports). Left broken per user direction; needs separate update pass.
+- Worth covering eventually: a Bucket-5 case where the keyword walk surfaces a clean fit (commitment fires keyword), a Bucket-6 case where semantic + a deterministic both fire (overlap is the design), a Bucket-8 case where multiple endpoints catch distinct facets (hard ceiling on metadata + tag set on keyword + intensity on semantic).
+- The walks now have `min_length=1` constraints on their internal candidate lists — same as before, but at a different schema position. If the LLM tries to abstain at the WALK level (rather than at the commitment level), validation fails. Watch for that pattern in production usage; the design intent is "always walk, abstain only at commitment."
+
+
 ## Stage-4 execution + ranking layer
 Files: search_v2/stage_4_execution.py, search_v2/full_pipeline_orchestrator.py, search_v2/endpoint_fetching/category_handlers/generated_endpoint_spec.py
 
@@ -966,3 +998,79 @@ Design worked through in conversation with user covering both failure modes and 
 
 ### Testing Notes
 Tests under unit_tests/ are out of scope per project boundary. Verification path: replay "joker movies not joaquin phoenix" and a "not scary" query through `run_full_pipeline` in test_v3_endpoints.ipynb and confirm: (a) Ledger/Romero/Nicholson Jokers receive ≈0 violation while Phoenix Joker receives ≈1.0; (b) thriller-genre scary movies now receive non-zero violation. Single-G degenerate cases ("not Christopher Nolan", "not from 2024") should produce identical scores to before since gate alone returns the G_a value. `python -m py_compile` passes; no new imports beyond what was already in scope.
+
+## Code-review follow-ups on negative-trait scoring fix
+Files: search_v2/stage_4_execution.py, docs/modules/search_v2.md
+
+Why: Code review surfaced two findings — both fixed in this changeset.
+
+Approach:
+1. Removed `CategoryName.CHRONOLOGICAL` from `_AUTHORITATIVE_NEGATION_CATEGORIES` (dead-code entry — `determine_operation_type` returns POOL_RERANKER for CHRONOLOGICAL+METADATA+POSITIVE, so the partition logic in `_score_negative_trait` never reaches the authoritative-set check for chronological calls). Replaced with an inline NOTE block explaining why CHRONOLOGICAL is intentionally excluded so a future reader does not re-add it. Fuzzy treatment is also semantically right for approximate phrasings ("old", "recent", "from the 80s").
+2. Updated three stale sections of `docs/modules/search_v2.md` describing the old `(∏ G) × mean(R)` multiplicative-gated formula: rewrote the "Negative-trait scoring" section (renamed to "gate × noisy-OR, three-bin"), updated the `stage_4_execution.py` table description, and revised the gotcha bullet about `determine_operation_type` to mention the authoritative-vs-evidential split. Per `.claude/rules/docs-awareness.md`, module docs may be autonomously updated when stale.
+
+Design context: Both findings came from /review-code; user accepted both ("Update all problems") and dismissed the third finding (magnitude inflation across traits with different decomposition depth) as not a concern. The dismissal preserves the deliberate "weak signals reinforce" property of noisy-OR — accepted that more decomposition produces higher trait magnitude.
+
+Testing notes: `python -m py_compile` passes on stage_4_execution.py; grep confirms no remaining "multiplicative" / "mean(R)" / "gated multiplication" references in the changed files. Verification path described in the previous DIFF_CONTEXT entry still applies (notebook replay of "joker movies not joaquin phoenix" + "not scary").
+
+## Surface positive/negative score breakdown in Stage-4 ranked output
+Files: search_v2/stage_4_execution.py, run_orchestrator.py
+
+Why: User wanted to see *why* a candidate ranked where it did without re-deriving from raw trait scores — the §9 final score is one number, but its provenance (how much positive contribution from cand-gen + positive rerankers vs. how much negative subtraction from negative rerankers) is the diagnostic signal that lets the user judge whether a movie should be there. Without the breakdown, debugging means walking the whole pipeline by hand.
+
+Approach: Added `ScoreBreakdown` dataclass (`positive_total`, `negative_total`) and `score_breakdowns: dict[int, ScoreBreakdown]` field on `BranchRankedResults` parallel to `ranked`. By construction `positive_total + negative_total == score`. `_finalize_scores` was already iterating per-movie summing weighted contributions; split the accumulator into positive_total / negative_total based on `sign >= 0.0` (cand-gen contributions and positive-polarity pure-reranker contributions go positive; negative-polarity pure-reranker contributions go negative with sign already applied). Return type changed to `tuple[ranked_list, breakdowns_dict]`. `_run_branch` unpacks both and threads `score_breakdowns` into the `BranchRankedResults` it returns. `run_orchestrator.py` per-rank line now prints `[pos=±X.XXXX neg=±X.XXXX]` alongside `score=±X.XXXX`.
+
+Design context: No other consumers of `_finalize_scores` or `BranchRankedResults.ranked` exist in the repo — return-shape change is safe. The breakdown computation is in-line in `_finalize_scores` rather than re-derived later because the same per-movie loop already had the necessary state (weights, signs, contributions) — doing it there is free; recomputing would re-walk every cand-gen execution and every pure-reranker score map.
+
+Testing notes: `python -m py_compile` passes on both files. Smoke test verified `BranchRankedResults` and `ScoreBreakdown` instantiate with sane defaults. Live verification via `python run_orchestrator.py "<query>"` will surface the new bracket alongside each ranked title.
+
+## ISO codes for Country/Language in metadata LLM schema
+Files: implementation/classes/countries.py, implementation/classes/languages.py, schemas/metadata_translation.py, search_v2/endpoint_fetching/metadata_query_execution.py
+
+Why: `TARGET_AUDIENCE` (and other Bucket-8 categories like `SENSITIVE_CONTENT`) was hitting OpenAI's 1000-enum-values-per-schema cap for structured outputs. Flat enum count was ~1193; the 334-member `Language` and 262-member `Country` enums (referenced as Pydantic field types in `AudioLanguageTranslation` / `CountryOfOriginTranslation`) accounted for 596 of those. Combined endpoint-trio buckets (KEYWORD + METADATA + SEMANTIC) compounded the cost.
+
+Approach: Replaced the LLM-facing field types with `conlist(str, ...)` validated against ISO codes (3166-1 alpha-2 for countries, 639-1 for languages). Codes were added to the existing enums via a side-table dict (`_COUNTRY_NAME_TO_ISO`, `_LANGUAGE_NAME_TO_ISO`) stamped onto each member at module import — avoids editing the 596 enum-tuple lines. New `Country.from_iso()` / `Language.from_iso()` classmethods do reverse lookup (case-insensitive). Pydantic `field_validator(mode="after")` on the schema validates each code resolves and canonicalizes casing; unknown codes raise ValidationError, surfacing as a parse failure on the LLM-output retry path. Executor handlers in `metadata_query_execution.py` switched from `Language(v).language_id` to `Language.from_iso(v).language_id` (1-line change per handler). Long-tail entries without ISO codes (retired countries: Yugoslavia/USSR/Czechoslovakia/etc.; ~150 regional/sign/constructed languages) are unreachable via the LLM schema by design — they're <1% of real queries and remain accessible via the unchanged `country_from_string` / display-name lookup paths for non-LLM callers.
+
+Design context: ISO 639-1 / 3166-1 alpha-2 chosen because LLM accuracy on these codes is essentially perfect (universal training-data familiarity), and uniform 2-letter casing gives a clean `^[a-z]{2}$` / `^[A-Z]{2}$` format. Mixed-length fallback to 639-3 / 3166-3 was rejected because the schema pattern would have to allow either length, degrading LLM accuracy. PALESTINE collides with PALESTINIAN_TERRITORIES on "PS" — the latter owns the code, the former intentionally gets `iso_code = None` (collision asserted at import). Kosovo uses "XK" (de facto IANA/EU code, not officially assigned by ISO).
+
+Verification: TARGET_AUDIENCE flat enum count dropped 1193 → 597; SENSITIVE_CONTENT identical; every other category schema verified under 1000. Round-trip checks confirm ISO codes parse to correct enum members, case-insensitive normalization works, unknown / display-name inputs ("English", "USA") raise ValidationError, executor handlers produce the expected language_id / country_id arrays. JSON schema for both sub-objects is now enum-free.
+
+Testing notes: This change only narrows the LLM-facing input shape. BaseMovie / DB / ingestion paths still use the full enum unchanged, so no migration needed. Existing test files (`test_languages.py`, `test_metadata_scoring.py`, `test_create_metadata_score.py`) use enum members directly and are unaffected by the schema-side change; not modified per test-boundaries rule.
+
+### Follow-up refinements after code review
+Files: schemas/metadata_translation.py, docs/modules/classes.md
+
+Applied four review suggestions on the same change before commit. (1) Promoted the per-item format constraint into the JSON schema via `Annotated[str, StringConstraints(pattern=...)]` — `_LangISOCode` and `_CountryISOCode` ship `^[a-z]{2}$` / `^[A-Z]{2}$` patterns to OpenAI so the structured-output decoder is constrained to canonical-case 2-letter codes upstream of any Python-side validator. Tried `to_lower=True` / `to_upper=True` first; pydantic 2.12 evaluated `pattern` before case-conversion in this composition so the auto-conversion didn't actually run — dropped those knobs and kept strict canonical-case patterns as the cleaner LLM contract. (2) Extracted the duplicated validator body into a module-level `_validate_iso_codes(codes, from_iso, kind)` helper; each field validator is now a one-liner. (3) Tightened the `audio_language` description from "pick the closest covered language or omit the column" to "omit the column entirely — do not substitute a near-match" since audio language is an explicit user constraint where a wrong match is worse than no match (left the country description's closest-fallback wording alone — for retired entities like Yugoslavia, falling back to a current country is genuinely useful). (4) Updated `docs/modules/classes.md` to describe `iso_code`, `from_iso()`, and the LLM-schema contract on both `Country` and `Language`; corrected stale path reference (`search_v2/stage_3/...` → `search_v2/endpoint_fetching/...`).
+
+Verification: TARGET_AUDIENCE flat enum count unchanged at 597; JSON schema items now carry `pattern` upstream of validation; pattern correctly rejects wrong-case and 3+ letter input; validator still rejects unknown 2-letter codes with helpful messages.
+
+## Redesign implicit-prior policy output and orchestration
+Files: schemas/implicit_expectations.py, search_v2/implicit_expectations.py, search_v2/full_pipeline_orchestrator.py
+
+Why: The old implicit-expectations step was boolean (`should_apply_quality_prior` / `should_apply_notability_prior`) and still targeted a stale Step-2 fragment schema. The final search design needs direction + strength for both quality and popularity priors, reasoned from Step 2's committed trait layer rather than rediscovering criteria from the raw query.
+Approach: Replaced the schema with observations-first policy output: one `ExplicitPriorSignal` per committed Step-2 trait, then whole-query ordering-axis analysis, query-specificity/prior-room analysis, then final `PriorDecision` records for quality and popularity. Rewrote `search_v2/implicit_expectations.py` to serialize `QueryAnalysis.intent_exploration` plus committed `Trait` fields (`surface_text`, `contextualized_phrase`, `evaluative_intent`, `qualifier_relation`, `anchor_reference`, `polarity`, `commitment`, `commitment_evidence`) and to use generalized guidance instead of examples. Hooked full-pipeline branch execution so the implicit-prior policy call starts immediately after Step 2 and runs in parallel with per-trait Step 3 decomposition / category-handler endpoint generation. Each `Step2BranchResult` now carries `implicit_expectations` or `implicit_expectations_error`; failures soft-fail per branch.
+Design context: Raw query is retained only for provenance and ambiguity resolution. Step 2 traits are treated as the closed set of explicit user intent, which avoids re-litigating atom splits/merges and lets commitment density drive `prior_room`.
+Testing notes: Did not read, edit, or run unit tests per boundary. `uv run python -m py_compile schemas/implicit_expectations.py search_v2/implicit_expectations.py search_v2/full_pipeline_orchestrator.py` passed.
+
+## Apply implicit-prior multiplicative rerank and diagnostics
+Files: search_v2/full_pipeline_orchestrator.py, search_v2/stage_4_execution.py, run_orchestrator.py
+
+Why: The implicit-prior policy now emits strength/direction decisions, but Stage 4 output was still only base relevance. The final search needs quality/popularity priors to affect ranking when active, and the diagnostic runner needs to show both the policy reasoning and per-movie boost.
+Approach: Added fixed boost tables in the full orchestrator (`quality: none/light/normal/strong = 0/2.5/6/10%`, `popularity = 0/5/12/20%`). After `execute_branches`, the orchestrator bulk-fetches `(popularity_score, reception_score)` for each branch's ranked movie IDs and applies `boosted_score = base_score * (1 + quality_cap * quality_signal + popularity_cap * popularity_signal)`, with inverse directions using `1 - normalized_signal`. Missing reception is neutral 0.5; missing popularity is 0.0. The reranked list is resorted, and `ScoreBreakdown.implicit_prior_boost` records the boost fraction for diagnostics. `run_orchestrator.py` now prints the full implicit policy reasoning and renders ranked results as a table with final score, boost %, positive base contribution, and negative base contribution.
+Design context: This is a post-score rerank so implicit priors remain relevance-scaled tie/ordering pressure rather than additional trait scores. Popularity has exactly double the cap of quality at every active strength level.
+Testing notes: Did not run unit tests per boundary. `uv run python -m py_compile search_v2/full_pipeline_orchestrator.py search_v2/stage_4_execution.py run_orchestrator.py` passed. Import smoke for `search_v2.full_pipeline_orchestrator` and `run_orchestrator` passed. `git diff --check` passed for changed files.
+
+## Follow-up fixes from implicit-prior review
+Files: search_v2/full_pipeline_orchestrator.py, db/postgres.py, run_search.py, run_search_json.py, docs/modules/search_v2.md
+
+Why: Review found stale diagnostic consumers of the old boolean implicit-prior schema, missing popularity receiving max inverse boost, and stale module docs. User clarified missing data should have no effect and asked to defer the negative-base-score boost semantics for further design discussion.
+Approach: Changed `_quality_signal()` and `_popularity_signal()` so `None` returns 0.0 before any positive/inverse direction logic; updated the Postgres helper docstring to match. Replaced old `should_apply_*` display reads in `run_search.py` and `run_search_json.py` with `direction/strength` summaries from the new `PriorDecision` fields. Updated `docs/modules/search_v2.md` to describe the implicit-prior policy step, parallel orchestration, post-Stage-4 multiplicative rerank, boost caps, inverse-signal handling, and missing-data behavior.
+Design context: Did not alter how boosts interact with negative base scores; that remains an open design choice to decide deliberately.
+Testing notes: Did not run unit tests per boundary. `uv run python -m py_compile search_v2/full_pipeline_orchestrator.py db/postgres.py run_search.py run_search_json.py` passed. `git diff --check` passed for changed files.
+
+## Refine implicit-prior boost base for pure-negative queries
+Files: search_v2/full_pipeline_orchestrator.py, docs/modules/search_v2.md
+
+Why: Multiplying the full base score by `(1 + boost)` makes negative base scores more negative. Pure-negative queries such as "not scary" also need a neutral positive surface so quality/popularity can break ties among non-violators without magnifying penalties.
+Approach: Changed the post-rerank formula to `final = base_score + prior_base * boost`, where `prior_base = positive_total` when a candidate has positive contribution and `1.0` otherwise. This preserves positive relevance amplification for normal queries and gives pure-negative / no-positive-contribution cases a neutral prior surface. Updated module docs with the exact formula.
+Design context: Negative penalties remain additive and untouched. The implicit prior now adds only the lift amount rather than multiplying the full signed score.
+Testing notes: Did not run unit tests per boundary. Verification pending in the next compile/check pass.

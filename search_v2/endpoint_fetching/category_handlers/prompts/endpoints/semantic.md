@@ -80,7 +80,7 @@ The blob-handling failure mode — treating a multi-dimensional description as o
 
 ## Boundaries
 
-If one of these slips through to this endpoint, fold what fits into the closest space or omit — do not refuse.
+If one of these slips through to this endpoint, fold what fits into the closest space and surface the gap honestly — out-of-scope content stays out of the bodies.
 
 - **Canonical concept tags** (genre labels, source-material types, narrative-mechanic enum members like PLOT_TWIST) → keyword endpoint, not semantic.
 - **Numeric / scalar metadata** (year ranges, runtime, popularity, broad "critically acclaimed" without naming an aspect) → metadata endpoint. Specific praised/criticized aspects (cinematography, performances, third-act pacing) DO belong in semantic reception.
@@ -92,6 +92,12 @@ Bodies describe what to FIND, regardless of polarity. Negation is committed upst
 
 The viewer_experience `negations` sub-fields are NOT polarity — they describe the boundary the trait wants the *match* to respect (e.g. "tense, but not gory"), not whether to include or exclude.
 
-## Trust upstream routing
+## Where the semantic analysis lives
 
-The category handler that handed you this schema already decided semantic is the right endpoint for the trait. Do not refuse, swap categories, or reinterpret the trait. Produce the best multi-space query plan the schema allows from the inputs you were given.
+In single-endpoint buckets the analysis (`aspects` / `space_candidates`) and the commitment (`role_exploration` / `role` / `space_queries`) live together in one `SemanticParameters`.
+
+In multi-endpoint buckets (preferred-fallback, semantic+augmentation, audience-suitability) the analysis is hoisted to a bucket-level `semantic_walk` field that sits BEFORE the coverage_assignments commitment, while the commitment lives in a thin `semantic_parameters` slot AFTER it. `role_exploration` + `role` stay paired with the commitment because they're semantic-internal selectivity, not space-grounded analysis. Refer to the schema descriptors for exact field locations.
+
+## Routing trust and abstention
+
+Upstream routing chose semantic as a candidate for this category, but the walk above the commitment is allowed to surface "no clean fit" when the call's intent doesn't actually land in any of the 7 spaces. In single-endpoint buckets, signal that with `should_run_endpoint=false`. In multi-endpoint buckets, simply omit semantic from `coverage_assignments`. Do not coerce out-of-scope intent into a noisy multi-space body. When the walk DOES surface clean coverage, produce the best multi-space query plan the schema allows.

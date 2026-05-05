@@ -4,6 +4,28 @@
 # retrieval_intent + expressions, routed to the semantic endpoint)
 # into a multi-vector search plan over the 7 non-anchor Qdrant spaces.
 #
+# Two shapes coexist in this file:
+#
+# 1. SINGLE-ENDPOINT shape (SemanticParameters / SemanticEndpointParameters)
+#    — used by buckets 3/4 when semantic owns the entire call. Internal
+#    structure: role_exploration → role → aspects → space_candidates →
+#    space_queries. Untouched by the walk-then-commit refactor.
+#
+# 2. MULTI-ENDPOINT shape (SemanticWalk + SemanticParametersSubintent /
+#    SemanticEndpointSubintentParameters) — used by buckets 5/6/8.
+#    Split across two classes that live in different positions of the
+#    bucket schema:
+#       a. SemanticWalk — the space-grounded analysis layer
+#          (`aspects` / `space_candidates`). Lives at the bucket level,
+#          emitted BEFORE the coverage_assignments commitment so the
+#          LLM walks the spaces concretely before committing.
+#       b. SemanticParametersSubintent — thin commitment-only spec
+#          (`role_exploration` + `role` + `space_queries`). Lives inside
+#          the per-endpoint semantic_parameters slot, populated only
+#          when coverage_assignments delegates a slice to this endpoint.
+#    `role_exploration` + `role` stay paired in the thin spec because
+#    they are semantic-internal commitment, not space-grounded analysis.
+#
 # Single unified shape — SemanticParameters — is emitted regardless of
 # whether the trait wants carver-style (strict, equal-vote) or
 # qualifier-style (looser, weighted-sum) retrieval. The LLM commits the
@@ -557,92 +579,115 @@ class SemanticEndpointParameters(EndpointParameters):
 
 
 # ---------------------------------------------------------------------------
-# Subintent variants
+# Multi-endpoint walk + thin commitment
 #
-# Used when a single category routes to multiple endpoints and the
-# upstream responsibility-splitting reasoning has already carved out
-# this endpoint's slice of intent into a dedicated field. Same shape
-# as the regular SemanticParameters, but every descriptor that
-# originally read from `expressions` / `retrieval_intent` reads from
-# `semantic_retrieval_intent` (declared on the parent wrapper)
-# instead. Sub-types whose descriptors don't reference the raw inputs
+# Used when the semantic endpoint is one of several contending for the
+# call's intent (buckets 5/6/8). Two classes that live in DIFFERENT
+# positions of the bucket schema:
+#
+#   - SemanticWalk lives at the bucket level, emitted BEFORE the
+#     coverage_assignments commitment phase. It carries the
+#     space-grounded analysis of how the semantic endpoint could
+#     cover the call's retrieval_intent. Forces concrete vector-space
+#     awareness before any commitment.
+#   - SemanticParametersSubintent lives inside the per-endpoint
+#     semantic_parameters slot, populated only when coverage_assignments
+#     delegates a slice to this endpoint. Carries just the commitment
+#     layer — role_exploration + role + space_queries — plus the
+#     same-space-merge validator.
+#
+# `role_exploration` and `role` stay paired in the thin spec because
+# they are semantic-internal commitment (carver vs qualifier
+# selectivity, not space-grounded analysis).
+#
+# Sub-types whose descriptors don't reference the raw inputs
 # (SemanticSpaceEntry and its body types) are reused as-is.
 # ---------------------------------------------------------------------------
 
 
-class SpaceCandidateSubintent(BaseModel):
+class SemanticWalk(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    space: SemanticSpace = Field(
+    # Reuses the shared SpaceCandidate class: its descriptor reads
+    # `aspects` (sibling field on this walk) and `retrieval_intent`
+    # (in the user message). Both inputs are exactly what the walk
+    # needs to ground itself.
+    aspects: conlist(
+        constr(strip_whitespace=True, min_length=1), min_length=1
+    ) = Field(
         ...,
         description=(
-            "Vector space whose ingest-side vocabulary plausibly "
-            "carries >=1 entry from `aspects`. List only spaces with "
-            "substantive coverage; do not enumerate all 7 for "
-            "thoroughness."
-        ),
-    )
-    aspects_covered: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "Which entries from `aspects` THIS space owns, written "
-            "holistically. Compose interlocking aspects into one "
-            "phrase — 'darkly funny' is one signal this space "
-            "carries, not two; the embedding lands more accurately "
-            "when composed signals stay composed than when split and "
-            "re-intersected. Read `aspects` (primary: what needs "
-            "covering) and `semantic_retrieval_intent` (discriminative "
-            "anchor when an aspect could surface-match here but the "
-            "intent narrows it elsewhere).\n"
+            "Holistic decomposition of the call's intent into atoms — "
+            "distinct axes the trait calls for that the semantic "
+            "endpoint could potentially carry. Read the call's "
+            "`retrieval_intent` + `expressions` (in the user message). "
+            "NOT 1:1 with phrases in the intent: one phrase may carry "
+            "several aspects, several phrases may collapse into one. "
+            "Compose interlocking signals into one aspect when they "
+            "perform better embedded together — 'darkly funny' is one "
+            "aspect, not two; the dark and the funny are inseparable "
+            "in the felt experience and a combined cosine outperforms "
+            "two intersected ones.\n"
             "\n"
-            "TEST: if I removed this space from candidates, which "
-            "aspects orphan? Name them.\n"
-            "\n"
-            "NEVER:\n"
-            "- BACK-RATIONALIZE. 'Plausible' isn't coverage. Drop "
-            "the candidate or commit what's substantively owned.\n"
-            "- ENUMERATE 1:1 WITH ASPECTS. Composed aspects fold; "
-            "splitting them defeats the embedding."
-        ),
-    )
-    gap: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "What this space MISSES, defined relative to "
-            "`aspects_covered` above and the full `aspects` list — "
-            "specifically: entries in `aspects` that this space does "
-            "NOT pick up (and which other space catches them), or "
-            "sub-shades inside an aspect that this space's boundary "
-            "redirects elsewhere (occasion → watch_context; craft → "
-            "narrative_techniques; scalar reception → metadata, not "
-            "here). 'nothing' when `aspects_covered` is a clean fit "
-            "for everything in `aspects` this space could plausibly "
-            "carry, with no competing adjacency.\n"
+            "TEST per aspect: would removing it change which space "
+            "ends up carrying the trait? Yes → distinct aspect. "
+            "No → fold.\n"
             "\n"
             "NEVER:\n"
-            "- HEDGE WITHOUT NAMING. Either 'nothing' or specific gap "
-            "with destination — no middle.\n"
-            "- INVENT GAPS to look thorough.\n"
-            "- RESTATE `aspects_covered` IN NEGATIVE FORM. The gap "
-            "names what's NOT here, not a re-listing of what is."
+            "- COPY `retrieval_intent` PHRASING VERBATIM. Decompose "
+            "first.\n"
+            "- SPLIT A COMPOSED SIGNAL that performs better embedded "
+            "together.\n"
+            "- INVENT axes the call doesn't signal."
+        ),
+    )
+    space_candidates: conlist(SpaceCandidate, min_length=1) = Field(
+        ...,
+        description=(
+            "Per-space exploration of how the semantic endpoint could "
+            "cover the aspects above. One entry per space whose "
+            "ingest-side vocabulary plausibly carries >=1 entry from "
+            "`aspects`. Read `aspects` (primary: what needs covering) "
+            "and the call's `retrieval_intent` (tiebreaker on "
+            "near-adjacencies). Skip spaces with no real coverage — do "
+            "not enumerate all 7.\n"
+            "\n"
+            "This is the GROUNDED walk that precedes the bucket-level "
+            "coverage_assignments commitment. Surface every plausibly "
+            "useful space with concrete coverage prose so the "
+            "commitment phase can read off real candidates rather than "
+            "abstract optimism. An empty space_candidates with all "
+            "aspects orphaned is a valid signal that the semantic "
+            "endpoint has nothing useful — the commitment phase is "
+            "allowed to leave the call unowned by semantic.\n"
+            "\n"
+            "TEST per candidate: 'if I dropped this candidate, would "
+            "the commit step lose a real routing option?' Yes → keep. "
+            "No → drop.\n"
+            "\n"
+            "NEVER:\n"
+            "- DUPLICATE A SPACE across candidates.\n"
+            "- LIST A SPACE whose aspects_covered would be hand-waving "
+            "rather than substantively named."
         ),
     )
 
 
 _WEIGHT_DESC_SUBINTENT = (
-    "How load-bearing this space's signal is for the trait. Read "
+    "How load-bearing this space's signal is for the slice. Read "
     "`semantic_retrieval_intent` (primary source: framing of what "
     "the search positions against) IN LIGHT OF the matching "
-    "`SpaceCandidateSubintent.aspects_covered` for `query.space` "
-    "above (i.e., what this specific space actually carries) — "
-    "mechanical mapping; do not re-derive from `aspects` wholesale.\n"
+    "`SpaceCandidate.aspects_covered` from the bucket-level "
+    "`semantic_walk` above (i.e., what this specific space actually "
+    "carries) — mechanical mapping; do not re-derive from "
+    "`semantic_walk.aspects` wholesale.\n"
     "- CENTRAL: semantic_retrieval_intent treats the aspects this "
-    "space carries (per its SpaceCandidateSubintent.aspects_covered) "
-    "as defining whether the match holds. Missing this signal = "
-    "trait broken. Multiple central spaces are fine when several "
-    "axes are equally load-bearing.\n"
+    "space carries (per its SpaceCandidate.aspects_covered) as "
+    "defining whether the match holds. Missing this signal = slice "
+    "broken. Multiple central spaces are fine when several axes are "
+    "equally load-bearing.\n"
     "- SUPPORTING: the aspects this space carries round out the "
-    "experience but aren't load-bearing on their own. Trait stays "
+    "experience but aren't load-bearing on their own. Slice stays "
     "recognizable without it.\n"
     "\n"
     "ALWAYS POPULATED. Weights are read by the executor on the "
@@ -651,16 +696,10 @@ _WEIGHT_DESC_SUBINTENT = (
     "the data stays interpretable for evaluation and any future "
     "shape change.\n"
     "\n"
-    "All-supporting is acceptable for broad-and-balanced traits — a "
+    "All-supporting is acceptable for broad-and-balanced slices — a "
     "truthful signal, not a cop-out. If a space would be below "
     "SUPPORTING (barely-there), drop the entry instead of including "
-    "it.\n"
-    "\n"
-    "TEST: look up the `aspects_covered` on the "
-    "SpaceCandidateSubintent matching `query.space`. Does "
-    "`semantic_retrieval_intent` name those aspects as defining the "
-    "match, or as one contributor among several? Defining → CENTRAL. "
-    "Contributor → SUPPORTING."
+    "it."
 )
 
 
@@ -672,12 +711,12 @@ class WeightedSpaceQuerySubintent(BaseModel):
         ...,
         description=(
             "Space-targeted body — {space + content}. `space` MUST "
-            "appear in `space_candidates` (any commit to a space "
-            "absent from candidates means exploration was skipped). "
-            "`content` is authored against the rules on the matching "
-            "entry-wrapper class (PlotEventsEntry / "
-            "ViewerExperienceEntry / etc.) — fold every aspect this "
-            "space owns per its SpaceCandidateSubintent.aspects_covered "
+            "appear in the bucket-level `semantic_walk.space_candidates` "
+            "above (any commit to a space absent from candidates means "
+            "the walk was skipped). `content` is authored against the "
+            "rules on the matching entry-wrapper class (PlotEventsEntry "
+            "/ ViewerExperienceEntry / etc.) — fold every aspect this "
+            "space owns per the matching SpaceCandidate.aspects_covered "
             "into ONE body in the space's ingest-side vocabulary; do "
             "not split coverage across multiple "
             "WeightedSpaceQuerySubintent entries with the same "
@@ -690,8 +729,8 @@ _ROLE_EXPLORATION_DESC_SUBINTENT = (
     "Decide whether this call should retrieve carver-style (strict, "
     "equal-vote across spaces) or qualifier-style (looser, weighted "
     "sum). Read `semantic_retrieval_intent` — the slice of intent "
-    "assigned to this endpoint by the upstream responsibility-"
-    "splitting reasoning.\n"
+    "this endpoint was assigned by the bucket-level "
+    "coverage_assignments above.\n"
     "\n"
     "CARVER applies when the slice NAMES THE POPULATION whose "
     "semantic profile must match. Adding a marginal space would let "
@@ -710,65 +749,21 @@ _ROLE_EXPLORATION_DESC_SUBINTENT = (
     "NEVER:\n"
     "- HEDGE. Pick one; the choice steers selectivity and weighting "
     "below.\n"
-    "- RE-DERIVE FROM `aspects`. Aspects are downstream of the same "
-    "intent — they don't add signal for this decision."
-)
-
-
-_ASPECTS_DESC_SUBINTENT = (
-    "Holistic decomposition of the trait into atoms — distinct axes "
-    "the trait calls for. Read `semantic_retrieval_intent` (the "
-    "framing of what the search positions against, plus the "
-    "dimensions assigned to this endpoint). NOT 1:1 with phrases in "
-    "the intent: one phrase may carry several aspects, several "
-    "phrases may collapse into one. Compose interlocking signals "
-    "into one aspect when they perform better embedded together — "
-    "'darkly funny' is one aspect, not two; the dark and the funny "
-    "are inseparable in the felt experience and a combined cosine "
-    "outperforms two intersected ones.\n"
-    "\n"
-    "TEST per aspect: would removing it change which space ends up "
-    "carrying the trait? Yes → distinct aspect. No → fold.\n"
-    "\n"
-    "NEVER:\n"
-    "- COPY `semantic_retrieval_intent` PHRASING VERBATIM. Decompose "
-    "first.\n"
-    "- SPLIT A COMPOSED SIGNAL that performs better embedded "
-    "together.\n"
-    "- INVENT axes `semantic_retrieval_intent` doesn't signal."
-)
-
-
-_SPACE_CANDIDATES_DESC_SUBINTENT = (
-    "Per-space exploration. One entry per space whose ingest-side "
-    "vocabulary plausibly carries >=1 entry from `aspects`. Read "
-    "`aspects` (primary: what needs covering) and "
-    "`semantic_retrieval_intent` (tiebreaker on near-adjacencies). "
-    "Skip spaces with no real coverage — do not enumerate all 7.\n"
-    "\n"
-    "This list IS the permitted commit set: `space_queries` below "
-    "pulls exclusively from spaces that appear here.\n"
-    "\n"
-    "TEST per candidate: 'if I dropped this candidate, would the "
-    "commit step lose a real routing option?' Yes → keep. No → drop.\n"
-    "\n"
-    "NEVER:\n"
-    "- DUPLICATE A SPACE across candidates.\n"
-    "- LIST A SPACE whose aspects_covered would be hand-waving "
-    "rather than substantively named."
+    "- RE-DERIVE FROM `semantic_walk.aspects`. Aspects are downstream "
+    "of the same intent — they don't add signal for this decision."
 )
 
 
 _SPACE_QUERIES_DESC_SUBINTENT = (
     "Committed set of spaces to search, each carrying a weight. Pull "
-    "exclusively from `space_candidates` above. Selectivity bar "
-    "depends on `role`:\n"
+    "exclusively from the bucket-level `semantic_walk.space_candidates` "
+    "above. Selectivity bar depends on `role`:\n"
     "\n"
     "If role == CARVER: STRICT BAR. Carver execution sums elbow-"
     "decayed scores evenly across active spaces and divides by the "
     "count — every marginal space directly dilutes the gate. Typical "
     "1–2 spaces, occasionally 3. Commit only to spaces whose signal "
-    "is genuinely load-bearing for the trait. Per-entry `weight` is "
+    "is genuinely load-bearing for the slice. Per-entry `weight` is "
     "populated for honesty but ignored at execution.\n"
     "\n"
     "If role == QUALIFIER: LOOSER BAR. Qualifier execution takes a "
@@ -777,14 +772,14 @@ _SPACE_QUERIES_DESC_SUBINTENT = (
     "SUPPORTING.\n"
     "\n"
     "Fold every aspect a space owns (per its "
-    "SpaceCandidateSubintent.aspects_covered for that space) into "
-    "ONE entry's `query.content`; do not split coverage across "
+    "SpaceCandidate.aspects_covered for that space, in the walk above) "
+    "into ONE entry's `query.content`; do not split coverage across "
     "multiple entries with the same `query.space`. Same-space "
     "duplicates merge server-side rather than fail; emit cleanly "
     "when you can.\n"
     "\n"
     "NEVER:\n"
-    "- COMMIT to a space absent from `space_candidates`.\n"
+    "- COMMIT to a space absent from `semantic_walk.space_candidates`.\n"
     "- SPLIT one space's coverage across multiple entries.\n"
     "- IGNORE the role-keyed selectivity bar — `role` above dictates "
     "how strict to be."
@@ -792,37 +787,38 @@ _SPACE_QUERIES_DESC_SUBINTENT = (
 
 
 _SEMANTIC_RETRIEVAL_INTENT_DESC = (
-    "What this endpoint specifically needs to be responsible for "
-    "fetching. Read off the prior reasoning fields above that split "
-    "up responsibilities across endpoints, capturing only the slice "
-    "of intent assigned to the semantic endpoint (free-form thematic, "
-    "tonal, experiential, narrative-craft, production, or "
-    "specific-aspect reception qualifiers — anything that lands in "
-    "the 7 vector spaces rather than a structured column or a "
-    "registry member). Leave categorical classification, structured "
-    "attributes, named entities, and awards to their respective "
-    "endpoints. Every field on this endpoint's `parameters` reads "
-    "from this intent rather than from any other upstream input."
+    "The slice of the call's intent this endpoint owns, committed by "
+    "the bucket-level coverage_assignments above (the entry whose "
+    "endpoint_kind matches semantic). Restate the assigned "
+    "slice_description here so the commitment below has a single, "
+    "self-contained pointer.\n"
+    "\n"
+    "Scope: free-form thematic, tonal, experiential, narrative-craft, "
+    "production, or specific-aspect reception qualifiers — anything "
+    "that lands in the 7 vector spaces rather than a structured "
+    "column or a registry member. Leave categorical classification, "
+    "structured attributes, named entities, and awards to their "
+    "respective endpoints. Every field on this endpoint's "
+    "`parameters` reads from this intent (and from the upstream "
+    "semantic_walk) rather than from any other input."
 )
 
 
 class SemanticParametersSubintent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # `semantic_retrieval_intent` is declared on the parent
-    # SemanticEndpointSubintentParameters wrapper — it is generated
-    # before this spec and every field below reads from it.
+    # Thin commitment-only spec for multi-endpoint contexts. The
+    # analysis layer that previously lived here (`aspects` and
+    # `space_candidates`) has been lifted up to SemanticWalk at the
+    # bucket level — populated BEFORE coverage_assignments so the
+    # commitment phase is grounded in concrete space candidates.
+    # `role_exploration` + `role` stay paired here because they are
+    # semantic-internal commitment, not space-grounded analysis.
 
     role_exploration: constr(strip_whitespace=True, min_length=1) = Field(
         ..., description=_ROLE_EXPLORATION_DESC_SUBINTENT
     )
     role: SemanticRetrievalShape = Field(..., description=_ROLE_DESC)
-    aspects: conlist(
-        constr(strip_whitespace=True, min_length=1), min_length=1
-    ) = Field(..., description=_ASPECTS_DESC_SUBINTENT)
-    space_candidates: conlist(SpaceCandidateSubintent, min_length=1) = Field(
-        ..., description=_SPACE_CANDIDATES_DESC_SUBINTENT
-    )
     space_queries: conlist(WeightedSpaceQuerySubintent, min_length=1) = Field(
         ..., description=_SPACE_QUERIES_DESC_SUBINTENT
     )
@@ -877,11 +873,10 @@ class SemanticEndpointSubintentParameters(EndpointParameters):
     parameters: SemanticParametersSubintent = Field(
         ...,
         description=(
-            "Semantic payload, sourced from `semantic_retrieval_intent` "
-            "rather than from the raw call inputs. Decide retrieval "
-            "shape (carver vs qualifier) in `role_exploration` and "
-            "commit it in `role`, then decompose into aspects, explore "
-            "which spaces plausibly cover them, and commit the "
-            "weighted space set per the role-keyed selectivity bar."
+            "Semantic endpoint thin commitment payload. Reads off "
+            "`semantic_retrieval_intent` (the assigned slice) and "
+            "the bucket-level `semantic_walk.space_candidates` (the "
+            "grounded analysis above) to commit role + weighted "
+            "space set per the role-keyed selectivity bar."
         ),
     )

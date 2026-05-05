@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import time
-from typing import Iterable
 from xml.sax.saxutils import escape as xml_escape
 
 from implementation.llms.generic_methods import (
@@ -12,17 +11,17 @@ from implementation.llms.generic_methods import (
     generate_llm_response_async,
 )
 from schemas.implicit_expectations import ImplicitExpectationsResult
-from schemas.step_2 import CoverageEvidence, Modifier, RequirementFragment, Step2Response
+from schemas.step_2 import QueryAnalysis, Trait
 from search_v2.step_2 import run_step_2
 
 
 # Search V2 — Implicit Expectations
 #
-# Runs after Step 2 and decides whether the query still leaves any
-# implicit quality/notability gap that reranking should backfill.
-# The module is intentionally narrow: it does not rewrite the query,
-# route endpoints, or score movies. It only classifies the explicit
-# Step-2 fragments and reports whether implicit priors still matter.
+# Runs after Step 2 and decides how much implicit quality/popularity
+# prior pressure remains after the user's committed traits have spoken.
+# This module intentionally reasons from QueryAnalysis.traits rather
+# than re-deriving criteria from the raw query. The raw query is passed
+# only for provenance and exact-phrasing disambiguation.
 #
 # Usage:
 #   python -m search_v2.implicit_expectations "your query here"
@@ -34,32 +33,27 @@ from search_v2.step_2 import run_step_2
 
 
 _TASK_AND_OUTCOME = """\
-You are the implicit-expectations step in a movie search pipeline.
+You are the implicit-prior policy step in a movie search pipeline.
 
 You receive:
-- the raw user query
-- Step-2's fragment-by-fragment decomposition of that query
+- the raw user query for provenance only
+- Step 2's intent_exploration
+- Step 2's committed trait list
 
-Your job is to determine whether the system should still apply an
-implicit quality prior, an implicit notability prior, both, or neither.
+Your job is to determine the direction and strength of the implicit
+quality prior and the implicit popularity prior that remain AFTER the
+committed traits are respected.
 
-Work in this order:
-1. summarize the query's ranking intent at a high level
-2. classify each Step-2 fragment for whether it explicitly addresses
-   quality, notability, both, or neither
-3. analyze whether the query explicitly asks for some OTHER ordering
-   axis beyond quality/notability
-4. then make the final booleans
+The implicit priors represent default user expectations that were not
+fully captured by explicit query wording:
+- quality: general goodness, reception, acclaim, taste/value judgment,
+  watch-worthiness, or avoiding low-quality results
+- popularity: mainstream reach, fame, cultural familiarity, obscurity,
+  hiddenness, or how well-known the result should be
 
-Your job is NOT:
-- to infer quality or notability from unstated cultural defaults at the
-  fragment level
-- to invent extra fragments not present in Step 2
-- to merge multiple requirement fragments into one signal row
-- to restate the whole query instead of classifying each fragment
-- to force quality/notability labels onto fragments that are really
-  about some other ordering criterion like trending, chronology, or
-  semantic extremeness
+Do not invent new criteria from the raw query. Treat Step 2's traits as
+the closed set of explicit user intent. Use the raw query only to
+preserve exact wording and resolve ambiguity in Step-2 fields.
 
 ---
 
@@ -68,200 +62,147 @@ Your job is NOT:
 _OBSERVATIONS_FIRST = """\
 OBSERVATIONS FIRST, DECISIONS SECOND
 
-Fill the schema top to bottom.
+Fill the schema top to bottom:
 
-First the exploratory fields:
-- query_intent_summary
-- explicit_signals
-- explicit_ordering_axis_analysis
+1. query_intent_summary
+2. explicit_signals
+3. ordering_axis_analysis
+4. query_specificity_analysis
+5. quality_prior
+6. popularity_prior
 
-Then the boolean summaries and decisions:
-- explicitly_addresses_quality
-- explicitly_addresses_notability
-- should_apply_quality_prior
-- should_apply_notability_prior
-
-The booleans must be a function of the earlier fields, not an
-independent second guess.
+The final prior decisions must be direct consequences of the preceding
+analysis. Do not jump to an answer and backfill explanations.
 
 ---
 
 """
 
-_SIGNAL_RULES = """\
-EXPLICIT SIGNALS
+_TRAIT_SIGNAL_RULES = """\
+PER-TRAIT PRIOR SIGNALS
 
-Produce exactly one row for every Step-2 requirement fragment, in the
-same order they are provided.
+Produce exactly one explicit_signals row for every Step-2 committed
+trait, in the same order provided.
 
-For each row:
-1. Read the fragment plus its modifiers and coverage evidence.
-2. Write normalized_description first as a short phrase describing
-   what the fragment is asking for.
-3. Then classify explicit_axis:
-   - quality
-   - notability
-   - both
-   - neither
+For each trait, analyze the trait as Step 2 committed it:
+- surface_text gives the user phrase
+- evaluative_intent gives the integrated meaning
+- qualifier_relation and anchor_reference say whether the trait is
+  standalone, comparative, positioning, or only qualifying another ask
+- polarity gives direction when the trait names an avoid/prefer-less
+  axis
+- commitment and commitment_evidence say how strongly this explicit
+  trait should own ranking pressure
 
-Use 'quality' only when the fragment explicitly addresses the
-goodness/badness/reception/value judgment of the movies.
-Typical examples: worst, critically acclaimed, well reviewed, trashy,
-masterpiece, so-bad-it's-good.
+Classify explicit_axis:
+- quality only when the trait itself speaks to goodness, badness,
+  reception, acclaim, taste/value judgment, watch-worthiness, or
+  avoiding low-quality results
+- popularity only when the trait itself speaks to mainstreamness, fame,
+  obscurity, hiddenness, cultural familiarity, or how well-known the
+  results should be
+- both only when the single trait bundles both axes
+- neither for ordinary content, tone, era, entity, availability,
+  format, occasion, or style traits
 
-Use 'notability' only when the fragment explicitly addresses how
-well-known, mainstream, obscure, hidden, or culturally familiar the
-movies should be. Typical examples: underrated, obscure, mainstream,
-blockbusters, everyone knows, lesser-known.
+Classify direction:
+- positive when the trait asks for more of the axis
+- inverse when the trait asks for less of the axis
+- none when explicit_axis is neither
 
-Use 'both' only when the fragment itself explicitly carries both
-quality and notability in one bundle. Typical examples: classics,
-best, hidden gems, must-see classics, iconic masterpieces.
+Classify coverage:
+- direct when this trait plainly names the axis and should fully
+  replace an implicit prior on that axis
+- partial when the trait shades into the axis but does not fully own it
+- none when the trait does not cover quality or popularity
 
-Use 'neither' for every remaining fragment, including:
-- genre
-- tone
-- plot
-- era
-- entity constraints
-- format
-- occasion
-- stylistic or thematic preferences
-- explicit ordering language like "trending", "most recent", or
-  "scariest" that should be discussed in the top-level ordering
-  analysis rather than labeled quality/notability here
-
-Important: specificity alone does NOT make something quality or
-notability. "Scary", "surreal", "political paranoia", "1970s", and
-"comedies" are all 'neither' unless the fragment explicitly adds
-quality/notability language. "Prestige" and "arthouse" by themselves
-stay 'neither' unless the fragment directly adds a quality or
-notability claim.
+Keep specificity separate from prior coverage. A highly specific
+non-prior trait may reduce prior_room later, but it is not itself an
+explicit quality/popularity signal.
 
 ---
 
 """
 
-_ORDERING_ANALYSIS_RULES = """\
-EXPLICIT ORDERING AXIS ANALYSIS
+_ORDERING_AXIS_RULES = """\
+ORDERING AXIS ANALYSIS
 
-Write a short analysis of whether the query explicitly asks to rank or
-order results by something other than quality/notability.
+Analyze whether the committed traits ask for a ranking order that is
+different from generic quality or generic popularity.
 
-Common examples:
-- trending / popular right now
-- chronology / most recent / earliest / in order
-- semantic extremeness such as scariest, funniest, most disturbing,
-  most romantic
+Recognize ordering axes by function:
+- chronology orders by time or sequence
+- trending orders by current attention rather than static popularity
+- semantic_extremeness orders by intensity on a requested semantic axis
+- obscurity orders away from mainstream familiarity
+- quality or popularity orders explicitly by one of the two prior axes
+- other covers a real ordering objective not named above
+- none means there are constraints/preferences but no explicit ranking
+  order
 
-If such an axis is present, name it plainly and say that it should take
-precedence over default quality/notability priors.
-If no such axis is present, say that directly.
-
-This field is not about generic constraints like genre, era, or named
-entities. Those do NOT count as explicit ordering axes by themselves.
-
----
-
-"""
-
-_FINAL_BOOLEAN_RULES = """\
-FINAL BOOLEANS
-
-- explicitly_addresses_quality is true iff at least one explicit_signals
-  row is quality or both.
-- explicitly_addresses_notability is true iff at least one
-  explicit_signals row is notability or both.
-- should_apply_quality_prior must be false whenever
-  explicitly_addresses_quality is true.
-- should_apply_notability_prior must be false whenever
-  explicitly_addresses_notability is true.
-
-If quality/notability is not already explicit, then decide the
-should_apply_* booleans based on the ordering analysis above:
-- if some other explicit ordering axis should drive ranking, the
-  corresponding priors should be false
-- if no other explicit ordering axis is present, the corresponding
-  priors should be true
-
----
-
-EXAMPLES
-
-- "comedies"
-  query_intent_summary: broad comedy discovery request
-  explicit_signals: "comedies" -> neither
-  explicit_ordering_axis_analysis: no explicit ordering axis beyond the
-  basic request
-  explicitly_addresses_quality=false
-  explicitly_addresses_notability=false
-  should_apply_quality_prior=true
-  should_apply_notability_prior=true
-
-- "best comedies"
-  explicit_signals: "best" -> both, "comedies" -> neither
-  explicit_ordering_axis_analysis: no separate ordering axis beyond the
-  explicit best-ness request already captured in the signal rows
-  explicitly_addresses_quality=true
-  explicitly_addresses_notability=true
-  should_apply_quality_prior=false
-  should_apply_notability_prior=false
-
-- "hidden gem comedies"
-  explicit_signals: "hidden gem" -> both, "comedies" -> neither
-  explicitly_addresses_quality=true
-  explicitly_addresses_notability=true
-  should_apply_quality_prior=false
-  should_apply_notability_prior=false
-
-- "trending comedies"
-  explicit_signals: "trending" -> neither, "comedies" -> neither
-  explicit_ordering_axis_analysis: explicit trending ordering axis
-  explicitly_addresses_quality=false
-  explicitly_addresses_notability=false
-  should_apply_quality_prior=false
-  should_apply_notability_prior=false
-
-- "most recent horror movies"
-  explicit_signals: "most recent" -> neither, "horror" -> neither
-  explicit_ordering_axis_analysis: explicit chronology ordering axis
-  explicitly_addresses_quality=false
-  explicitly_addresses_notability=false
-  should_apply_quality_prior=false
-  should_apply_notability_prior=false
-
-- "scariest horror movies"
-  explicit_signals: "scariest" -> neither, "horror" -> neither
-  explicit_ordering_axis_analysis: explicit semantic extremeness
-  ordering axis
-  explicitly_addresses_quality=false
-  explicitly_addresses_notability=false
-  should_apply_quality_prior=false
-  should_apply_notability_prior=false
-
-- "prestige thrillers"
-  explicit_signals: "prestige" -> neither, "thrillers" -> neither
-  explicit_ordering_axis_analysis: no explicit ordering axis beyond the
-  descriptive request
-  explicitly_addresses_quality=false
-  explicitly_addresses_notability=false
-  should_apply_quality_prior=true
-  should_apply_notability_prior=true
+Suppression is not automatic. A separate ordering axis should suppress
+a prior only when that prior would fight the requested order rather
+than serve as tie pressure among similarly relevant candidates.
 
 ---
 
 """
 
-_GROUNDING_RULES = """\
-GROUNDING RULES
+_SPECIFICITY_RULES = """\
+QUERY SPECIFICITY AND PRIOR ROOM
 
-- Prefer the fragment's exact meaning over the raw-query vibe.
-- Use modifiers when they change what the fragment means.
-- Coverage evidence exists to help you understand the fragment; do
-  not copy category names into the answer unless they genuinely help
-  the normalized description.
-- Do not let one fragment's explicit quality/notability wording spill
-  into neighboring rows that do not contain it.
+Decide how much room remains for hidden priors after explicit traits
+have spoken.
+
+Use low explicit_trait_pressure when the query is broad, has few
+committed traits, or leaves many equally plausible candidates.
+
+Use medium explicit_trait_pressure when the query has a few meaningful
+criteria but still leaves broad ranking discretion.
+
+Use high explicit_trait_pressure when multiple traits are required or
+elevated, when traits are highly specific, or when the query's own
+ordering objective should dominate.
+
+prior_room is the allowed strength envelope:
+- high: broad discovery query; hidden quality/popularity expectations
+  can meaningfully shape ordering
+- normal: some explicit constraints, but default watch-worthiness or
+  mainstream usefulness still matters
+- light: explicit traits should dominate; priors should mostly break
+  ties
+- none: priors would duplicate or fight explicit intent
+
+---
+
+"""
+
+_FINAL_DECISION_RULES = """\
+FINAL PRIOR DECISIONS
+
+For each axis independently, choose direction and strength.
+
+Use direction=none and strength=none when:
+- direct explicit coverage already owns that axis
+- an ordering axis suppresses that prior
+- prior_room is none
+- applying the prior would fight the user's committed traits
+
+Use direction=positive when the remaining implicit expectation is to
+prefer higher quality or higher popularity.
+
+Use direction=inverse when the committed traits imply an underseen,
+obscure, less-mainstream, anti-prestige, or otherwise lower-axis
+preference that should be represented as a prior rather than as
+generic positive lift.
+
+Strength must respect prior_room. Do not choose a strength above the
+room available. When a trait provides partial explicit coverage on an
+axis, reduce the implicit strength rather than treating the axis as
+fully uncovered.
+
+Final decisions are policy outputs only. Do not describe endpoint
+routing, SQL, vector spaces, or score formulas.
 
 ---
 
@@ -271,10 +212,10 @@ SYSTEM_PROMPT = "".join(
     [
         _TASK_AND_OUTCOME,
         _OBSERVATIONS_FIRST,
-        _SIGNAL_RULES,
-        _ORDERING_ANALYSIS_RULES,
-        _FINAL_BOOLEAN_RULES,
-        _GROUNDING_RULES,
+        _TRAIT_SIGNAL_RULES,
+        _ORDERING_AXIS_RULES,
+        _SPECIFICITY_RULES,
+        _FINAL_DECISION_RULES,
     ]
 )
 
@@ -284,15 +225,12 @@ SYSTEM_PROMPT = "".join(
 # ===============================================================
 
 
-def build_user_prompt(raw_query: str, step_2: Step2Response) -> str:
-    """Serialize the query and Step-2 output as an XML payload."""
+def build_user_prompt(raw_query: str, step_2: QueryAnalysis) -> str:
+    """Serialize the query and Step-2 committed traits as XML."""
     parts = [
-        _wrap_leaf("raw_query", raw_query),
-        _wrap_leaf(
-            "overall_query_intention_exploration",
-            step_2.overall_query_intention_exploration,
-        ),
-        _serialize_requirements(step_2.requirements),
+        _wrap_leaf("raw_query_for_provenance_only", raw_query),
+        _wrap_leaf("intent_exploration", step_2.intent_exploration),
+        _serialize_traits(step_2.traits),
     ]
     return "\n".join(parts)
 
@@ -301,80 +239,47 @@ def _wrap_leaf(tag: str, text: str) -> str:
     return f"<{tag}>{xml_escape(text)}</{tag}>"
 
 
-def _serialize_requirements(
-    requirements: Iterable[RequirementFragment],
-) -> str:
-    reqs = list(requirements)
-    if not reqs:
-        return "<requirements></requirements>"
+def _serialize_traits(traits: list[Trait]) -> str:
+    if not traits:
+        return "<traits></traits>"
 
-    blocks = "\n".join(_serialize_requirement(req) for req in reqs)
-    return f"<requirements>\n{blocks}\n</requirements>"
+    blocks = "\n".join(_serialize_trait(trait) for trait in traits)
+    return f"<traits>\n{blocks}\n</traits>"
 
 
-def _serialize_requirement(requirement: RequirementFragment) -> str:
+def _serialize_trait(trait: Trait) -> str:
     lines = [
-        "  <requirement>",
-        f"    <query_text>{xml_escape(requirement.query_text)}</query_text>",
-        f"    <description>{xml_escape(requirement.description)}</description>",
-        _serialize_modifiers(requirement.modifiers, indent="    "),
-        _serialize_coverage_evidence(requirement.coverage_evidence, indent="    "),
-        "  </requirement>",
+        "  <trait>",
+        f"    <surface_text>{xml_escape(trait.surface_text)}</surface_text>",
+        (
+            "    <contextualized_phrase>"
+            f"{xml_escape(trait.contextualized_phrase)}"
+            "</contextualized_phrase>"
+        ),
+        (
+            "    <evaluative_intent>"
+            f"{xml_escape(trait.evaluative_intent)}"
+            "</evaluative_intent>"
+        ),
+        (
+            "    <qualifier_relation>"
+            f"{xml_escape(trait.qualifier_relation)}"
+            "</qualifier_relation>"
+        ),
+        (
+            "    <anchor_reference>"
+            f"{xml_escape(trait.anchor_reference)}"
+            "</anchor_reference>"
+        ),
+        f"    <polarity>{xml_escape(trait.polarity.value)}</polarity>",
+        f"    <commitment>{xml_escape(trait.commitment)}</commitment>",
+        (
+            "    <commitment_evidence>"
+            f"{xml_escape(trait.commitment_evidence)}"
+            "</commitment_evidence>"
+        ),
+        "  </trait>",
     ]
-    return "\n".join(lines)
-
-
-def _serialize_modifiers(modifiers: Iterable[Modifier], indent: str) -> str:
-    mods = list(modifiers)
-    if not mods:
-        return f"{indent}<modifiers></modifiers>"
-
-    lines = [f"{indent}<modifiers>"]
-    for modifier in mods:
-        lines.append(f"{indent}  <modifier>")
-        lines.append(f"{indent}    <type>{xml_escape(modifier.type.value)}</type>")
-        lines.append(
-            f"{indent}    <original_text>"
-            f"{xml_escape(modifier.original_text)}"
-            f"</original_text>"
-        )
-        lines.append(
-            f"{indent}    <effect>{xml_escape(modifier.effect)}</effect>"
-        )
-        lines.append(f"{indent}  </modifier>")
-    lines.append(f"{indent}</modifiers>")
-    return "\n".join(lines)
-
-
-def _serialize_coverage_evidence(
-    evidence: Iterable[CoverageEvidence],
-    indent: str,
-) -> str:
-    entries = list(evidence)
-    if not entries:
-        return f"{indent}<coverage_evidence></coverage_evidence>"
-
-    lines = [f"{indent}<coverage_evidence>"]
-    for entry in entries:
-        lines.append(f"{indent}  <entry>")
-        lines.append(
-            f"{indent}    <captured_meaning>"
-            f"{xml_escape(entry.captured_meaning)}"
-            f"</captured_meaning>"
-        )
-        lines.append(
-            f"{indent}    <category_name>{xml_escape(entry.category_name.value)}</category_name>"
-        )
-        lines.append(
-            f"{indent}    <fit_quality>{xml_escape(entry.fit_quality.value)}</fit_quality>"
-        )
-        lines.append(
-            f"{indent}    <atomic_rewrite>"
-            f"{xml_escape(entry.atomic_rewrite)}"
-            f"</atomic_rewrite>"
-        )
-        lines.append(f"{indent}  </entry>")
-    lines.append(f"{indent}</coverage_evidence>")
     return "\n".join(lines)
 
 
@@ -393,9 +298,9 @@ _MODEL_KWARGS: dict = {
 
 async def run_implicit_expectations(
     raw_query: str,
-    step_2: Step2Response,
+    step_2: QueryAnalysis,
 ) -> tuple[ImplicitExpectationsResult, int, int, float]:
-    """Run the implicit-expectations LLM on one query + Step-2 result."""
+    """Run the implicit-prior policy LLM on one query + Step-2 result."""
     raw_query = raw_query.strip()
     if not raw_query:
         raise ValueError("raw_query must be a non-empty string.")
@@ -413,21 +318,20 @@ async def run_implicit_expectations(
     )
     elapsed = time.perf_counter() - start
 
-    if len(response.explicit_signals) != len(step_2.requirements):
+    if len(response.explicit_signals) != len(step_2.traits):
         raise ValueError(
             "Implicit expectations output must contain exactly one explicit "
-            "signal per Step-2 requirement fragment."
+            "signal per Step-2 committed trait."
         )
-    for signal, requirement in zip(
+    for signal, trait in zip(
         response.explicit_signals,
-        step_2.requirements,
+        step_2.traits,
         strict=True,
     ):
-        if signal.query_span != requirement.query_text:
+        if signal.query_span != trait.surface_text:
             raise ValueError(
-                "Implicit expectations output must preserve Step-2 "
-                "requirement order and copy each fragment query_text "
-                "verbatim into query_span."
+                "Implicit expectations output must preserve Step-2 trait order "
+                "and copy each trait surface_text verbatim into query_span."
             )
     return response, input_tokens, output_tokens, elapsed
 
@@ -445,7 +349,7 @@ def _print_response(response: ImplicitExpectationsResult) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run Step 2 followed by the implicit-expectations step "
+            "Run Step 2 followed by the implicit-prior policy step "
             "on a single query and print the structured output."
         )
     )

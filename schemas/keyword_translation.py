@@ -9,14 +9,27 @@
 #   ANY → 1.0 if movie matches ≥1 finalized member
 #   ALL → matched_count / len(finalized_keywords)
 #
-# Two-layer shape:
-#   1. Analysis — `attributes`. Holistic decomposition of the call's
-#      intent into distinct facets, each with shortlisted candidates.
-#      Describes; does not commit.
-#   2. Commitment — `finalized_keywords` + `scoring_method`. Minimum covering
-#      set of registry members + AND/OR aggregation mode read off
-#      retrieval_intent. The attribute facets do not survive past
-#      this layer; only the deduped union reaches execution.
+# Two shapes coexist in this file:
+#
+# 1. SINGLE-ENDPOINT shape (KeywordQuerySpec / KeywordEndpointParameters)
+#    — used by buckets 3/4 when the keyword endpoint owns the entire
+#    call. Two-layer internal structure:
+#       a. Analysis — `attributes` (decomposition + shortlisting).
+#       b. Commitment — `finalized_keywords` + `scoring_method`.
+#    Untouched by the walk-then-commit refactor.
+#
+# 2. MULTI-ENDPOINT shape (KeywordWalk + KeywordQuerySpecSubintent /
+#    KeywordEndpointSubintentParameters) — used by buckets 5/6/8.
+#    Split across two classes that live in different positions of the
+#    bucket schema:
+#       a. KeywordWalk — the registry-grounded analysis layer
+#          (`attributes` / `potential_keywords`). Lives at the bucket
+#          level, emitted BEFORE the coverage_assignments commitment so
+#          the LLM walks the registry concretely before committing.
+#       b. KeywordQuerySpecSubintent — thin commitment-only spec
+#          (`finalized_keywords` + `scoring_method`). Lives inside the
+#          per-endpoint `keyword_parameters` slot, populated only when
+#          coverage_assignments delegates a slice to this endpoint.
 #
 # Validator dedupes finalized_keywords server-side. The LLM is told
 # to emit duplicates freely if a member is the best fit for multiple
@@ -237,60 +250,70 @@ class KeywordEndpointParameters(EndpointParameters):
     )
 
 
-# ── Subintent variant ─────────────────────────────────────────────
+# ── Multi-endpoint walk + thin commitment ─────────────────────────
 #
-# Used when a single category routes to multiple endpoints and the
-# upstream responsibility-splitting reasoning has already carved out
-# this endpoint's slice of intent into a dedicated field. Same
-# structure as KeywordQuerySpec, but every descriptor reads from
-# `keyword_retrieval_intent` (declared first on this spec) rather
-# than from the raw call inputs.
+# Used when the keyword endpoint is one of several contending for the
+# call's intent (buckets 5/6/8). Two classes that live in DIFFERENT
+# positions of the bucket schema:
+#
+#   - KeywordWalk lives at the bucket level, emitted BEFORE the
+#     coverage_assignments commitment phase. It carries the
+#     registry-grounded analysis of how the keyword endpoint could
+#     cover the call's retrieval_intent. Forces concrete registry
+#     awareness before any commitment.
+#   - KeywordQuerySpecSubintent lives inside the per-endpoint
+#     keyword_parameters slot, populated only when the bucket-level
+#     coverage_assignments delegates a slice to this endpoint. Carries
+#     just the commitment layer (finalized_keywords + scoring_method).
+#
+# Both reference `keyword_walk.attributes[*].potential_keywords`
+# (analysis) and the wrapper's `keyword_retrieval_intent` (the slice
+# this endpoint was assigned by coverage_assignments). The thin spec
+# does NOT carry its own analysis — that lives upstream in
+# KeywordWalk so it grounds the commitment phase that decides whether
+# to fire keyword at all.
 
 
-class AttributeAnalysisSubintent(BaseModel):
+class KeywordWalk(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    attribute: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "One distinguishable facet of the call's intent. Read "
-            "`keyword_retrieval_intent` HOLISTICALLY — NOT 1:1 with "
-            "the phrases inside it. One phrase may carry multiple "
-            "facets; several phrases may collapse into one. Short "
-            "noun-phrase, in user/database vocabulary.\n"
-            "\n"
-            "Test: would an independent retrieval against this facet "
-            "alone hit a meaningful slice of the user's intent? Yes → "
-            "distinct attribute. No → fold it into the attribute it "
-            "actually belongs to.\n"
-            "\n"
-            "NEVER:\n"
-            "- COPY a phrase from `keyword_retrieval_intent` verbatim. "
-            "Decompose first.\n"
-            "- INVENT facets `keyword_retrieval_intent` doesn't signal.\n"
-            "- SPLIT one facet across multiple attributes."
-        ),
-    )
-
-    potential_keywords: list[PotentialKeyword] = Field(
+    # Reuses the shared AttributeAnalysis class: its descriptor reads
+    # off the call's `retrieval_intent + expressions` (in the user
+    # message), which is exactly the input the walk grounds itself in.
+    # The walk surfaces what the keyword endpoint COULD cover; the
+    # commitment that follows it decides whether to fire and on what
+    # slice.
+    attributes: list[AttributeAnalysis] = Field(
         ...,
         min_length=1,
         description=(
-            "Registry members that could plausibly answer THIS "
-            "`attribute`, each with its coverage analysis. One when "
-            "fit is unambiguous; two or three when adjacency is real "
-            "(broader vs narrower, cross-family neighbors); more when "
-            "the attribute genuinely sits between several.\n"
+            "Registry-grounded analysis of how the keyword endpoint "
+            "could cover this call's intent. One AttributeAnalysis "
+            "per distinct facet of the call's retrieval_intent + "
+            "expressions, derived holistically from them.\n"
             "\n"
-            "Test per candidate: 'if I dropped this, would the commit "
-            "step lose a real routing option?' Yes → keep. No → drop.\n"
+            "This is the GROUNDED walk that precedes the bucket-level "
+            "coverage_assignments commitment. Surface every plausible "
+            "registry member with concrete coverage prose so the "
+            "commitment phase can read off real candidates rather "
+            "than abstract optimism. Empty potential_keywords on a "
+            "facet is a valid signal that the registry has nothing "
+            "useful — the commitment phase is allowed to leave the "
+            "facet unowned by keyword (delegating to a sibling "
+            "endpoint or naming it as intentionally_uncovered).\n"
+            "\n"
+            "Coverage: every aspect the call's intent signals is "
+            "owned by some attribute; every attribute traces back to "
+            "something explicit in the call. Cardinality follows the "
+            "intent — concrete single-facet intents resolve to one "
+            "entry; compound intents resolve to several.\n"
             "\n"
             "NEVER:\n"
-            "- LIST ONLY ONE when a definitional adjacency competes — "
-            "surface it so finalized_keywords is grounded.\n"
-            "- PAD with members whose coverage you can't substantively "
-            "name.\n"
-            "- DUPLICATE a member within one attribute."
+            "- MIRROR the call's phrasing 1:1. Decompose first.\n"
+            "- INVENT facets the call doesn't signal.\n"
+            "- SPLIT one facet across multiple attributes.\n"
+            "- HEDGE in coverage prose. Either name the specific gap "
+            "or commit 'fully covered'."
         ),
     )
 
@@ -298,51 +321,32 @@ class AttributeAnalysisSubintent(BaseModel):
 class KeywordQuerySpecSubintent(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
-    # Field order is cognitive scaffolding: analysis grounds the
-    # commitment, the commitment grounds the scoring mode. Do not
-    # reorder. `keyword_retrieval_intent` is declared on the parent
-    # KeywordEndpointSubintentParameters wrapper — it is generated
-    # before this spec and every field below reads from it.
-
-    attributes: list[AttributeAnalysisSubintent] = Field(
-        ...,
-        min_length=1,
-        description=(
-            "Analysis layer. One AttributeAnalysisSubintent per "
-            "distinct facet of `keyword_retrieval_intent`, derived "
-            "holistically from it.\n"
-            "\n"
-            "Coverage: every aspect `keyword_retrieval_intent` signals "
-            "is owned by some attribute; every attribute traces back "
-            "to something explicit in `keyword_retrieval_intent`. "
-            "Cardinality follows the intent — concrete single-facet "
-            "intents resolve to one entry; compound intents resolve "
-            "to several.\n"
-            "\n"
-            "NEVER:\n"
-            "- MIRROR the phrasing of `keyword_retrieval_intent` 1:1. "
-            "Decompose first.\n"
-            "- DROP a facet silently. If a facet resists candidate "
-            "shortlisting, the facet was wrong (too abstract / not "
-            "actually independent) — revise it, don't skip it."
-        ),
-    )
+    # Thin commitment-only spec for multi-endpoint contexts. The
+    # analysis layer that previously lived here (`attributes`) has
+    # been lifted up to KeywordWalk at the bucket level — populated
+    # BEFORE coverage_assignments so the commitment phase is grounded
+    # in concrete registry candidates. This spec carries only the
+    # commitment that fires when coverage_assignments delegated a
+    # slice to keyword.
 
     finalized_keywords: list[UnifiedClassification] = Field(
         ...,
         min_length=1,
         description=(
             "Commitment layer. The MINIMUM set of registry members "
-            "whose union covers the span of `attributes`. Pull from "
-            "members surfaced in `attributes[*].potential_keywords`. "
-            "(A member not previously shortlisted is allowed but "
-            "signals the attribute analysis was incomplete.)\n"
+            "whose union covers the slice this endpoint was assigned "
+            "by coverage_assignments. Pull from members surfaced in "
+            "`keyword_walk.attributes[*].potential_keywords` at the "
+            "bucket level above. (A member not previously shortlisted "
+            "is allowed but signals the walk was incomplete.)\n"
             "\n"
-            "The attributes do not survive past this layer — only the "
-            "deduped union of finalized members reaches execution. "
-            "Do NOT think of finalized_keywords as a flattening of "
-            "every potential_keyword; it is a fresh minimum-cover "
-            "commitment.\n"
+            "If the walk surfaced no clean fit, the bucket-level "
+            "coverage_assignments should NOT have delegated a slice "
+            "to keyword in the first place — keyword_parameters would "
+            "be null and this spec never instantiates. By the time "
+            "this field is being populated, commitment has already "
+            "decided keyword fires; commit at least one grounded "
+            "member.\n"
             "\n"
             "Test per member: 'if I dropped this, would the remaining "
             "set still cover every attribute this member was the best "
@@ -355,18 +359,15 @@ class KeywordQuerySpecSubintent(BaseModel):
             "\n"
             "NEVER:\n"
             "- INVENT members not in the registry.\n"
-            "- PAD past the minimum covering set.\n"
-            "- LEAVE EMPTY. Routing committed this call to the "
-            "keyword endpoint; if no member fits cleanly, pick the "
-            "closest definitionally supported one anyway."
+            "- PAD past the minimum covering set."
         ),
     )
 
     scoring_method: ScoringMethod = Field(
         ...,
         description=(
-            "Aggregation across `finalized_keywords`, read off "
-            "`keyword_retrieval_intent`:\n"
+            "Aggregation across `finalized_keywords`, read off the "
+            "wrapper's `keyword_retrieval_intent`:\n"
             "- ANY → we only care if the movie has at least one of "
             "the finalized members. Movies score equally high for "
             "matching 1+ values. Pick when keyword_retrieval_intent "
@@ -384,7 +385,7 @@ class KeywordQuerySpecSubintent(BaseModel):
             "\n"
             "When N=1 the two modes are mathematically identical — "
             "default to ANY and move on. Do NOT re-derive the mode "
-            "from the attributes count; cardinality is not the signal."
+            "from the finalized count; cardinality is not the signal."
         ),
     )
 
@@ -405,24 +406,29 @@ class KeywordEndpointSubintentParameters(EndpointParameters):
     keyword_retrieval_intent: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "What this endpoint specifically needs to be responsible "
-            "for fetching. Read off the prior reasoning fields above "
-            "that split up responsibilities across endpoints, capturing "
-            "only the slice of intent assigned to the keyword endpoint "
-            "(canonical UnifiedClassification registry members across "
-            "genre, sub-genre, source material, narrative mechanics, "
-            "etc.). Leave structured attributes, named entities, free-"
-            "form thematic qualifiers, and awards to their respective "
-            "endpoints. Every field on this endpoint's `parameters` "
-            "reads from this intent rather than from any other upstream "
+            "The slice of the call's intent this endpoint owns, "
+            "committed by the bucket-level coverage_assignments above "
+            "(the entry whose endpoint_kind matches keyword). Restate "
+            "the assigned slice_description here so the commitment "
+            "below has a single, self-contained pointer.\n"
+            "\n"
+            "Scope: canonical UnifiedClassification registry members "
+            "across genre, sub-genre, source material, narrative "
+            "mechanics, etc. Structured attributes, named entities, "
+            "free-form thematic qualifiers, and awards belong to "
+            "their respective endpoints. Every field on this "
+            "endpoint's `parameters` reads from this intent (and from "
+            "the upstream keyword_walk) rather than from any other "
             "input."
         ),
     )
     parameters: KeywordQuerySpecSubintent = Field(
         ...,
         description=(
-            "Keyword endpoint payload, sourced from "
-            "`keyword_retrieval_intent` rather than from the raw call "
-            "inputs."
+            "Keyword endpoint thin commitment payload. Reads off "
+            "`keyword_retrieval_intent` (the assigned slice) and "
+            "`keyword_walk.attributes[*].potential_keywords` (the "
+            "bucket-level grounded analysis above) to commit "
+            "finalized_keywords + scoring_method."
         ),
     )

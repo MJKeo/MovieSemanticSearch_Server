@@ -41,10 +41,10 @@ _SINGLE_ENDPOINT_BUCKETS: frozenset[HandlerBucket] = frozenset({
 
 # Buckets whose output schema carries one Optional `<route>_parameters`
 # field per candidate endpoint. The fired set is whichever fields are
-# non-null. Reasoning fields (intent prose, opportunity lists) live
-# alongside but do not need to be inspected here. See schema_factories
-# _build_preferred_fallback / _build_semantic_with_augmentation /
-# _build_suitability_combo.
+# non-null. Reasoning fields (`<route>_walk` blocks, coverage_assignments,
+# intentionally_uncovered) live alongside but do not need to be inspected
+# here — the suffix filter below picks up only `*_parameters`. See
+# schema_factories._build_walk_then_commit.
 _PER_ROUTE_PARAMETER_BUCKETS: frozenset[HandlerBucket] = frozenset({
     HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
     HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,

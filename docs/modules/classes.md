@@ -22,9 +22,9 @@ in scoring and filtering.
 | `movie.py` | `BaseMovie` — the core movie data model with all fields from TMDB + IMDB + LLM-generated metadata. Includes era-aware budget classification. |
 | `schemas.py` | All Pydantic models: LLM output schemas (plot events, plot analysis, viewer experience, watch context, narrative techniques, production, reception), query understanding responses (entities, channel weights, metadata preferences, vector subqueries/weights), and metadata filter types. |
 | `enums.py` | All enums: `MaturityRating` (with maturity_rank), `StreamingAccessType` (with type_id), `VectorName`/`VectorCollectionName` (8 vector spaces, backed by Qdrant), `RelevanceSize` (NOT_RELEVANT/SMALL/MEDIUM/LARGE), `Genre`, `EntityCategory`, `BudgetSize`, match operation enums. |
-| `languages.py` | Language catalog with IDs for audio language filtering. |
+| `languages.py` | `Language` enum with stable integer IDs (`language_id`) plus ISO 639-1 codes (`iso_code`, ~140/334 covered) and a `from_iso()` classmethod. The LLM-facing metadata schema speaks ISO codes; the executor maps back to `language_id` via `from_iso()`. Long-tail languages without a 639-1 code keep `iso_code = None` and are unreachable from the LLM schema by design. `LANGUAGE_BY_NORMALIZED_NAME` remains for non-LLM display-name lookup. |
 | `watch_providers.py` | Streaming service catalog with provider IDs. |
-| `countries.py` | `Country` enum with stable integer IDs. Imported by `schemas/movie.py`, `schemas/metadata_translation.py`, and `search_v2/stage_3/metadata_query_execution.py`. |
+| `countries.py` | `Country` enum with stable integer IDs (`country_id`) plus ISO 3166-1 alpha-2 codes (`iso_code`, ~249/262 covered) and a `from_iso()` classmethod. Same ISO-code contract as `languages.py` — LLM-facing schema uses alpha-2, retired entities (Yugoslavia, USSR, etc.) keep `iso_code = None`. `country_from_string()` and `_COUNTRY_ALIASES` remain for non-LLM display-name lookup (used by `schemas/movie.py` for IMDB country names). Imported by `schemas/movie.py`, `schemas/metadata_translation.py`, and `search_v2/endpoint_fetching/metadata_query_execution.py`. |
 | `overall_keywords.py` | `OverallKeyword` enum (225 values). Imported by `schemas/movie.py` and `schemas/unified_classification.py` for the V2 keyword endpoint vocabulary. |
 
 ## Boundaries

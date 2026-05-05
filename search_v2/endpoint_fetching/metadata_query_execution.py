@@ -499,7 +499,10 @@ def _make_streaming_handler(value: StreamingTranslation) -> _ColumnHandler:
 
 
 def _make_audio_language_handler(value: AudioLanguageTranslation) -> _ColumnHandler:
-    include_ids = [Language(v).language_id for v in value.languages]
+    # value.languages holds ISO 639-1 codes after schema validation; the
+    # validator already rejected unknown codes, so Language.from_iso never
+    # returns None here.
+    include_ids = [Language.from_iso(v).language_id for v in value.languages]
     include_set = set(include_ids)
 
     return _ColumnHandler(
@@ -514,7 +517,9 @@ def _make_audio_language_handler(value: AudioLanguageTranslation) -> _ColumnHand
 def _make_country_handler(
     value: CountryOfOriginTranslation, dealbreaker: bool,
 ) -> _ColumnHandler:
-    include_ids = [Country(v).country_id for v in value.countries]
+    # value.countries holds ISO 3166-1 alpha-2 codes after schema
+    # validation; the validator already rejected unknown codes.
+    include_ids = [Country.from_iso(v).country_id for v in value.countries]
     include_set = set(include_ids)
 
     if dealbreaker:

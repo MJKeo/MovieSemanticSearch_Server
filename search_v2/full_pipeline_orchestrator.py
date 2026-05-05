@@ -45,19 +45,21 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Literal, TypeVar
 
+from db.postgres import fetch_quality_popularity_signals
 from schemas.enums import (
     EndpointRoute,
     OperationType,
     Polarity,
     ReleaseFormat,
 )
+from schemas.implicit_expectations import ImplicitExpectationsResult
 from schemas.media_type_translation import (
     MediaTypeEndpointParameters,
     MediaTypeQuerySpec,
 )
 from schemas.step_0_flow_routing import Step0Response
 from schemas.step_1 import Step1Response
-from schemas.step_2 import Trait
+from schemas.step_2 import QueryAnalysis, Trait
 from schemas.step_3 import CategoryCall
 from schemas.trait_category import CategoryName
 
@@ -75,6 +77,7 @@ from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
 from search_v2.step_2 import run_step_2
 from search_v2.step_3 import run_step_3
+from search_v2.implicit_expectations import run_implicit_expectations
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +93,20 @@ TIMEOUT_SECONDS = 25.0
 # Total attempts per LLM call (initial + retries). The user spec is
 # "1 retry", which means 2 attempts total.
 LLM_MAX_ATTEMPTS = 2
+
+QUALITY_PRIOR_BOOSTS: dict[str, float] = {
+    "none": 0.0,
+    "light": 0.025,
+    "normal": 0.06,
+    "strong": 0.10,
+}
+
+POPULARITY_PRIOR_BOOSTS: dict[str, float] = {
+    "none": 0.0,
+    "light": 0.05,
+    "normal": 0.12,
+    "strong": 0.20,
+}
 
 
 # Step 2 branch identifiers. Match the labels the upstream UI uses so
@@ -154,6 +171,8 @@ class Step2BranchResult:
     query: str
     ui_label: str
     traits: list[TraitWithEndpoints]
+    implicit_expectations: ImplicitExpectationsResult | None = None
+    implicit_expectations_error: str | None = None
     branch_error: str | None = None
 
 
@@ -336,14 +355,19 @@ async def _run_branch(
             branch_error=repr(exc),
         )
 
-    # Per-trait fan-out. asyncio.gather with default
-    # return_exceptions=False — each per-trait coroutine handles its
-    # own failures internally and always returns a TraitWithEndpoints.
-    trait_results = await asyncio.gather(
+    implicit_task = _run_implicit_expectations_for_branch(query, qa, kind)
+    # Per-trait fan-out runs alongside implicit-prior policy. The
+    # implicit step consumes only Step-2 output, so it does not need to
+    # wait for Step 3 endpoint decomposition.
+    trait_task = asyncio.gather(
         *(
             _decompose_and_generate(trait, branch_label=kind)
             for trait in qa.traits
         )
+    )
+    trait_results, (implicit, implicit_error) = await asyncio.gather(
+        trait_task,
+        implicit_task,
     )
 
     return Step2BranchResult(
@@ -351,7 +375,30 @@ async def _run_branch(
         query=query,
         ui_label=ui_label,
         traits=trait_results,
+        implicit_expectations=implicit,
+        implicit_expectations_error=implicit_error,
     )
+
+
+async def _run_implicit_expectations_for_branch(
+    query: str,
+    qa: QueryAnalysis,
+    branch_label: str,
+) -> tuple[ImplicitExpectationsResult | None, str | None]:
+    """Run implicit-prior policy for one Step-2 branch.
+
+    This is soft-fail by design: a prior-policy miss should not block
+    endpoint generation or result assembly. The branch keeps the error
+    for diagnostics and proceeds with no implicit policy attached.
+    """
+    try:
+        response, _, _, _ = await _call_with_retry(
+            lambda: run_implicit_expectations(query, qa),
+            label=f"implicit_expectations[{branch_label}]",
+        )
+    except Exception as exc:  # noqa: BLE001 — soft-fail per branch
+        return None, repr(exc)
+    return response, None
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +689,129 @@ def determine_promotion_tier(
 
 
 # ---------------------------------------------------------------------------
+# Implicit-prior post-reranking
+# ---------------------------------------------------------------------------
+
+
+async def _apply_implicit_prior_rerank(
+    branches: list[Step2BranchResult],
+    branch_results: list[BranchRankedResults],
+) -> list[BranchRankedResults]:
+    """Apply implicit quality/popularity multiplicative boosts.
+
+    Stage 4 owns base relevance scoring. This pass only applies the
+    post-score policy produced from Step 2 traits:
+
+        boosted_score = base_score + prior_base * boost
+
+    where each axis boost is the configured strength cap multiplied by
+    the movie's normalized axis signal. `prior_base` is the movie's
+    positive relevance contribution, or 1.0 when no positive
+    contribution exists. Missing axis data contributes 0.0 so absence
+    of data has no effect.
+    """
+    if not branches or not branch_results:
+        return branch_results
+
+    branches_by_kind = {branch.kind: branch for branch in branches}
+    return list(
+        await asyncio.gather(
+            *(
+                _apply_implicit_prior_rerank_for_branch(
+                    branches_by_kind.get(result.kind),
+                    result,
+                )
+                for result in branch_results
+            )
+        )
+    )
+
+
+async def _apply_implicit_prior_rerank_for_branch(
+    branch: Step2BranchResult | None,
+    result: BranchRankedResults,
+) -> BranchRankedResults:
+    if (
+        branch is None
+        or branch.implicit_expectations is None
+        or result.branch_error is not None
+        or not result.ranked
+    ):
+        return result
+
+    policy = branch.implicit_expectations
+    quality_strength = policy.quality_prior.strength
+    popularity_strength = policy.popularity_prior.strength
+    quality_cap = QUALITY_PRIOR_BOOSTS[quality_strength]
+    popularity_cap = POPULARITY_PRIOR_BOOSTS[popularity_strength]
+    if quality_cap == 0.0 and popularity_cap == 0.0:
+        return result
+
+    movie_ids = [movie_id for movie_id, _ in result.ranked]
+    signals = await fetch_quality_popularity_signals(movie_ids)
+
+    reranked: list[tuple[int, float]] = []
+    for movie_id, base_score in result.ranked:
+        popularity_raw, reception_raw = signals.get(movie_id, (None, None))
+        quality_signal = _quality_signal(
+            reception_raw,
+            direction=policy.quality_prior.direction,
+        )
+        popularity_signal = _popularity_signal(
+            popularity_raw,
+            direction=policy.popularity_prior.direction,
+        )
+        boost = (quality_cap * quality_signal) + (
+            popularity_cap * popularity_signal
+        )
+        breakdown = result.score_breakdowns.get(movie_id)
+        prior_base = (
+            breakdown.positive_total
+            if breakdown is not None and breakdown.positive_total > 0.0
+            else 1.0
+        )
+        reranked.append((movie_id, base_score + (prior_base * boost)))
+        if breakdown is not None:
+            breakdown.implicit_prior_boost = boost
+
+    reranked.sort(key=lambda mid_score: mid_score[1], reverse=True)
+    result.ranked = reranked
+    return result
+
+
+def _quality_signal(
+    reception_score: float | None,
+    *,
+    direction: str,
+) -> float:
+    if direction == "none" or reception_score is None:
+        return 0.0
+    normalized = reception_score / 100.0
+    normalized = _clamp_unit(normalized)
+    if direction == "inverse":
+        return 1.0 - normalized
+    return normalized
+
+
+def _popularity_signal(
+    popularity_score: float | None,
+    *,
+    direction: str,
+) -> float:
+    if direction == "none" or popularity_score is None:
+        return 0.0
+    normalized = popularity_score
+    normalized = _clamp_unit(normalized)
+    if direction == "inverse":
+        return 1.0 - normalized
+    return normalized
+
+
+def _clamp_unit(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -688,6 +858,10 @@ async def run_full_pipeline(
             + _build_auxiliary_specs(branch_list)
         )
         branch_results = await execute_branches(branch_list, auxiliary)
+        branch_results = await _apply_implicit_prior_rerank(
+            branch_list,
+            branch_results,
+        )
         return FullPipelineResult(
             query=query,
             skipped_steps_0_1=True,
@@ -750,6 +924,10 @@ async def run_full_pipeline(
         + _build_auxiliary_specs(branches)
     )
     branch_results = await execute_branches(branches, auxiliary)
+    branch_results = await _apply_implicit_prior_rerank(
+        branches,
+        branch_results,
+    )
     return FullPipelineResult(
         query=query,
         skipped_steps_0_1=False,

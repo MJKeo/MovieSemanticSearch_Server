@@ -4,9 +4,9 @@
 # traits, fans out Step 3 over those traits, and then for each
 # emitted CategoryCall runs the per-handler query-generation stage.
 # Prints the full payload from each stage — including the per-handler
-# LLM's reasoning fields (preferred_coverage_exploration, intent
-# prose, augmentation opportunities, etc.) which the production
-# `run_query_generation` strips before returning.
+# LLM's reasoning fields (per-endpoint `<route>_walk` blocks,
+# coverage_assignments, intentionally_uncovered, etc.) which the
+# production `run_query_generation` strips before returning.
 #
 # To get those reasoning fields we call the handler LLM directly
 # using the same prompt builder + schema factory the production
