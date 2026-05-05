@@ -1,6 +1,25 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Metadata executor: drop floor compression, sigmoid popularity/reception
+Files: search_v2/endpoint_fetching/metadata_query_execution.py
+Why: Bring metadata in line with the semantic executor rework — endpoints emit raw [0, 1], cross-endpoint weighting is the merger's job. Also fix a long-standing semantic bug where popularity/reception used pure linear pass-through, so a 0.01 raw delta translated 1:1 into score, even though no user means "score 76" differently from "score 78" when they say "well-received."
+Approach:
+- Dropped `compress_to_dealbreaker_floor` from the dealbreaker path. Survivors now emit raw folded score in [0, 1]. Drop-on-zero rule kept (combined==0 rows still pruned from the candidate pool — they only matched the OR'd gate via one column and scored 0 raw on every populated column, so they shouldn't crowd out real candidates).
+- Replaced `_score_popularity` and `_score_reception` with sigmoids anchored on real-world thresholds:
+  - WELL_RECEIVED: center=70 (IMDb 7.0), k=0.22 → r=60→0.10, r=70→0.50, r=80→0.90, r=85→0.96. Saturation by ~80 reflects the user-meaning that 85 vs 90 is the same bucket.
+  - POORLY_RECEIVED: center=50 (median; "average" stops being "poor" above this), k=0.22 → mirror of well.
+  - POPULAR: center=0.70, k=12 → p=0.6→0.23, p=0.7→0.50, p=0.8→0.77, p=0.9→0.92. Anchors top ~30% as "popular," saturates by ~0.85.
+  - NICHE: center=0.40, k=12. Slight asymmetry — "niche" requires being demonstrably outside the mainstream, not just below median.
+- Left SQL `sort_signal_sql` linear. The all-unbounded path uses it only to LIMIT 5000 candidates; sigmoid is monotone in the same direction so the top-5000 set is unchanged. Avoids encoding `exp()` in SQL.
+- Updated stale comment on `_score_country_position_dealbreaker` (the 0.33 raw value was previously calibrated against the floor compression, landing at 0.665 in the band; that calibration is gone but the value stays — pos 2 = 0.33 raw is still distinctly above 0 and below pos 1's 1.0).
+
+Self-review follow-ups:
+- Replaced dealbreaker drop filter `combined > 0.0` with `combined >= _DEALBREAKER_DROP_EPSILON` (=0.01). Sigmoid scorers emit tiny non-zero values in their saturated tails (e.g., reception=40 in WELL_RECEIVED → 0.0017) — those used to be exact 0 under the linear formulas and got dropped naturally. Without an epsilon, drop-on-zero degrades to a NULL-only filter and the candidate pool fills with noise. 0.01 corresponds to roughly r≈51 in WELL_RECEIVED / p≈0.32 in POPULAR — cleanly below the threshold a user means.
+- Refreshed the now-stale `_make_reception_handler` sort_signal comment (no longer "mirrors `_score_reception`'s piecewise-linear shape"; it's deliberately kept linear for the SQL ORDER BY/LIMIT, with sigmoid applied post-fetch in Python — top-N is unchanged because sigmoid is monotone in reception).
+
+Testing notes: Existing metadata unit tests will likely need updates: (a) dealbreaker scores no longer land in [0.5, 1.0] — raw [0, 1] now; (b) any test that asserts a specific popularity or reception score under the linear formulas needs new expected values from the sigmoid curves above; (c) country pos-2 dealbreaker now lands at 0.33 final (not 0.665); (d) dealbreaker drop threshold is now 0.01 not 0.0 — tests asserting "exactly 0 → dropped" still pass; tests asserting "tiny positive → kept" need new expected values.
+
 ## Semantic executor review fixes
 Files: search_v2/endpoint_fetching/semantic_query_execution.py, docs/modules/search_v2.md
 Why: Self-review of the semantic executor rewrite caught a negative-cosine edge case in the qualifier rescale, surfaced an executor-side empty-set short-circuit that duplicated orchestrator logic, and noted the module doc still implied universal [0.5, 1] dealbreaker compression.

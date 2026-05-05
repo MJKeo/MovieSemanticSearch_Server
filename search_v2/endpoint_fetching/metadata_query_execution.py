@@ -7,12 +7,14 @@
 #     gates joined by OR (any single column qualifies a movie for the
 #     candidate pool), score every returned row per populated column,
 #     fold those scores into one combined score using scoring_method,
-#     drop zero-combined movies, and lift survivors into the
-#     dealbreaker floor band [0.5, 1.0].
+#     drop zero-combined movies, and emit the raw [0, 1] folded score.
 #   - Preference mode (restrict_to_movie_ids is a set of ids): pull
 #     every supplied id, score per populated column, fold via
-#     scoring_method. Raw [0, 1] scores are preserved (no compression);
-#     missing ids get 0.0 via build_endpoint_result.
+#     scoring_method. Raw [0, 1] scores preserved; missing ids get 0.0
+#     via build_endpoint_result.
+#
+# Both paths emit raw [0, 1]; no dealbreaker-floor compression. The
+# orchestrator's score merging handles cross-endpoint weighting.
 #
 # The new schema lets the LLM commit a single ColumnSpec where each of
 # the ten attribute columns is independently null-or-populated, plus a
@@ -62,10 +64,7 @@ from schemas.metadata_translation import (
     RuntimeTranslation,
     StreamingTranslation,
 )
-from search_v2.endpoint_fetching.result_helpers import (
-    build_endpoint_result,
-    compress_to_dealbreaker_floor,
-)
+from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +97,16 @@ _POPULARITY_RECEPTION_DEALBREAKER_CAP = 5000
 # provider_id, lower 4 bits hold the method_id. The 4-bit mask matches
 # the encoding.
 _METHOD_ID_BITMASK = 0xF
+
+# Dealbreaker drop floor. Sigmoid scorers produce tiny non-zero values
+# in their saturated tails (e.g., reception=40 in WELL_RECEIVED → 0.0017),
+# which would slip past a strict `combined > 0` filter. Drop anything
+# under this epsilon — by construction these rows scored "extremely
+# against direction" on every populated column and contribute only
+# noise to the merged score. Threshold corresponds to roughly r≈51
+# in WELL_RECEIVED, p≈0.32 in POPULAR — i.e., cleanly below the
+# semantic threshold a user means.
+_DEALBREAKER_DROP_EPSILON = 0.01
 
 _ALL_METHOD_IDS: tuple[int, ...] = tuple(m.type_id for m in StreamingAccessType)
 
@@ -284,12 +293,10 @@ def _score_country_position_dealbreaker(
 ) -> float:
     # Discrete-position dealbreaker scorer:
     #   pos 1 → 1.0, pos 2 → 0.33, pos ≥ 3 (or no match) → 0.0.
-    # The raw 0.33 is calibrated against the post-combine compression
-    # (compress_to_dealbreaker_floor: raw → 0.5 + 0.5 * raw), so a
-    # single-column country pos-2 dealbreaker lands at ~0.665 in the
-    # dealbreaker band — clearly above the floor but distinctly below
-    # pos 1's 1.0. Position 3+ still scores zero so IMDB tail
-    # positions don't sneak into the candidate pool.
+    # Pos 2 emits a moderate raw signal (clear "Japan is listed but
+    # not primary" — meaningful but distinctly below pos 1). Position
+    # 3+ scores zero so IMDB tail positions don't sneak into the
+    # candidate pool.
     if not movie_country_ids:
         return 0.0
     for idx, cid in enumerate(movie_country_ids[:2], start=1):
@@ -298,19 +305,45 @@ def _score_country_position_dealbreaker(
     return 0.0
 
 
+# Sigmoid parameters — anchored on real-world thresholds so micro
+# differences in raw popularity / reception don't translate into
+# meaningful score deltas. See DIFF_CONTEXT.md for the derivation.
+#
+# Reception uses a 0–100 scale (≈ IMDb·10 / Metacritic / RT %):
+#   WELL_RECEIVED: center=70 (IMDb 7.0 — common "well-received" line),
+#     k=0.22 → r=60→0.10, r=70→0.50, r=80→0.90.
+#   POORLY_RECEIVED: center=50 (median of the scale; "average movie"
+#     stops being "poor"), k=0.22 → r=40→0.90, r=50→0.50, r=60→0.10.
+#
+# Popularity is normalized to [0, 1]:
+#   POPULAR: center=0.70 (~top 30%), k=12 → p=0.6→0.23, p=0.7→0.50,
+#     p=0.8→0.77, p=0.9→0.92.
+#   NICHE: center=0.40 (slight asymmetry — "niche" requires being
+#     demonstrably outside the mainstream, not just below median),
+#     k=12 → p=0.3→0.77, p=0.4→0.50, p=0.5→0.23.
+_RECEPTION_K = 0.22
+_RECEPTION_WELL_CENTER = 70.0
+_RECEPTION_POOR_CENTER = 50.0
+_POPULARITY_K = 12.0
+_POPULARITY_POPULAR_CENTER = 0.70
+_POPULARITY_NICHE_CENTER = 0.40
+
+
 def _score_popularity(pop: float | None, mode: PopularityMode) -> float:
     if pop is None:
         return 0.0
     pop = max(0.0, min(1.0, float(pop)))
-    return pop if mode == PopularityMode.POPULAR else (1.0 - pop)
+    if mode == PopularityMode.POPULAR:
+        return 1.0 / (1.0 + math.exp(-_POPULARITY_K * (pop - _POPULARITY_POPULAR_CENTER)))
+    return 1.0 / (1.0 + math.exp(_POPULARITY_K * (pop - _POPULARITY_NICHE_CENTER)))
 
 
 def _score_reception(reception: float | None, mode: ReceptionMode) -> float:
     if reception is None:
         return 0.0
     if mode == ReceptionMode.WELL_RECEIVED:
-        return max(0.0, min(1.0, (reception - 55) / 40))
-    return max(0.0, min(1.0, (50 - reception) / 40))
+        return 1.0 / (1.0 + math.exp(-_RECEPTION_K * (reception - _RECEPTION_WELL_CENTER)))
+    return 1.0 / (1.0 + math.exp(_RECEPTION_K * (reception - _RECEPTION_POOR_CENTER)))
 
 
 # ── Column handler abstraction ────────────────────────────────────────────
@@ -541,9 +574,12 @@ def _make_popularity_handler(value: str) -> _ColumnHandler:
 
 def _make_reception_handler(value: str) -> _ColumnHandler:
     mode = ReceptionMode(value)
-    # Sort signal mirrors _score_reception's piecewise-linear shape;
-    # clamping inside the SQL keeps the contribution in [0, 1] when
-    # combined with popularity's [0, 1] signal.
+    # Sort signal stays piecewise-linear (deliberately, not a sigmoid):
+    # used only by the all-unbounded path's ORDER BY + LIMIT to bound
+    # the candidate pool; Python applies the sigmoid scorer post-fetch.
+    # Sigmoid is monotone in reception, so the top-N set under linear
+    # sort matches what the sigmoid would select. Clamping inside SQL
+    # keeps the contribution in [0, 1] when combined with popularity.
     if mode == ReceptionMode.WELL_RECEIVED:
         sort_signal = (
             "COALESCE(LEAST(1.0, GREATEST(0.0, (reception_score - 55.0) / 40.0)), 0.0)"
@@ -718,7 +754,8 @@ async def execute_metadata_query(
     Dealbreaker mode (restrict_to_movie_ids=None):
       - OR-joined per-column gates (any column admits the movie); the
         all-unbounded path uses ORDER BY + LIMIT instead.
-      - Drop combined == 0; compress survivors into [0.5, 1.0].
+      - Drop combined == 0 (gated in via one column but every populated
+        column scored 0 raw); emit the raw folded score in [0, 1].
     Preference mode (restrict_to_movie_ids supplied):
       - movie_id = ANY(%s) gate.
       - Raw [0, 1] combined scores preserved; missing ids zero-filled
@@ -755,13 +792,17 @@ async def execute_metadata_query(
             combined_by_movie = _score_and_combine(rows, handlers, select_cols, mode)
 
             if is_dealbreaker:
-                # Drop zero-combined rows (matched the OR'd gate via
-                # one column but every populated column scored 0 raw),
-                # then compress survivors into [0.5, 1.0].
+                # Drop near-zero rows (gated in via one column but
+                # scored ~0 across the board, including sigmoid-tail
+                # leakage from popularity/reception against direction)
+                # so they don't crowd the candidate pool. Survivors
+                # emit their raw folded score in [0, 1] — no floor
+                # compression; cross-endpoint weighting handles the
+                # candidate-vs-non-candidate distinction at merge time.
                 scored = {
-                    mid: compress_to_dealbreaker_floor(combined)
+                    mid: combined
                     for mid, combined in combined_by_movie.items()
-                    if combined > 0.0
+                    if combined >= _DEALBREAKER_DROP_EPSILON
                 }
             else:
                 scored = combined_by_movie
