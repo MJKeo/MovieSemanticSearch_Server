@@ -2435,6 +2435,41 @@ async def fetch_franchise_entry_ids_for_tokens(
     return out
 
 
+async def fetch_franchise_entries_for_movies(
+    movie_ids: list[int],
+) -> dict[int, tuple[set[int], set[int]]]:
+    """Return per-movie (lineage_entry_ids, shared_universe_entry_ids).
+
+    Used by the exact-title search flow (search_v2/exact_title_search.py)
+    to read a seed movie's franchise membership before fanning out to
+    other movies that share those franchise entry IDs. fetch_movie_cards
+    intentionally omits these arrays from its SELECT, so the exact-title
+    flow needs a dedicated read rather than overloading that helper.
+
+    Args:
+        movie_ids: Movie IDs to read franchise-entry arrays for.
+
+    Returns:
+        Mapping `{movie_id: (lineage_entry_ids, shared_universe_entry_ids)}`
+        as sets. Movies absent from the row set, or with NULL arrays, get
+        empty sets — callers can union without nullity checks. Movies
+        absent from the input list are not present in the mapping.
+    """
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT movie_id, lineage_entry_ids, shared_universe_entry_ids
+        FROM public.movie_card
+        WHERE movie_id = ANY(%s::bigint[])
+    """
+    rows = await _execute_read(query, (movie_ids,))
+    return {
+        row[0]: (set(row[1] or ()), set(row[2] or ()))
+        for row in rows
+    }
+
+
 async def fetch_franchise_movie_ids(
     *,
     franchise_name_entry_ids: set[int] | None,

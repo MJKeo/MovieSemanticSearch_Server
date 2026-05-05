@@ -121,6 +121,33 @@ Rules:
 - When the query is a sentence that mentions a title, the title \
   span is just the title itself, not the whole sentence.
 
+Franchise umbrellas are NOT titles (hard rule):
+- A "franchise umbrella" is the series-level name that no individual \
+  installment carries as its own canonical title — e.g., "Indiana \
+  Jones", "Harry Potter", "James Bond", "Mission Impossible", \
+  "Marvel", "The Avengers" (the franchise concept, not the 2012 \
+  film), "Fast and Furious". When the user types only the umbrella \
+  with no installment marker, do NOT emit a TitleObservation. There \
+  is no canonical movie title to resolve to, and picking a \
+  representative installment ("Raiders of the Lost Ark" for "Indiana \
+  Jones", "The Fellowship of the Ring" for "Lord of the Rings") is \
+  hallucination from your own knowledge of the franchise.
+- The umbrella name still carries search signal — record it in \
+  qualifiers as an entity-style filter so the standard flow can use \
+  it.
+- Exception: when the umbrella name IS the canonical title of a \
+  specific film (e.g., "Star Wars" is the 1977 film, "Halloween" is \
+  the 1978 / 2007 / 2018 films, "Spider-Man" is the 2002 film), emit \
+  the TitleObservation normally. The test is "does any single movie \
+  literally bear this exact title", not "does this name evoke a \
+  movie franchise."
+- Do NOT infer a specific installment from descriptive details \
+  ("the indiana jones where he runs from a boulder" must NOT \
+  resolve to "Raiders of the Lost Ark"). Inference from plot, \
+  setting, or franchise-knowledge is hallucination. If you are not \
+  confident the user literally named a specific film's title, leave \
+  titles_observed empty and let the standard flow handle it.
+
 ambiguity_potential — how to reason:
 - State whether the span could reasonably be read as something \
   other than this specific title. Be specific: name the alternative \
@@ -424,11 +451,11 @@ Query: "Halloween (2018)"
 - enable_primary_flow: false
 - primary_flow: exact_title
 
-Example 13 — descriptive reference, year must NOT be inferred
+Example 13 — descriptive franchise reference, no exact title (no inference allowed)
 Query: "that one indiana jones where he runs from a boulder"
-- titles_observed: [{span_text: "indiana jones", most_likely_canonical_title: "Indiana Jones", ambiguity_potential: "franchise reference, not a specific installment; do not auto-resolve to Raiders of the Lost Ark from the boulder description."}]
-- qualifiers: ["where he runs from a boulder"]
-- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "Indiana Jones", release_year: null}  (year NOT inferred from boulder reference)
+- titles_observed: []  ("Indiana Jones" is a franchise umbrella; no movie literally bears that title. The boulder description points at Raiders of the Lost Ark but inferring a specific installment from plot details is hallucination — see the no-inference rule.)
+- qualifiers: ["indiana jones", "where he runs from a boulder"]
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "", release_year: null}
 - similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
 - enable_primary_flow: true
 - primary_flow: standard
@@ -447,6 +474,24 @@ Query: "Top Gun 2"
 - titles_observed: [{span_text: "Top Gun 2", most_likely_canonical_title: "Top Gun: Maverick", ambiguity_potential: "title-only; '2' is sequel numbering, not a release year."}]
 - qualifiers: []
 - exact_title_flow_data: {should_be_searched: true, exact_title_to_search: "Top Gun: Maverick", release_year: null}  (the '2' is a sequel marker, not a year)
+- similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
+- enable_primary_flow: false
+- primary_flow: exact_title
+
+Example 16 — bare franchise umbrella, no individual film bears the name
+Query: "indiana jones"
+- titles_observed: []  (no movie is literally titled "Indiana Jones"; "Raiders of the Lost Ark" was retitled "Indiana Jones and the Raiders of the Lost Ark", which is a different canonical string. Do not pick an installment as the canonical title.)
+- qualifiers: ["indiana jones"]
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "", release_year: null}
+- similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
+- enable_primary_flow: true
+- primary_flow: standard
+
+Example 17 — umbrella name that DOES coincide with a real film's canonical title
+Query: "star wars"
+- titles_observed: [{span_text: "star wars", most_likely_canonical_title: "Star Wars", ambiguity_potential: "title-only; 'Star Wars' is the canonical title of the 1977 film. The franchise reading and the film reading collapse to the same exact-title lookup, which downstream franchise expansion handles."}]
+- qualifiers: []
+- exact_title_flow_data: {should_be_searched: true, exact_title_to_search: "Star Wars", release_year: null}
 - similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
 - enable_primary_flow: false
 - primary_flow: exact_title
