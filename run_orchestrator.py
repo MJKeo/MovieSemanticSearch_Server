@@ -243,8 +243,20 @@ async def _print_ranked_results(
                     if ts is not None
                     else "?"
                 )
+            # Stage 4 produces a parallel breakdown per movie_id —
+            # split the §9 sum into its positive and negative halves
+            # so the source of a candidate's standing is visible at a
+            # glance without re-deriving from raw trait scores.
+            breakdown = br.score_breakdowns.get(movie_id)
+            if breakdown is None:
+                breakdown_str = ""
+            else:
+                breakdown_str = (
+                    f"  [pos={breakdown.positive_total:+.4f} "
+                    f"neg={breakdown.negative_total:+.4f}]"
+                )
             print(
-                f"  #{rank:<3d}  score={score:+.4f}  "
+                f"  #{rank:<3d}  score={score:+.4f}{breakdown_str}  "
                 f"{title} ({year})  tmdb_id={movie_id}"
             )
 

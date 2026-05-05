@@ -56,12 +56,11 @@ def _print_trait_decomposition(
         "[trait inputs]"
         f'\n  contextualized_phrase: "{trait.contextualized_phrase}"'
         f"\n  evaluative_intent: {trait.evaluative_intent}"
-        f"\n  role_evidence: {trait.role_evidence}"
-        f"\n  role: {trait.role}"
         f"\n  qualifier_relation: {trait.qualifier_relation}"
         f"\n  anchor_reference: {trait.anchor_reference}"
         f"\n  polarity: {trait.polarity}"
-        f"\n  relevance_to_query: {trait.relevance_to_query}"
+        f"\n  commitment_evidence: {trait.commitment_evidence}"
+        f"\n  commitment: {trait.commitment}"
     )
     print("[decomposition]")
     payload = decomposition.model_dump()

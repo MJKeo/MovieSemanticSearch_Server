@@ -33,7 +33,7 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from typing import List, Sequence
-from schemas.enums import LineagePosition, release_format_id_for_imdb_type
+from schemas.enums import LineagePosition, ReleaseFormat, release_format_id_for_imdb_type
 from schemas.imdb_models import AwardNomination
 from schemas.movie import Movie
 from implementation.llms.generic_methods import generate_vector_embedding
@@ -283,6 +283,12 @@ async def ingest_movie_card(
         # to a stable int. Anything outside the supported set — or a missing
         # value — collapses to UNKNOWN (0), which is the column's audit handle.
         release_format = release_format_id_for_imdb_type(movie.imdb_data.imdb_title_type)
+        # Runtime-based override: anything <= 40 minutes is a short by the
+        # standard IMDB / Academy definition. IMDB occasionally tags such
+        # titles as 'movie', so we promote them to SHORT here regardless
+        # of the reported title type.
+        if runtime_minutes <= 40:
+            release_format = ReleaseFormat.SHORT.release_format_id
 
         await upsert_movie_card(
             movie_id=movie_id,

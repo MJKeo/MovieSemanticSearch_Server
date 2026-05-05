@@ -16,8 +16,9 @@
 # defer one level up. Composites use nested equal-weight averaging.
 #
 # Negative-polarity traits are pure-reranker for orchestration but
-# score the branch pool with a different shape (multiplicative AND
-# over would-be-generator calls, gated against the reranker average).
+# score the branch pool with a three-bin shape: an authoritative-G
+# gate ANDs across specific-entity / structured-metadata calls, then
+# multiplies into a noisy-OR over evidential-G plus reranker calls.
 # See _score_negative_trait.
 #
 # Auxiliary specs (NEUTRAL_SEED, MEDIA_TYPE shorts) are applied at
@@ -127,12 +128,36 @@ def _rarity_factor(match_count: int, corpus_size: int = CORPUS_SIZE) -> float:
 
 
 @dataclass
+class ScoreBreakdown:
+    """Per-candidate decomposition of the §9 final score.
+
+    `positive_total` sums every contribution with a positive sign:
+    cand-gen traits (always positive) and positive pure-reranker
+    traits, each `trait_score × trait_weight`. Always ≥ 0.
+
+    `negative_total` sums negative pure-reranker contributions with
+    the polarity sign already applied (negative traits use sign = -1),
+    so the value is ≤ 0.
+
+    By construction `positive_total + negative_total` equals the
+    score paired with the same movie_id in `BranchRankedResults.ranked`.
+    """
+
+    positive_total: float
+    negative_total: float
+
+
+@dataclass
 class BranchRankedResults:
     """One Step-2 branch's executed + ranked output.
 
     `ranked` is sorted descending by final_score per §9. Ties are
     broken by the order in which candidates entered the branch_pool,
     which is deterministic given a fixed input.
+
+    `score_breakdowns` carries the positive/negative decomposition of
+    each ranked candidate's score (same movie_id keys as `ranked`).
+    Empty when `ranked` is empty.
 
     `branch_error` mirrors the upstream Step2BranchResult.branch_error;
     when set, `ranked` is empty.
@@ -142,6 +167,7 @@ class BranchRankedResults:
     query: str
     ui_label: str
     ranked: list[tuple[int, float]] = field(default_factory=list)
+    score_breakdowns: dict[int, ScoreBreakdown] = field(default_factory=dict)
     branch_error: str | None = None
 
 
@@ -289,7 +315,7 @@ async def _run_branch(
     )
 
     # Step F — final weighted sum per §9.
-    ranked = _finalize_scores(
+    ranked, score_breakdowns = _finalize_scores(
         branch_pool=branch_pool,
         cand_gen_executions=cand_gen_executions,
         pure_rer_traits=pure_rer_traits,
@@ -307,6 +333,7 @@ async def _run_branch(
         query=branch.query,
         ui_label=branch.ui_label,
         ranked=ranked,
+        score_breakdowns=score_breakdowns,
     )
 
 
@@ -597,9 +624,9 @@ async def _run_pure_reranker_trait(
     """Score a pure-reranker trait against the branch_pool.
 
     Positive pure-reranker traits use equal-weight averaging across
-    all successfully-executed calls. Negative traits use multiplicative
-    AND over would-be-generator calls, gated against the reranker
-    average — see _score_negative_trait.
+    all successfully-executed calls. Negative traits use a three-bin
+    formula (authoritative-G gate × noisy-OR over evidential-G ∪ R) —
+    see _score_negative_trait.
     """
     if trait.step_3_error is not None or not branch_pool:
         return {mid: 0.0 for mid in branch_pool}
@@ -647,6 +674,55 @@ async def _run_pure_reranker_trait(
     return out
 
 
+# Categories whose membership signal is *authoritative* about a negative
+# concept — when this signal says "not a member," the matter is settled
+# (no recall gap). These are the specific-entity lookups (PERSON_CREDIT,
+# NAMED_CHARACTER, …) and structured-metadata attributes (RELEASE_DATE,
+# RUNTIME, …) where membership is definitionally answered. Negative-trait
+# scoring ANDs these together and gates the fuzzy bin behind them.
+#
+# Every category NOT listed here that still routes as a CANDIDATE_GENERATOR
+# (KEYWORD-style tags, GENRE, archetypes, TRENDING, CENTRAL_TOPIC, …) is
+# *evidential* — a high-precision but low-recall proxy. Those OR with R
+# rather than gating it, which is what fixes the "not scary" decomposition
+# (KEYWORD:horror missing thrillers that SEMANTIC:scary catches).
+#
+# Lives here rather than in full_pipeline_orchestrator.py with the other
+# category-classification tables because the orchestrator imports from
+# this module at load time; pulling the set the other way would be a
+# circular import.
+_AUTHORITATIVE_NEGATION_CATEGORIES: frozenset[CategoryName] = frozenset({
+    # Specific-entity lexical categories — definitional membership.
+    CategoryName.PERSON_CREDIT,
+    CategoryName.TITLE_TEXT,
+    CategoryName.NAMED_CHARACTER,
+    CategoryName.CHARACTER_FRANCHISE,
+    CategoryName.STUDIO_BRAND,
+    CategoryName.FRANCHISE_LINEAGE,
+    CategoryName.ADAPTATION_SOURCE,
+    CategoryName.NAMED_SOURCE_CREATOR,
+    # Specific-award lookups — definitional yes/no.
+    CategoryName.AWARDS,
+    # Structured metadata — definitional attribute lookups.
+    CategoryName.RELEASE_DATE,
+    CategoryName.RUNTIME,
+    CategoryName.MATURITY_RATING,
+    CategoryName.AUDIO_LANGUAGE,
+    CategoryName.STREAMING,
+    CategoryName.FINANCIAL_SCALE,
+    CategoryName.COUNTRY_OF_ORIGIN,
+    CategoryName.MEDIA_TYPE,
+    # NOTE: CHRONOLOGICAL is intentionally excluded. It routes through
+    # METADATA but determine_operation_type treats it as POOL_RERANKER
+    # for positive polarity (alongside GENERAL_APPEAL, CULTURAL_STATUS),
+    # so its negative would-be-positive is POOL_RERANKER and the call
+    # never enters the G_a partition regardless of this set. Treating
+    # CHRONOLOGICAL as fuzzy is also defensible semantically — most
+    # decomposer phrasings ("old", "recent", "from the 80s") are
+    # approximate rather than precise.
+})
+
+
 def _score_negative_trait(
     paired: list[tuple[CategoryName, GeneratedEndpointSpec]],
     call_results: list[dict[int, float] | None],
@@ -654,60 +730,87 @@ def _score_negative_trait(
 ) -> dict[int, float]:
     """Negative-trait inner score in [0, 1] (violation strength).
 
-    Partition by what each call WOULD HAVE BEEN in positive polarity —
-    not by its current operation_type, which is uniformly POOL_RERANKER
-    for negatives (handler.determine_operation_type forces that). We
-    re-derive the would-be type from (category, route).
+    Three-bin partition by what each call WOULD HAVE BEEN in positive
+    polarity (operation_type is uniformly POOL_RERANKER for negatives,
+    so we re-derive via determine_operation_type with POSITIVE):
 
-      G = would-be CANDIDATE_GENERATOR (membership-shaped — discrete
-          tag / posting / array-overlap signals)
-      R = would-be POOL_RERANKER       (continuous similarity / prior)
+      G_a = would-be CANDIDATE_GENERATOR with an *authoritative* category
+            (specific-entity / structured-metadata — see
+            _AUTHORITATIVE_NEGATION_CATEGORIES). Membership definitively
+            answers the negative concept.
+      G_e = would-be CANDIDATE_GENERATOR with an *evidential* category
+            (keyword-style tags, archetypes, fuzzy descriptors). Proxy
+            with high precision but low recall.
+      R   = would-be POOL_RERANKER (continuous similarity / prior).
 
     Combine:
-      - G and R both present → trait_score = (∏ G) × mean(R)
-        (gated multiplication: membership confirms violation, similarity
-         calibrates magnitude)
-      - G only              → trait_score = ∏ G
-      - R only              → trait_score = mean(R)  (graceful fallback)
+      fuzzy = noisy-OR over G_e ∪ R   = 1 − ∏ (1 − s_j)
+      gate  = ∏ G_a
 
-    Failed calls are dropped from both partitions: a transient endpoint
-    failure must not zero out the multiplicative AND or skew the mean.
+      - G_a and fuzzy both present → trait = gate × fuzzy
+      - G_a only                    → trait = gate
+      - fuzzy only                  → trait = fuzzy
+      - all empty                   → trait = 0.0
+
+    Why this shape: a single G call is often a *proxy* for a fuzzy
+    concept (KEYWORD:horror standing in for "scary"); gating R behind
+    it under-penalizes scary movies in adjacent genres. But when the
+    decomposer issues *authoritative* G calls (PERSON_CREDIT:Joaquin
+    Phoenix + NAMED_CHARACTER:Joker for "not Joaquin Phoenix Joker"),
+    those describe required parts of a conjunctive concept and SHOULD
+    gate — otherwise R's similarity to the JP-Joker vibe over-penalizes
+    Heath Ledger's Joker. Authoritative vs evidential is the
+    discriminator; G_e merges into the noisy-OR with R because both
+    are alternative evidence, not required parts.
+
+    Failed calls are dropped from their bin: a transient endpoint
+    failure must not zero out the gate or saturate the noisy-OR.
     Sign is applied at the §9 final-aggregation layer, not here.
     """
-    g_scores: list[dict[int, float]] = []
-    r_scores: list[dict[int, float]] = []
+    g_a_scores: list[dict[int, float]] = []
+    fuzzy_scores: list[dict[int, float]] = []
     for (category, spec), scores in zip(paired, call_results):
         if scores is None:
             # Failed call — drop entirely (option A from review).
             continue
         would_be = determine_operation_type(category, spec.route, Polarity.POSITIVE)
         if would_be is OperationType.CANDIDATE_GENERATOR:
-            g_scores.append(scores)
+            if category in _AUTHORITATIVE_NEGATION_CATEGORIES:
+                g_a_scores.append(scores)
+            else:
+                # Evidential G — high precision, low recall. Treated as
+                # alternative evidence alongside R rather than as a gate.
+                fuzzy_scores.append(scores)
         else:
-            r_scores.append(scores)
+            fuzzy_scores.append(scores)
 
     out: dict[int, float] = {}
     for movie_id in branch_pool:
-        if g_scores:
-            gen_violation: float | None = 1.0
-            for scores in g_scores:
-                gen_violation *= scores.get(movie_id, 0.0)
+        # Gate: AND across authoritative G calls.
+        if g_a_scores:
+            gate: float | None = 1.0
+            for scores in g_a_scores:
+                gate *= scores.get(movie_id, 0.0)
         else:
-            gen_violation = None
+            gate = None
 
-        if r_scores:
-            rer_avg: float | None = sum(
-                scores.get(movie_id, 0.0) for scores in r_scores
-            ) / len(r_scores)
+        # Fuzzy bin: noisy-OR across evidential G + R calls.
+        # 1 − ∏(1 − s) — independent evidence accumulates; weak signals
+        # reinforce; one strong signal is enough.
+        if fuzzy_scores:
+            inv_product = 1.0
+            for scores in fuzzy_scores:
+                inv_product *= (1.0 - scores.get(movie_id, 0.0))
+            fuzzy: float | None = 1.0 - inv_product
         else:
-            rer_avg = None
+            fuzzy = None
 
-        if gen_violation is not None and rer_avg is not None:
-            out[movie_id] = gen_violation * rer_avg
-        elif gen_violation is not None:
-            out[movie_id] = gen_violation
-        elif rer_avg is not None:
-            out[movie_id] = rer_avg
+        if gate is not None and fuzzy is not None:
+            out[movie_id] = gate * fuzzy
+        elif gate is not None:
+            out[movie_id] = gate
+        elif fuzzy is not None:
+            out[movie_id] = fuzzy
         else:
             # All calls failed; nothing to penalize on.
             out[movie_id] = 0.0
@@ -799,13 +902,19 @@ def _finalize_scores(
     cand_gen_executions: list[_TraitExecution],
     pure_rer_traits: list["TraitWithEndpoints"],
     pure_rer_scores_per_trait: list[dict[int, float]],
-) -> list[tuple[int, float]]:
+) -> tuple[list[tuple[int, float]], dict[int, ScoreBreakdown]]:
     """Per-candidate final score per §9: Σ trait_score × trait_weight × sign.
 
     Cand-gen traits use commitment_mult × rarity_factor. Pure-reranker
     traits use commitment_mult × 1.0. Polarity sign is applied here:
     cand-gen traits are always positive (negative traits never become
     cand-gen), pure-reranker traits may be either.
+
+    Returns the ranked list (sorted descending by final score) and a
+    parallel `{movie_id: ScoreBreakdown}` dict carrying the positive
+    and negative components of each candidate's total. Splitting them
+    here is cheaper than re-deriving downstream and keeps the §9 math
+    in one place.
     """
     # Pre-compute weights so we don't re-derive per movie.
     cand_gen_weights: list[float] = []
@@ -823,22 +932,35 @@ def _finalize_scores(
         )
 
     final: list[tuple[int, float]] = []
+    breakdowns: dict[int, ScoreBreakdown] = {}
     for movie_id in branch_pool:
-        score = 0.0
+        positive_total = 0.0
+        negative_total = 0.0
         # Cand-gen contributions (always positive sign). A trait
         # contributes 0 for movies it didn't generate (opportunity
         # cost, §8).
         for ex, weight in zip(cand_gen_executions, cand_gen_weights):
-            score += ex.trait_scores.get(movie_id, 0.0) * weight
-        # Pure-reranker contributions, signed by polarity.
+            positive_total += ex.trait_scores.get(movie_id, 0.0) * weight
+        # Pure-reranker contributions, signed by polarity. Positive
+        # traits accumulate into positive_total; negative traits accumulate
+        # into negative_total with the sign already applied (so the
+        # value is ≤ 0).
         for scores, weight, sign in zip(
             pure_rer_scores_per_trait, pure_rer_weights, pure_rer_signs
         ):
-            score += scores.get(movie_id, 0.0) * weight * sign
-        final.append((movie_id, score))
+            contribution = scores.get(movie_id, 0.0) * weight * sign
+            if sign >= 0.0:
+                positive_total += contribution
+            else:
+                negative_total += contribution
+        final.append((movie_id, positive_total + negative_total))
+        breakdowns[movie_id] = ScoreBreakdown(
+            positive_total=positive_total,
+            negative_total=negative_total,
+        )
 
     final.sort(key=lambda mid_score: mid_score[1], reverse=True)
-    return final
+    return final, breakdowns
 
 
 # ---------------------------------------------------------------------------
@@ -859,11 +981,11 @@ async def _dispatch_call(
 
     Returns None to distinguish *failed* calls from *legitimately empty*
     results: a failed call must not contribute a confirmed-zero signal
-    to negative-trait multiplicative AND, where one failure would
-    otherwise zero out the entire trait's penalty. Positive-trait
+    to the negative-trait gate or noisy-OR, where one failure would
+    otherwise zero out the gate or saturate the OR. Positive-trait
     callers fold None into `{}` and absorb the zero contribution into
     their averages; the negative-trait scorer drops failed calls from
-    the product entirely.
+    their bin entirely.
 
     NEUTRAL_SEED and TRENDING are not dispatched through this path.
     NEUTRAL_SEED is handled inside _apply_auxiliary; TRENDING has no

@@ -106,29 +106,57 @@ supporting=0.6 / diminished=0.35`. Rarity tiers (corpus N≈150K):
 A cand-gen trait contributes 0 to candidates it didn't generate
 (opportunity cost, §8) — missing positive ≠ active subtraction.
 
-### Negative-trait scoring (multiplicative, gated)
+### Negative-trait scoring (gate × noisy-OR, three-bin)
 
 `handler.determine_operation_type` short-circuits every
 negative-polarity call to `POOL_RERANKER` regardless of route, so the
 "would-be-generator vs would-be-reranker" partition is **not readable
 off `spec.operation_type`** at execution time. Stage 4 re-derives it
 by calling `determine_operation_type(category, route, Polarity.POSITIVE)`
-per call. The partition then drives a different aggregation shape:
+per call, then further partitions the would-be-generator calls by
+whether the category is *authoritative* about the negative concept
+(membership definitively answers "is this a member?", e.g.
+PERSON_CREDIT, NAMED_CHARACTER, RELEASE_DATE, MEDIA_TYPE) versus
+*evidential* (a high-precision but low-recall proxy, e.g.
+KEYWORD-style tags, GENRE, archetypes, TRENDING, CENTRAL_TOPIC).
+
+The three bins drive different aggregation shapes:
 
 ```
-G = would-be CANDIDATE_GENERATOR calls (membership-shaped)
-R = would-be POOL_RERANKER calls       (continuous similarity / prior)
+G_a = would-be CANDIDATE_GENERATOR with authoritative category
+      (specific-entity / structured-metadata)
+G_e = would-be CANDIDATE_GENERATOR with evidential category
+      (keyword tags, archetypes, fuzzy descriptors)
+R   = would-be POOL_RERANKER (continuous similarity / prior)
 
-trait_score = (∏ G) × mean(R)   when both present  (gated multiplication)
-            = ∏ G               G only
-            = mean(R)           R only
+gate  = ∏ G_a                         when present
+fuzzy = 1 − ∏(1 − s)  over G_e ∪ R    when present
+
+trait_score = gate × fuzzy   when both present
+            = gate           G_a only
+            = fuzzy          G_e ∪ R only
+            = 0.0            all empty
 ```
 
-Failed calls are *dropped from both partitions* rather than counted as
+Why the asymmetry: a single fuzzy proxy ("not scary" decomposed to
+KEYWORD:horror) under-recalls and shouldn't gate a more comprehensive
+semantic R. But authoritative G calls describe required parts of a
+conjunctive concept ("not Joaquin Phoenix Joker" → PERSON_CREDIT:JP +
+NAMED_CHARACTER:Joker) and SHOULD gate — otherwise R's similarity to
+the JP-Joker vibe over-penalizes Heath Ledger Jokers. Authoritative
+vs evidential is the discriminator; G_e merges into the noisy-OR with
+R because both are alternative evidence rather than required parts.
+
+The authoritative set is hardcoded in
+`stage_4_execution._AUTHORITATIVE_NEGATION_CATEGORIES` (co-located
+with the consumer rather than alongside `_SEMANTIC_PROMOTION_TIERS`
+in `full_pipeline_orchestrator.py` because the orchestrator imports
+from `stage_4_execution` at load time).
+
+Failed calls are *dropped from their bin* rather than counted as
 confirmed-zero — option A from review. A single transient endpoint
-failure can no longer zero out a multiplicative-AND product or drag a
-mean toward zero. Sign is applied at the §9 aggregation layer, not
-inside the trait.
+failure can no longer zero out the gate or saturate the noisy-OR.
+Sign is applied at the §9 aggregation layer, not inside the trait.
 
 ### Auxiliary specs (NEUTRAL_SEED + shorts exclusion)
 
@@ -211,7 +239,7 @@ Stage 4 (stage_4/): Assembly & reranking
 | `step_2.py` | Query analysis — combined Stage 1+2 of the 5-stage trait decomposition. `run_step_2()` returns `QueryAnalysis` (holistic_read + atoms with modifying_signals + evaluative_intent). Model hard-coded to Gemini 3 Flash (no thinking, temperature 0.35). System prompt loads sections this stage applies (atomicity, modifier vs trait, evaluative intent) plus background sections later stages use (carver vs qualifier, polarity, salience, category taxonomy). |
 | `run_step_2.py` | CLI runner for step_2. Prints full JSON response + timing + tokens. Default query exercises role markers, polarity, chronological, and multi-dimension entities. |
 | `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline(query, *, skip_bypass_steps_0_1=False)` runs Steps 0+1 in parallel (or skipped) → Step 2 per branch → Step 3 per trait → per-CategoryCall handler-LLM endpoint-spec generation → reranker-only fallback + auxiliary-spec planning → `stage_4_execution.execute_branches`. Returns `FullPipelineResult` with per-branch specs (`branches`) and ranked candidates (`branch_results`). 25s timeout + 1 retry per LLM call. |
-| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Implements recursive granularity (category → trait → branch) with nested equal-weight averaging, multiplicative-gated negative-trait scoring (would-be partition derived via `determine_operation_type(category, route, POSITIVE)`), commitment × rarity weighting, NEUTRAL_SEED additive seeding, and MEDIA_TYPE shorts subtraction. Per-call soft-fail returns None so failed calls are dropped from negative-trait products instead of zeroing them. |
+| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Implements recursive granularity (category → trait → branch) with nested equal-weight averaging, three-bin negative-trait scoring (`gate × fuzzy` where gate = ∏ authoritative-G and fuzzy = noisy-OR over evidential-G ∪ R; would-be partition derived via `determine_operation_type(category, route, POSITIVE)` then split by `_AUTHORITATIVE_NEGATION_CATEGORIES`), commitment × rarity weighting, NEUTRAL_SEED additive seeding, and MEDIA_TYPE shorts subtraction. Per-call soft-fail returns None so failed calls are dropped from their bin instead of zeroing the gate or saturating the noisy-OR. |
 | `step_3.py` | Trait decomposition. `run_step_3(trait)` returns `TraitDecomposition`. One LLM call per committed Trait. Reads `qualifier_relation` (with `"n/a"` sentinel) as the carver-vs-qualifier signal — `role` was removed from Step 2. |
 | `endpoint_fetching/category_handlers/output_extractor.py` | `extract_fired_endpoints(category, output)`: per-bucket extraction of `(EndpointRoute, EndpointParameters)` pairs from a handler-LLM structured output. |
 | `implicit_expectations.py` | Implicit-prior state management (quality/notability priors). |
@@ -355,7 +383,9 @@ combination (`max()` for carver, `Σ(w·score)/Σw` for qualifier).
   `operation_type` does NOT identify which negative-trait calls
   would have been candidate-generators in positive polarity. Stage 4
   re-derives the would-be type using `determine_operation_type(category,
-  route, Polarity.POSITIVE)` for the multiplicative-AND partition.
+  route, Polarity.POSITIVE)`, then further partitions the would-be
+  generators by `_AUTHORITATIVE_NEGATION_CATEGORIES` to drive the
+  three-bin `gate × fuzzy` formula.
 - **Stoplist asymmetry for awards**: ingest writes every token; query
   drops `AWARD_QUERY_STOPLIST`. Intentional — lets the droplist be
   revised without re-ingesting.
