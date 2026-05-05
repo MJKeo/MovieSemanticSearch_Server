@@ -1,9 +1,10 @@
 """
-run_orchestrator.py — CLI runner for the unified front-half orchestrator.
+run_orchestrator.py — CLI runner for the full search pipeline.
 
 Runs `search_v2.full_pipeline_orchestrator.run_full_pipeline` with
 `skip_bypass_steps_0_1=True`, so the raw query goes straight into
-Step 2 as a single "original" branch. Prints:
+Step 2 as a single "original" branch, then through Stage 4 execution
++ ranking. Prints:
 
   1. Per-step completion events with elapsed (real-time, via INFO logs).
   2. Total wall-clock elapsed for the whole pipeline.
@@ -11,6 +12,8 @@ Step 2 as a single "original" branch. Prints:
      trait → category → individual endpoint call. Per-call output
      names the endpoint route and dumps only the non-null parameters
      of its EndpointParameters wrapper.
+  4. Per-branch ranked results — the top-N candidates by Stage-4
+     final score, with title and release year resolved from movie_card.
 
 Usage:
     python run_orchestrator.py "your query here"
@@ -24,6 +27,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -38,12 +42,22 @@ if str(_PROJECT_ROOT) not in sys.path:
 load_dotenv(_PROJECT_ROOT / ".env")
 
 from search_v2.full_pipeline_orchestrator import (  # noqa: E402
+    BranchRankedResults,
     CategoryCallWithEndpoints,
     FullPipelineResult,
     GeneratedEndpointSpec,
     TraitWithEndpoints,
     run_full_pipeline,
 )
+from db.postgres import fetch_movie_cards, pool as postgres_pool  # noqa: E402
+import db.redis as _redis_module  # noqa: E402
+from db.redis import init_redis  # noqa: E402
+
+
+# Top-N to display from each branch's ranked candidate list. Stage 4
+# returns the full ranked set; capping the display keeps CLI output
+# scannable for branches that produce hundreds or thousands of hits.
+DEFAULT_TOP_N = 25
 
 
 # ---------------------------------------------------------------------------
@@ -60,12 +74,18 @@ def _configure_realtime_logging() -> None:
         logging.Formatter("[%(relativeCreated)6.0fms] %(message)s")
     )
 
-    orch_logger = logging.getLogger(
-        "search_v2.full_pipeline_orchestrator"
-    )
-    orch_logger.setLevel(logging.INFO)
-    orch_logger.addHandler(handler)
-    orch_logger.propagate = False
+    # Surface per-step events from the front-half orchestrator AND the
+    # Stage-4 executor (per-branch ranking timing, auxiliary spec
+    # decisions, per-call failure warnings) without pulling in noisy
+    # INFO chatter from httpx / openai / etc.
+    for logger_name in (
+        "search_v2.full_pipeline_orchestrator",
+        "search_v2.stage_4_execution",
+    ):
+        sub_logger = logging.getLogger(logger_name)
+        sub_logger.setLevel(logging.INFO)
+        sub_logger.addHandler(handler)
+        sub_logger.propagate = False
 
 
 # ---------------------------------------------------------------------------
@@ -171,14 +191,89 @@ def _print_full_result(result: FullPipelineResult) -> None:
     _print_auxiliary_specs(result)
 
 
+async def _print_ranked_results(
+    branch_results: list[BranchRankedResults],
+    *,
+    top_n: int = DEFAULT_TOP_N,
+) -> None:
+    """Print each branch's top-N ranked candidates with title + year.
+
+    Pulls movie_card metadata in one bulk fetch per branch so we never
+    do per-candidate Postgres lookups (cross-codebase invariant). Cards
+    that fail to resolve render with placeholder title/year so a stale
+    ID never breaks the output.
+    """
+    if not branch_results:
+        print("\nNo ranked results — Stage 4 did not run.")
+        return
+
+    print()
+    print("=" * 72)
+    print("STAGE 4 RANKED RESULTS")
+    print("=" * 72)
+
+    for br in branch_results:
+        print()
+        print("-" * 72)
+        print(f"Branch: {br.kind}  ({br.ui_label})")
+        print(f"  query:        {br.query}")
+        print(f"  total ranked: {len(br.ranked)}")
+        print("-" * 72)
+
+        if br.branch_error is not None:
+            print(f"  branch_error: {br.branch_error}")
+            continue
+        if not br.ranked:
+            print("  (no candidates ranked)")
+            continue
+
+        top = br.ranked[:top_n]
+        cards = await fetch_movie_cards([mid for mid, _ in top])
+        cards_by_id = {c["movie_id"]: c for c in cards}
+
+        for rank, (movie_id, score) in enumerate(top, start=1):
+            card = cards_by_id.get(movie_id)
+            if card is None:
+                title, year = "<missing card>", "?"
+            else:
+                title = card["title"] or "<untitled>"
+                ts = card["release_ts"]
+                year = (
+                    datetime.fromtimestamp(ts, tz=timezone.utc).year
+                    if ts is not None
+                    else "?"
+                )
+            print(
+                f"  #{rank:<3d}  score={score:+.4f}  "
+                f"{title} ({year})  tmdb_id={movie_id}"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
+async def _ensure_db_ready() -> None:
+    """Open the Postgres pool and init Redis if not already done.
+
+    Stage 4 execution fires endpoint queries that hit Postgres + Qdrant
+    + Redis directly. The Qdrant client is a module-level singleton
+    that connects on first use, but the Postgres pool needs an explicit
+    open() and Redis needs init_redis() — both are no-ops when already
+    initialized so we can re-enter safely.
+    """
+    if postgres_pool._closed:
+        await postgres_pool.open()
+    if _redis_module._redis_client is None:
+        await init_redis()
+
+
 async def _run(query: str) -> None:
     print(f'Query: "{query}"\n')
     print("Step completions (real-time):")
+
+    await _ensure_db_ready()
 
     pipeline_start = time.perf_counter()
     result = await run_full_pipeline(query, skip_bypass_steps_0_1=True)
@@ -190,6 +285,7 @@ async def _run(query: str) -> None:
     print(f"Wall-clock elapsed:         {pipeline_elapsed:.2f}s")
 
     _print_full_result(result)
+    await _print_ranked_results(result.branch_results)
 
 
 def _parse_args() -> argparse.Namespace:

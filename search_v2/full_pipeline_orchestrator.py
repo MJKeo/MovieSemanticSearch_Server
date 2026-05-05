@@ -67,6 +67,10 @@ from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec impor
 from search_v2.endpoint_fetching.category_handlers.handler import (
     run_query_generation,
 )
+from search_v2.stage_4_execution import (
+    BranchRankedResults,
+    execute_branches,
+)
 from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
 from search_v2.step_2 import run_step_2
@@ -179,6 +183,10 @@ class FullPipelineResult:
     auxiliary_endpoint_specs: list[GeneratedEndpointSpec] = field(
         default_factory=list
     )
+    # Stage-4 output: per-branch ranked candidate lists. Empty list
+    # when no branch executed (non-standard flows / hard Step-0
+    # failure paths cannot reach this populated).
+    branch_results: list[BranchRankedResults] = field(default_factory=list)
     total_elapsed: float = 0.0
 
 
@@ -556,6 +564,10 @@ def _apply_reranker_only_candidate_fallback(
     for tier, spec in tiered_refs:
         if tier is lowest_tier:
             spec.operation_type = OperationType.CANDIDATE_GENERATOR
+            # Mark so stage-4 rarity uses the semantic-promoted rule
+            # (count of post-elbow 1.0 movies) instead of the regular
+            # finder rule (all matched candidates).
+            spec.was_promoted = True
 
     return []
 
@@ -675,6 +687,7 @@ async def run_full_pipeline(
             _apply_reranker_only_candidate_fallback(branch_list)
             + _build_auxiliary_specs(branch_list)
         )
+        branch_results = await execute_branches(branch_list, auxiliary)
         return FullPipelineResult(
             query=query,
             skipped_steps_0_1=True,
@@ -685,6 +698,7 @@ async def run_full_pipeline(
             similarity_flow_executed=False,
             branches=branch_list,
             auxiliary_endpoint_specs=auxiliary,
+            branch_results=branch_results,
             total_elapsed=time.perf_counter() - total_start,
         )
 
@@ -735,6 +749,7 @@ async def run_full_pipeline(
         _apply_reranker_only_candidate_fallback(branches)
         + _build_auxiliary_specs(branches)
     )
+    branch_results = await execute_branches(branches, auxiliary)
     return FullPipelineResult(
         query=query,
         skipped_steps_0_1=False,
@@ -745,5 +760,6 @@ async def run_full_pipeline(
         similarity_flow_executed=similarity_flow_executed,
         branches=branches,
         auxiliary_endpoint_specs=auxiliary,
+        branch_results=branch_results,
         total_elapsed=time.perf_counter() - total_start,
     )

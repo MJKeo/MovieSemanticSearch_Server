@@ -52,20 +52,127 @@ Full pipeline orchestrator (full_pipeline_orchestrator.py):
     Step 3 per trait; per-CategoryCall handler-LLM fired immediately
     as each Step 3 returns (does not wait on sibling traits)
   → 25s timeout + 1 retry on every individual LLM call
-  → Returns FullPipelineResult: per-branch results with traits
-    carrying polarity/commitment + per-category generated endpoint
-    specs ready for stage-4 execution
-  → Soft-fails per branch / per trait / per CategoryCall; only
-    Step 0 failure is fatal
+  → After Step 3 + handler-LLM, applies the reranker-only candidate
+    fallback (promotes tier-1+ rerankers or emits a NEUTRAL_SEED spec)
+    and the default shorts-exclusion auxiliary, then calls
+    stage_4_execution.execute_branches to actually fire endpoints and
+    rank candidates per branch.
+  → Returns FullPipelineResult: per-branch trait/category/endpoint
+    specs (`branches`) + auxiliary specs + per-branch ranked candidate
+    lists (`branch_results: list[BranchRankedResults]`).
+  → Soft-fails per branch / per trait / per CategoryCall / per
+    endpoint call; only Step 0 failure is fatal.
 ```
+
+## Stage 4 — Execution & Ranking (`stage_4_execution.py`)
+
+Stage 4 is the execution + scoring layer that turns generated endpoint
+specs into a ranked candidate list. Public entry:
+`execute_branches(branches, auxiliary_specs) -> list[BranchRankedResults]`.
+
+It implements the recursive granularity rule from
+`search_improvement_planning/search_method_deterministic_logic.md`
+(§3 / §5 / §6 / §7 / §8):
+
+```
+query
+  └── traits             (across-trait at branch level)
+       └── categories    (intra-trait at trait level)
+            └── calls    (intra-category at category level)
+```
+
+At every level a node is either **candidate-generating** (≥1
+positive-polarity CANDIDATE_GENERATOR call somewhere in its subtree)
+or **pure-reranker**. Cand-gen nodes execute generators in isolation
+then run rerankers within their own scope; pure-reranker nodes defer
+one level up. Composites use **nested equal-weight averaging** —
+calls average within a category, categories average within a trait,
+traits combine across the branch via §9's weighted sum.
+
+### Branch-level scoring (§9)
+
+```
+final_score(movie) = Σ over traits of (trait_score × trait_weight × polarity_sign)
+
+trait_weight = commitment_multiplier × rarity_factor      (cand-gen traits)
+             = commitment_multiplier × 1.0                 (pure-rer / negative)
+polarity_sign = +1 (positive)  or  -1 (negative)
+```
+
+Commitment multipliers: `required=3.0 / elevated=1.75 / neutral=1.0 /
+supporting=0.6 / diminished=0.35`. Rarity tiers (corpus N≈150K):
+`<0.1%→1.5 / <1%→1.2 / <10%→1.0 / <30%→0.75 / else 0.5`.
+
+A cand-gen trait contributes 0 to candidates it didn't generate
+(opportunity cost, §8) — missing positive ≠ active subtraction.
+
+### Negative-trait scoring (multiplicative, gated)
+
+`handler.determine_operation_type` short-circuits every
+negative-polarity call to `POOL_RERANKER` regardless of route, so the
+"would-be-generator vs would-be-reranker" partition is **not readable
+off `spec.operation_type`** at execution time. Stage 4 re-derives it
+by calling `determine_operation_type(category, route, Polarity.POSITIVE)`
+per call. The partition then drives a different aggregation shape:
+
+```
+G = would-be CANDIDATE_GENERATOR calls (membership-shaped)
+R = would-be POOL_RERANKER calls       (continuous similarity / prior)
+
+trait_score = (∏ G) × mean(R)   when both present  (gated multiplication)
+            = ∏ G               G only
+            = mean(R)           R only
+```
+
+Failed calls are *dropped from both partitions* rather than counted as
+confirmed-zero — option A from review. A single transient endpoint
+failure can no longer zero out a multiplicative-AND product or drag a
+mean toward zero. Sign is applied at the §9 aggregation layer, not
+inside the trait.
+
+### Auxiliary specs (NEUTRAL_SEED + shorts exclusion)
+
+`auxiliary_endpoint_specs` carries up to two entries from upstream:
+the reranker-only fallback's `NEUTRAL_SEED` (additive) and the default
+shorts-exclusion `MEDIA_TYPE` (subtractive). Stage 4 applies them at
+branch level, in order:
+
+1. If `branch_pool` is empty AND a NEUTRAL_SEED spec is present, fetch
+   `db.postgres.fetch_neutral_reranker_seed_ids()` and seed the pool.
+2. If a MEDIA_TYPE spec is present, fetch the SHORT-format movie IDs
+   and **subtract** them from the pool. The MEDIA_TYPE spec is tagged
+   `CANDIDATE_GENERATOR` upstream so its executor returns the SHORT
+   set; Stage 4 uses those IDs as a blocklist, not as a positive
+   contribution.
+
+Neither contributes a `trait_score`. Pure rerankers run *after*
+auxiliary application so they only score the surviving pool.
+
+### Rarity bookkeeping
+
+Rarity uses a per-trait union over the trait's would-be-generator
+calls (per §7 + the user's clarification on semantic-promoted traits):
+
+- **Promoted call** (`spec.was_promoted=True`, set by
+  `_apply_reranker_only_candidate_fallback`): only post-elbow 1.0
+  scoring movies count.
+- **Regular finder call**: every matched candidate counts (every key
+  in the call's score map).
+- A trait mixing both unions both sets.
+
+### Soft-failure semantics
+
+`_dispatch_call` returns `dict[int, float] | None`. None ≡ failed
+call. Positive-trait paths fold None into `{}` (the call simply
+doesn't contribute candidates / scores); negative-trait scoring drops
+None calls from both G and R partitions.
 
 ## Back-End Stages (Stage 3 / Stage 4)
 
-Stage 3 and Stage 4 are carried over from the earlier V2 work and
-are still operational for the old stage_2a/2b concept-routing flow.
-The new step-2 holistic-read path feeds into category-handler
-routing (stage_3/category_handlers/) which is still under
-construction.
+Stage 3 owns endpoint translation + execution. Stage 4 (the new
+`stage_4_execution.py`, not the legacy `stage_4/` directory) owns
+recursive scoring + ranking — see the **Stage 4 — Execution &
+Ranking** section above for the full design.
 
 ```
 Stage 3 (stage_3/): Endpoint translation + execution (9 endpoints)
@@ -103,7 +210,8 @@ Stage 4 (stage_4/): Assembly & reranking
 | `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response`. Produces two distinct spins plus UI labels. Always exactly two spins. `distinctness` field requires result-set divergence from both original and sibling. |
 | `step_2.py` | Query analysis — combined Stage 1+2 of the 5-stage trait decomposition. `run_step_2()` returns `QueryAnalysis` (holistic_read + atoms with modifying_signals + evaluative_intent). Model hard-coded to Gemini 3 Flash (no thinking, temperature 0.35). System prompt loads sections this stage applies (atomicity, modifier vs trait, evaluative intent) plus background sections later stages use (carver vs qualifier, polarity, salience, category taxonomy). |
 | `run_step_2.py` | CLI runner for step_2. Prints full JSON response + timing + tokens. Default query exercises role markers, polarity, chronological, and multi-dimension entities. |
-| `full_pipeline_orchestrator.py` | Unified front-half orchestrator. `run_full_pipeline(query, *, skip_bypass_steps_0_1=False)` runs Steps 0+1 in parallel (or skipped) → Step 2 per branch → Step 3 per trait → per-CategoryCall handler-LLM endpoint-spec generation. Stops short of execution. Returns `FullPipelineResult` with per-branch trait/category/endpoint groupings. 25s timeout + 1 retry per LLM call. |
+| `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline(query, *, skip_bypass_steps_0_1=False)` runs Steps 0+1 in parallel (or skipped) → Step 2 per branch → Step 3 per trait → per-CategoryCall handler-LLM endpoint-spec generation → reranker-only fallback + auxiliary-spec planning → `stage_4_execution.execute_branches`. Returns `FullPipelineResult` with per-branch specs (`branches`) and ranked candidates (`branch_results`). 25s timeout + 1 retry per LLM call. |
+| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Implements recursive granularity (category → trait → branch) with nested equal-weight averaging, multiplicative-gated negative-trait scoring (would-be partition derived via `determine_operation_type(category, route, POSITIVE)`), commitment × rarity weighting, NEUTRAL_SEED additive seeding, and MEDIA_TYPE shorts subtraction. Per-call soft-fail returns None so failed calls are dropped from negative-trait products instead of zeroing them. |
 | `step_3.py` | Trait decomposition. `run_step_3(trait)` returns `TraitDecomposition`. One LLM call per committed Trait. Reads `qualifier_relation` (with `"n/a"` sentinel) as the carver-vs-qualifier signal — `role` was removed from Step 2. |
 | `endpoint_fetching/category_handlers/output_extractor.py` | `extract_fired_endpoints(category, output)`: per-bucket extraction of `(EndpointRoute, EndpointParameters)` pairs from a handler-LLM structured output. |
 | `implicit_expectations.py` | Implicit-prior state management (quality/notability priors). |
@@ -237,6 +345,17 @@ combination (`max()` for carver, `Σ(w·score)/Σw` for qualifier).
   is a required dependency for Kneedle elbow detection.
 - **`stage_4/priors.py` is deleted.** No replacement — priors are
   out of scope for the V2 runtime orchestrator.
+- **Stage 4 lives in `stage_4_execution.py`, not `stage_4/`.** The
+  legacy `stage_4/` directory's assembly/reranking code is superseded
+  by the recursive granularity executor described above. Code
+  importing the old `run_stage_4` will fail.
+- **Negative-trait `operation_type` is uniformly `POOL_RERANKER`.**
+  `determine_operation_type` short-circuits negative polarity to
+  `POOL_RERANKER` regardless of route, so the spec's
+  `operation_type` does NOT identify which negative-trait calls
+  would have been candidate-generators in positive polarity. Stage 4
+  re-derives the would-be type using `determine_operation_type(category,
+  route, Polarity.POSITIVE)` for the multiplicative-AND partition.
 - **Stoplist asymmetry for awards**: ingest writes every token; query
   drops `AWARD_QUERY_STOPLIST`. Intentional — lets the droplist be
   revised without re-ingesting.

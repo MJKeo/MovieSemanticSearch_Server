@@ -1,6 +1,34 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Stage-4 execution + ranking layer
+Files: search_v2/stage_4_execution.py, search_v2/full_pipeline_orchestrator.py, search_v2/endpoint_fetching/category_handlers/generated_endpoint_spec.py
+
+### Intent
+Wire the front-half pipeline (Steps 0-3 + spec building) to actual endpoint execution and produce per-branch ranked candidate lists. Until this change, `run_full_pipeline` stopped at handing back `GeneratedEndpointSpec` lists; nothing fired them. Stage 4 closes that gap.
+
+### Key Decisions
+- New module `search_v2/stage_4_execution.py` owns all execution + scoring. The orchestrator stays focused on Steps 0-3 + auxiliary-spec planning and now calls `execute_branches(...)` at the tail of both bypass and standard paths.
+- Recursive granularity per `search_improvement_planning/search_method_deterministic_logic.md` §3 / §5 / §6 / §7 / §8: category → trait → branch. Composites use **nested equal-weight averaging** (per category, then per trait) — chosen over a single flat trait-wide average because the user's design treats each level's composite as a single value at the next level. Worth flagging in §6 of the design doc as a follow-up.
+- **Negative-polarity traits** use multiplicative-AND over would-be-generator calls, gated against the reranker average: `trait_score = (∏ G) × mean(R)` when both present; falls back to `∏ G` or `mean(R)` cleanly. Sign is applied at the §9 final-aggregation layer, not inside the trait.
+- **Auxiliary specs** apply only at branch level, in order: NEUTRAL_SEED (additive — only when branch_pool is empty AND the upstream fallback emitted one) then MEDIA_TYPE shorts (subtractive — IDs from the SHORT-format MEDIA_TYPE generator are used as a blocklist, not a positive contribution). Both special-cased in `_apply_auxiliary` rather than going through the standard call dispatch, since neither contributes a trait_score.
+- Added `was_promoted: bool = False` on `GeneratedEndpointSpec`, set True by `_apply_reranker_only_candidate_fallback` when it flips a reranker spec to CANDIDATE_GENERATOR. Stage-4 reads this so semantic-promoted traits' rarity counts only post-elbow 1.0 movies (per user clarification), not all matched candidates.
+- Per-call soft-failure: `_dispatch_call` wraps `build_endpoint_coroutine` with a 25s timeout and converts exceptions to empty score maps. One bad call never tanks a whole trait or branch.
+
+### Planning Context
+Plan file at `~/.claude/plans/1-use-the-approach-melodic-cake.md`. The user explicitly chose: nested averaging at category and trait levels; multiplicative-gated for negative traits; mark `was_promoted` only at fallback time; only count post-elbow 1.0 movies for promoted traits' rarity.
+
+### Testing Notes
+- No automated tests added (per repo test-boundary rule). Manual exercise documented in plan file's Verification section.
+- Worth covering eventually: negative-trait gated-multiplicative shape (a horror-comedy hits 1 of 3 G-calls vs all 3 — penalty must scale steeply); rarity tier boundaries on a small synthetic corpus; auxiliary shorts subtraction does not affect rerankers (it runs before them); branch with `branch_error` set yields empty `ranked` and propagates the error string.
+- Risky edges: cand-gen trait whose pool is empty after generators returns None (drops trait silently); branch with empty cand-gen pool AND no NEUTRAL_SEED auxiliary returns empty (no automatic recovery — fallback already ran upstream).
+
+### Self-review follow-ups
+- **Negative-trait would-be-generator detection was broken.** Initial implementation partitioned negative-trait calls by `spec.operation_type`, but `handler.determine_operation_type` short-circuits every negative-polarity call to `POOL_RERANKER` regardless of route. The G partition was always empty → multiplicative-AND never fired → negative traits scored as a plain mean of rerankers (the OLD behavior). Fix: re-derive what each call WOULD have been with `determine_operation_type(category, route, Polarity.POSITIVE)`. Required carrying the originating CategoryName alongside each spec into the negative scorer.
+- **`_dispatch_call` now returns `dict[int, float] | None`** so failed calls can be distinguished from legitimately empty results. Negative-trait scoring drops failed calls from both G product and R mean (option A); positive paths fold None → `{}` and absorb the zero contribution into their averages.
+- Removed dead `_CallExecution.is_generator` field (read `spec.operation_type` directly). Simplified `_match_count_for_rarity` (no defensive intersection needed — `unioned ⊆ trait_pool` by construction). Dropped unused `Literal` import.
+- Updated `docs/modules/search_v2.md` with the new Stage 4 design (recursive granularity, nested averaging, negative-trait gated multiplication, auxiliary-spec ordering, soft-failure semantics) and the gotcha that `operation_type` is uniformly `POOL_RERANKER` for negatives.
+
 ## Metadata executor: drop floor compression, sigmoid popularity/reception
 Files: search_v2/endpoint_fetching/metadata_query_execution.py
 Why: Bring metadata in line with the semantic executor rework — endpoints emit raw [0, 1], cross-endpoint weighting is the merger's job. Also fix a long-standing semantic bug where popularity/reception used pure linear pass-through, so a 0.01 raw delta translated 1:1 into score, even though no user means "score 76" differently from "score 78" when they say "well-received."
