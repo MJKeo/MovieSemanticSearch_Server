@@ -1074,3 +1074,11 @@ Why: Multiplying the full base score by `(1 + boost)` makes negative base scores
 Approach: Changed the post-rerank formula to `final = base_score + prior_base * boost`, where `prior_base = positive_total` when a candidate has positive contribution and `1.0` otherwise. This preserves positive relevance amplification for normal queries and gives pure-negative / no-positive-contribution cases a neutral prior surface. Updated module docs with the exact formula.
 Design context: Negative penalties remain additive and untouched. The implicit prior now adds only the lift amount rather than multiplying the full signed score.
 Testing notes: Did not run unit tests per boundary. Verification pending in the next compile/check pass.
+
+## Align implicit-prior signal shape with metadata endpoint
+Files: search_v2/full_pipeline_orchestrator.py, search_v2/endpoint_fetching/metadata_query_execution.py, docs/modules/search_v2.md
+
+Why: Implicit-prior scoring was using fully continuous linear normalization while explicit metadata popularity/reception scoring uses threshold-anchored sigmoid curves. User asked for implicit priors to match metadata endpoint scoring.
+Approach: Added public `score_popularity_prior()` and `score_reception_prior()` wrappers around the metadata endpoint's existing sigmoid scorers, then switched full-orchestrator implicit signals to use those wrappers. Positive quality uses `ReceptionMode.WELL_RECEIVED`; inverse quality uses `ReceptionMode.POORLY_RECEIVED`; positive popularity uses `PopularityMode.POPULAR`; inverse popularity uses `PopularityMode.NICHE`. Missing data still returns 0.0 before scoring. Updated module docs to describe the shared sigmoid shape.
+Design context: Public wrappers avoid importing private underscored helpers across module boundaries while preserving one source of truth for threshold centers/slopes.
+Testing notes: Did not run unit tests per boundary. Verification pending in the next compile/check pass.

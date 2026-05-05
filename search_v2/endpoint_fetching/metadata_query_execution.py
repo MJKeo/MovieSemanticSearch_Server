@@ -346,6 +346,16 @@ def _score_reception(reception: float | None, mode: ReceptionMode) -> float:
     return 1.0 / (1.0 + math.exp(_RECEPTION_K * (reception - _RECEPTION_POOR_CENTER)))
 
 
+def score_popularity_prior(popularity: float | None, mode: PopularityMode) -> float:
+    """Score a popularity prior with the metadata endpoint's sigmoid shape."""
+    return _score_popularity(popularity, mode)
+
+
+def score_reception_prior(reception: float | None, mode: ReceptionMode) -> float:
+    """Score a reception prior with the metadata endpoint's sigmoid shape."""
+    return _score_reception(reception, mode)
+
+
 # ── Column handler abstraction ────────────────────────────────────────────
 
 

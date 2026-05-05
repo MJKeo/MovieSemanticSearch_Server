@@ -129,10 +129,12 @@ boosted_score = base_score + prior_base * boost
 Boost caps are `quality: 0 / 0.025 / 0.06 / 0.10` and
 `popularity: 0 / 0.05 / 0.12 / 0.20` for
 `none / light / normal / strong`. Inverse directions use
-`1 - normalized_signal`. Missing reception or popularity data has no
-effect on the boost. The neutral `prior_base = 1.0` fallback lets
-pure-negative queries (for example, "not scary") still use implicit
-priors for ordering without magnifying negative penalties.
+the same direction-specific sigmoid scoring as the metadata endpoint
+(`POORLY_RECEIVED` for inverse quality, `NICHE` for inverse
+popularity). Missing reception or popularity data has no effect on
+the boost. The neutral `prior_base = 1.0` fallback lets pure-negative
+queries (for example, "not scary") still use implicit priors for
+ordering without magnifying negative penalties.
 
 ### Negative-trait scoring (gate × noisy-OR, three-bin)
 

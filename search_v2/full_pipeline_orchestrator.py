@@ -49,7 +49,9 @@ from db.postgres import fetch_quality_popularity_signals
 from schemas.enums import (
     EndpointRoute,
     OperationType,
+    PopularityMode,
     Polarity,
+    ReceptionMode,
     ReleaseFormat,
 )
 from schemas.implicit_expectations import ImplicitExpectationsResult
@@ -68,6 +70,10 @@ from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec impor
 )
 from search_v2.endpoint_fetching.category_handlers.handler import (
     run_query_generation,
+)
+from search_v2.endpoint_fetching.metadata_query_execution import (
+    score_popularity_prior,
+    score_reception_prior,
 )
 from search_v2.stage_4_execution import (
     BranchRankedResults,
@@ -786,11 +792,13 @@ def _quality_signal(
 ) -> float:
     if direction == "none" or reception_score is None:
         return 0.0
-    normalized = reception_score / 100.0
-    normalized = _clamp_unit(normalized)
+    # Keep implicit-prior shape aligned with explicit metadata-prior
+    # scoring. The metadata endpoint owns these sigmoid parameters.
     if direction == "inverse":
-        return 1.0 - normalized
-    return normalized
+        return score_reception_prior(
+            reception_score, ReceptionMode.POORLY_RECEIVED
+        )
+    return score_reception_prior(reception_score, ReceptionMode.WELL_RECEIVED)
 
 
 def _popularity_signal(
@@ -800,15 +808,11 @@ def _popularity_signal(
 ) -> float:
     if direction == "none" or popularity_score is None:
         return 0.0
-    normalized = popularity_score
-    normalized = _clamp_unit(normalized)
+    # Keep implicit-prior shape aligned with explicit metadata-prior
+    # scoring. The metadata endpoint owns these sigmoid parameters.
     if direction == "inverse":
-        return 1.0 - normalized
-    return normalized
-
-
-def _clamp_unit(value: float) -> float:
-    return max(0.0, min(1.0, value))
+        return score_popularity_prior(popularity_score, PopularityMode.NICHE)
+    return score_popularity_prior(popularity_score, PopularityMode.POPULAR)
 
 
 # ---------------------------------------------------------------------------
