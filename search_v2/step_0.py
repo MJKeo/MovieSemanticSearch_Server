@@ -225,6 +225,14 @@ exact_title_flow_data:
 - Otherwise set should_be_searched to false (no title covers the \
   full query, multiple titles observed, or the title appears inside \
   a similarity frame / descriptive sentence).
+- release_year: integer year ONLY when the user EXPLICITLY states a \
+  year next to (or otherwise clearly attached to) the title — \
+  examples: "Dune 2021", "the 1978 Superman", "Halloween (2018)". \
+  Otherwise set to null. NEVER infer the year from descriptive \
+  details, plot references, sequel numbering, or your own knowledge \
+  of when a franchise installment came out. This field becomes an \
+  exact filter downstream, so guessing will silently drop valid \
+  results. When in doubt, leave it null.
 
 similarity_flow_data:
 - similar_search_title: always populate with your best canonical \
@@ -237,6 +245,11 @@ similarity_flow_data:
   "only mode" — the presence of any qualifier forces the query \
   into the standard flow where descriptive signal can be applied. \
   This is a hard rule enforced by a schema validator.
+- release_year: integer year ONLY when the user EXPLICITLY states a \
+  year next to the reference title inside the similarity frame — \
+  example: "movies like Dune 2021". Otherwise set to null. Same \
+  hard rule as the exact-title flow: never inferred, never \
+  auto-filled.
 
 enable_primary_flow (boolean controlling the standard/default flow):
 - Set to true if any of the following hold:
@@ -388,10 +401,55 @@ Example 10 — similarity frame blocked by a modifier qualifier
 Query: "Inception but funnier"
 - titles_observed: [{span_text: "Inception", most_likely_canonical_title: "Inception", ambiguity_potential: "title-only."}]
 - qualifiers: ["funnier"]
-- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "Inception"}
-- similarity_flow_data: {should_be_searched: false, similar_search_title: "Inception"}  (reference captured but blocked by qualifier)
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "Inception", release_year: null}
+- similarity_flow_data: {should_be_searched: false, similar_search_title: "Inception", release_year: null}  (reference captured but blocked by qualifier)
 - enable_primary_flow: true
 - primary_flow: standard
+
+Example 11 — explicit year alongside title (exact-title flow)
+Query: "Dune 2021"
+- titles_observed: [{span_text: "Dune 2021", most_likely_canonical_title: "Dune", ambiguity_potential: "title-only with explicit year disambiguation; user is pointing at the 2021 Villeneuve film specifically."}]
+- qualifiers: []
+- exact_title_flow_data: {should_be_searched: true, exact_title_to_search: "Dune", release_year: 2021}
+- similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
+- enable_primary_flow: false
+- primary_flow: exact_title
+
+Example 12 — explicit year in parentheses
+Query: "Halloween (2018)"
+- titles_observed: [{span_text: "Halloween (2018)", most_likely_canonical_title: "Halloween", ambiguity_potential: "title-only with explicit year disambiguation; user is pointing at the 2018 Blumhouse reboot specifically."}]
+- qualifiers: []
+- exact_title_flow_data: {should_be_searched: true, exact_title_to_search: "Halloween", release_year: 2018}
+- similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
+- enable_primary_flow: false
+- primary_flow: exact_title
+
+Example 13 — descriptive reference, year must NOT be inferred
+Query: "that one indiana jones where he runs from a boulder"
+- titles_observed: [{span_text: "indiana jones", most_likely_canonical_title: "Indiana Jones", ambiguity_potential: "franchise reference, not a specific installment; do not auto-resolve to Raiders of the Lost Ark from the boulder description."}]
+- qualifiers: ["where he runs from a boulder"]
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "Indiana Jones", release_year: null}  (year NOT inferred from boulder reference)
+- similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
+- enable_primary_flow: true
+- primary_flow: standard
+
+Example 14 — explicit year inside a similarity frame
+Query: "movies like Dune 2021"
+- titles_observed: [{span_text: "Dune 2021", most_likely_canonical_title: "Dune", ambiguity_potential: "title-only with explicit year disambiguation."}]
+- qualifiers: []
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "Dune", release_year: 2021}
+- similarity_flow_data: {should_be_searched: true, similar_search_title: "Dune", release_year: 2021}
+- enable_primary_flow: false
+- primary_flow: similarity
+
+Example 15 — sequel numbering is NOT a release year
+Query: "Top Gun 2"
+- titles_observed: [{span_text: "Top Gun 2", most_likely_canonical_title: "Top Gun: Maverick", ambiguity_potential: "title-only; '2' is sequel numbering, not a release year."}]
+- qualifiers: []
+- exact_title_flow_data: {should_be_searched: true, exact_title_to_search: "Top Gun: Maverick", release_year: null}  (the '2' is a sequel marker, not a year)
+- similarity_flow_data: {should_be_searched: false, similar_search_title: "", release_year: null}
+- enable_primary_flow: false
+- primary_flow: exact_title
 
 ---
 
@@ -412,14 +470,17 @@ qualifiers — list of strings, possibly empty. Quote each qualifier \
 phrase directly from the query. Exclude similarity-framing phrases \
 and phrases already fully captured by a TitleObservation span.
 
-exact_title_flow_data — structured object with two fields:
+exact_title_flow_data — structured object with three fields:
 - should_be_searched (bool): true only when exactly one \
   TitleObservation's span_text covers the full query.
 - exact_title_to_search (str): the canonical title that would be \
   searched. Always your best candidate when a title is present; \
   empty string only when no title is named.
+- release_year (int | null): the year the user explicitly stated \
+  alongside the title. Null otherwise. Never inferred — only \
+  carried over from explicit user statement.
 
-similarity_flow_data — structured object with two fields:
+similarity_flow_data — structured object with three fields:
 - should_be_searched (bool): true only when a similarity frame is \
   observed, the reference resolves, AND qualifiers is empty. \
   Presence of any qualifier blocks the similarity search.
@@ -427,6 +488,8 @@ similarity_flow_data — structured object with two fields:
   would be searched. Always your best candidate when a similarity \
   reference is present; empty string only when no similarity \
   reference exists.
+- release_year (int | null): the year the user explicitly stated \
+  alongside the reference title. Null otherwise. Never inferred.
 
 enable_primary_flow — boolean. True when the standard (primary/\
 default) search flow should run; false otherwise. At least one flow \

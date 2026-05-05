@@ -92,11 +92,22 @@ Bodies describe what to FIND, regardless of polarity. Negation is committed upst
 
 The viewer_experience `negations` sub-fields are NOT polarity — they describe the boundary the trait wants the *match* to respect (e.g. "tense, but not gory"), not whether to include or exclude.
 
+## Authoring `strengths` and `weaknesses` per space candidate
+
+Each `space_candidates` entry carries a vector space plus two short prose fields. Frame both operationally — what does this space's embedding do at retrieval time, given the aspects under consideration? Four shapes recur:
+
+- **clean** — strengths name the aspects the space genuinely owns; weaknesses = "none". Common when the aspect lands cleanly in one space's ingest-side vocabulary.
+- **under-coverage** — strengths name the aspects owned; weaknesses lead with `under-coverage:` and name aspects the space's boundary redirects elsewhere (occasion → watch_context; craft → narrative_techniques; scalar reception → metadata; etc.).
+- **over-coverage** — strengths name the aspects owned; weaknesses lead with `over-coverage:` and name what the embedding would ALSO match beyond the slice (e.g. plot_analysis on a broad genre query pulls every adjacent thematic shape).
+- **both** — strengths name the partial slice owned; weaknesses names BOTH `under-coverage:` (what's missed) and `over-coverage:` (what's over-pulled).
+
+The over-coverage axis is what the commitment phase uses to decide whether to fire a sibling endpoint that refines this one. Surface it honestly even when this space is the best semantic fit.
+
 ## Where the semantic analysis lives
 
 In single-endpoint buckets the analysis (`aspects` / `space_candidates`) and the commitment (`role_exploration` / `role` / `space_queries`) live together in one `SemanticParameters`.
 
-In multi-endpoint buckets (preferred-fallback, semantic+augmentation, audience-suitability) the analysis is hoisted to a bucket-level `semantic_walk` field that sits BEFORE the coverage_assignments commitment, while the commitment lives in a thin `semantic_parameters` slot AFTER it. `role_exploration` + `role` stay paired with the commitment because they're semantic-internal selectivity, not space-grounded analysis. Refer to the schema descriptors for exact field locations.
+In multi-endpoint buckets the analysis is hoisted to a bucket-level `semantic_walk` field that sits BEFORE the coverage_exploration / coverage_assignments commitment, while the commitment lives in a thin `semantic_parameters` slot AFTER it. `role_exploration` + `role` stay paired with the commitment because they're semantic-internal selectivity, not space-grounded analysis. Refer to the schema descriptors for exact field locations.
 
 ## Routing trust and abstention
 

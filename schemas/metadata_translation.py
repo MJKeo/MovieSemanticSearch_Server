@@ -312,22 +312,31 @@ class ColumnCandidate(BaseModel):
         ...,
         description="The structured-attribute column under audit.",
     )
-    what_this_covers: str = Field(
+    strengths: str = Field(
         ...,
         description=(
-            "One sentence naming the aspect of the call's intent this "
-            "column genuinely owns. Cite the specific intent fragment.\n"
+            "What aspect of the call's intent this column genuinely "
+            "OWNS at retrieval time. Cite the specific intent fragment.\n"
             "NEVER back-rationalize. NEVER generalize from the "
             "column's default purpose."
         ),
     )
-    what_this_misses: str = Field(
+    weaknesses: str = Field(
         ...,
         description=(
-            "Aspect of the call's intent this column does NOT cover, "
-            "naming the column that owns the gap. \"Nothing\" when fit "
-            "is clean and no adjacent column competes.\n"
-            "NEVER hedge without naming. NEVER invent gaps."
+            "What this column MISSES or OVER-PULLS relative to the "
+            "call's intent. Two failure modes — both belong here:\n"
+            "- under-coverage: aspects of the intent this column does "
+            "NOT carry, naming the column or endpoint that owns the "
+            "gap.\n"
+            "- over-coverage: rows this column would ALSO match beyond "
+            "the slice (e.g. a country list whose region pull is "
+            "broader than the cultural-tradition slice).\n"
+            "\n"
+            "Suggested vocabulary (not enforced): prefix lines with "
+            "'under-coverage:' and 'over-coverage:'. Use 'none' only "
+            "when the column is a clean fit on both axes.\n"
+            "NEVER hedge without naming. NEVER invent weaknesses."
         ),
     )
 
@@ -410,9 +419,9 @@ class MetadataTranslationOutput(BaseModel):
         ...,
         description=(
             "Honest audit of columns plausible for search_picture, "
-            "with per-column what_this_covers / what_this_misses. "
-            "Surface adjacency where it genuinely competes; drop "
-            "columns whose only contribution is being adjacent.\n"
+            "with per-column strengths + weaknesses. Surface adjacency "
+            "where it genuinely competes; drop columns whose only "
+            "contribution is being adjacent.\n"
             "Local test: \"if I removed this candidate, would the "
             "commit step lose a real option?\" Padding → drop.\n"
             "NEVER list every column out of habit. NEVER duplicate "
@@ -435,13 +444,12 @@ class MetadataTranslationOutput(BaseModel):
         ...,
         description=(
             "Literal commitment. Populate ONLY columns surfaced in "
-            "column_candidates with substantive what_this_covers; "
-            "explicit null elsewhere. Apply minimum span — null a "
-            "column whose search_picture aspect is fully covered by "
-            "another populated column. Same-column expressions merge "
-            "into ONE populated sub-object (country lists union, "
-            "runtime ranges reconcile, streaming services + access "
-            "pair).\n"
+            "column_candidates with substantive strengths; explicit "
+            "null elsewhere. Apply minimum span — null a column whose "
+            "search_picture aspect is fully covered by another "
+            "populated column. Same-column expressions merge into ONE "
+            "populated sub-object (country lists union, runtime ranges "
+            "reconcile, streaming services + access pair).\n"
             "Local test per column: \"if I null this, does "
             "search_picture lose real intent?\" If no, null it.\n"
             "NEVER populate a column absent from column_candidates. "
@@ -524,17 +532,16 @@ class MetadataWalk(BaseModel):
             "cover the call's intent. One entry per column whose "
             "definition plausibly carries part of the call (read the "
             "call's `retrieval_intent` + `expressions` in the user "
-            "message), with concrete what_this_covers / "
-            "what_this_misses prose.\n"
+            "message), with concrete strengths + weaknesses.\n"
             "\n"
             "This is the GROUNDED walk that precedes the bucket-level "
-            "coverage_assignments commitment. Surface every column "
-            "with substantive coverage so the commitment phase reads "
-            "off real candidates rather than abstract optimism. An "
-            "empty list (no column meaningfully fits) is a valid "
-            "signal that the metadata endpoint has nothing useful — "
-            "the commitment phase is allowed to leave the call unowned "
-            "by metadata.\n"
+            "coverage_exploration / coverage_assignments commitment. "
+            "Surface every column with substantive strengths so the "
+            "commitment phase reads off real candidates rather than "
+            "abstract optimism. An empty list (no column meaningfully "
+            "fits) is a valid signal that the metadata endpoint has "
+            "nothing useful — the commitment phase is allowed to leave "
+            "the call unowned by metadata.\n"
             "\n"
             "TEST per candidate: 'if I dropped this, would the commit "
             "step lose a real option?' Padding → drop.\n"
@@ -574,12 +581,12 @@ class MetadataTranslationOutputSubintent(BaseModel):
         description=(
             "Literal commitment. Populate ONLY columns surfaced in "
             "the bucket-level `metadata_walk.column_candidates` above "
-            "with substantive what_this_covers; explicit null "
-            "elsewhere. Apply minimum span — null a column whose "
-            "intent fragment is fully covered by another populated "
-            "column. Same-column intent merges into ONE populated "
-            "sub-object (country lists union, runtime ranges "
-            "reconcile, streaming services + access pair).\n"
+            "with substantive strengths; explicit null elsewhere. "
+            "Apply minimum span — null a column whose intent fragment "
+            "is fully covered by another populated column. Same-column "
+            "intent merges into ONE populated sub-object (country lists "
+            "union, runtime ranges reconcile, streaming services + "
+            "access pair).\n"
             "Local test per column: \"if I null this, does the "
             "assigned slice lose real intent?\" If no, null it.\n"
             "NEVER populate a column absent from "

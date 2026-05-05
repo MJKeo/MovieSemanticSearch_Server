@@ -55,11 +55,19 @@ class TitleObservation(BaseModel):
 #   should_be_searched is False (can be empty string only when there
 #   is genuinely no candidate title in the query). When
 #   should_be_searched is True, the string must be non-empty.
+# - release_year: the release year the user EXPLICITLY stated alongside
+#   the title (e.g., "Dune 2021", "the 1978 Superman"). None when the
+#   user did not state a year. The LLM must NOT infer the year from
+#   descriptive details, plot references, or its own knowledge of the
+#   franchise — only carry over what the query literally says. Used as
+#   an exact filter downstream, so over-restricting via inference would
+#   silently drop valid candidates.
 class ExactTitleFlowData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     should_be_searched: bool = Field(...)
     exact_title_to_search: str = Field(...)
+    release_year: int | None = Field(default=None)
 
 
 # Similarity flow decision payload.
@@ -73,11 +81,16 @@ class ExactTitleFlowData(BaseModel):
 #   when should_be_searched is False (can be empty string only when
 #   there is genuinely no reference title in the query). When
 #   should_be_searched is True, the string must be non-empty.
+# - release_year: the release year the user EXPLICITLY stated for the
+#   reference title (e.g., "movies like Dune 2021"). Same rule as the
+#   exact-title flow: never inferred, never auto-filled. None when the
+#   user did not state a year.
 class SimilarityFlowData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     should_be_searched: bool = Field(...)
     similar_search_title: str = Field(...)
+    release_year: int | None = Field(default=None)
 
 
 # Top-level Step 0 response.

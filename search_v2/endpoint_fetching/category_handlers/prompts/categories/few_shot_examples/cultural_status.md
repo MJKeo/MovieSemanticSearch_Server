@@ -12,11 +12,12 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspect "whole-work canonical stature / lasting reputation"; candidate `reception` (central) — canonical stature lives in reception prose / praised qualities, not in scalar columns alone.
-- `metadata_walk`: surface `reception` and `popularity` columns as priors that reinforce stature; flag the gap that scalars alone don't capture canonical-status framing.
-- `coverage_assignments`: semantic for the stature framing; metadata for reception/popularity priors. Overlap is the design — both pull on "classic". `intentionally_uncovered` empty.
+- `semantic_walk`: aspect "whole-work canonical stature / lasting reputation"; `reception` (strengths: canonical-stature framing lives in reception prose; weaknesses: under-coverage of scalar reception priors that semantic alone can't anchor numerically).
+- `metadata_walk`: `reception` and `popularity` columns with strengths: scalar priors that anchor stature numerically; weaknesses: under-coverage of the canonical-status framing (scalars alone don't capture "classic"); `release_date` skipped — era is a sibling trait's concern.
+- `coverage_exploration`: semantic carries the framing; metadata's scalars layer on as priors that reinforce. Both fire — semantic's experiential framing fills metadata's framing weakness; metadata's scalar anchor fills semantic's numerical weakness.
+- `coverage_assignments`: semantic + metadata.
 - `semantic_parameters`: `reception` body capturing canonical-stature language.
-- `metadata_parameters`: reception and/or popularity prior; no release-date logic here (era is a sibling trait's concern).
+- `metadata_parameters`: reception and/or popularity prior; no release-date logic here.
 </example>
 
 <example>
@@ -31,11 +32,12 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspect "quality-versus-recognition gap"; candidate `reception` (central) — the gap is reception-shape content, only semantic can name it.
-- `metadata_walk`: walk the scalar reception/popularity columns honestly; coverage prose names them as unable to express the gap (high-quality + low-recognition is a relationship, not a level).
-- `coverage_assignments`: semantic owns the slice; metadata skipped because the walk surfaced no clean fit. `intentionally_uncovered` may name "scalar quality-vs-recognition gap" if the slice can't be carried any other way.
+- `semantic_walk`: aspect "quality-versus-recognition gap"; `reception` (strengths: the gap is reception-shape content the embedding can name; weaknesses: none for this slice — only semantic can frame a relationship between two scalars).
+- `metadata_walk`: scalar reception/popularity columns with strengths: nominal anchors on either side of the gap; weaknesses: under-coverage (scalars alone can't express the high-quality + low-recognition relationship; either one in isolation is the wrong signal).
+- `coverage_exploration`: semantic alone owns the slice. Metadata fails the fire test — its strengths are nominal anchors that don't compose into the gap relationship.
+- `coverage_assignments`: semantic only.
 - `semantic_parameters`: `reception` body framed around the underrated relationship.
-- `metadata_parameters`: null unless the input separately gives a clean scalar prior.
+- `metadata_parameters`: null.
 </example>
 
 <example>
@@ -50,9 +52,10 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspect "canonical stature among newer films"; candidate `reception` (central).
-- `metadata_walk`: surface `reception` and `popularity` columns as broad priors; do NOT surface `release_date` here — the modern date window belongs to the sibling era trait, not this category.
-- `coverage_assignments`: semantic for the stature; metadata for reception/popularity priors. `intentionally_uncovered` empty (release-date is owned by a sibling trait, not this category).
+- `semantic_walk`: aspect "canonical stature among newer films"; `reception` (strengths: stature framing).
+- `metadata_walk`: `reception` and `popularity` columns with strengths: broad scalar priors; weaknesses: none for this slice. `release_date` NOT surfaced — the modern date window belongs to the sibling era trait.
+- `coverage_exploration`: semantic carries the stature framing; metadata's scalars layer on as priors. Both fire.
+- `coverage_assignments`: semantic + metadata.
 - `semantic_parameters`: `reception`.
 - `metadata_parameters`: reception/popularity only; do not encode the modern date window here.
 </example>
@@ -69,6 +72,9 @@
 ```
 
 ## Expected Decision
-- No-fire for this category — `coverage_assignments` empty; `intentionally_uncovered` names "specific aspect praise for cinematography, owned by Specific praise / criticism or Visual craft acclaim".
-- Reason: this is specific aspect praise, not whole-work cultural status. Specific praise / criticism or Visual craft acclaim owns it.
+- `semantic_walk`: no candidates with substantive strengths for THIS category — aspect-level praise is owned by Specific praise / criticism or Visual craft acclaim.
+- `metadata_walk`: no candidates with substantive strengths.
+- `coverage_exploration`: every walk surfaced no useful candidate; this category abstains. Routing handles the retrieval via a sibling category.
+- `coverage_assignments`: empty.
+- All `*_parameters`: null.
 </example>

@@ -61,22 +61,43 @@ class PotentialKeyword(BaseModel):
         ),
     )
 
-    coverage: constr(strip_whitespace=True, min_length=1) = Field(
+    strengths: constr(strip_whitespace=True, min_length=1) = Field(
         ...,
         description=(
-            "How `keyword` matches the parent `attribute`: what aspect "
-            "it owns + what specifically it misses (or 'fully covered' "
-            "when no real gap). One short sentence, concrete to THIS "
-            "attribute.\n"
+            "What this keyword genuinely OWNS of the parent `attribute` "
+            "at retrieval time. Frame operationally — would using only "
+            "this member retrieve the slice the attribute names?\n"
             "\n"
             "NEVER:\n"
-            "- HEDGE WITHOUT NAMING. Commit 'fully covered' or name "
-            "the specific gap (a sub-form, a cross-family neighbor, a "
-            "tonal sub-shade the boundary redirects elsewhere).\n"
             "- BACK-RATIONALIZE. If the only thing you can say is "
             "'plausible', drop the candidate.\n"
-            "- GENERALIZE. Coverage is about THIS attribute, not the "
-            "keyword's general scope."
+            "- GENERALIZE the keyword's broad scope. Strengths name what "
+            "this attribute asks for and this member supplies."
+        ),
+    )
+
+    weaknesses: constr(strip_whitespace=True, min_length=1) = Field(
+        ...,
+        description=(
+            "What this keyword MISSES or OVER-PULLS relative to the "
+            "parent `attribute`. Two failure modes — both belong here:\n"
+            "- under-coverage: aspects of the attribute this member "
+            "doesn't reach (a sub-form, a cross-family neighbor, a "
+            "tonal sub-shade redirected elsewhere).\n"
+            "- over-coverage: content this member ALSO retrieves beyond "
+            "the slice (e.g., SPORT covers running but also football, "
+            "basketball, hockey).\n"
+            "\n"
+            "Suggested vocabulary (not enforced): prefix lines with "
+            "'under-coverage:' and/or 'over-coverage:'. Use 'none' only "
+            "when the member is a clean fit on both axes — rare.\n"
+            "\n"
+            "NEVER:\n"
+            "- HEDGE WITHOUT NAMING. Either 'none' or specific "
+            "gap/over-pull with concrete content.\n"
+            "- RESTATE STRENGTHS IN NEGATIVE. Weaknesses name failures, "
+            "not the inverse of what was owned.\n"
+            "- INVENT WEAKNESSES to look thorough."
         ),
     )
 
@@ -110,7 +131,7 @@ class AttributeAnalysis(BaseModel):
         min_length=1,
         description=(
             "Registry members that could plausibly answer THIS "
-            "`attribute`, each with its coverage analysis. One when "
+            "`attribute`, each with strengths + weaknesses. One when "
             "fit is unambiguous; two or three when adjacency is real "
             "(broader vs narrower, cross-family neighbors); more when "
             "the attribute genuinely sits between several.\n"
@@ -121,7 +142,7 @@ class AttributeAnalysis(BaseModel):
             "NEVER:\n"
             "- LIST ONLY ONE when a definitional adjacency competes — "
             "surface it so finalized_keywords is grounded.\n"
-            "- PAD with members whose coverage you can't substantively "
+            "- PAD with members whose strengths you can't substantively "
             "name.\n"
             "- DUPLICATE a member within one attribute."
         ),
@@ -240,8 +261,9 @@ class KeywordEndpointParameters(EndpointParameters):
         description=(
             "Keyword endpoint payload. Decompose the call's "
             "retrieval_intent + expressions into distinct attributes, "
-            "shortlist candidates per attribute with coverage prose, "
-            "then commit to the minimum set of registry members whose "
+            "shortlist candidates per attribute with strengths + "
+            "weaknesses, then commit to the minimum set of registry "
+            "members whose "
             "union covers the attribute span. Read retrieval_intent "
             "for AND/OR framing → scoring. Describe target concepts "
             "directly regardless of polarity — negation is handled on "
@@ -293,14 +315,14 @@ class KeywordWalk(BaseModel):
             "expressions, derived holistically from them.\n"
             "\n"
             "This is the GROUNDED walk that precedes the bucket-level "
-            "coverage_assignments commitment. Surface every plausible "
-            "registry member with concrete coverage prose so the "
-            "commitment phase can read off real candidates rather "
-            "than abstract optimism. Empty potential_keywords on a "
-            "facet is a valid signal that the registry has nothing "
-            "useful — the commitment phase is allowed to leave the "
-            "facet unowned by keyword (delegating to a sibling "
-            "endpoint or naming it as intentionally_uncovered).\n"
+            "coverage_exploration / coverage_assignments commitment. "
+            "Surface every plausible registry member with concrete "
+            "strengths + weaknesses so the commitment phase can read "
+            "off real candidates rather than abstract optimism. Empty "
+            "potential_keywords on a facet is a valid signal that the "
+            "registry has nothing useful — the commitment phase is "
+            "allowed to leave the facet unowned by keyword (delegating "
+            "to a sibling endpoint).\n"
             "\n"
             "Coverage: every aspect the call's intent signals is "
             "owned by some attribute; every attribute traces back to "
@@ -312,8 +334,8 @@ class KeywordWalk(BaseModel):
             "- MIRROR the call's phrasing 1:1. Decompose first.\n"
             "- INVENT facets the call doesn't signal.\n"
             "- SPLIT one facet across multiple attributes.\n"
-            "- HEDGE in coverage prose. Either name the specific gap "
-            "or commit 'fully covered'."
+            "- HEDGE in strengths or weaknesses. Either name the "
+            "specific content or commit 'none'."
         ),
     )
 

@@ -26,11 +26,22 @@ These signal types route to other endpoints upstream and should not normally rea
 
 If a phrase looks like one of those, surface that honestly in the column-candidate audit (no column cleanly fits) rather than coercing it into a metadata column. The bucket-level commitment is allowed to leave metadata unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets by simply omitting metadata from `coverage_assignments`). Do not coerce out-of-scope intent into a poor column match.
 
+## Authoring `strengths` and `weaknesses` per column candidate
+
+Each `column_candidates` entry carries a structured column plus two short prose fields. Frame both operationally — what does this column do at retrieval time, given the call's intent? Four shapes recur:
+
+- **clean** — strengths name the slice this column owns; weaknesses = "none". Common when the call's intent maps to one column's purpose exactly (e.g. "under 90 minutes" → `runtime`).
+- **under-coverage** — strengths name the slice owned; weaknesses lead with `under-coverage:` and name aspects of the call's intent this column does NOT carry (e.g. release window without a temporal cutoff; cultural identity beyond the country list).
+- **over-coverage** — strengths name the slice owned; weaknesses lead with `over-coverage:` and name what this column would ALSO match beyond the slice (e.g. a country list whose region pull is broader than the cultural-tradition slice; a maturity-rating ceiling that admits content the call would exclude on tone).
+- **both** — strengths name the partial slice owned; weaknesses names BOTH `under-coverage:` and `over-coverage:`.
+
+The over-coverage axis is what the commitment phase uses to decide whether to fire a sibling endpoint that refines this one. Surface it honestly even when this column is the best metadata fit.
+
 ## Where the metadata analysis lives
 
 In single-endpoint buckets the analysis (`column_candidates`) and the commitment (`scoring_method_reasoning` / `column_spec` / `scoring_method`) live together in one `MetadataTranslationOutput`, with `search_picture` as the holistic restatement.
 
-In multi-endpoint buckets (preferred-fallback, semantic+augmentation, audience-suitability) the analysis is hoisted to a bucket-level `metadata_walk` field that sits BEFORE the coverage_assignments commitment, while the commitment lives in a thin `metadata_parameters` slot AFTER it. `search_picture` is dropped in the multi-endpoint shape because the bucket-level `coverage_assignments[kind=metadata].slice_description` plus `metadata_retrieval_intent` already supply the holistic restatement. Refer to the schema descriptors for exact field locations.
+In multi-endpoint buckets the analysis is hoisted to a bucket-level `metadata_walk` field that sits BEFORE the coverage_exploration / coverage_assignments commitment, while the commitment lives in a thin `metadata_parameters` slot AFTER it. `search_picture` is dropped in the multi-endpoint shape because the bucket-level `coverage_assignments[kind=metadata].slice_description` plus `metadata_retrieval_intent` already supply the holistic restatement. Refer to the schema descriptors for exact field locations.
 
 ## The ten attribute columns
 

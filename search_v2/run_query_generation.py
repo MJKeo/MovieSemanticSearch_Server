@@ -5,7 +5,7 @@
 # emitted CategoryCall runs the per-handler query-generation stage.
 # Prints the full payload from each stage — including the per-handler
 # LLM's reasoning fields (per-endpoint `<route>_walk` blocks,
-# coverage_assignments, intentionally_uncovered, etc.) which the
+# coverage_exploration, coverage_assignments, etc.) which the
 # production `run_query_generation` strips before returning.
 #
 # To get those reasoning fields we call the handler LLM directly

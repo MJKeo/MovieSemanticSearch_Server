@@ -12,11 +12,12 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspect "slow-building tension / restrained pacing feel"; candidate `viewer_experience` (central) — pacing/tension live there, not in keyword.
-- `keyword_walk`: walk the registry honestly; broad thriller / suspense members surface but cover genre, not the experiential feel — gap noted.
-- `coverage_assignments`: semantic owns the slice; keyword skipped because no registry member directly names the experiential effect. `intentionally_uncovered` empty (semantic covers what matters; the registry simply has no slow-burn-pacing tag).
+- `semantic_walk`: aspect "slow-building tension / restrained pacing feel"; `viewer_experience` (strengths: pacing/tension live there directly; weaknesses: none for this slice).
+- `keyword_walk`: broad thriller / suspense members carry strengths: genre proxy; weaknesses: under-coverage (no member names the slow-burn pacing FEEL) AND over-coverage (year-round thrillers pulled regardless of pacing). Drop them per the local test — dominated by semantic on the same content with no distinct strength to add.
+- `coverage_exploration`: semantic alone owns the slice. Keyword candidates fail the fire test (under-coverage on the pacing aspect, over-coverage on the genre prior; no distinct strength semantic doesn't already carry).
+- `coverage_assignments`: semantic only.
 - `semantic_parameters`: `viewer_experience` only.
-- `keyword_parameters`: null; do not add generic thriller or suspense tags.
+- `keyword_parameters`: null.
 </example>
 
 <example>
@@ -31,11 +32,12 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspects "viewer goal of crying" (`watch_context`), "cathartic emotional palette" (`viewer_experience`), and "audience-label tearjerker reception" (`reception` — only if framed as audience-label).
-- `keyword_walk`: surface a direct tearjerker registry member; coverage prose names it as a clean fit for the effect.
-- `coverage_assignments`: semantic for the goal + felt response; keyword for the direct tearjerker tag. Both slices are distinct facets of one ask. `intentionally_uncovered` empty.
+- `semantic_walk`: aspects "viewer goal of crying", "cathartic emotional palette", "audience-label tearjerker reception"; `watch_context` (strengths: viewer-goal framing), `viewer_experience` (strengths: cathartic emotional palette), `reception` (strengths: audience-label framing if framed that way).
+- `keyword_walk`: tearjerker registry member with strengths: direct effect tag; weaknesses: none — the registry has a member that names exactly this effect.
+- `coverage_exploration`: semantic carries the graded experiential signal across multiple aspects; keyword adds gate-style sharpness via the tearjerker tag. Both fire — distinct contributions on the same slice.
+- `coverage_assignments`: semantic + keyword.
 - `semantic_parameters`: `watch_context` for the viewer goal; `viewer_experience` for emotional palette; `reception` if framed as audience label.
-- `keyword_parameters`: tearjerker-style tag if the registry definition matches the effect.
+- `keyword_parameters`: tearjerker tag.
 </example>
 
 <example>
@@ -50,9 +52,10 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspect "positive resolution / satisfying ending aftertaste"; candidate `viewer_experience` targeting `ending_aftertaste`.
-- `keyword_walk`: surface a direct happy-ending registry member if one fits cleanly.
-- `coverage_assignments`: semantic for the experiential aftertaste; keyword for the direct happy-ending tag. `intentionally_uncovered` empty.
+- `semantic_walk`: aspect "positive resolution / satisfying ending aftertaste"; `viewer_experience` targeting `ending_aftertaste` (strengths: ending-aftertaste vocabulary directly; weaknesses: none for this slice).
+- `keyword_walk`: happy-ending registry member with strengths: direct ending-shape tag; weaknesses: none — the registry has a member that names exactly this shape.
+- `coverage_exploration`: semantic carries the experiential aftertaste; keyword adds gate-style sharpness via the happy-ending tag. Both fire.
+- `coverage_assignments`: semantic + keyword.
 - `semantic_parameters`: `viewer_experience.ending_aftertaste`.
 - `keyword_parameters`: happy-ending tag.
 </example>
@@ -69,6 +72,9 @@
 ```
 
 ## Expected Decision
-- No-fire for this category — `coverage_assignments` empty; `intentionally_uncovered` names "date-night viewing occasion, owned by Viewing occasion".
-- Reason: this is a concrete viewing situation, not an emotional or experiential property. Viewing occasion owns it.
+- `semantic_walk`: no candidates with substantive strengths for THIS category — date-night is a viewing occasion, owned by the Viewing occasion category.
+- `keyword_walk`: no candidates with substantive strengths.
+- `coverage_exploration`: every walk surfaced no useful candidate; this category abstains. Routing handles the actual retrieval via the Viewing occasion call.
+- `coverage_assignments`: empty.
+- All `*_parameters`: null.
 </example>

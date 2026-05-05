@@ -1,17 +1,23 @@
 # Failure-mode guardrails
 
-Before emitting, check for these failure modes. In each case, **abstaining or naming the gap explicitly is the correct response** — not fabricated parameters.
+**NEVER:**
+- COMMIT AN ASSIGNMENT WHOSE WALK SHOWS NO USEFUL CANDIDATE. The walks are the audit; assignments must be readable off them.
+- DROP AN ENDPOINT WHOSE WALK CONTRIBUTES A DISTINCT STRENGTH OR FILLS ANOTHER'S WEAKNESS. Drop only when another endpoint dominates the same content strictly better, or its walk surfaced no useful candidate.
+- FIRE A SINGLE ENDPOINT WHEN ANOTHER ENDPOINT'S WALK CLEANLY FILLS A WEAKNESS. The most common failure: keyword's walk shows over-coverage (e.g. SPORT pulls football and basketball alongside running), semantic's walk has a clean candidate that isolates the slice, but only keyword fires. The over-coverage signal exists for exactly this case.
+- DECLARE A SLICE UNSERVABLE. There is no `intentionally_uncovered` field. Either fire an endpoint that can carry the slice, or drop the candidate that surfaced it.
+- HEDGE in `coverage_exploration`. Apply the local tests per endpoint and commit a stance.
+- SPLIT ONE SLICE ACROSS ENDPOINTS to look thorough. Let the endpoint that owns the slice own it cleanly.
+
+Before emitting, check for these failure modes. Abstaining at the whole-call level is correct ONLY when ALL endpoint walks surfaced no useful candidate.
 
 - **Ambiguous requirement.** The call's intent is too vague to point at concrete candidates in any walk. Do not invent specificity that is not in the call.
-- **Out of scope for every endpoint.** No walk surfaces a clean fit. Leave `coverage_assignments` empty and name the unaddressable aspects in `intentionally_uncovered`. Do not pick the least-bad option.
+- **Out of scope for every endpoint.** No walk surfaces a candidate with substantive `strengths`. Empty `coverage_assignments`. Do not pick the least-bad option.
 - **Self-contradictory requirement.** Modifiers on the call flip the requirement against itself in a way no representation can express.
 
 Beyond those, watch for these walk-vs-commitment traps:
 
-- **Walking abstractly.** A walk that describes the endpoint's general fitness ("keyword can cover registry-style elements") instead of concrete candidates ("HORROR covers the genre signal; nothing in the registry covers clown specifically") defeats the grounding the walk exists to enforce. Walks must name actual registry members / vector spaces / columns and explicit covers/misses prose.
-- **Committing past the walk.** An assignment whose endpoint's walk surfaced no clean fit is a fabrication. The walks are the audit; commitments must be readable off them. If the walk says "no clean fit," the commitment must either skip that endpoint or name the aspect in `intentionally_uncovered`.
-- **Padding with the fallback when the preferred already covers.** When the preferred representation cleanly captures the requirement (its walk shows clean candidates and it appears alone in coverage_assignments), adding a fallback assignment mixes interpretations and adds noisy duplicate signal. Commit only the preferred.
-- **Stopping at the preferred when uncovered intent remains.** When the preferred's walk handles only part of the requirement and the fallback's walk surfaces a clean fit for what's left, both should appear in `coverage_assignments` covering distinct slices.
-- **Splitting one slice across endpoints.** If one endpoint cleanly owns an aspect, let it own that aspect alone. Fragmenting it across multiple assignments is padding.
+- **Walking abstractly.** A walk that describes the endpoint's general fitness ("keyword can cover registry-style elements") instead of concrete candidates with strengths/weaknesses defeats the grounding the walk exists to enforce. Walks must name actual registry members / vector spaces / columns and frame their `strengths` and `weaknesses` operationally.
+- **Treating "fully covered" as license to drop other endpoints.** A keyword candidate marked as fully covering may STILL pull more than the slice — its `weaknesses` should call out the over-coverage. If it does, a sibling endpoint that isolates the slice still fires.
+- **Treating priority order as a license to skip the fallback.** Priority is a tiebreaker for slices that two endpoints could equivalently own. It does not override the fire test (does this endpoint contribute net signal?).
 
-Make the coverage call **explicit** in `coverage_assignments` and `intentionally_uncovered` — name which parts of the call each fired endpoint handles, and which (if any) intentionally go uncovered.
+Make the coverage call **explicit** in `coverage_exploration` — name which endpoints contribute distinct strengths, where their weaknesses are filled by another endpoint, and which (if any) are dominated and dropped.

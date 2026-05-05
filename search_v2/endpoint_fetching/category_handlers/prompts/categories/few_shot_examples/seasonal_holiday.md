@@ -12,9 +12,10 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspects "Christmas viewing occasion" and "Christmas story setting"; candidates `watch_context` (holiday viewing) and `plot_events` (Christmas-set narrative).
-- `keyword_walk`: surface a holiday-packaging registry member if one fits cleanly; flag generic family/romance candidates as too loose.
-- `coverage_assignments`: semantic owns the holiday-viewing + Christmas-setting slice; add keyword only if a registry member directly covers holiday packaging. `intentionally_uncovered` empty.
+- `semantic_walk`: aspects "Christmas viewing occasion" and "Christmas story setting"; `watch_context` (strengths: holiday viewing occasion; weaknesses: under-coverage of the on-screen Christmas setting itself, which lives in plot_events) and `plot_events` (strengths: Christmas-set narrative; weaknesses: under-coverage of the viewing-occasion framing).
+- `keyword_walk`: holiday-packaging registry member if one fits with clean strengths; generic family/romance candidates carry over-coverage weaknesses (year-round romance / family pulled alongside the holiday slice).
+- `coverage_exploration`: semantic owns the experiential / setting slice; keyword fires only when its walk surfaces a holiday-packaging member with clean strengths — its sharpness layers on top of semantic. Skip keyword when only over-broad romance/family candidates surface.
+- `coverage_assignments`: semantic always; keyword when the registry has a clean holiday-packaging member.
 - `semantic_parameters`: `watch_context` always; `plot_events` if the phrase reads as Christmas-set as well as Christmas-viewing.
 - `keyword_parameters`: one strongest holiday-packaging proxy, or null when only generic-romance/family adjacencies exist.
 </example>
@@ -31,9 +32,10 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspect "Halloween viewing occasion / seasonal spooky fit"; candidate `watch_context` (central). Optional `plot_events` candidate only if Halloween-night setting is part of the captured meaning.
-- `keyword_walk`: surface broad horror-family registry member as a proxy; narrower horror only if the call names that sub-form.
-- `coverage_assignments`: semantic for the viewing-occasion slice; keyword for the broad horror-proxy slice. `intentionally_uncovered` empty.
+- `semantic_walk`: aspect "Halloween viewing occasion / seasonal spooky fit"; `watch_context` (strengths: viewing-occasion fit; weaknesses: none for this slice). Optional `plot_events` only if Halloween-night setting is part of the meaning.
+- `keyword_walk`: broad horror-family member with strengths: spooky proxy fit; weaknesses: over-coverage (pulls non-Halloween horror year-round). Narrower horror only if the call names a sub-form.
+- `coverage_exploration`: semantic owns the viewing-occasion slice; keyword's broad horror layers on as a sharpness signal — its over-coverage is acceptable because semantic isolates the Halloween framing.
+- `coverage_assignments`: semantic + keyword.
 - `semantic_parameters`: central `watch_context`; optional `plot_events` only when Halloween-night story setting is part of the meaning.
 - `keyword_parameters`: crisp horror-family proxy.
 </example>
@@ -50,11 +52,12 @@
 ```
 
 ## Expected Decision
-- `semantic_walk`: aspect "Valentine's Day viewing / date-night holiday package"; candidate `watch_context` only.
-- `keyword_walk`: surface generic-romance candidates honestly and mark them as too loose — they drop the holiday packaging.
-- `coverage_assignments`: semantic owns the slice. Skip keyword unless a registry definition directly covers the seasonal package; otherwise leave it out (the walk's "too loose" finding is the audit). `intentionally_uncovered` empty.
+- `semantic_walk`: aspect "Valentine's Day viewing / date-night holiday package"; `watch_context` (strengths: date-night package fit; weaknesses: none for this slice).
+- `keyword_walk`: generic-romance members carry strengths: romance proxy; weaknesses: over-coverage (year-round romance pulled alongside the Valentine's slice) AND under-coverage (no Valentine's-specific signal). Drop the candidate per the local test — its strengths are dominated by what semantic already carries, and its over-coverage isn't refined by anything.
+- `coverage_exploration`: semantic alone covers the slice. Keyword's only candidate fails the fire test (no distinct strength, dominated by semantic on the same content).
+- `coverage_assignments`: semantic only.
 - `semantic_parameters`: `watch_context`.
-- `keyword_parameters`: null — a generic-romance commit would mix holiday-day signal with year-round romance.
+- `keyword_parameters`: null.
 </example>
 
 <example>
@@ -69,6 +72,9 @@
 ```
 
 ## Expected Decision
-- No-fire for this category — `coverage_assignments` empty; `intentionally_uncovered` names "Christmas as subject matter, not seasonal viewing" so reviewers see what was walked away from.
-- Reason: the holiday is the subject matter, not seasonal viewing or holiday movie packaging. Central topic owns the retrieval.
+- `semantic_walk`: no candidates with substantive strengths — Christmas-as-subject is owned by Central topic, not this category's spaces.
+- `keyword_walk`: no candidates with substantive strengths — same reason.
+- `coverage_exploration`: every walk surfaced no useful candidate; this category abstains. Routing handles the actual retrieval via the Central topic call.
+- `coverage_assignments`: empty.
+- All `*_parameters`: null.
 </example>

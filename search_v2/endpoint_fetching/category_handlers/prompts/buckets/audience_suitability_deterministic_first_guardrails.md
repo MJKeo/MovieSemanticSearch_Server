@@ -1,18 +1,24 @@
 # Failure-mode guardrails
 
-Before emitting, check for these failure modes. In each case, **leaving the affected endpoint unassigned with the rationale captured in `intentionally_uncovered` is the correct response** — not fabricated parameters on endpoints that do not genuinely fit.
+**NEVER:**
+- COMMIT AN ASSIGNMENT WHOSE WALK SHOWS NO USEFUL CANDIDATE. Walks are the audit; assignments read off them.
+- DROP AN ENDPOINT WHOSE WALK CONTRIBUTES A DISTINCT STRENGTH OR FILLS ANOTHER'S WEAKNESS. Suitability is multi-faceted; deduplicating to a single endpoint loses real signal.
+- COLLAPSE TO A SINGLE ASSIGNMENT OUT OF CONSERVATISM. The default posture for this bucket is multiple assignments. Drop only when another endpoint dominates the same content strictly better, or its walk surfaced no useful candidate.
+- DECLARE A SLICE UNSERVABLE. There is no `intentionally_uncovered` field. Either fire an endpoint that can carry the slice, or drop the candidate that surfaced it.
+- FLIP POLARITY AT THE PARAMETER LEVEL. Parameters describe presence of an attribute. Whether that presence helps the user is decided when signals are combined later.
+- HEDGE in `coverage_exploration`. Apply the local tests per endpoint and commit a stance.
+
+Before emitting, check for these failure modes. Whole-call abstain (empty `coverage_assignments`) is correct ONLY when all endpoint walks surfaced no useful candidate.
 
 - **Ambiguous requirement.** The call's intent is too vague to point at concrete candidates in any walk. Do not invent specificity that is not in the call.
-- **Out of scope for every endpoint.** No walk surfaces a clean fit. Leave `coverage_assignments` empty and name the unaddressable aspects in `intentionally_uncovered`. Do not fire every endpoint "just in case."
+- **Out of scope for every endpoint.** No walk surfaces a candidate with substantive `strengths`. Empty `coverage_assignments`. Do not pick the least-bad option.
 - **Self-contradictory requirement.** Modifiers on the call flip the requirement against itself in a way no endpoint can express.
 
-Beyond those, watch for these combination-specific traps:
+Beyond those, watch for these composition traps:
 
-- **Walking abstractly.** A walk that describes the endpoint's general fitness ("metadata can pin a maturity ceiling") instead of concrete candidates ("maturity_rating capped at PG-13 covers the suitability ceiling; no column captures the parental-consent angle") defeats the grounding the walk exists to enforce. Walks must name actual columns / registry members / vector spaces and explicit covers/misses prose.
-- **Committing past the walk.** An assignment whose endpoint's walk surfaced no clean signal is a fabrication. The walks are the audit; commitments must be readable off them.
-- **Skipping a real signal because another endpoint already covers it.** Overlap is the point. A maturity gate (metadata) and a wholesome-tone semantic query both pulling on "suitable for kids" is the design — do not deduplicate them at the commitment phase. Skip an endpoint only when its walk has nothing distinct to add, not when its angle is already partially captured by another assignment.
-- **Mismatching strength to channel.** A clear maturity ceiling or hard exclusion belongs on metadata. A soft preference belongs on keyword or semantic scoring. Match the strength the call actually carries — but do not use this as cover for skipping a softer overlapping signal that another endpoint can carry.
-- **Flipping polarity at the parameter level.** Parameters describe presence of an attribute. Whether that presence helps the user is decided when the signals are combined later — do not encode the direction into the parameter itself.
-- **Silently skipping an endpoint without naming the gap.** If an endpoint's walk surfaced potential candidates but you choose not to assign, there should be a corresponding entry in `intentionally_uncovered` naming the aspect you walked away from. Treating any endpoint as a rubber stamp — fired or skipped without consideration — is the failure this bucket is designed to prevent.
+- **Walking abstractly.** A walk that describes the endpoint's general fitness ("metadata can pin a maturity ceiling") instead of concrete candidates with strengths/weaknesses defeats the grounding the walk exists to enforce. Walks must name actual columns / registry members / vector spaces and frame their `strengths` and `weaknesses` operationally.
+- **Mismatching strength to channel.** A clear maturity ceiling or hard exclusion belongs on metadata (gate-style sharpness). A soft preference belongs on keyword or semantic scoring (graded signal). Match the strength the call actually carries — but use this to choose WHICH endpoint, not whether to drop a softer overlapping signal that another endpoint can carry.
+- **Treating one endpoint's clean coverage as license to skip another.** Overlap is the point. A maturity gate (metadata) and a wholesome-tone semantic query both pulling on "suitable for kids" is the design. Skip an endpoint only when its walk surfaced no useful candidate, not when its angle is partially captured elsewhere.
+- **Treating an endpoint as a rubber stamp** — fired or skipped without consideration of its walk. Each fired assignment must point at a real candidate from its walk; each skipped endpoint should be skippable per the drop test.
 
-Beyond those: each fired endpoint's assignment must point at a real candidate from its walk — overlap with another assignment is welcome, but firing on no candidate is not. Do not collapse to a single assignment out of conservatism when multiple endpoints genuinely apply.
+Make the coverage call **explicit** in `coverage_exploration` — name which endpoints contribute distinct strengths, where their weaknesses are filled by another endpoint, and which (if any) are dominated and dropped.

@@ -13,7 +13,7 @@ When decomposing `attributes` from the call's intent, ignore content from these 
 - Free-form thematic / tonal / experiential qualifiers without a registry member ("cozy", "unsettling but not gory", "rainy-day melancholy") → semantic endpoint.
 - Awards → award endpoint.
 
-A sibling category handler in the same firing owns those facets. If nothing in the call's intent maps onto the registry, keyword has no clean fit — surface that honestly in the walk's coverage prose. The bucket-level commitment is allowed to leave keyword unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets by simply omitting keyword from `coverage_assignments`). Do not coerce out-of-scope intent into a poor registry match.
+A sibling category handler in the same firing owns those facets. If nothing in the call's intent maps onto the registry, keyword has no clean fit — surface that honestly via empty `potential_keywords` on the walk attribute, or via `weaknesses` that names the gap. The bucket-level commitment is allowed to leave keyword unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets by simply omitting keyword from `coverage_assignments`). Do not coerce out-of-scope intent into a poor registry match.
 
 ## Where the keyword analysis lives
 
@@ -49,6 +49,17 @@ User phrasing often paraphrases canonical labels. Match by meaning, not literal 
 - "Twist ending" → `PLOT_TWIST`, unless the phrasing names a specific ending type.
 
 These examples illustrate the principle; the right registry match is often definitionally clear even when the inputs do not literally echo the label. Do not force them mechanically.
+
+## Authoring `strengths` and `weaknesses` per candidate
+
+Each `potential_keywords` entry carries a registry member plus two short prose fields. Frame both operationally — what does this member do at retrieval time, given the parent attribute? Four shapes recur:
+
+- **clean** — strengths name the slice this member retrieves; weaknesses = "none". Rare; only when the registry has a member whose definition is exactly the attribute.
+- **under-coverage** — strengths name what the member retrieves; weaknesses lead with `under-coverage:` and name the aspects of the attribute the member does NOT carry, with the destination (sibling endpoint or sibling registry member) where possible.
+- **over-coverage** — strengths name the slice the member retrieves; weaknesses lead with `over-coverage:` and name what the member ALSO retrieves beyond the slice. `SPORT` for a "running movies" attribute is the canonical case: it covers running but ALSO pulls football, basketball, hockey, golf — name those over-pulls explicitly.
+- **both** — strengths name the partial slice owned; weaknesses names BOTH `under-coverage:` (what's missing) and `over-coverage:` (what's pulled beyond the slice).
+
+The over-coverage axis is what the commitment phase uses to decide whether to fire a sibling endpoint that refines this one. Surface it honestly even when the member is the best registry fit.
 
 ## Near-collision disambiguation
 

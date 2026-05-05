@@ -1082,3 +1082,12 @@ Why: Implicit-prior scoring was using fully continuous linear normalization whil
 Approach: Added public `score_popularity_prior()` and `score_reception_prior()` wrappers around the metadata endpoint's existing sigmoid scorers, then switched full-orchestrator implicit signals to use those wrappers. Positive quality uses `ReceptionMode.WELL_RECEIVED`; inverse quality uses `ReceptionMode.POORLY_RECEIVED`; positive popularity uses `PopularityMode.POPULAR`; inverse popularity uses `PopularityMode.NICHE`. Missing data still returns 0.0 before scoring. Updated module docs to describe the shared sigmoid shape.
 Design context: Public wrappers avoid importing private underscored helpers across module boundaries while preserving one source of truth for threshold centers/slopes.
 Testing notes: Did not run unit tests per boundary. Verification pending in the next compile/check pass.
+
+## Add Step 0 CLI runner
+Files: search_v2/run_step_0.py | New thin CLI wrapper mirroring run_step_2.py — takes optional query arg, calls run_step_0, prints full Step0Response as indented JSON plus locally-measured elapsed time and token usage (run_step_0 returns a 3-tuple without elapsed, unlike run_step_2's 4-tuple).
+
+## Add explicit release_year to Step 0 flow payloads
+Files: schemas/step_0_flow_routing.py, search_v2/step_0.py
+Why: Downstream exact-title and similarity searches benefit from a (title, year) pair when the user explicitly disambiguates a remake or franchise installment ("Dune 2021", "Halloween (2018)"). Year must never be inferred — silent over-restriction would drop valid results.
+Approach: Added `release_year: int | None = None` to ExactTitleFlowData and SimilarityFlowData. Extended the system prompt's flow-eligibility section and OUTPUT field guidance with a hard rule that the year is only carried over from explicit user statement (never inferred from plot, sequel numbering, or franchise knowledge). Added boundary examples 11–15 covering: explicit year on exact-title, parenthesized year, descriptive Indy reference where year MUST NOT be inferred, explicit year inside a similarity frame, and sequel-number ("Top Gun 2") which is not a year.
+Testing notes: py_compile passed for both files. New schema field defaults to None so existing callers/serialized payloads stay valid.

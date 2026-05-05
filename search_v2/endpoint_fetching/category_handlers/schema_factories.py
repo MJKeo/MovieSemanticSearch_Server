@@ -19,9 +19,10 @@
 #   7. CHARACTER_FRANCHISE_FANOUT                — single shared schema (no per-endpoint payloads)
 #   8. AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST  — walk-then-commit (every candidate endpoint)
 #
-# Buckets 5/6/8 share one shape: per-endpoint grounded walks → coverage
-# commitment (assignments + intentionally_uncovered) → thin per-endpoint
-# params. See _build_walk_then_commit.
+# Buckets 5/6/8 share one shape: per-endpoint grounded walks (each
+# candidate carrying strengths + weaknesses) → coverage_exploration →
+# coverage_assignments → thin per-endpoint params. See
+# _build_walk_then_commit.
 #
 # Schemas are eagerly built at module import so any misconfiguration
 # (missing wrapper, invalid field name, JSON-schema size issue) fails
@@ -95,14 +96,16 @@ _ENDPOINT_PARAMETERS_SINGLE_DESC = (
 #
 # Phase 1: per-endpoint grounded walks. One `{route}_walk` field per
 # declared endpoint, holding the registry/space/column-grounded
-# analysis lifted out of the per-endpoint subintent params. Emitted
-# BEFORE the commitment phase so the LLM walks concrete candidates
-# before deciding who fires.
+# analysis lifted out of the per-endpoint subintent params. Each
+# candidate carries strengths + weaknesses so the commitment phase
+# can compose endpoints by reading off real signals, not optimism.
 #
-# Phase 2: coverage commitment. `coverage_assignments` delegates
-# slices to specific endpoints; `intentionally_uncovered` names what
-# the call asks for that no declared endpoint can cleanly serve.
-# Both grounded in the walks above.
+# Phase 2: coverage exploration + commitment. `coverage_exploration`
+# argues which endpoints contribute distinct strengths or fill each
+# other's weaknesses, BEFORE the structural commitment.
+# `coverage_assignments` is then the mechanical commit, one entry
+# per endpoint that should fire. Overlap is the design — multiple
+# assignments catching distinct facets is expected.
 #
 # Phase 3: per-endpoint thin params. One Optional `{route}_parameters`
 # slot per declared endpoint, populated iff coverage_assignments
@@ -135,6 +138,31 @@ def _walk_desc_for(route: EndpointRoute) -> str:
     )
 
 
+_COVERAGE_EXPLORATION_DESC = (
+    "Argue which endpoints should fire to compose coverage of the "
+    "call's intent, BEFORE the structural commit below. Read off the "
+    "strengths + weaknesses already written on each walk's candidates "
+    "above; do not re-derive. Frame the endpoints as puzzle pieces — "
+    "they may overlap partially, and that is the design when one adds "
+    "specificity another lacks or fills a gap another leaves.\n"
+    "\n"
+    "TEST per endpoint considered: 'does this contribute a strength "
+    "the others don't, OR fill a weakness another has?' Yes → fire it. "
+    "No → drop it.\n"
+    "TEST for dropping: 'does another endpoint dominate this one's "
+    "strengths AND weaknesses (capture the same content strictly "
+    "better)?' Yes → drop the dominated one.\n"
+    "\n"
+    "NEVER:\n"
+    "- RE-NARRATE THE WALKS. Argue endpoint composition; the walks "
+    "themselves carry the candidate detail.\n"
+    "- HEDGE on which endpoints fire. Pick one stance per endpoint "
+    "with the local test above.\n"
+    "- DECLARE A SLICE UNSERVABLE HERE. If no endpoint can carry an "
+    "aspect, that's a routing problem upstream, not something to "
+    "memorialize."
+)
+
 _COVERAGE_ASSIGNMENT_ENDPOINT_KIND_DESC = (
     "Which declared endpoint this assignment delegates a slice to. "
     "Must be one of the routes whose grounded walk appears above on "
@@ -154,46 +182,26 @@ _COVERAGE_ASSIGNMENT_SLICE_DESCRIPTION_DESC = (
 )
 
 _COVERAGE_ASSIGNMENTS_DESC = (
-    "Coverage commitment phase. One entry per declared endpoint "
-    "that should fire, naming the slice of the call's intent it "
-    "owns. Read every endpoint walk above and decide who fires on "
-    "what. Multiple assignments are fine when the call is genuinely "
-    "compound and several endpoints catch distinct facets; a single "
-    "assignment is the natural shape when one endpoint cleanly owns "
-    "the call.\n"
+    "Mechanical commitment of the choice argued in "
+    "coverage_exploration above. One entry per endpoint that should "
+    "fire (per the local tests on coverage_exploration), naming the "
+    "slice of the call's intent it owns. Overlap is the design — "
+    "multiple assignments catching distinct facets, or one endpoint's "
+    "strength filling another's weakness, is expected.\n"
     "\n"
-    "EMPTY is a valid outcome when no declared endpoint cleanly fits "
-    "and the call is better unowned than served by a poor fit.\n"
-    "\n"
-    "Priority order (the order endpoints appear in the bucket "
-    "schema, top to bottom) is a tiebreaker only — when two "
-    "endpoints could cover the same slice equally well, prefer the "
-    "earlier one. The walks themselves are order-independent.\n"
+    "EMPTY is valid only when ALL declared endpoint walks surfaced no "
+    "useful candidate. In that case the whole call abstains.\n"
     "\n"
     "NEVER:\n"
-    "- DELEGATE TO AN ENDPOINT WHOSE WALK SHOWS NO CLEAN FIT. The "
-    "walks are the audit; assignments must be readable off them.\n"
+    "- DELEGATE TO AN ENDPOINT WHOSE WALK SHOWS NO USEFUL CANDIDATE. "
+    "Assignments must be readable off the strengths recorded above.\n"
+    "- DROP AN ENDPOINT WHOSE WALK CONTRIBUTES A DISTINCT STRENGTH OR "
+    "FILLS ANOTHER'S WEAKNESS. Drop only when another endpoint "
+    "dominates it on the same content, or its walk surfaced no useful "
+    "candidate.\n"
     "- DUPLICATE AN ENDPOINT (one assignment per endpoint kind).\n"
     "- SPLIT ONE SLICE ACROSS ENDPOINTS to look thorough; let the "
     "endpoint that owns the slice own it cleanly."
-)
-
-_INTENTIONALLY_UNCOVERED_DESC = (
-    "Aspects of the call's intent that no declared endpoint can "
-    "cleanly serve, named explicitly. Forces the commitment phase to "
-    "be honest about gaps rather than fabricating shallow coverage. "
-    "Empty list is correct when coverage_assignments cleanly handle "
-    "the whole call.\n"
-    "\n"
-    "An entry here is a deliberate trade-off — better to leave "
-    "an aspect unserved than to ship a poor-fit assignment. Reviewers "
-    "read this list to understand what the bucket consciously walked "
-    "away from.\n"
-    "\n"
-    "NEVER:\n"
-    "- HEDGE. Either an aspect is owned (in coverage_assignments) or "
-    "intentionally not (here).\n"
-    "- LIST AN ASPECT THAT'S ALREADY OWNED by some assignment."
 )
 
 _THIN_PARAMETERS_DESC_TEMPLATE = (
@@ -306,13 +314,16 @@ def _build_walk_then_commit(
     #
     #   Phase 1: per-endpoint walks. For each declared endpoint, a
     #   `{route}_walk` field holds the registry/space/column-grounded
-    #   analysis (KeywordWalk / SemanticWalk / MetadataWalk).
-    #   Surfaces concrete candidates BEFORE any commitment.
+    #   analysis (KeywordWalk / SemanticWalk / MetadataWalk). Each
+    #   candidate carries strengths + weaknesses so the commitment
+    #   phase can compose endpoints by reading off real signals.
     #
-    #   Phase 2: coverage commitment. `coverage_assignments` (a list
-    #   of CoverageAssignment with Literal-bounded endpoint_kind)
-    #   delegates slices to specific endpoints; `intentionally_uncovered`
-    #   names aspects no declared endpoint can cleanly serve.
+    #   Phase 2: coverage exploration + commitment. `coverage_exploration`
+    #   argues which endpoints contribute distinct strengths or fill
+    #   each other's weaknesses, BEFORE the structural commit.
+    #   `coverage_assignments` (a list of CoverageAssignment with
+    #   Literal-bounded endpoint_kind) is then the mechanical commit,
+    #   one entry per endpoint that should fire.
     #
     #   Phase 3: per-endpoint thin params. One Optional
     #   `{route}_parameters` per declared endpoint, populated iff a
@@ -321,8 +332,9 @@ def _build_walk_then_commit(
     # Field declaration order matches that phase ordering — which
     # matters because Pydantic structured output emits top-down, so
     # the LLM walks all endpoints concretely before committing to who
-    # fires. This is the structural fix for the prior design's
-    # "abstract commitment before grounded walk" failure mode.
+    # fires. coverage_exploration sits between walks and assignments
+    # so the LLM reasons about composition before structurally
+    # committing.
     pairs = _resolve_wrappers_for_bucket(category, bucket)
     if not pairs:
         return None
@@ -370,14 +382,18 @@ def _build_walk_then_commit(
             Field(..., description=_walk_desc_for(route)),
         )
 
-    # Phase 2: coverage commitment.
+    # Phase 2: coverage exploration (argue composition) → coverage
+    # assignments (mechanical commit). `intentionally_uncovered` was
+    # removed; empty `coverage_assignments` is the abstain signal, and
+    # the puzzle-pieces framing in coverage_exploration replaces the
+    # prior soft-out of declaring a slice unservable.
+    fields["coverage_exploration"] = (
+        str,
+        Field(..., description=_COVERAGE_EXPLORATION_DESC),
+    )
     fields["coverage_assignments"] = (
         list[coverage_assignment_model],
         Field(..., description=_COVERAGE_ASSIGNMENTS_DESC),
-    )
-    fields["intentionally_uncovered"] = (
-        list[str],
-        Field(..., description=_INTENTIONALLY_UNCOVERED_DESC),
     )
 
     # Phase 3: per-endpoint thin params, one Optional per declared
