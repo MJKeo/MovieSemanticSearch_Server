@@ -454,6 +454,29 @@ class OperationType(StrEnum):
     POOL_RERANKER = "pool_reranker"
 
 
+# How a CategoryName composes its orchestrator-visible call scores
+# into a single per-category score during Stage 4 per-trait scoring.
+# Declared per-category on the CategoryName enum; consumed by the
+# Stage 4 within-category combine. See
+# search_improvement_planning/rescore_overhaul.md (Within-category
+# combine) for the full rationale and per-mode semantics.
+#
+# - SINGLE: category fires exactly one orchestrator-visible call;
+#   passthrough.
+# - ADDITIVE: multiple calls together complete the picture; product
+#   across [0, 1] scores. Strict — any 0 zeros the category.
+# - ALTERNATIVES: each call is a distinct way of finding the trait;
+#   max across calls. Matching any one is sufficient evidence.
+# - NO_OP: category never fires (e.g. BELOW_THE_LINE_CREATOR's
+#   EXPLICIT_NO_OP bucket emits zero specs); the per-category combine
+#   returns a sentinel that the across-category max skips entirely.
+class CategoryCombineType(StrEnum):
+    SINGLE = "single"
+    ADDITIVE = "additive"
+    ALTERNATIVES = "alternatives"
+    NO_OP = "no_op"
+
+
 # Handler query-generation bucket. Determines the shared instruction
 # shape a category handler uses before endpoint-specific schemas fill in
 # concrete parameters.

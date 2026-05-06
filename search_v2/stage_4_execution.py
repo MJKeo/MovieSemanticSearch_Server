@@ -1,46 +1,55 @@
 # Search V2 — Stage 4: execute generated endpoint specs and produce
 # per-branch ranked candidate lists.
 #
-# Driven by the recursive granularity rule (search_method_deterministic_logic.md
-# §3 / §5 / §6 / §7 / §8):
+# Driven by the 5-phase pipeline from
+# search_improvement_planning/rescore_overhaul.md:
 #
-#   query
-#     └── traits             (across-trait merges at branch level)
-#          └── categories    (intra-trait merges at trait level)
-#               └── calls    (intra-category merges at category level)
+#   Phase A — LLM generation (steps 0/1/2/3 + handler-LLM, upstream).
+#   Phase B — Pool definition: run every positive-polarity candidate-
+#             generator call across every trait in parallel; union the
+#             match sets; apply shorts subtraction; neutral-seed
+#             fallback only when zero generators ran pipeline-wide.
+#   Phase C — Reranker pass: run every positive-polarity reranker call
+#             across every trait against the finalized union (the load-
+#             bearing change vs the prior trait-local-pool design — a
+#             reranker now scores every candidate, regardless of which
+#             trait its call lives in).
+#   Phase D — Per-trait scoring: for each candidate, for each trait,
+#             compose per-call scores via the category's combine type
+#             (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP), then take max
+#             across the trait's categories. Trait weight is commitment
+#             × rarity (rarity = 1.0 unless the trait is pure-generator).
+#   Phase E — Branch aggregation: Σ trait_score × weight × sign over
+#             positive traits, minus the gate × fuzzy negative trait
+#             contributions. Implicit-prior boost is applied later by
+#             the orchestrator.
 #
-# At every level a node is either "candidate-generating" (≥1 positive-
-# polarity CANDIDATE_GENERATOR call somewhere in its subtree) or
-# "pure-reranker." Cand-gen nodes execute generators in isolation,
-# then run rerankers within their own scope; pure-reranker nodes
-# defer one level up. Composites use nested equal-weight averaging.
+# Negative-polarity traits keep the existing three-bin gate × fuzzy
+# formula (G_a authoritative gate × noisy-OR over G_e ∪ R). See
+# `_score_negative_trait`.
 #
-# Negative-polarity traits are pure-reranker for orchestration but
-# score the branch pool with a three-bin shape: an authoritative-G
-# gate ANDs across specific-entity / structured-metadata calls, then
-# multiplies into a noisy-OR over evidential-G plus reranker calls.
-# See _score_negative_trait.
-#
-# Auxiliary specs (NEUTRAL_SEED, MEDIA_TYPE shorts) are applied at
-# branch level after cand-gen traits run: NEUTRAL_SEED adds IDs to a
-# branch_pool that is otherwise empty (the upstream fallback only
-# emits it when no cand-gen exists pipeline-wide); MEDIA_TYPE shorts
-# subtracts its IDs from branch_pool unconditionally. Neither
-# contributes a trait_score.
+# Auxiliary specs (NEUTRAL_SEED, MEDIA_TYPE shorts) are applied in
+# Phase B: NEUTRAL_SEED seeds the pool only when no positive generator
+# was attempted; MEDIA_TYPE shorts is subtracted whenever the user did
+# not explicitly request a media type. Neither contributes a trait_score.
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from db.postgres import fetch_neutral_reranker_seed_ids
 from db.qdrant import qdrant_client
 from schemas.endpoint_result import EndpointResult
-from schemas.enums import EndpointRoute, OperationType, Polarity
+from schemas.enums import (
+    CategoryCombineType,
+    EndpointRoute,
+    OperationType,
+    Polarity,
+)
 from schemas.trait_category import CategoryName
 from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
     GeneratedEndpointSpec,
@@ -55,7 +64,6 @@ from search_v2.endpoint_fetching.endpoint_executors import (
 if TYPE_CHECKING:
     from search_v2.full_pipeline_orchestrator import (
         BranchKind,
-        CategoryCallWithEndpoints,
         Step2BranchResult,
         TraitWithEndpoints,
     )
@@ -123,6 +131,68 @@ def _rarity_factor(match_count: int, corpus_size: int = CORPUS_SIZE) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Within-category combine
+# ---------------------------------------------------------------------------
+
+
+def combine_calls(
+    combine_type: CategoryCombineType,
+    scores: list[float],
+) -> float | None:
+    """Apply a category's within-category combine rule and return a
+    per-category score in [0, 1] — or None for NO_OP, signaling that
+    the category should be skipped entirely by the across-category max.
+
+    Empty `scores` means no calls fired for the category (handler
+    emitted no specs, or every call failed). For non-NO_OP modes that
+    is treated as a 0.0 contribution: the category is fine to include
+    in the max, it just doesn't help.
+
+    Modes (per rescore_overhaul.md):
+      SINGLE       — one orchestrator-visible call, passthrough.
+      ADDITIVE     — multiple calls together complete the picture;
+                     product across [0, 1] scores. Strict — any 0 zeros
+                     the category.
+      ALTERNATIVES — each call is an alternative way of finding the
+                     trait; max across calls. Matching any one is
+                     sufficient evidence.
+      NO_OP        — category never fires. Returns None so the across-
+                     category max can skip it rather than treating it
+                     as a 0.0 framing that drags down the max for
+                     traits whose other categories did fire.
+    """
+    if combine_type is CategoryCombineType.NO_OP:
+        return None
+    if not scores:
+        return 0.0
+    if combine_type is CategoryCombineType.SINGLE:
+        # Handler is responsible for ensuring SINGLE-combine categories
+        # only ever fire one orchestrator-visible call. If we somehow
+        # see >1, take the first deterministically and surface the
+        # invariant violation in the logs — the upstream handler
+        # config is the place to fix it.
+        if len(scores) > 1:
+            logger.warning(
+                "combine_calls(SINGLE) received %d scores; expected 1. "
+                "Taking the first deterministically — check the handler "
+                "for the SINGLE-combine category that fired multiple "
+                "orchestrator-visible calls.",
+                len(scores),
+            )
+        return scores[0]
+    if combine_type is CategoryCombineType.ADDITIVE:
+        out = 1.0
+        for s in scores:
+            out *= s
+        return out
+    if combine_type is CategoryCombineType.ALTERNATIVES:
+        return max(scores)
+    # Defensive — keep the type checker honest if a new mode lands
+    # without a branch above.
+    raise ValueError(f"unknown combine_type: {combine_type!r}")
+
+
+# ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
 
@@ -145,15 +215,15 @@ class TraitContribution:
 
 @dataclass
 class ScoreBreakdown:
-    """Per-candidate decomposition of the §9 final score.
+    """Per-candidate decomposition of the final score.
 
     `positive_total` sums every contribution with a positive sign:
-    cand-gen traits (always positive) and positive pure-reranker
-    traits, each `trait_score × trait_weight`. Always ≥ 0.
+    every positive-polarity trait's `trait_score × trait_weight`.
+    Always ≥ 0.
 
-    `negative_total` sums negative pure-reranker contributions with
-    the polarity sign already applied (negative traits use sign = -1),
-    so the value is ≤ 0.
+    `negative_total` sums negative-polarity contributions with the
+    polarity sign already applied (negative traits use sign = -1), so
+    the value is ≤ 0.
 
     Before implicit-prior post-reranking, `positive_total +
     negative_total` equals the score paired with the same movie_id in
@@ -162,9 +232,8 @@ class ScoreBreakdown:
     boost fraction applied on top of that base relevance score.
 
     `trait_contributions` lists the signed weighted contribution from
-    each trait that fed the §9 sum, in the same order traits appear on
-    the upstream branch (cand-gen traits first, then pure-reranker
-    traits). Sum of contributions equals positive_total + negative_total.
+    each trait that fed the §9 sum, in branch trait order. The sum of
+    contributions equals positive_total + negative_total.
     """
 
     positive_total: float
@@ -178,8 +247,8 @@ class BranchRankedResults:
     """One Step-2 branch's executed + ranked output.
 
     `ranked` is sorted descending by final_score per §9. Ties are
-    broken by the order in which candidates entered the branch_pool,
-    which is deterministic given a fixed input.
+    broken by the order in which candidates entered the union, which
+    is deterministic given a fixed input.
 
     `score_breakdowns` carries the positive/negative decomposition of
     each ranked candidate's score (same movie_id keys as `ranked`).
@@ -198,48 +267,29 @@ class BranchRankedResults:
 
 
 # ---------------------------------------------------------------------------
-# Internal execution-state dataclasses (not exposed)
+# Internal types — call-level addressing
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _CallExecution:
-    """One executed call. Carries both scores and the spec so callers
-    can read provenance (route, operation_type, was_promoted) for
-    rarity counting on semantic-promoted traits.
+# Stable per-call identity inside a branch: (trait_idx, cat_idx,
+# spec_idx). Drives the call_score_maps dict and lets Phase D look up
+# scores by trait+category position without needing object identity
+# (which would be fragile across the Phase B/C parallel dispatch).
+_CallKey = tuple[int, int, int]
+
+# Per-branch trait-classification triplet. Determines whether rarity
+# weighting fires for a positive trait.
+_TraitClass = Literal["pure_generator", "mixed", "pure_reranker"]
+
+
+class _TaggedSpec(NamedTuple):
+    """One spec annotated with its (trait_idx, cat_idx, spec_idx) so
+    Phase B/C can fan out specs in flat lists without losing the
+    trait/category provenance Phase D needs.
     """
 
+    key: _CallKey
     spec: GeneratedEndpointSpec
-    scores: dict[int, float]
-
-
-@dataclass
-class _CategoryExecution:
-    """One executed category. `pool` is the union of generator
-    matches in the category (empty for pure-reranker categories,
-    which defer to the trait level). `composite_scores` carries the
-    equal-weight average across the category's calls, defined only
-    over `pool`. `calls` is preserved for rarity bookkeeping.
-    """
-
-    is_cand_gen: bool
-    pool: set[int]
-    composite_scores: dict[int, float]
-    calls: list[_CallExecution]
-
-
-@dataclass
-class _TraitExecution:
-    """One executed cand-gen trait. `pool` is the union across cand-
-    gen categories. `trait_scores` is the equal-weight average across
-    all categories in the trait, restricted to `pool`. `match_count`
-    feeds rarity (semantic-promoted vs regular finder).
-    """
-
-    trait: "TraitWithEndpoints"
-    pool: set[int]
-    trait_scores: dict[int, float]
-    match_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +303,9 @@ async def execute_branches(
 ) -> list[BranchRankedResults]:
     """Run every branch in parallel and return ranked candidate lists.
 
-    Each branch is independent: it executes its own cand-gen traits,
-    builds its own branch_pool, applies the auxiliary specs to its
-    own pool, then reranks with its own pure-reranker / negative
-    traits. Errors in one branch do not affect siblings.
+    Each branch is independent: it runs its own Phase B/C/D/E using
+    its own auxiliary spec view. Errors in one branch do not affect
+    siblings.
     """
     if not branches:
         return []
@@ -268,7 +317,7 @@ async def execute_branches(
 
 
 # ---------------------------------------------------------------------------
-# Branch-level execution
+# Branch-level execution — 5-phase flow
 # ---------------------------------------------------------------------------
 
 
@@ -276,7 +325,7 @@ async def _run_branch(
     branch: "Step2BranchResult",
     auxiliary_specs: list[GeneratedEndpointSpec],
 ) -> BranchRankedResults:
-    """Execute one Step-2 branch end-to-end."""
+    """Execute one Step-2 branch end-to-end via the 5-phase pipeline."""
     if branch.branch_error is not None:
         # Upstream already failed for this branch; surface the error
         # and produce an empty ranked list. No execution attempted.
@@ -290,62 +339,159 @@ async def _run_branch(
 
     branch_start = time.perf_counter()
 
-    # Partition traits per §4. Negative-polarity traits are always
-    # pure-reranker for orchestration even when they carry would-be-
-    # generator calls (handled inside _score_negative_trait).
-    cand_gen_traits = [
-        t for t in branch.traits if _trait_is_cand_gen(t)
+    # ------------------------------------------------------------------
+    # Step 1 — Classify positive specs into generators / rerankers and
+    #          collect negative-polarity traits for separate handling.
+    # ------------------------------------------------------------------
+    pos_generators: list[_TaggedSpec] = []
+    pos_rerankers: list[_TaggedSpec] = []
+    negative_trait_indices: list[int] = []
+
+    for trait_idx, trait in enumerate(branch.traits):
+        if trait.step_3_error is not None:
+            # Trait surfaced an upstream error — nothing to dispatch.
+            # It will contribute 0.0 in Phase D regardless.
+            continue
+        if trait.polarity is Polarity.NEGATIVE:
+            negative_trait_indices.append(trait_idx)
+            continue
+        for cat_idx, cc in enumerate(trait.category_calls):
+            if cc.handler_error is not None:
+                continue
+            for spec_idx, spec in enumerate(cc.generated_specs):
+                key: _CallKey = (trait_idx, cat_idx, spec_idx)
+                tagged = _TaggedSpec(key=key, spec=spec)
+                if spec.operation_type is OperationType.CANDIDATE_GENERATOR:
+                    pos_generators.append(tagged)
+                else:
+                    pos_rerankers.append(tagged)
+
+    # ------------------------------------------------------------------
+    # Phase B — Pool definition.
+    # Run every positive-polarity generator concurrently with no
+    # restrict (each emits its own match set). Build the union from
+    # successful generator score-map keys. Apply shorts subtraction.
+    # Apply neutral seed fallback only when no positive generator was
+    # attempted (i.e. every positive trait is structurally pure-
+    # reranker AND tier-fallback promotion did not promote any).
+    # ------------------------------------------------------------------
+    call_score_maps: dict[_CallKey, dict[int, float] | None] = {}
+    if pos_generators:
+        gen_results = await asyncio.gather(
+            *(
+                _dispatch_call(t.spec, restrict=None)
+                for t in pos_generators
+            )
+        )
+        for tagged, scores in zip(pos_generators, gen_results):
+            call_score_maps[tagged.key] = scores
+
+    union: set[int] = set()
+    for tagged in pos_generators:
+        scores = call_score_maps.get(tagged.key)
+        if scores is not None:
+            union.update(scores.keys())
+
+    shorts_specs = [
+        s for s in auxiliary_specs if s.route is EndpointRoute.MEDIA_TYPE
     ]
-    pure_rer_traits = [
-        t for t in branch.traits if not _trait_is_cand_gen(t)
-    ]
+    if shorts_specs and union:
+        union = await _subtract_shorts(union, shorts_specs)
 
-    # Step C — cand-gen traits in parallel, each builds its own pool
-    # in isolation. Each result is a _TraitExecution (or None when
-    # the trait failed upstream / produced nothing useful).
-    cand_gen_executions = await asyncio.gather(
-        *(_run_cand_gen_trait(t) for t in cand_gen_traits)
-    )
-    cand_gen_executions = [ex for ex in cand_gen_executions if ex is not None]
+    # Empty-pool semantics:
+    #   * No generators were attempted → seed via NEUTRAL_SEED (if
+    #     auxiliary spec is present).
+    #   * Generators ran and union ended up empty → return empty
+    #     results. Per rescore_overhaul.md: "if something truly
+    #     doesn't exist, then it doesn't exist."
+    if not union:
+        if not pos_generators:
+            seed_specs = [
+                s for s in auxiliary_specs
+                if s.route is EndpointRoute.NEUTRAL_SEED
+            ]
+            if seed_specs:
+                union = await _seed_from_neutral(seed_specs)
+        if not union:
+            logger.info(
+                "branch %s: empty union after Phase B; returning empty",
+                branch.kind,
+            )
+            return BranchRankedResults(
+                kind=branch.kind,
+                query=branch.query,
+                ui_label=branch.ui_label,
+                ranked=[],
+            )
 
-    # Step D — union pools.
-    branch_pool: set[int] = set()
-    for ex in cand_gen_executions:
-        branch_pool.update(ex.pool)
-
-    # Apply auxiliary specs (neutral seed first, shorts subtraction
-    # second). Both are no-ops when their preconditions don't hold.
-    branch_pool = await _apply_auxiliary(branch_pool, auxiliary_specs)
-
-    # If the branch has nothing in its pool by now, no rerankers can
-    # contribute. Return empty deterministically — no fallback
-    # promotion happens at this layer; that already ran upstream.
-    if not branch_pool:
-        logger.info(
-            "branch %s: empty pool after cand-gen + auxiliary; returning empty",
-            branch.kind,
+    # ------------------------------------------------------------------
+    # Phase C — Reranker pass against the finalized union.
+    # Every positive reranker now scores every candidate in the union,
+    # not just the trait-local subset. This is the load-bearing fix
+    # vs the prior recursive-granularity scoring path.
+    # ------------------------------------------------------------------
+    if pos_rerankers:
+        rer_results = await asyncio.gather(
+            *(
+                _dispatch_call(t.spec, restrict=union)
+                for t in pos_rerankers
+            )
         )
-        return BranchRankedResults(
-            kind=branch.kind,
-            query=branch.query,
-            ui_label=branch.ui_label,
-            ranked=[],
-        )
+        for tagged, scores in zip(pos_rerankers, rer_results):
+            call_score_maps[tagged.key] = scores
 
-    # Step E — pure-reranker / negative traits score the branch_pool.
-    pure_rer_scores_per_trait = await asyncio.gather(
-        *(
-            _run_pure_reranker_trait(t, branch_pool)
-            for t in pure_rer_traits
+    # ------------------------------------------------------------------
+    # Phase D — Per-trait scoring against the finalized union.
+    # Positive traits compose per-call scores via combine_calls and
+    # take max across categories; negative traits dispatch their calls
+    # against the union and route through the existing gate × fuzzy
+    # formula in _score_negative_trait.
+    # ------------------------------------------------------------------
+    pos_payloads: list[
+        tuple["TraitWithEndpoints", dict[int, float], float, float]
+    ] = []
+    for trait_idx, trait in enumerate(branch.traits):
+        if trait.polarity is Polarity.NEGATIVE:
+            continue
+        if trait.step_3_error is not None:
+            # Trait failed upstream — contributes nothing.
+            continue
+        trait_scores = _score_positive_trait(
+            trait_idx=trait_idx,
+            trait=trait,
+            union=union,
+            call_score_maps=call_score_maps,
         )
-    )
+        weight = _positive_trait_weight(
+            trait_idx=trait_idx,
+            trait=trait,
+            call_score_maps=call_score_maps,
+        )
+        pos_payloads.append((trait, trait_scores, weight, +1.0))
 
-    # Step F — final weighted sum per §9.
+    # Negative traits in parallel — each rescores the union via its
+    # own three-bin formula. _score_negative_trait already handles
+    # failed-call drops and the gate × fuzzy combine.
+    neg_payloads: list[
+        tuple["TraitWithEndpoints", dict[int, float], float, float]
+    ] = []
+    if negative_trait_indices:
+        negative_traits = [branch.traits[i] for i in negative_trait_indices]
+        neg_score_maps = await asyncio.gather(
+            *(_dispatch_negative_trait(t, union) for t in negative_traits)
+        )
+        for trait, neg_scores in zip(negative_traits, neg_score_maps):
+            weight = _commitment_multiplier(trait.commitment)
+            neg_payloads.append((trait, neg_scores, weight, -1.0))
+
+    # ------------------------------------------------------------------
+    # Phase E — Branch aggregation.
+    # ------------------------------------------------------------------
     ranked, score_breakdowns = _finalize_scores(
-        branch_pool=branch_pool,
-        cand_gen_executions=cand_gen_executions,
-        pure_rer_traits=pure_rer_traits,
-        pure_rer_scores_per_trait=pure_rer_scores_per_trait,
+        union=union,
+        branch_traits=branch.traits,
+        pos_payloads=pos_payloads,
+        neg_payloads=neg_payloads,
     )
 
     logger.info(
@@ -364,306 +510,250 @@ async def _run_branch(
 
 
 # ---------------------------------------------------------------------------
-# Trait-level classification + execution
+# Phase B helpers — auxiliary spec application
 # ---------------------------------------------------------------------------
 
 
-def _trait_is_cand_gen(trait: "TraitWithEndpoints") -> bool:
-    """A trait is candidate-generating iff it is positive-polarity AND
-    has ≥1 CANDIDATE_GENERATOR spec in any of its category_calls.
-    Negative traits never generate candidates (§4 / §8).
+async def _subtract_shorts(
+    union: set[int],
+    shorts_specs: list[GeneratedEndpointSpec],
+) -> set[int]:
+    """Subtract SHORT-format movies from the union.
+
+    The auxiliary MEDIA_TYPE spec is tagged CANDIDATE_GENERATOR
+    upstream so its executor returns the SHORT-format movies; we use
+    those IDs as a blocklist rather than as a positive contribution.
+
+    Failed shorts calls are skipped — better to let a SHORT slip
+    through than to abandon the whole branch on a transient miss.
     """
-    if trait.polarity is Polarity.NEGATIVE:
-        return False
+    if not shorts_specs or not union:
+        return union
+    shorts_results = await asyncio.gather(
+        *(_dispatch_call(spec, restrict=None) for spec in shorts_specs)
+    )
+    shorts_ids: set[int] = set()
+    for scores in shorts_results:
+        if scores is None:
+            continue
+        shorts_ids.update(scores.keys())
+    if not shorts_ids:
+        return union
+    before = len(union)
+    union = union - shorts_ids
+    logger.info(
+        "auxiliary: shorts-excluded %d / %d candidates",
+        before - len(union),
+        before,
+    )
+    return union
+
+
+async def _seed_from_neutral(
+    neutral_seed_specs: list[GeneratedEndpointSpec],
+) -> set[int]:
+    """Fetch the neutral-seed movie IDs as a fallback union.
+
+    The seed only fires when no positive generator was attempted
+    pipeline-wide — i.e., every positive trait is pure-reranker AND
+    tier-fallback promotion did not promote any. Seed scores do not
+    enter trait scoring (implicit priors handle quality/popularity
+    contribution at branch aggregation).
+
+    Best-effort: a fetch failure simply leaves the union empty, and
+    the branch returns no results.
+    """
+    if not neutral_seed_specs:
+        return set()
+    try:
+        seed_ids = await fetch_neutral_reranker_seed_ids()
+    except Exception as exc:  # noqa: BLE001 — seed fetch is best-effort
+        logger.warning(
+            "neutral seed fetch failed; branch will return empty (%r)",
+            exc,
+        )
+        return set()
+    seeded = set(seed_ids)
+    logger.info("auxiliary: seeded union with %d neutral-seed IDs", len(seeded))
+    return seeded
+
+
+# ---------------------------------------------------------------------------
+# Phase D helpers — per-trait positive scoring
+# ---------------------------------------------------------------------------
+
+
+def _score_positive_trait(
+    trait_idx: int,
+    trait: "TraitWithEndpoints",
+    union: set[int],
+    call_score_maps: dict[_CallKey, dict[int, float] | None],
+) -> dict[int, float]:
+    """Compute per-candidate trait_score in [0, 1] for one positive trait.
+
+    For each candidate, walk the trait's categories. Skip categories
+    whose combine_type is NO_OP (defense-in-depth — handler emits zero
+    specs for EXPLICIT_NO_OP categories anyway, so no specs land in
+    call_score_maps for them). For each non-NO_OP category, collect
+    the per-call scores from call_score_maps keyed by
+    (trait_idx, cat_idx, spec_idx); failed calls (None) are skipped,
+    successful calls missing this candidate contribute 0.0. Apply
+    `combine_calls` to fold the call scores into one per-category
+    score, then take max across categories. Returns 0.0 for the
+    candidate when no category fired.
+    """
+    # Resolve the live-call score maps once per (trait, category)
+    # outside the per-candidate loop. With unions in the tens of
+    # thousands, redoing the (trait_idx, cat_idx, spec_idx) tuple
+    # construction + `is None` filter per mid is wasted work — those
+    # values are constant across the union.
+    live_cats: list[tuple[CategoryCombineType, list[dict[int, float]]]] = []
+    for cat_idx, cc in enumerate(trait.category_calls):
+        if cc.handler_error is not None:
+            continue
+        combine_type = cc.category.combine_type
+        if combine_type is CategoryCombineType.NO_OP:
+            continue
+        live_maps: list[dict[int, float]] = []
+        for spec_idx in range(len(cc.generated_specs)):
+            scores = call_score_maps.get((trait_idx, cat_idx, spec_idx))
+            if scores is not None:
+                live_maps.append(scores)
+        live_cats.append((combine_type, live_maps))
+
+    out: dict[int, float] = {}
+    for mid in union:
+        category_scores: list[float] = []
+        for combine_type, live_maps in live_cats:
+            call_scores = [m.get(mid, 0.0) for m in live_maps]
+            cat_score = combine_calls(combine_type, call_scores)
+            if cat_score is None:
+                # NO_OP is filtered out of live_cats above; this branch
+                # is a safety net if combine_calls grows new None-
+                # returning modes in the future.
+                continue
+            category_scores.append(cat_score)
+        out[mid] = max(category_scores) if category_scores else 0.0
+    return out
+
+
+def _classify_trait(trait: "TraitWithEndpoints") -> _TraitClass:
+    """Classify a positive trait by the operation_type of its specs.
+
+    Used for rarity bookkeeping only (per rescore_overhaul.md). The
+    combine rules in Phase D are uniform across the three classes;
+    this classification does not gate execution.
+
+    Empty traits (handler errors zeroed every category) collapse to
+    pure_reranker — there is no generator evidence to assess rarity
+    against, and rarity defaults to 1.0 in that case anyway.
+    """
+    saw_generator = False
+    saw_reranker = False
     for cc in trait.category_calls:
+        if cc.handler_error is not None:
+            continue
         for spec in cc.generated_specs:
             if spec.operation_type is OperationType.CANDIDATE_GENERATOR:
-                return True
-    return False
+                saw_generator = True
+            else:
+                saw_reranker = True
+            if saw_generator and saw_reranker:
+                return "mixed"
+    if saw_generator and not saw_reranker:
+        return "pure_generator"
+    return "pure_reranker"
 
 
-def _category_is_cand_gen(cc: "CategoryCallWithEndpoints") -> bool:
-    """A category contributes generators iff ≥1 of its specs is a
-    CANDIDATE_GENERATOR. (Polarity is checked at the trait level —
-    cand-gen categories are reached only inside positive traits.)
-    """
-    return any(
-        spec.operation_type is OperationType.CANDIDATE_GENERATOR
-        for spec in cc.generated_specs
-    )
-
-
-async def _run_cand_gen_trait(
+def _positive_trait_weight(
+    trait_idx: int,
     trait: "TraitWithEndpoints",
-) -> _TraitExecution | None:
-    """Execute a positive cand-gen trait fully (categories then calls).
+    call_score_maps: dict[_CallKey, dict[int, float] | None],
+) -> float:
+    """Compute the positive-trait weight = commitment × rarity.
 
-    Returns None when the trait surfaced a Step-3 error or has zero
-    successfully-executed calls — both collapse to "trait contributes
-    nothing." Returning None lets the caller drop it cleanly without
-    needing per-trait error fields on the execution result.
+    Rarity is only applied to pure-generator traits (rescore_overhaul
+    "Trait weighting"). Mixed and pure-reranker traits get
+    rarity_factor = 1.0; the trait weight is purely commitment.
     """
-    if trait.step_3_error is not None:
-        return None
-
-    # Skip silently empty trait shells (e.g. all CategoryCalls had
-    # handler errors and emitted nothing).
-    if not trait.category_calls:
-        return None
-
-    # Run every category in parallel. Cand-gen categories build
-    # their own pools; pure-reranker categories defer (we run them
-    # again at the trait level once the trait pool is known).
-    category_kinds = [_category_is_cand_gen(cc) for cc in trait.category_calls]
-    cand_gen_categories = [
-        cc for cc, is_gen in zip(trait.category_calls, category_kinds) if is_gen
-    ]
-    pure_rer_categories = [
-        cc for cc, is_gen in zip(trait.category_calls, category_kinds) if not is_gen
-    ]
-
-    cat_executions = await asyncio.gather(
-        *(_run_cand_gen_category(cc) for cc in cand_gen_categories)
-    )
-
-    # Trait pool = union of cand-gen categories' pools.
-    trait_pool: set[int] = set()
-    for cat_ex in cat_executions:
-        trait_pool.update(cat_ex.pool)
-
-    if not trait_pool:
-        # All cand-gen categories produced nothing → trait contributes
-        # nothing. Pure-reranker categories within the trait do not
-        # run (§11: empty propagates upward).
-        return None
-
-    # Run pure-reranker categories restricted to the trait pool.
-    rer_cat_executions = await asyncio.gather(
-        *(
-            _run_pure_reranker_category(cc, trait_pool)
-            for cc in pure_rer_categories
-        )
-    )
-
-    # Trait composite: equal-weight average across all categories
-    # (cand-gen + pure-reranker), per the user's nested-averaging
-    # design choice. Each category contributes its composite_scores
-    # as a single [0,1] value per movie (0 if not present).
-    all_cat_executions = list(cat_executions) + list(rer_cat_executions)
-    num_categories = len(all_cat_executions)
-    trait_scores: dict[int, float] = {}
-    for movie_id in trait_pool:
-        s = 0.0
-        for cat_ex in all_cat_executions:
-            s += cat_ex.composite_scores.get(movie_id, 0.0)
-        trait_scores[movie_id] = s / num_categories if num_categories else 0.0
-
-    match_count = _match_count_for_rarity(cat_executions)
-
-    return _TraitExecution(
+    commit = _commitment_multiplier(trait.commitment)
+    classification = _classify_trait(trait)
+    if classification != "pure_generator":
+        return commit
+    match_count = _match_count_for_rarity(
+        trait_idx=trait_idx,
         trait=trait,
-        pool=trait_pool,
-        trait_scores=trait_scores,
-        match_count=match_count,
+        call_score_maps=call_score_maps,
     )
+    return commit * _rarity_factor(match_count)
 
 
 def _match_count_for_rarity(
-    cand_gen_cat_executions: Iterable[_CategoryExecution],
+    trait_idx: int,
+    trait: "TraitWithEndpoints",
+    call_score_maps: dict[_CallKey, dict[int, float] | None],
 ) -> int:
-    """Count movies for the rarity tier lookup.
+    """Size of the rarity-relevant match set for one positive trait.
 
-    Per §7 + user clarification:
+    Per §7 + the existing semantic-promoted rule:
       - Promoted (semantic-promoted) generator calls: only post-elbow
-        1.0 movies count. Take the union across the trait's promoted
-        generator calls.
+        1.0-scoring movies count. Take the union across the trait's
+        promoted generator calls.
       - Regular finder generator calls: every matched candidate counts
-        (i.e. every member of the call's score map).
+        (i.e., every member of the call's score map).
       - When a trait mixes promoted + regular generator calls, both
         rules apply — we union both sets.
 
-    Returns the size of the union across all generator calls in all
-    cand-gen categories within the trait. By construction this set is
-    a subset of the trait's pool (the pool is built from the same
-    score-map keys), so no clamping is needed.
+    Returns the size of the union. Failed (None) calls are skipped.
+    Only the trait's POSITIVE generator calls feed rarity — rerankers
+    do not contribute, since their meaning is "scoring" rather than
+    "membership."
     """
     unioned: set[int] = set()
-    for cat_ex in cand_gen_cat_executions:
-        for call in cat_ex.calls:
-            if call.spec.operation_type is not OperationType.CANDIDATE_GENERATOR:
+    for cat_idx, cc in enumerate(trait.category_calls):
+        if cc.handler_error is not None:
+            continue
+        for spec_idx, spec in enumerate(cc.generated_specs):
+            if spec.operation_type is not OperationType.CANDIDATE_GENERATOR:
                 continue
-            if call.spec.was_promoted:
+            scores = call_score_maps.get((trait_idx, cat_idx, spec_idx))
+            if scores is None:
+                continue
+            if spec.was_promoted:
                 # Semantic-promoted: only 1.0-scoring movies count.
                 unioned.update(
                     mid
-                    for mid, sc in call.scores.items()
+                    for mid, sc in scores.items()
                     if sc >= 1.0 - _ELBOW_ONE_EPSILON
                 )
             else:
                 # Regular finder: all matched candidates count.
-                unioned.update(call.scores.keys())
+                unioned.update(scores.keys())
     return len(unioned)
 
 
 # ---------------------------------------------------------------------------
-# Category-level execution
+# Negative-polarity scoring (preserved unchanged)
 # ---------------------------------------------------------------------------
 
 
-async def _run_cand_gen_category(
-    cc: "CategoryCallWithEndpoints",
-) -> _CategoryExecution:
-    """Execute one positive cand-gen category.
-
-    Generators run with restrict=None and produce the category pool
-    (union of their matched IDs). Rerankers in the same category run
-    with restrict=category_pool — their meaning is scoped to this
-    category's carve, per §3.
-
-    Composite is the equal-weight average across all calls in the
-    category (generator + reranker), defined only over the category
-    pool. Movies outside the pool are not scored at this level.
-    """
-    if cc.handler_error is not None:
-        return _CategoryExecution(
-            is_cand_gen=True,
-            pool=set(),
-            composite_scores={},
-            calls=[],
-        )
-
-    gen_specs: list[GeneratedEndpointSpec] = []
-    rer_specs: list[GeneratedEndpointSpec] = []
-    for spec in cc.generated_specs:
-        if spec.operation_type is OperationType.CANDIDATE_GENERATOR:
-            gen_specs.append(spec)
-        else:
-            rer_specs.append(spec)
-
-    # Generators in parallel, full corpus. None on failure → treat
-    # as empty for positive-trait paths (the call simply doesn't
-    # contribute candidates).
-    raw_gen_results = await asyncio.gather(
-        *(_dispatch_call(spec, restrict=None) for spec in gen_specs)
-    )
-    gen_results = [scores or {} for scores in raw_gen_results]
-
-    category_pool: set[int] = set()
-    for scores in gen_results:
-        category_pool.update(scores.keys())
-
-    if not category_pool:
-        # Empty pool → connected rerankers do not run (§11).
-        return _CategoryExecution(
-            is_cand_gen=True,
-            pool=set(),
-            composite_scores={},
-            calls=[
-                _CallExecution(spec=spec, scores=scores)
-                for spec, scores in zip(gen_specs, gen_results)
-            ],
-        )
-
-    # Rerankers within this category, restricted to its pool. None on
-    # failure → treat as empty for the per-category equal-weight average.
-    raw_rer_results = await asyncio.gather(
-        *(_dispatch_call(spec, restrict=category_pool) for spec in rer_specs)
-    )
-    rer_results = [scores or {} for scores in raw_rer_results]
-
-    all_specs = gen_specs + rer_specs
-    all_scores = list(gen_results) + list(rer_results)
-    num_calls = len(all_specs)
-
-    composite: dict[int, float] = {}
-    for movie_id in category_pool:
-        s = 0.0
-        for scores in all_scores:
-            s += scores.get(movie_id, 0.0)
-        composite[movie_id] = s / num_calls if num_calls else 0.0
-
-    calls = [
-        _CallExecution(spec=spec, scores=scores)
-        for spec, scores in zip(all_specs, all_scores)
-    ]
-
-    return _CategoryExecution(
-        is_cand_gen=True,
-        pool=category_pool,
-        composite_scores=composite,
-        calls=calls,
-    )
-
-
-async def _run_pure_reranker_category(
-    cc: "CategoryCallWithEndpoints",
-    pool: set[int],
-) -> _CategoryExecution:
-    """Run a pure-reranker category against an externally-defined pool.
-
-    Used when a category sits inside a cand-gen trait but contributes
-    no generators of its own — the trait's pool (union of cand-gen
-    categories) becomes its scope.
-    """
-    if cc.handler_error is not None or not pool:
-        return _CategoryExecution(
-            is_cand_gen=False,
-            pool=set(),
-            composite_scores={},
-            calls=[],
-        )
-
-    raw_rer_results = await asyncio.gather(
-        *(_dispatch_call(spec, restrict=pool) for spec in cc.generated_specs)
-    )
-    rer_results = [scores or {} for scores in raw_rer_results]
-
-    num_calls = len(cc.generated_specs)
-    composite: dict[int, float] = {}
-    for movie_id in pool:
-        s = 0.0
-        for scores in rer_results:
-            s += scores.get(movie_id, 0.0)
-        composite[movie_id] = s / num_calls if num_calls else 0.0
-
-    calls = [
-        _CallExecution(spec=spec, scores=scores)
-        for spec, scores in zip(cc.generated_specs, rer_results)
-    ]
-    return _CategoryExecution(
-        is_cand_gen=False,
-        pool=set(pool),
-        composite_scores=composite,
-        calls=calls,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Pure-reranker / negative traits — score the branch pool
-# ---------------------------------------------------------------------------
-
-
-async def _run_pure_reranker_trait(
+async def _dispatch_negative_trait(
     trait: "TraitWithEndpoints",
-    branch_pool: set[int],
+    union: set[int],
 ) -> dict[int, float]:
-    """Score a pure-reranker trait against the branch_pool.
+    """Dispatch a negative trait's calls against the finalized union
+    and apply the gate × fuzzy three-bin formula.
 
-    Positive pure-reranker traits use equal-weight averaging across
-    all successfully-executed calls. Negative traits use a three-bin
-    formula (authoritative-G gate × noisy-OR over evidential-G ∪ R) —
-    see _score_negative_trait.
+    Negative-polarity rerank scope is unchanged from the prior design:
+    every negative call runs restricted to the (now globally finalized)
+    union, and `_score_negative_trait` composes them via the same
+    G_a × (G_e ∪ R) shape as before. The asymmetry between positive
+    and negative is intentional — see rescore_overhaul.md "Negative
+    polarity (unchanged)."
     """
-    if trait.step_3_error is not None or not branch_pool:
-        return {mid: 0.0 for mid in branch_pool}
+    if trait.step_3_error is not None or not union:
+        return {mid: 0.0 for mid in union}
 
-    # Flatten every call across every category in the trait, carrying
-    # the originating category alongside the spec. For negative traits
-    # the partition between "would-be-generator" and "would-be-reranker"
-    # is not readable off `spec.operation_type` (handler.determine_operation_type
-    # short-circuits every negative-polarity call to POOL_RERANKER), so
-    # we re-derive what each call would have been in positive polarity
-    # using the same routing function.
     paired: list[tuple[CategoryName, GeneratedEndpointSpec]] = []
     for cc in trait.category_calls:
         if cc.handler_error is not None:
@@ -671,33 +761,12 @@ async def _run_pure_reranker_trait(
         for spec in cc.generated_specs:
             paired.append((cc.category, spec))
     if not paired:
-        return {mid: 0.0 for mid in branch_pool}
+        return {mid: 0.0 for mid in union}
 
-    # Every call runs restricted to the branch_pool. Negative-polarity
-    # specs are POOL_RERANKER (per determine_operation_type), so the
-    # dispatcher passes the restrict through and the executor returns
-    # one score per pool ID. None on failure → call is dropped from
-    # downstream aggregation rather than counted as confirmed-zero.
     call_results = await asyncio.gather(
-        *(_dispatch_call(spec, restrict=branch_pool) for _, spec in paired)
+        *(_dispatch_call(spec, restrict=union) for _, spec in paired)
     )
-
-    if trait.polarity is Polarity.NEGATIVE:
-        return _score_negative_trait(paired, call_results, branch_pool)
-
-    # Positive pure-reranker trait: equal-weight average across calls
-    # that didn't fail. A failed call is dropped from the denominator
-    # rather than treated as a 0-everywhere contributor — that keeps a
-    # flaky endpoint from silently dragging the trait score down.
-    succeeded = [scores for scores in call_results if scores is not None]
-    if not succeeded:
-        return {mid: 0.0 for mid in branch_pool}
-    denom = len(succeeded)
-    out: dict[int, float] = {}
-    for movie_id in branch_pool:
-        s = sum(scores.get(movie_id, 0.0) for scores in succeeded)
-        out[movie_id] = s / denom
-    return out
+    return _score_negative_trait(paired, list(call_results), union)
 
 
 # Categories whose membership signal is *authoritative* about a negative
@@ -844,148 +913,63 @@ def _score_negative_trait(
 
 
 # ---------------------------------------------------------------------------
-# Auxiliary spec application (NEUTRAL_SEED + MEDIA_TYPE shorts)
-# ---------------------------------------------------------------------------
-
-
-async def _apply_auxiliary(
-    branch_pool: set[int],
-    auxiliary_specs: list[GeneratedEndpointSpec],
-) -> set[int]:
-    """Apply auxiliary specs to the branch_pool in the documented order:
-
-    1. NEUTRAL_SEED — additive seed when branch_pool is empty AND the
-       upstream fallback already chose to emit one. (The fallback only
-       emits NEUTRAL_SEED when no cand-gen exists pipeline-wide; but we
-       gate again here so a branch with successful cand-gen output
-       isn't accidentally diluted by the seed.)
-    2. MEDIA_TYPE shorts exclusion — subtractive set-difference on
-       whatever pool exists at this point. The auxiliary MEDIA_TYPE
-       spec is tagged CANDIDATE_GENERATOR upstream so its executor
-       returns the SHORT-format movies; we use those IDs as a
-       blocklist rather than as a positive contribution.
-    """
-    if not auxiliary_specs:
-        return branch_pool
-
-    neutral_seed_specs = [
-        s for s in auxiliary_specs if s.route is EndpointRoute.NEUTRAL_SEED
-    ]
-    # The shorts exclusion is the only MEDIA_TYPE entry that ever
-    # lands in auxiliary_endpoint_specs (per the upstream comment in
-    # _build_shorts_exclusion_spec). Filter by route alone — params
-    # is wrapped in MediaTypeEndpointParameters with a SHORT format.
-    shorts_specs = [
-        s for s in auxiliary_specs if s.route is EndpointRoute.MEDIA_TYPE
-    ]
-
-    # Step 1: neutral seed.
-    if not branch_pool and neutral_seed_specs:
-        try:
-            seed_ids = await fetch_neutral_reranker_seed_ids()
-            branch_pool = set(seed_ids)
-            logger.info(
-                "auxiliary: seeded branch_pool with %d neutral-seed IDs",
-                len(branch_pool),
-            )
-        except Exception as exc:  # noqa: BLE001 — seed fetch is best-effort
-            logger.warning(
-                "neutral seed fetch failed; branch will return empty (%r)", exc
-            )
-
-    # Step 2: shorts subtraction. Each spec's executor returns a score
-    # map of SHORT-format movies; we take the keys as a blocklist.
-    # If the call fails (None), skip it — better to let a SHORT slip
-    # through than to abandon the whole branch.
-    if shorts_specs and branch_pool:
-        shorts_results = await asyncio.gather(
-            *(_dispatch_call(spec, restrict=None) for spec in shorts_specs)
-        )
-        shorts_ids: set[int] = set()
-        for scores in shorts_results:
-            if scores is None:
-                continue
-            shorts_ids.update(scores.keys())
-        if shorts_ids:
-            before = len(branch_pool)
-            branch_pool = branch_pool - shorts_ids
-            logger.info(
-                "auxiliary: shorts-excluded %d / %d candidates",
-                before - len(branch_pool),
-                before,
-            )
-
-    return branch_pool
-
-
-# ---------------------------------------------------------------------------
-# Final aggregation (§9)
+# Phase E — final aggregation
 # ---------------------------------------------------------------------------
 
 
 def _finalize_scores(
-    branch_pool: set[int],
-    cand_gen_executions: list[_TraitExecution],
-    pure_rer_traits: list["TraitWithEndpoints"],
-    pure_rer_scores_per_trait: list[dict[int, float]],
+    union: set[int],
+    branch_traits: list["TraitWithEndpoints"],
+    pos_payloads: list[
+        tuple["TraitWithEndpoints", dict[int, float], float, float]
+    ],
+    neg_payloads: list[
+        tuple["TraitWithEndpoints", dict[int, float], float, float]
+    ],
 ) -> tuple[list[tuple[int, float]], dict[int, ScoreBreakdown]]:
-    """Per-candidate final score per §9: Σ trait_score × trait_weight × sign.
+    """Per-candidate final score: Σ trait_score × trait_weight × sign.
 
-    Cand-gen traits use commitment_mult × rarity_factor. Pure-reranker
-    traits use commitment_mult × 1.0. Polarity sign is applied here:
-    cand-gen traits are always positive (negative traits never become
-    cand-gen), pure-reranker traits may be either.
+    `pos_payloads` and `neg_payloads` are
+    `(trait, scores_by_mid, weight, sign)` tuples produced in Phase D.
+    Positive traits accumulate into `positive_total`; negative traits
+    accumulate into `negative_total` with the polarity sign already
+    applied (so `negative_total ≤ 0`).
 
-    Returns the ranked list (sorted descending by final score) and a
-    parallel `{movie_id: ScoreBreakdown}` dict carrying the positive
-    and negative components of each candidate's total. Splitting them
-    here is cheaper than re-deriving downstream and keeps the §9 math
-    in one place.
+    `branch_traits` is passed in to preserve a stable per-branch trait
+    order in `trait_contributions`: traits are emitted in the same
+    order they appear on the branch, so callers reading the breakdown
+    side-by-side with the upstream trait list see consistent indexing
+    even when some traits had upstream errors and contributed nothing.
     """
-    # Pre-compute weights so we don't re-derive per movie.
-    cand_gen_weights: list[float] = []
-    for ex in cand_gen_executions:
-        commit = _commitment_multiplier(ex.trait.commitment)
-        rarity = _rarity_factor(ex.match_count)
-        cand_gen_weights.append(commit * rarity)
-
-    pure_rer_weights: list[float] = []
-    pure_rer_signs: list[float] = []
-    for trait in pure_rer_traits:
-        pure_rer_weights.append(_commitment_multiplier(trait.commitment))
-        pure_rer_signs.append(
-            -1.0 if trait.polarity is Polarity.NEGATIVE else 1.0
-        )
+    # Resolve per-trait payloads once, in branch order. Traits that
+    # contributed nothing (upstream errors, no positive payload, no
+    # negative payload) get a None entry so the per-mid loop can skip
+    # them without re-doing the lookup. id()-keyed indexing is safe
+    # here because branch.traits holds every trait object live for
+    # the duration of this call — no reuse of freed slots is possible.
+    pos_by_id = {id(p[0]): p for p in pos_payloads}
+    neg_by_id = {id(p[0]): p for p in neg_payloads}
+    payloads_in_order: list[
+        tuple["TraitWithEndpoints", dict[int, float], float, float] | None
+    ] = [
+        pos_by_id.get(id(trait)) or neg_by_id.get(id(trait))
+        for trait in branch_traits
+    ]
 
     final: list[tuple[int, float]] = []
     breakdowns: dict[int, ScoreBreakdown] = {}
-    for movie_id in branch_pool:
+    for movie_id in union:
         positive_total = 0.0
         negative_total = 0.0
         trait_contribs: list[TraitContribution] = []
-        # Cand-gen contributions (always positive sign). A trait
-        # contributes 0 for movies it didn't generate (opportunity
-        # cost, §8).
-        for ex, weight in zip(cand_gen_executions, cand_gen_weights):
-            contribution = ex.trait_scores.get(movie_id, 0.0) * weight
-            positive_total += contribution
-            trait_contribs.append(
-                TraitContribution(
-                    surface_text=ex.trait.surface_text,
-                    commitment=ex.trait.commitment,
-                    contribution=contribution,
-                )
-            )
-        # Pure-reranker contributions, signed by polarity. Positive
-        # traits accumulate into positive_total; negative traits accumulate
-        # into negative_total with the sign already applied (so the
-        # value is ≤ 0).
-        for trait, scores, weight, sign in zip(
-            pure_rer_traits,
-            pure_rer_scores_per_trait,
-            pure_rer_weights,
-            pure_rer_signs,
-        ):
+
+        for payload in payloads_in_order:
+            if payload is None:
+                # Trait contributed nothing — omit from the breakdown
+                # entirely so the row reflects what actually fed the
+                # score, rather than padding with 0.0 contributions.
+                continue
+            trait, scores, weight, sign = payload
             contribution = scores.get(movie_id, 0.0) * weight * sign
             if sign >= 0.0:
                 positive_total += contribution
@@ -998,6 +982,7 @@ def _finalize_scores(
                     contribution=contribution,
                 )
             )
+
         final.append((movie_id, positive_total + negative_total))
         breakdowns[movie_id] = ScoreBreakdown(
             positive_total=positive_total,
@@ -1010,7 +995,7 @@ def _finalize_scores(
 
 
 # ---------------------------------------------------------------------------
-# Single-call dispatch wrapper
+# Single-call dispatch wrapper (preserved unchanged)
 # ---------------------------------------------------------------------------
 
 
@@ -1029,13 +1014,13 @@ async def _dispatch_call(
     results: a failed call must not contribute a confirmed-zero signal
     to the negative-trait gate or noisy-OR, where one failure would
     otherwise zero out the gate or saturate the OR. Positive-trait
-    callers fold None into `{}` and absorb the zero contribution into
-    their averages; the negative-trait scorer drops failed calls from
-    their bin entirely.
+    callers fold None into "skip the call" and absorb the absence into
+    their per-category combine; the negative-trait scorer drops failed
+    calls from their bin entirely.
 
     NEUTRAL_SEED and TRENDING are not dispatched through this path.
-    NEUTRAL_SEED is handled inside _apply_auxiliary; TRENDING has no
-    LLM codepath in v2 and is not expected to appear in
+    NEUTRAL_SEED is handled inside `_seed_from_neutral`; TRENDING has
+    no LLM codepath in v2 and is not expected to appear in
     `generated_specs`.
     """
     try:

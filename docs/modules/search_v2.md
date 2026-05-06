@@ -73,32 +73,60 @@ Stage 4 is the execution + scoring layer that turns generated endpoint
 specs into a ranked candidate list. Public entry:
 `execute_branches(branches, auxiliary_specs) -> list[BranchRankedResults]`.
 
-It implements the recursive granularity rule from
-`search_improvement_planning/search_method_deterministic_logic.md`
-(§3 / §5 / §6 / §7 / §8):
+It implements the 5-phase pipeline from
+`search_improvement_planning/rescore_overhaul.md`. The load-bearing
+property is **separation of pool definition from per-trait scoring**:
+all positive generators across all traits build one union, all
+positive rerankers score that finalized union, then per-trait
+scoring composes per-call scores via the category's combine type
+and takes max across categories. This fixes the prior trait-local
+reranker bug — in queries like "dark gritty marvel movies", the
+dark/gritty rerankers now score the marvel candidates produced by
+sibling traits.
 
 ```
-query
-  └── traits             (across-trait at branch level)
-       └── categories    (intra-trait at trait level)
-            └── calls    (intra-category at category level)
+Phase A — LLM generation (Steps 0/1/2/3 + handler-LLM, upstream)
+Phase B — Pool definition: positive generators in parallel → union
+          → shorts subtraction → neutral-seed only when zero generators
+            were attempted pipeline-wide
+Phase C — Reranker pass: positive rerankers in parallel against the
+          finalized union (no trait-local scoping)
+Phase D — Per-trait scoring (positive + negative), described below
+Phase E — Branch aggregation: Σ trait_score × weight × sign
 ```
 
-At every level a node is either **candidate-generating** (≥1
-positive-polarity CANDIDATE_GENERATOR call somewhere in its subtree)
-or **pure-reranker**. Cand-gen nodes execute generators in isolation
-then run rerankers within their own scope; pure-reranker nodes defer
-one level up. Composites use **nested equal-weight averaging** —
-calls average within a category, categories average within a trait,
-traits combine across the branch via §9's weighted sum.
+### Within-category combine
 
-### Branch-level scoring (§9)
+Each `CategoryName` member declares a `combine_type` (in
+`schemas/enums.CategoryCombineType`):
+
+- `SINGLE` — passthrough (one orchestrator-visible call)
+- `ADDITIVE` — product across calls (multiple calls together complete
+  the picture; strict — any 0 zeros the category)
+- `ALTERNATIVES` — max across calls (each call is an alternative way
+  of finding the trait; matching any one is sufficient)
+- `NO_OP` — category never fires (e.g. `BELOW_THE_LINE_CREATOR`'s
+  `EXPLICIT_NO_OP` bucket); skipped by across-category max
+
+The 43-member assignment is locked in `schemas/trait_category.py`:
+27 SINGLE, 11 ADDITIVE, 4 ALTERNATIVES, 1 NO_OP. Rationale per
+category lives in `search_improvement_planning/rescore_overhaul.md`.
+
+### Across-category combine
+
+`trait_score = max(category_score_j)` over the trait's categories
+(NO_OP categories skipped). Step 2's atomization rule guarantees one
+trait = one criterion, so multiple categories within a trait are
+different framings of the same criterion (max, not noisy-OR or
+average — the strongest framing wins).
+
+### Branch-level scoring
 
 ```
 final_score(movie) = Σ over traits of (trait_score × trait_weight × polarity_sign)
 
-trait_weight = commitment_multiplier × rarity_factor      (cand-gen traits)
-             = commitment_multiplier × 1.0                 (pure-rer / negative)
+trait_weight = commitment_multiplier × rarity_factor      (pure-generator traits)
+             = commitment_multiplier × 1.0                 (mixed / pure-reranker / negative)
 polarity_sign = +1 (positive)  or  -1 (negative)
 ```
 
@@ -106,8 +134,15 @@ Commitment multipliers: `required=3.0 / elevated=1.75 / neutral=1.0 /
 supporting=0.6 / diminished=0.35`. Rarity tiers (corpus N≈150K):
 `<0.1%→1.5 / <1%→1.2 / <10%→1.0 / <30%→0.75 / else 0.5`.
 
-A cand-gen trait contributes 0 to candidates it didn't generate
-(opportunity cost, §8) — missing positive ≠ active subtraction.
+### Trait classification (rarity bookkeeping only)
+
+Traits are classified by the operation_type of their calls:
+**pure-generator** (every call is CANDIDATE_GENERATOR), **mixed**
+(at least one of each), or **pure-reranker** (every call is
+POOL_RERANKER). Rarity weighting only applies to pure-generator
+traits — mixed and pure-reranker traits get `rarity_factor = 1.0`.
+The combine rules above are uniform across all three classes; this
+classification does not gate execution.
 
 ### Implicit-prior post-rerank
 
@@ -191,25 +226,34 @@ Sign is applied at the §9 aggregation layer, not inside the trait.
 ### Auxiliary specs (NEUTRAL_SEED + shorts exclusion)
 
 `auxiliary_endpoint_specs` carries up to two entries from upstream:
-the reranker-only fallback's `NEUTRAL_SEED` (additive) and the default
-shorts-exclusion `MEDIA_TYPE` (subtractive). Stage 4 applies them at
-branch level, in order:
+the reranker-only fallback's `NEUTRAL_SEED` and the default
+shorts-exclusion `MEDIA_TYPE`. Both are applied during Phase B:
 
-1. If `branch_pool` is empty AND a NEUTRAL_SEED spec is present, fetch
-   `db.postgres.fetch_neutral_reranker_seed_ids()` and seed the pool.
-2. If a MEDIA_TYPE spec is present, fetch the SHORT-format movie IDs
-   and **subtract** them from the pool. The MEDIA_TYPE spec is tagged
+1. **Shorts subtraction** — if a MEDIA_TYPE spec is present and the
+   union is non-empty, fetch the SHORT-format movie IDs and
+   **subtract** them from the union. The MEDIA_TYPE spec is tagged
    `CANDIDATE_GENERATOR` upstream so its executor returns the SHORT
    set; Stage 4 uses those IDs as a blocklist, not as a positive
    contribution.
+2. **Neutral seed** — fires only when **zero positive generators were
+   attempted pipeline-wide** (every positive trait is structurally
+   pure-reranker AND tier-fallback promotion did not promote any).
+   In that case, fetch `db.postgres.fetch_neutral_reranker_seed_ids()`
+   and use the result as the union. Seed scores do not enter trait
+   scoring; quality/popularity contribution is handled by implicit
+   priors at branch aggregation.
 
-Neither contributes a `trait_score`. Pure rerankers run *after*
-auxiliary application so they only score the surviving pool.
+If at least one generator was attempted but the union ended up empty
+(generators returned nothing, or shorts subtraction emptied an
+all-shorts pool), Stage 4 returns empty results — per
+`rescore_overhaul.md`, "if something truly doesn't exist, then it
+doesn't exist." No neutral-seed substitution in that case.
 
 ### Rarity bookkeeping
 
-Rarity uses a per-trait union over the trait's would-be-generator
-calls (per §7 + the user's clarification on semantic-promoted traits):
+Rarity uses a per-trait union over the trait's positive generator
+calls (only fires for pure-generator traits — see classification
+above):
 
 - **Promoted call** (`spec.was_promoted=True`, set by
   `_apply_reranker_only_candidate_fallback`): only post-elbow 1.0
@@ -269,7 +313,7 @@ Stage 4 (stage_4/): Assembly & reranking
 | `step_2.py` | Query analysis — combined Stage 1+2 of the 5-stage trait decomposition. `run_step_2()` returns `QueryAnalysis` (holistic_read + atoms with modifying_signals + evaluative_intent). Model hard-coded to Gemini 3 Flash (no thinking, temperature 0.35). System prompt loads sections this stage applies (atomicity, modifier vs trait, evaluative intent) plus background sections later stages use (carver vs qualifier, polarity, salience, category taxonomy). |
 | `run_step_2.py` | CLI runner for step_2. Prints full JSON response + timing + tokens. Default query exercises role markers, polarity, chronological, and multi-dimension entities. |
 | `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline(query, *, skip_bypass_steps_0_1=False)` runs Steps 0+1 in parallel (or skipped) → Step 2 per branch → Step 3 per trait → per-CategoryCall handler-LLM endpoint-spec generation → reranker-only fallback + auxiliary-spec planning → `stage_4_execution.execute_branches`. Returns `FullPipelineResult` with per-branch specs (`branches`) and ranked candidates (`branch_results`). 25s timeout + 1 retry per LLM call. |
-| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Implements recursive granularity (category → trait → branch) with nested equal-weight averaging, three-bin negative-trait scoring (`gate × fuzzy` where gate = ∏ authoritative-G and fuzzy = noisy-OR over evidential-G ∪ R; would-be partition derived via `determine_operation_type(category, route, POSITIVE)` then split by `_AUTHORITATIVE_NEGATION_CATEGORIES`), commitment × rarity weighting, NEUTRAL_SEED additive seeding, and MEDIA_TYPE shorts subtraction. Per-call soft-fail returns None so failed calls are dropped from their bin instead of zeroing the gate or saturating the noisy-OR. |
+| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Runs the 5-phase pipeline from `search_improvement_planning/rescore_overhaul.md`: Phase B unions positive generators across all traits, applies shorts subtraction, and falls back to NEUTRAL_SEED only when zero generators were attempted; Phase C reranks the finalized union globally; Phase D scores each trait by composing per-call scores via the category's `combine_type` (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP) and taking max across categories; Phase E applies commitment × rarity weighting and signs the contributions. Negative-polarity traits keep the existing three-bin gate × fuzzy formula (`gate × fuzzy` where gate = ∏ authoritative-G and fuzzy = noisy-OR over evidential-G ∪ R; would-be partition derived via `determine_operation_type(category, route, POSITIVE)` then split by `_AUTHORITATIVE_NEGATION_CATEGORIES`). Per-call soft-fail returns None so failed calls are dropped from their bin instead of zeroing the gate or saturating the noisy-OR. |
 | `step_3.py` | Trait decomposition. `run_step_3(trait)` returns `TraitDecomposition`. One LLM call per committed Trait. Reads `qualifier_relation` (with `"n/a"` sentinel) as the carver-vs-qualifier signal — `role` was removed from Step 2. |
 | `endpoint_fetching/category_handlers/output_extractor.py` | `extract_fired_endpoints(category, output)`: per-bucket extraction of `(EndpointRoute, EndpointParameters)` pairs from a handler-LLM structured output. |
 | `implicit_expectations.py` | Implicit-prior state management (quality/notability priors). |
@@ -405,8 +449,8 @@ combination (`max()` for carver, `Σ(w·score)/Σw` for qualifier).
   out of scope for the V2 runtime orchestrator.
 - **Stage 4 lives in `stage_4_execution.py`, not `stage_4/`.** The
   legacy `stage_4/` directory's assembly/reranking code is superseded
-  by the recursive granularity executor described above. Code
-  importing the old `run_stage_4` will fail.
+  by the 5-phase pipeline described above. Code importing the old
+  `run_stage_4` will fail.
 - **Negative-trait `operation_type` is uniformly `POOL_RERANKER`.**
   `determine_operation_type` short-circuits negative polarity to
   `POOL_RERANKER` regardless of route, so the spec's

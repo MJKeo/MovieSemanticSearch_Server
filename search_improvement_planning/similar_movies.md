@@ -8,7 +8,7 @@ Given a single anchor movie, return movies that someone would genuinely consider
 
 ## Similarity Axes
 
-Three independent candidate sources, each generates its own candidates and scores. A weaving/rescoring step combines them into the final order (strategy TBD).
+Four independent candidate sources, each generates its own candidates and scores. A weaving/rescoring step combines them into the final order (strategy TBD).
 
 ### 1. Movie Shape (strong)
 
@@ -35,6 +35,22 @@ Should not depend heavily on movie shape (a Nolan film is still a relevant "like
 
 Direct franchise / universe match (sequels, prequels, spinoffs, remakes). Worth weaving in but **should not be the top result unless it also matches the other axes well** — someone asking for "like Inception" probably doesn't want only Tenet and Interstellar; they want a broader similarity surface.
 
+### 4. Studio / Source Lineage (moderate auxiliary)
+
+Production-brand / studio-company overlap and source-of-inspiration overlap are useful as **latent lineage signals**: they capture shared creative machinery, audience calibration, source tradition, or house style that semantic vectors may only partially infer from the movie text.
+
+This signal is **not a replacement for semantic shape**. The vector spaces already capture much of the observable output of studio/source influence — tone, premise, pacing, themes, genre, production style. Studio/source lineage should therefore act as a tie-breaker, agreement boost, and limited recall-repair path, not as a dominant retrieval axis.
+
+**Studio / production company:** Use only identity-bearing brands or specific company/studio labels whose name meaningfully predicts something about the movie. Broad corporate umbrellas are weak for similarity even when useful for explicit studio search.
+
+- Stronger examples from the current brand registry: Pixar, Walt Disney Animation, Studio Ghibli, DreamWorks Animation, Illumination, Sony Pictures Animation, Marvel Studios, Lucasfilm, DC Studios, A24, Neon, Blumhouse, Searchlight, Focus Features, Miramax, Touchstone, New Line Cinema.
+- Moderate / context-dependent examples: Lionsgate, MGM, United Artists, TriStar, Columbia, 20th Century, Apple Studios, Amazon MGM, Netflix.
+- Weak examples for similarity: Disney umbrella, Warner Bros., Universal, Paramount, Sony. These are too broad; require strong vector agreement before they contribute, or ignore them for similarity scoring.
+
+Studio identity can be **era-dependent**. For labels whose house style changes over time, apply an era-proximity multiplier rather than treating all same-brand matches equally. Examples: Walt Disney Animation classic / Renaissance / Revival / modern eras; Pixar early-golden vs sequel-heavy/recent eras; Marvel Studios pre-Endgame vs post-Endgame; Miramax's 1990s prestige identity; New Line's genre/indie vs commercial blockbuster phases.
+
+**Source of inspiration:** Use generated source-of-inspiration metadata as a lineage signal when movies share adaptation tradition or source type. This is intentionally not exact-author matching because exact source author is not currently available in the DB. Source lineage should help surface movies that share myth, fairy tale, comic-book, folklore, historical-event, toy/game, remake, or other inspiration patterns even when their literal plot text differs.
+
 ## Explicitly Out of Scope
 
 These were considered and rejected for this flow:
@@ -44,10 +60,13 @@ These were considered and rejected for this flow:
 - **Lead actor overlap** — too weak (DiCaprio in Titanic is not "like Inception").
 - **Same composer / DP** — real signal but too sparse to be worth the complexity.
 - **Era / decade, country / language** — captured by vectors.
+- **Exact source author matching** — not currently available in the DB; use source-of-inspiration categories/patterns instead.
 
 ## Open Questions
 
-- **Weaving / rescoring strategy.** How do we combine candidates from the three sources into a final ordered list? Options include score normalization + weighted sum, round-robin interleaving with tier constraints, or a learned reranker. TODO.
+- **Weaving / rescoring strategy.** How do we combine candidates from the four sources into a final ordered list? Options include score normalization + weighted sum, round-robin interleaving with tier constraints, or a learned reranker. TODO.
 - **Quality bucket thresholds.** What concrete reception/popularity cutoffs define each bucket? Needs distribution analysis.
 - **Cult signal robustness.** Without critic-vs-audience data, how reliably can reception-vs-popularity distinguish true cult films from mainstream guilty pleasures? Vector matching is expected to carry the slack, but worth validating.
+- **Studio/source weighting.** How much should latent lineage boost candidates beyond semantic-vector agreement? Initial stance: moderate auxiliary signal only; prevent broad studios or weak source overlap from outranking better semantic matches.
+- **Studio era windows.** Which production brands need explicit era buckets, and what windows are empirically supported by the catalog? TODO.
 - **Multi-anchor similarity ("like Inception *and* Memento").** Current design assumes a single anchor movie. Naive vector averaging is geometrically biased (pulls toward dense clusters, can fall off the embedding manifold, drowns out distinct flavors of diverse inputs) and not a principled "semantic average." Better approach is likely per-anchor search with score aggregation across candidates (mean / min / reciprocal rank fusion) rather than a single averaged-vector query. Director and franchise axes also need a multi-anchor combination story (intersection vs union). TODO.

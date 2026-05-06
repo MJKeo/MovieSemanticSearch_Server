@@ -26,7 +26,7 @@ The 45-category list and granularity principles live in
 
 from enum import Enum
 
-from schemas.enums import EndpointRoute, HandlerBucket
+from schemas.enums import CategoryCombineType, EndpointRoute, HandlerBucket
 
 
 class CategoryName(str, Enum):
@@ -37,6 +37,7 @@ class CategoryName(str, Enum):
     bad_examples: tuple[str, ...]
     endpoints: tuple["EndpointRoute", ...]
     bucket: "HandlerBucket"
+    combine_type: "CategoryCombineType"
 
     def __new__(
         cls,
@@ -48,6 +49,7 @@ class CategoryName(str, Enum):
         bad_examples: tuple[str, ...],
         endpoints: tuple["EndpointRoute", ...],
         bucket: "HandlerBucket",
+        combine_type: "CategoryCombineType",
     ) -> "CategoryName":
         obj = str.__new__(cls, value)
         obj._value_ = value
@@ -58,6 +60,7 @@ class CategoryName(str, Enum):
         obj.bad_examples = bad_examples
         obj.endpoints = endpoints
         obj.bucket = bucket
+        obj.combine_type = combine_type
         return obj
 
     # -----------------------------------------------------------------
@@ -83,6 +86,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.ENTITY,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     TITLE_TEXT = (
         "Title text lookup",
@@ -105,6 +109,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.ENTITY,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     NAMED_CHARACTER = (
         "Named character",
@@ -132,6 +137,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.ENTITY,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     STUDIO_BRAND = (
         "Studio / brand",
@@ -157,6 +163,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.STUDIO,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     FRANCHISE_LINEAGE = (
         "Franchise / universe lineage",
@@ -187,6 +194,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.FRANCHISE_STRUCTURE,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     CHARACTER_FRANCHISE = (
         "Character-franchise",
@@ -219,6 +227,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.ENTITY, EndpointRoute.FRANCHISE_STRUCTURE),
         HandlerBucket.CHARACTER_FRANCHISE_FANOUT,
+        CategoryCombineType.ALTERNATIVES,
     )
     ADAPTATION_SOURCE = (
         "Adaptation source flag",
@@ -248,6 +257,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     CENTRAL_TOPIC = (
         "Central topic / about-ness",
@@ -273,6 +283,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ADDITIVE,
     )
     ELEMENT_PRESENCE = (
         "Element / motif presence",
@@ -297,6 +308,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ADDITIVE,
     )
     CHARACTER_ARCHETYPE = (
         "Character archetype",
@@ -322,6 +334,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ADDITIVE,
     )
     AWARDS = (
         "Award records",
@@ -348,6 +361,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.AWARDS,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     TRENDING = (
         "Trending",
@@ -370,6 +384,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.TRENDING,),
         HandlerBucket.NO_LLM_PURE_CODE,
+        CategoryCombineType.SINGLE,
     )
 
     # -----------------------------------------------------------------
@@ -399,6 +414,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     RUNTIME = (
         "Runtime",
@@ -422,6 +438,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     MATURITY_RATING = (
         "Maturity rating",
@@ -442,6 +459,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     AUDIO_LANGUAGE = (
         "Audio language",
@@ -461,6 +479,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     STREAMING = (
         "Streaming platform",
@@ -478,6 +497,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     FINANCIAL_SCALE = (
         "Financial scale",
@@ -502,6 +522,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     NUMERIC_RECEPTION_SCORE = (
         "Numeric reception score",
@@ -520,6 +541,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     COUNTRY_OF_ORIGIN = (
         "Country of origin",
@@ -545,6 +567,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     MEDIA_TYPE = (
         "Media type",
@@ -565,6 +588,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.MEDIA_TYPE,),
         HandlerBucket.NO_LLM_PURE_CODE,
+        CategoryCombineType.SINGLE,
     )
 
     # -----------------------------------------------------------------
@@ -598,6 +622,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ALTERNATIVES,
     )
     CULTURAL_TRADITION = (
         "Cultural tradition / national cinema",
@@ -621,6 +646,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ALTERNATIVES,
     )
     FILMING_LOCATION = (
         "Filming location",
@@ -644,6 +670,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     FORMAT_VISUAL = (
         "Format + visual-format specifics",
@@ -669,6 +696,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ALTERNATIVES,
     )
     NARRATIVE_DEVICES = (
         "Narrative devices + structural form + how-told craft",
@@ -698,6 +726,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ADDITIVE,
     )
     TARGET_AUDIENCE = (
         "Target audience",
@@ -727,6 +756,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
         HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
+        CategoryCombineType.ADDITIVE,
     )
     SENSITIVE_CONTENT = (
         "Sensitive content",
@@ -751,6 +781,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
         HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
+        CategoryCombineType.ADDITIVE,
     )
     SEASONAL_HOLIDAY = (
         "Seasonal / holiday",
@@ -775,6 +806,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
         HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
+        CategoryCombineType.ADDITIVE,
     )
 
     # -----------------------------------------------------------------
@@ -809,6 +841,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     NARRATIVE_SETTING = (
         "Narrative setting (time/place)",
@@ -835,6 +868,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     STORY_THEMATIC_ARCHETYPE = (
         "Story / thematic archetype",
@@ -862,6 +896,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ADDITIVE,
     )
     EMOTIONAL_EXPERIENTIAL = (
         "Emotional / experiential",
@@ -895,6 +930,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
         HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
+        CategoryCombineType.ADDITIVE,
     )
     VIEWING_OCCASION = (
         "Viewing occasion",
@@ -919,6 +955,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     VISUAL_CRAFT_ACCLAIM = (
         "Visual craft acclaim",
@@ -943,6 +980,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     MUSIC_SCORE_ACCLAIM = (
         "Music / score acclaim",
@@ -966,6 +1004,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     DIALOGUE_CRAFT_ACCLAIM = (
         "Dialogue craft acclaim",
@@ -990,6 +1029,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     GENERAL_APPEAL = (
         "General appeal / quality baseline",
@@ -1020,6 +1060,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     CULTURAL_STATUS = (
         "Cultural status / canonical stature",
@@ -1053,6 +1094,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC, EndpointRoute.METADATA),
         HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
+        CategoryCombineType.ADDITIVE,
     )
     SPECIFIC_PRAISE_CRITICISM = (
         "Specific praise / criticism",
@@ -1090,6 +1132,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
         HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        CategoryCombineType.ADDITIVE,
     )
 
     # -----------------------------------------------------------------
@@ -1130,6 +1173,7 @@ class CategoryName(str, Enum):
         ),
         (),
         HandlerBucket.EXPLICIT_NO_OP,
+        CategoryCombineType.NO_OP,
     )
     NAMED_SOURCE_CREATOR = (
         "Named source creator",
@@ -1163,6 +1207,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.SEMANTIC,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
 
     # -----------------------------------------------------------------
@@ -1192,4 +1237,5 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.METADATA,),
         HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )

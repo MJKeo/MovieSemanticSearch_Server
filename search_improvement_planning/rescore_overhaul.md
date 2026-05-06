@@ -65,6 +65,15 @@ Negative polarity stays on the existing gate × fuzzy formula.
    combine described here; negative polarity continues to use the
    three-bin gate × fuzzy formula already in
    [stage_4_execution.py](../search_v2/stage_4_execution.py).
+6. **Endpoint internals belong to the executor.** "One call" at the
+   orchestrator's level is one endpoint invocation — regardless of
+   how many internal targets (vector spaces, entity list members,
+   keyword groups) the call covers. SEMANTIC across multiple vector
+   spaces is one call, not many. The orchestrator consumes a single
+   [0,1] score per call and never looks inside. This boundary is what
+   makes the within-category combine modes (additive / alternatives /
+   single) tractable — the modes describe how *orchestrator-visible*
+   calls compose, not how an executor stitches its own internals.
 
 ## Pipeline phases
 
@@ -214,14 +223,44 @@ combine rule is trivial; surfacing it as a third mode keeps the
 classification exhaustive and self-documenting on the CategoryName
 enum.
 
-### Multi-call same-category
+### What counts as one call
 
-When a single category fires multiple calls of the same endpoint
-type (e.g., PERSON_CREDIT with two ENT calls because the spec is
-shaped to handle multiple entities), the endpoint owns the scoring
-logic for that case. The ENT executor takes a list of entities and
-returns one [0,1] score per movie covering all of them. The
-orchestrator does not see the internal aggregation.
+The combine modes apply to **orchestrator-level calls**, not to
+internal endpoint operations. Each endpoint invocation is one call
+from the orchestrator's perspective, regardless of how many internal
+targets it scores.
+
+The clearest case is SEMANTIC. The semantic executor takes a params
+object that may target several vector spaces in a single call —
+e.g., `reception_vectors` and `production_vectors` for
+VISUAL_CRAFT_ACCLAIM, or `viewer_experience_vectors`,
+`watch_context_vectors`, and `reception_vectors` for
+EMOTIONAL_EXPERIENTIAL. All cross-space aggregation, blending, and
+elbow normalization happens inside the executor and surfaces a
+single [0,1] score per movie. From the orchestrator's perspective
+that is one call, full stop.
+
+The same boundary applies to ENTITY (one call against a list of
+person entities), KEYWORD (one call against a list of tag groups),
+and any other endpoint that accepts list-shaped specs. The
+orchestrator consumes the final [0,1] number and never looks inside.
+
+Two consequences fall out of this:
+
+- A category whose only endpoints are semantic vector spaces — e.g.,
+  VISUAL_CRAFT_ACCLAIM, DIALOGUE_CRAFT_ACCLAIM, NAMED_SOURCE_CREATOR —
+  is **SINGLE-combine**, not additive across multiple semantic calls.
+  Multi-vector-space concerns are not visible at the rescore layer.
+- A category with KEYWORD plus semantic spaces — e.g., CENTRAL_TOPIC,
+  ELEMENT_PRESENCE, EMOTIONAL_EXPERIENTIAL — has exactly two
+  orchestrator-visible calls (one KW, one SEM), regardless of how
+  many vector spaces SEM internally targets. These are the
+  ADDITIVE-combine cases.
+
+This is also what closes the older question about "should we merge
+related semantic calls?" There is nothing to merge at the
+orchestrator level — the executor already returns one score per
+SEMANTIC invocation.
 
 ## Across-category combine
 
@@ -493,12 +532,9 @@ feel-good — well below a Christmas+feel-good film at ~2.75.
   (the WWII + Tom Hanks case where CENTRAL_TOPIC was dropped
   entirely) becomes a quality-of-result bonus rather than something
   the scoring layer depends on.
-- Improving keyword query breadth for additive categories. If KW
-  tag sets have meaningful coverage gaps, the multiply rule will
-  occasionally zero out additive categories for strong-SEM-untagged
-  candidates. Treated as a separate concern: ensure handler-LLM
-  keeps keyword sets broad when the category is additive, and accept
-  that bad keyword data produces bad multiplied scores.
+- Improving keyword query breadth for additive categories. The
+  upstream concern is real (see Sharp Edges below) but the response
+  lives in handler-LLM spec generation, not in the rescore math.
 
 ## Sharp edges to watch
 
@@ -507,8 +543,30 @@ canonical tag in an additive category zeros that category, even
 with strong gradient evidence. The across-category max provides
 recovery when other categories of the same trait fire, but if every
 category of a trait happens to be additive multi-call with KW + SEM,
-the strictness compounds. Expected to be rare in practice given how
-Step 3 currently routes; flagged as a thing to monitor in evaluation.
+the strictness compounds.
+
+**This strictness is accepted as-is.** The implication is explicit
+and bounded: for additive categories where KW carries the
+membership signal and SEM carries the gradient — CENTRAL_TOPIC,
+ELEMENT_PRESENCE, CHARACTER_ARCHETYPE, NARRATIVE_DEVICES,
+STORY_THEMATIC_ARCHETYPE, plus EMOTIONAL_EXPERIENTIAL,
+SEASONAL_HOLIDAY, TARGET_AUDIENCE, SENSITIVE_CONTENT, CULTURAL_STATUS,
+SPECIFIC_PRAISE_CRITICISM, NAMED_SOURCE_CREATOR — a movie that the
+keyword vocabulary fails to tag (true vocab gap, not genuine
+absence) will score 0 on that category regardless of SEM strength.
+The across-category max recovers the trait when another category
+fires; for traits whose only category is KW + SEM additive, the
+multiply does the gating intentionally.
+
+The remediation lives upstream — the handler-LLM is expected to
+keep KW tag sets broad enough to absorb realistic vocab variance,
+and the routing rules in
+[query_categories.md](query_categories.md) keep KW as a *broad
+fallback* signal rather than a precise filter. If evaluation
+reveals systematic miss patterns, the response is to broaden KW
+spec generation, not to soften the combine rule. Multiply's
+strictness is a feature: it forces categorical evidence to be
+present before the category can fire.
 
 ## Implementation hooks (for follow-up planning, not part of this doc)
 

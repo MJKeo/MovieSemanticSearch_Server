@@ -1,6 +1,80 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Rescore overhaul: separate pool definition from per-trait scoring
+Files: schemas/enums.py, schemas/trait_category.py, search_v2/stage_4_execution.py
+
+### Intent
+Implements the conceptual plan in
+[search_improvement_planning/rescore_overhaul.md](search_improvement_planning/rescore_overhaul.md).
+Fixes the trait-local reranker pool bug: in queries like "dark gritty
+marvel movies", the dark/gritty SEMANTIC rerankers were scoping to
+keyword-matched candidates only and never seeing the marvel STUDIO/
+FRANCHISE candidates from sibling traits. Stage 4 now runs as a
+5-phase pipeline (B = pool definition, C = global reranker pass,
+D = per-trait scoring, E = aggregation) where every positive
+reranker scores the finalized union regardless of which trait its
+call lives in.
+
+### Key Decisions
+- **Per-category combine declared on `CategoryName` enum.** New
+  `CategoryCombineType` enum in `schemas/enums.py` with values
+  SINGLE / ADDITIVE / ALTERNATIVES / NO_OP. Populated on all 43
+  members per the user's authoritative mapping (27 SINGLE, 11
+  ADDITIVE, 4 ALTERNATIVES, 1 NO_OP for BELOW_THE_LINE_CREATOR).
+  The `combine_calls` helper folds per-call scores into a per-
+  category score; ADDITIVE multiplies, ALTERNATIVES takes max,
+  SINGLE passes through, NO_OP returns None so the across-category
+  max skips it. NO_OP is defense-in-depth — the EXPLICIT_NO_OP
+  handler bucket already emits zero specs.
+- **Across-category combine is max universally.** Step 2's
+  atomization rule guarantees one trait = one criterion, so
+  multiple categories within a trait are different framings of the
+  same criterion (max, not noisy-OR or average).
+- **Rarity weighting restricted to pure-generator traits.** Mixed
+  and pure-reranker traits get rarity_factor = 1.0; only
+  pure-generator traits use the corpus-rarity tier. Trait
+  classification is derived from `spec.operation_type` across the
+  trait's calls — no new LLM-emitted role label.
+- **Negative polarity preserved verbatim.** `_score_negative_trait`
+  and `_AUTHORITATIVE_NEGATION_CATEGORIES` carry over unchanged;
+  the gate × fuzzy three-bin formula stays. Negative traits dispatch
+  their calls against the finalized union via a thin wrapper
+  (`_dispatch_negative_trait`) and route through the existing
+  scoring function.
+- **Empty-pool semantics tightened.** Neutral seed only fires when
+  zero positive generators were attempted pipeline-wide. If
+  generators ran and the union ended up empty (or shorts subtraction
+  emptied it), return empty results — "if something truly doesn't
+  exist, then it doesn't exist."
+- **Clean rewrite of `stage_4_execution.py`**, not a feature flag.
+  The recursive granularity helpers (`_run_cand_gen_trait`,
+  `_run_cand_gen_category`, `_run_pure_reranker_category`,
+  `_finalize_scores`, the per-execution dataclasses) are deleted.
+  Public dataclasses (`BranchRankedResults`, `ScoreBreakdown`,
+  `TraitContribution`) and the `execute_branches` signature are
+  preserved so the orchestrator caller is unaffected.
+
+### Planning Context
+Plan file: `/Users/michaelkeohane/.claude/plans/optimized-cuddling-blossom.md`.
+Per-category combine assignments and the no-op short-circuit
+semantics were locked by the user before implementation began.
+The 27/11/4/1 split tally was verified post-population.
+
+### Testing Notes
+End-to-end smoke tests via `run_orchestrator.py` confirm the bug fix:
+"dark gritty marvel movies" → top results are Werewolf by Night,
+Thunderbolts*, Black Panther: Wakanda Forever (the actual dark/gritty
+Marvel films) with marvel trait_score = 1.0 × elevated 1.75 × ULTRA_RARE
+1.5 = 2.625 contribution; "movies about WWII" → Dunkirk, Land of
+Mine, The Longest Day rank top with maxed trait scores. Per-trait
+breakdown surfaced via ScoreBreakdown.trait_contributions matches the
+new per-trait scoring output.
+
+Per `.claude/rules/test-boundaries.md` no test files were touched
+or run. Existing `unit_tests/` covering stage 4 may need updates
+in a follow-up testing pass.
+
 ## Per-trait score decomposition in top-25 print
 Files: search_v2/stage_4_execution.py, run_orchestrator.py
 Why: Debugging which trait drove a movie's rank required re-deriving per-trait contributions from raw trait_scores by hand. Surface them first-class alongside positive_total / negative_total (per "Surface computed-value decomposition alongside aggregates").
