@@ -38,3 +38,13 @@ Do not add genre, audience, or content tags as emotional proxies.
 ## No-Fire
 
 No-fire when the target is only a situation, genre, content rule, structural device, or vague "vibe" with no concrete emotional, experiential, or ending signal.
+
+## Endpoint coverage breadth
+
+This category's ingest-side signal is spread across `viewer_experience` (during-viewing tone), `watch_context` (self-experience motivations like "make me cry" / "comfort watch"), `reception` (audience labels like "tearjerker"), and the keyword registry (binary effect tags like FEEL_GOOD / TEARJERKER / HAPPY_ENDING). Most rich emotional/experiential traits land on at least three of these in parallel — they reinforce each other on the same slice rather than redundantly covering it.
+
+Single-endpoint coverage is the under-recall failure mode. When you fire `viewer_experience` only and skip `watch_context` / `reception`, the trait misses the films whose ingest signal lives on the sibling spaces. Default to firing every endpoint whose walk surfaced a real candidate; abstain only on endpoints whose walk genuinely had nothing useful to add.
+
+## Body authoring style
+
+When firing the semantic endpoint, the `viewer_experience` body should follow this category's density and synonym rules — see the dedicated viewer_experience category note for the 5–10 terms / section target, the true-synonym substitution test, and the default-populate negations rule. Those apply here too whenever this category's call routes to viewer_experience.

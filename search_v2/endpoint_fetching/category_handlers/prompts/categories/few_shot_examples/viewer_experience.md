@@ -1,40 +1,54 @@
 # Examples
 
-These examples calibrate the three clean-fire patterns (dark-gritty tonal, cerebral cognitive-demand, whimsical-cozy tonal) plus the two nearest-neighbor no-fires: post-viewing resonance (Cat 26) and scale/scope (Cat 27).
+These examples calibrate three things on top of the boundary work the prior
+versions modeled:
+1. Density per active sub-field — 5–10 terms, not 3.
+2. True-synonym discipline (substitution test) — what to include vs. what's
+   drift.
+3. Default-populate negations on every active section, naming the closest-
+   opposite axis.
 
-**Example: clean fire on a dark-gritty tonal ask**
+The first example shows a clean fire WITH a drift counter-example so the
+model trains on the substitution test directly. The second example shows
+how a user-supplied boundary lives in one section while the others still
+default-populate. The last two examples are unchanged in intent — they
+exercise the no-fire boundaries with Cat 26 (post-viewing aftertaste) and
+Cat 27 (scale/scope).
+
+**Example: clean fire — uplifting feel-good comedy (density + true
+synonyms + default negations)**
 
 ```xml
-<raw_query>dark gritty crime movies</raw_query>
-<overall_query_intention_exploration>The user wants crime films whose during-viewing feel is dark and gritty — a tonal aesthetic claim about how the movie feels moment to moment, distinct from the crime-genre aspect which lives in another fragment.</overall_query_intention_exploration>
+<raw_query>uplifting feel-good comedy</raw_query>
+<overall_query_intention_exploration>The user wants comedies whose during-viewing feel is uplifting and feel-good — a tonal aesthetic claim about how the movie feels moment to moment. The comedy genre lives on a sibling fragment.</overall_query_intention_exploration>
 <target_entry>
-  <captured_meaning>A dark and gritty during-viewing tonal feel — heavy, unvarnished, unglamorous.</captured_meaning>
+  <captured_meaning>An uplifting, feel-good during-viewing feel — warm, joyful, light.</captured_meaning>
   <category_name>Viewer experience / feel / tone</category_name>
   <fit_quality>clean</fit_quality>
-  <atomic_rewrite>Movies whose during-viewing feel is dark and gritty.</atomic_rewrite>
+  <atomic_rewrite>Movies whose during-viewing feel is uplifting and feel-good.</atomic_rewrite>
 </target_entry>
 <parent_fragment>
-  <query_text>dark gritty</query_text>
-  <description>A dark, gritty tonal aesthetic.</description>
+  <query_text>uplifting feel-good</query_text>
+  <description>An uplifting, feel-good tonal aesthetic.</description>
   <modifiers></modifiers>
 </parent_fragment>
 <sibling_fragments>
   <fragment>
-    <query_text>crime movies</query_text>
-    <description>Crime-genre films.</description>
+    <query_text>comedy</query_text>
+    <description>Comedy-genre films.</description>
     <modifiers></modifiers>
   </fragment>
 </sibling_fragments>
 ```
 
-Expected output:
+Expected output (compressed to highlight the body):
 
 ```json
 {
   "requirement_aspects": [
     {
-      "aspect_description": "Match films whose during-viewing tone reads as dark and gritty — heavy emotional palette and a serious, unglamorous register.",
-      "relation_to_endpoint": "Semantic viewer_experience carries emotional_palette for tonal descriptors and tone_self_seriousness for the serious/unglamorous register. 'Dark' and 'gritty' land cleanly in those two sub-fields as near-synonyms of the ingest-side vocabulary; embedding them there surfaces films whose tonal metadata matches the register.",
+      "aspect_description": "Match films whose during-viewing tone reads as uplifting and feel-good — warm emotional palette plus a playful, low-self-seriousness register.",
+      "relation_to_endpoint": "viewer_experience emotional_palette holds warm/light tonal descriptors; tone_self_seriousness carries the playful register; both sub-fields land on the same axis the trait names.",
       "coverage_gaps": null
     }
   ],
@@ -42,44 +56,58 @@ Expected output:
   "endpoint_parameters": {
     "match_mode": "trait",
     "parameters": {
-      "qualifier_inventory": "Two same-dimension tonal qualifiers treated as one unit: a dark, gritty during-viewing feel — heavy palette plus an unglamorous, serious register.",
+      "qualifier_inventory": "Two same-dimension tonal qualifiers treated as one unit: an uplifting, feel-good during-viewing feel.",
       "space_queries": [
         {
-          "carries_qualifiers": "viewer_experience emotional_palette holds tonal-mood descriptors on the ingest side; 'dark', 'bleak', 'grim' are the native vocabulary for this tonal register. tone_self_seriousness carries the unglamorous, serious-register dimension that 'gritty' lands on.",
+          "carries_qualifiers": "viewer_experience emotional_palette holds the warm/light tonal axis; tone_self_seriousness holds the playful register.",
           "space": "viewer_experience",
           "weight": "central",
           "content": {
             "emotional_palette": {
-              "terms": ["dark", "bleak", "grim"],
-              "negations": []
+              "terms": [
+                "uplifting",
+                "feel-good",
+                "heartwarming",
+                "joyful",
+                "warm",
+                "laugh out loud"
+              ],
+              "negations": [
+                "not depressing",
+                "not bleak",
+                "not heavy"
+              ]
             },
             "tension_adrenaline": {
               "terms": [],
-              "negations": []
+              "negations": [
+                "not stressful",
+                "not anxiety inducing"
+              ]
             },
             "tone_self_seriousness": {
-              "terms": ["gritty", "unglamorous", "serious"],
-              "negations": []
+              "terms": [
+                "earnest",
+                "lighthearted",
+                "playful"
+              ],
+              "negations": [
+                "not cynical",
+                "not mean-spirited"
+              ]
             },
-            "cognitive_complexity": {
-              "terms": [],
-              "negations": []
-            },
-            "disturbance_profile": {
-              "terms": [],
-              "negations": []
-            },
-            "sensory_load": {
-              "terms": [],
-              "negations": []
-            },
-            "emotional_volatility": {
-              "terms": [],
-              "negations": []
-            },
+            "cognitive_complexity": {"terms": [], "negations": []},
+            "disturbance_profile": {"terms": [], "negations": []},
+            "sensory_load": {"terms": [], "negations": []},
+            "emotional_volatility": {"terms": [], "negations": []},
             "ending_aftertaste": {
-              "terms": [],
-              "negations": []
+              "terms": [
+                "satisfying ending",
+                "feel-good payoff"
+              ],
+              "negations": [
+                "not a downer ending"
+              ]
             }
           }
         }
@@ -91,250 +119,77 @@ Expected output:
 }
 ```
 
-**Example: clean fire on a cerebral cognitive-demand ask**
+Notes on this output:
+- `emotional_palette.terms` carries 6 phrases — true synonyms of "uplifting/feel-good" plus the search-query phrase "laugh out loud" that real users type. All pass the substitution test.
+- **Terms and negations both point the same way.** For a feel-good body, terms are happy-side phrases (`uplifting`, `joyful`) and negations are the same idea expressed with `not`/`no` prefix (`not depressing`, `not bleak`). They reinforce — they are NOT opposites of each other. `"happy"` and `"not sad"` mean the same thing, and putting both in the body weights that concept in the embedded vector.
+- `tension_adrenaline.negations` fires even though `tension_adrenaline.terms` is empty — `not stressful` / `not anxiety inducing` reinforce the feel-good direction (a feel-good film IS not stressful) and live in the same cluster as the explicit happy-palette signals.
+- Sub-fields with no real signal stay fully empty (`cognitive_complexity`, `disturbance_profile`, `sensory_load`, `emotional_volatility`).
 
-```xml
-<raw_query>cerebral sci-fi</raw_query>
-<overall_query_intention_exploration>The user wants sci-fi films that demand active thought during viewing — a cognitive-demand claim about the during-viewing experience. The sci-fi genre atom lives on a sibling fragment.</overall_query_intention_exploration>
-<target_entry>
-  <captured_meaning>A cerebral during-viewing experience — the movie asks the viewer to think, track, and interpret.</captured_meaning>
-  <category_name>Viewer experience / feel / tone</category_name>
-  <fit_quality>clean</fit_quality>
-  <atomic_rewrite>Movies that feel cerebral to watch — cognitively demanding during viewing.</atomic_rewrite>
-</target_entry>
-<parent_fragment>
-  <query_text>cerebral</query_text>
-  <description>A cerebral, thought-provoking during-viewing feel.</description>
-  <modifiers></modifiers>
-</parent_fragment>
-<sibling_fragments>
-  <fragment>
-    <query_text>sci-fi</query_text>
-    <description>Science fiction genre.</description>
-    <modifiers></modifiers>
-  </fragment>
-</sibling_fragments>
-```
-
-Expected output:
+**COUNTER-EXAMPLE — do NOT emit this for the same query (drift):**
 
 ```json
-{
-  "requirement_aspects": [
-    {
-      "aspect_description": "Match films whose during-viewing experience is cognitively demanding — asks the viewer to track, interpret, and reason rather than coast.",
-      "relation_to_endpoint": "Semantic viewer_experience carries cognitive_complexity as a dedicated sub-field for the demand a film places on the viewer mid-watch. 'Cerebral' is a direct-match term in that sub-field's ingest-side vocabulary.",
-      "coverage_gaps": null
-    }
-  ],
-  "should_run_endpoint": true,
-  "endpoint_parameters": {
-    "match_mode": "trait",
-    "parameters": {
-      "qualifier_inventory": "One atom: a cerebral during-viewing experience — the film demands active thought and interpretation to follow.",
-      "space_queries": [
-        {
-          "carries_qualifiers": "viewer_experience cognitive_complexity is the sub-field that carries mid-watch cognitive demand on the ingest side; 'cerebral', 'thought-provoking', and 'intellectually demanding' are the native terms.",
-          "space": "viewer_experience",
-          "weight": "central",
-          "content": {
-            "emotional_palette": {
-              "terms": [],
-              "negations": []
-            },
-            "tension_adrenaline": {
-              "terms": [],
-              "negations": []
-            },
-            "tone_self_seriousness": {
-              "terms": [],
-              "negations": []
-            },
-            "cognitive_complexity": {
-              "terms": ["cerebral", "thought-provoking", "intellectually demanding"],
-              "negations": []
-            },
-            "disturbance_profile": {
-              "terms": [],
-              "negations": []
-            },
-            "sensory_load": {
-              "terms": [],
-              "negations": []
-            },
-            "emotional_volatility": {
-              "terms": [],
-              "negations": []
-            },
-            "ending_aftertaste": {
-              "terms": [],
-              "negations": []
-            }
-          }
-        }
-      ],
-      "primary_vector": "viewer_experience"
-    },
-    "polarity": "positive"
+"emotional_palette": {
+  "terms": ["uplifting", "redemption", "underdog", "inspirational journey"]
+}
+```
+
+Why this fails the substitution test:
+- "redemption" — story shape, not a feel. A film can be uplifting without being a redemption story.
+- "underdog" — character archetype, not a feel. Belongs to a different category entirely.
+- "inspirational journey" — thematic claim about the story arc, not a tonal palette descriptor.
+
+Each of these would shift the cosine search away from films whose `emotional_palette` actually carries "uplifting / feel-good / warm" and toward films with redemption arcs or underdog stories regardless of feel. **True synonyms only.**
+
+**Example: clean fire with a user-supplied boundary — campy slasher, not too gory**
+
+```xml
+<raw_query>campy slasher horror that is not too gory</raw_query>
+<atomic_rewrite>A campy, theatrical during-viewing feel that avoids graphic gore.</atomic_rewrite>
+```
+
+Expected output (highlights):
+
+```json
+"viewer_experience": {
+  "emotional_palette": {
+    "terms": ["campy", "theatrical", "fun", "tongue-in-cheek"],
+    "negations": ["not earnest", "not grim"]
+  },
+  "tone_self_seriousness": {
+    "terms": ["winking self aware", "knowingly silly", "over the top", "cheesy"],
+    "negations": ["not serious", "not grimly serious"]
+  },
+  "tension_adrenaline": {
+    "terms": ["slasher tension", "kills and chases"],
+    "negations": ["not a slow burn", "not subtle"]
+  },
+  "disturbance_profile": {
+    "terms": ["light scares", "playful violence"],
+    "negations": ["not too gory", "no graphic gore", "not disturbing"]
   }
 }
 ```
 
-**Example: clean fire on a whimsical cozy tonal ask**
-
-```xml
-<raw_query>whimsical cozy movies for a rainy day</raw_query>
-<overall_query_intention_exploration>The user wants films whose during-viewing feel is whimsical and cozy. The "rainy day" part is a watch occasion handled by another category; the target atom here is purely the tonal aesthetic.</overall_query_intention_exploration>
-<target_entry>
-  <captured_meaning>A whimsical, cozy during-viewing feel — light, warm, gently playful.</captured_meaning>
-  <category_name>Viewer experience / feel / tone</category_name>
-  <fit_quality>clean</fit_quality>
-  <atomic_rewrite>Movies whose during-viewing feel is whimsical and cozy.</atomic_rewrite>
-</target_entry>
-<parent_fragment>
-  <query_text>whimsical cozy</query_text>
-  <description>A whimsical, cozy tonal aesthetic.</description>
-  <modifiers></modifiers>
-</parent_fragment>
-<sibling_fragments>
-  <fragment>
-    <query_text>for a rainy day</query_text>
-    <description>Occasion: rainy-day watching.</description>
-    <modifiers></modifiers>
-  </fragment>
-</sibling_fragments>
-```
-
-Expected output:
-
-```json
-{
-  "requirement_aspects": [
-    {
-      "aspect_description": "Match films whose during-viewing tone reads as whimsical and cozy — warm, light emotional palette plus a playful, low-self-seriousness register.",
-      "relation_to_endpoint": "Semantic viewer_experience emotional_palette carries warm/light tonal descriptors; tone_self_seriousness carries the playful, unserious register that 'whimsical' lands on. Both sub-fields hold ingest-side terms close to 'whimsical', 'cozy', 'warm', 'playful'.",
-      "coverage_gaps": null
-    }
-  ],
-  "should_run_endpoint": true,
-  "endpoint_parameters": {
-    "match_mode": "trait",
-    "parameters": {
-      "qualifier_inventory": "Two same-dimension tonal atoms: a whimsical, cozy during-viewing feel — warm/light palette plus a playful, unserious register.",
-      "space_queries": [
-        {
-          "carries_qualifiers": "viewer_experience emotional_palette holds warm, light tonal descriptors on the ingest side; 'cozy', 'warm', 'gentle' are the native vocabulary. tone_self_seriousness carries the playful, whimsical register that sits on the low-self-seriousness end of that sub-field.",
-          "space": "viewer_experience",
-          "weight": "central",
-          "content": {
-            "emotional_palette": {
-              "terms": ["cozy", "warm", "gentle"],
-              "negations": []
-            },
-            "tension_adrenaline": {
-              "terms": [],
-              "negations": []
-            },
-            "tone_self_seriousness": {
-              "terms": ["whimsical", "playful", "light-hearted"],
-              "negations": []
-            },
-            "cognitive_complexity": {
-              "terms": [],
-              "negations": []
-            },
-            "disturbance_profile": {
-              "terms": [],
-              "negations": []
-            },
-            "sensory_load": {
-              "terms": [],
-              "negations": []
-            },
-            "emotional_volatility": {
-              "terms": [],
-              "negations": []
-            },
-            "ending_aftertaste": {
-              "terms": [],
-              "negations": []
-            }
-          }
-        }
-      ],
-      "primary_vector": "viewer_experience"
-    },
-    "polarity": "positive"
-  }
-}
-```
+Notes:
+- This is the NON-GORY direction. `disturbance_profile.terms = ["light scares", "playful violence"]` and `negations = ["not too gory", "no graphic gore", "not disturbing"]` BOTH point at the same retrieval target: films that have light slasher fun without graphic gore. They reinforce each other.
+- The OPPOSITE direction (looking for gory films, e.g. trait="gory" with polarity=negative so the orchestrator can penalize them) would emit: `terms = ["gory", "bloody", "graphic violence", "splatter"]` + `negations = ["not peaceful", "not for kids", "not gentle"]` — both pointing at gory films, with polarity flipping the score downstream.
+- Contradictory pairings to AVOID: `terms=["gory"] + negations=["not too gory"]` (same axis, opposite directions, contradicts itself).
+- The other three active sections still default-populate negations even though no boundary was named there.
 
 **Example: no-fire on a post-viewing aftertaste ask (Cat 26 boundary)**
 
 ```xml
 <raw_query>something haunting that stays with you</raw_query>
-<overall_query_intention_exploration>The user wants films whose impact lingers after the credits — an aftertaste claim, not a during-viewing feel. "Haunting" and "stays with you" both name what the movie leaves behind, not how it plays moment to moment.</overall_query_intention_exploration>
-<target_entry>
-  <captured_meaning>A during-viewing feel of being haunted — mid-watch mood of lingering disquiet.</captured_meaning>
-  <category_name>Viewer experience / feel / tone</category_name>
-  <fit_quality>partial</fit_quality>
-  <atomic_rewrite>Movies that feel haunting to watch.</atomic_rewrite>
-</target_entry>
-<parent_fragment>
-  <query_text>something haunting that stays with you</query_text>
-  <description>Films with a haunting, lingering quality after viewing.</description>
-  <modifiers></modifiers>
-</parent_fragment>
-<sibling_fragments></sibling_fragments>
+<atomic_rewrite>Movies that feel haunting to watch.</atomic_rewrite>
 ```
 
-Expected output:
-
-```json
-{
-  "requirement_aspects": [
-    {
-      "aspect_description": "The user is naming what the movie leaves behind after viewing, not how it feels during viewing.",
-      "relation_to_endpoint": "Semantic viewer_experience covers the during-viewing experience across tone, tension, cognitive demand, and sensory load. 'Haunting' and 'stays with you' are both aftertaste claims — the residue a film leaves once it's over. That axis lives on viewer_experience.ending_aftertaste on the ingest side, but aftertaste is Cat 26's primary target, not this category's. Forcing these terms into emotional_palette would mis-embed the query as a during-viewing mood claim when the user is naming post-viewing resonance.",
-      "coverage_gaps": "Upstream dispatch read 'haunting' as a during-viewing tonal term when the accompanying 'stays with you' makes clear the axis is post-viewing resonance. The correct route is Cat 26 (Post-viewing resonance), not here."
-    }
-  ],
-  "should_run_endpoint": false,
-  "endpoint_parameters": null
-}
-```
+Expected: `should_run_endpoint: false`. "Haunting / stays with you" is post-viewing aftertaste (Cat 26's `viewer_experience.ending_aftertaste`), not during-viewing feel. Forcing terms into `emotional_palette` would mis-embed the query as a during-viewing mood claim when the user named post-viewing resonance.
 
 **Example: no-fire on a scale/scope ask (Cat 27 boundary)**
 
 ```xml
 <raw_query>epic sweeping movies</raw_query>
-<overall_query_intention_exploration>The user wants films with an epic, sweeping scope. "Epic" and "sweeping" both name scale — how large and ambitious the movie's canvas is — rather than a tonal feel or cognitive demand.</overall_query_intention_exploration>
-<target_entry>
-  <captured_meaning>An epic, sweeping during-viewing feel — grand, large-scale tonal register.</captured_meaning>
-  <category_name>Viewer experience / feel / tone</category_name>
-  <fit_quality>partial</fit_quality>
-  <atomic_rewrite>Movies that feel epic and sweeping to watch.</atomic_rewrite>
-</target_entry>
-<parent_fragment>
-  <query_text>epic sweeping</query_text>
-  <description>Films with an epic, sweeping scale.</description>
-  <modifiers></modifiers>
-</parent_fragment>
-<sibling_fragments></sibling_fragments>
+<atomic_rewrite>Movies that feel epic and sweeping to watch.</atomic_rewrite>
 ```
 
-Expected output:
-
-```json
-{
-  "requirement_aspects": [
-    {
-      "aspect_description": "The user is naming scale and scope — how large and sweeping the movie's canvas is — not a tonal aesthetic or cognitive-demand property.",
-      "relation_to_endpoint": "Semantic viewer_experience carries tone, tension, cognitive demand, sensory load, and emotional volatility — dimensions of during-viewing feel. 'Epic' and 'sweeping' are scope descriptors: they name the size of the story's canvas rather than any of those experiential axes. Embedding them into emotional_palette or tone_self_seriousness would route a scope query through the wrong vocabulary. Cat 27 (Scale / scope / holistic vibe) is the correct category for scale framing.",
-      "coverage_gaps": "Upstream dispatch read 'epic' as a tonal term, but paired with 'sweeping' the axis is unambiguously scope. The viewer_experience sub-fields have no lever for scale; this needs to route through Cat 27."
-    }
-  ],
-  "should_run_endpoint": false,
-  "endpoint_parameters": null
-}
-```
+Expected: `should_run_endpoint: false`. "Epic / sweeping" names scale, not tonal aesthetic or cognitive demand. Embedding into `emotional_palette` would route a scope query through the wrong vocabulary.

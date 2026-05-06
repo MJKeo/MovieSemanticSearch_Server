@@ -17,7 +17,52 @@ The `viewer_experience` body has eight paired sub-fields (`terms` + `negations`)
 - Sensory density ("sensory overload", "visually loud", "quiet", "restrained") → `sensory_load`.
 - Emotional turbulence across the runtime ("rollercoaster", "emotionally steady") → `emotional_volatility`.
 
-Negations carry a qualifier's boundary — "unsettling but not gory" puts "unsettling" in `disturbance_profile.terms` and "gore" / "graphic violence" in `disturbance_profile.negations`. Use negations only when the input itself names a boundary, not to pre-empt edge cases.
+## Density: 5–10 terms per active sub-field
+
+The ingest-side `viewer_experience` text routinely emits 5–10 phrases per active section in user-search vernacular — slang, paraphrases, and TRUE synonyms. The query-side body should match. A body with 3 dictionary adjectives and zero negations sits in a thinner part of the embedding neighborhood than the documents we're trying to retrieve.
+
+Per active sub-field, anchor on adjectives but add 1-2 vernacular synonyms and 1-2 user-search-phrase variants. "cozy, warm, gentle" is OK; "cozy, warm, gentle, comfort movie, feel good watch" is closer to the ingest neighborhood.
+
+## True synonyms only — substitution test
+
+When expanding a term list, every term must pass the substitution test:
+
+> **"Could I show this term to the user instead of their original word, and would they say yes, that's the same thing?"**
+
+- ✓ "haunting" → "haunting, lingering, sticks with you, stays with you" — true synonyms; same residue.
+- ✓ "uplifting" → "uplifting, inspiring, hopeful, feel-good" — same lift.
+- ✗ "haunting" → "haunting, eerie, creepy, supernatural" — eerie/creepy is a different feel; supernatural is a content claim. Drift hurts retrieval.
+- ✗ "bittersweet" → "bittersweet, tragic, melancholic" — tragic is stronger; melancholic is adjacent.
+
+If the test fails, drop the term. Drift terms degrade cosine similarity against the films the user actually wants.
+
+## Negations default-populate — same direction as terms
+
+`terms` and `negations` BOTH POINT AT THE SAME RETRIEVAL TARGET. They're complementary phrasings of the same concept, not opposites. `"happy"` and `"not sad"` are the same idea — putting both in the body weights that concept in the embedded vector.
+
+The mechanical rule: `terms` never has `not`/`no` prefix; `negations` always does. Both fields cluster on the same side of the embedding.
+
+Correct pairings:
+
+- Feel-good body: `terms=["uplifting", "joyful", "warm"]` + `negations=["not depressing", "not bleak"]`.
+- Earnest tone body: `terms=["earnest", "heartfelt", "sincere"]` + `negations=["not campy", "not ironic", "not mean spirited"]`.
+- Cozy tension body: `terms=["relaxed", "chill", "low stakes"]` + `negations=["not stressful", "not edge of your seat"]`.
+- Gory body: `terms=["gory", "bloody", "graphic violence"]` + `negations=["not peaceful", "not for kids", "not gentle"]`.
+- Non-gory body: `terms=["light scares", "tame violence", "restrained"]` + `negations=["no gore", "not too gory", "not bloody"]`.
+
+Contradictory pairings — these break retrieval. NEVER emit:
+
+- `terms=["gory"]` + `negations=["not too gory"]` — same axis, opposite directions; contradicts itself.
+- `terms=["happy"]` + `negations=["not happy"]` — contradicts.
+- `terms=["uplifting"]` + `negations=["not uplifting"]` — contradicts.
+
+**For each active sub-field, default-populate 1–3 negations that reinforce the direction the terms already point.** Suppress only when the section is barely populated.
+
+When the user names a boundary ("not too gory") and it's the trait's central ask:
+- If "not too gory" is its own trait (typical Step 2 split), it gets `polarity=negative` upstream and the body searches AFFIRMATIVELY for gory films (`terms=["gory", "bloody"]`, `negations=["not peaceful", "not for kids"]`). The orchestrator inverts the score.
+- If "not too gory" is a within-trait boundary on a positive-finding body (e.g. "campy slasher but not too gory" as one inseparable concept), the body searches for the affirmative complement: `terms=["light scares", "tame violence"]` + `negations=["no gore", "not too gory", "not bloody"]`. Both fields cluster on the non-gory side.
+
+The body NEVER inverts. Polarity flipping happens at the trait level, applied by the orchestrator.
 
 ## Boundaries with nearby categories
 

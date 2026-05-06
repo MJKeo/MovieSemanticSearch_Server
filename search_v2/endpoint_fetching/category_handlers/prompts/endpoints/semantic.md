@@ -56,16 +56,83 @@ Every movie carries 7 named vectors. Each was embedded at ingest from a structur
 
 ## Body authoring — match the ingest side
 
-Each body is the query-side text that gets embedded and compared cosine-wise to the corresponding ingest-side vector. Match the **vocabulary**, **verbosity**, and **register** the ingest side uses for that space.
+Each body is the query-side text that gets embedded and compared cosine-wise to the corresponding ingest-side vector. Match the **vocabulary**, **verbosity**, and **register** the ingest side uses for that space. **The per-sub-field descriptions on each Body class (PlotEventsBody, ViewerExperienceBody, WatchContextBody, NarrativeTechniquesBody, PlotAnalysisBody, ProductionBody, ReceptionBody) carry the density, register, vocabulary, and synonym targets — read them before populating.**
 
-- **Term-list spaces** (viewer_experience, watch_context, narrative_techniques, production, reception term lists): compact 2–4-word phrases. "unreliable narrator" — good. "The story is told by an unreliable narrator who withholds information." — too long; collapse.
-- **Prose spaces** (plot_events `plot_summary`, plot_analysis `elevator_pitch` / `plot_overview`, reception `reception_summary`): one or two dense sentences carrying the signal, not a paragraph.
-- **Populate only sub-fields the aspects genuinely land in.** Empty sub-fields are valid and expected — schema field rules forbid filling them with weak or invented content.
-- **Translate, don't echo.** Rewrite user-side phrasing into the space's ingest-side register: "it's so dumb but in a fun way" → viewer_experience `tone_self_seriousness.terms` = ["unselfserious", "knowingly silly"], not the literal user phrase.
-- **Negation lists**: only populated when the boundary actually matters and the input grounds it. "Tense but not gory" → viewer_experience `disturbance_profile.terms` = ["tense"], `negations` = ["graphic gore"]. Don't list negations to look thorough.
-- **No numerics.** Years, runtimes, ratings, budgets, box-office figures route to metadata. They don't embed usefully here.
+### Per-space register table
 
-Expansion pressure varies by space: viewer_experience often benefits from a few nearby tone/feeling synonyms that sharpen the intended mood; plot_events should stay close to the concrete situation described, phrased as compact prose; plot_analysis can translate into schema-native thematic/conflict language but stay tighter than viewer_experience.
+| Space | Density per active sub-field | Phrase length | Voice | Negations |
+|---|---|---|---|---|
+| `plot_events.plot_summary` | One body: 1–3 sentences for events; OR fragments per motif | n/a | Past-tense third-person synopsis prose. Restate only user-grounded events / motifs. NEVER fabricate plot detail. | n/a |
+| `plot_analysis` | All 6 fields when grounded | varies | Generic, no proper nouns. **Reuse load-bearing thematic terms across `elevator_pitch` / `plot_overview` / `thematic_concepts` / `character_arcs`** — the ingest side does this on purpose to weight the central concept. | n/a |
+| `viewer_experience` | 5–10 terms / section when active | 1–5 words | Search-query vernacular. Slang OK ("tearjerker", "white knuckle", "snoozefest"). First/second-person fragments OK ("kept me guessing", "made me nauseous"). | **1–3 default per active section, naming the section's closest-opposite axis** |
+| `watch_context` | 4–8 terms / section when active | 1–6 words | Intent-framed search vernacular ("turn my brain off", "stoned movie", "feel small in the universe"). All four sections fire when the trait grounds them. | n/a |
+| `narrative_techniques` | 1–3 terms / section, 4–6 sections active typical | 1–6 words | Canonical craft labels VERBATIM: "Chekhov's gun", "ticking clock deadline", "non-linear timeline", "unreliable narrator", "dramatic irony". Do NOT paraphrase. | n/a |
+| `production` | filming_locations 1–3, production_techniques 0–2 | strings / 1–3 words | **Match the user's geographic specificity exactly — do NOT add finer detail than asked.** | n/a |
+| `reception` | praised/criticized 3–6 each, summary 1–2 sentences | 1–3 words (terms) | Adjective+noun aspect labels for terms ("evocative score", "convoluted plot"). Evaluative third-person prose for `reception_summary`. | n/a |
+
+### Phrasing rules (term-list spaces — viewer_experience, watch_context, narrative_techniques, reception term lists)
+
+These are the same rules used at ingest time to author the embedded text. Match them so query and document vectors land in the same neighborhood.
+
+1. **Write phrases like search queries, not sentences.** Good: "edge of your seat", "date night movie", "turn my brain off". Bad: "This movie will keep you on the edge of your seat."
+2. **Use common, everyday user wording.** Prefer everyday language over academic terms. ("kept me guessing" beats "narratively unpredictable".)
+3. **Include redundant near-duplicates on purpose, but TRUE synonyms only.** Synonyms that mean the same thing ("uplifting / inspiring / hopeful"), paraphrases ("kept me guessing / unpredictable"), and slang you actually understand ("tearjerker", "gorefest", "edge of your seat") all qualify. **Adjacent concepts that drift the meaning do NOT** — "haunting" → "eerie / supernatural" is drift, not synonymy ("eerie" implies a different feel; "supernatural" is a content claim, not a feel claim). "Bittersweet" → "tragic / melancholic" drifts too — tragic is stronger than bittersweet, melancholic is adjacent.
+4. **No proper nouns, no character names, no plot details** in the term-list spaces.
+5. **Use canonical craft terms verbatim in `narrative_techniques`** — "Chekhov's gun", "unreliable narrator", "non-linear timeline", "ticking clock deadline". Established technique names should NOT be paraphrased.
+
+### The substitution test
+
+Before adding a synonym to a term list, run this test:
+
+> **"Could I show this term to the user instead of their original word, and would they say yes, that's the same thing?"**
+
+If yes → safe to include. If no → drop it; it's drift, not synonymy. Drift terms shift the retrieval target away from what the user asked for and hurt cosine match against the films they actually want.
+
+### Negations (viewer_experience only)
+
+**Both `terms` and `negations` point at the SAME retrieval target.** They are complementary phrasings of the same concept, not opposites:
+
+- `terms` = "what films matching this body ARE", no `not`/`no` prefix.
+- `negations` = "what films matching this body are NOT", with `not`/`no` prefix.
+
+Both fields cluster on the same side of the embedding. They reinforce each other — `"happy"` and `"not sad"` are the same idea phrased two ways.
+
+Correct pairings (terms and negations point the same direction):
+
+- Feel-good body: `terms = ["happy", "uplifting", "joyful"]` + `negations = ["not sad", "not depressing", "not bleak"]`.
+- Gory body (looking for gore-heavy films): `terms = ["gory", "bloody", "graphic violence"]` + `negations = ["not peaceful", "not gentle", "not for kids"]`.
+- Non-gory body (looking for restrained slashers): `terms = ["light scares", "tame violence", "restrained"]` + `negations = ["no gore", "not too gory", "not bloody"]`.
+
+Contradictory pairings — DO NOT EMIT:
+
+- `terms = ["gory"]` + `negations = ["not too gory"]` — contradicts itself.
+- `terms = ["happy"]` + `negations = ["not happy"]` — contradicts itself.
+
+**Field signature is mechanical.** `terms` never carries `not`/`no` prefix. `negations` always does. If you find yourself writing `"not too X"` inside a `terms` list, move it to `negations` and check that the body's direction matches.
+
+**Default-populate negations.** The ingest side routinely emits 1–3 negations per active section even when no user-side boundary was named. Author 1–3 negations per active section that REINFORCE the direction the terms already point — same retrieval target, opposite-syntactic-form (`not`/`no`) phrasing. Suppress only when the section is barely populated.
+
+**Polarity flips at the trait level, never inside the body.** When the user wants to AVOID gory films, the trait gets `polarity=negative` upstream and the body still searches *affirmatively* for gory films (`terms=["gory", "bloody", ...]`, `negations=["not peaceful", "not for kids", ...]`). The orchestrator inverts the score downstream. The body never inverts.
+
+### Plot events — motifs and specific events (no fabrication)
+
+Two valid shapes for `plot_events.plot_summary`:
+
+- **Specific event query** ("a heist that falls apart due to crew betrayal"): 1–3 dense past-tense sentences restating only what the user named. Generic agents are fine ("a heist crew", "the protagonist"); specific names, settings, side-events, motives, or outcomes you fabricated are not.
+- **Motif query** ("clowns as a recurring motif"): short fragments naming the motif in the contexts a real synopsis would mention it. For "clowns": `"the clown. is a clown. and then the clown. encounters a clown. the clown returns."` This retrieves films that contain the motif WITHOUT inventing a plot around it.
+
+The failure mode is fabricating plot detail. "Clowns" → "a clown chases a woman through a carnival as her boyfriend tries to save her" shifts the retrieval target away from real motif occurrences.
+
+### Production specificity
+
+`filming_locations` matches the user's geographic specificity exactly. If the user said "Iceland", emit `["Iceland"]` — do NOT add `"Reykjavik, Iceland"` or specific landmarks. Adding finer detail changes what the user asked for. The ingest side stores raw IMDB filming-location strings (city + country); query-side specificity should be capped at what the user supplied.
+
+### Other authoring rules (apply across all spaces)
+
+- **Populate only sub-fields the aspects genuinely land in.** Empty sub-fields are valid and expected — padding dilutes the query vector.
+- **Translate the register only when it differs.** Rewrite user-side phrasing into the space's ingest register when they differ ("it's so dumb but in a fun way" → `tone_self_seriousness.terms` = ["unselfserious", "knowingly silly"]). **Keep user phrasing verbatim when it already matches** — `viewer_experience` and `watch_context` use search-query vernacular, so "tearjerker", "edge of your seat", "date night movie" pass through, not get rewritten into critic-prose.
+- **No numerics.** Years, runtimes, ratings, budgets, box-office figures route to metadata.
+- **One body per space.** Fold every aspect a space owns into ONE entry's `query.content`; do not split coverage across multiple entries with the same `query.space`.
 
 ## Decomposing into aspects
 
