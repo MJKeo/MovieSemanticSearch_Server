@@ -128,6 +128,22 @@ def _rarity_factor(match_count: int, corpus_size: int = CORPUS_SIZE) -> float:
 
 
 @dataclass
+class TraitContribution:
+    """One trait's signed weighted contribution to a candidate's score.
+
+    `surface_text` and `commitment` mirror the upstream Trait so the
+    output is self-describing. `contribution` is `trait_score × weight
+    × sign` — the same value the §9 sum already accumulates into
+    positive_total / negative_total. Negative-polarity traits surface
+    as a non-positive value here.
+    """
+
+    surface_text: str
+    commitment: str
+    contribution: float
+
+
+@dataclass
 class ScoreBreakdown:
     """Per-candidate decomposition of the §9 final score.
 
@@ -144,11 +160,17 @@ class ScoreBreakdown:
     `BranchRankedResults.ranked`. When the full orchestrator applies
     implicit priors, `implicit_prior_boost` records the multiplicative
     boost fraction applied on top of that base relevance score.
+
+    `trait_contributions` lists the signed weighted contribution from
+    each trait that fed the §9 sum, in the same order traits appear on
+    the upstream branch (cand-gen traits first, then pure-reranker
+    traits). Sum of contributions equals positive_total + negative_total.
     """
 
     positive_total: float
     negative_total: float
     implicit_prior_boost: float = 0.0
+    trait_contributions: list[TraitContribution] = field(default_factory=list)
 
 
 @dataclass
@@ -940,27 +962,47 @@ def _finalize_scores(
     for movie_id in branch_pool:
         positive_total = 0.0
         negative_total = 0.0
+        trait_contribs: list[TraitContribution] = []
         # Cand-gen contributions (always positive sign). A trait
         # contributes 0 for movies it didn't generate (opportunity
         # cost, §8).
         for ex, weight in zip(cand_gen_executions, cand_gen_weights):
-            positive_total += ex.trait_scores.get(movie_id, 0.0) * weight
+            contribution = ex.trait_scores.get(movie_id, 0.0) * weight
+            positive_total += contribution
+            trait_contribs.append(
+                TraitContribution(
+                    surface_text=ex.trait.surface_text,
+                    commitment=ex.trait.commitment,
+                    contribution=contribution,
+                )
+            )
         # Pure-reranker contributions, signed by polarity. Positive
         # traits accumulate into positive_total; negative traits accumulate
         # into negative_total with the sign already applied (so the
         # value is ≤ 0).
-        for scores, weight, sign in zip(
-            pure_rer_scores_per_trait, pure_rer_weights, pure_rer_signs
+        for trait, scores, weight, sign in zip(
+            pure_rer_traits,
+            pure_rer_scores_per_trait,
+            pure_rer_weights,
+            pure_rer_signs,
         ):
             contribution = scores.get(movie_id, 0.0) * weight * sign
             if sign >= 0.0:
                 positive_total += contribution
             else:
                 negative_total += contribution
+            trait_contribs.append(
+                TraitContribution(
+                    surface_text=trait.surface_text,
+                    commitment=trait.commitment,
+                    contribution=contribution,
+                )
+            )
         final.append((movie_id, positive_total + negative_total))
         breakdowns[movie_id] = ScoreBreakdown(
             positive_total=positive_total,
             negative_total=negative_total,
+            trait_contributions=trait_contribs,
         )
 
     final.sort(key=lambda mid_score: mid_score[1], reverse=True)

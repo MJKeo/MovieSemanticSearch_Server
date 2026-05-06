@@ -1,6 +1,12 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Per-trait score decomposition in top-25 print
+Files: search_v2/stage_4_execution.py, run_orchestrator.py
+Why: Debugging which trait drove a movie's rank required re-deriving per-trait contributions from raw trait_scores by hand. Surface them first-class alongside positive_total / negative_total (per "Surface computed-value decomposition alongside aggregates").
+Approach: New `TraitContribution` dataclass (surface_text, commitment, contribution) and `ScoreBreakdown.trait_contributions: list[TraitContribution]` populated in `_finalize_scores` — cand-gen traits first, then pure-reranker traits, with sign already applied (negative-polarity traits surface as a non-positive contribution). Sum of contributions equals positive_total + negative_total. The top-25 table in run_orchestrator.py picks header order from the first non-empty breakdown and renders one column per trait labeled `"surface" [commitment]`. The implicit-prior post-rerank pass already mutates breakdowns in place, so trait_contributions is preserved.
+Testing notes: Dataclass field is `field(default_factory=list)` so existing constructors that omitted it (none in the codebase besides the one updated here) would still work. The reranking/scoring.py `ScoreBreakdown` is a separately-named class in a different module — no collision.
+
 ## Strengths/weaknesses walks + coverage_exploration; drop intentionally_uncovered
 Files: schemas/keyword_translation.py, schemas/semantic_translation.py, schemas/metadata_translation.py, search_v2/endpoint_fetching/category_handlers/schema_factories.py, search_v2/endpoint_fetching/category_handlers/output_extractor.py, search_v2/run_query_generation.py, search_v2/endpoint_fetching/category_handlers/prompts/buckets/{preferred_representation_fallback,semantic_preferred_deterministic_support,audience_suitability_deterministic_first}_{objective,guardrails}.md, search_v2/endpoint_fetching/category_handlers/prompts/endpoints/{keyword,semantic,metadata}.md, search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/{seasonal_holiday,emotional_experiential,cultural_status}.md
 
