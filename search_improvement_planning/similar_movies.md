@@ -34,6 +34,19 @@ Vector similarity across all 8 spaces. The vector blend should use tiers:
 
 Tier 1 should carry the most influence because it best captures what users usually mean by "same kind of movie": thematic shape, premise structure, emotional experience, tone, and audience feel. Tier 3 should be weaker because `plot_events` can be too literal and `narrative_techniques` can be too craft-specific.
 
+Base vector-space weights are the same for single-anchor and multi-anchor search:
+
+```text
+plot_analysis:         1.00
+viewer_experience:     1.00
+watch_context:         0.65
+production:            0.65
+reception:             0.65
+dense_anchor:          0.65
+narrative_techniques:  0.35
+plot_events:           0.35
+```
+
 ### 2. Director (strong-moderate lane, not an anchor)
 
 Lexical match on director. Director remains a useful creative-fingerprint lane, but we are **not** deriving a separate `director_signature` anchor type for V1 because identifying when a director is unusually defining requires additional precomputed director-cohesion data.
@@ -52,11 +65,57 @@ This is **not** a replacement for semantic shape. The vector spaces already capt
 
 Use only identity-bearing brands or specific company/studio labels whose name meaningfully predicts something about the movie. Broad corporate umbrellas are weak for similarity even when useful for explicit studio search.
 
-- Stronger examples from the current brand registry: Pixar, Walt Disney Animation, Studio Ghibli, DreamWorks Animation, Illumination, Sony Pictures Animation, Marvel Studios, Lucasfilm, DC Studios, A24, Neon, Blumhouse, Searchlight, Focus Features, Miramax, Touchstone, New Line Cinema.
-- Moderate / context-dependent examples: Lionsgate, MGM, United Artists, TriStar, Columbia, 20th Century, Apple Studios, Amazon MGM, Netflix.
-- Weak examples for similarity: Disney umbrella, Warner Bros., Universal, Paramount, Sony. These are too broad; require strong vector agreement before they contribute, or ignore them for similarity scoring.
+Curated company/string-level similarity list:
 
-Open implementation note: create a curated "meaningful similarity studio/company" list before implementation. The existing production-brand registry is a starting point, but explicit studio search value and similarity value are not identical.
+| Signal | Company / label strings | Date handling | Rationale |
+| --- | --- | --- | --- |
+| High | `Pixar Animation Studios`, `Pixar` | Split: `1995-2010`, `2011-2019`, `2020-present` | Strong house style, but eras differ: golden original run, sequel/franchise-heavy period, modern/streaming recovery. |
+| High | `Walt Disney Animation Studios`, `Walt Disney Feature Animation` | Split: `1989-1999`, `2000-2008`, `2009-2019`, `2020-present` | Renaissance, experimental/post-Renaissance, Revival, and modern eras are meaningfully different. |
+| High | `Studio Ghibli` | No V1 split | Extremely coherent studio identity; director/vector lanes can absorb internal differences. |
+| High | `DreamWorks Animation`, `Pacific Data Images (PDI)` | Split: `1998-2004`, `2005-2016`, `2017-present` | Early mixed/traditional-CG era, franchise/comedy peak, NBCUniversal era. |
+| High | `Illumination Entertainment`, `Illumination Studios Paris` | No V1 split | Highly consistent family-comedy/franchise house style. |
+| High | `Marvel Studios` | Split: `2008-2019`, `2021-present`; ignore/weak before `2008` | Infinity Saga vs post-Endgame/Multiverse era. |
+| High | `DC Films`, `DC Studios` | Split: `2016-2022`, `2023-present` | DCEU studio era vs Gunn/Safran DC Studios era. |
+| High | `Lucasfilm`, `Lucasfilm Animation` | Split: `1977-1989`, `1999-2012`, `2015-present` | Original Indy/Star Wars era, prequel/Clone Wars era, Disney-era Star Wars. |
+| High | `A24` | No V1 split | Strong modern indie/auteur/genre-prestige signal. |
+| High | `Neon` | No V1 split | Strong arthouse/international/prestige acquisition identity. |
+| High | `Blumhouse Productions`, `Blumhouse International` | Split: `2009-2014`, `2015-present` | Early low-budget supernatural/found-footage vs broader social/auteur/franchise horror. |
+| High | `Searchlight Pictures`, `Fox Searchlight Pictures` | No V1 split | Specialty/prestige identity is stable across Fox/Disney rename. |
+| High | `Focus Features`, `Focus Features International (FFI)` | No V1 split | Stable prestige/specialty label. |
+| High | `Good Machine`, `Good Machine Films`, `USA Films` | Use registry windows | Strong Focus-predecessor prestige/indie signal. |
+| High | `Miramax` | Split: `1989-2005`, `2006-present` | Weinstein-era indie/prestige signal is strong; post-2005 weaker. |
+| High | `New Line Cinema`, `New Line Productions`, `New Line Film`, `New Line Film Productions` | Split: `1984-1994`, `1995-2008`, `2009-present` | Horror/cult period, broad genre/blockbuster period, post-WB integration weaker. |
+| Moderate | `Sony Pictures Animation` | Split: `2006-2017`, `2018-present` | Post-`Spider-Verse` era is more distinctive than earlier family-comedy output. |
+| Moderate | `Atomic Monster` | `2024-present` in current registry | Useful horror signal, but less proven inside post-merger data. |
+| Moderate | `Touchstone Pictures`, `Touchstone Films` | Split: `1984-2002`, `2003-2016` | Adult/non-Disney Disney label was meaningful early; later became less distinct. |
+| Moderate | `Screen Gems` | `1999-present` | Useful genre/action-horror signal, not broad Sony. |
+| Moderate | `Lionsgate`, `Lion's Gate Films`, `Lions Gate Films`, `Lions Gate Entertainment`, `Lions Gate`, `Lionsgate Premiere`, `Lionsgate Productions`, `Lions Gate Studios` | Split: `2000-2011`, `2012-present` | Early indie/horror/mid-budget, then Summit/YA/franchise-heavy identity. |
+| Moderate | `Summit Entertainment`, `Summit Premiere` | `2012-present` per registry | YA/franchise/commercial genre signal under Lionsgate. |
+| Moderate | `Fox 2000 Pictures` | `1994-2020` | Literary/adult-commercial drama signal. |
+| Moderate | `Paramount Vantage`, `Paramount Classics` | `2006-2013` | Specialty/prestige sublabel, but sparse. |
+| Moderate | `Paramount Animation`, `Paramount Animation Studios` | `2011-present` | Some family-animation signal, but less coherent than Pixar/DreamWorks/Illumination. |
+| Moderate | `Netflix Animation` | No V1 split | More meaningful than broad Netflix, but still mixed. |
+| Moderate | `Apple Original Films`, `Apple Studios` | No V1 split | Moderate prestige/adult-drama signal; catalog still young. |
+| Moderate | `Amazon Studios`, `Amazon MGM Studios` | Split: pre-`2022`, `2022-present` | Streamer prestige/commercial mix; MGM integration changes identity. |
+| Moderate | `Metro-Goldwyn-Mayer (MGM)`, `Metro-Goldwyn-Mayer (MGM) Studios`, `Metro-Goldwyn-Mayer Studios` | Split: `1924-1959`, `1960-1980`, `1981-present` | Classic MGM is meaningful; modern MGM is mostly franchise/library and weaker. |
+| Moderate | `United Artists`, `United Artists Pictures` | Split: `1919-1951`, `1952-1981`, `1982-present` | Stronger as classic/artist-founded and later New Hollywood/adult-film signal; weak after MGM era. |
+| Moderate | `Warner Bros. Animation`, `Warner Bros. Feature Animation`, `Warner Bros. Cartoon Studios` | Split classic cartoons separately if shorts matter | Use animation labels only, not broad Warner Bros. |
+
+Do not use these broad company strings for studio similarity, even when they remain valid for explicit studio search:
+
+```text
+Walt Disney Pictures
+Warner Bros. Pictures / Warner Bros.
+Universal Pictures / Universal
+Paramount Pictures / Paramount
+Sony Pictures / Sony Pictures Entertainment
+Columbia Pictures
+TriStar Pictures
+20th Century Fox / 20th Century Studios
+Netflix / Netflix Studios
+```
+
+Some broad strings can still matter through other lanes: franchise, source, vectors, or a specific sublabel such as `Screen Gems`, `Fox 2000 Pictures`, or `Sony Pictures Animation`.
 
 Studio identity can be **era-dependent**. For labels whose house style changes over time, apply an era-proximity multiplier rather than treating all same-brand matches equally. Examples: Walt Disney Animation classic / Renaissance / Revival / modern eras; Pixar early-golden vs sequel-heavy/recent eras; Marvel Studios pre-Endgame vs post-Endgame; Miramax's 1990s prestige identity; New Line's genre/indie vs commercial blockbuster phases.
 
@@ -95,8 +154,8 @@ Impact: movie shape remains the backbone for every anchor. It should be the defa
 
 Active when:
 
-- Reception is low.
-- Popularity, vote count, or another engagement proxy is meaningfully high.
+- `reception_score <= 45`.
+- `public.mv_popularity_percentile.percentile >= 0.89`.
 
 Impact: quality/reception becomes a major lane. The system should actively preserve entertaining badness rather than "correcting" toward conventionally better movies.
 
@@ -104,8 +163,8 @@ Impact: quality/reception becomes a major lane. The system should actively prese
 
 Active when:
 
-- Reception is very high.
-- There is enough popularity, vote count, awards evidence, or other notability signal to trust the reception score.
+- `reception_score >= 85`.
+- `public.mv_popularity_percentile.percentile >= 0.75`.
 
 Impact: quality/reception becomes strong, but less dominant than for `cult_garbage`. The system should prefer similarly acclaimed/status-compatible matches inside the semantic neighborhood.
 
@@ -140,39 +199,39 @@ Impact: source-material lane becomes independently important. Source material is
 
 Start with a base lane-weight profile, then apply additive adjustments for every active anchor type. Do **not** cap the lane weights during adjustment. Anchors should be allowed to push lane importance however strongly makes sense. After all anchor adjustments are applied, normalize the final distribution so all lane weights sum to `1.0`.
 
-Example base profile:
+Finalized single-anchor base profile:
 
 ```text
-shape:     0.62
-director:  0.16
-franchise: 0.08
-studio:    0.04
+shape:     0.60
+director:  0.12
+franchise: 0.12
+studio:    0.06
 source:    0.04
 quality:   0.06
 ```
 
-Example anchor adjustments:
+Finalized single-anchor anchor adjustments:
 
 ```text
 cult_garbage:
-  quality += strong
-  shape   -= moderate
+  quality += 0.26
+  shape   -= 0.10
 
 prestige:
-  quality += medium-strong
-  shape   -= light
+  quality += 0.16
+  shape   -= 0.06
 
 franchise_dominant:
-  franchise += strong
-  shape     -= moderate
+  franchise += 0.18
+  shape     -= 0.08
 
 studio_lineage:
-  studio += medium-strong
-  shape  -= light
+  studio += 0.12
+  shape  -= 0.04
 
 source_material:
-  source += strong
-  shape  -= light
+  source += 0.14
+  shape  -= 0.04
 ```
 
 Then normalize:
@@ -217,12 +276,80 @@ Practical weaving rules:
 - Mostly follow combined score.
 - Prefer candidates with multiple evidence types when scores are close.
 - Reserve limited early opportunities for lanes emphasized by active anchors.
+- Use `competitive_band = 0.08` when deciding whether a lane-specific candidate is close enough to receive woven exposure.
+- Treat the top section as the top 10 results.
+- In the top 10, allow at most 4 results dominated by the same lane.
+- In the top 10, allow at most 3 franchise results.
+- In the top 10, allow at most 1 studio/source result that lacks meaningful shape agreement.
 - For `cult_garbage`, allow quality-bucket matches to appear early.
 - For `prestige`, prefer high-quality candidates inside close semantic bands.
 - For `franchise_dominant`, allow one early direct-lineage candidate, then cap franchise density.
-- For `studio_lineage`, require semantic competitiveness or strong era-adjusted studio match before early exposure.
-- For `source_material`, allow source-lineage candidates more independently than studio candidates.
+- For `studio_lineage`, require `shape_score >= 0.55` for early exposure.
+- For `source_material`, require `shape_score >= 0.45` for early exposure.
+- For franchise candidates, require `shape_score >= 0.35` for early exposure.
+- For director candidates, require `shape_score >= 0.40` for early exposure.
 - Avoid letting any one lane monopolize the first page.
+
+Finalized lane-score details:
+
+```text
+quality:
+  active only for `cult_garbage` or `prestige` anchors
+  inactive for middle-bucket anchors
+
+  cult_score =
+    0.5 * low_reception_match
+    + 0.5 * engagement_match
+
+  prestige_score =
+    0.75 * high_reception_match
+    + 0.25 * engagement_or_awards_match
+
+  low_reception_match =
+    clamp((50 - reception_score) / 30, 0, 1)
+
+  high_reception_match =
+    clamp((reception_score - 75) / 20, 0, 1)
+
+  engagement_match =
+    clamp((mv_popularity_percentile - 0.75) / 0.20, 0, 1)
+
+  engagement_or_awards_match =
+    max(
+      clamp((mv_popularity_percentile - 0.50) / 0.30, 0, 1),
+      award_prestige_match
+    )
+
+  award_prestige_match =
+    1.00 if candidate has major award win
+    0.75 if candidate has major award nomination
+    0.00 otherwise
+
+  if awards are not available in this flow:
+    engagement_or_awards_match =
+      clamp((mv_popularity_percentile - 0.50) / 0.30, 0, 1)
+
+studio:
+  strong studio match:   1.00
+  moderate studio match: 0.65
+  weak/broad studio:     0.00
+
+source:
+  exact source_material_type match: 1.00
+  no exact match:                    0.00
+
+franchise:
+  direct lineage / same series: 1.00
+  shared universe:             0.85
+```
+
+For era-sensitive studios:
+
+```text
+era_gap = abs(candidate_release_year - anchor_release_year)
+era_proximity = exp(-era_gap / 18)
+studio_score *= 0.60 + 0.40 * era_proximity
+```
 
 ## Multi-Anchor Similarity
 
@@ -254,6 +381,13 @@ effective_space_weight =
   + (0.25 * base_space_weight)
 ```
 
+V1 cohesion mapping:
+
+```text
+cohesion_weight =
+  clamp((avg_pairwise_cosine - 0.55) / 0.30, 0.10, 1.00)
+```
+
 Then normalize effective weights across all vector spaces:
 
 ```text
@@ -261,11 +395,7 @@ normalized_space_weight[space] =
   effective_space_weight[space] / sum(effective_space_weight.values())
 ```
 
-Use the existing single-anchor vector tiers to derive `base_space_weight`:
-
-- **Tier 1:** `plot_analysis`, `viewer_experience`
-- **Tier 2:** `watch_context`, `production`, `reception`, `dense_anchor`
-- **Tier 3:** `narrative_techniques`, `plot_events`
+Use the same `base_space_weight` values as single-anchor search.
 
 The practical effect:
 
@@ -316,23 +446,28 @@ candidate matches no director searches:
   director_score = 0.00
 ```
 
-Lane cohesion should be based on repetition among the anchors, not on candidate results. V1 rule:
+Lane cohesion should be based on repetition among the anchors, not on candidate results. V1 uses a `[0, 2]` logarithmic cohesion multiplier so repeated traits can actively boost a metadata lane before final normalization. This prevents a constant shape lane from becoming more dominant merely because non-shape lanes are only penalized.
 
 ```text
-metadata_lane_cohesion =
+repetition_ratio =
   max_trait_anchor_count / anchor_count
+
+metadata_lane_cohesion =
+  2 * log1p(9 * repetition_ratio) / log1p(9)
 ```
 
-Only traits with `max_trait_anchor_count >= 2` count. If no trait repeats, `metadata_lane_cohesion = 0.0`.
+Only traits with `max_trait_anchor_count >= 2` count. If no trait repeats, `metadata_lane_cohesion = 0.0`. The logarithmic curve makes strong-but-imperfect agreement close to full agreement: for example, `4/5` anchor agreement should be treated as nearly as meaningful as `5/5`.
 
 Examples with 3 anchors:
 
 ```text
 all 3 share Christopher Nolan:
-  director cohesion = 3 / 3 = 1.00
+  repetition_ratio = 3 / 3 = 1.00
+  director cohesion = 2.00
 
 2 of 3 share Pixar:
-  studio cohesion = 2 / 3 = 0.67
+  repetition_ratio = 2 / 3 = 0.67
+  studio cohesion = 1.69
 
 no repeated source material type:
   source cohesion = 0.00
@@ -352,12 +487,26 @@ Where `normalized_lane_weight[lane]` is derived from metadata cohesion and then 
 For multi-anchor search, lane weights should come from shared signal strength:
 
 - Vector spaces: `75%` measured vector cohesion, `25%` single-anchor base prior.
+- Shape lane: overall `shape` lane raw weight stays at the single-anchor base weight. Vector cohesion changes the internal vector-space mix inside shape, not the overall shape lane weight.
 - Metadata lanes: repeated traits only. If a lane has no repeated trait across anchors, it should not receive a consensus boost.
 - Quality lane: active only when the anchor set repeatedly lands in the same meaningful bucket (`cult_garbage` or `prestige`). No shared extreme bucket means no quality boost.
 - Studio lane: active only when repeated studio/company traits are in the curated meaningful similarity studio/company list.
 - Source lane: active when source material types repeat across anchors.
 - Franchise lane: active when lineage/universe/franchise traits repeat across anchors.
 - Director lane: active when directors repeat across anchors, even though there is no director anchor type.
+
+Raw lane weights:
+
+```text
+shape_raw     = 0.60
+director_raw  = 0.12 * director_cohesion
+franchise_raw = 0.12 * franchise_cohesion
+studio_raw    = 0.06 * studio_cohesion
+source_raw    = 0.04 * source_cohesion
+quality_raw   = 0.06 * quality_cohesion
+```
+
+Each metadata-lane cohesion value uses the `[0, 2]` logarithmic multiplier above, with `0.0` when no trait repeats.
 
 After deriving raw lane weights, normalize them to sum to `1.0`, same as single-anchor search.
 
@@ -406,9 +555,6 @@ These were considered and rejected for this flow:
 
 ## Open Questions
 
-- **Concrete lane weights and anchor adjustments.** What exact numeric base weights and per-anchor adjustments should V1 use? Needs tuning against examples.
-- **Quality bucket thresholds.** What concrete reception/popularity cutoffs define each bucket? Needs distribution analysis.
-- **Cult signal robustness.** Without critic-vs-audience data, how reliably can reception-vs-popularity distinguish true cult films from mainstream guilty pleasures? Vector matching is expected to carry the slack, but worth validating.
-- **Meaningful similarity studio/company list.** Which production brands and specific production-company strings should activate `studio_lineage` and carry significant weight?
-- **Studio era windows.** Which production brands need explicit era buckets, and what windows are empirically supported by the catalog? TODO.
-- **Multi-anchor cohesion calibration.** What numeric mapping should convert pairwise vector similarities into `[0, 1]` cohesion weights? Need distribution analysis across known coherent and incoherent anchor sets.
+- **Cult signal robustness.** Without critic-vs-audience data, how reliably can reception-vs-popularity distinguish true cult films from mainstream guilty pleasures? Current thresholds are `reception_score <= 45` and `mv_popularity_percentile.percentile >= 0.89`, but vector matching is expected to carry the slack.
+- **Studio/company curation validation.** Validate the current high/moderate studio list and era windows against catalog examples and search-result quality.
+- **Multi-anchor cohesion validation.** Validate the current vector and metadata cohesion mappings against known coherent and incoherent anchor sets.

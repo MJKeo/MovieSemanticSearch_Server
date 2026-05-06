@@ -198,6 +198,24 @@ def combine_calls(
 
 
 @dataclass
+class CategoryScore:
+    """One category's combined score under a positive trait.
+
+    For positive traits the trait_score is `max(category_scores)` over
+    the trait's non-NO_OP categories (each category's score being the
+    `combine_calls` fold over its live calls). Surfacing these per-
+    category scores lets callers see WHICH category drove the trait's
+    contribution. `combine_type` mirrors the category's combine rule
+    (SINGLE / ADDITIVE / ALTERNATIVES) so the breakdown is self-
+    describing without round-tripping back to the taxonomy.
+    """
+
+    category_name: str
+    combine_type: str
+    score: float
+
+
+@dataclass
 class TraitContribution:
     """One trait's signed weighted contribution to a candidate's score.
 
@@ -206,11 +224,22 @@ class TraitContribution:
     × sign` — the same value the §9 sum already accumulates into
     positive_total / negative_total. Negative-polarity traits surface
     as a non-positive value here.
+
+    `trait_score` is the inner score in [0, 1] that fed the
+    contribution (before weight and sign). `weight` is the multiplier
+    applied (commitment × rarity for positives, commitment for
+    negatives). `category_scores` decomposes the inner score into its
+    per-category inputs — populated for positive traits, empty for
+    negatives (whose three-bin gate × fuzzy formula does not fold
+    through per-category scores).
     """
 
     surface_text: str
     commitment: str
     contribution: float
+    trait_score: float = 0.0
+    weight: float = 0.0
+    category_scores: list[CategoryScore] = field(default_factory=list)
 
 
 @dataclass
@@ -276,6 +305,19 @@ class BranchRankedResults:
 # scores by trait+category position without needing object identity
 # (which would be fragile across the Phase B/C parallel dispatch).
 _CallKey = tuple[int, int, int]
+
+# Per-trait payload threaded from Phase D to Phase E. The 5th element
+# carries per-candidate per-category scores so `_finalize_scores` can
+# decompose each TraitContribution into the categories that produced
+# its inner score. Empty for negative traits — see Phase D for the
+# rationale.
+_TraitPayload = tuple[
+    "TraitWithEndpoints",
+    dict[int, float],
+    float,
+    float,
+    dict[int, list["CategoryScore"]],
+]
 
 # Per-branch trait-classification triplet. Determines whether rarity
 # weighting fires for a positive trait.
@@ -447,16 +489,14 @@ async def _run_branch(
     # against the union and route through the existing gate × fuzzy
     # formula in _score_negative_trait.
     # ------------------------------------------------------------------
-    pos_payloads: list[
-        tuple["TraitWithEndpoints", dict[int, float], float, float]
-    ] = []
+    pos_payloads: list[_TraitPayload] = []
     for trait_idx, trait in enumerate(branch.traits):
         if trait.polarity is Polarity.NEGATIVE:
             continue
         if trait.step_3_error is not None:
             # Trait failed upstream — contributes nothing.
             continue
-        trait_scores = _score_positive_trait(
+        trait_scores, cat_scores = _score_positive_trait(
             trait_idx=trait_idx,
             trait=trait,
             union=union,
@@ -467,14 +507,15 @@ async def _run_branch(
             trait=trait,
             call_score_maps=call_score_maps,
         )
-        pos_payloads.append((trait, trait_scores, weight, +1.0))
+        pos_payloads.append((trait, trait_scores, weight, +1.0, cat_scores))
 
     # Negative traits in parallel — each rescores the union via its
     # own three-bin formula. _score_negative_trait already handles
-    # failed-call drops and the gate × fuzzy combine.
-    neg_payloads: list[
-        tuple["TraitWithEndpoints", dict[int, float], float, float]
-    ] = []
+    # failed-call drops and the gate × fuzzy combine. Negative scoring
+    # does not fold through per-category scores (the gate × fuzzy
+    # bins partition calls cross-category), so the per-category map
+    # is left empty for negatives.
+    neg_payloads: list[_TraitPayload] = []
     if negative_trait_indices:
         negative_traits = [branch.traits[i] for i in negative_trait_indices]
         neg_score_maps = await asyncio.gather(
@@ -482,7 +523,7 @@ async def _run_branch(
         )
         for trait, neg_scores in zip(negative_traits, neg_score_maps):
             weight = _commitment_multiplier(trait.commitment)
-            neg_payloads.append((trait, neg_scores, weight, -1.0))
+            neg_payloads.append((trait, neg_scores, weight, -1.0, {}))
 
     # ------------------------------------------------------------------
     # Phase E — Branch aggregation.
@@ -588,7 +629,7 @@ def _score_positive_trait(
     trait: "TraitWithEndpoints",
     union: set[int],
     call_score_maps: dict[_CallKey, dict[int, float] | None],
-) -> dict[int, float]:
+) -> tuple[dict[int, float], dict[int, list[CategoryScore]]]:
     """Compute per-candidate trait_score in [0, 1] for one positive trait.
 
     For each candidate, walk the trait's categories. Skip categories
@@ -601,13 +642,21 @@ def _score_positive_trait(
     `combine_calls` to fold the call scores into one per-category
     score, then take max across categories. Returns 0.0 for the
     candidate when no category fired.
+
+    Returns a 2-tuple: `(trait_score_by_mid, category_scores_by_mid)`.
+    The second element decomposes each candidate's trait_score into
+    its per-category inputs (the same values the max() on the first
+    element folds over) so callers can render the WHY behind the
+    score without re-running the combine logic.
     """
     # Resolve the live-call score maps once per (trait, category)
     # outside the per-candidate loop. With unions in the tens of
     # thousands, redoing the (trait_idx, cat_idx, spec_idx) tuple
     # construction + `is None` filter per mid is wasted work — those
     # values are constant across the union.
-    live_cats: list[tuple[CategoryCombineType, list[dict[int, float]]]] = []
+    live_cats: list[
+        tuple[CategoryName, CategoryCombineType, list[dict[int, float]]]
+    ] = []
     for cat_idx, cc in enumerate(trait.category_calls):
         if cc.handler_error is not None:
             continue
@@ -619,12 +668,14 @@ def _score_positive_trait(
             scores = call_score_maps.get((trait_idx, cat_idx, spec_idx))
             if scores is not None:
                 live_maps.append(scores)
-        live_cats.append((combine_type, live_maps))
+        live_cats.append((cc.category, combine_type, live_maps))
 
     out: dict[int, float] = {}
+    cat_out: dict[int, list[CategoryScore]] = {}
     for mid in union:
         category_scores: list[float] = []
-        for combine_type, live_maps in live_cats:
+        per_cat: list[CategoryScore] = []
+        for cat_name, combine_type, live_maps in live_cats:
             call_scores = [m.get(mid, 0.0) for m in live_maps]
             cat_score = combine_calls(combine_type, call_scores)
             if cat_score is None:
@@ -633,8 +684,16 @@ def _score_positive_trait(
                 # returning modes in the future.
                 continue
             category_scores.append(cat_score)
+            per_cat.append(
+                CategoryScore(
+                    category_name=cat_name.value,
+                    combine_type=combine_type.value,
+                    score=cat_score,
+                )
+            )
         out[mid] = max(category_scores) if category_scores else 0.0
-    return out
+        cat_out[mid] = per_cat
+    return out, cat_out
 
 
 def _classify_trait(trait: "TraitWithEndpoints") -> _TraitClass:
@@ -920,12 +979,8 @@ def _score_negative_trait(
 def _finalize_scores(
     union: set[int],
     branch_traits: list["TraitWithEndpoints"],
-    pos_payloads: list[
-        tuple["TraitWithEndpoints", dict[int, float], float, float]
-    ],
-    neg_payloads: list[
-        tuple["TraitWithEndpoints", dict[int, float], float, float]
-    ],
+    pos_payloads: list[_TraitPayload],
+    neg_payloads: list[_TraitPayload],
 ) -> tuple[list[tuple[int, float]], dict[int, ScoreBreakdown]]:
     """Per-candidate final score: Σ trait_score × trait_weight × sign.
 
@@ -949,9 +1004,7 @@ def _finalize_scores(
     # the duration of this call — no reuse of freed slots is possible.
     pos_by_id = {id(p[0]): p for p in pos_payloads}
     neg_by_id = {id(p[0]): p for p in neg_payloads}
-    payloads_in_order: list[
-        tuple["TraitWithEndpoints", dict[int, float], float, float] | None
-    ] = [
+    payloads_in_order: list[_TraitPayload | None] = [
         pos_by_id.get(id(trait)) or neg_by_id.get(id(trait))
         for trait in branch_traits
     ]
@@ -969,8 +1022,9 @@ def _finalize_scores(
                 # entirely so the row reflects what actually fed the
                 # score, rather than padding with 0.0 contributions.
                 continue
-            trait, scores, weight, sign = payload
-            contribution = scores.get(movie_id, 0.0) * weight * sign
+            trait, scores, weight, sign, cat_scores_by_mid = payload
+            inner = scores.get(movie_id, 0.0)
+            contribution = inner * weight * sign
             if sign >= 0.0:
                 positive_total += contribution
             else:
@@ -980,6 +1034,9 @@ def _finalize_scores(
                     surface_text=trait.surface_text,
                     commitment=trait.commitment,
                     contribution=contribution,
+                    trait_score=inner,
+                    weight=weight,
+                    category_scores=cat_scores_by_mid.get(movie_id, []),
                 )
             )
 

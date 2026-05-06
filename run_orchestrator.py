@@ -290,38 +290,15 @@ async def _print_ranked_results(
         cards = await fetch_movie_cards([mid for mid, _ in top])
         cards_by_id = {c["movie_id"]: c for c in cards}
 
-        # Per-trait columns are derived from the first non-empty
-        # breakdown so the header order matches the upstream branch's
-        # trait list. Cand-gen traits come first, then pure-reranker
-        # traits — this matches the order _finalize_scores writes them
-        # into ScoreBreakdown.trait_contributions.
-        trait_headers: list[tuple[str, str]] = []
-        for _, breakdown in br.score_breakdowns.items():
-            if breakdown.trait_contributions:
-                trait_headers = [
-                    (tc.surface_text, tc.commitment)
-                    for tc in breakdown.trait_contributions
-                ]
-                break
-
-        trait_col_titles = [
-            f'"{surface}" [{commitment}]'
-            for surface, commitment in trait_headers
-        ]
-        header_cols = (
-            ["#", "final", "boost", "pos", "neg"]
-            + trait_col_titles
-            + ["title (year)", "tmdb_id"]
-        )
-        # Right-align numeric columns; left-align the text ones.
-        align_cols = (
-            ["---", "------:", "------:", "----:", "----:"]
-            + ["----:"] * len(trait_col_titles)
-            + ["--------------", "--------:"]
-        )
-        print("| " + " | ".join(header_cols) + " |")
-        print("|" + "|".join(align_cols) + "|")
-
+        # One compact block per result. Header line carries the
+        # headline numbers (final score, implicit-prior boost, the
+        # positive/negative halves of the §9 sum), then one indented
+        # line per trait showing its inner score, weight, and signed
+        # contribution, then one further-indented line per category
+        # showing its combine_type and combined score. Per-category
+        # rows are populated for positive traits only — negative
+        # traits use a three-bin gate × fuzzy formula that does not
+        # fold through per-category scores.
         for rank, (movie_id, score) in enumerate(top, start=1):
             card = cards_by_id.get(movie_id)
             if card is None:
@@ -334,45 +311,46 @@ async def _print_ranked_results(
                     if ts is not None
                     else "?"
                 )
-            # Stage 4 produces a parallel breakdown per movie_id —
-            # split the §9 sum into its positive and negative halves
-            # and records the implicit-prior multiplicative boost
-            # applied by the full orchestrator's post-rerank pass.
-            # trait_contributions decomposes the §9 sum further into
-            # per-trait signed weighted contributions.
+
             breakdown = br.score_breakdowns.get(movie_id)
             if breakdown is None:
-                pos = 0.0
-                neg = 0.0
+                pos = neg = 0.0
                 boost_pct = 0.0
-                trait_cells = ["+0.0000"] * len(trait_headers)
+                contributions: list = []
             else:
                 pos = breakdown.positive_total
                 neg = breakdown.negative_total
                 boost_pct = breakdown.implicit_prior_boost * 100.0
-                trait_cells = [
-                    f"{tc.contribution:+.4f}"
-                    for tc in breakdown.trait_contributions
-                ]
-                # Pad in case a breakdown is missing entries (defensive —
-                # _finalize_scores always emits one entry per upstream
-                # trait, but the print should not crash if that ever
-                # changes).
-                while len(trait_cells) < len(trait_headers):
-                    trait_cells.append("+0.0000")
-            safe_title = title.replace("|", "\\|")
-            row_cells = (
-                [
-                    str(rank),
-                    f"{score:+.4f}",
-                    f"{boost_pct:.1f}%",
-                    f"{pos:+.4f}",
-                    f"{neg:+.4f}",
-                ]
-                + trait_cells
-                + [f"{safe_title} ({year})", str(movie_id)]
+                contributions = breakdown.trait_contributions
+
+            print()
+            print(
+                f"#{rank:<2} final={score:+.4f}  boost={boost_pct:+.1f}%  "
+                f"pos={pos:+.4f}  neg={neg:+.4f}  "
+                f"{title} ({year})  [tmdb={movie_id}]"
             )
-            print("| " + " | ".join(row_cells) + " |")
+            if not contributions:
+                print("    (no trait contributions recorded)")
+                continue
+            for tc in contributions:
+                # Trait line: surface text, commitment tier, inner
+                # trait_score in [0, 1], weight (commitment × rarity
+                # for positives, commitment for negatives), and the
+                # signed weighted contribution that fed the §9 sum.
+                print(
+                    f'    {tc.surface_text!r} [{tc.commitment}]  '
+                    f"trait={tc.trait_score:.4f}  wt={tc.weight:.3f}  "
+                    f"→ {tc.contribution:+.4f}"
+                )
+                if not tc.category_scores:
+                    # Negative traits land here, as do positive traits
+                    # whose categories all errored or were NO_OP.
+                    continue
+                for cs in tc.category_scores:
+                    print(
+                        f"        • {cs.category_name} "
+                        f"[{cs.combine_type}]: {cs.score:.4f}"
+                    )
 
 
 # ---------------------------------------------------------------------------
