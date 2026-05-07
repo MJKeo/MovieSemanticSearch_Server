@@ -21,9 +21,7 @@ from db.postgres import (
     TRAIT_KIND_SOURCE_MATERIAL,
     TRAIT_KIND_TMDB_GENRE,
     fetch_director_movie_terms,
-    fetch_director_strengths,
     fetch_director_term_ids_for_movies,
-    fetch_franchise_confidence,
     fetch_movie_ids_by_overall_keywords,
     fetch_movie_ids_by_production_company_ids,
     fetch_movie_ids_with_title_like,
@@ -37,6 +35,7 @@ from db.postgres import (
     fetch_similarity_top_billed_cast,
     fetch_trait_idfs,
 )
+from search_v2.auteur_directors import fetch_auteur_term_ids
 from db.qdrant import qdrant_client
 from db.vector_scoring import normalize_blended_scores
 from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
@@ -83,6 +82,7 @@ LaneName = Literal[
     "themes",
     "cast",
     "specific_award",
+    "rare_keyword",   # V3 §2.6 — distinctive-match lane (NEW)
 ]
 
 # Lanes whose scores feed the additive sum. Studio is intentionally
@@ -91,6 +91,10 @@ LaneName = Literal[
 # of the list. The themes/cast/specific_award lanes are multi-anchor
 # only; their weights collapse to 0 in single-anchor flow so the same
 # pipeline handles both cases without branching.
+#
+# V3: director and rare_keyword are passthrough (raw = absolute
+# contribution); they participate in the additive sum but bypass the
+# `_normalize_weights` denominator. See PASSTHROUGH_LANES below.
 ADDITIVE_LANES: tuple[LaneName, ...] = (
     "shape",
     "director",
@@ -101,7 +105,13 @@ ADDITIVE_LANES: tuple[LaneName, ...] = (
     "themes",
     "cast",
     "specific_award",
+    "rare_keyword",
 )
+
+# Lanes whose raw score IS the absolute contribution (no weight scaling).
+# They appear in the additive sum but are excluded from the normalization
+# denominator so adding them doesn't dilute the proportional lanes.
+PASSTHROUGH_LANES: frozenset[LaneName] = frozenset({"director", "rare_keyword"})
 
 # All lanes carried through the debug payload, including the studio
 # multiplier so debug output still shows when on-brand candidates were
@@ -117,6 +127,7 @@ ALL_LANES: tuple[LaneName, ...] = (
     "themes",
     "cast",
     "specific_award",
+    "rare_keyword",
 )
 
 AnchorType = Literal[
@@ -160,7 +171,12 @@ VECTOR_BASE_WEIGHTS_MULTI: dict[VectorName, float] = {
 
 BASE_LANE_WEIGHTS: dict[LaneName, float] = {
     "shape": 0.60,
-    "director": 0.12,
+    # V3: director is "passthrough" — its raw score is the absolute
+    # contribution defined in the §2.1 unified rule (single-anchor curated
+    # = 0.20; multi curated max = 0.30; cohesion-only max = 0.10). The
+    # weight is excluded from `_normalize_weights`'s denominator so other
+    # lanes don't get diluted, and the raw value flows through unchanged.
+    "director": 1.00,
     "franchise": 0.12,
     "studio": 0.06,        # debug-only; the multiplier doesn't read it
     "source": 0.04,
@@ -170,12 +186,21 @@ BASE_LANE_WEIGHTS: dict[LaneName, float] = {
     "themes": 0.06,
     "cast": 0.03,
     "specific_award": 0.04,
+    # NEW V3 §2.6 lane — rare-keyword. Passthrough like director (its
+    # tier-summed contributions and floor are computed in absolute
+    # terms by the scoring function).
+    "rare_keyword": 1.00,
 }
 
 # Single-anchor weight deltas applied additively per active anchor type.
 # studio_lineage is retained as a debug flag with no weight delta — V2
-# studio handling is multiplicative, not additive. director_signature is
-# the new V2 anchor type for genuine top-tier auteurs (strength >= 0.80).
+# studio handling is multiplicative, not additive.
+#
+# V3: director_signature also has no delta. The V3 director lane is a
+# passthrough that contributes 0.20 in absolute terms when an auteur
+# match fires, so the V2 +0.10 weight bump is redundant. The anchor
+# type still appears in `active_anchor_types` for debug visibility.
+#
 # source_material delta dropped from V1 +0.14 to V2 +0.08 because the
 # IDF-weighted source lane no longer over-credits "novel"-tier matches.
 SINGLE_ANCHOR_ADJUSTMENTS: dict[AnchorType, dict[LaneName, float]] = {
@@ -185,7 +210,7 @@ SINGLE_ANCHOR_ADJUSTMENTS: dict[AnchorType, dict[LaneName, float]] = {
     "franchise_dominant": {"franchise": 0.18, "shape": -0.08},
     "studio_lineage": {},
     "source_material": {"source": 0.08, "shape": -0.04},
-    "director_signature": {"director": 0.10, "shape": -0.04},
+    "director_signature": {},
 }
 
 
@@ -195,27 +220,35 @@ TOP_FORMAT_LOCK = 5             # top-5 must share the anchor format bucket
 MAX_TOP_DOMINANT_LANE = 4
 MAX_TOP_FRANCHISE = 3
 
-# V2 franchise confidence thresholds. Lineages that clear both gates run
-# the lane additively (with raised shape gate); below either gate they
-# drop to a multiplicative nudge so direct-to-DVD Barbie spinoffs can't
-# dominate.
-FRANCHISE_HIGH_CONF_CONFIDENCE = 0.65
-FRANCHISE_HIGH_CONF_CONSISTENCY = 0.60
+# V3 §2.2: V2's franchise-confidence and low-confidence-multiplier paths
+# are retired. The structural matrix in `_franchise_score_v2` scores
+# every hit additively; "low-confidence" lineages now show up as 0.30
+# universe-only or 0.55 same-subgroup-different-lineage scores and
+# can't dominate top results without strong shape backing.
 
 # V2 multipliers on combined score (applied post-additive-sum).
 STUDIO_MULTIPLIER_SHAPE_GATE = 0.60
 STUDIO_MULTIPLIER_STRENGTH = 0.10            # +10% per unit studio_score
-LOW_CONF_FRANCHISE_SHAPE_GATE = 0.55
-LOW_CONF_FRANCHISE_MULTIPLIER_STRENGTH = 0.10
 
-# Medium multiplier: max-mismatch (live-action vs. animation) drops
-# combined score by 15%; perfect medium agreement leaves it untouched.
+# Medium multiplier: V3 §3.2 piecewise — cross-category (live-action ↔
+# animation, where MEDIUM_SIMILARITY returns 0.0) gets a hard 0.65× hit;
+# within-category mismatches (CG ↔ stop-motion, etc.) keep the V2 formula
+# 0.85 + 0.15 * score, which still floors at 0.85 for cross-anim-style
+# crossings but rewards perfect agreement at 1.00. The cross-category
+# 0.65 fixes the Dark Knight Rises case where animated Batman entries
+# (Year One, Long Halloween) were riding the V2 0.85 floor into the top
+# 10 — H4 in the V3 hypothesis table.
 MEDIUM_MULTIPLIER_FLOOR = 0.85
 MEDIUM_MULTIPLIER_RANGE = 0.15
+MEDIUM_CROSS_CATEGORY_MULTIPLIER = 0.65
 
-# Country/language coherence multiplier (multi-anchor only).
-COUNTRY_CONSENSUS_BOOST = 1.10
-COUNTRY_CONSENSUS_PENALTY = 0.85
+# Country/language coherence multiplier. V3 §2.4: extended to single-
+# anchor (V2 was multi-only) and recalibrated. The looser V2 boost
+# (1.10) was too generous for "you got the country right" given how
+# weak country alone is as a similarity signal; the looser V2 penalty
+# (0.85) was too soft for the Barbie-Telugu-#1 failure case.
+COUNTRY_CONSENSUS_BOOST = 1.05
+COUNTRY_CONSENSUS_PENALTY = 0.75
 
 # Selective rare-medium retrieval gate (V2 single-anchor): anchor medium
 # tags with idf >= this threshold trigger a candidate-pool expansion via
@@ -223,17 +256,20 @@ COUNTRY_CONSENSUS_PENALTY = 0.85
 # because every catalog entry would qualify.
 RARE_MEDIUM_IDF_THRESHOLD = 0.50
 
-# director_signature anchor type triggers when the anchor's director has
-# director_strength >= this percentile. Restricts the lane to genuine
-# top-tier auteurs (Tarantino, Nolan, Scorsese, Spielberg, Miyazaki, etc.)
-# rather than any above-median director.
-DIRECTOR_SIGNATURE_STRENGTH_THRESHOLD = 0.80
+# V3 §2.1: director_signature anchor type fires when at least one of
+# the anchor's directors is in the curated auteur list. The V2
+# `mv_director_strength` percentile gate is retired (it conflated fame
+# with stylistic coherence — Lucas surfacing American Graffiti for Star
+# Wars, etc.). The auteur list is the canonical source of truth.
 
 # Low-cohesion fallback (multi-anchor): when both vector cohesion and
 # every metadata lane's cohesion are weak, the centroid is in noise and
 # we fall back to round-robin per-anchor single-anchor results.
+# V3 §4.2: raised the metadata threshold from 1.00 to 1.50 because the
+# old bar still let "prestige-by-2-of-3" cases (metadata_max_cohesion
+# ~1.69) bypass the chaotic-mixed-bag handling.
 LOW_COHESION_VECTOR_THRESHOLD = 0.35
-LOW_COHESION_METADATA_MAX_THRESHOLD = 1.00
+LOW_COHESION_METADATA_MAX_THRESHOLD = 1.50
 
 DEFAULT_QDRANT_LIMIT = 500
 DEFAULT_QUALITY_LIMIT = 500
@@ -250,6 +286,20 @@ class LaneEvidence:
     lane_scores: dict[LaneName, float]
     candidate_sources: list[LaneName]
     dominant_lane: LaneName
+    # V3 diagnostic fields — populated by `_build_results` so debug
+    # consumers (batch runner, analysis scripts) can see how the final
+    # score was assembled. `base_score` is the additive sum BEFORE
+    # multipliers / floors. `multipliers` only contains keys for
+    # multipliers actually applied (a value of 1.0 means "applied as
+    # identity" — e.g., medium with same-medium match). `floor_value`
+    # > 0 indicates a floor displaced the additive computation;
+    # `floor_source` names the lane it came from. Defaults keep
+    # backwards compatibility with any caller that constructs a
+    # LaneEvidence without diagnostics.
+    base_score: float = 0.0
+    multipliers: dict[str, float] = field(default_factory=dict)
+    floor_value: float = 0.0
+    floor_source: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +327,11 @@ class SimilarMoviesDebug:
     per_anchor_active_anchor_types: dict[int, list[AnchorType]] = field(
         default_factory=dict
     )
+    # V3 multi-anchor diagnostic: when ≥50% of anchors are shorts,
+    # `_run_multi_anchor_similarity` flips into shorts-friendly mode
+    # (boost on, downrank off). Surfaced here so the batch runner can
+    # explain why short candidates are scoring high.
+    shorts_dominant: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +355,13 @@ class _CandidateScore:
     lane_scores: dict[LaneName, float]
     candidate_sources: list[LaneName]
     dominant_lane: LaneName
+    # Diagnostic mirrors of the LaneEvidence diagnostic fields. Carried
+    # through weaving so the eventual SimilarMovieResult.LaneEvidence
+    # can pass them out unchanged.
+    base_score: float = 0.0
+    multipliers: dict[str, float] = field(default_factory=dict)
+    floor_value: float = 0.0
+    floor_source: str = ""
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -320,21 +382,38 @@ def _as_int_set(value: object) -> set[int]:
 
 
 def _normalize_weights(raw: dict[LaneName, float]) -> dict[LaneName, float]:
-    """Normalize raw lane weights so the additive lanes sum to 1.0.
+    """Normalize raw lane weights so the proportional additive lanes sum to 1.0.
 
-    Studio is excluded — it's a multiplier in V2, not an additive lane,
-    and including its raw weight in the denominator would dilute every
-    other lane unnecessarily. Negative weights (possible after applying
-    anchor-type deltas) get clamped to 0 before the division. If every
-    lane is zero or negative, the function falls back to "all weight on
-    shape" so the flow still returns ranked results.
+    V3: passthrough lanes (director, rare_keyword) carry absolute
+    contributions defined by their scoring functions, so they're
+    excluded from both the denominator AND the per-lane normalization.
+    Their raw weight flows through unchanged (typically 1.0 = identity
+    multiplier). Studio is excluded for the V2 reason (multiplier-only).
+
+    Negative weights (possible after applying anchor-type deltas) get
+    clamped to 0 before the division. If every proportional lane is
+    zero or negative, fallback is "all weight on shape" so the flow
+    still returns ranked results.
     """
-    total = sum(max(raw.get(lane, 0.0), 0.0) for lane in ADDITIVE_LANES)
+    proportional_lanes = tuple(
+        lane for lane in ADDITIVE_LANES if lane not in PASSTHROUGH_LANES
+    )
+    total = sum(max(raw.get(lane, 0.0), 0.0) for lane in proportional_lanes)
     if total <= 0.0:
-        return {lane: (1.0 if lane == "shape" else 0.0) for lane in ALL_LANES}
-    out: dict[LaneName, float] = {
-        lane: max(raw.get(lane, 0.0), 0.0) / total for lane in ADDITIVE_LANES
-    }
+        # Fallback when every proportional lane is zero or negative —
+        # collapse to "all weight on shape" so the flow still returns
+        # ranked results. Other proportional lanes get 0; passthrough
+        # lanes still flow through with their raw weight.
+        out: dict[LaneName, float] = {lane: 0.0 for lane in proportional_lanes}
+        out["shape"] = 1.0
+    else:
+        out = {
+            lane: max(raw.get(lane, 0.0), 0.0) / total
+            for lane in proportional_lanes
+        }
+    # Passthrough lanes carry their raw weight unchanged (typically 1.0).
+    for lane in PASSTHROUGH_LANES:
+        out[lane] = max(raw.get(lane, 0.0), 0.0)
     # Studio carries through unnormalized so debug output preserves the raw
     # studio score; the multiplier doesn't read this field.
     out["studio"] = max(raw.get("studio", 0.0), 0.0)
@@ -378,35 +457,34 @@ def _major_award_win_score(row: dict) -> float:
 def _single_anchor_lane_weights(
     active_anchor_types: list[AnchorType],
     *,
-    franchise_low_confidence: bool,
+    quality_bucket: str | None = None,
 ) -> tuple[dict[LaneName, float], dict[LaneName, float]]:
     """Build raw + normalized lane weights for single-anchor flow.
 
-    V2 changes vs. V1: quality lane is always active (the middle bucket
-    runs at base weight 0.06 as a soft notability prior); themes / cast
-    / specific_award are zeroed out because they're multi-only. When the
-    anchor sits on a low-confidence franchise (e.g. Barbie), the
-    franchise lane is dropped from the additive sum entirely — the
-    franchise multiplier handles those candidates instead — and the
-    franchise_dominant adjustment is suppressed.
+    V3 changes vs. V2: the V2 ``franchise_low_confidence`` gating that
+    suppressed the ``franchise_dominant`` adjustment and zeroed the
+    franchise lane is gone. The structural V3 franchise matrix already
+    scales scores by overlap quality (1.00 same lineage + same subgroup,
+    0.30 universe-only, etc.), so direct-to-DVD spinoffs can't ride a
+    full +0.18 weight into the top of the list. Themes / cast /
+    specific_award stay zeroed in single-anchor flow because those
+    lanes are multi-anchor-only signals.
     """
     raw = dict(BASE_LANE_WEIGHTS)
-    # Multi-only lanes contribute nothing in single-anchor flow.
-    raw["themes"] = 0.0
+    # V3 §2.3 enables themes in single-anchor flow; cast and
+    # specific_award stay multi-only.
     raw["cast"] = 0.0
     raw["specific_award"] = 0.0
 
+    # V3 §4.1: middle-bucket quality weight is halved (0.06 → 0.03).
+    # Prestige/cult buckets keep the V2 weight because the per-bucket
+    # formulas are bucket-specific and tightly tuned.
+    if quality_bucket == "middle":
+        raw["quality"] = 0.03
+
     for anchor_type in active_anchor_types:
-        # Suppress the franchise_dominant delta on low-confidence anchors;
-        # the multiplicative path handles those without expanding the
-        # franchise lane's exposure.
-        if anchor_type == "franchise_dominant" and franchise_low_confidence:
-            continue
         for lane, delta in SINGLE_ANCHOR_ADJUSTMENTS[anchor_type].items():
             raw[lane] = raw.get(lane, 0.0) + delta
-
-    if franchise_low_confidence:
-        raw["franchise"] = 0.0
 
     normalized = _normalize_weights(raw)
     return raw, normalized
@@ -492,26 +570,176 @@ def _franchise_traits(row: dict) -> tuple[set[int], set[int], set[int]]:
 
 
 def _franchise_score_v2(anchor_row: dict, candidate_row: dict) -> float:
-    """V2 franchise lane score with subgroup gating.
+    """V3 franchise lane — simplified 5-tier matrix over (lineage, subgroup, universe).
 
-    Lineage hits are full strength. Subgroup hits only score full when
-    they're backed by a universe or lineage match — the V2 spec calls
-    this out specifically so e.g. "Original Star Wars Trilogy" subgroup
-    matches don't ride at 1.0 without the universe agreeing. Universe-
-    only matches stay at 0.85; subgroup-only matches drop to a 0.40
-    fallback so they still surface but can't dominate.
+    The V3 plan §2.2 originally specified a 2D matrix over (role, overlap)
+    where role was mainline/spinoff/crossover. Pre-flight DB verification
+    confirmed the catalog data doesn't carry a role discriminator —
+    crossover films get their own dedicated lineage rather than
+    multiple per-hero lineages (e.g., Avengers films use a single
+    "Avengers" lineage 1998, not the union of Iron Man / Cap / Thor
+    lineages). Star Wars uses the same pattern: every theatrical film
+    sits in lineage [3], with subgroups distinguishing trilogies
+    (original [1,2], prequel [2,484], sequel [2,8909], Rogue One
+    [12533]).
+
+    The structural intent of the V3 matrix carries over to a 5-tier
+    rule on what's actually encoded:
+
+    1. **Same lineage AND ≥1 shared subgroup → 1.00** — direct trilogy
+       siblings (Star Wars 1977 ↔ Empire share lin [3] AND sub [1,2]).
+       Cross-trilogy cases also clear this if they share the saga-wide
+       subgroup [2] (1977 ↔ Phantom Menace via sub [2]).
+
+    2. **Same lineage, no shared subgroup → 0.70** — same series but
+       a structurally different cluster (1977 ↔ Rogue One: same lin
+       [3], no subgroup overlap).
+
+    3. **Different lineage, ≥1 shared subgroup AND shared universe → 0.55** —
+       MCU sibling case (Iron Man ↔ Captain America: different
+       hero-lineages 440 vs 447, share subgroup [435,437] AND universe
+       [436]).
+
+    4. **Different lineage, shared universe only (no subgroup overlap) →
+       0.30** — loosely-related universe entries (e.g., late-phase MCU
+       entry vs. early-phase MCU entry whose subgroup tags have drifted).
+
+    5. **Disjoint → 0.00**.
+
+    The V2 ``franchise_consistency >= 0.6`` measurement-artifact gate
+    that silenced Star Wars in V2 is gone — the matrix scores by
+    structure, so Star Wars's "low statistical consistency" is moot.
+    The V2 "low-confidence multiplier" path (LOW_CONF_FRANCHISE_*) is
+    also retired; the structural matrix gives the score directly.
     """
     a_lin, a_uni, a_sub = _franchise_traits(anchor_row)
     c_lin, c_uni, c_sub = _franchise_traits(candidate_row)
-    if a_lin and c_lin and (a_lin & c_lin):
+
+    same_lineage = bool(a_lin and c_lin and (a_lin & c_lin))
+    shared_subgroup = bool(a_sub and c_sub and (a_sub & c_sub))
+    shared_universe = bool(a_uni and c_uni and (a_uni & c_uni))
+
+    if same_lineage and shared_subgroup:
         return 1.00
-    if (a_sub & c_sub) and ((a_uni & c_uni) or (a_lin & c_lin)):
-        return 1.00
-    if a_uni and c_uni and (a_uni & c_uni):
-        return 0.85
-    if a_sub and c_sub and (a_sub & c_sub):
-        return 0.40
+    if same_lineage:
+        return 0.70
+    if shared_subgroup and shared_universe:
+        return 0.55
+    if shared_universe:
+        return 0.30
     return 0.0
+
+
+# V3 §2.1 director lane — absolute contributions per the unified rule.
+# The lane contributes 0.20 in single-anchor when an auteur match
+# fires, 0.20 + 0.10*(M/N) in multi-anchor when an auteur match fires
+# (M = anchors sharing the auteur director, N = total anchors), and
+# 0.10 * (M/N) in multi-anchor cohesion-only when M ≥ 2. Take the max
+# over shared directors so a candidate matching multiple shared
+# directors gets the strongest signal (the "WA + PTA 2-2 split"
+# example from §2.1: each candidate scores via its own M_d).
+DIRECTOR_SINGLE_ANCHOR_CONTRIBUTION = 0.20
+DIRECTOR_MULTI_ANCHOR_AUTEUR_BASE = 0.20
+DIRECTOR_MULTI_ANCHOR_AUTEUR_RATIO = 0.10
+DIRECTOR_MULTI_ANCHOR_COHESION_RATIO = 0.10
+DIRECTOR_FLOOR_RATIO_THRESHOLD = 0.75
+DIRECTOR_FLOOR_SHAPE_GATE = 0.30
+DIRECTOR_FLOOR_MAGNITUDE = 0.35
+
+
+def _single_anchor_director_score(
+    candidate_terms: dict[int, set[int]],
+    anchor_directors: set[int],
+    auteur_term_ids: frozenset[int],
+) -> dict[int, float]:
+    """V3 single-anchor director: 0.20 contribution when the anchor's
+    director is curated AND the candidate shares that director.
+
+    Returns an empty dict when the anchor has no curated director — the
+    lane is silent for non-auteur anchors per V3 §2.1 (the user's
+    motivation: "when director matters for non-auteurs it's via
+    franchise or shape, both of which are already lanes").
+    """
+    if not anchor_directors:
+        return {}
+    auteur_intersect = anchor_directors & auteur_term_ids
+    if not auteur_intersect:
+        return {}
+    scores: dict[int, float] = {}
+    for movie_id, candidate_dirs in candidate_terms.items():
+        if not candidate_dirs:
+            continue
+        if candidate_dirs & auteur_intersect:
+            scores[movie_id] = DIRECTOR_SINGLE_ANCHOR_CONTRIBUTION
+    return scores
+
+
+def _multi_anchor_director_score(
+    *,
+    candidate_terms: dict[int, set[int]],
+    anchor_director_sets: list[set[int]],
+    auteur_term_ids: frozenset[int],
+    n: int,
+) -> tuple[dict[int, float], dict[int, float]]:
+    """V3 multi-anchor director: per-shared-director contribution.
+
+    For each director ``d`` that the candidate shares with at least
+    one anchor, with ``M_d`` = number of anchors that share ``d`` and
+    ``N`` = total anchors:
+
+      - if d is curated: contribution = 0.20 + 0.10 * (M_d / N)   (caps 0.30)
+      - elif M_d >= 2  : contribution = 0.10 * (M_d / N)          (caps 0.10)
+      - else           : 0 (single-anchor cohesion of a non-auteur is silent)
+
+    Returns the max contribution across shared directors so a candidate
+    matching multiple shared directors lights up via whichever signal
+    is strongest. Also returns ``max_ratio`` (the max ``M_d / N`` for
+    each candidate) so ``_build_results`` can apply the §2.1 cohesion
+    floor.
+
+    Multi-director independent boost (e.g., 4 anchors split 2-2 between
+    Wes Anderson and PTA) is automatic from the max-over-d structure:
+    a WA candidate scores via M_WA=2, N=4 → 0.25; a PTA candidate
+    scores via M_PTA=2, N=4 → 0.25. Both boosted, neither suppresses
+    the other.
+    """
+    scores: dict[int, float] = {}
+    max_ratios: dict[int, float] = {}
+    if n <= 0:
+        return scores, max_ratios
+    for movie_id, candidate_dirs in candidate_terms.items():
+        if not candidate_dirs:
+            continue
+        # M_d for each director shared with at least one anchor.
+        m_per_director: dict[int, int] = {}
+        for anchor_dirs in anchor_director_sets:
+            shared = candidate_dirs & anchor_dirs
+            for d in shared:
+                m_per_director[d] = m_per_director.get(d, 0) + 1
+        if not m_per_director:
+            continue
+        best_contribution = 0.0
+        best_ratio = 0.0
+        for d, m_d in m_per_director.items():
+            ratio = m_d / n
+            if d in auteur_term_ids:
+                contrib = (
+                    DIRECTOR_MULTI_ANCHOR_AUTEUR_BASE
+                    + DIRECTOR_MULTI_ANCHOR_AUTEUR_RATIO * ratio
+                )
+            elif m_d >= 2:
+                contrib = DIRECTOR_MULTI_ANCHOR_COHESION_RATIO * ratio
+            else:
+                contrib = 0.0
+            if contrib > best_contribution:
+                best_contribution = contrib
+            if ratio > best_ratio:
+                best_ratio = ratio
+        if best_contribution > 0.0:
+            scores[movie_id] = best_contribution
+        if best_ratio > 0.0:
+            max_ratios[movie_id] = best_ratio
+    return scores, max_ratios
 
 
 def _source_score_idf(
@@ -600,23 +828,31 @@ def _medium_tags_for_movie(row: dict) -> set[int]:
 
 
 def _medium_multiplier(anchor_tags: set[int], candidate_tags: set[int]) -> float:
-    """Map the medium similarity score onto the [floor, 1.0] multiplier.
+    """Map the medium similarity score onto a multiplier (V3 §3.2 piecewise).
 
-    Perfect medium agreement leaves combined score unchanged; full
-    mismatch (live-action anchor vs. animation candidate) drops it by
-    ``1 - MEDIUM_MULTIPLIER_FLOOR`` (15% by default). Cross-medium-but-
-    related (CG anchor vs. stop-motion candidate, score 0.50) gets a
-    partial penalty (multiplier ≈ 0.925).
+    V3 splits the multiplier into two regimes:
 
-    When either side has no medium tags the score is 0.0, which here
-    means "we can't tell" — applying the floor as the multiplier is a
-    soft penalty consistent with treating no-signal candidates as
-    cross-medium. Lane code can short-circuit by checking the tag sets
-    if it wants to skip this entirely.
+    - **Cross-category** (live-action ↔ animation): ``medium_score`` returns
+      0.0 because MEDIUM_SIMILARITY's LIVE row is all-zeros against animation
+      sub-tags (and vice versa). These get a hard ``MEDIUM_CROSS_CATEGORY_MULTIPLIER``
+      (0.65) hit — animated Batman shouldn't ride a soft 0.85 floor into a
+      live-action Batman anchor's top 10.
+
+    - **Within-category** (any non-zero ``medium_score``): keep the V2 formula
+      ``MEDIUM_MULTIPLIER_FLOOR + MEDIUM_MULTIPLIER_RANGE * score``. Perfect
+      agreement (1.00) keeps the multiplier at 1.00; CG vs. stop-motion
+      (~0.50) lands at ~0.925; same-anim-style at ~0.90 lands at ~0.985.
+
+    Either side missing medium tags is treated as "we can't tell" and
+    returns 1.0 (no penalty) — V2 behavior preserved. The harsh
+    cross-category penalty only fires when both anchor and candidate
+    actually carry medium tags AND those tags don't agree at all.
     """
     if not anchor_tags or not candidate_tags:
         return 1.0
     score = medium_score(anchor_tags, candidate_tags)
+    if score == 0.0:
+        return MEDIUM_CROSS_CATEGORY_MULTIPLIER
     return MEDIUM_MULTIPLIER_FLOOR + MEDIUM_MULTIPLIER_RANGE * score
 
 
@@ -839,24 +1075,43 @@ def _build_results(
     lane_scores: dict[LaneName, dict[int, float]],
     lane_weights: dict[LaneName, float],
     limit: int,
-    # V2 post-additive multipliers — each is a per-movie lookup. None means
+    # Post-additive multipliers — each is a per-movie lookup. None means
     # "this signal isn't relevant for this flow" (e.g., country/language is
     # multi-anchor only; medium tags may be empty for live-action anchors).
     studio_score_by_movie: dict[int, float] | None = None,
     medium_multiplier_by_movie: dict[int, float] | None = None,
-    low_conf_franchise_score_by_movie: dict[int, float] | None = None,
     country_consensus_match_by_movie: dict[int, bool] | None = None,
+    # V3 floor signals (each gated on shape ≥ floor's shape gate).
+    rare_keyword_floor_by_movie: dict[int, float] | None = None,
+    cast_floor_by_movie: dict[int, float] | None = None,
+    director_floor_max_ratio_by_movie: dict[int, float] | None = None,
+    # V3 §3.1 shorts handling.
+    candidate_format_bucket_by_movie: dict[int, FormatBucket] | None = None,
+    anchor_active_format_bucket: FormatBucket | None = None,
+    apply_shorts_downrank: bool = True,
+    # When the multi-anchor anchor set is shorts-dominant (≥50% of
+    # anchors are shorts), the short candidates get a small positive
+    # boost via SHORTS_MULTI_ANCHOR_BOOST. Mutually exclusive with the
+    # downrank — callers pass `apply_shorts_downrank=False,
+    # apply_shorts_boost=True` together.
+    apply_shorts_boost: bool = False,
     anchor_format_bucket: FormatBucket | None = None,
     enforce_format_top_lock: bool = False,
 ) -> tuple[list[SimilarMovieResult], dict[LaneName, int]]:
-    """Combine per-lane scores into ranked candidates with V2 multipliers.
+    """Combine per-lane scores into ranked candidates with V3 multipliers + floors.
 
     Pipeline:
-      1. Sum lane_weights * lane_scores across ADDITIVE_LANES.
-      2. Apply V2 multipliers (medium, studio, low-confidence franchise,
-         multi-anchor country/language coherence) on shape-qualifying
-         candidates.
-      3. Weave: V1 dominance/franchise caps plus the V2 top-5 format lock.
+      1. Sum lane_weights * lane_scores across ADDITIVE_LANES (director
+         and rare_keyword are passthrough lanes — their raw score IS
+         the absolute contribution).
+      2. Apply post-additive multipliers (studio, country/language, medium
+         piecewise, shorts harsh downrank) on shape-qualifying candidates.
+      3. Apply V3 floors (rare-keyword, cast bucket-with-floor, director
+         cohesion floor) gated by shape — these allow a candidate with
+         strong distinctive-match evidence to override moderate shape
+         drift, but never with weak shape.
+      4. Weave: V1 dominance/franchise caps plus the V2 top-5 format
+         lock plus the V3 max-1 shorts cap (when anchor isn't a short).
 
     Studio is debug-only in lane_scores — its multiplier path is the
     studio_score_by_movie dict, not a contribution to the additive sum.
@@ -869,8 +1124,19 @@ def _build_results(
 
     studio_score_by_movie = studio_score_by_movie or {}
     medium_multiplier_by_movie = medium_multiplier_by_movie or {}
-    low_conf_franchise_score_by_movie = low_conf_franchise_score_by_movie or {}
     country_consensus_match_by_movie = country_consensus_match_by_movie or {}
+    rare_keyword_floor_by_movie = rare_keyword_floor_by_movie or {}
+    cast_floor_by_movie = cast_floor_by_movie or {}
+    director_floor_max_ratio_by_movie = director_floor_max_ratio_by_movie or {}
+    candidate_format_bucket_by_movie = candidate_format_bucket_by_movie or {}
+
+    # Whether the shorts harsh downrank fires for this flow. Disabled
+    # when the anchor IS a short (or multi-anchor with shorts dominance);
+    # callers pass apply_shorts_downrank=False in those cases.
+    apply_shorts = (
+        apply_shorts_downrank
+        and anchor_active_format_bucket != "short"
+    )
 
     candidates: list[_CandidateScore] = []
     for movie_id in candidate_ids:
@@ -882,7 +1148,8 @@ def _build_results(
         if not sources:
             continue
 
-        # Additive sum — only ADDITIVE_LANES (excludes studio).
+        # Additive sum — director and rare_keyword are passthrough so
+        # their raw value flows in directly via the 1.0 weight.
         contributions = {
             lane: lane_weights.get(lane, 0.0) * per_lane[lane]
             for lane in ADDITIVE_LANES
@@ -894,36 +1161,86 @@ def _build_results(
             key=lambda lane: (contributions[lane], per_lane[lane]),
         )
         score = sum(contributions.values())
+        base_score = score  # additive sum, captured for diagnostics
         shape_score = per_lane["shape"]
+        applied_multipliers: dict[str, float] = {}
 
         # Studio multiplier — applies to candidates that already cleared
         # the shape gate, so on-brand-but-low-shape noise can't ride the
         # multiplier into the top of the list.
         studio_score = studio_score_by_movie.get(movie_id, 0.0)
         if studio_score > 0.0 and shape_score >= STUDIO_MULTIPLIER_SHAPE_GATE:
-            score *= 1.0 + STUDIO_MULTIPLIER_STRENGTH * studio_score
+            studio_mult = 1.0 + STUDIO_MULTIPLIER_STRENGTH * studio_score
+            score *= studio_mult
+            applied_multipliers["studio"] = studio_mult
 
-        # Low-confidence franchise multiplier — separate path from the
-        # additive franchise lane; only fires when the anchor lineage was
-        # below the confidence/consistency thresholds.
-        low_conf_franchise = low_conf_franchise_score_by_movie.get(movie_id, 0.0)
-        if (
-            low_conf_franchise > 0.0
-            and shape_score >= LOW_CONF_FRANCHISE_SHAPE_GATE
-        ):
-            score *= 1.0 + LOW_CONF_FRANCHISE_MULTIPLIER_STRENGTH * low_conf_franchise
-
-        # Country/language coherence multiplier — multi-anchor only.
+        # Country/language coherence multiplier — extended to single-anchor
+        # in V3 §2.4 by passing `country_consensus_match_by_movie` from the
+        # single-anchor flow as well.
         if movie_id in country_consensus_match_by_movie:
             if country_consensus_match_by_movie[movie_id]:
                 score *= COUNTRY_CONSENSUS_BOOST
+                applied_multipliers["country"] = COUNTRY_CONSENSUS_BOOST
             else:
                 score *= COUNTRY_CONSENSUS_PENALTY
+                applied_multipliers["country"] = COUNTRY_CONSENSUS_PENALTY
 
         # Medium multiplier — applied unconditionally so cross-medium
         # candidates lose ground regardless of how strong other lanes are.
         medium_mult = medium_multiplier_by_movie.get(movie_id, 1.0)
         score *= medium_mult
+        if medium_mult != 1.0:
+            applied_multipliers["medium"] = medium_mult
+
+        # V3 §3.1 shorts harsh downrank — fires when the anchor isn't a
+        # short and the candidate IS. The combined-score multiplier
+        # (0.30) makes shorts uncompetitive even with strong shape,
+        # which fixes the V2 Toy Story top 10 flooded by Pixar shorts.
+        # Conversely, in shorts-dominant multi-anchor cohorts the short
+        # candidates get a small positive boost — the user has signaled
+        # they want shorts, so a same-format match gets a thumb on the
+        # scale.
+        candidate_bucket = candidate_format_bucket_by_movie.get(movie_id)
+        if apply_shorts and candidate_bucket == "short":
+            score *= SHORTS_DOWNRANK_MULTIPLIER
+            applied_multipliers["shorts_downrank"] = SHORTS_DOWNRANK_MULTIPLIER
+        elif apply_shorts_boost and candidate_bucket == "short":
+            score *= SHORTS_MULTI_ANCHOR_BOOST
+            applied_multipliers["shorts_boost"] = SHORTS_MULTI_ANCHOR_BOOST
+
+        # V3 floor application — apply the strongest applicable floor
+        # (max over the three sources). Each floor has its own shape
+        # gate so a low-shape candidate doesn't get artificially
+        # promoted by a single distinctive-match signal.
+        # Track each candidate floor so diagnostics show which one won
+        # AND which others were available.
+        candidate_floors: list[tuple[str, float]] = []
+        rare_keyword_floor = rare_keyword_floor_by_movie.get(movie_id, 0.0)
+        if rare_keyword_floor > 0.0 and shape_score >= RARE_KW_FLOOR_SHAPE_GATE:
+            candidate_floors.append(("rare_keyword", rare_keyword_floor))
+        cast_floor = cast_floor_by_movie.get(movie_id, 0.0)
+        if cast_floor > 0.0 and shape_score >= CAST_FLOOR_SHAPE_GATE:
+            candidate_floors.append(("cast", cast_floor))
+        director_ratio = director_floor_max_ratio_by_movie.get(movie_id, 0.0)
+        if (
+            director_ratio >= DIRECTOR_FLOOR_RATIO_THRESHOLD
+            and shape_score >= DIRECTOR_FLOOR_SHAPE_GATE
+        ):
+            candidate_floors.append(("director", DIRECTOR_FLOOR_MAGNITUDE))
+        applied_floor_value = 0.0
+        applied_floor_source = ""
+        if candidate_floors:
+            best_floor_source, best_floor_value = max(
+                candidate_floors, key=lambda x: x[1]
+            )
+            if best_floor_value > score:
+                # Floor displaces the additive computation only when it
+                # exceeds the current score; otherwise it's recorded as
+                # "available but didn't fire" via the per-floor input
+                # dicts (no diagnostic emit here).
+                score = best_floor_value
+                applied_floor_value = best_floor_value
+                applied_floor_source = best_floor_source
 
         # Studio score is preserved in lane_scores for debug visibility
         # even though it doesn't participate in the additive sum.
@@ -938,6 +1255,10 @@ def _build_results(
                 lane_scores=per_lane,
                 candidate_sources=sources,
                 dominant_lane=dominant,
+                base_score=base_score,
+                multipliers=applied_multipliers,
+                floor_value=applied_floor_value,
+                floor_source=applied_floor_source,
             )
         )
 
@@ -946,6 +1267,8 @@ def _build_results(
         limit=limit,
         anchor_format_bucket=anchor_format_bucket,
         enforce_format_top_lock=enforce_format_top_lock,
+        candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
+        enforce_shorts_cap=apply_shorts,
     )
     ranked = [
         SimilarMovieResult(
@@ -955,6 +1278,10 @@ def _build_results(
                 lane_scores=c.lane_scores,
                 candidate_sources=c.candidate_sources,
                 dominant_lane=c.dominant_lane,
+                base_score=c.base_score,
+                multipliers=dict(c.multipliers),
+                floor_value=c.floor_value,
+                floor_source=c.floor_source,
             ),
         )
         for c in woven
@@ -1019,8 +1346,10 @@ def _weave_candidates(
     limit: int,
     anchor_format_bucket: FormatBucket | None = None,
     enforce_format_top_lock: bool = False,
+    candidate_format_bucket_by_movie: dict[int, FormatBucket] | None = None,
+    enforce_shorts_cap: bool = False,
 ) -> list[_CandidateScore]:
-    """Order candidates with V2 lane-variety + format-lock constraints.
+    """Order candidates with V2 lane-variety + V3 shorts cap constraints.
 
     Top section is built greedily from the score-sorted candidates. The
     first ``TOP_FORMAT_LOCK`` slots only accept candidates sharing the
@@ -1028,9 +1357,16 @@ def _weave_candidates(
     after that, regular dominance/franchise caps apply through slot 10.
     Anything that didn't make the top section is appended in score order
     so callers still receive a full ``limit``-sized list.
+
+    V3 §3.1 ``enforce_shorts_cap``: when set, limits the top section
+    to ``SHORTS_TOP_SECTION_MAX`` (1) short film overall — covers the
+    Toy Story case where V2 let shorts pile up at slots 8/9/10 even
+    though they were locked out of the top 5.
     """
     if not candidates or limit <= 0:
         return []
+
+    candidate_format_bucket_by_movie = candidate_format_bucket_by_movie or {}
 
     base_sorted = sorted(candidates, key=_base_sort_key)
     best_score = base_sorted[0].score
@@ -1038,6 +1374,7 @@ def _weave_candidates(
     deferred: list[_CandidateScore] = []
     dominant_counts: dict[LaneName, int] = {}
     franchise_count = 0
+    shorts_count = 0
     top_section_cap = min(TOP_SECTION_SIZE, limit)
 
     # Single pass: each candidate either enters top, gets deferred to the
@@ -1051,6 +1388,18 @@ def _weave_candidates(
             and anchor_format_bucket is not None
             and len(top) < TOP_FORMAT_LOCK
         )
+        # V3 §3.1: max-1 shorts in the top section when the anchor
+        # isn't a short.
+        is_short_candidate = (
+            candidate_format_bucket_by_movie.get(candidate.movie_id) == "short"
+        )
+        if (
+            enforce_shorts_cap
+            and is_short_candidate
+            and shorts_count >= SHORTS_TOP_SECTION_MAX
+        ):
+            deferred.append(candidate)
+            continue
         if _can_enter_top_section(
             candidate,
             best_score=best_score,
@@ -1064,6 +1413,8 @@ def _weave_candidates(
             )
             if candidate.lane_scores["franchise"] > 0.0:
                 franchise_count += 1
+            if is_short_candidate:
+                shorts_count += 1
         else:
             deferred.append(candidate)
 
@@ -1201,17 +1552,23 @@ async def _run_single_anchor_similarity(
     anchor_studio_company_ids = {entry.company_id for entry in anchor_studio_entries}
     anchor_medium_tags = _medium_tags_for_movie(anchor_row)
     anchor_format_bucket = format_bucket(anchor_row.get("keyword_ids") or ())
+    anchor_themes_traits = _themes_traits_for_movie(anchor_row)
 
-    # Pre-fetches for V2 lane data. Director strengths and franchise
-    # confidence are MV reads; source IDFs use the unified trait-IDF MV
-    # filtered to kind=4. Medium IDFs are loaded lazily once per process
-    # and cached. None of these depend on the candidate pool, so they run
+    # Pre-fetches for V3 lane data. The V2 director_strengths and
+    # franchise_confidence MV reads are retired (V3 §2.1, §2.2); the
+    # auteur set replaces director_strength as the lane gate, and the
+    # franchise structural matrix replaces the consistency check.
+    # Source IDFs use the unified trait-IDF MV filtered to kind=4.
+    # Themes IDFs (V3 §2.3 single-anchor + §2.6 rare-keyword) read the
+    # unified MV at kinds 0/2/3 (overall_keyword / concept_tag /
+    # tmdb_genre). Medium IDFs are loaded lazily once per process and
+    # cached. None of these depend on the candidate pool, so they run
     # in parallel with shape search and the candidate-generation lanes.
-    director_strengths_task = fetch_director_strengths(list(anchor_directors))
-    franchise_confidence_task = fetch_franchise_confidence(list(anchor_lineage))
+    auteur_term_ids_task = fetch_auteur_term_ids()
     source_idf_task = fetch_trait_idfs(
         [(TRAIT_KIND_SOURCE_MATERIAL, t) for t in anchor_source_ids]
     )
+    themes_idf_task = fetch_trait_idfs(list(anchor_themes_traits))
     medium_idf_task = load_medium_idfs()
 
     shape_task = _run_single_anchor_shape_search(
@@ -1242,9 +1599,9 @@ async def _run_single_anchor_similarity(
         studio_candidate_ids,
         source_candidate_ids,
         quality_candidate_ids,
-        director_strengths,
-        franchise_confidence,
+        auteur_term_ids,
         source_idfs_pairs,
+        themes_idfs,
         medium_idfs,
     ) = await asyncio.gather(
         shape_task,
@@ -1253,9 +1610,9 @@ async def _run_single_anchor_similarity(
         studio_task,
         source_task,
         quality_task,
-        director_strengths_task,
-        franchise_confidence_task,
+        auteur_term_ids_task,
         source_idf_task,
+        themes_idf_task,
         medium_idf_task,
     )
 
@@ -1283,31 +1640,21 @@ async def _run_single_anchor_similarity(
         else set()
     )
 
-    # V2 director-signature anchor type — fires when at least one of the
-    # anchor's directors clears the auteur threshold in mv_director_strength.
-    has_director_signature = any(
-        strength >= DIRECTOR_SIGNATURE_STRENGTH_THRESHOLD
-        for strength in director_strengths.values()
-    )
+    # V3 §2.1 director_signature anchor type — fires when at least one
+    # of the anchor's directors is on the curated auteur list.
+    has_director_signature = bool(anchor_directors & auteur_term_ids)
 
-    # V2 franchise confidence: a single anchor lineage clearing both gates
-    # is enough to keep the additive-lane behavior. If no lineage clears
-    # them, the franchise lane drops to a multiplicative nudge to prevent
-    # low-quality direct-to-DVD spinoffs from dominating top results.
-    franchise_high_confidence = any(
-        conf >= FRANCHISE_HIGH_CONF_CONFIDENCE
-        and consist >= FRANCHISE_HIGH_CONF_CONSISTENCY
-        for (conf, consist) in franchise_confidence.values()
-    )
-    franchise_low_confidence = (
-        bool(franchise_candidate_ids - {anchor_id}) and not franchise_high_confidence
-    )
+    # V3 §2.2 franchise_dominant: simplified to "anchor has at least
+    # one lineage_entry_id" (i.e., is part of any franchise). The V2
+    # confidence/consistency gating is retired — the structural matrix
+    # already scales scores by overlap quality so direct-to-DVD
+    # spinoffs can't ride the +0.18 weight bump into the top.
+    is_franchise_anchor = bool(anchor_lineage)
 
     active_anchor_types: list[AnchorType] = ["standard_shape"]
     if quality_bucket in {"cult_garbage", "prestige"}:
         active_anchor_types.append(quality_bucket)  # type: ignore[arg-type]
-    # Suppress franchise_dominant on low-confidence anchors per V2 spec.
-    if franchise_high_confidence:
+    if is_franchise_anchor:
         active_anchor_types.append("franchise_dominant")
     if anchor_studio_entries:
         active_anchor_types.append("studio_lineage")
@@ -1318,7 +1665,7 @@ async def _run_single_anchor_similarity(
 
     raw_lane_weights, lane_weights = _single_anchor_lane_weights(
         active_anchor_types,
-        franchise_low_confidence=franchise_low_confidence,
+        quality_bucket=quality_bucket,
     )
 
     candidate_ids = set(shape_scores)
@@ -1340,24 +1687,20 @@ async def _run_single_anchor_similarity(
     )
 
     # ----- Per-lane scoring -----
-    # Director: V2 auteur prior — score by max director_strength across
-    # shared term IDs. Candidates whose only shared director was filtered
-    # out of the MV (single-film directors) get score 0 since the MV row
-    # is absent.
-    director_scores: dict[int, float] = {}
-    for movie_id, terms in director_candidate_terms.items():
-        if movie_id == anchor_id:
-            continue
-        shared = terms & anchor_directors
-        if not shared:
-            continue
-        strength = max((director_strengths.get(t, 0.0) for t in shared), default=0.0)
-        if strength > 0.0:
-            director_scores[movie_id] = strength
+    # Director: V3 single-anchor — 0.20 absolute contribution iff the
+    # anchor's director is in the auteur set AND the candidate shares
+    # that director. Non-auteur anchors leave the director lane silent
+    # (V3 §2.1: "for non-auteurs, franchise/shape already cover").
+    director_scores = _single_anchor_director_score(
+        director_candidate_terms,
+        anchor_directors,
+        auteur_term_ids,
+    )
 
-    # Franchise: V2 subgroup-gated scoring on the candidate set. Even when
-    # the lane is multiplicative-only (low-confidence), we still compute
-    # the per-candidate score for the multiplier path.
+    # Franchise: V3 §2.2 structural matrix — 5-tier rule on
+    # (lineage match, subgroup overlap, universe overlap). The V2
+    # multiplicative low-confidence path is retired; every hit now
+    # flows through the additive lane.
     raw_franchise_scores = {
         movie_id: _franchise_score_v2(anchor_row, row)
         for movie_id, row in candidate_rows.items()
@@ -1410,18 +1753,52 @@ async def _run_single_anchor_similarity(
                 anchor_medium_tags, candidate_medium
             )
 
-    # Split franchise into additive vs. multiplicative paths based on
-    # confidence. Additive entries land in lane_scores; multiplicative
-    # entries land in low_conf_franchise_score_by_movie.
-    franchise_additive: dict[int, float] = {}
-    low_conf_franchise: dict[int, float] = {}
-    for movie_id, score in raw_franchise_scores.items():
-        if score <= 0.0:
-            continue
-        if franchise_high_confidence:
-            franchise_additive[movie_id] = score
-        else:
-            low_conf_franchise[movie_id] = score
+    # V3 §2.2: every franchise hit goes through the additive lane —
+    # the V2 high/low-confidence split is retired.
+    franchise_additive: dict[int, float] = {
+        movie_id: score
+        for movie_id, score in raw_franchise_scores.items()
+        if score > 0.0
+    }
+
+    # V3 §2.4: country/language multiplier extended to single-anchor.
+    # The anchor's own country tags become the consensus set; a
+    # candidate intersecting them is "match" (×1.05), a candidate with
+    # any country tags but none in common is "mismatch" (×0.75).
+    # Candidates with no country tags get neither boost nor penalty
+    # (preserves the V2 "we can't tell" semantics).
+    country_consensus_match_by_movie = _country_consensus_per_candidate(
+        anchor_country_tags=country_set(_as_int_set(anchor_row.get("keyword_ids"))),
+        candidate_rows=candidate_rows,
+    )
+
+    # V3 §2.3: themes lane extended to single-anchor — anchor's own
+    # trait pool drives the denominator.
+    single_themes_scores = _single_anchor_themes_scores(
+        anchor_traits=anchor_themes_traits,
+        candidate_rows=candidate_rows,
+        idf_lookup=themes_idfs,
+    )
+
+    # V3 §2.6: rare-keyword lane (NEW). Same trait pool as themes; the
+    # difference is per-trait tiered scoring + floor on rare combos.
+    (
+        single_rare_keyword_scores,
+        single_rare_keyword_floor,
+    ) = _single_anchor_rare_keyword_scores(
+        anchor_traits=anchor_themes_traits,
+        candidate_rows=candidate_rows,
+        idf_lookup=themes_idfs,
+    )
+
+    # V3 §3.1 shorts harsh downrank requires per-candidate format
+    # bucket so `_build_results` can multiply combined score by 0.30
+    # for cross-format candidates and `_weave_candidates` can enforce
+    # the max-1 hard cap.
+    candidate_format_bucket_by_movie: dict[int, FormatBucket] = {
+        mid: format_bucket(row.get("keyword_ids") or ())
+        for mid, row in candidate_rows.items()
+    }
 
     lane_scores: dict[LaneName, dict[int, float]] = {
         "shape": shape_scores,
@@ -1433,10 +1810,13 @@ async def _run_single_anchor_similarity(
         "source": {mid: s for mid, s in source_scores.items() if s > 0.0},
         "quality": {mid: s for mid, s in quality_scores.items() if s > 0.0},
         "format": {mid: s for mid, s in format_scores.items() if s > 0.0},
-        # Multi-only lanes stay empty in single-anchor flow.
-        "themes": {},
+        # V3 §2.3: themes lane extended to single-anchor.
+        "themes": single_themes_scores,
+        # Cast / specific_award stay multi-only.
         "cast": {},
         "specific_award": {},
+        # V3 §2.6: rare-keyword lane (NEW) — single-anchor case.
+        "rare_keyword": single_rare_keyword_scores,
     }
 
     ranked, counts = _build_results(
@@ -1446,7 +1826,10 @@ async def _run_single_anchor_similarity(
         limit=limit,
         studio_score_by_movie=studio_scores,
         medium_multiplier_by_movie=medium_multiplier_by_movie,
-        low_conf_franchise_score_by_movie=low_conf_franchise,
+        country_consensus_match_by_movie=country_consensus_match_by_movie,
+        rare_keyword_floor_by_movie=single_rare_keyword_floor,
+        candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
+        anchor_active_format_bucket=anchor_format_bucket,
         anchor_format_bucket=anchor_format_bucket,
         enforce_format_top_lock=True,
     )
@@ -1461,7 +1844,6 @@ async def _run_single_anchor_similarity(
             candidate_counts_by_lane=counts,
             anchor_format_bucket=anchor_format_bucket,
             anchor_medium_tags=sorted(anchor_medium_tags),
-            franchise_high_confidence=franchise_high_confidence,
         ),
     )
 
@@ -1566,9 +1948,21 @@ async def _run_multi_anchor_similarity(
     shape_task = _run_multi_anchor_shape_search(
         anchor_ids, vectors_by_anchor, qdrant_limit=qdrant_limit
     )
+    # V3 §2.1 fires the multi-anchor director lane on EITHER director
+    # cohesion (≥2 anchors share a director) OR auteur presence (any
+    # anchor's director is curated, even with M_d=1). The latter is
+    # what surfaces e.g. Tenet for a 3-anchor cohort where only
+    # Inception is by a curated director — without this, the V3 unified
+    # rule's M_d=1 + auteur path would silently miss because the
+    # candidate-fetching task returned an empty dict.
+    #
+    # `fetch_auteur_term_ids` is module-cached after first call, so
+    # awaiting it here doesn't block the parallel gather meaningfully.
+    auteur_term_ids = await fetch_auteur_term_ids()
+    has_auteur_anchor = bool(director_terms & auteur_term_ids)
     director_task = (
         fetch_director_movie_terms(director_terms)
-        if cohesion_by_lane["director"] > 0.0
+        if (cohesion_by_lane["director"] > 0.0 or has_auteur_anchor)
         else _empty_dict()
     )
     franchise_task = (
@@ -1652,22 +2046,35 @@ async def _run_multi_anchor_similarity(
             mean_pairwise_cosine=mean_pairwise_cosine,
         )
 
-    # V2 raw lane weights. Shape scales with mean cohesion (range
-    # [0.36, 1.20]); metadata lanes scale by their cohesion factor.
+    # V3 raw lane weights. Shape scales with mean cohesion (range
+    # [0.36, 1.20]); proportional metadata lanes scale by their cohesion
+    # factor. Director and rare_keyword are passthrough (raw = absolute
+    # contribution).
+    #
+    # V3 §4.1 quality bucket-conditional weight: the middle bucket gets
+    # half the base weight (0.03 vs 0.06) — V2's 0.06 was over-firing
+    # for prestige-by-2-of-3 cases (Lawrence of Arabia / Citizen Kane
+    # surfacing for Godfather despite no shape adjacency).
     shape_raw = _shape_raw_for_multi_anchor(mean_pairwise_cosine)
+    quality_base = (
+        0.03 if repeated_quality_bucket not in {"cult_garbage", "prestige"} else 0.06
+    )
     raw_lane_weights: dict[LaneName, float] = {
         "shape": shape_raw,
-        "director": 0.12 * cohesion_by_lane["director"],
+        "director": 1.00,                               # passthrough; raw is absolute
         "franchise": 0.12 * cohesion_by_lane["franchise"],
         "studio": 0.06 * cohesion_by_lane["studio"],   # debug-only weight
         "source": 0.04 * cohesion_by_lane["source"],
-        "quality": 0.06 * cohesion_by_lane["quality"],
+        "quality": quality_base * cohesion_by_lane["quality"],
         "format": 0.04 * cohesion_by_lane["format"],
         "themes": 0.06 * cohesion_by_lane["themes"],
-        "cast": 0.03 * cohesion_by_lane["cast"],
+        # Cast weight is finalized after the V3 cast lane runs (it
+        # encodes cohesion explicitly via 0.05 + 0.10 * ratio).
+        "cast": 0.0,
         "specific_award": 0.04 * cohesion_by_lane["specific_award"],
+        "rare_keyword": 1.00,                           # passthrough; raw is absolute
     }
-    lane_weights = _normalize_weights(raw_lane_weights)
+    # `_normalize_weights` is deferred to after cast scoring — see below.
 
     candidate_ids = set(shape_scores)
     candidate_ids.update(director_candidate_terms)
@@ -1700,14 +2107,22 @@ async def _run_multi_anchor_similarity(
         if source_ids and cohesion_by_lane["source"] > 0.0
         else _empty_idf_dict()
     )
-    # Themes IDFs only need entries for the repeated traits (the lane
-    # denominator + numerator only iterate over those). Repeated traits
-    # are already (kind, trait_id) tuples — feed straight into the
-    # batch IDF fetch.
+    # V3 §2.6: rare-keyword scores against the UNION of anchor traits
+    # (any anchor's rare keyword is a valid signal — rare-trait IDFs
+    # don't compound across anchors). Themes scores against the
+    # REPEATED subset only, which is a subset of the union. So we
+    # fetch IDFs for the full union once and feed both lanes.
     themes_repeated = _multi_anchor_themes_repeated(themes_trait_sets)
+    themes_union: set[tuple[int, int]] = set()
+    for trait_set in themes_trait_sets:
+        themes_union |= trait_set
+    # Always fetch the union when any anchor has trait pool entries —
+    # rare-keyword needs the IDFs even when themes cohesion is zero.
+    # Themes scoring still no-ops when `themes_repeated` is empty
+    # because it iterates over `themes_repeated` directly.
     themes_idf_pairs_task = (
-        fetch_trait_idfs(list(themes_repeated))
-        if themes_repeated and cohesion_by_lane["themes"] > 0.0
+        fetch_trait_idfs(list(themes_union))
+        if themes_union
         else _empty_idf_dict()
     )
 
@@ -1735,10 +2150,14 @@ async def _run_multi_anchor_similarity(
     themes_idfs: dict[tuple[int, int], float] = themes_idf_pairs
 
     # ----- Per-lane scoring -----
-    director_scores = _score_multi_trait_count(
+    # V3 §2.1 director: per-shared-director absolute contributions
+    # (curated 0.20-0.30 vs cohesion-only ≤0.10), max-over-d. Also
+    # returns max_ratio per candidate for the §2.1 cohesion floor.
+    director_scores, director_max_ratio = _multi_anchor_director_score(
         candidate_terms=director_candidate_terms,
-        anchor_trait_sets=director_trait_sets,
-        anchor_count=n,
+        anchor_director_sets=director_trait_sets,
+        auteur_term_ids=auteur_term_ids,
+        n=n,
     )
 
     franchise_candidate_traits = {
@@ -1824,12 +2243,34 @@ async def _run_multi_anchor_similarity(
         idf_lookup=themes_idfs,
     )
 
-    # Cast: repetition-count over top-3 billed actors.
-    cast_scores = _score_multi_trait_count(
-        candidate_terms=candidate_cast_by_movie,
-        anchor_trait_sets=cast_trait_sets,
-        anchor_count=n,
+    # V3 §2.5 cast: generic N-anchor bucket-with-floor on shared
+    # top-3 billed leads. Returns per-candidate score, per-candidate
+    # floor, and the cohesion-driven lane weight (0.05 + 0.10 * ratio).
+    (
+        cast_scores,
+        cast_floor_by_movie,
+        cast_lane_weight,
+    ) = _multi_anchor_cast_v3(
+        candidate_top_billing=candidate_cast_by_movie,
+        anchor_top_billing_sets=cast_trait_sets,
+        n=n,
     )
+    raw_lane_weights["cast"] = cast_lane_weight
+
+    # V3 §2.6 rare-keyword: union of anchor trait pools, tiered IDF
+    # additive contributions, plus floor on rare combos / single
+    # super-rare hits.
+    rare_keyword_scores, rare_keyword_floor_by_movie = (
+        _multi_anchor_rare_keyword_scores(
+            anchor_trait_sets=themes_trait_sets,
+            candidate_rows=candidate_rows,
+            idf_lookup=themes_idfs,
+        )
+    )
+
+    # Now finalize the lane weights with the cast lane's cohesion-
+    # derived value. Weights downstream of this point use `lane_weights`.
+    lane_weights = _normalize_weights(raw_lane_weights)
 
     # Specific award: tier-weighted score over repeated tags.
     specific_award_scores = _multi_anchor_specific_award_scores(
@@ -1852,6 +2293,22 @@ async def _run_multi_anchor_similarity(
     # medium in V2.0. Pass an empty multiplier dict so build_results
     # leaves combined_score untouched.
 
+    # V3 §3.1 shorts dominance: when ≥50% of anchors are shorts, the
+    # user is signaling they want shorts. Disable the harsh downrank
+    # in that case (the lane caller passes apply_shorts_downrank=False).
+    short_anchor_count = sum(
+        1
+        for traits in format_trait_sets
+        if "short" in traits
+    )
+    shorts_dominant = (
+        short_anchor_count / max(1, n) >= SHORTS_MULTI_ANCHOR_DOMINANCE_THRESHOLD
+    )
+    candidate_format_bucket_by_movie: dict[int, FormatBucket] = {
+        mid: format_bucket(row.get("keyword_ids") or ())
+        for mid, row in candidate_rows.items()
+    }
+
     lane_scores: dict[LaneName, dict[int, float]] = {
         "shape": shape_scores,
         "director": {mid: s for mid, s in director_scores.items() if s > 0.0},
@@ -1865,6 +2322,7 @@ async def _run_multi_anchor_similarity(
         "specific_award": {
             mid: s for mid, s in specific_award_scores.items() if s > 0.0
         },
+        "rare_keyword": rare_keyword_scores,
     }
 
     ranked, counts = _build_results(
@@ -1874,6 +2332,15 @@ async def _run_multi_anchor_similarity(
         limit=limit,
         studio_score_by_movie=studio_scores,
         country_consensus_match_by_movie=country_consensus_match,
+        rare_keyword_floor_by_movie=rare_keyword_floor_by_movie,
+        cast_floor_by_movie=cast_floor_by_movie,
+        director_floor_max_ratio_by_movie=director_max_ratio,
+        candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
+        anchor_active_format_bucket=(
+            "short" if shorts_dominant else repeated_format_bucket
+        ),
+        apply_shorts_downrank=not shorts_dominant,
+        apply_shorts_boost=shorts_dominant,
         anchor_format_bucket=repeated_format_bucket,
         enforce_format_top_lock=repeated_format_bucket is not None,
     )
@@ -1911,8 +2378,290 @@ async def _run_multi_anchor_similarity(
             anchor_format_bucket=repeated_format_bucket,
             consensus_countries=sorted(consensus_countries, key=str),
             per_anchor_active_anchor_types=per_anchor_active,
+            shorts_dominant=shorts_dominant,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# V3 lane helpers
+# ---------------------------------------------------------------------------
+
+
+def _country_consensus_per_candidate(
+    *,
+    anchor_country_tags: frozenset[int | str],
+    candidate_rows: dict[int, dict],
+) -> dict[int, bool]:
+    """V3 §2.4 single-anchor country/language consensus per candidate.
+
+    Anchor's own country tags become the consensus set. Candidates with
+    ≥1 country in common are "match" → +5%; candidates that DO carry
+    country tags but none in common are "mismatch" → -25%; candidates
+    with no country tags get neither (preserves V2 "we can't tell").
+
+    Returns ``{movie_id: bool}`` where True = match, False = mismatch,
+    absent = no signal. ``_build_results`` reads the same shape that
+    multi-anchor uses.
+    """
+    out: dict[int, bool] = {}
+    if not anchor_country_tags:
+        return out
+    for mid, row in candidate_rows.items():
+        candidate_countries = country_set(row.get("keyword_ids") or ())
+        if not candidate_countries:
+            continue
+        out[mid] = bool(candidate_countries & anchor_country_tags)
+    return out
+
+
+# Themes-lane minimum normalizer denominator. Anchors with a small
+# trait pool (e.g., Barbie at IDF mass 2.5) give very small denominators;
+# this floor prevents any single high-IDF trait from monopolizing the
+# score by dividing by something smaller than itself.
+THEMES_MIN_DENOMINATOR = 1.0
+
+
+def _single_anchor_themes_scores(
+    *,
+    anchor_traits: set[tuple[int, int]],
+    candidate_rows: dict[int, dict],
+    idf_lookup: dict[tuple[int, int], float],
+) -> dict[int, float]:
+    """V3 §2.3 single-anchor themes lane.
+
+    For each candidate, score = sum(IDF for shared traits) / max(
+    THEMES_MIN_DENOMINATOR, sum(IDF for anchor traits)). Same trait
+    pool as multi-anchor themes (concept_tags + non-registry overall
+    keywords + genres, minus country/medium/format).
+
+    Per pre-flight #3, anchors with a small IDF mass (e.g., Barbie at
+    ~2.5) score top candidates well above 0.05 because partial overlap
+    over a small denominator gives meaningful values; the
+    ``THEMES_MIN_DENOMINATOR`` floor keeps the result in [0, 1].
+    """
+    if not anchor_traits:
+        return {}
+    anchor_idf_sum = sum(idf_lookup.get(t, 0.0) for t in anchor_traits)
+    denom = max(THEMES_MIN_DENOMINATOR, anchor_idf_sum)
+    scores: dict[int, float] = {}
+    for mid, row in candidate_rows.items():
+        candidate_traits = _themes_traits_for_movie(row)
+        shared = anchor_traits & candidate_traits
+        if not shared:
+            continue
+        shared_idf = sum(idf_lookup.get(t, 0.0) for t in shared)
+        if shared_idf > 0.0:
+            scores[mid] = _clamp(shared_idf / denom)
+    return scores
+
+
+# V3 §2.6 rare-keyword tiers (IDF thresholds + per-trait coefficients).
+#
+# CALIBRATION NOTE (2026-05-07): the v3 plan's thresholds were sized
+# for raw `log(N/df)` IDFs in roughly [0, 8]. The actual `mv_trait_idf`
+# table normalizes IDFs to ~[0, 1] (max overall_keyword IDF observed
+# is 1.0; only ~5 keywords sit at >=1.0; ~18 at >=0.65). Under the
+# original 2.5/4.5/5.0/7.0 thresholds every trait fell into the LOW
+# tier and the floor never fired — the lane was effectively capped
+# at 0.05 for every candidate. Thresholds below are recalibrated to
+# the observed distribution; per-trait coefficients are scaled up to
+# keep the lane's max contribution comparable to the original design
+# intent (~0.20-0.55 for very-rare-trait candidates).
+RARE_KW_TIER_LOW_MAX = 0.30        # idf < 0.30 → pooled into the low-tier bucket
+RARE_KW_TIER_MODERATE_MAX = 0.55   # 0.30 ≤ idf < 0.55 → moderate per-trait additive
+# idf >= 0.55 → high per-trait additive AND eligible for floor
+RARE_KW_LOW_COEF = 0.05            # low traits collapse to a single ~0.05-cap pool
+RARE_KW_LOW_POOL_CAP = 0.05
+RARE_KW_MODERATE_COEF = 0.10
+RARE_KW_HIGH_COEF = 0.20
+RARE_KW_FLOOR_HIGH_SINGLE = 0.85   # one super-rare trait at idf >= 0.85 triggers floor
+RARE_KW_FLOOR_COMBO_SUM = 1.50     # OR sum of moderate+high tiers ≥ 1.50 triggers floor
+RARE_KW_FLOOR_BASE = 0.40
+RARE_KW_FLOOR_HIGH_INC = 0.05      # +0.05 per high-tier trait
+RARE_KW_FLOOR_CAP = 0.55
+RARE_KW_FLOOR_SHAPE_GATE = 0.30    # candidate's shape must be ≥ 0.30 to apply floor
+
+
+def _rare_keyword_score_for_traits(
+    shared_traits: set[tuple[int, int]],
+    idf_lookup: dict[tuple[int, int], float],
+) -> tuple[float, float]:
+    """Per-candidate rare-keyword (lane_score, floor_value).
+
+    Returns the tiered additive lane score + the floor value (or 0.0
+    if no floor triggers). The lane score is in absolute terms so the
+    "rare_keyword" lane weight is set to passthrough (1.0).
+    """
+    if not shared_traits:
+        return 0.0, 0.0
+    low_pool = 0.0
+    moderate_total = 0.0
+    high_total = 0.0
+    high_count = 0
+    high_max = 0.0
+    moderate_or_high_sum = 0.0
+    for trait in shared_traits:
+        idf = idf_lookup.get(trait, 0.0)
+        if idf <= 0.0:
+            continue
+        if idf < RARE_KW_TIER_LOW_MAX:
+            low_pool += idf * RARE_KW_LOW_COEF
+        elif idf < RARE_KW_TIER_MODERATE_MAX:
+            moderate_total += idf * RARE_KW_MODERATE_COEF
+            moderate_or_high_sum += idf
+        else:
+            high_total += idf * RARE_KW_HIGH_COEF
+            high_count += 1
+            high_max = max(high_max, idf)
+            moderate_or_high_sum += idf
+    lane_score = (
+        moderate_total + high_total + min(RARE_KW_LOW_POOL_CAP, low_pool)
+    )
+    # Floor: triggered by single super-rare hit OR rare combo.
+    floor = 0.0
+    if (
+        high_max >= RARE_KW_FLOOR_HIGH_SINGLE
+        or moderate_or_high_sum >= RARE_KW_FLOOR_COMBO_SUM
+    ):
+        floor = min(
+            RARE_KW_FLOOR_CAP,
+            RARE_KW_FLOOR_BASE + RARE_KW_FLOOR_HIGH_INC * high_count,
+        )
+    return _clamp(lane_score), floor
+
+
+def _single_anchor_rare_keyword_scores(
+    *,
+    anchor_traits: set[tuple[int, int]],
+    candidate_rows: dict[int, dict],
+    idf_lookup: dict[tuple[int, int], float],
+) -> tuple[dict[int, float], dict[int, float]]:
+    """V3 §2.6 single-anchor rare-keyword scoring.
+
+    Returns (lane_scores, floor_by_movie) — floor application is
+    deferred to ``_build_results`` so the shape gate runs against the
+    final shape score. Trait pool reuses the themes-lane builder
+    (`_themes_traits_for_movie`) so the same exclusions apply.
+    """
+    if not anchor_traits:
+        return {}, {}
+    lane_scores: dict[int, float] = {}
+    floor_by_movie: dict[int, float] = {}
+    for mid, row in candidate_rows.items():
+        candidate_traits = _themes_traits_for_movie(row)
+        shared = anchor_traits & candidate_traits
+        if not shared:
+            continue
+        score, floor = _rare_keyword_score_for_traits(shared, idf_lookup)
+        if score > 0.0:
+            lane_scores[mid] = score
+        if floor > 0.0:
+            floor_by_movie[mid] = floor
+    return lane_scores, floor_by_movie
+
+
+def _multi_anchor_rare_keyword_scores(
+    *,
+    anchor_trait_sets: list[set[tuple[int, int]]],
+    candidate_rows: dict[int, dict],
+    idf_lookup: dict[tuple[int, int], float],
+) -> tuple[dict[int, float], dict[int, float]]:
+    """V3 §2.6 multi-anchor rare-keyword scoring.
+
+    Per-candidate score / floor are computed against the **union** of
+    all anchor trait sets — matching any anchor's rare keyword is
+    sufficient signal, and rare-trait IDFs don't compound across
+    anchors (a film about the Manhattan Project is a candidate for a
+    Manhattan-Project-ish anchor regardless of how many anchors
+    independently mentioned it). This keeps the lane consistent
+    with the cohesion-floor semantics of director / cast where
+    cohesion gates the *floor* but not the per-trait contribution.
+    """
+    union_anchor_traits: set[tuple[int, int]] = set()
+    for traits in anchor_trait_sets:
+        union_anchor_traits |= traits
+    return _single_anchor_rare_keyword_scores(
+        anchor_traits=union_anchor_traits,
+        candidate_rows=candidate_rows,
+        idf_lookup=idf_lookup,
+    )
+
+
+# V3 §2.5 cast bucket-with-floor parameters.
+CAST_LANE_WEIGHT_BASE = 0.05       # silent component — pooled into 0.05 weight
+CAST_LANE_WEIGHT_RATIO = 0.10      # max weight = 0.05 + 0.10 = 0.15 at full cohesion
+CAST_FLOOR_RATIO_THRESHOLD = 0.5
+CAST_FLOOR_BASE = 0.25
+CAST_FLOOR_RATIO_INC = 0.20        # max floor = 0.25 + 0.20 = 0.45
+CAST_FLOOR_SHAPE_GATE = 0.30
+
+
+def _multi_anchor_cast_v3(
+    *,
+    candidate_top_billing: dict[int, set[int]],
+    anchor_top_billing_sets: list[set[int]],
+    n: int,
+) -> tuple[dict[int, float], dict[int, float], float]:
+    """V3 §2.5 cast scoring with bucket-with-floor.
+
+    Returns ``(per_candidate_lane_score, per_candidate_floor, lane_weight)``.
+
+    ``M_a`` = number of anchors with actor a in top-3 billing.
+    ``shared_leads`` = {actors with M_a >= 2}.
+    ``max_M`` = max(M_a). ``ratio = max_M / N``.
+
+    Per candidate:
+      - matches = |candidate.top_3_billing ∩ shared_leads|
+      - lane_score = matches / |shared_leads|     (in [0,1])
+      - floor = 0.25 + 0.20 * ratio if ratio ≥ 0.5 AND candidate matched ≥1 lead
+
+    The lane_weight is shared across candidates (a function of cohesion
+    only, not the candidate). It's returned alongside the per-candidate
+    dicts so the caller can pass it through `_normalize_weights`.
+    """
+    # No shared leads → lane is silent. Return weight 0.0 (not the
+    # CAST_LANE_WEIGHT_BASE) so the lane doesn't dilute other lanes'
+    # normalized weights via the `_normalize_weights` denominator. V2
+    # behavior was strict gating; V3 keeps that behavior in the
+    # no-cohesion case.
+    if n <= 0 or not anchor_top_billing_sets:
+        return {}, {}, 0.0
+    # Compute M_a for each actor.
+    m_per_actor: dict[int, int] = {}
+    for billing in anchor_top_billing_sets:
+        for actor in billing:
+            m_per_actor[actor] = m_per_actor.get(actor, 0) + 1
+    shared_leads = {a for a, m in m_per_actor.items() if m >= 2}
+    if not shared_leads:
+        return {}, {}, 0.0
+    max_m = max(m_per_actor[a] for a in shared_leads)
+    ratio = max_m / n
+    lane_weight = CAST_LANE_WEIGHT_BASE + CAST_LANE_WEIGHT_RATIO * ratio
+    floor_value = (
+        CAST_FLOOR_BASE + CAST_FLOOR_RATIO_INC * ratio
+        if ratio >= CAST_FLOOR_RATIO_THRESHOLD
+        else 0.0
+    )
+    lane_scores: dict[int, float] = {}
+    floor_by_movie: dict[int, float] = {}
+    for mid, billing in candidate_top_billing.items():
+        if not billing:
+            continue
+        matches = len(billing & shared_leads)
+        if matches == 0:
+            continue
+        lane_scores[mid] = _clamp(matches / len(shared_leads))
+        if floor_value > 0.0:
+            floor_by_movie[mid] = floor_value
+    return lane_scores, floor_by_movie, lane_weight
+
+
+# V3 §3.1 shorts harsh downrank.
+SHORTS_DOWNRANK_MULTIPLIER = 0.30
+SHORTS_TOP_SECTION_MAX = 1          # max shorts in top 10 when anchor isn't a short
+SHORTS_MULTI_ANCHOR_BOOST = 1.10    # multi-anchor with shorts dominance — boost shorts
+SHORTS_MULTI_ANCHOR_DOMINANCE_THRESHOLD = 0.5  # ratio of short anchors to fire boost
 
 
 def _score_multi_trait_count(
