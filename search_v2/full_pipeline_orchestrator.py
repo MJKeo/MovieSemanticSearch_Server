@@ -79,6 +79,10 @@ from search_v2.stage_4_execution import (
     BranchRankedResults,
     execute_branches,
 )
+from search_v2.similar_movies import (
+    SimilarMoviesSearchResult,
+    run_similarity_search,
+)
 from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
 from search_v2.step_2 import run_step_2
@@ -200,6 +204,8 @@ class FullPipelineResult:
     step1_error: str | None
     exact_title_flow_executed: bool
     similarity_flow_executed: bool
+    similarity_result: SimilarMoviesSearchResult | None = None
+    similarity_error: str | None = None
     branches: list[Step2BranchResult] = field(default_factory=list)
     # Endpoint specs not attached to any trait — global fetches that
     # apply to the full result set rather than scoring a single trait.
@@ -874,6 +880,8 @@ async def run_full_pipeline(
             step1_error=None,
             exact_title_flow_executed=False,
             similarity_flow_executed=False,
+            similarity_result=None,
+            similarity_error=None,
             branches=branch_list,
             auxiliary_endpoint_specs=auxiliary,
             branch_results=branch_results,
@@ -914,6 +922,21 @@ async def run_full_pipeline(
         step0_response.similarity_flow_data.should_be_searched
     )
 
+    similarity_result: SimilarMoviesSearchResult | None = None
+    similarity_error: str | None = None
+    if similarity_flow_executed:
+        try:
+            similarity_result = await run_similarity_search(
+                step0_response.similarity_flow_data
+            )
+        except Exception as exc:  # noqa: BLE001 — non-standard side flow soft-fail
+            logger.error(
+                "similarity flow execution failed; continuing standard flow "
+                "when present (error=%r)",
+                exc,
+            )
+            similarity_error = repr(exc)
+
     # Standard flow — plan branches per the budget rule and run them
     # in parallel with per-branch error isolation.
     branch_plan = _plan_step2_branches(step0_response, step1_response, query)
@@ -940,6 +963,8 @@ async def run_full_pipeline(
         step1_error=step1_error,
         exact_title_flow_executed=exact_title_flow_executed,
         similarity_flow_executed=similarity_flow_executed,
+        similarity_result=similarity_result,
+        similarity_error=similarity_error,
         branches=branches,
         auxiliary_endpoint_specs=auxiliary,
         branch_results=branch_results,

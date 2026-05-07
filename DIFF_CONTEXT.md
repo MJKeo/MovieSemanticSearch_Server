@@ -1230,3 +1230,99 @@ Files: search_v2/stage_4_execution.py, run_orchestrator.py
 Why: The CLI runner only showed each trait's signed weighted contribution as a single column. When a trait routes through multiple categories (positive trait_score = max over per-category combine_calls), we couldn't see which category drove it without re-running the pipeline mentally. User asked for the full per-trait + per-category view on the top 25.
 Approach: Added a `CategoryScore` dataclass (category_name, combine_type, score) and extended `TraitContribution` with `trait_score`, `weight`, and `category_scores`. `_score_positive_trait` now also returns `dict[mid → list[CategoryScore]]` collected during the same loop that already computed combine_calls per category — no extra work in the hot path. Threaded the per-category map through Phase D's `_TraitPayload` 5-tuple to `_finalize_scores`, which writes it into the per-trait breakdown. Negative traits pass an empty dict because their gate × fuzzy formula partitions calls cross-category, so a per-category score is not well-defined; the trait-level contribution is still displayed. Replaced the markdown table in `run_orchestrator.py` with a per-result block: header line with final/boost/pos/neg/title, indented trait line per contribution, double-indented bullet per category.
 Testing notes: ast/import smoke passed. No tests touched per test-boundary rule. Live verification deferred to user run.
+
+## Add per-endpoint score breakdown to score tree
+Files: search_v2/stage_4_execution.py, run_orchestrator.py
+Why: Per-trait + per-category was helpful but cut off above the call layer. Couldn't see which endpoint inside a category drove its combine_calls fold. User wants the whole scoring tree visible, including per-endpoint scores and the human-language ask (expressions + retrieval_intent) attached to each category.
+Approach: Added `EndpointScore` dataclass (route, score) and extended `CategoryScore` with `expressions`, `retrieval_intent`, and `endpoint_scores`. `_score_positive_trait` now keeps `(spec, scores_map)` pairs in `live_cats` instead of bare maps so per-mid extraction can label each call by route in the same loop that already feeds combine_calls. Added `CategoryCallWithEndpoints` to the TYPE_CHECKING block since live_cats now references it. run_orchestrator.py now prints a four-level tree: result header → trait → category (with expressions + retrieval_intent + cat_score) → endpoint (route + score). Per-endpoint and per-category rows are populated for positive traits only (negatives' gate × fuzzy is cross-category).
+Testing notes: ast/import smoke passed. No tests touched per test-boundary rule.
+
+## Standalone similar-movies search flow
+Files: search_v2/similar_movies.py, search_v2/similar_studio_registry.py, db/postgres.py, search_v2/run_step_0.py, search_v2/full_pipeline_orchestrator.py, search_v2/test_similar_movies.ipynb
+
+### Intent
+Implement the separate "movies like X" flow from `search_improvement_planning/similar_movies.md` without changing the standard Stage-4 search/reranking path. Supports both direct TMDB-anchor debugging and Step-0 similarity routing.
+
+### Key Decisions
+- Added `run_similar_movies_for_ids()` and `run_similarity_search()` in a new standalone module. Candidate generation is lane-based: shape, director, franchise, studio, source, and quality.
+- Shape lane queries Qdrant directly with existing named vectors, alias, and `QDRANT_SEARCH_PARAMS`. Single-anchor search uses each anchor vector; multi-anchor search builds normalized centroid vectors and cohesion-weighted space weights. Final merged shape scores are max-normalized so the documented weave thresholds operate on a true lane scale.
+- Metadata lanes use new narrow bulk Postgres helpers only. No tracker fallback: source similarity uses `movie_card.source_material_type_ids`; studio similarity uses curated normalized production-company strings resolved through `lex.production_company`.
+- Middle-bucket anchors set quality raw weight to zero and renormalize. Cult/prestige anchors activate quality scoring with the formulas from the planning doc.
+- Step-0 similarity routing now executes the standalone flow in both `search_v2.run_step_0` and `run_full_pipeline` as a side result. Standard branch planning and Stage-4 scoring are unchanged.
+
+### Testing Notes
+Compile/import smoke passed for new and touched modules. Notebook JSON loads. Live smoke checks ran against local Postgres/Qdrant for Inception, a Nolan multi-anchor set, Star Wars/franchise, Oppenheimer/prestige, Sharknado/cult-ish, and `python -m search_v2.run_step_0 "movies like Inception"`; all returned lane-labeled results and lane weights summed to 1.0. Per repo test-boundary rule, no `unit_tests/` files were read, edited, or run.
+
+## Similar-movies batch runner and smoke report
+Files: search_v2/run_similar_movies_batch.py, search_v2/similar_movies.py, search_v2/similar_movies_batch_results.json, search_v2/similar_movies_batch_results.md
+
+Why: User wanted a reusable Python module that can run the suggested TMDB anchor set directly and show the actual similar-movies outputs instead of only describing expected examples.
+Approach: Added a CLI module with a broad default anchor list, configurable `--ids` and `--limit`, and JSON/Markdown report writers. The runner opens the Postgres pool, executes the standalone similarity flow for each anchor, bulk-fetches display cards, and prints lane-labeled compact tables. Also clamped direct Qdrant similarity scores to `1.0` before local lane normalization to tolerate small numeric overshoots without changing shared scoring helpers or the main search path.
+Testing notes: `uv run python -m py_compile search_v2/similar_movies.py search_v2/run_similar_movies_batch.py` passed. Live run `uv run python -m search_v2.run_similar_movies_batch --limit 5` completed for the full default anchor set and wrote both report files. No `unit_tests/` files were read, edited, or run.
+
+## V2 production medium registry + V2 similar-movies materialized views
+Files: search_v2/production_medium_registry.py, db/init/01_create_postgres_tables.sql, db/postgres.py, movie_ingestion/final_ingestion/ingest_movie.py
+
+### Intent
+Lay down the data-layer prerequisites for the V2 similar-movies redesign in `search_improvement_planning/similar_movies.md` before touching any lane code: a shared production-medium similarity table importable by `search_v2/similar_movies.py`, plus three new materialized views that back the V2 director auteur prior, franchise confidence prior, and IDF-over-traits lanes (source / themes / medium). No V2 lane code is wired up yet — this round only populates the lookups and refreshes them on ingest.
+
+### Key Decisions
+- New module `search_v2/production_medium_registry.py` mirrors the existing `similar_studio_registry.py` convention (top-level frozenset + dicts, no class wrapping). Keys reference `OverallKeyword.<member>.keyword_id` instead of hardcoded ints so an enum rename surfaces at import time. Exposes `MEDIUM_TAG_IDS`, `MEDIUM_SIMILARITY` (8x8 symmetric table verbatim from the spec), and a single `medium_score(anchor_tags, candidate_tags)` helper that returns the max similarity across anchor x candidate pairs (per spec: parent ANIMATION absorbs sub-type differences). The multiplier formula `0.85 + 0.15 * score` lives in lane code, not in the registry.
+- Three new MVs in `public.*` matching the existing `mv_popularity_percentile` schema: `mv_director_strength` (per-director percentile-rank of 0.8*pop + 0.2*recep, restricted to directors with >= 2 films), `mv_franchise_confidence` (per-lineage confidence + consistency, where consistency is `1 - clamp(2*stddev, 0, 1)` and single-film franchises get 1.0), and a unified `mv_trait_idf` covering all four trait families (overall_keyword / concept_tag / tmdb_genre / source_material) with a SMALLINT `trait_kind` discriminator. IDF normalized as `log(N/df) / log(N)` so values stay in `[0, 1]` regardless of catalog size.
+- Chose a single unified trait-IDF MV over four per-source MVs (decided in plan-mode AskUserQuestion). Avoids duplicate aggregation passes over `movie_card`; lane code reads with a `trait_kind` filter. The medium-IDF retrieval gate becomes a filtered subset of trait_kind=1 (no separate medium MV).
+- Three refresh helpers in `db/postgres.py`, all using `_execute_write` and `REFRESH MATERIALIZED VIEW CONCURRENTLY` with the existing pattern. Added `TRAIT_KIND_*` constants in the same module to keep Python and SQL discriminator values in lockstep.
+- Refresh order in `ingest_movie.py` post-ingest block: phase 1 unchanged (lex DFs + popularity), phase 2 adds `refresh_director_strength` + `refresh_franchise_confidence` (both depend on freshly-rebuilt `mv_popularity_percentile`), phase 3 adds `refresh_trait_idf` (independent but kept serial for simple failure semantics).
+
+### Planning Context
+Design decisions come from the V2 spec finalized earlier in the same session. Plan file at `/Users/michaelkeohane/.claude/plans/dapper-dazzling-rabbit.md` records the four AskUserQuestion answers (all 5 MVs, unified trait-IDF shape, `1 - clamp(2*stddev, 0, 1)` consistency formula, new file under `search_v2/`).
+
+### Testing Notes
+No lane code consumes any of these MVs yet, so live verification is limited to:
+  1. Re-running `db/init/01_create_postgres_tables.sql` against a Postgres instance (DDL is idempotent via `IF NOT EXISTS`).
+  2. Calling each refresh helper from a Python REPL and confirming no errors.
+  3. Spot-checking populated values (top-strength directors should be recognizable auteurs; LotR/MCU lineages should land high-confidence + high-consistency; common traits like DRAMA collapse to near-zero IDF while rare ones like FOLK_HORROR sit near 1.0).
+Per the test-boundaries rule, no `unit_tests/` files were read, edited, or run.
+
+## V2 similar-movies full lane rework
+Files: db/postgres.py, search_v2/similar_movies.py, search_v2/format_registry.py, search_v2/country_language_registry.py, search_v2/award_taxonomy.py, search_v2/production_medium_registry.py, search_v2/run_similar_movies_batch.py
+
+### Intent
+Complete the V2 redesign from `search_improvement_planning/similar_movies.md` by wiring every remaining lane change into the live similar-movies flow. Single-anchor and multi-anchor paths now use V2 vector base weights, IDF source/themes lanes, multiplicative studio/medium/low-confidence-franchise multipliers, auteur-prior director lane, unified always-on quality lane, format lane with top-5 weaving constraint, country/language coherence multiplier, top-3 cast lane, specific-award taxonomy lane, and a low-cohesion fallback for chaotic anchor sets.
+
+### Key Decisions
+- New per-flow vector weight maps (`VECTOR_BASE_WEIGHTS_SINGLE` raises narrative_techniques and lowers production per V2 spec; multi keeps the V1 tiered set since cohesion does the heavy lifting). Tier groupings are gone.
+- `LaneName` extended with `format`, `themes`, `cast`, `specific_award`. Studio kept in `LaneName` for debug visibility but excluded from `ADDITIVE_LANES` — V2 makes studio a multiplier on shape-qualifying candidates (`shape >= 0.60` → `*= 1 + 0.10 * studio_score`). The `studio_lineage` anchor type stays as a flag with no weight delta.
+- `_apply_post_weight_multipliers` semantics live inline in `_build_results` (one call site, kept readable). Multipliers stack in order: studio → low-confidence-franchise → country/language → medium. Worst-case stack: `1.10 * 1.10 * 1.10 * 1.0 ≈ 1.33`. Documented in code comment.
+- Franchise lane splits on confidence: high-confidence lineages (`confidence >= 0.65 AND consistency >= 0.6`) run additively with the V1 `franchise_dominant` adjustment; low-confidence lineages drop to a multiplicative path with shape gate 0.55 and the anchor-type adjustment is suppressed. Per-anchor `franchise_high_confidence: bool` is threaded through `_single_anchor_lane_weights`.
+- Source lane (single + multi) uses `max(idf(t in shared))` against `mv_trait_idf` filtered to `trait_kind=4`. Multi-anchor extends `_score_multi_trait_count` with an optional `weight_fn` so per-anchor matches contribute `max idf of shared types` rather than a constant 1.0. Source anchor adjustment dropped from V1 +0.14 to V2 +0.08 because IDF already discounts common types.
+- Quality lane is always-on with bucket-specific formulas: cult_garbage (`0.40*low_recep + 0.50*pop_match + 0.10*razzie`), prestige (`0.80*high_recep + 0.20*pop_or_award + 0.20*non_razzie`), middle (`0.80*pop + 0.20*recep`). Replaced `fetch_similarity_award_prestige_scores` with `fetch_similarity_award_signals` returning a `SimilarityAwardSignals` dataclass that carries both razzie and non-razzie signals in one query.
+- Director lane uses `mv_director_strength` for the per-director auteur prior; new `director_signature` anchor type fires when any anchor director clears strength >= 0.80 (Tarantino, Nolan, Scorsese, Spielberg, Miyazaki, etc.).
+- Format lane: binary same-bucket score plus a top-5 weaving lock (`enforce_format_top_lock` parameter) — top 5 entries must share the anchor format bucket; positions 6+ may include cross-format. Multi-anchor enforces this only when ≥2 anchors share a bucket. Also dropped V1's `weak_studio_source_count` weaving rule since studio is no longer dominant.
+- Themes lane (multi-only): IDF-mass-share over the union of `keyword_ids - country - medium - format` ∪ `concept_tag_ids` ∪ `genre_ids`, restricted to traits repeated by ≥2 anchors. Trait-kind discriminator threaded into the IDF fetch via `_multi_anchor_themes_repeated`.
+- Specific-award lane (multi-only): three-tier scoring on `movie_awards.category_tag_ids` with a specificity discount on cohesion (L0 fully specific, L1 = 0.6, L2 = 0.3) and tier-weighted candidate scoring (L0=1.00, L1=0.50, L2=0.20). New `search_v2/award_taxonomy.py` derives the level from the numeric ID range so no enum lookup is needed.
+- Low-cohesion fallback: when `mean_pairwise_cosine < 0.35 AND every metadata cohesion < 1.0`, fall back to round-robin per-anchor single-anchor results with `limit = ceil(target * 1.2 / N)` per anchor. UI presents results identically; debug payload sets `low_cohesion_fallback_used = True`.
+- Selective rare-medium retrieval: anchor medium tags with `idf >= 0.50` (excluding LIVE_ACTION) trigger `fetch_movie_ids_by_overall_keywords` to seed additional candidates so e.g. a stop-motion anchor surfaces other stop-motion films. Medium IDFs lazy-loaded once per process via `load_medium_idfs()` in `production_medium_registry.py`.
+- New data-layer fetchers in `db/postgres.py`: `fetch_director_strengths`, `fetch_franchise_confidence`, `fetch_trait_idfs`, `fetch_movie_ids_by_overall_keywords`, `fetch_similarity_top_billed_cast`, `fetch_similarity_award_category_tags`, `fetch_similarity_award_signals`. Extended `fetch_similarity_signal_rows` to include `keyword_ids`, `concept_tag_ids`, `genre_ids`, `runtime_minutes`. Old `fetch_similarity_award_prestige_scores` deleted (sole caller updated).
+- New registries: `search_v2/format_registry.py` (bucket priority: mockumentary > performance > news > tv_format > short > documentary > narrative_feature), `search_v2/country_language_registry.py` (30 nation/language `OverallKeyword` IDs + `US_DEFAULT` fallback), `search_v2/award_taxonomy.py` (level + tier weights). All registries derive keys from `OverallKeyword.<member>.keyword_id` so an enum rename surfaces at import time.
+- `SimilarMoviesDebug` extended with V2 audit fields: `anchor_format_bucket`, `anchor_medium_tags`, `franchise_high_confidence`, `consensus_countries`, `low_cohesion_fallback_used`, `per_anchor_active_anchor_types`. None of these fields participate in scoring; they're for diagnosing centroid drift and similar failures.
+- `LANES` constant renamed to `ALL_LANES` (added `ADDITIVE_LANES` alongside). Updated `run_similar_movies_batch.py` to import the new name.
+
+### Planning Context
+Plan at `/Users/michaelkeohane/.claude/plans/dapper-dazzling-rabbit.md`. Four AskUserQuestion answers fed into the design: studio kept as debug flag (not removed), multi-anchor batch runner uses ID-count-based dispatch (no flag needed), multi-anchor source lane upgraded to IDF-weighted, Razzie data unified into `fetch_similarity_award_signals` rather than a parallel fetcher.
+
+### Testing Notes
+Live single-anchor smoke confirmed end-to-end: Inception (director_signature active, top match Tenet via Nolan strength), LotR Fellowship (top 5 = Hobbit + LotR sequels with full lineage, studio=New Line, source=novel IDF 0.20), Pulp Fiction (Reservoir Dogs at top via Tarantino prior). Live multi-anchor smoke: LotR trilogy (shape_raw = 1.20 max from cohesion ≈ 0.97; top 4 are franchise sequels), Best Picture trio (specific_award lane firing strongly across L0 BEST_PICTURE matches), Korean trio (consensus_countries = {106 KOREAN}; +10% boost for matching candidates), Stephen King trio (source IDF 0.20 only — no longer dominating; themes lane carries the horror signal). Low-cohesion fallback gate verified to NOT fire on partially-cohesive sets (Toy Story + Godfather + Sharknado share THRILLER → themes_cohesion ≥ 1.0 → fallback correctly suppressed). No `unit_tests/` files were read, edited, or run.
+
+## Review fixes for V2 similar-movies
+Files: search_v2/similar_movies.py, db/postgres.py
+
+### Intent
+Address three findings from the post-implementation review of the V2 lane rework: one high-severity bug (themes lane conflated trait IDs across families), one efficiency issue (anchor cast/award fetched in a separate await before the main gather), and one type-correctness cleanup (`fetch_trait_idfs` parameter array type).
+
+### Key Decisions
+- Kind-namespaced themes lane traits: `_themes_traits_for_movie` now returns `set[tuple[int, int]]` of `(kind, trait_id)` pairs. The `Genre.HORROR.genre_id = 14` / `OverallKeyword.BASEBALL.keyword_id = 14` collision (and many like it across the keyword/concept/genre families) was producing wrong cohesion counts and wrong IDF lookups in the multi-anchor themes lane. `_multi_anchor_themes_repeated` simplified — no more disambiguation step needed since the kind is on the key. `themes_idfs` flatten step removed; the IDF fetch result already carries `(kind, trait_id)` tuples.
+- Anchor cast / award fetches folded into the main multi-anchor `asyncio.gather`. Cast/specific_award cohesion is now computed AFTER that gather (the only consumer is `raw_lane_weights`, which doesn't need to exist before the candidate-generation tasks fire). Saves one round-trip on the critical path. Smaller candidate-lane tasks still gate on the sync cohesion derived from anchor_rows alone.
+- `fetch_trait_idfs` parameter array changed from `bigint[]` to `int[]`. The MV's `trait_id` column is INT (every UNION branch yields INT[] elements), so `int[]` is the correct width. Postgres was auto-widening before, but the type pun was confusing.
+
+### Testing Notes
+Live verification: LotR trilogy still surfaces sequels at top with `cast_cohesion = 2.0` and `specific_award_cohesion = 2.0` (max amplification). Single-anchor Inception unchanged. `fetch_trait_idfs` direct call returns the expected (kind, trait_id, idf) rows across all four kinds — `bigint[]` was working via Postgres auto-widening, the change to `int[]` is type-correctness only.

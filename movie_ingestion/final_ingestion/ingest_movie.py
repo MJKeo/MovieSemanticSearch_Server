@@ -88,6 +88,9 @@ from db.postgres import (
     refresh_franchise_token_doc_frequency,
     refresh_award_name_token_doc_frequency,
     refresh_movie_popularity_scores,
+    refresh_director_strength,
+    refresh_franchise_confidence,
+    refresh_trait_idf,
     fetch_movie_ids_missing_card,
 )
 
@@ -1683,13 +1686,21 @@ async def cmd_ingest(
                 f"| Cumulative: {cumulative_ingested:,} ingested, {cumulative_failed:,} failed, {cumulative_filtered:,} filtered"
             )
 
-        # Post-ingestion: refresh materialized views
+        # Post-ingestion: refresh materialized views.
         if cumulative_ingested > 0:
             print("\nRefreshing materialized views...")
+            # Phase 1: lex token DFs and popularity (independent of each other).
             await refresh_studio_token_doc_frequency()
             await refresh_franchise_token_doc_frequency()
             await refresh_award_name_token_doc_frequency()
             await refresh_movie_popularity_scores()
+            # Phase 2: V2 similar-movies MVs that JOIN mv_popularity_percentile —
+            # must run AFTER refresh_movie_popularity_scores().
+            await refresh_director_strength()
+            await refresh_franchise_confidence()
+            # Phase 3: trait-IDF (independent of phase 2; only needs movie_card
+            # to be final, which it is by this point in the post-ingest block).
+            await refresh_trait_idf()
             print("Materialized views refreshed.")
 
     finally:

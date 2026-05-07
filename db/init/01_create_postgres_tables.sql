@@ -456,3 +456,156 @@ GROUP BY token;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_award_name_token_df_token
   ON lex.award_name_token_doc_frequency (token);
+
+-- =============================================================================
+-- V2 similar-movies materialized views
+-- =============================================================================
+-- These three MVs back the V2 lanes defined in
+-- search_improvement_planning/similar_movies.md (director auteur prior,
+-- franchise confidence prior, IDF over source-material/themes/medium traits).
+-- All three are refreshed CONCURRENTLY in the post-ingest block of
+-- movie_ingestion/final_ingestion/ingest_movie.py — requires the UNIQUE
+-- indexes below. Director and franchise MVs JOIN public.mv_popularity_percentile
+-- and so must be refreshed AFTER refresh_movie_popularity_scores().
+
+-- Per-director auteur strength. Aggregates a director's filmography (via
+-- the lex.inv_director_postings inverted index) into mean popularity and
+-- mean reception, blends 0.8/0.2, then percentile-ranks across all
+-- directors with >= 2 films. Directors with a single film are excluded:
+-- a single film is the anchor itself, so there are no other films to
+-- match through the director lane. The V2 director_signature anchor type
+-- triggers when director_strength >= 0.80.
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_director_strength AS
+WITH director_films AS (
+  SELECT
+    p.term_id,
+    mc.movie_id,
+    COALESCE(mc.reception_score, 0)::FLOAT / 100.0 AS recep_norm,
+    COALESCE(pop.percentile, 0)::FLOAT             AS pop_pct
+  FROM lex.inv_director_postings p
+  JOIN public.movie_card mc                     ON mc.movie_id = p.movie_id
+  LEFT JOIN public.mv_popularity_percentile pop ON pop.movie_id = p.movie_id
+),
+per_director AS (
+  SELECT
+    term_id,
+    COUNT(*)                                       AS film_count,
+    AVG(pop_pct)                                   AS mean_pop_pct,
+    AVG(recep_norm)                                AS mean_recep,
+    0.8 * AVG(pop_pct) + 0.2 * AVG(recep_norm)     AS raw_strength
+  FROM director_films
+  GROUP BY term_id
+  HAVING COUNT(*) >= 2
+)
+SELECT
+  term_id,
+  film_count,
+  mean_pop_pct,
+  mean_recep,
+  raw_strength,
+  PERCENT_RANK() OVER (ORDER BY raw_strength) AS director_strength,
+  now() AS updated_at
+FROM per_director;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_director_strength_term
+  ON public.mv_director_strength (term_id);
+
+-- Per-franchise confidence and consistency. Confidence is the mean
+-- 0.8*popularity + 0.2*reception across the lineage's films; consistency
+-- is 1 - clamp(2*stddev, 0, 1) so single-film franchises score 1.0
+-- (no spread to measure) and high-variance lineages drop toward 0.
+-- The V2 franchise lane uses these two values to gate between additive
+-- exposure (high confidence + high consistency) and a small multiplicative
+-- nudge (low confidence — multi-quality IPs like Barbie).
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_franchise_confidence AS
+WITH franchise_films AS (
+  SELECT
+    lineage_entry_id,
+    mc.movie_id,
+    0.8 * COALESCE(pop.percentile, 0)::FLOAT
+      + 0.2 * COALESCE(mc.reception_score, 0)::FLOAT / 100.0 AS strength_score
+  -- Explicit CROSS JOIN LATERAL is required so the LEFT JOIN below binds
+  -- to (movie_card, unnest) as a single FROM-clause unit. Comma-joined
+  -- LATERAL + LEFT JOIN parses as the LEFT JOIN binding only to the
+  -- LATERAL alias, which loses visibility of mc in the ON clause.
+  FROM public.movie_card mc
+  CROSS JOIN LATERAL UNNEST(mc.lineage_entry_ids) AS lineage_entry_id
+  LEFT JOIN public.mv_popularity_percentile pop ON pop.movie_id = mc.movie_id
+  WHERE mc.lineage_entry_ids IS NOT NULL
+    AND array_length(mc.lineage_entry_ids, 1) > 0
+)
+SELECT
+  lineage_entry_id,
+  COUNT(*) AS film_count,
+  AVG(strength_score) AS franchise_confidence,
+  CASE
+    WHEN COUNT(*) < 2 THEN 1.0
+    ELSE 1.0 - LEAST(1.0, GREATEST(0.0, 2.0 * STDDEV_SAMP(strength_score)))
+  END AS franchise_consistency,
+  now() AS updated_at
+FROM franchise_films
+GROUP BY lineage_entry_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_franchise_confidence_lineage
+  ON public.mv_franchise_confidence (lineage_entry_id);
+
+-- Unified trait-IDF MV covering four trait families: OverallKeyword,
+-- concept tag, TMDB genre, and source material type. trait_kind is a
+-- small discriminator (1=overall_keyword, 2=concept_tag, 3=tmdb_genre,
+-- 4=source_material) — kept in sync with the TRAIT_KIND_* constants in
+-- db/postgres.py. IDF is normalized log(N/df)/log(N) so values stay in
+-- [0, 1] regardless of catalog size, and rare traits sit near 1.0 while
+-- common traits like DRAMA/COMEDY collapse toward 0. Lane code reads
+-- this MV with a trait_kind filter — the V2 themes lane uses kinds
+-- 1/2/3, the source lane uses kind 4, and the medium-IDF retrieval
+-- gate uses kind 1 filtered to MEDIUM_TAG_IDS.
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_trait_idf AS
+WITH catalog_size AS (
+  SELECT COUNT(*)::FLOAT AS n FROM public.movie_card
+),
+overall_kw AS (
+  SELECT 1::SMALLINT AS trait_kind, kw AS trait_id, COUNT(DISTINCT movie_id)::BIGINT AS df
+  FROM public.movie_card, LATERAL UNNEST(keyword_ids) AS kw
+  WHERE keyword_ids IS NOT NULL AND array_length(keyword_ids, 1) > 0
+  GROUP BY kw
+),
+concept AS (
+  SELECT 2::SMALLINT AS trait_kind, ct AS trait_id, COUNT(DISTINCT movie_id)::BIGINT AS df
+  FROM public.movie_card, LATERAL UNNEST(concept_tag_ids) AS ct
+  WHERE concept_tag_ids IS NOT NULL AND array_length(concept_tag_ids, 1) > 0
+  GROUP BY ct
+),
+genre AS (
+  SELECT 3::SMALLINT AS trait_kind, g AS trait_id, COUNT(DISTINCT movie_id)::BIGINT AS df
+  FROM public.movie_card, LATERAL UNNEST(genre_ids) AS g
+  WHERE genre_ids IS NOT NULL AND array_length(genre_ids, 1) > 0
+  GROUP BY g
+),
+source_mat AS (
+  SELECT 4::SMALLINT AS trait_kind, s AS trait_id, COUNT(DISTINCT movie_id)::BIGINT AS df
+  FROM public.movie_card, LATERAL UNNEST(source_material_type_ids) AS s
+  WHERE source_material_type_ids IS NOT NULL AND array_length(source_material_type_ids, 1) > 0
+  GROUP BY s
+),
+unioned AS (
+  SELECT * FROM overall_kw
+  UNION ALL SELECT * FROM concept
+  UNION ALL SELECT * FROM genre
+  UNION ALL SELECT * FROM source_mat
+)
+SELECT
+  u.trait_kind,
+  u.trait_id,
+  u.df,
+  -- Normalized IDF: log(N/df) / log(N). Guards against ln(N)=0 when N<=1
+  -- (empty/near-empty catalog) and df=0 (defensive — UNNEST shouldn't
+  -- produce zero-frequency rows but the CASE keeps the expression total).
+  CASE
+    WHEN c.n <= 1 OR u.df = 0 THEN 0.0
+    ELSE LN(c.n / u.df::FLOAT) / LN(c.n)
+  END AS idf,
+  now() AS updated_at
+FROM unioned u, catalog_size c;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_trait_idf_kind_id
+  ON public.mv_trait_idf (trait_kind, trait_id);

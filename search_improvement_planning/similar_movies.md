@@ -558,3 +558,647 @@ These were considered and rejected for this flow:
 - **Cult signal robustness.** Without critic-vs-audience data, how reliably can reception-vs-popularity distinguish true cult films from mainstream guilty pleasures? Current thresholds are `reception_score <= 45` and `mv_popularity_percentile.percentile >= 0.89`, but vector matching is expected to carry the slack.
 - **Studio/company curation validation.** Validate the current high/moderate studio list and era windows against catalog examples and search-result quality.
 - **Multi-anchor cohesion validation.** Validate the current vector and metadata cohesion mappings against known coherent and incoherent anchor sets.
+
+---
+
+# V2 Planned Changes
+
+V2 is a structural rework triggered by analysis of V1 output across 20 single-anchor + 12 multi-anchor test cases. Failure patterns: source lane false positives (Stephen King, heist), franchise lane swamping tone-mismatched candidates (Barbie, single-anchor LotR), studio lane creating exposure for low-shape on-brand noise (Get Out, Pulp Fiction), middle-bucket anchors getting no quality signal (Inception, Titanic, Oppenheimer), and shape getting crowded out of multi-anchor cohesive sets (LotR trilogy where shape weight dropped to 0.43 despite vector cohesion of ~0.96).
+
+## V2 Vector-Space Weights
+
+Drop the tier groupings. Single-anchor and multi-anchor get separate base profiles.
+
+**Single-anchor base weights:**
+
+```text
+plot_analysis:        1.00
+viewer_experience:    1.00
+watch_context:        0.75
+narrative_techniques: 0.55
+reception:            0.55
+dense_anchor:         0.45
+production:           0.30
+plot_events:          0.25
+```
+
+Rationale: keep `plot_analysis` and `viewer_experience` anchored. Raise `narrative_techniques` (storytelling-style binds Tarantino, Nolan). Lower `production` (it locks Titanic to ship-disasters and Oppenheimer to atomic-subject docs). Keep `plot_events` lowest.
+
+**Multi-anchor base weights (unchanged from V1):**
+
+```text
+plot_analysis:        1.00
+viewer_experience:    1.00
+watch_context:        0.65
+production:           0.65
+reception:            0.65
+dense_anchor:         0.65
+narrative_techniques: 0.35
+plot_events:          0.35
+```
+
+Multi-anchor keeps the original tiered base because cohesion does the heavy lifting and the V1 results on cohesive sets (Pixar, Ghibli, war films, Tarantino) were already strong.
+
+## V2 Shape Lane Scaling (Multi-Anchor)
+
+In V1 the shape lane raw weight was constant at `0.60` while metadata lanes could grow to `0.12 * 2.0 = 0.24` each via the log cohesion multiplier. With four maxed-out metadata lanes, shape's normalized weight could drop from 0.60 to 0.43 even when vector cohesion was near-perfect — a directional asymmetry that crowded out shape exactly when it was most reliable.
+
+V2 fix: shape scales with an expanded cohesion measure that can both boost shape on coherent sets and penalize it on incoherent ones.
+
+```text
+# Per-space cohesion_weight stays clamped to [0.10, 1.00] for vector-space mixing
+# (negative weights inside the shape mix don't make sense). For shape lane scaling
+# we use a separate measure with an expanded lower bound.
+
+mean_pairwise_cosine        = mean(avg_pairwise_cosine across active spaces)
+shape_cohesion_signal       = clamp((mean_pairwise_cosine - 0.55) / 0.30, -0.40, 1.00)
+shape_raw                   = 0.60 * (1 + shape_cohesion_signal)         # range [0.36, 1.20]
+```
+
+Reference points:
+- `mean_pairwise_cosine = 0.55` → signal = 0.0, shape_raw = 0.60 (V1 default).
+- `mean_pairwise_cosine = 0.85` → signal = 1.0, shape_raw = 1.20 (LotR trilogy ≈ here).
+- `mean_pairwise_cosine = 0.43` → signal = -0.40, shape_raw = 0.36 (chaotic mixed bag ≈ here).
+
+Penalizing shape when anchors disagree is desirable: the centroid is in noise and shape's output should be down-weighted before metadata lanes pick up whatever signal still exists. The low-cohesion fallback below catches the worst cases entirely; the expanded range handles the messy middle.
+
+## V2 Source Lane (Inverse-Frequency Weighting)
+
+Source-material-type matching is the most broken lane in V1: any two novel-based movies share `novel` as a source type and get a full 1.0 source score, contributing meaningfully to combined score and surfacing irrelevant matches (Stephen King horror trio returning generic novel-based horror; heist trio returning unrelated thrillers via shared book sources).
+
+V2 replaces binary matching with IDF over source-material-types:
+
+```text
+# Computed once at startup from a materialized view of trait frequencies.
+idf(trait) = log(N / df(trait)) / log(N)              # normalized to [0, 1]
+
+source_score = max(idf(t) for t in shared_traits)      # max, not sum
+```
+
+Common types like `novel` collapse to ~0.20 contribution; rare types (`video_game`, `fairy_tale`, `stage_play`, `comic_book`) stay near 1.0. Use `max` over shared traits so a single rare match dominates and two common-tag overlaps don't add up to a high score.
+
+Lane base weight stays at `0.04`. The `source_material` anchor adjustment drops from `+0.14` to `+0.08`.
+
+## V2 Studio Lane (Multiplicative)
+
+V1 studio lane created exposure for on-brand but low-shape candidates (Oculus and Hush surfacing for Get Out via shared Blumhouse). Even with the `shape_score >= 0.55` floor, once a candidate cleared the floor, the studio additive contribution pushed it above better non-studio shape matches.
+
+V2 makes studio multiplicative on shape-qualifying candidates instead of an independent additive lane:
+
+```text
+if studio_match and shape_score >= 0.60:
+    combined_score *= 1.0 + 0.10 * studio_score
+```
+
+Studio is removed from the additive lane sum entirely. The `studio_lineage` anchor type stays as a flag for debug visibility but stops adjusting lane weights.
+
+## V2 Director Lane (Auteur Prior + Optional Anchor Type)
+
+V1 used binary 1.0 director matching, which over-credited matches on obscure directors and under-credited matches on auteurs whose name carries strong meaning. V2 replaces that with a per-director auteur prior, then introduces an optional `director_signature` anchor type.
+
+**Director strength materialized view:**
+
+```text
+For each director_term_id with >= 2 films in the catalog:
+  mean_pop_pct  = mean(mv_popularity_percentile across director's films)
+  mean_recep    = mean(reception_score / 100 across director's films)
+  raw_strength  = 0.8 * mean_pop_pct + 0.2 * mean_recep
+
+director_strength = percentile_rank(raw_strength) across all qualifying directors    # [0, 1]
+```
+
+Directors with only one cataloged film are excluded from the percentile-rank pool and never receive a director-lane match (a single film is the anchor itself; there are no other candidates to match through this lane). View refresh follows the daily ingestion cadence already in place — no separate schedule needed.
+
+**Director lane score:**
+
+```text
+director_score = director_strength               # if anchor and candidate share director
+                                                 # else 0
+```
+
+**`director_signature` anchor type (new):**
+
+Active when the anchor's director has `director_strength >= 0.80`.
+
+```text
+director_signature:
+  director += 0.10
+  shape    -= 0.04
+```
+
+Multiple anchor types can stack as today. The 0.80 threshold restricts the anchor type to genuine top-tier auteurs (Tarantino, Nolan, Scorsese, Spielberg, Miyazaki, the Coens, Anderson, etc.) rather than any above-median director.
+
+## V2 Franchise Lane (Subgroup Gating + Confidence Prior)
+
+V1 franchise lane treated all lineage edges equally and let subgroup-only matches (e.g., "Original Star Wars Trilogy" subgroup, generic franchise subgroups) ride at full 1.0. Combined with the franchise_dominant boost, this caused the Barbie failure (direct-to-DVD Barbie kids' films dominating top 5) and the LotR-single failure (only Hobbit films, no fantasy adjacency).
+
+**Step 1 — Subgroup gating:**
+
+```text
+score = 1.00   if anchor_lineage ∩ candidate_lineage
+score = 1.00   if anchor_subgroup ∩ candidate_subgroup
+                  AND (anchor_universe ∩ candidate_universe
+                       OR anchor_lineage ∩ candidate_lineage)
+score = 0.85   if anchor_universe ∩ candidate_universe
+score = 0.40   if anchor_subgroup ∩ candidate_subgroup     # subgroup-only fallback
+score = 0.00   otherwise
+```
+
+**Step 2 — Franchise confidence materialized view** (per lineage_entry_id, refresh nightly):
+
+```text
+franchise_confidence  = 0.8 * mean(popularity_percentile)
+                      + 0.2 * mean(reception_score / 100)
+franchise_consistency = 1 - normalized_stddev(0.8*pop + 0.2*recep)
+```
+
+**Step 3 — Confidence-driven behavior:**
+
+```text
+if franchise_confidence >= 0.65 and franchise_consistency >= 0.6:
+    # High-confidence franchises (LotR, MCU pre-2019, Pixar):
+    # additive lane as today, with raised shape gate.
+    additive_contribution = lane_weight[franchise] * franchise_score
+    shape_gate            = 0.45        # raised from 0.35 in V1
+
+else:
+    # Low-confidence franchises (Barbie, mixed-quality IPs):
+    # multiplicative on shape, no additive lane contribution.
+    if shape_score >= 0.55:
+        combined_score *= 1.0 + 0.10 * franchise_score
+```
+
+`franchise_dominant` anchor adjustment stays at `franchise +0.18, shape -0.08` for high-confidence franchises only. Low-confidence franchises do not trigger the anchor adjustment.
+
+## V2 Quality Lane (Unified Three-Mode + Awards)
+
+V1 quality lane was inactive for middle-bucket anchors (the largest segment), giving Inception, Interstellar, Pulp Fiction, Get Out etc. no reception-aware tie-breaking. V2 unifies all three modes into a single quality lane with bucket-specific scoring.
+
+**Bucket detection (unchanged from V1):**
+
+- `cult_garbage`: `reception_score <= 45` AND `popularity_percentile >= 0.89`
+- `prestige`: `reception_score >= 85` AND `popularity_percentile >= 0.75`
+- `middle`: everything else
+
+**Per-bucket score formulas:**
+
+```text
+cult_garbage:
+  quality_score =
+      0.40 * low_reception_match        # clamp((50 - reception)/30, 0, 1)
+    + 0.50 * popularity_match           # clamp((pop_pct - 0.75)/0.20, 0, 1)
+    + 0.10 * razzie_match               # 1.0 if any Razzie nom/win else 0
+
+prestige:
+  quality_score =
+      0.80 * high_reception_match       # clamp((reception - 75)/20, 0, 1)
+    + 0.20 * (popularity_or_award)
+  + 0.20 * non_razzie_award_match    # additive (clamped to <= 1.0)
+
+middle:
+  quality_score =
+      0.80 * popularity_percentile
+    + 0.20 * (reception_score / 100)
+```
+
+`non_razzie_award_match`: `1.0` for major non-Razzie win, `0.75` for nomination, `0.0` otherwise. `popularity_or_award`: `max(clamp((pop_pct - 0.50)/0.30, 0, 1), award_match)`.
+
+**Lane weight per bucket:**
+
+```text
+base quality lane weight: 0.06
+prestige     anchor adjustment: quality +0.16, shape -0.06    # unchanged
+cult_garbage anchor adjustment: quality +0.26, shape -0.10    # unchanged
+middle       anchor adjustment: none — runs at base 0.06 (tunable down to 0.04 in testing)
+```
+
+For middle bucket the lane is now always active as a soft notability prior, without dominating shape.
+
+**Multi-anchor award handling:** if multiple anchors share a specific award ceremony win/nomination, treat the ceremony as a metadata trait so existing metadata-cohesion logic boosts candidates that won that ceremony. Single-anchor uses the per-bucket formula only (no specific-ceremony preference).
+
+## V2 Production Medium (Single-Anchor Only — New Multiplier + Selective Retrieval)
+
+**Scope:** Single-anchor flow only for V2.0. Multi-anchor medium handling is left for the multi-anchor themes work below; in the meantime, multi-anchor candidates are not scored or filtered by medium.
+
+Production medium is a shape-shaping attribute (animated vs live-action affects every other vector dimension). V2 treats it as a multiplier on combined score using a curated similarity table — not pure IDF — because mediums are not equally distant from each other (animation sub-types are closer to each other than to live-action, and the parent ANIMATION tag should match all animated sub-types).
+
+**Complete production-medium tag list** (from `OverallKeyword`):
+
+```text
+Pure-medium tags:
+  ANIMATION              (#8)    #  6,010 movies — parent / generic animation
+  COMPUTER_ANIMATION     (#32)   #    792 movies
+  HAND_DRAWN_ANIMATION   (#83)   #  1,591 movies
+  STOP_MOTION_ANIMATION  (#185)  #    222 movies
+  LIVE_ACTION            (#226)  # ~95% of catalog (auto-stamped complement of ANIMATION)
+
+Animation cross-cuts (imply ANIMATION but mark a sub-style or audience):
+  ANIME                  (#9)    #    929 movies — Japanese animation tradition
+  ADULT_ANIMATION        (#3)    #    751 movies — animation for adults
+  HOLIDAY_ANIMATION      (#92)   #    121 movies — animation, holiday-themed
+```
+
+**Anchor and candidate medium sets:**
+
+For each movie, collect every applicable medium tag from the list above. An adult Pixar-style film could have `{ANIMATION, COMPUTER_ANIMATION, ADULT_ANIMATION}`. Coraline would have `{ANIMATION, STOP_MOTION_ANIMATION}`. A live-action drama would have `{LIVE_ACTION}`.
+
+**Medium similarity table** (lookup by `[anchor_tag][candidate_tag]`):
+
+```text
+                    LIVE   ANIM   CG     HD     STOP   ANIME  ADULT  HOLIDAY
+LIVE_ACTION         1.00   0.00   0.00   0.00   0.00   0.00   0.00   0.00
+ANIMATION           0.00   1.00   0.90   0.90   0.90   0.90   0.95   0.90
+COMPUTER_ANIMATION  0.00   0.90   1.00   0.60   0.50   0.55   0.85   0.85
+HAND_DRAWN_ANIM     0.00   0.90   0.60   1.00   0.65   0.85   0.85   0.85
+STOP_MOTION_ANIM    0.00   0.90   0.50   0.65   1.00   0.55   0.80   0.80
+ANIME               0.00   0.90   0.55   0.85   0.55   1.00   0.80   0.70
+ADULT_ANIMATION     0.00   0.95   0.85   0.85   0.80   0.80   1.00   0.55
+HOLIDAY_ANIMATION   0.00   0.90   0.85   0.85   0.80   0.70   0.55   1.00
+```
+
+Symmetric. ANIMATION (parent) is treated as an "any-animation matches" row: a candidate that's hand-drawn anime still scores 0.90 vs. an ANIMATION-only anchor, because the parent tag carries the "this is animated" signal without specifying technique.
+
+LIVE_ACTION matches only LIVE_ACTION at 1.0 and is 0 against everything animated — animated and live-action are categorically different watching experiences.
+
+**Medium score:**
+
+```text
+medium_score = max(
+    table[a_tag][c_tag]
+    for a_tag in anchor_medium_tags
+    for c_tag in candidate_medium_tags
+)
+```
+
+Taking max across all anchor × candidate pairs lets the parent ANIMATION tag absorb sub-type differences (per user direction: don't over-index on the most specific tag).
+
+**Score multiplier:**
+
+```text
+medium_multiplier = 0.85 + 0.15 * medium_score          # range [0.85, 1.00]
+combined_score *= medium_multiplier
+```
+
+A perfect medium match leaves combined score unchanged; full mismatch (live-action anchor vs. animation candidate) drops it by 15%. Cross-medium-but-related (CG anchor vs. stop-motion candidate, score 0.50) gets a partial penalty (multiplier ≈ 0.925).
+
+**Selective candidate retrieval** (rare-medium recall repair):
+
+If the anchor has at least one medium tag with `medium_idf >= 0.50` (i.e., COMPUTER_ANIMATION, HAND_DRAWN_ANIMATION, STOP_MOTION_ANIMATION, ANIME, ADULT_ANIMATION, HOLIDAY_ANIMATION, or ANIMATION-as-rarest), add candidates sharing that tag as a retrieval lane in addition to scoring. This ensures stop-motion anchors surface other stop-motion films from the catalog even if their vectors don't cluster nearby.
+
+For LIVE_ACTION-only anchors, no candidate-retrieval expansion happens — live action is the catalog default and adding all live-action films as candidates would explode the pool with no signal.
+
+**Medium IDF table** (precomputed once at startup, used for the retrieval gate):
+
+```text
+medium_idf(LIVE_ACTION)            ≈ 0.04
+medium_idf(ANIMATION)              ≈ 0.27
+medium_idf(ANIME)                  ≈ 0.42
+medium_idf(ADULT_ANIMATION)        ≈ 0.43
+medium_idf(HAND_DRAWN_ANIMATION)   ≈ 0.37
+medium_idf(COMPUTER_ANIMATION)     ≈ 0.43
+medium_idf(HOLIDAY_ANIMATION)      ≈ 0.55
+medium_idf(STOP_MOTION_ANIMATION)  ≈ 0.54
+```
+
+Approximate values assuming a ~150K catalog and the per-tag counts above; actual values come from the runtime IDF computation.
+
+## V2 Format Lane (Single-Anchor Only — New Metadata Lane)
+
+**Scope:** Single-anchor flow only for V2.0. Multi-anchor format handling is folded into the multi-anchor themes work below; in the meantime, multi-anchor candidates are not gated or scored by format bucket.
+
+Format (documentary vs short vs narrative feature vs performance) gets its own metadata lane plus weaving rules. Top of the result list stays format-coherent for clear user expectations; tail can mix formats for discovery.
+
+**Format taxonomy:**
+
+```text
+documentary:
+  DOCUMENTARY                          (#52)   # 7,909
+  CRIME_DOCUMENTARY                    (#41)   #   243
+  FAITH_AND_SPIRITUALITY_DOCUMENTARY   (#61)   #    86
+  FOOD_DOCUMENTARY                     (#72)   #    50
+  HISTORY_DOCUMENTARY                  (#90)   #    81
+  MILITARY_DOCUMENTARY                 (#116)  #    63
+  MUSIC_DOCUMENTARY                    (#122)  #   478
+  NATURE_DOCUMENTARY                   (#125)  #   100
+  POLITICAL_DOCUMENTARY                (#134)  #    84
+  SCIENCE_AND_TECHNOLOGY_DOCUMENTARY   (#158)  #    52
+  SPORTS_DOCUMENTARY                   (#179)  #   182
+  TRAVEL_DOCUMENTARY                   (#209)  #    66
+  DOCUDRAMA                            (#51)   #   703  — dramatized doc
+  TRUE_CRIME                           (#210)  #   832  — usually doc-style
+
+mockumentary:
+  MOCKUMENTARY                         (#117)  #    80
+
+short:
+  SHORT                                (#163)  # 5,646
+
+performance:
+  CONCERT                              (#33)   #    86
+  STAND_UP                             (#181)  #   123
+
+news:
+  NEWS                                 (#126)  #   172
+
+tv_format (sparse — group together for completeness):
+  REALITY_TV                           (#147)  #    11
+  PARANORMAL_REALITY_TV                (#129)  #     1
+  BUSINESS_REALITY_TV                  (#24)   #     1
+  GAME_SHOW                            (#76)   #     1
+  TALK_SHOW                            (#195)  #     3
+  SOAP_OPERA                           (#172)  #     1
+  SITCOM                               (#167)  #    11
+  COOKING_COMPETITION                  (#36)   #     1
+  SKETCH_COMEDY                        (#168)  #    77
+
+narrative_feature (default):
+  No format tag from any group above — implicit category covering the bulk of the catalog.
+```
+
+A movie is bucketed into the most specific group present in its tags, with priority: `mockumentary > performance > news > tv_format > short > documentary > narrative_feature`. (Mockumentary takes priority over documentary because the conventions are documentary-style but the experience is fictional.)
+
+**Format lane score:**
+
+```text
+format_score = 1.0  if anchor_format_bucket == candidate_format_bucket
+             = 0.0  otherwise
+```
+
+**Lane weights:**
+
+```text
+single-anchor base: 0.04
+multi-anchor base:  0.04 (subject to existing log cohesion multiplier when anchors share a non-default format)
+```
+
+No per-anchor-type adjustment. The lane is always scored; its impact depends on weight.
+
+**Weaving rules** (applied during top-section assembly):
+
+- Top 5 results MUST share the anchor's format bucket.
+- Positions 6–10 may include cross-format candidates that survived scoring.
+- For multi-anchor: top 5 must share the format bucket repeated by ≥ 2 anchors. If anchors disagree (no repeated bucket), drop the top-5 constraint entirely and let combined score decide.
+
+This handles the Oppenheimer / Barbie failure modes: documentary candidates can still appear in positions 6–10 (so a user discovering "I might also like the Oppenheimer biographical doc" still sees it), but they can't crowd out the actual film's narrative-feature adjacents from the top of the page.
+
+## V2 Themes Lane (Multi-Anchor Only)
+
+A new metadata lane that captures the **shared semantic profile** of an anchor set: keywords, concept tags, and genres that recur across anchors. Vectors blur category boundaries; an explicit lane on these discrete traits gives the multi-anchor flow a way to lock onto specific shared signals (heist, war epic, dark fantasy, slow-burn psychological horror) without depending on the centroid landing in the right neighborhood.
+
+Skipped for single-anchor: the anchor's own traits are already encoded by vectors plus the new medium and format signals; adding themes there would double-count without solving a known failure case.
+
+**Trait sources:**
+
+```text
+overall_keywords  (~225 tags from OverallKeyword,
+                   minus the 30 country/language tags handled separately
+                   by the country/language coherence multiplier below)
+concept_tags      (25 binary tags from concept_tags)      — narrow & specific
+tmdb_genres       (~20 broad genres on movie_card)        — broad
+```
+
+All three sources are concatenated into one trait pool per movie. Combining them into a single lane avoids triple-counting overlapping signals (`HORROR` shows up as both a `tmdb_genre` and an `overall_keyword`); the IDF step below handles cardinality imbalance automatically.
+
+Country/language tags (KOREAN, FRENCH, JAPANESE, HINDI, etc. — the 30 nation/tradition tags in `OverallKeyword`) are pulled out of the themes pool and handled by the dedicated multiplier below, so they get a stronger fixed effect than IDF would naturally assign.
+
+**Anchor-set repeated traits:**
+
+```text
+repeated_traits = {
+  trait
+  for trait in union(anchor_traits)
+  if count(anchor_traits where trait in anchor) >= 2
+}
+```
+
+Only traits appearing in at least 2 anchors qualify. Singletons are dropped — they're per-anchor identity, not shared signal.
+
+**Candidate score:**
+
+```text
+shared        = candidate_traits ∩ repeated_traits
+score_numer   = sum(idf(t) for t in shared)
+score_denom   = sum(idf(t) for t in repeated_traits)
+themes_score  = score_numer / score_denom    if score_denom > 0 else 0
+```
+
+IDF uses the same `log(N/df) / log(N)` formula as the source lane. Common tags (`DRAMA` at 56,798 movies, `COMEDY` at 33,054, `THRILLER` at 23,577) get near-zero weight; niche tags (`FOLK_HORROR`, `KAIJU`, `CYBERPUNK`, `SAMURAI`) carry the actual signal.
+
+**Lane weight:**
+
+```text
+base weight: 0.06    # slightly above source/format because it's broader and integrative
+
+# Existing multi-anchor metadata-cohesion mechanism applies:
+themes_cohesion = 2 * log1p(9 * max_trait_repetition_ratio) / log1p(9)
+themes_raw      = 0.06 * themes_cohesion
+```
+
+When all anchors share many repeated traits → high cohesion → meaningful lane weight. When few or no traits repeat → cohesion → 0 → lane drops out automatically. This gives the "doesn't dominate unless other lanes are also weak" property without a special activation rule.
+
+**Active anchor type:** none. The lane is purely cohesion-driven.
+
+**Effect on the V1 multi-anchor failures:**
+
+- Best Picture trio (Godfather/Schindler/12YS): repeated traits like `DRAMA`, `HISTORY`, `BIOGRAPHY`, `EPIC` combined with prestige-tier concept tags pull mafia/historical-American adjacents (Goodfellas, There Will Be Blood) back up against the Holocaust-pulled centroid.
+- Heist trio: repeated `HEIST`, `CRIME`, `THRILLER`, `CAPER` lock in actual heist films vs. adjacent crime thrillers.
+- Stephen King trio: repeated `HORROR`, `SUPERNATURAL_HORROR`, `PSYCHOLOGICAL_HORROR` plus relevant concept tags carry the signal that source-material IDF alone can't (since "novel" was the only repeated source type).
+- Chaotic mixed bag: no traits repeat → themes_cohesion = 0 → lane drops out → low-cohesion fallback handles the case.
+
+## V2 Country / Language Coherence (Multi-Anchor Only)
+
+A multi-anchor multiplier on combined score that pins results to the same national/linguistic tradition as the anchor set. Vectors capture this weakly; an explicit signal prevents Bollywood matches from surfacing for an American-classics anchor set, or US matches drowning out Korean cinema for a Korean-cinema anchor set.
+
+**Country/language taxonomy:**
+
+The 30 nation/tradition tags from `OverallKeyword`:
+
+```text
+ARABIC, BENGALI, CANTONESE, DANISH, DUTCH, FILIPINO, FINNISH, FRENCH,
+GERMAN, GREEK, HINDI, ITALIAN, JAPANESE, KANNADA, KOREAN, MALAYALAM,
+MANDARIN, MARATHI, NORWEGIAN, PERSIAN, PORTUGUESE, PUNJABI, RUSSIAN,
+SPANISH, SWEDISH, TAMIL, TELUGU, THAI, TURKISH, URDU
+```
+
+Plus a synthetic `US_DEFAULT` bucket for any movie carrying none of these tags (covers ~75-80% of the catalog: US/UK/Canadian/Australian English-language productions). Treating this as a real bucket (rather than "no signal") is what gives the "boost American films when anchors are American" behavior: candidates with no country tag are explicitly checked against the anchor consensus.
+
+**Per-movie country set:**
+
+```text
+country_set(movie) = movie.country_language_tags  if non-empty
+                   = {US_DEFAULT}                  otherwise
+```
+
+A film carrying multiple country/language tags (e.g., a French-Italian co-production with both `FRENCH` and `ITALIAN`) keeps both — match if anchor and candidate share any.
+
+**Consensus detection:**
+
+```text
+country_repetition_count(c) = number of anchors with c in country_set(anchor)
+consensus_countries         = {c : country_repetition_count(c) >= 2}
+```
+
+If no country/language is shared by ≥ 2 anchors, the multiplier is inactive (anchors are too cosmopolitan to call a tradition).
+
+**Multiplier:**
+
+```text
+if consensus_countries:
+    if candidate_country_set ∩ consensus_countries:
+        combined_score *= 1.10        # candidate matches consensus
+    else:
+        combined_score *= 0.85        # candidate is outside consensus tradition
+```
+
+Three American classics → consensus = `{US_DEFAULT}` → US/UK/Canadian candidates get +10%, Bollywood/Korean/etc. get -15%. Three Korean cinema picks → consensus = `{KOREAN}` → Korean candidates get +10%, US candidates get -15%. Mixed set (one French, one Korean, one US) → no consensus → multiplier inactive.
+
+The multiplier is intentionally smaller than the medium multiplier (0.85 vs. 0.85 floor for both, but country/language tops out at 1.10 instead of 1.00) so it shapes the result list without overwhelming shape-driven adjacency.
+
+## V2 Cast Lane (Multi-Anchor Only)
+
+A small new metadata lane based on top-3-billed cast overlap. Single-anchor cast matching was rightly rejected (DiCaprio in Titanic isn't "like Inception"), but for multi-anchor, repeated cast across 2+ anchors is diagnostic — three Tom Hanks dramas, two Frances McDormand prestige pictures, three Jackie Chan vehicles all carry real shared identity.
+
+**Per-anchor traits:**
+
+```text
+top_3_cast_ids = top 3 cast member IDs by billing position from movie_card
+```
+
+Top 3 only; deeper billing positions create noise (a third-billed lead is meaningful; a tenth-billed character actor is not). Implementation note: verify `movie_card` has cast member IDs ordered by billing — if not, plumb that ordering during the cast-lane data extraction step.
+
+**Lane scoring (uses the existing repetition-count formula):**
+
+```text
+candidate_cast_score = matched_anchor_count_for_lane / anchor_count
+```
+
+Same shape as the existing director/franchise/source/quality lanes. A candidate appearing in all 3 anchors' top-3 cast lists scores 1.0; a candidate in 1 of 3 scores 0.33.
+
+**Lane weight:**
+
+```text
+base weight: 0.03    # small — gets amplified by cohesion when cast is the strongest signal
+
+cast_cohesion = 2 * log1p(9 * max_cast_repetition_ratio) / log1p(9)
+cast_raw      = 0.03 * cast_cohesion
+```
+
+The intentionally-small base weight is the user's design: cast should be a small contribution in normal cases (where it overlaps with the obvious shape adjacency) but get amplified to a real signal when the anchor set's strongest cohesion is repeated cast members. The standard log multiplier handles that amplification automatically.
+
+**Active anchor type:** none. Pure cohesion-driven.
+
+## V2 Specific-Award Lane (Multi-Anchor Only)
+
+The existing quality lane buckets anchors as `cult_garbage` / `prestige` / `middle` but can't distinguish "all three won Best Picture" from "all three are well-reviewed crowd-pleasers." A new lane on `movie_awards.category_tag_ids` captures the specific accolade profile shared across anchors — Best Picture cohort vs. Acting cohort vs. festival-jury cohort vs. Razzie cohort.
+
+The lane leans on the three-level taxonomy already in `category_tag_ids`:
+
+```text
+L0 (leaves, ids 1..62)        — specific concepts (LEAD_ACTOR, BEST_PICTURE_DRAMA, WORST_DIRECTOR)
+L1 (mids, ids 100..199)       — meaningful rollups (LEAD_ACTING covers actor + actress;
+                                 BEST_PICTURE_ANY covers all picture genre splits)
+L2 (groups, ids 10000..10006) — seven top-level buckets
+                                 (ACTING, DIRECTING, WRITING, PICTURE, CRAFT, RAZZIE,
+                                  FESTIVAL_OR_TRIBUTE)
+```
+
+Every award row already stores leaf + ancestors, so an anchor's full tag pool is just the union of `category_tag_ids` across all its award rows. Three anchors that won Best Actor + Best Actress + Best Supporting Actor share `LEAD_ACTING` (L1) and `ACTING` (L2) but not any L0 leaf — the lane should still recognize that as a meaningful acting-cohort signal, just less strongly than three exact `BEST_PICTURE` matches.
+
+**Per-anchor traits:**
+
+```text
+anchor_award_tags(i) = union of category_tag_ids from all award rows for anchor i
+                       (wins and nominations lumped together for V2.0;
+                        win-vs-nomination split deferred until results show
+                        nominee-only matches riding through inappropriately)
+```
+
+**Most-specific repeating level:**
+
+```text
+counts          = {tag_id : count(anchors containing tag_id)}
+repeated_tags   = {tag_id : counts[tag_id] >= 2}
+
+if no repeated_tags:
+    lane drops out (cohesion = 0)
+else:
+    most_specific_level = min(tag.level for tag in repeated_tags)
+```
+
+**Lane cohesion (with specificity discount):**
+
+```text
+specificity_factor = {0: 1.0, 1: 0.6, 2: 0.3}[most_specific_level]
+best_ratio         = max(counts[t] / N for t in repeated_tags
+                                          if t.level == most_specific_level)
+lane_cohesion      = specificity_factor
+                   * 2 * log1p(9 * best_ratio) / log1p(9)
+```
+
+Three exact `BEST_PICTURE` wins (L0, ratio 1.0): cohesion = 1.0 × 2.0 = **2.0** (max).
+Three different acting awards repeating only at L1 `LEAD_ACTING` (ratio 0.67): cohesion = 0.6 × 1.69 ≈ **1.01** (moderate).
+Three disjoint award groups repeating only at L2 (ratio 1.0): cohesion = 0.3 × 2.0 = **0.6** (mild).
+
+**Candidate score (tier-weighted):**
+
+```text
+tier_weight(t) = {0: 1.00, 1: 0.50, 2: 0.20}[t.level]
+
+shared      = candidate_award_tags ∩ repeated_tags
+numer       = sum(tier_weight(t) for t in shared)
+denom       = sum(tier_weight(t) for t in repeated_tags)
+award_score = numer / denom        if denom > 0 else 0
+```
+
+The denominator includes every repeated tag across all three levels, so a candidate matching only at the L2 group level gets partial credit but is dominated by candidates that match the same L0 leaf as the anchors.
+
+**Lane weight:**
+
+```text
+base weight: 0.04
+specific_award_raw = 0.04 * lane_cohesion        # uses the lane_cohesion above
+```
+
+**Active anchor type:** none. Pure cohesion-driven, parallel to the themes and cast lanes.
+
+**Effect on V1 failure cases:**
+
+- Best Picture trio (Godfather/Schindler/12YS): all three won Oscar Best Picture → L0 `BEST_PICTURE` repeats at 1.0 → strong lane → other Best Picture winners (Goodfellas was nominated, Forrest Gump won, etc.) climb back up against the Holocaust-pulled centroid.
+- Razzie trio (Sharknado/The Room/Birdemic): all three nominated/won at Razzies → L0 `WORST_PICTURE` likely repeats; L2 `RAZZIE` definitely repeats → other Razzie titles get a real boost vs. generic cult.
+- War film trio: anchors share PICTURE-tier awards but at different L0 leaves → falls back to L1/L2 specificity → mild boost for prestige-war titles, doesn't dominate (which is right — the war genre signal is what should dominate, not the award signal).
+
+When the user provides a chaotic anchor set (Toy Story + Godfather + Sharknado in the V1 batch) the centroid lands in noise and we currently return arbitrary matches.
+
+**Trigger:**
+
+```text
+mean_vector_cohesion < 0.35
+AND no metadata lane has cohesion >= 1.0
+```
+
+**Fallback behavior:**
+
+1. Run independent single-anchor similarity for each anchor with `limit = ceil(final_limit * 1.2 / N)`.
+2. Interleave by rank (round-robin), break ties by combined score.
+3. Return results without any low-cohesion flag — UI presents them identically.
+
+## V2 Debug Payload Changes
+
+Add per-anchor active-anchor-types to the multi-anchor debug payload. Useful for diagnosing centroid drift in cases like the Best Picture trio (where Schindler's List + 12 Years a Slave dominated the centroid and pushed The Godfather's adjacents off the page).
+
+```text
+SimilarMoviesDebug:
+  ...existing fields...
+  per_anchor_active_anchor_types: dict[int, list[AnchorType]]   # multi-anchor only
+```
+
+## V2 Implementation Order
+
+1. **Style soft-signal + Production medium IDF** — cheap, big wins on Oppenheimer / Barbie / Titanic.
+2. **Source lane IDF rework** — kills Stephen King / heist false positives.
+3. **Franchise restructure** (subgroup gating + confidence prior + multiplicative-when-low-confidence).
+4. **Shape-raw scales with vector cohesion** + V2 single-anchor base vector weights.
+5. **Unified quality lane** with per-bucket popularity/reception split + middle-bucket activation.
+6. **Director auteur prior** + optional `director_signature` anchor type.
+7. **Low-cohesion fallback** + debug payload changes.
+8. **Genre similarity graph** — deferred until V2 results are evaluated.

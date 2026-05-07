@@ -290,15 +290,15 @@ async def _print_ranked_results(
         cards = await fetch_movie_cards([mid for mid, _ in top])
         cards_by_id = {c["movie_id"]: c for c in cards}
 
-        # One compact block per result. Header line carries the
-        # headline numbers (final score, implicit-prior boost, the
-        # positive/negative halves of the §9 sum), then one indented
-        # line per trait showing its inner score, weight, and signed
-        # contribution, then one further-indented line per category
-        # showing its combine_type and combined score. Per-category
-        # rows are populated for positive traits only — negative
-        # traits use a three-bin gate × fuzzy formula that does not
-        # fold through per-category scores.
+        # One block per result. The structure mirrors the scoring tree:
+        #   result header (final / boost / pos / neg / title)
+        #     trait line (surface, commitment, inner trait_score, weight, signed contribution)
+        #       category line (name, combine_type, expressions, retrieval_intent, combined score)
+        #         endpoint line (route, score)
+        # Per-category and per-endpoint rows populate for positive traits
+        # only — negative traits use a three-bin gate × fuzzy formula that
+        # does not fold through per-category scores, so we emit only the
+        # trait-level contribution for them.
         for rank, (movie_id, score) in enumerate(top, start=1):
             card = cards_by_id.get(movie_id)
             if card is None:
@@ -334,23 +334,37 @@ async def _print_ranked_results(
                 continue
             for tc in contributions:
                 # Trait line: surface text, commitment tier, inner
-                # trait_score in [0, 1], weight (commitment × rarity
-                # for positives, commitment for negatives), and the
-                # signed weighted contribution that fed the §9 sum.
+                # trait_score in [0, 1] (max over categories for
+                # positives; gate × fuzzy for negatives), weight
+                # (commitment × rarity for positives, commitment for
+                # negatives), and the signed weighted contribution
+                # that fed the §9 sum.
                 print(
-                    f'    {tc.surface_text!r} [{tc.commitment}]  '
-                    f"trait={tc.trait_score:.4f}  wt={tc.weight:.3f}  "
-                    f"→ {tc.contribution:+.4f}"
+                    f'  trait {tc.surface_text!r} [{tc.commitment}]  '
+                    f"trait_score={tc.trait_score:.4f}  "
+                    f"wt={tc.weight:.3f}  → {tc.contribution:+.4f}"
                 )
                 if not tc.category_scores:
-                    # Negative traits land here, as do positive traits
-                    # whose categories all errored or were NO_OP.
+                    # Negative traits and positive traits whose
+                    # categories all errored or were NO_OP land here.
                     continue
                 for cs in tc.category_scores:
+                    expr_repr = ", ".join(repr(e) for e in cs.expressions)
                     print(
-                        f"        • {cs.category_name} "
-                        f"[{cs.combine_type}]: {cs.score:.4f}"
+                        f"    category {cs.category_name} "
+                        f"[{cs.combine_type}]  cat_score={cs.score:.4f}"
                     )
+                    print(f"      expressions: [{expr_repr}]")
+                    print(f"      retrieval_intent: {cs.retrieval_intent!r}")
+                    if not cs.endpoint_scores:
+                        # All calls under this category failed (None
+                        # from the executor) and were filtered out
+                        # before combine_calls — surface the absence
+                        # rather than silently emitting nothing.
+                        print("      (no live endpoint calls)")
+                        continue
+                    for ep in cs.endpoint_scores:
+                        print(f"      • {ep.route}: {ep.score:.4f}")
 
 
 # ---------------------------------------------------------------------------

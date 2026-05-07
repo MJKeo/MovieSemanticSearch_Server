@@ -14,7 +14,7 @@ from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
 from schemas.award_category_tags import tags_for_category
-from schemas.enums import AwardCeremony
+from schemas.enums import AwardCeremony, AwardOutcome
 from schemas.imdb_models import AwardNomination
 from schemas.metadata import FranchiseOutput
 
@@ -789,6 +789,74 @@ async def refresh_award_name_token_doc_frequency() -> None:
     """
     await _execute_write(
         "REFRESH MATERIALIZED VIEW CONCURRENTLY lex.award_name_token_doc_frequency;"
+    )
+
+
+# ---------------------------------------------------------------------------
+# V2 similar-movies materialized views.
+# ---------------------------------------------------------------------------
+# trait_kind discriminator values for public.mv_trait_idf. Kept in sync
+# with the WITH-clause literals in db/init/01_create_postgres_tables.sql
+# (the unified mv_trait_idf definition). Lane code filters this MV by
+# trait_kind to read the right per-trait-family IDF table.
+TRAIT_KIND_OVERALL_KEYWORD = 1
+TRAIT_KIND_CONCEPT_TAG = 2
+TRAIT_KIND_TMDB_GENRE = 3
+TRAIT_KIND_SOURCE_MATERIAL = 4
+
+
+async def refresh_director_strength() -> None:
+    """
+    Refresh the public.mv_director_strength materialized view concurrently.
+
+    Backs the V2 similar-movies director-auteur lane: per-director
+    percentile-rank of (0.8 * mean popularity) + (0.2 * mean reception)
+    across films on lex.inv_director_postings, restricted to directors
+    with >= 2 films. The director_signature anchor type triggers when
+    director_strength >= 0.80.
+
+    Must run AFTER refresh_movie_popularity_scores() — the underlying
+    SQL JOINs public.mv_popularity_percentile.
+    """
+    await _execute_write(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv_director_strength;"
+    )
+
+
+async def refresh_franchise_confidence() -> None:
+    """
+    Refresh the public.mv_franchise_confidence materialized view concurrently.
+
+    Backs the V2 similar-movies franchise lane: per-lineage confidence
+    (mean strength score) and consistency (1 - clamp(2*stddev, 0, 1)).
+    Lineages with high confidence + high consistency get additive lane
+    exposure; lower-confidence lineages drop to a small multiplicative
+    nudge to avoid surfacing direct-to-DVD spinoffs in the top results.
+
+    Must run AFTER refresh_movie_popularity_scores() — the underlying
+    SQL JOINs public.mv_popularity_percentile.
+    """
+    await _execute_write(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv_franchise_confidence;"
+    )
+
+
+async def refresh_trait_idf() -> None:
+    """
+    Refresh the public.mv_trait_idf materialized view concurrently.
+
+    Unified IDF table across four trait families (overall_keyword /
+    concept_tag / tmdb_genre / source_material) used by the V2 themes
+    lane (multi-anchor), source lane (single + multi), and the
+    medium-IDF retrieval gate. IDF is normalized log(N/df)/log(N) so
+    values stay in [0, 1] regardless of catalog size.
+
+    Independent of the popularity / director / franchise MVs — only
+    requires that movie_card upserts for the current ingest batch
+    have completed.
+    """
+    await _execute_write(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv_trait_idf;"
     )
 
 
@@ -1911,6 +1979,462 @@ async def fetch_quality_popularity_signals(
 
     rows = await _execute_read(query, (movie_ids,))
     return {row[0]: (row[1], row[2]) for row in rows}
+
+
+# =========================================
+#     SIMILAR-MOVIES FLOW READ HELPERS
+# =========================================
+#
+# These helpers are intentionally narrow and read-only. They support
+# search_v2.similar_movies without changing the standard Stage-4 search
+# execution path.
+
+
+async def fetch_similarity_signal_rows(movie_ids: list[int]) -> dict[int, dict]:
+    """Bulk fetch the Postgres signals used by the similar-movies flow.
+
+    Returns one dict per movie_id with movie_card display fields, similarity
+    lane arrays, reception/popularity signals, and the global popularity
+    percentile from ``public.mv_popularity_percentile``.
+    """
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT
+            mc.movie_id,
+            mc.title,
+            mc.poster_url,
+            mc.release_ts,
+            mc.reception_score,
+            mc.popularity_score,
+            mvp.percentile AS popularity_percentile,
+            mc.source_material_type_ids,
+            mc.production_company_ids,
+            mc.lineage_entry_ids,
+            mc.shared_universe_entry_ids,
+            mc.subgroup_entry_ids,
+            mc.award_ceremony_win_ids,
+            mc.keyword_ids,
+            mc.concept_tag_ids,
+            mc.genre_ids,
+            mc.runtime_minutes
+        FROM public.movie_card mc
+        LEFT JOIN public.mv_popularity_percentile mvp
+          ON mvp.movie_id = mc.movie_id
+        WHERE mc.movie_id = ANY(%s::bigint[])
+    """
+    columns = [
+        "movie_id",
+        "title",
+        "poster_url",
+        "release_ts",
+        "reception_score",
+        "popularity_score",
+        "popularity_percentile",
+        "source_material_type_ids",
+        "production_company_ids",
+        "lineage_entry_ids",
+        "shared_universe_entry_ids",
+        "subgroup_entry_ids",
+        "award_ceremony_win_ids",
+        "keyword_ids",
+        "concept_tag_ids",
+        "genre_ids",
+        "runtime_minutes",
+    ]
+    rows = await _execute_read(query, (movie_ids,))
+    return {row[0]: dict(zip(columns, row)) for row in rows}
+
+
+async def fetch_director_term_ids_for_movies(
+    movie_ids: list[int],
+) -> dict[int, set[int]]:
+    """Return director lexical term IDs for each supplied movie."""
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT movie_id, term_id
+        FROM lex.inv_director_postings
+        WHERE movie_id = ANY(%s::bigint[])
+    """
+    rows = await _execute_read(query, (movie_ids,))
+    out: dict[int, set[int]] = {}
+    for movie_id, term_id in rows:
+        out.setdefault(movie_id, set()).add(term_id)
+    return out
+
+
+async def fetch_director_movie_terms(
+    term_ids: set[int],
+    *,
+    restrict_movie_ids: set[int] | None = None,
+) -> dict[int, set[int]]:
+    """Fetch movies and matching director term IDs for a director-term set."""
+    if not term_ids:
+        return {}
+
+    params: list = [list(term_ids)]
+    restrict_clause = ""
+    if restrict_movie_ids is not None:
+        if not restrict_movie_ids:
+            return {}
+        restrict_clause = " AND movie_id = ANY(%s::bigint[])"
+        params.append(list(restrict_movie_ids))
+
+    query = f"""
+        SELECT movie_id, term_id
+        FROM lex.inv_director_postings
+        WHERE term_id = ANY(%s::bigint[]){restrict_clause}
+    """
+    rows = await _execute_read(query, params)
+    out: dict[int, set[int]] = {}
+    for movie_id, term_id in rows:
+        out.setdefault(movie_id, set()).add(term_id)
+    return out
+
+
+async def fetch_production_company_ids_by_normalized_strings(
+    normalized_strings: list[str],
+) -> dict[str, int]:
+    """Resolve normalized production-company strings to company IDs."""
+    if not normalized_strings:
+        return {}
+
+    query = """
+        SELECT normalized_string, production_company_id
+        FROM lex.production_company
+        WHERE normalized_string = ANY(%s::text[])
+    """
+    rows = await _execute_read(query, (normalized_strings,))
+    return {row[0]: row[1] for row in rows}
+
+
+async def fetch_similarity_source_candidates(
+    source_material_type_ids: set[int],
+) -> set[int]:
+    """Movie IDs whose source-material type array overlaps the input set."""
+    if not source_material_type_ids:
+        return set()
+
+    query = """
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE source_material_type_ids && %s::int[]
+    """
+    rows = await _execute_read(query, (list(source_material_type_ids),))
+    return {row[0] for row in rows}
+
+
+async def fetch_similarity_franchise_candidates(
+    *,
+    lineage_entry_ids: set[int],
+    shared_universe_entry_ids: set[int],
+    subgroup_entry_ids: set[int],
+) -> set[int]:
+    """Movie IDs overlapping any supplied franchise lineage/universe signal."""
+    clauses: list[str] = []
+    params: list = []
+    if lineage_entry_ids:
+        clauses.append(
+            "(lineage_entry_ids && %s::bigint[] "
+            "OR shared_universe_entry_ids && %s::bigint[])"
+        )
+        entry_ids = list(lineage_entry_ids)
+        params.extend([entry_ids, entry_ids])
+    if shared_universe_entry_ids:
+        clauses.append(
+            "(lineage_entry_ids && %s::bigint[] "
+            "OR shared_universe_entry_ids && %s::bigint[])"
+        )
+        entry_ids = list(shared_universe_entry_ids)
+        params.extend([entry_ids, entry_ids])
+    if subgroup_entry_ids:
+        clauses.append("subgroup_entry_ids && %s::bigint[]")
+        params.append(list(subgroup_entry_ids))
+
+    if not clauses:
+        return set()
+
+    where_clause = " OR ".join(f"({clause})" for clause in clauses)
+    query = f"SELECT movie_id FROM public.movie_card WHERE {where_clause}"
+    rows = await _execute_read(query, params)
+    return {row[0] for row in rows}
+
+
+async def fetch_similarity_quality_candidates(
+    *,
+    bucket: str,
+    limit: int,
+) -> set[int]:
+    """Fetch an independent quality/reception candidate lane.
+
+    ``bucket`` accepts ``"cult_garbage"`` or ``"prestige"``. Middle-bucket
+    anchors do not use the quality lane in the similar-movies flow.
+    """
+    if bucket not in {"cult_garbage", "prestige"}:
+        raise ValueError(f"unsupported similarity quality bucket: {bucket!r}")
+
+    if bucket == "cult_garbage":
+        query = """
+            SELECT mc.movie_id
+            FROM public.movie_card mc
+            JOIN public.mv_popularity_percentile mvp
+              ON mvp.movie_id = mc.movie_id
+            WHERE mc.reception_score <= 50
+              AND mvp.percentile >= 0.75
+            ORDER BY
+              (0.5 * LEAST(1.0, GREATEST(0.0, (50 - mc.reception_score) / 30.0))
+               + 0.5 * LEAST(1.0, GREATEST(0.0, (mvp.percentile - 0.75) / 0.20))) DESC,
+              mc.movie_id ASC
+            LIMIT %s
+        """
+        rows = await _execute_read(query, (limit,))
+        return {row[0] for row in rows}
+
+    non_razzie_ids = [
+        c.ceremony_id for c in AwardCeremony if c is not AwardCeremony.RAZZIE
+    ]
+    query = """
+        SELECT mc.movie_id
+        FROM public.movie_card mc
+        LEFT JOIN public.mv_popularity_percentile mvp
+          ON mvp.movie_id = mc.movie_id
+        WHERE mc.reception_score >= 75
+           OR EXISTS (
+                SELECT 1
+                FROM unnest(mc.award_ceremony_win_ids) AS win_id
+                WHERE win_id = ANY(%s::smallint[])
+           )
+        ORDER BY
+          (0.75 * LEAST(1.0, GREATEST(0.0, (COALESCE(mc.reception_score, 0) - 75) / 20.0))
+           + 0.25 * GREATEST(
+                LEAST(1.0, GREATEST(0.0, (COALESCE(mvp.percentile, 0) - 0.50) / 0.30)),
+                CASE
+                  WHEN EXISTS (
+                    SELECT 1
+                    FROM unnest(mc.award_ceremony_win_ids) AS win_id
+                    WHERE win_id = ANY(%s::smallint[])
+                  ) THEN 1.0
+                  ELSE 0.0
+                END
+             )) DESC,
+          mc.movie_id ASC
+        LIMIT %s
+    """
+    rows = await _execute_read(query, (non_razzie_ids, non_razzie_ids, limit))
+    return {row[0] for row in rows}
+
+
+@dataclass(frozen=True, slots=True)
+class SimilarityAwardSignals:
+    """Award signals consumed by the V2 quality lane.
+
+    `non_razzie_score` powers the prestige-bucket formula; `razzie_score`
+    powers the cult_garbage formula. Lumped into one struct so callers
+    fetch both with a single query rather than firing two parallel reads.
+    """
+    non_razzie_score: float   # 1.0 win, 0.75 nom, else 0.0
+    razzie_score: float       # 1.0 if any Razzie nom/win, else 0.0
+
+
+async def fetch_similarity_award_signals(
+    movie_ids: list[int],
+) -> dict[int, SimilarityAwardSignals]:
+    """Return non-Razzie + Razzie award signals for the supplied movies.
+
+    Single SQL pass over `public.movie_awards` with conditional aggregates
+    so cult_garbage / prestige scoring can read both sides without firing
+    two queries. Movies absent from the result have no relevant award rows.
+    """
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT
+            movie_id,
+            BOOL_OR(outcome_id = %s AND ceremony_id <> %s) AS has_non_razzie_win,
+            BOOL_OR(outcome_id = %s AND ceremony_id <> %s) AS has_non_razzie_nom,
+            BOOL_OR(ceremony_id = %s)                      AS has_razzie
+        FROM public.movie_awards
+        WHERE movie_id = ANY(%s::bigint[])
+        GROUP BY movie_id
+    """
+    rows = await _execute_read(
+        query,
+        (
+            AwardOutcome.WINNER.outcome_id,
+            AwardCeremony.RAZZIE.ceremony_id,
+            AwardOutcome.NOMINEE.outcome_id,
+            AwardCeremony.RAZZIE.ceremony_id,
+            AwardCeremony.RAZZIE.ceremony_id,
+            movie_ids,
+        ),
+    )
+    out: dict[int, SimilarityAwardSignals] = {}
+    for movie_id, has_win, has_nom, has_razzie in rows:
+        if has_win:
+            non_razzie = 1.0
+        elif has_nom:
+            non_razzie = 0.75
+        else:
+            non_razzie = 0.0
+        razzie = 1.0 if has_razzie else 0.0
+        if non_razzie > 0.0 or razzie > 0.0:
+            out[movie_id] = SimilarityAwardSignals(
+                non_razzie_score=non_razzie,
+                razzie_score=razzie,
+            )
+    return out
+
+
+async def fetch_director_strengths(term_ids: list[int]) -> dict[int, float]:
+    """Return {term_id: director_strength in [0,1]} from mv_director_strength.
+
+    Directors with <2 cataloged films are absent from the MV (they can't be
+    "matched through" because the anchor itself would be the only film).
+    """
+    if not term_ids:
+        return {}
+
+    query = """
+        SELECT term_id, director_strength
+        FROM public.mv_director_strength
+        WHERE term_id = ANY(%s::bigint[])
+    """
+    rows = await _execute_read(query, (term_ids,))
+    return {row[0]: float(row[1]) for row in rows}
+
+
+async def fetch_franchise_confidence(
+    lineage_entry_ids: list[int],
+) -> dict[int, tuple[float, float]]:
+    """Return {lineage_entry_id: (franchise_confidence, franchise_consistency)}.
+
+    Single-film lineages have consistency=1.0 (no spread to measure). Used
+    by the V2 franchise lane to choose additive (high-confidence) vs.
+    multiplicative (low-confidence) behavior.
+    """
+    if not lineage_entry_ids:
+        return {}
+
+    query = """
+        SELECT lineage_entry_id, franchise_confidence, franchise_consistency
+        FROM public.mv_franchise_confidence
+        WHERE lineage_entry_id = ANY(%s::bigint[])
+    """
+    rows = await _execute_read(query, (lineage_entry_ids,))
+    return {row[0]: (float(row[1]), float(row[2])) for row in rows}
+
+
+async def fetch_trait_idfs(
+    pairs: list[tuple[int, int]],
+) -> dict[tuple[int, int], float]:
+    """Return {(trait_kind, trait_id): idf} from mv_trait_idf.
+
+    `pairs` are (trait_kind, trait_id) tuples; trait_kind values are the
+    TRAIT_KIND_* constants in this module. Missing pairs are omitted from
+    the result and treated as idf=0 by lane callers (which discards them
+    naturally via the IDF formulas — log(N/df)/log(N) is 0 when df==N).
+    """
+    if not pairs:
+        return {}
+
+    # Split into two parallel arrays so the query stays a single round-trip
+    # rather than ((kind, id) IN (...)) which Postgres can't index nicely.
+    # `trait_id` in mv_trait_idf is INT (every UNION branch yields INT[]
+    # column elements), so the parameter array stays INT[] for type fidelity.
+    kinds = [int(p[0]) for p in pairs]
+    ids = [int(p[1]) for p in pairs]
+    query = """
+        SELECT trait_kind, trait_id, idf
+        FROM public.mv_trait_idf
+        WHERE (trait_kind, trait_id) IN (
+            SELECT UNNEST(%s::smallint[]), UNNEST(%s::int[])
+        )
+    """
+    rows = await _execute_read(query, (kinds, ids))
+    return {(int(row[0]), int(row[1])): float(row[2]) for row in rows}
+
+
+async def fetch_movie_ids_by_overall_keywords(
+    keyword_ids: list[int],
+) -> set[int]:
+    """Movie IDs whose `keyword_ids` array overlaps the supplied set.
+
+    Used by the V2 single-anchor selective rare-medium retrieval lane so
+    e.g. a stop-motion anchor surfaces other stop-motion films even when
+    the centroid-driven shape lane misses them.
+    """
+    if not keyword_ids:
+        return set()
+
+    query = """
+        SELECT movie_id
+        FROM public.movie_card
+        WHERE keyword_ids && %s::int[]
+    """
+    rows = await _execute_read(query, (list(keyword_ids),))
+    return {row[0] for row in rows}
+
+
+async def fetch_similarity_top_billed_cast(
+    movie_ids: list[int],
+    *,
+    top_k: int = 3,
+) -> dict[int, set[int]]:
+    """Return {movie_id: {term_id, ...}} for the top-K billed actors per movie.
+
+    Source: lex.inv_actor_postings filtered to billing_position <= top_k.
+    Drives the multi-anchor cast lane. `term_id` is the canonical actor
+    identity already used by the lex layer.
+    """
+    if not movie_ids or top_k <= 0:
+        return {}
+
+    query = """
+        SELECT movie_id, term_id
+        FROM lex.inv_actor_postings
+        WHERE movie_id = ANY(%s::bigint[])
+          AND billing_position IS NOT NULL
+          AND billing_position <= %s
+    """
+    rows = await _execute_read(query, (movie_ids, top_k))
+    out: dict[int, set[int]] = {}
+    for movie_id, term_id in rows:
+        out.setdefault(int(movie_id), set()).add(int(term_id))
+    return out
+
+
+async def fetch_similarity_award_category_tags(
+    movie_ids: list[int],
+) -> dict[int, set[int]]:
+    """Return {movie_id: union of category_tag_ids across that movie's awards}.
+
+    Lumps wins and nominations together (per V2 spec V2.0). Used by the
+    multi-anchor specific-award lane to compute repeated-tag cohesion + the
+    tier-weighted candidate score.
+    """
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT movie_id, category_tag_ids
+        FROM public.movie_awards
+        WHERE movie_id = ANY(%s::bigint[])
+          AND category_tag_ids IS NOT NULL
+          AND array_length(category_tag_ids, 1) > 0
+    """
+    rows = await _execute_read(query, (movie_ids,))
+    out: dict[int, set[int]] = {}
+    for movie_id, tags in rows:
+        if not tags:
+            continue
+        bucket = out.setdefault(int(movie_id), set())
+        for tag_id in tags:
+            bucket.add(int(tag_id))
+    return out
 
 
 async def fetch_movie_ids_by_term_ids(

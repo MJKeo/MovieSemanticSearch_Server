@@ -5,10 +5,11 @@
 # accepted as a positional argument with a built-in default so the
 # script can be invoked with no arguments for a quick smoke test.
 #
-# When Step 0 sets exact_title_flow_data.should_be_searched=True, the
-# runner additionally invokes search_v2.exact_title_search.run_exact_title_search
-# with the resulting payload and pretty-prints the ranked candidates.
-# This requires Postgres connectivity, so the pool is opened on demand.
+# When Step 0 sets exact_title_flow_data.should_be_searched=True or
+# similarity_flow_data.should_be_searched=True, the runner additionally
+# invokes the corresponding standalone search flow and pretty-prints the
+# ranked candidates. This requires Postgres connectivity, so the pool is
+# opened on demand.
 #
 # Usage:
 #   python -m search_v2.run_step_0
@@ -31,10 +32,18 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from db.postgres import fetch_movie_cards, pool as postgres_pool  # noqa: E402
-from schemas.step_0_flow_routing import ExactTitleFlowData, Step0Response  # noqa: E402
+from schemas.step_0_flow_routing import (  # noqa: E402
+    ExactTitleFlowData,
+    SimilarityFlowData,
+    Step0Response,
+)
 from search_v2.exact_title_search import (  # noqa: E402
     ExactTitleSearchResult,
     run_exact_title_search,
+)
+from search_v2.similar_movies import (  # noqa: E402
+    SimilarMoviesSearchResult,
+    run_similarity_search,
 )
 from search_v2.step_0 import run_step_0  # noqa: E402
 
@@ -44,10 +53,9 @@ from search_v2.step_0 import run_step_0  # noqa: E402
 # alternate reading — a classic boundary case for flow routing.
 _DEFAULT_QUERY = "scary movie"
 
-# Cap the printed exact-title result list. Long franchises (e.g.
-# Marvel-universe queries) can produce 100+ rows; capping keeps the
-# CLI output scannable while the full result set remains available
-# in-memory for any caller that wants it.
+# Cap printed standalone-flow result lists. Long franchises and broad
+# similarity lanes can produce 100+ rows; capping keeps CLI output
+# scannable while the full result set remains available in-memory.
 _MAX_PRINTED_RESULTS = 25
 
 
@@ -143,6 +151,54 @@ async def _print_exact_title_results(
         )
 
 
+async def _print_similarity_results(
+    flow_data: SimilarityFlowData,
+    result: SimilarMoviesSearchResult,
+) -> None:
+    """Render the similar-movies ranked output as a compact table."""
+    print("\n[similar_movies_search]")
+    print(
+        f"input: title={flow_data.similar_search_title!r}, "
+        f"release_year={flow_data.release_year}"
+    )
+    if result.anchor_movie_ids:
+        print(f"anchor_tmdb_ids: {result.anchor_movie_ids}")
+    if result.active_anchor_types:
+        print(f"active_anchor_types: {', '.join(result.active_anchor_types)}")
+    if result.debug.normalized_lane_weights:
+        weights = ", ".join(
+            f"{lane}={weight:.3f}"
+            for lane, weight in result.debug.normalized_lane_weights.items()
+        )
+        print(f"lane_weights: {weights}")
+
+    if not result.ranked:
+        print("results: (no matches)")
+        return
+
+    top = result.ranked[:_MAX_PRINTED_RESULTS]
+    movie_ids = [item.movie_id for item in top]
+    cards = await fetch_movie_cards(movie_ids)
+    by_id = {card["movie_id"]: card for card in cards}
+
+    total = len(result.ranked)
+    shown = len(top)
+    suffix = f" (showing top {shown} of {total})" if total > shown else ""
+    print(f"results: {total} total{suffix}")
+
+    for rank, item in enumerate(top, start=1):
+        card = by_id.get(item.movie_id)
+        title = card["title"] if card else "<missing card>"
+        year = _year_of(card["release_ts"]) if card else None
+        year_str = str(year) if year is not None else "----"
+        lanes = ",".join(item.evidence.candidate_sources)
+        print(
+            f"  {rank:>2}. {item.score:>5.3f}  "
+            f"{item.evidence.dominant_lane:<10}  {lanes:<36}  "
+            f"{year_str}  {title} ({item.movie_id})"
+        )
+
+
 async def _main_async() -> None:
     args = _parse_args()
     print(f"[query] {args.query}\n")
@@ -174,6 +230,16 @@ async def _main_async() -> None:
             response.exact_title_flow_data, ets_result
         )
         print(f"[exact_title_stats] elapsed={ets_elapsed:.2f}s")
+
+    if response.similarity_flow_data.should_be_searched:
+        await _ensure_postgres_open()
+        sim_start = time.perf_counter()
+        sim_result = await run_similarity_search(response.similarity_flow_data)
+        sim_elapsed = time.perf_counter() - sim_start
+        await _print_similarity_results(
+            response.similarity_flow_data, sim_result
+        )
+        print(f"[similar_movies_stats] elapsed={sim_elapsed:.2f}s")
 
 
 def main() -> None:

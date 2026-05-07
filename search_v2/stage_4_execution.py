@@ -64,6 +64,7 @@ from search_v2.endpoint_fetching.endpoint_executors import (
 if TYPE_CHECKING:
     from search_v2.full_pipeline_orchestrator import (
         BranchKind,
+        CategoryCallWithEndpoints,
         Step2BranchResult,
         TraitWithEndpoints,
     )
@@ -198,6 +199,20 @@ def combine_calls(
 
 
 @dataclass
+class EndpointScore:
+    """One endpoint call's per-candidate score in [0, 1].
+
+    `route` is the endpoint route value (e.g. "vector_search",
+    "keyword_search") so the breakdown is human-readable without a
+    round-trip through the EndpointRoute enum. `score` is the value
+    that fed into the category's combine_calls fold.
+    """
+
+    route: str
+    score: float
+
+
+@dataclass
 class CategoryScore:
     """One category's combined score under a positive trait.
 
@@ -208,11 +223,20 @@ class CategoryScore:
     contribution. `combine_type` mirrors the category's combine rule
     (SINGLE / ADDITIVE / ALTERNATIVES) so the breakdown is self-
     describing without round-tripping back to the taxonomy.
+
+    `expressions` and `retrieval_intent` mirror the upstream Step-3
+    CategoryCall so the breakdown carries the human-language ask that
+    drove the category's endpoint generation. `endpoint_scores` lists
+    the per-call scores that fed `combine_calls` to produce `score`,
+    in the order they were dispatched.
     """
 
     category_name: str
     combine_type: str
+    expressions: list[str]
+    retrieval_intent: str
     score: float
+    endpoint_scores: list[EndpointScore] = field(default_factory=list)
 
 
 @dataclass
@@ -649,13 +673,19 @@ def _score_positive_trait(
     element folds over) so callers can render the WHY behind the
     score without re-running the combine logic.
     """
-    # Resolve the live-call score maps once per (trait, category)
-    # outside the per-candidate loop. With unions in the tens of
-    # thousands, redoing the (trait_idx, cat_idx, spec_idx) tuple
-    # construction + `is None` filter per mid is wasted work — those
-    # values are constant across the union.
+    # Resolve the live-call (spec, score-map) pairs once per (trait,
+    # category) outside the per-candidate loop. With unions in the
+    # tens of thousands, redoing the (trait_idx, cat_idx, spec_idx)
+    # tuple construction + `is None` filter per mid is wasted work —
+    # those values are constant across the union. Specs are kept
+    # alongside the score maps so the per-mid loop can label each
+    # endpoint with its route in the surfaced breakdown.
     live_cats: list[
-        tuple[CategoryName, CategoryCombineType, list[dict[int, float]]]
+        tuple[
+            "CategoryCallWithEndpoints",
+            CategoryCombineType,
+            list[tuple[GeneratedEndpointSpec, dict[int, float]]],
+        ]
     ] = []
     for cat_idx, cc in enumerate(trait.category_calls):
         if cc.handler_error is not None:
@@ -663,20 +693,25 @@ def _score_positive_trait(
         combine_type = cc.category.combine_type
         if combine_type is CategoryCombineType.NO_OP:
             continue
-        live_maps: list[dict[int, float]] = []
-        for spec_idx in range(len(cc.generated_specs)):
+        live_pairs: list[tuple[GeneratedEndpointSpec, dict[int, float]]] = []
+        for spec_idx, spec in enumerate(cc.generated_specs):
             scores = call_score_maps.get((trait_idx, cat_idx, spec_idx))
             if scores is not None:
-                live_maps.append(scores)
-        live_cats.append((cc.category, combine_type, live_maps))
+                live_pairs.append((spec, scores))
+        live_cats.append((cc, combine_type, live_pairs))
 
     out: dict[int, float] = {}
     cat_out: dict[int, list[CategoryScore]] = {}
     for mid in union:
         category_scores: list[float] = []
         per_cat: list[CategoryScore] = []
-        for cat_name, combine_type, live_maps in live_cats:
-            call_scores = [m.get(mid, 0.0) for m in live_maps]
+        for cc, combine_type, live_pairs in live_cats:
+            # Extract per-endpoint scores once so we can both surface
+            # them and pass the bare floats into combine_calls.
+            endpoint_pairs = [
+                (spec, scores.get(mid, 0.0)) for spec, scores in live_pairs
+            ]
+            call_scores = [s for _, s in endpoint_pairs]
             cat_score = combine_calls(combine_type, call_scores)
             if cat_score is None:
                 # NO_OP is filtered out of live_cats above; this branch
@@ -686,9 +721,15 @@ def _score_positive_trait(
             category_scores.append(cat_score)
             per_cat.append(
                 CategoryScore(
-                    category_name=cat_name.value,
+                    category_name=cc.category.value,
                     combine_type=combine_type.value,
+                    expressions=cc.expressions,
+                    retrieval_intent=cc.retrieval_intent,
                     score=cat_score,
+                    endpoint_scores=[
+                        EndpointScore(route=spec.route.value, score=s)
+                        for spec, s in endpoint_pairs
+                    ],
                 )
             )
         out[mid] = max(category_scores) if category_scores else 0.0
