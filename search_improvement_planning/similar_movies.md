@@ -1202,3 +1202,285 @@ SimilarMoviesDebug:
 6. **Director auteur prior** + optional `director_signature` anchor type.
 7. **Low-cohesion fallback** + debug payload changes.
 8. **Genre similarity graph** — deferred until V2 results are evaluated.
+
+---
+
+# V3 Planned Changes
+
+V3 is the next structural rework, motivated by end-to-end V2 testing on the same 20 single-anchor + 12 multi-anchor benchmark (full audit in [similar_movies_v2_results.md](similar_movies_v2_results.md), detailed planning in [similar_movies_v3_plan.md](similar_movies_v3_plan.md)). V2 fixed several V1 problems but introduced or exposed new ones:
+
+- Format buckets contained content tags (`DOCUDRAMA`, `TRUE_CRIME`, `SKETCH_COMEDY`) that misclassified prestige biopics and Monty Python features.
+- Production medium matrix contained audience tags (`ADULT_ANIMATION`, `HOLIDAY_ANIMATION`) that produced wrong scores like Persepolis vs. Sita Sings the Blues at 1.0.
+- Country / language signal was multi-anchor only — single-anchor Barbie returned a Telugu film at #1.
+- Format top-5 lock blocked shorts from positions 1–5 but let them flood positions 6–10.
+- Medium multiplier `0.85 + 0.15 * score` was too soft for live↔animation crossings — animated Batman entered Dark Knight's top 10.
+- Franchise `franchise_consistency >= 0.6` gate silenced Star Wars (the most franchise-coherent anchor in the benchmark) due to the sequels-and-spinoffs tail.
+- Director lane fired off `mv_director_strength` (popularity percentile) — surfaced Lucas's *American Graffiti* for *Star Wars* and Spielberg cross-over films for unrelated anchors.
+- Single-anchor flow had no themes / cast / specific-award signal — Barbie's `FEMALE_LEAD`, `SATIRE`, `BARBIE_DOLL` tags contributed nothing.
+
+V3 addresses each through a mix of registry edits, multiplier recalibrations, lane reworks, and one new lane.
+
+## V3 Categorization Fixes (Audited Registries)
+
+### Format registry
+
+Removed from format buckets (audit details in `similar_movies_v3_plan.md` §1.1):
+- `DOCUDRAMA` — 27 of 30 prestige samples were narrative biopics (Schindler's List, Spotlight, Oppenheimer, Zero Dark Thirty).
+- `TRUE_CRIME` — 28 of 30 prestige samples were narrative crime dramas (GoodFellas, Killers of the Flower Moon).
+- `SKETCH_COMEDY` — 13 of 13 prestige samples were narrative features (Monty Python and the Holy Grail, And Now for Something Completely Different).
+
+These tags now feed the themes lane via the keyword pool, so they remain available as content-similarity signals without forcing format misclassification.
+
+### Production medium registry
+
+Removed from `MEDIUM_TAG_IDS` and shrunk the matrix from 8×8 to 6×6 (audit details §1.2):
+- `ADULT_ANIMATION` — co-occurs with the actual technique tag in 17/20 prestige cases (Persepolis = HD, Mahavatar Narsimha = CG). Audience signal, not technique.
+- `HOLIDAY_ANIMATION` — purely thematic (Christmas), spans HD / stop-motion / CG techniques. Theme signal, not technique.
+
+The remaining matrix covers `LIVE_ACTION`, `ANIMATION` (parent), `COMPUTER_ANIMATION`, `HAND_DRAWN_ANIMATION`, `STOP_MOTION_ANIMATION`, `ANIME` — the actual production techniques.
+
+## V3 Format Weave — Harsh Downrank for Shorts
+
+Replace V2's top-5 format lock (which only blocks shorts from positions 1–5) with a combined-score multiplier plus a structural cap, so shorts cannot flood any part of the top 10 when the user clearly isn't looking for shorts.
+
+```text
+# Per-candidate multiplier on combined score
+if candidate.format_bucket == "short" and active_anchor_bucket != "short":
+    combined_score *= 0.30          # severe — pushes Partysaurus Rex 0.34 → 0.10
+
+# Hard cap during weaving — applied across the full top 10, not just top 5
+short_count = 0
+for candidate in ranked_candidates:
+    if candidate.format_bucket == "short":
+        if short_count >= 1:
+            skip                      # at most 1 short anywhere in the top 10
+        short_count += 1
+    add to top_10
+```
+
+Multi-anchor "moderate cohesion" definition: the dominant format bucket = the bucket ≥ 50 % of anchors share. If shorts clear 50 %, treat shorts as the dominant bucket → no penalty (in fact slight 1.10× upweight within shorts). If no bucket clears 50 %, drop the constraint entirely (no shorts penalty).
+
+Short-anchor case (single-anchor with anchor bucket = `short`): apply a soft top-1 lock (require at least one short in top 1, then let features fill from 2 onward). The catalog's shorts skew toward franchise-tied tails (Pixar shorts → Pixar features), so a fully strict lock would block legitimate adjacent features.
+
+## V3 Medium Multiplier — Piecewise (Cross-Category vs. Within-Category)
+
+Replace V2's `0.85 + 0.15 * medium_score` (range `[0.85, 1.00]`, too soft for live↔animation crossings) with a piecewise function that distinguishes categorical mismatch from within-category technique differences.
+
+```python
+def medium_multiplier(anchor_tags, candidate_tags):
+    if not anchor_tags or not candidate_tags:
+        return 1.0
+    score = medium_score(anchor_tags, candidate_tags)
+    if score == 0.0:
+        # Live-action vs. animation — categorical mismatch.
+        return 0.65          # 35% penalty
+    # Within-category crossings (CG vs stop-motion, anime vs HD, etc.):
+    return 0.85 + 0.15 * score  # V2 formula preserved
+```
+
+Effects:
+- LIVE ↔ ANIM (score 0.0): multiplier `0.65`. Animated Batman drops from raw franchise/source contributions of ~0.50 to ~0.33 — likely below shape-only adjacents.
+- CG vs STOP_MOTION (score 0.50): multiplier `0.925` (unchanged from V2).
+- ANIME vs HD (score 0.85): multiplier `0.978` (unchanged from V2).
+- Perfect medium match: `1.00` (unchanged).
+
+## V3 Country / Language — Extend to Single-Anchor and Recalibrate
+
+V2 country/language coherence was multi-anchor only. V3 extends to single-anchor (anchor's own `country_set` becomes the consensus, same code path with `n == 1`) and recalibrates both flows.
+
+Calibrated multipliers (single-anchor and multi-anchor):
+```text
+match boost:        1.10 → 1.05    # over-rewarding match was creating its own noise
+mismatch penalty:   0.85 → 0.75    # too soft — Barbie's Swag (Telugu, 0.70) survived V2's
+                                   #   0.85 (= 0.595, still beat Poor Things at 0.56);
+                                   #   0.75 → 0.525 drops cleanly below
+```
+
+Calibration math (Barbie case): `0.70 * 0.75 = 0.525 < Poor Things 0.56`. Cross-tradition films now consistently exit the top 3 unless they decisively beat in-tradition adjacents — *not* a hard exclusion.
+
+Edge cases (unchanged): co-production support stays multi-tag (any anchor-tag overlap matches); `US_DEFAULT` continues to lump US/UK/Canada/Australia (Nolan's UK productions don't get penalized for an American anchor).
+
+## V3 Franchise Lane — Structural 2D Matrix
+
+Replace V2's `franchise_consistency >= 0.6` gate (which silenced Star Wars due to the sequels-and-spinoffs tail) with a structural 2D lookup that scores by **role** and **lineage overlap** rather than statistical variance over the franchise's IDs.
+
+Role determination (from `movie_card`):
+- **mainline**: single `lineage_entry_ids` AND non-empty `subgroup_entry_ids`.
+- **spinoff**: single `lineage_entry_ids` AND empty `subgroup_entry_ids`.
+- **crossover**: `len(lineage_entry_ids) >= 2`.
+
+Score lookup `(anchor_role, candidate_role, overlap)` → weight, take **max** across applicable cells:
+
+| anchor role | candidate role | overlap relationship | weight |
+|---|---|---|---:|
+| mainline | mainline | same lineage + same subgroup | **1.00** |
+| mainline | mainline | same lineage, different subgroup | 0.70 |
+| mainline | spinoff | same lineage | 0.50 |
+| mainline | crossover | shares ≥1 lineage | 0.40 |
+| spinoff | spinoff | **same lineage** | **0.85** |
+| spinoff | mainline | same lineage | 0.50 |
+| spinoff | crossover | shares lineage | 0.40 |
+| crossover | crossover | shares ≥1 lineage | **0.85** |
+| crossover | mainline | shares lineage | 0.40 |
+| crossover | spinoff | shares lineage | 0.40 |
+| any | any | same universe, no lineage overlap | 0.30 |
+| any | any | disjoint | 0.00 |
+
+Bold rows encode the user's role-consistency principle: same-role + same-lineage gets a bigger boost than mixed-role + same-lineage. Rogue One ↔ Solo (spinoff↔spinoff, same Star Wars lineage) = 0.85; Rogue One ↔ Star Wars 1977 (spinoff↔mainline, same lineage) = 0.50. Avengers ↔ Civil War (crossover↔crossover) = 0.85; Iron Man ↔ Avengers (mainline↔crossover) = 0.40.
+
+The V2 `franchise_confidence` gate is removed entirely. The structural matrix encodes match quality directly — Star Wars's "low consistency" measurement artifact becomes irrelevant because we score by structure, not statistical variance.
+
+## V3 Director Lane — Manual Auteur List Only
+
+Drop the `mv_director_strength` percentile-based boost. V2's "popularity percentile" measure rewarded *prolific generalists* (Spielberg surfaced *E.T.* for *Indiana Jones*; Lucas surfaced *American Graffiti* for *Star Wars*) while under-rewarding *style-coherent auteurs* (Darabont ranked Shawshank only #6 for The Green Mile).
+
+V3 director lane fires only when the anchor's director is on a **manual auteur list** of style-coherent directors (Tarantino-style sharp dialogue, Wes Anderson-style symmetry, Lynch-style oneiric tone, Miyazaki-style hand-drawn pastoral). For non-auteur directors, the lane is silent in single-anchor — the franchise lane and shape vectors already cover the cases where director coherence matters.
+
+Multi-anchor behavior unchanged: when ≥2 anchors share a director (auteur or not), that's a deliberate user signal — director cohesion fires at full strength regardless of auteur status.
+
+> **🛑 BLOCKER — auteur list composition is deferred to a follow-up conversation.** No code path depending on the auteur list ships until the list is finalized. See `similar_movies_v3_plan.md` §2.1 and `docs/TODO.md` "Auteur list composition for similar-movies V3 director lane" for the hard pause rule.
+
+## V3 Single-Anchor Themes Lane
+
+V2 left the themes lane multi-anchor only. V3 enables it for single-anchor too, using the anchor's own trait pool as the basis (vs. multi-anchor's "repeated traits across anchors").
+
+```text
+themes_score(candidate) =
+  sum(idf(t) for t in candidate_traits ∩ anchor_traits)
+  / sum(idf(t) for t in anchor_traits)
+```
+
+Trait pool: same as V2 multi-anchor (overall keywords, concept tags, TMDB genres) **minus** format / medium / country / source tags (handled by their dedicated lanes).
+
+Lane weight: copy V2 multi-anchor's `0.06` base. Active for any single-anchor flow regardless of trait count (no "must repeat ≥2" gate — that's a multi-anchor requirement).
+
+Direct effect on Barbie: `FEMALE_LEAD`, `SATIRE`, `EXISTENTIAL`, `BARBIE_DOLL`, `MUSICAL_NUMBER` become signal. Combined with V3 country/language penalty, the cross-tradition Telugu #1 problem disappears.
+
+## V3 Cast Lane — Generic N-Anchor Bucket-with-Floor (Multi-Anchor)
+
+V2 cast lane had base weight `0.03` cohesion-amplified to ~0.06 raw — not enough for Tom Hanks repeated 3/3 across Big + Polar Express + Toy Story to surface relevant Hanks vehicles past stronger shape matches. V3 keeps the additive lane but adds a **bucket floor**, scaled by the strength of the shared signal.
+
+Generic formula for any number of anchors `N`:
+
+```text
+# For each lead (top-3 billing in any anchor), count anchors containing them
+M_a           = number of anchors with actor a in top-3 billing
+shared_leads  = {a : M_a >= 2}                       # singletons dropped
+max_M         = max(M_a for a in shared_leads) or 0
+ratio         = max_M / N
+
+# Per-candidate score (additive contribution)
+matches    = |candidate.top_3_billing ∩ shared_leads|
+cast_score = matches / max(1, len(shared_leads))     # range [0, 1]
+
+# Lane weight
+if max_M < 2:
+    lane_weight = 0
+else:
+    lane_weight = 0.05 + 0.10 * ratio                # 2/3 → 0.117, 3/3 → 0.15
+
+# Bucket floor (the weave update)
+if max_M < 2 or ratio < 0.5:
+    floor = 0
+else:
+    floor = 0.25 + 0.20 * ratio                      # 2/3 → 0.384, 3/3 → 0.45
+
+# Application — only when shape is decent
+if cast_score > 0 and shape_score >= 0.30:
+    combined_score = max(combined_score, floor)
+```
+
+Tom Hanks 3-of-3 case: `max_M=3, N=3, ratio=1.0` → floor `0.45`, lane weight `0.15`. A Hanks vehicle with shape `0.40` and otherwise modest combined score `0.32` gets pulled up to `0.45` — surfaces in top 10. A Hanks vehicle with already-strong combined `0.55` stays at `0.55` (floor doesn't pull down).
+
+Single-anchor cast: stays disabled. By construction `shared_leads` is empty (one anchor cannot repeat itself).
+
+## V3 Rare-Keyword Lane (NEW)
+
+A new lane parallel to themes. Themes handles aggregate signal across the trait pool (low-rarity matches contribute via the IDF sum). Rare-keyword lane handles **distinctive matches** — high-rarity individuals or rare combos that deserve weave-level attention beyond their additive contribution.
+
+**Pool** (same as themes, with explicit exclusions):
+- Include: concept tags + overall keywords NOT in dedicated registries + TMDB genres.
+- Exclude: format / medium / country / source / award tags (handled by their lanes).
+
+**Three rarity tiers** (using `mv_trait_idf`):
+
+| Tier | IDF range | Behavior |
+|---|---|---|
+| **Low** | `< 2.5` | Flows into themes lane. No separate lane visibility. |
+| **Moderate** | `2.5 ≤ IDF < 4.5` | Each shared trait adds `IDF × 0.03` to combined score. Visible per-trait. |
+| **High** | `IDF ≥ 4.5` | Each shared trait adds `IDF × 0.05`. Counts toward floor trigger. |
+
+Threshold values are starting points — calibrate to roughly p70 / p90 of the actual IDF distribution before locking.
+
+**Floor (the weave update)** — triggers if either:
+
+```text
+# Single super-rare hit
+max(IDF for shared high-tier traits) >= 5.0
+
+# Rare combo
+sum(IDF for shared (high|moderate)-tier traits) >= 7.0
+```
+
+When triggered:
+```text
+floor = 0.40 + 0.05 * (number_of_high_tier_matches)        # capped at 0.55
+if shape_score >= 0.30:
+    combined_score = max(combined_score, floor)
+```
+
+**Single vs. multi**:
+- Single-anchor: pool = anchor's own qualifying traits.
+- Multi-anchor: pool = traits shared across ≥2 anchors (cohesion intersection).
+
+**Concrete examples**:
+- Oppenheimer + candidate sharing `MANHATTAN_PROJECT` (IDF ≈ 6.0): `+0.30` to combined, floor `0.45` activates.
+- Memento + candidate sharing `NON_LINEAR_NARRATIVE` + `UNRELIABLE_NARRATOR` + `AMNESIA` (sum IDF ≈ 11.3): `+0.339` total moderate-tier additive, combo floor `0.40` activates.
+
+The lane primarily contributes to score (most matches), but the floor protects truly distinctive matches with weaker shape from dropping out of the top 10.
+
+## V3 Hypotheses to Test
+
+Each hypothesis pairs a V3 change with the failure case it should fix and the observable behavior we expect. The benchmark stays the same 20 single-anchor + 12 multi-anchor anchor sets used in V2 testing.
+
+| # | Change | Hypothesis | Observable verification |
+|---|---|---|---|
+| H1 | Format registry edits | Documentary biopics (Schindler's List, Spotlight, Oppenheimer) appear in narrative-feature top 10 of similar prestige biopic anchors instead of being miscategorized as documentaries | Re-run Best Picture trio + Oppenheimer single-anchor; check format breakdown |
+| H2 | Medium registry edits | Persepolis vs. Sita Sings the Blues no longer scores 1.0 (matched only on `ADULT_ANIMATION`); animated films match by *technique* not *audience* | Re-run animation anchors; inspect medium_score breakdown |
+| H3 | Shorts harsh downrank (0.30× + max-1 cap) | Toy Story top 10 has zero or one short, not the V2 trio at 8/9/10 | Toy Story single-anchor; count shorts in top 10 |
+| H4 | Medium piecewise (0.65 cross-category) | The Dark Knight Rises top 10 has zero animated Batman entries (Year One, Long Halloween) | TDK Rises single-anchor; check for animated Batman in top 10 |
+| H5 | Country/language 1.05 / 0.75 single-anchor | Barbie #1 is no longer Telugu (Swag); a US/UK on-tradition match takes #1 | Barbie single-anchor; check country tag of #1 |
+| H6 | Franchise structural matrix | Star Wars 1977 surfaces Empire / Phantom Menace / Force Awakens in top 5 (V2 silenced these via the consistency gate) | Star Wars single-anchor; check franchise lane breakdown |
+| H7 | Director auteur list (when unblocked) | Star Wars 1977 no longer surfaces American Graffiti; Lucas as a non-auteur becomes director-silent | Star Wars single-anchor; lane breakdown shows zero director contribution |
+| H8 | Single-anchor themes lane | Barbie surfaces other satire / female-lead films (Poor Things, Promising Young Woman) in top 10 instead of generic shape adjacents | Barbie single-anchor; check themes lane contributions |
+| H9 | Cast bucket floor (multi-anchor) | Tom Hanks 3-of-3 trio (Big + Polar Express + Toy Story) surfaces ≥1 Hanks vehicle in top 10 (Forrest Gump, Cast Away, Captain Phillips) | Run that custom multi-anchor set; check top 10 for Hanks |
+| H10 | Rare-keyword lane | Oppenheimer with candidates sharing `MANHATTAN_PROJECT` (Fat Man and Little Boy, Day One) get bucket floor protection — they survive even with weaker shape | Oppenheimer single-anchor; check rare-keyword lane breakdown |
+| H11 | Genre inclusion in rare-keyword pool | Common genres (DRAMA, COMEDY) collapse to low tier and contribute negligibly; rare genres (KAIJU, FOLK_HORROR, CYBERPUNK) carry real weight | Inspect IDF distribution of TMDB genres; verify low-tier collapse |
+
+## V3 Success Criteria
+
+V3 is ready to land when the benchmark re-run shows:
+
+1. **No regression on V2 wins.** Pixar / Ghibli / Tarantino / war-film cohesive multi-anchor sets retain their tight clusters; Inception / Get Out single-anchor results don't lose their shape-adjacent matches.
+2. **Zero shorts in top 5 for any non-short anchor; ≤1 short anywhere in top 10.** Verified across all 20 single-anchor + 12 multi-anchor cases.
+3. **Format coherence in top 5.** For prestige biopic anchors (Oppenheimer, Schindler's List), top 5 contains zero pure documentaries; biopic narrative features dominate.
+4. **Country/language coherence.** No cross-tradition film in top 3 of any monolingual anchor (Barbie, Inception, Get Out) unless it decisively beats in-tradition adjacents.
+5. **Franchise coverage where it should fire.** Star Wars 1977 surfaces ≥3 same-franchise entries in top 10. Barbie's direct-to-DVD spinoffs do *not* dominate top 5.
+6. **Distinctive match interpretability.** Lane breakdown for Oppenheimer #1 explicitly shows the `MANHATTAN_PROJECT` rare-keyword hit; for the Memento case, shows the non-linear-narrative combo.
+7. **Single-anchor flow is no longer "shape only".** Themes lane contributes to ≥40 % of single-anchor candidates by lane breakdown sampling.
+8. **Cast bucket activates for shared-lead multi-anchor sets.** Tom Hanks trio surfaces ≥1 Hanks vehicle; verified independently with a 4-anchor and 5-anchor variant.
+9. **Auteur list (when unblocked) is consistent.** All anchors whose director is on the list see meaningful director-lane contribution; all anchors whose director is *not* on the list see zero director contribution in single-anchor (multi-anchor cohesion path unaffected).
+10. **Debug payload completeness.** Every candidate's evidence bundle includes the V3 lane breakdown (rare-keyword tier, cast floor activation, franchise tier hit) so future regressions are inspectable in lane-level detail.
+
+## V3 Implementation Order
+
+Tracked in detail in [`similar_movies_v3_plan.md`](similar_movies_v3_plan.md) §5 with status flags. Summary:
+
+- **Batch A — categorization fixes** (✅ shipped): registry edits for format and production medium.
+- **Batch B — single-anchor enrichment**: themes lane, country/language extension and recalibration, director auteur rework (**blocked on auteur list**).
+- **Batch C — franchise + weaving + cast**: franchise structural matrix, format harsh-downrank, cast generic-formula bucket-with-floor.
+- **Batch D — distinctive-match interpretability**: rare-keyword lane (depends on Batch B themes lane).
+- **Batch E — multiplier strengthening**: medium piecewise multiplier.
+- **Batch F — tuning**: middle-bucket quality weight, low-cohesion threshold, award SPECIFICITY_FACTOR observation.
+
+Each batch is testable end-to-end against the same 20 + 12 benchmark, so wins/regressions can be quantified per change.

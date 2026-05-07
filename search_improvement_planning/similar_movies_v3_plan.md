@@ -119,40 +119,86 @@ So the only cases where director matters BEYOND what other lanes already cover a
 The throughline: `director_strength = 0.8*pop + 0.2*reception` measures **director popularity**, not **stylistic coherence across films**. For directors whose filmography is genuinely stylistically uniform (Tarantino, Wes Anderson, Lynch, Miyazaki, Coen Bros), directorship is a near-perfect similarity signal. For prolific generalists (Spielberg, Lucas), it's misleading.
 
 **Action**:
-- Maintain a **manual auteur list** (~30–50 directors) for "truly iconic, style-coherent" directors. These get the full director-lane boost.
-  - Initial list (style is consistent across filmography): Quentin Tarantino, Wes Anderson, David Lynch, Stanley Kubrick, Martin Scorsese, Coen Brothers, Hayao Miyazaki, Christopher Nolan, Paul Thomas Anderson, Darren Aronofsky, Jim Jarmusch, Spike Lee, Spike Jonze, Charlie Kaufman, Edgar Wright, Yorgos Lanthimos, Ari Aster, Robert Eggers, Jordan Peele, Greta Gerwig, David Fincher, Sofia Coppola, David Cronenberg, Lars von Trier, Pedro Almodóvar, Luca Guadagnino, Jane Campion, Mike Leigh, Ken Loach, Akira Kurosawa, Andrei Tarkovsky, Krzysztof Kieślowski, Bong Joon-ho, Park Chan-wook, Hirokazu Kore-eda, Takashi Miike, Wong Kar-wai, Hou Hsiao-hsien.
-  - Stored as a curated Python list / YAML mapping director term IDs to a tier (initially just "auteur" / not — flat boolean). Easy to extend; no MV needed.
+- Maintain a **manual auteur list** for "truly iconic, style-coherent" directors. These get the full director-lane boost.
+  - **Auteur-list composition is explicitly deferred to a follow-up conversation** — see §6 open question #1. The list is the load-bearing artifact of this rework; getting it right matters more than shipping fast.
+  - Stored as a curated mapping (Python list / YAML) from director term IDs to a tier (initially just "auteur" / not — flat boolean). Easy to extend; no MV needed.
 - For directors **not** on the auteur list (single-anchor): **drop director lane entirely**. Their films compete on shape, themes, franchise, etc. The user's reasoning holds: when director matters for non-auteurs, it's via franchise or shape, both of which are already lanes.
 - For **multi-anchor only**: when ≥2 anchors share a non-auteur director, treat that as a true repetition signal (the user explicitly picked multiple films by this director). Director cohesion fires regardless of auteur status. So in the multi case the lane stays cohesion-driven exactly as V2.
 - **Retire `mv_director_strength`** as a lane signal. The auteur list replaces it. The MV may still be useful elsewhere (e.g., the director endpoint in the standard V2 search pipeline) — out of scope to rip out, but stop reading it from `similar_movies.py`.
 
-### 2.2 Franchise lane — confidence formula breaks for large franchises; consider reworking entirely
+> **🛑 BLOCKER — DO NOT IMPLEMENT THIS LANE WITHOUT THE AUTEUR LIST.**
+> The auteur list is essential to this rework and must be resolved with the user before code changes begin. If implementation work on the director lane reaches the point of needing the list and it has not been finalized: **STOP, surface the gap to the user, and pause execution until the list is locked.** Do not stub the list, fall back to the V2 MV, or guess at composition. See [docs/TODO.md](../docs/TODO.md) entry "Auteur list composition for similar-movies V3 director lane".
 
-**Findings**: investigated Star Wars franchise data:
-- Star Wars lineage_id=3 has confidence=0.719 (≥0.65 ✓), **consistency=0.571** (<0.6 ✗).
-- Therefore `franchise_high_confidence = False` → low-confidence path → multiplicative-only.
-- That's why **no Star Wars film shows the franchise lane in its candidate_sources column** in the single-anchor output — the lane doesn't appear in `lane_scores`, only in the multiplier path.
-- Captain America: Brave New World's lineage 447 (MCU): confidence=0.729, consistency=0.600 (exactly at threshold — barely passes).
+### 2.2 Franchise lane — tier system based on lineage + subgroup, with spinoff/crossover handling
 
-The consistency formula at [mv_franchise_confidence](../db/init/01_create_postgres_tables.sql) is `1 - clamp(2 * stddev(0.8*pop + 0.2*reception), 0, 1)`. For Star Wars, the stddev across (Original trilogy + Prequels + Sequels + Solo + Holiday Special + animated entries + various spinoffs) is enough to push consistency below 0.6.
+**Conceptual framing first** (per user discussion): when *should* we surface a same-franchise film, and how do we keep quality high when a franchise spans iconic mainline entries plus a tail of variable-quality spinoffs/shorts/crossovers?
 
-**This is wrong for two reasons**:
-1. The MV is computed over *all* `movie_card`-eligible movies in the lineage. Big franchises have intrinsically more variance because they include shorts, spinoffs, TV movies, and weaker entries. A franchise being big shouldn't disqualify it.
-2. Star Wars is *the* iconic franchise. If our system says it's "low-confidence" we have a definitional problem, not a marginal-tuning problem.
+The principle: **proximity within the franchise structure should map directly to candidate strength.** A user asking "movies like Star Wars (1977)" expects:
+1. **Strongest**: other mainline entries in the same era/trilogy (Empire Strikes Back, Return of the Jedi).
+2. **Strong**: mainline entries from a different era of the same franchise (Phantom Menace, Force Awakens).
+3. **Moderate**: spinoffs in the same lineage (Solo: A Star Wars Story).
+4. **Weak**: cross-franchise crossovers that include this franchise (rare for SW; common for MCU — e.g., Avengers crossing Iron Man + Cap + Thor lineages).
+5. **None**: direct-to-DVD entries with no real shape or quality match.
 
-User question: "*Maybe it isn't a lane at all?*"
+**Verified data structure** ([similar_movies.py:486–514](../search_v2/similar_movies.py#L486), and queried catalog):
+- `lineage_entry_ids`: the canonical franchise. Star Wars 1977 has lineage `[3]`; Empire `[3]`; Solo `[3]`. Avengers crossovers have multiple lineages (Iron Man + Cap + Thor + Hulk).
+- `subgroup_entry_ids`: sub-franchise grouping. Star Wars 1977 has subgroup `[1, 2]` (= original trilogy + main feature films). Phantom Menace has `[2, 484]` (= main features + prequel trilogy). Force Awakens `[2, 8909]` (= main features + sequel trilogy). Solo has `[]` (no subgroup → spinoff signal!).
+- `shared_universe_entry_ids`: cross-franchise universe (MCU, DCEU). Civil War has universe `[436]`; non-MCU films don't.
 
-**Action — proposal**: replace the lane with a simpler, more user-aligned signal:
-- **Option A (preferred)**: keep franchise as an **always-on additive lane** with a fixed weight (no confidence gating). Cap exposure with the existing `MAX_TOP_FRANCHISE = 3` rule and a shape gate (e.g., shape ≥ 0.30) so direct-to-DVD spinoffs can't dominate. The exposure caps already do most of the work; the confidence formula was over-engineered.
-- **Option B**: drop franchise as an explicit lane. Rely on shape similarity (sequels naturally vector-cluster with the original) plus a separate "same-lineage" hard-gate — e.g., always include the top-3 highest-popularity-percentile non-anchor entries from the anchor's lineage, regardless of shape. This guarantees obvious franchise candidates appear without giving franchise its own scoring weight.
-- **Option C (simplest)**: keep V2 architecture but drop the `consistency` requirement. Use `confidence ≥ 0.50` only. Star Wars (0.719) passes, prestige franchises (LotR, Pixar) pass, low-confidence franchises (Barbie kids' films) still fail.
+This gives us a **structural spinoff detector**: a candidate with the anchor's lineage but **no shared subgroup** is a spinoff. A candidate with **multiple lineages including the anchor's** is a crossover.
 
-I lean Option C as the smallest patch that fixes Star Wars while preserving the Barbie-kids'-films suppression that V2 nailed.
+**Verified Star Wars confidence issue**:
+- Star Wars lineage_id=3: confidence=0.719 (≥0.65 ✓), **consistency=0.571** (<0.6 ✗).
+- `1 - clamp(2 * stddev(0.8*pop + 0.2*reception), 0, 1)` knocks Star Wars below the consistency gate because the lineage includes Holiday Special / shorts / weaker spinoffs alongside the iconic entries.
+- The MV is correctly scoped to `movie_card`-eligible movies (verified — answers the user's question: no, we did *not* accidentally include all TMDB).
 
-**Independent verification needed**:
-- User asked: "*Did we accidentally look at all movies not just the ones with movie cards when making the franchise DB?*"
-- Verified: the MV joins on `movie_card` ([01_create_postgres_tables.sql:mv_franchise_confidence](../db/init/01_create_postgres_tables.sql)) — only quality-passed movies are included. Not the cause of Star Wars's low consistency. The cause is intrinsic Star Wars variance.
-- Verified the `_franchise_score_v2()` logic at [search_v2/similar_movies.py:494–514](../search_v2/similar_movies.py#L494): for Star Wars (1977) vs Empire Strikes Back, both have `lineage=[3]` so `a_lin & c_lin = {3}` → score 1.0. The lineage match works correctly; the issue is purely whether the franchise lane is *additive* or *multiplicative-only*.
+**V3 proposal — replace V2's confidence gating with a 2D role × overlap matrix**:
+
+The structural lookup uses two dimensions: the **role** of each side (mainline / spinoff / crossover) and the **overlap relationship** (same subgroup / same lineage / same universe / disjoint). Each side's role is determined once per movie:
+
+- **mainline**: single lineage AND non-empty `subgroup_entry_ids` (Empire Strikes Back, Iron Man, Toy Story 2)
+- **spinoff**: single lineage AND empty `subgroup_entry_ids` (Solo: A Star Wars Story, Rogue One)
+- **crossover**: `len(lineage_entry_ids) >= 2` (Avengers, Civil War, Endgame)
+
+Then the (anchor_role, candidate_role, overlap) triple looks up a weight in this table:
+
+| anchor role | candidate role | overlap relationship | weight |
+|---|---|---|---:|
+| mainline | mainline | same lineage + same subgroup | **1.00** |
+| mainline | mainline | same lineage, different subgroup | 0.70 |
+| mainline | spinoff | same lineage | 0.50 |
+| mainline | crossover | shares ≥1 lineage | 0.40 |
+| spinoff | spinoff | **same lineage** | **0.85** |
+| spinoff | mainline | same lineage | 0.50 |
+| spinoff | crossover | shares lineage | 0.40 |
+| crossover | crossover | shares ≥1 lineage | **0.85** |
+| crossover | mainline | shares lineage | 0.40 |
+| crossover | spinoff | shares lineage | 0.40 |
+| any | any | same universe, no lineage overlap | 0.30 |
+| any | any | disjoint | 0.00 |
+
+The three boldface rows encode the user's "role consistency is a strong signal" principle: same-role + same-lineage gets a bigger boost than mixed-role + same-lineage. Concrete examples:
+
+- **Toy Story 1 ↔ Toy Story 2** = 1.00 (mainline-mainline, same subgroup).
+- **Star Wars 1977 ↔ Phantom Menace** = 0.70 (mainline-mainline, same lineage `[3]` but different subgroup — original trilogy `[1, 2]` vs prequel `[2, 484]`).
+- **Star Wars 1977 ↔ Solo** = 0.50 (mainline-spinoff, same lineage).
+- **Rogue One ↔ Solo** = 0.85 (spinoff-spinoff, same lineage — the user's "even more strongly rewarded" case).
+- **Avengers ↔ Civil War** = 0.85 (crossover-crossover, share lineages — both span Iron Man + Cap + Thor + Hulk).
+- **Iron Man ↔ Avengers** = 0.40 (mainline anchor → crossover candidate; relevant but secondary to other Iron Man entries).
+- **Civil War ↔ Iron Man** = 0.40 (crossover-mainline, shares lineage).
+- **Iron Man ↔ Cap: Civil War** = 0.30 (same MCU universe, no shared lineage). Confirm with data — if Civil War actually carries Iron Man's lineage too, this falls into the 0.40 row instead.
+
+**Tie-breaking rule**: take the **max** of all matching cells. A candidate that satisfies multiple rows (e.g., a mainline-mainline same-subgroup AND same-universe) takes the highest applicable weight (1.00 in that example).
+
+**Drop the `franchise_confidence` gate entirely**. The structural matrix encodes match quality directly — Star Wars's "low consistency" measurement artifact is irrelevant once we score by structure rather than statistical variance over the lineage's IDs.
+
+**Drop the `franchise_confidence` gate entirely**. The structural tier system makes Star Wars's "consistency problem" moot — within the mainline lineage+subgroup space (Tier 1/2), variance is naturally low because we're only comparing major entries.
+
+**Quality safety net**: keep the V2 shape gate (`shape >= 0.35` for franchise candidates to enter the top 5–10). Direct-to-DVD spinoffs that the centroid doesn't pull naturally won't surface even at Tier 3. Optional V3 addition: per-candidate quality gate — `popularity_percentile >= 0.50` OR `reception_score >= 60` — for franchise candidates, to filter the long tail.
+
+**Crossover detection**: simple — `len(lineage_entry_ids) >= 2`. Verified the data: Avengers films have multiple lineages, regular MCU entries have one. May want to inspect the actual data shape for Avengers in the catalog before fully committing to this signal.
+
+This rework also fixes the Barbie problem differently: Barbie's lineage is sparse and direct-to-DVD spinoffs all share the same lineage but no subgroup → Tier 3 (0.50) instead of full strength → they don't dominate. No need for the V2 `franchise_low_confidence` low-multiplier path at all.
 
 ### 2.3 Single-anchor needs themes / keyword / concept_tag support
 
@@ -169,45 +215,212 @@ Confirmed by reading [search_v2/similar_movies.py:1437–1439](../search_v2/simi
 
 Single-anchor flow drops the themes lane entirely. So Barbie's defining concept tags (`FEMALE_LEAD`, `BARBIE_DOLL`, `SATIRE`, `EXISTENTIAL`, etc., whatever the catalog has) provide no signal. The centroid does the work alone.
 
-**Action — single-anchor themes lane**:
-- Run themes scoring against the anchor's own trait pool (vs. multi-anchor's "repeated traits").
-- Score: `themes_score(candidate) = sum(idf(t) for t in candidate_traits ∩ anchor_traits) / sum(idf(t) for t in anchor_traits)`. Identical formula to multi-anchor, just with anchor traits in place of repeated traits.
-- IDF weighting handles the cardinality problem automatically: shared `DRAMA` (very common) contributes near zero; shared `BARBIE_DOLL` (very rare) carries real signal.
-- Lane weight: copy V2 multi-anchor's `0.06` base.
-- This reform is independently helpful for every single-anchor case where the anchor has a distinctive concept-tag profile (Get Out's `RACE_RELATIONS`, Inception's `DREAMS`, Mad Max Fury Road's `POST_APOCALYPTIC` + `CHASE`).
+**User's structural question**: "*Should we break it up into distinct categories? Like keywords that serve as info on themes and stuff, keywords that serve as style or production, keywords that serve as source of inspiration, keywords that serve as culture, etc? Or would it be better to do a generic 'any keywords this movie has gets used with its strength being based on how rare that keyword is' and then tune based on the results? If a keyword is especially rare should it get its own lane?*"
 
-**Should single-anchor also get `cast` and `specific_award`?** The V2 spec rejected single-anchor cast on the principle that "DiCaprio in Titanic isn't like Inception", which is correct. Single-anchor `specific_award` is more debatable — sharing a Best Picture award between anchor and candidate is a real prestige signal — but I'd defer it to V4 to stay focused.
+**Recommendation: start with generic IDF, observe, then split categories only if a category visibly underperforms.**
+
+Why generic IDF is the right starting point:
+- IDF naturally does what categorization is trying to do: rare = important, common = not. `BARBIE_DOLL` (very rare) carries near 1.0 weight; `DRAMA` (very common) carries near 0. The math handles the cardinality problem we'd otherwise hand-tune via category weights.
+- Categorization adds ~5 hand-tuned multipliers (theme×source×style×culture×production) and a maintenance burden. Each multiplier is a knob we have to test against real outputs and decide a value for. With generic IDF there's one knob: the lane weight.
+- We can already observe whether IDF is doing the job by inspecting V3 outputs. If, say, source-of-inspiration tags are systematically underrepresented in the lane, we can boost them with a category multiplier *then* — but we should measure first.
+- Multi-anchor V2 already ships generic IDF in the themes lane and it's clearly contributing real signal (Eternal Sunshine surfacing for Nolan trio, Killers of the Flower Moon for Best Picture trio).
+
+**On rare keywords getting their own lane**: not initially. IDF already gives a single rare keyword shared between anchor and candidate near-1.0 contribution to themes. Promoting "exceptionally rare → own lane" adds threshold tuning (what counts as exceptionally rare?) and lane-weight allocation overhead. If after V3 testing we observe e.g. "rare-keyword matches are competing too closely with shape-only matches", *then* split out a "rare_signal" lane with its own weight. Premature otherwise.
+
+**Action — single-anchor themes lane**:
+- Run themes scoring against the anchor's own trait pool (vs. multi-anchor's "repeated traits across anchors"). Use the same `(kind, trait_id)` namespacing already in `_themes_traits_for_movie`.
+- Score: `themes_score(candidate) = sum(idf(t) for t in candidate_traits ∩ anchor_traits) / sum(idf(t) for t in anchor_traits)`. Same formula shape as multi-anchor; the denominator is the IDF mass of the anchor's own traits.
+- Lane weight: copy V2 multi-anchor's `0.06` base.
+- Active for single-anchor regardless of trait count (no "must repeat ≥2 anchors" gate; that's a multi-anchor requirement only).
+- Continue excluding format / medium / country tags from the themes pool (they're handled by their dedicated lanes/multipliers). Once §1.1 / §1.2 are merged, DOCUDRAMA / TRUE_CRIME / SKETCH_COMEDY / ADULT_ANIMATION / HOLIDAY_ANIMATION will be **available** to themes (they're no longer in `FORMAT_KEYWORD_IDS_ALL` or `MEDIUM_TAG_IDS`) — which is the desired behavior. Documentary biopics get to share `DOCUDRAMA` as a content-similarity signal even though they're no longer format-bucketed as documentary.
+
+**Direct effect on Barbie**: `FEMALE_LEAD`, `SATIRE`, `EXISTENTIAL`, `BARBIE_DOLL`, `MUSICAL_NUMBER`, etc. become signal. The Telugu film at #1 likely shares few of those rare tags; Poor Things and other on-theme films share them and rise. Combined with §1.3 country/language penalty, the cross-tradition #1 problem disappears.
+
+**Should single-anchor also get `cast` and `specific_award`?**
+- Cast: keep disabled (per user direction below). DiCaprio-in-Titanic isn't Inception; the V2 rationale stands.
+- Specific_award: defer to V4. Sharing a Best Picture award between anchor and candidate is real prestige signal, but the middle-bucket quality lane already covers most of the case.
 
 ### 2.4 Country/language coherence for single-anchor
 
-Already covered by §1.3. Calls back here for completeness — single-anchor flow gets a country/language multiplier driven by the anchor's own tradition.
+Already covered by §1.3. Calls back here for completeness — single-anchor flow gets a country/language multiplier driven by the anchor's own tradition, with the calibrated `1.05` / `0.75` multipliers.
+
+### 2.5 Cast lane — multi-anchor bucket-with-floor (generic N-anchor formula)
+
+**User direction**: "*for the multi movie case I'd say if they share a lead actor that's actually a really big signal we should at least try to weave in, even if the movies have other dominant shapes. Like if I had 'big', 'polar express', and 'toy story' that's 3/3 on Tom Hanks. I should absolutely weave in some Tom hanks movies in there.*" Followed by: "*treat it as a bucket when there's strong cohesion with a reasonable floor, kinda like what we had for director before (but don't let it get too crazy)*", and "*ensure this is for top 3 billing position not just #1*", and "*give this as a generic formula when we have N movies and M actor matches*".
+
+**Generic formula** (works for any number of anchors `N`):
+
+Definitions (per anchor set):
+- For each lead actor (anyone in **top-3 billing** in *any* anchor), let `M_a` = count of anchors where actor `a` is in top-3 billing.
+- `shared_leads = {a : M_a >= 2}` — actors carrying real cohesion signal (singletons are dropped).
+- `max_M = max(M_a for a in shared_leads)` (or `0` if `shared_leads` is empty).
+- `ratio = max_M / N`.
+
+Per-candidate cast lane score (additive contribution):
+```text
+matches    = |candidate.top_3_billing ∩ shared_leads|
+cast_score = matches / max(1, len(shared_leads))      # range [0, 1]
+```
+
+Lane weight (scales with cohesion strength):
+```text
+single-anchor:   shared_leads is empty by construction → cast lane silent.
+multi-anchor:    lane_weight = 0.05 + 0.10 * ratio    # silent when max_M < 2
+                                                      # ratio = 0.5 → 0.10
+                                                      # ratio = 0.67 → 0.117
+                                                      # ratio = 1.00 → 0.15
+```
+
+Bucket floor (the weaving mechanism, multi-anchor only):
+```text
+if max_M < 2 or ratio < 0.5:
+    floor = 0
+else:
+    floor = 0.25 + 0.20 * ratio
+```
+Yields: `2/4 → 0.35`, `2/3 → 0.384`, `3/4 → 0.40`, `3/3 → 0.45`, `4/4 → 0.45`, `3/5 → 0.37`.
+
+Floor application:
+- Activates per-candidate when `cast_score > 0` (candidate matches at least one shared lead in their own top-3 billing).
+- `combined_score = max(combined_score, floor)` — pulls weak-shape candidates up to the floor; doesn't touch already-strong candidates ("don't let it get too crazy").
+- **Shape gate**: floor only applies when `shape >= 0.30`. Truly off-shape candidates (e.g. a Tom Hanks indie drama vs. a Big/Polar Express/Toy Story trio that's strongly family-comedy-shaped) don't get pulled in — keeps the floor from rescuing tonally-wrong matches.
+
+Multi-shared-lead case (e.g. Hanks AND Travolta both in 2/3 anchors):
+- Floor magnitude uses `max_M` only.
+- Per-candidate `cast_score` differentiates within the bucket — a candidate matching both shared leads scores higher additively than one matching just one. That's where multi-actor strength gets captured.
+- Optional refinement once observed: bump floor by `+0.03` per additional shared lead beyond the first, capped at `+0.10`. Defer until real cases call for it.
+
+**Single-anchor cast**: stays disabled per user direction. DiCaprio-in-Titanic isn't Inception.
+
+### 2.6 Rare-keyword lane — tiered IDF with combo-driven floor (NEW)
+
+**User direction**: "*each keyword should contribute its own score rather than cramming them all into a single closeness value...this should update lane weaving as well when the rarity (or combination of the rarity) is unique enough. Kinda like it adds a floor similar to multi-anchor actor so the shape still needs to be decent in order to make it work. Maybe low to medium rarity terms are pure additive (low could combine into that single 0.05 weight, moderate could be individual additions) and then high rarity individuals or high rarity combos (or maybe just allow them to stack in some way) changes weaving logic.*"
+
+This is a new lane added in V3 (parallel to themes — it operates on the same trait pool but applies tiered visibility and a floor mechanism for distinctive matches). The themes lane (§2.3) handles common-and-moderate signal in aggregate; the rare-keyword lane handles the high-rarity individual + combo cases that deserve weave-level attention.
+
+**Pool definition** (which traits participate):
+
+Include:
+- Concept tags (`CategoryName.CONCEPT_TAG`) — designed to be specific, the highest-value pool.
+- `OverallKeyword`s NOT handled by other lanes/registries (see exclusion list).
+- TMDB genres (`tmdb_genres`) — included per user direction: "*include genres for now. Worst case they don't contribute as much when they're frequent.*" High-IDF genres (rare combinations) will surface; common genres (DRAMA, COMEDY) will fall into the low tier and be effectively muted.
+
+Exclude (already handled elsewhere — would double-count):
+- `FORMAT_KEYWORD_IDS_ALL` (format lane).
+- `MEDIUM_TAG_IDS` (medium multiplier).
+- Country/language tags from `country_language_registry` (country/language multiplier).
+- Source-material tags (source IDF lane).
+- Award-related category tags (quality / specific_award).
+
+**Three rarity tiers** (using IDF):
+
+| Tier | IDF range | Behavior |
+|---|---|---|
+| **Low** | `< 2.5` | Pooled into the existing **themes lane** (§2.3 generic IDF). Combined contribution weighted at `0.05`, capped. *No individual visibility — just adds to themes lane numerator.* |
+| **Moderate** | `2.5 ≤ IDF < 4.5` | **Individual additive contributions.** Each shared moderate-tier trait adds `IDF × 0.03` to combined score. Visible per-trait in the rare-keyword lane breakdown (separate from themes lane). |
+| **High** | `IDF ≥ 4.5` | **Individual additive contributions** at higher weight: `IDF × 0.05` per shared trait. Plus counts toward floor trigger (below). |
+
+IDF thresholds `2.5 / 4.5` are starting points — sanity-check against the actual `mv_trait_idf` distribution before locking. The thresholds should land roughly at the p70 / p90 IDF percentile (i.e., low = bottom 70 % of trait IDFs, moderate = next 20 %, high = top 10 %).
+
+**Floor mechanism (the weaving update)**:
+
+Triggers if either:
+1. **Single super-rare hit**: `max(IDF for shared high-tier traits) >= 5.0`.
+2. **Rare combo**: `sum(IDF for shared high+moderate-tier traits) >= 7.0`. So 2-3 strong moderate matches can also trigger, even without a single super-rare hit.
+
+When triggered:
+- `floor = 0.40 + 0.05 * (number_of_high_tier_matches)`, capped at `0.55`.
+- **Shape gate**: `shape >= 0.30` required (same as cast — no truly off-shape rescues).
+- Apply: `combined_score = max(combined_score, floor)`.
+
+**Single vs multi-anchor**:
+- Single-anchor: pool = anchor's own keywords + concept tags + genres, after exclusions.
+- Multi-anchor: pool = traits shared across ≥2 anchors (cohesion intersection — same as the themes lane multi-anchor logic).
+
+**Where it adds to score** (both flows):
+- Low tier: into themes lane (no separate score addition — themes lane is the home).
+- Moderate / high tier: each contributes individually to the rare-keyword lane's additive sum, with high-tier weighted more.
+
+**Where it updates weaving** (both flows):
+- Floor only — same mechanism as cast multi-anchor §2.5. Sufficient rare matches pull combined score up to the floor regardless of weaker shape (with shape gate). Most rare-keyword signal is pure score; only the high-rarity / strong-combo cases get bucket protection.
+
+**Concrete examples**:
+
+Oppenheimer anchor with candidate sharing `MANHATTAN_PROJECT` (IDF ≈ 6.0, high tier):
+- Score: `+0.30` from high-tier individual contribution (6.0 × 0.05).
+- Floor: max IDF 6.0 ≥ 5.0 → activates. Magnitude: `0.40 + 0.05 × 1 = 0.45`.
+- Effect: candidate at combined 0.32 with shape 0.40 → pulled up to 0.45, lands in top 10. Candidate already at 0.55 → unchanged (already over floor).
+
+Memento anchor with candidate sharing `NON_LINEAR_NARRATIVE` (≈3.5), `UNRELIABLE_NARRATOR` (≈4.0), `AMNESIA` (≈3.8):
+- Score: `0.105 + 0.120 + 0.114 = 0.339` total moderate-tier additive.
+- Floor: sum 11.3 ≥ 7.0 → activates (combo path, no high-tier hit). Magnitude: `0.40 + 0.05 × 0 = 0.40`.
+- Effect: thematically-distinctive matches surface even when shape is mediocre.
+
+**Why this matters beyond pure score**: visibility. When Oppenheimer matches via "Manhattan Project" specifically, the hit shows up labeled in the lane breakdown rather than smearing into a generic themes score. Easier to explain ranks to ourselves and to debug regressions.
 
 ---
 
 ## 3. Weaving and multipliers
 
-### 3.1 Format weave — extend lock to all 10 slots and exclude shorts/docs entirely when the anchor is `narrative_feature`
+### 3.1 Format weave — harsh downrank for shorts, asymmetric short-anchor handling
 
-**Combines V2 findings F2 + user direction**: "*We should honestly exclude shorts if we're not searching for similar to a short. If we have a short we should heavily boost shorts, and if there is significant overlap in the multi case where they're shorts then boost it there, otherwise harshly penalize or fully exclude.*"
+**Combines V2 findings F2 + user direction**: "*When we're matching on a single movie that isn't a short or there isn't moderate cohesion for the short format in the multi case we should severely downrank shorts. Like the user clearly isn't looking for shorts so they should be fully locked out of the top 10 but I don't want it to reach #10 and then be a flood of shorts so really we should do a HARSH downrank on them.*"
 
-**Action**:
-- For single-anchor:
-  - If anchor format ∈ {`narrative_feature`, `documentary`, etc.}: **hard-exclude** candidates from a different format bucket from the entire top 10 (not just top 5). `(top + remainder)` should be filtered before slicing.
-  - If anchor format = `short`: invert — heavily boost short candidates (e.g., medium-style multiplier of 1.10 for same-bucket, harsh 0.70 for cross-bucket, OR a hard exclusion of non-shorts).
-- For multi-anchor:
-  - If a single format bucket repeats across ≥2 anchors: hard-exclude other buckets from top 10, same as single-anchor.
-  - If anchors disagree on format: drop the constraint entirely (current V2 behavior).
-- Update [search_v2/similar_movies.py:_weave_candidates](../search_v2/similar_movies.py#L1016) to apply the format gate to *both* the top section and the deferred remainder, replacing today's 5-slot-only enforcement.
+**Mechanism — multiplier + hard cap, not just a top-5 lock**:
+The V2 top-5 lock is a half-fix. It blocks shorts from positions 1–5 but lets them flood positions 6–10 because the underlying combined score still ranks them well. The fix has to act on the score itself, with a structural cap as a safety net.
 
-This single change kills all the "Pixar shorts at #9–10 / Animatrix shorts at #7–10 / They Shall Not Grow Old at #8" failures.
+- **Combined-score multiplier**: when candidate is `format_bucket = short` and the active anchor bucket is *not* `short`, multiply the candidate's combined score by **0.30**. A typical short-with-strong-franchise candidate (Partysaurus Rex against Toy Story at raw 0.34) drops to ~0.10, well below position-10 of the feature pool.
+- **Hard cap**: at most 1 short in the entire top 10, regardless of score. This catches pathological cases (catalog-wide Pixar short pile-up surviving the 0.30 multiplier).
+- **Multi-anchor "moderate cohesion" definition**: the dominant format bucket = the bucket that ≥50 % of anchors share. If no bucket clears 50 %, treat as "no consensus" → no shorts penalty (drop the constraint, same as V2). If shorts clear 50 %, treat shorts *as* the dominant bucket → no penalty, in fact slight upweight (1.10 multiplier within shorts).
+- **Short-anchor case** (single-anchor with anchor bucket = `short`): invert — apply a soft top-1 lock (require at least one short in top 1, then let features fill from 2 onward). Don't fully lock to shorts; the catalog's shorts skew toward the same-franchise tail and the user likely also wants the related features.
 
-### 3.2 Medium multiplier — strengthen for live-action vs animation
+**Where this lives in code**:
+- The multiplier is applied during the combined-score computation in [`_build_results`](../search_v2/similar_movies.py#L1016) (or wherever `combined_score` is finalized), conditional on `format_bucket(candidate) == "short"` and `anchor_format_bucket != "short"`.
+- The hard cap is applied during [`_weave_candidates`](../search_v2/similar_movies.py#L1016) — track a running short-count as we fill the top section + remainder, skip any short past the first.
+- Replaces today's `TOP_FORMAT_LOCK = 5` enforcement that only catches half the problem.
 
-**V2 finding F3**: floor `0.85` is too soft. For live-action vs animation, 15 % penalty doesn't push animated Batman / Wallace & Gromit out of TDK / Toy Story top 10.
+This kills all the "Pixar shorts at #9–10 / Animatrix shorts at #7–10 / They Shall Not Grow Old at #8" failures simultaneously.
 
-**Action**:
-- Make the multiplier asymmetric: live-action ↔ animation = `0.65–0.70` floor (35 % penalty); within-animation cross-technique = `0.85` floor (current behavior).
-- Or apply medium as a **hard gate inside the format top-10 lock**: a candidate must share at least one medium tag at score ≥ 0.50 with the anchor to enter the top 10 when the anchor has a strong medium signal. (Keep the multiplier for finer ranking within the gate.)
+### 3.2 Medium multiplier — strengthen for live-action ↔ animation crossings only
+
+**Detailed explanation** (per user request):
+
+V2's medium multiplier is `0.85 + 0.15 * medium_score`, range `[0.85, 1.0]`:
+- Perfect medium agreement (e.g., live-action vs live-action) → multiplier = `1.00` (no penalty).
+- Within-animation cross-technique (e.g., CG vs stop-motion, score 0.50) → multiplier ≈ `0.925` (7.5 % penalty).
+- Live-action vs animation (medium_score = 0) → multiplier = `0.85` (15 % penalty).
+
+The 15 % penalty is the issue: animated Batman films (Year One, Long Halloween Pt 2) ride into Dark Knight's top 10 with franchise=1.0 + source=1.0 + format=1.0 + shape ≈ 0.30 contributing roughly +0.30 to combined score. The 0.85 multiplier subtracts ~0.045 — not enough to displace them. Wallace & Gromit (stop-motion) entered Toy Story's top 10 at #4 with the lighter 7.5 % penalty.
+
+The fix has to acknowledge that **live-action vs animation is a categorically different watching experience**, while within-animation crossings (CG vs stop-motion, hand-drawn vs anime) are softer differences. The V2 spec itself frames it that way; the multiplier just needs to follow through.
+
+**Proposal — piecewise multiplier**:
+
+```python
+def _medium_multiplier(anchor_tags, candidate_tags):
+    if not anchor_tags or not candidate_tags:
+        return 1.0
+    score = medium_score(anchor_tags, candidate_tags)
+    if score == 0.0:
+        # No overlap at all → categorical mismatch (live ↔ animation).
+        # Drop combined score by 35% so on-brand-but-wrong-medium franchise
+        # candidates can't ride strong franchise/source contributions into
+        # the top of the list.
+        return 0.65
+    # Within-category crossings (CG vs stop-motion, anime vs HD, etc.):
+    # keep V2 behavior — partial penalty proportional to similarity gap.
+    return 0.85 + 0.15 * score
+```
+
+Effects:
+- LIVE ↔ ANIM (score 0.0): multiplier `0.65` (35 % penalty). Animated Batman films in TDK drop combined contribution from ~0.50 to ~0.33 — likely below shape-only adjacents.
+- CG vs STOP_MOTION (score 0.50): multiplier `0.925` (unchanged from V2).
+- ANIME vs HD (score 0.85): multiplier `0.978` (unchanged).
+- Perfect medium match: `1.00` (unchanged).
+
+**Alternative — hard gate (more aggressive)**: replace the multiplier with a top-10 gate. If anchor has a strong medium signal (e.g., LIVE_ACTION-only or any animation-only), candidates must satisfy `medium_score(anchor, candidate) >= 0.50` to enter the top 10. Implies hard exclusion of pure animation from a live-action anchor's top 10.
+
+Recommendation: start with the piecewise multiplier (lower-risk change). If V3 testing still shows wrong-medium leakage, escalate to the hard gate.
 
 ### 3.3 Cross-cultural penalty for single-anchor
 
@@ -245,27 +458,45 @@ Source author (Stephen King-specific, Tolkien-specific) is not in the DB. Adding
 
 ## 5. Implementation order / priority
 
-By impact (high → low), with recommended priority:
+By impact (high → low), with recommended priority. Items marked ✅ are already shipped.
 
-| # | Change | Section | Impact |
-|---|---|---|---|
-| 1 | Remove DOCUDRAMA + TRUE_CRIME from documentary bucket | §1.1 | **Huge** — fixes Oppenheimer, Best Picture trio, frees GoodFellas et al. |
-| 2 | Remove ADULT_ANIMATION + HOLIDAY_ANIMATION from MEDIUM_TAG_IDS | §1.2 | Medium-large — fixes false matrix matches; cleans medium IDF signal |
-| 3 | Hard-exclude wrong-format candidates from full top 10 (not just top 5) | §3.1 | Huge — fixes Pixar shorts, Animatrix shorts, LotR documentary |
-| 4 | Add themes lane (IDF over keywords/concepts/genres) to single-anchor | §2.3 | Large — fixes Barbie, Get Out, Mad Max-style anchors with distinctive concept-tag profiles |
-| 5 | Add country/language multiplier to single-anchor | §1.3, §2.4 | Medium-large — fixes Barbie's Telugu #1 |
-| 6 | Director lane: manual auteur list, drop pure director_strength | §2.1 | Medium-large — fixes Star Wars's American Graffiti, Lucasfilm's non-SW credits, balances Tarantino/Fincher |
-| 7 | Franchise: drop consistency requirement (or rework lane entirely) | §2.2 | Medium — fixes Star Wars franchise silence, doesn't break Barbie suppression |
-| 8 | Strengthen medium multiplier asymmetrically (live ↔ anim = 0.65 floor) | §3.2 | Medium — fixes animated Batman in TDK |
-| 9 | Lower middle-bucket quality weight 0.06 → 0.03 | §4.1 | Small — cleans prestige-pick noise |
-| 10 | Raise low-cohesion metadata threshold 1.0 → 1.5 | §4.2 | Small — chaotic-mixed-bag handling |
-| 11 | Re-verify award SPECIFICITY_FACTOR L2 after above changes | §1.5 | Smallest — observe first |
+| # | Change | Section | Impact | Status |
+|---|---|---|---|---|
+| 1 | Remove DOCUDRAMA + TRUE_CRIME + SKETCH_COMEDY from format buckets | §1.1 | **Huge** — fixes Oppenheimer, Best Picture trio, Monty Python miscategorization | ✅ done |
+| 2 | Remove ADULT_ANIMATION + HOLIDAY_ANIMATION from MEDIUM_TAG_IDS | §1.2 | Medium-large — fixes false matrix matches; cleans medium IDF signal | ✅ done |
+| 3 | Shorts harsh downrank (0.30 multiplier + max-1 hard cap) for non-short anchors / no-cohesion multi-anchor | §3.1 | Huge — fixes Pixar shorts, Animatrix shorts, LotR documentary | pending |
+| 4 | Add themes lane (generic IDF over keywords/concepts/genres) to single-anchor | §2.3 | Large — fixes Barbie identity, Get Out, Mad Max-style anchors | pending |
+| 5 | Add country/language multiplier to single-anchor + tune to `1.05`/`0.75` | §1.3, §2.4 | Medium-large — fixes Barbie Telugu #1; tighter cross-tradition bar everywhere | pending |
+| 6 | Franchise rework: structural tier system + spinoff/crossover detection | §2.2 | Medium-large — fixes Star Wars silent-franchise, Barbie suppression, Avengers crossover handling | pending |
+| 7 | Director: manual auteur list only; drop non-curated tier entirely | §2.1 | Medium — fixes Lucas's American Graffiti, Spielberg over-firing, etc. | **BLOCKED** on auteur list (§6 #1) |
+| 8 | Cast lane: generic N-anchor formula — bucket-with-floor on shared top-3 leads (multi-anchor) | §2.5 | Medium — fixes Tom-Hanks-trio scenario | pending |
+| 9 | Rare-keyword lane: tiered IDF (low/moderate/high) + floor on high-rarity hits or rare combos (NEW) | §2.6 | Medium — interpretability + distinctive-match weaving for both single and multi | pending |
+| 10 | Medium multiplier: piecewise — `0.65` for cross-category, V2 formula within category | §3.2 | Medium — fixes animated Batman in TDK, Wallace & Gromit in Toy Story | pending |
+| 11 | Lower middle-bucket quality weight `0.06 → 0.03` | §4.1 | Small — cleans prestige-pick noise | pending |
+| 12 | Raise low-cohesion metadata threshold `1.0 → 1.5` | §4.2 | Small — chaotic-mixed-bag handling | pending |
+| 13 | Re-verify award SPECIFICITY_FACTOR L2 after above changes | §1.5 | Smallest — observe first | pending |
 
 **Suggested batches** (each batch is testable end-to-end in isolation):
 
-- **Batch A (categorization fixes)**: 1, 2 — pure registry edits, low blast radius, immediate visible improvement on Oppenheimer / Best Picture / Toy Story-shorts cases.
-- **Batch B (single-anchor enrichment)**: 4, 5, 6 — add themes + country to single-anchor; auteur-list rework. Bigger architectural change but enables a class of cases V2 silently fails.
-- **Batch C (weaving + franchise)**: 3, 7, 8 — final polish on rank order and exposure caps.
-- **Batch D (tuning)**: 9, 10, 11 — observe-first calibration once A/B/C are in.
+- **Batch A — categorization fixes** (✅ done): items 1, 2. Pure registry edits, low blast radius. Already verified Oppenheimer correctness improvement.
+- **Batch B — single-anchor enrichment**: items 4, 5, 7. Add themes + country to single-anchor; auteur-list director rework. Biggest architectural change in V3 but unlocks Barbie-class cases that V2 silently fails. **Item 7 is blocked** on the auteur list (§6 #1) — items 4 and 5 can ship independently, but Batch B is not "complete" until 7 is unblocked and lands.
+- **Batch C — franchise + weaving + cast**: items 3, 6, 8. Tier-system franchise, format harsh-downrank, cast generic-formula bucket-with-floor. Fixes the rank-order issues that the lane-level reworks alone don't.
+- **Batch D — distinctive-match interpretability**: item 9 (rare-keyword lane). Adds the new lane with tiered IDF and floor; depends on the themes lane (Batch B item 4) being in place since they share the trait pool.
+- **Batch E — multiplier strengthening**: item 10. Asymmetric medium multiplier; small-surface change but high specificity for the live↔anim crossing failures.
+- **Batch F — tuning**: items 11, 12, 13. Observe-first calibration once A–E are in.
 
-Each batch should be re-tested against the same 20 single-anchor + 12 multi-anchor sets used here, so we can quantify wins/regressions per change.
+Each batch should be re-run against the same 20 single-anchor + 12 multi-anchor sets used here, so we can quantify wins/regressions per change.
+
+---
+
+## 6. Open questions / things to verify before V3 implementation
+
+1. **🛑 Auteur list — final composition (BLOCKER for §2.1).** The director rework hinges on this list. Composition has been deferred to a dedicated follow-up conversation with the user; no preliminary list is committed in this plan. **If implementation on the director lane begins before the list is locked, pause and surface the gap.** Tracking entry: [docs/TODO.md](../docs/TODO.md) "Auteur list composition for similar-movies V3 director lane". Decisions still to make in that conversation: (a) inclusion criteria — pure stylistic auteurs only, or include franchise-defining genre directors (Carpenter, Romero)? (b) how to source candidates — hand-pick, external rank (Sight & Sound), or hybrid? (c) data-side resolution — are Coen Brothers one director term or two; is Cronenberg-the-elder vs Cronenberg-the-younger one entry or two?
+
+2. **Crossover detection** (§2.2). Verify on actual catalog: do Avengers films *really* carry multiple lineage_entry_ids, or is the data structured with a single "Avengers lineage" that subsumes Iron Man / Cap / Thor lineages? The franchise tier system depends on this. A 2-line query against `movie_card.lineage_entry_ids` for Avengers films will resolve it.
+
+3. **Cast top-3 ordering** (§2.5). Verify `movie_card`'s cast member IDs are ordered by billing position. If not, the cast lane today is reading "first 3 cast members" without billing-order semantics, and the Tom Hanks weave reservation could miss the Hanks signal because his ID isn't in slot 0–2.
+
+4. **Themes IDF — denominator behavior on tag-rich anchors** (§2.3). Movies with 50+ keyword/concept tags will have a denominator dominated by IDF mass. Verify the score distribution looks reasonable (top candidates should still hit ~0.5+, not collapse to ~0.05 because the anchor has too many tags).
+
+5. **Director auteur list — multi-anchor behavior**. The proposal keeps non-auteur director cohesion firing in multi-anchor when ≥2 anchors share a director. But should we still allow that for *any* director, or also gate on "≥2 anchors share a director AND that director has ≥3 films in the catalog" (to avoid noise from 1-credit directors)?
