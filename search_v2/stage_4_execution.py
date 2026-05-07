@@ -16,9 +16,12 @@
 #             trait its call lives in).
 #   Phase D — Per-trait scoring: for each candidate, for each trait,
 #             compose per-call scores via the category's combine type
-#             (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP), then take max
-#             across the trait's categories. Trait weight is commitment
-#             × rarity (rarity = 1.0 unless the trait is pure-generator).
+#             (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP), then fold
+#             across the trait's categories by combine_mode — FRAMINGS
+#             takes MAX (alternative homes for one underlying thing);
+#             FACETS takes PRODUCT (compound concept whose axes must
+#             compound). Trait weight is commitment × rarity (rarity =
+#             1.0 unless the trait is pure-generator).
 #   Phase E — Branch aggregation: Σ trait_score × weight × sign over
 #             positive traits, minus the gate × fuzzy negative trait
 #             contributions. Implicit-prior boost is applied later by
@@ -49,6 +52,7 @@ from schemas.enums import (
     EndpointRoute,
     OperationType,
     Polarity,
+    TraitCombineMode,
 )
 from schemas.trait_category import CategoryName
 from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
@@ -193,6 +197,43 @@ def combine_calls(
     raise ValueError(f"unknown combine_type: {combine_type!r}")
 
 
+def combine_categories(
+    combine_mode: TraitCombineMode,
+    category_scores: list[float],
+) -> float:
+    """Apply a trait's across-category combine rule and return the
+    per-trait score in [0, 1].
+
+    Empty `category_scores` means no category fired for the trait
+    (every category was NO_OP, every call failed, etc.) — returns 0.0
+    in either mode so an empty trait contributes nothing.
+
+    Modes (per V4 plan in search_deepdive.md):
+      FRAMINGS — categories are alternative homes for one underlying
+                 thing; matching any one is sufficient evidence. MAX
+                 over the category scores. Redundant categories
+                 reinforce as alternative routes to the same signal.
+      FACETS   — categories cover different axes of a compound
+                 concept; ALL facets must fire to a degree for the
+                 criterion to be met. PRODUCT over the category
+                 scores. Strict — any 0 zeros the trait, the same
+                 way within-category ADDITIVE behaves at the
+                 per-category level.
+    """
+    if not category_scores:
+        return 0.0
+    if combine_mode is TraitCombineMode.FRAMINGS:
+        return max(category_scores)
+    if combine_mode is TraitCombineMode.FACETS:
+        out = 1.0
+        for s in category_scores:
+            out *= s
+        return out
+    # Defensive — keep the type checker honest if a new mode lands
+    # without a branch above.
+    raise ValueError(f"unknown combine_mode: {combine_mode!r}")
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -256,6 +297,14 @@ class TraitContribution:
     per-category inputs — populated for positive traits, empty for
     negatives (whose three-bin gate × fuzzy formula does not fold
     through per-category scores).
+
+    `scoring_method` names the across-trait fold that produced
+    `trait_score` so debug output can surface which combine the
+    pipeline picked: `"framings"` (MAX over categories) or
+    `"facets"` (PRODUCT over categories) for positive traits;
+    `"gate×fuzzy"` for negative traits (whose scoring uses the
+    three-bin authoritative-gate × evidential-fuzzy formula and
+    ignores combine_mode).
     """
 
     surface_text: str
@@ -263,6 +312,7 @@ class TraitContribution:
     contribution: float
     trait_score: float = 0.0
     weight: float = 0.0
+    scoring_method: str = ""
     category_scores: list[CategoryScore] = field(default_factory=list)
 
 
@@ -664,14 +714,16 @@ def _score_positive_trait(
     (trait_idx, cat_idx, spec_idx); failed calls (None) are skipped,
     successful calls missing this candidate contribute 0.0. Apply
     `combine_calls` to fold the call scores into one per-category
-    score, then take max across categories. Returns 0.0 for the
-    candidate when no category fired.
+    score, then apply `combine_categories` keyed on the trait's
+    combine_mode (FRAMINGS → MAX; FACETS → PRODUCT) to fold across
+    categories into the trait_score. Returns 0.0 for the candidate
+    when no category fired.
 
     Returns a 2-tuple: `(trait_score_by_mid, category_scores_by_mid)`.
     The second element decomposes each candidate's trait_score into
-    its per-category inputs (the same values the max() on the first
-    element folds over) so callers can render the WHY behind the
-    score without re-running the combine logic.
+    its per-category inputs (the same values the across-category
+    fold consumed) so callers can render the WHY behind the score
+    without re-running the combine logic.
     """
     # Resolve the live-call (spec, score-map) pairs once per (trait,
     # category) outside the per-candidate loop. With unions in the
@@ -732,7 +784,7 @@ def _score_positive_trait(
                     ],
                 )
             )
-        out[mid] = max(category_scores) if category_scores else 0.0
+        out[mid] = combine_categories(trait.combine_mode, category_scores)
         cat_out[mid] = per_cat
     return out, cat_out
 
@@ -1070,6 +1122,15 @@ def _finalize_scores(
                 positive_total += contribution
             else:
                 negative_total += contribution
+            # Positive traits fold per-category scores via combine_mode;
+            # negative traits use the three-bin gate × fuzzy formula
+            # which doesn't read combine_mode at all. Surface that
+            # distinction so the debug output reflects the actual
+            # scoring path rather than the structurally-defaulted
+            # combine_mode value on negative traits.
+            scoring_method = (
+                trait.combine_mode.value if sign >= 0.0 else "gate×fuzzy"
+            )
             trait_contribs.append(
                 TraitContribution(
                     surface_text=trait.surface_text,
@@ -1077,6 +1138,7 @@ def _finalize_scores(
                     contribution=contribution,
                     trait_score=inner,
                     weight=weight,
+                    scoring_method=scoring_method,
                     category_scores=cat_scores_by_mid.get(movie_id, []),
                 )
             )

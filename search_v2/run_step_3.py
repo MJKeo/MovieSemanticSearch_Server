@@ -57,6 +57,9 @@ def _print_trait_decomposition(
         f'\n  contextualized_phrase: "{trait.contextualized_phrase}"'
         f"\n  evaluative_intent: {trait.evaluative_intent}"
         f"\n  qualifier_relation: {trait.qualifier_relation}"
+        f"\n  relationship_role: {trait.relationship_role.value}"
+        f"\n  replaces_axis: {trait.replaces_axis!r}"
+        f"\n  axes_replaced_by_siblings: {trait.axes_replaced_by_siblings}"
         f"\n  anchor_reference: {trait.anchor_reference}"
         f"\n  polarity: {trait.polarity}"
         f"\n  commitment_evidence: {trait.commitment_evidence}"
@@ -109,8 +112,17 @@ async def _main_async() -> None:
         step_3_out_total = 0
         step_3_elapsed_max = 0.0
     else:
+        # Each Step 3 call receives its sibling traits' structural
+        # fields so positioning references can drop replaced axes
+        # without violating per-trait isolation.
         results = await asyncio.gather(
-            *(run_step_3(trait) for trait in analysis.traits)
+            *(
+                run_step_3(
+                    trait,
+                    [s for s in analysis.traits if s is not trait],
+                )
+                for trait in analysis.traits
+            )
         )
         # results[i] aligns with analysis.traits[i] because gather
         # preserves the order of its awaitables.

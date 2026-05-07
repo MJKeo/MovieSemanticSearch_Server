@@ -18,7 +18,7 @@
 #   ATOM PHASE — descriptive evidence gathering
 #     atomicity → modifier vs atom → evaluative intent
 #   COMMIT PHASE — read evidence, commit per trait
-#     commit phase wrapper → polarity → commitment
+#     commit phase wrapper → polarity → commitment → relationship role
 #   CATEGORY VOCABULARY — recognize-only; full taxonomy at Step 3
 #
 # Output-shape discipline lives in the response-schema field
@@ -57,7 +57,8 @@ from schemas.step_2 import QueryAnalysis
 #
 #   task framing
 #   ATOM PHASE   — atomicity → modifier vs atom → evaluative intent
-#   COMMIT PHASE — commit phase → polarity → commitment
+#   COMMIT PHASE — commit phase → polarity → commitment →
+#                  relationship role
 #   CATEGORY VOCABULARY (recognition-only)
 
 
@@ -72,8 +73,9 @@ natural-language query comes in; you produce three coupled outputs:
 2. atoms — descriptive layer. surface_text + modifying_signals + \
    evaluative_intent + split_exploration + standalone_check. Atoms \
    record and analyze.
-3. traits — committed layer. Search-ready units with polarity \
-   and commitment assigned. Step 3 consumes this list.
+3. traits — committed layer. Search-ready units with polarity, \
+   commitment, and structural relationship-role assigned. Step 3 \
+   consumes this list.
 
 Read the response schema's field descriptions before producing \
 output.
@@ -93,19 +95,22 @@ consolidating raw signals into per-criterion meaning. The \
 exploration fields describe analyses without committing to verdicts.
 
 COMMIT PHASE — read the evidence and commit. Structural decisions \
-(split / keep whole; merge / own trait) act on the atom phase's \
-exploration fields. Per-trait commitments (polarity, commitment) \
-read mechanically off the source atom's intent shape and effect \
-tokens, with commitment surveying both explicit phrasing signals \
-and structural-prominence signals before settling on a level.
+(split / keep whole; merge / own trait — including FUSE merges \
+where two atoms with bidirectional IDENTITY-SHAPING signals \
+collapse into one compound trait) act on the atom phase's \
+exploration fields. Per-trait commitments (polarity, commitment, \
+relationship-role and its axis bookkeeping) read mechanically off \
+the source atom's intent shape and effect tokens, with commitment \
+surveying both explicit phrasing signals and structural-prominence \
+signals before settling on a level.
 
 Don't re-interpret intent from scratch — the atom phase already \
 did the interpretive work.
 
 The sections below cover the atom phase first (atomicity, modifier \
 vs atom, evaluative intent), then the commit phase (commit phase, \
-polarity, commitment), then category vocabulary for recognition \
-checks.
+polarity, commitment, relationship role), then category vocabulary \
+for recognition checks.
 
 ---
 
@@ -419,23 +424,61 @@ retrieval matches a user-articulated standalone-able criterion \
 (including exclusions tied to an earlier atom's pool with negative \
 polarity), keep as own trait.
 
-When merging, the merged trait absorbs both sources fully. Neither \
-survives separately. The host's surface_text and evaluative_intent \
-stand; the coupled atom's content is integrated via the host's \
-modifying_signals already.
+ACT ON FUSED-COMPOUND CHECKS. Walk pairs of atoms with cross-\
+modifying signals on each other. For each pair, ask: does each \
+atom's modifying_signals carry an IDENTITY-SHAPING effect token \
+referencing the other atom's content? Bidirectional IDENTITY-\
+SHAPING is the signature for a fused compound — the user means \
+piece A specifically in the context of piece B AND vice versa, \
+such that A standalone ≠ A-in-the-compound and B standalone ≠ \
+B-in-the-compound. When this fires, FUSE the pair into ONE trait: \
+the population test's two-atom outcome is wrong for this query. \
+Surface_text spans both source phrases as they appear in the query; \
+evaluative_intent integrates both source intents into a single \
+compound description.
+
+Single-direction shaping is NOT a fuse trigger. When a qualifier \
+shapes how the population's instance is scored but the population \
+doesn't reshape what the qualifier means, the atoms stay separate \
+— the qualifier-on-population case keeps two traits with \
+INDEPENDENT relationship roles. The fuse rule fires only when \
+removing either piece collapses both pieces' meaning into something \
+the user wasn't asking for.
+
+The fuse decision happens BEFORE polarity / commitment / \
+relationship-role commits, so the merged trait commits its \
+own polarity, commitment, and role from scratch — it inherits \
+neither source atom's slot.
+
+When merging (either standalone-check-driven or fuse-driven), the \
+merged trait absorbs both sources fully. Neither survives \
+separately. For standalone-check merges: the host's surface_text \
+and evaluative_intent stand; the coupled atom's content is \
+integrated via the host's modifying_signals already. For fuse \
+merges: both sources contribute equally to the merged \
+surface_text and evaluative_intent.
 
 DON'T DROP, DON'T INVENT. Every atom that survives the standalone \
-check produces at least one trait. No trait without a source atom. \
-Splits add traits; merges combine.
+check AND is not absorbed by a fuse merge produces at least one \
+trait. Two atoms absorbed by a fuse merge produce ONE trait \
+together — neither survives separately, the merged trait is the \
+shared output. No trait without a source atom. Splits add traits; \
+merges combine. Atom count is NOT constrained to equal trait \
+count — splits push count up, merges push count down. Do NOT \
+default to one-trait-per-atom; the count emerges from the splits \
+and merges you commit, not from the atom list's length.
 
-PER-TRAIT COMMITMENTS. qualifier_relation, anchor_reference, \
+PER-TRAIT COMMITMENTS. qualifier_relation, relationship_role, \
+replaces_axis, axes_replaced_by_siblings, anchor_reference, \
 polarity, commitment_evidence, commitment, and \
 contextualized_phrase commit per the schema field descriptions. \
-The commitment cluster sits at the tail of the trait: polarity \
-commits first (mechanical from FLIPS POLARITY signals), then \
-commitment_evidence surveys both signal channels without writing a \
-verdict, then commitment commits as the natural conclusion of that \
-evidence.
+The commitment order is: polarity (mechanical from FLIPS POLARITY \
+signals) → commitment_evidence (surveys both signal channels) → \
+commitment (natural conclusion of evidence) → qualifier_relation \
+(freeform prose) → relationship_role (closed-enum hard commit) → \
+replaces_axis / axes_replaced_by_siblings (axis bookkeeping for \
+positioning roles) → anchor_reference (verbatim surface) → \
+contextualized_phrase (user-voice restatement).
 
 qualifier_relation is freeform prose describing how this trait \
 positions against the rest of the query AND the operational \
@@ -445,6 +488,16 @@ in your own words — describe the specific relation this query \
 contains, not a slot from a closed list. When no qualifier-style \
 signal exists in the source atom's modifying_signals, commit the \
 literal string "n/a".
+
+relationship_role hard-commits the prose's structural shape into \
+one of three closed values (INDEPENDENT / POSITIONING_REFERENCE / \
+POSITIONING_QUALIFIER). The role is a structural classification, \
+not a polarity / weight choice. See the RELATIONSHIP ROLE section \
+below for the discriminator.
+
+replaces_axis and axes_replaced_by_siblings carry the axis-level \
+bookkeeping for positioning roles. See the RELATIONSHIP ROLE \
+section.
 
 anchor_reference is the modifier surface phrase carried verbatim \
 from modifying_signals.surface_phrase. If no modifier acts on the \
@@ -475,6 +528,13 @@ OPERATIONAL TESTS (apply at the point of writing each value):
   named, and the anchor I carried, present in modifying_signals?" \
   If not, revise to match or commit "n/a". NEVER fabricate to fill \
   the slot.
+- After relationship_role: "if I asked a fresh reader to decompose \
+  this trait standalone, would they need to know about a sibling \
+  trait to do it correctly?" If no → INDEPENDENT. If yes and this \
+  trait is the anchor → POSITIONING_REFERENCE. If yes and this \
+  trait is the modifier → POSITIONING_QUALIFIER. See the \
+  RELATIONSHIP ROLE section for the full discriminator and the \
+  axis-bookkeeping rules.
 - After contextualized_phrase: "if I read this phrase aloud out \
   of query context, can a fresh reader recover what the trait is \
   asking for?" If not, fold the modifier in more clearly. (When no \
@@ -637,6 +697,115 @@ investment is.
 """
 
 
+_RELATIONSHIP_ROLE = """\
+RELATIONSHIP ROLE (commits Trait.relationship_role,
+Trait.replaces_axis, Trait.axes_replaced_by_siblings)
+
+After qualifier_relation prose is written, hard-commit the \
+structural shape into the closed enum. Three operational shapes:
+
+INDEPENDENT — the trait stands on its own for retrieval and \
+scoring. Sibling traits exist (or don't), but this trait does not \
+need information from any sibling for Step 3 to decompose it \
+correctly. Two cases land here:
+- Parallel filters: each trait names its own evaluable population, \
+  and the user wants the intersection.
+- Qualifier-on-population: one trait modifies how another's \
+  population is scored, but each is independently scorable. The \
+  qualifier doesn't replace any axis of the population; it adds an \
+  additional axis the user wants to score on. Single-direction \
+  shaping with no axis-substitution is the signature.
+
+POSITIONING_REFERENCE — the trait names an anchor a sibling is \
+comparing, transposing, or scoping against. The trait's identity \
+is being used as a TEMPLATE for matching other films; specific \
+axes of that template may be replaced by sibling qualifiers. The \
+user is not asking for the reference itself — they are asking for \
+things that match the reference along the kept axes. This role is \
+RECIPROCAL: it commits only when at least one sibling commits \
+POSITIONING_QUALIFIER targeting this trait.
+
+POSITIONING_QUALIFIER — the trait names a substitute for some \
+axis on a sibling reference. The qualifier is independently \
+scorable, but its meaning in this query is SUBSTITUTION on the \
+reference. This role is RECIPROCAL: it commits only when at \
+least one sibling commits POSITIONING_REFERENCE for it to point \
+at.
+
+DISCRIMINATOR. Read by what the trait DOES in the query, not by \
+surface tokens. The same connective ("with", "but", "-style", \
+"like") joins independent or positioning relations depending on \
+the content phrases it joins. The connective is evidence; the role \
+is what the trait is doing.
+
+The operational test: "if I asked a fresh reader to decompose this \
+trait standalone, would they need to know about a sibling trait to \
+do it correctly?" If no → INDEPENDENT. If yes and this trait is \
+the anchor → POSITIONING_REFERENCE. If yes and this trait is the \
+modifier → POSITIONING_QUALIFIER.
+
+REPLACES_AXIS (POSITIONING_QUALIFIER only). A short user-vocabulary \
+noun-phrase naming the AXIS on the sibling reference being \
+substituted. The axis is the DIMENSION of evaluation, not the \
+VALUE this trait provides on that dimension. Axis = "setting"; \
+value = "jungle setting". Axis = "tone"; value = "comedic". \
+Multi-axis substitution → slash-joined phrase ("genre/setting") \
+rather than emitting two qualifier traits.
+
+AXES_REPLACED_BY_SIBLINGS (POSITIONING_REFERENCE only). VERBATIM \
+copy of every sibling POSITIONING_QUALIFIER's replaces_axis. The \
+reference does not invent or paraphrase replacements — it inherits \
+them from siblings that committed them. Step 2 is the only stage \
+that sees the whole query, so this list is where the cross-trait \
+reasoning lands; Step 3 reads it mechanically when decomposing.
+
+OPERATIONAL TESTS:
+- After relationship_role: run the standalone-decomposition test \
+  above. Does the role I committed match the answer?
+- After replaces_axis: read it back. "Does this name a DIMENSION \
+  of evaluation, or a VALUE on that dimension?" Dimension → \
+  correct. Value → revise. (And: is this committed only when \
+  relationship_role is POSITIONING_QUALIFIER? If not, revise — \
+  None for the other roles.)
+- After axes_replaced_by_siblings: walk each entry. "Does a \
+  sibling trait commit replaces_axis equal to this exact phrase?" \
+  If no, the entry was invented — drop it. (And: is this populated \
+  only when relationship_role is POSITIONING_REFERENCE? If not, \
+  revise — empty list for the other roles.)
+
+BOUNDARIES.
+
+- Role classification is reciprocal. POSITIONING_REFERENCE without \
+  any sibling POSITIONING_QUALIFIER is wrong (no one is positioning \
+  against it → it's just INDEPENDENT). POSITIONING_QUALIFIER \
+  without any sibling POSITIONING_REFERENCE is wrong (nothing for \
+  it to substitute on → it's just INDEPENDENT or a separate \
+  filter).
+- Single-direction shaping doesn't trigger positioning. When a \
+  qualifier shapes how the population's instance is scored but the \
+  population doesn't reshape what the qualifier means AND no axis \
+  is being substituted, both atoms commit INDEPENDENT.
+- Replaces_axis is at most ONE axis (or one slash-joined compound \
+  axis) per qualifier. If a single qualifier substitutes on \
+  multiple distinct axes that the user would consider separate, \
+  consider whether atomization should have produced two qualifier \
+  atoms instead.
+
+Common pitfalls:
+- Committing by connective surface. "with X" can be either an \
+  independent qualifier-on-population or a positioning qualifier — \
+  depends on whether X replaces an axis of a sibling reference.
+- Naming the substitute instead of the axis in replaces_axis. \
+  "jungle" / "comedic" / "sci-fi" are values; "setting" / "tone" / \
+  "genre" are axes.
+- Inventing entries in axes_replaced_by_siblings that no sibling \
+  committed. The reference inherits; it doesn't generate.
+
+---
+
+"""
+
+
 def _build_category_vocabulary_section() -> str:
     """Render category vocabulary for Step 2 atom-phase recognition.
 
@@ -678,6 +847,7 @@ SYSTEM_PROMPT = (
     + _COMMIT_PHASE
     + _POLARITY
     + _COMMITMENT
+    + _RELATIONSHIP_ROLE
     + _CATEGORY_VOCABULARY
 )
 

@@ -41,10 +41,18 @@ Step 2 (step_2.py): Query analysis (combined holistic read + atomization)
 
 Step 3 (step_3.py): Trait decomposition (per-trait LLM call)
   → TraitDecomposition: target_population + trait_role_analysis +
-    aspects + dimensions + category_calls
+    aspects + dimensions + combine_mode + category_calls
   → One call per committed trait; orchestrator fans out in parallel
-  → Reads qualifier_relation as the carver-vs-qualifier signal
-    (Step 2 no longer commits a binary `role` field)
+  → Reads relationship_role (PRIMARY closed-enum signal: INDEPENDENT
+    / POSITIONING_REFERENCE / POSITIONING_QUALIFIER) plus the paired
+    axis-bookkeeping fields (replaces_axis, axes_replaced_by_siblings)
+    + qualifier_relation prose. Receives sibling traits' structural
+    fields (no interpretive prose) so positioning references can drop
+    replaced axes without leaking sibling decompositions.
+  → Commits combine_mode (FRAMINGS / FACETS) AFTER candidate analysis
+    and BEFORE category_calls — the mode shapes which categories make
+    sense to commit (FRAMINGS authorizes overlap; FACETS demands
+    complementary axes).
 
 Full pipeline orchestrator (full_pipeline_orchestrator.py):
   → run_full_pipeline(query, *, skip_bypass_steps_0_1=False)
@@ -114,11 +122,27 @@ category lives in `search_improvement_planning/rescore_overhaul.md`.
 
 ### Across-category combine
 
-`trait_score = max(category_score_j)` over the trait's categories
-(NO_OP categories skipped). Step 2's atomization rule guarantees one
-trait = one criterion, so multiple categories within a trait are
-different framings of the same criterion (max, not noisy-OR or
-average — the strongest framing wins).
+Branches on the trait's `combine_mode` (committed by Step 3 in
+`schemas.enums.TraitCombineMode`):
+
+- `FRAMINGS` — categories are alternative homes for the same
+  underlying thing; matching any one is sufficient evidence of the
+  criterion. `trait_score = max(category_score_j)` (NO_OP categories
+  skipped). Identity-style traits (Marvel = STUDIO_BRAND ∨
+  FRANCHISE_LINEAGE; Christmas = SEASONAL_HOLIDAY ∨ NARRATIVE_SETTING)
+  commit FRAMINGS.
+- `FACETS` — categories cover different axes of a compound concept;
+  ALL facets must fire to a degree for the criterion to be met.
+  `trait_score = ∏ category_score_j` (NO_OP categories skipped).
+  Strict — any 0 zeros the trait. Compound aesthetic / cultural
+  concepts (bro movie, cottagecore, dark gritty) commit FACETS.
+
+The fold lives in `combine_categories(combine_mode, category_scores)`
+in `stage_4_execution.py`. Empty `category_scores` returns 0.0 in
+both modes (a trait whose every category went silent contributes
+nothing). `TraitWithEndpoints.combine_mode` defaults to FRAMINGS so
+failure paths (Step 3 errors) and test mocks land on V3-equivalent
+MAX behavior.
 
 ### Branch-level scoring
 
@@ -313,8 +337,8 @@ Stage 4 (stage_4/): Assembly & reranking
 | `step_2.py` | Query analysis — combined Stage 1+2 of the 5-stage trait decomposition. `run_step_2()` returns `QueryAnalysis` (holistic_read + atoms with modifying_signals + evaluative_intent). Model hard-coded to Gemini 3 Flash (no thinking, temperature 0.35). System prompt loads sections this stage applies (atomicity, modifier vs trait, evaluative intent) plus background sections later stages use (carver vs qualifier, polarity, salience, category taxonomy). |
 | `run_step_2.py` | CLI runner for step_2. Prints full JSON response + timing + tokens. Default query exercises role markers, polarity, chronological, and multi-dimension entities. |
 | `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline(query, *, skip_bypass_steps_0_1=False)` runs Steps 0+1 in parallel (or skipped) → Step 2 per branch → Step 3 per trait → per-CategoryCall handler-LLM endpoint-spec generation → reranker-only fallback + auxiliary-spec planning → `stage_4_execution.execute_branches`. Returns `FullPipelineResult` with per-branch specs (`branches`) and ranked candidates (`branch_results`). 25s timeout + 1 retry per LLM call. |
-| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Runs the 5-phase pipeline from `search_improvement_planning/rescore_overhaul.md`: Phase B unions positive generators across all traits, applies shorts subtraction, and falls back to NEUTRAL_SEED only when zero generators were attempted; Phase C reranks the finalized union globally; Phase D scores each trait by composing per-call scores via the category's `combine_type` (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP) and taking max across categories; Phase E applies commitment × rarity weighting and signs the contributions. Negative-polarity traits keep the existing three-bin gate × fuzzy formula (`gate × fuzzy` where gate = ∏ authoritative-G and fuzzy = noisy-OR over evidential-G ∪ R; would-be partition derived via `determine_operation_type(category, route, POSITIVE)` then split by `_AUTHORITATIVE_NEGATION_CATEGORIES`). Per-call soft-fail returns None so failed calls are dropped from their bin instead of zeroing the gate or saturating the noisy-OR. |
-| `step_3.py` | Trait decomposition. `run_step_3(trait)` returns `TraitDecomposition`. One LLM call per committed Trait. Reads `qualifier_relation` (with `"n/a"` sentinel) as the carver-vs-qualifier signal — `role` was removed from Step 2. |
+| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Runs the 5-phase pipeline from `search_improvement_planning/rescore_overhaul.md`: Phase B unions positive generators across all traits, applies shorts subtraction, and falls back to NEUTRAL_SEED only when zero generators were attempted; Phase C reranks the finalized union globally; Phase D scores each trait by composing per-call scores via the category's `combine_type` (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP) and folding across categories via `combine_categories(trait.combine_mode, ...)` — FRAMINGS → MAX (alternative homes for one signal); FACETS → PRODUCT (axes of a compound concept that must compound); Phase E applies commitment × rarity weighting and signs the contributions. Negative-polarity traits keep the existing three-bin gate × fuzzy formula (`gate × fuzzy` where gate = ∏ authoritative-G and fuzzy = noisy-OR over evidential-G ∪ R; would-be partition derived via `determine_operation_type(category, route, POSITIVE)` then split by `_AUTHORITATIVE_NEGATION_CATEGORIES`); negative-trait scoring is unchanged by combine_mode. Per-call soft-fail returns None so failed calls are dropped from their bin instead of zeroing the gate or saturating the noisy-OR. |
+| `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (now includes `combine_mode`). One LLM call per committed Trait. Reads `relationship_role` (closed-enum: INDEPENDENT / POSITIONING_REFERENCE / POSITIONING_QUALIFIER) as the PRIMARY structural signal, with `replaces_axis` + `axes_replaced_by_siblings` driving axis-drop / axis-coverage rules. `qualifier_relation` (with `"n/a"` sentinel) is now the freeform companion to the closed-enum role. Sibling traits' structural fields (surface_text + role + axis bookkeeping; no interpretive prose) are surfaced so positioning references can honor cross-trait scope replacement. |
 | `endpoint_fetching/category_handlers/output_extractor.py` | `extract_fired_endpoints(category, output)`: per-bucket extraction of `(EndpointRoute, EndpointParameters)` pairs from a handler-LLM structured output. |
 | `implicit_expectations.py` | Implicit-prior state management (quality/notability priors). |
 | `stage_3/category_handlers/` | Category handler module (scaffolded, prompts in progress). `handler.py` is scoped to a single category — fan-out lives one level up. |

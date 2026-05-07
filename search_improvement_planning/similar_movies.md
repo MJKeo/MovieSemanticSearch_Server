@@ -1336,9 +1336,21 @@ Drop the `mv_director_strength` percentile-based boost. V2's "popularity percent
 
 V3 director lane fires only when the anchor's director is on a **manual auteur list** of style-coherent directors (Tarantino-style sharp dialogue, Wes Anderson-style symmetry, Lynch-style oneiric tone, Miyazaki-style hand-drawn pastoral). For non-auteur directors, the lane is silent in single-anchor — the franchise lane and shape vectors already cover the cases where director coherence matters.
 
-Multi-anchor behavior unchanged: when ≥2 anchors share a director (auteur or not), that's a deliberate user signal — director cohesion fires at full strength regardless of auteur status.
+**Multi-anchor lane firing**: lane fires when (a) any anchor's director is on the auteur list and the candidate shares it, OR (b) ≥2 anchors share a director (auteur or not) and the candidate shares it. Cohesion across anchors is itself sufficient evidence the user wants that director — the curated list is a prior, not a gate.
 
-> **🛑 BLOCKER — auteur list composition is deferred to a follow-up conversation.** No code path depending on the auteur list ships until the list is finalized. See `similar_movies_v3_plan.md` §2.1 and `docs/TODO.md` "Auteur list composition for similar-movies V3 director lane" for the hard pause rule.
+**Per-director scoring**: for each director `d` shared between candidate and anchors, with `M_d` = anchors that share `d` and `N` = total anchors:
+
+```
+N == 1:                         contribution_d = 0.20
+auteur, multi-anchor:           contribution_d = 0.20 + 0.10 * (M_d / N)   # caps at 0.30
+cohesion-only (M_d ≥ 2):        contribution_d = 0.10 * (M_d / N)          # caps at 0.10
+```
+
+Take `max(contribution_d)` across shared directors. **Multiple curated directors boost independently** — e.g., 4 anchors split 2-2 between WA and PTA both produce M=2/N=4 contributions for their respective candidate matches.
+
+**Cohesion floor (multi-anchor only)**: if `max(M_d / N) >= 0.75` and `shape_score >= 0.30`, set `combined_score = max(combined_score, 0.35)`. The floor activates at 2-of-2, 3-of-3, 3-of-4, 4-of-4, 4-of-5, 5-of-5 — near-unanimous director cohesion, regardless of auteur-list membership.
+
+**Auteur list (60 entries, finalized 2026-05-07)**: full table with normalized DB keys and catalog film counts is in `similar_movies_v3_plan.md` §2.1, verified against `lex.lexical_dictionary` and `lex.inv_director_postings`. `mv_director_strength` is retired as a similar-movies signal.
 
 ## V3 Single-Anchor Themes Lane
 

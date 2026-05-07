@@ -707,3 +707,50 @@ class Role(StrEnum):
 class Polarity(StrEnum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
+
+
+# How a trait relates to the rest of the query. Closed enum read by
+# Step 3's role analysis to branch decomposition behavior:
+#
+#   INDEPENDENT covers parallel filters AND qualifier-on-population.
+#     No cross-trait info flow needed; the trait stands on its own
+#     for retrieval / scoring purposes.
+#   POSITIONING_REFERENCE marks an anchor that a sibling is comparing,
+#     transposing, or scoping against. The trait's identity is being
+#     used as a template; specific axes of that template may be
+#     replaced by siblings.
+#   POSITIONING_QUALIFIER marks the modifier that names a substitute
+#     for some axis on a sibling reference. The qualifier itself is
+#     independently scorable, but its meaning in the query is
+#     SUBSTITUTION on the reference.
+#
+# The role is a structural classification, not a polarity / weight
+# choice. Read by what the trait DOES in the query, not by surface
+# tokens — the same connective ("with", "but", "-style", "like")
+# can join independent or positioning relations depending on what
+# content phrases it joins.
+class TraitRelationshipRole(StrEnum):
+    INDEPENDENT = "independent"
+    POSITIONING_REFERENCE = "positioning_reference"
+    POSITIONING_QUALIFIER = "positioning_qualifier"
+
+
+# How Phase D (stage-4 across-category fold) collapses a trait's
+# per-category scores into a single trait_score in [0, 1]:
+#
+#   FRAMINGS — categories are alternative homes for the same
+#     underlying thing; matching ANY ONE is sufficient evidence of
+#     the criterion. Phase D MAX-folds them; redundant categories
+#     reinforce each other as alternative routes to the same signal.
+#   FACETS — categories cover DIFFERENT axes of a compound concept;
+#     ALL facets must fire to a degree for the criterion to be met.
+#     Phase D PRODUCT-folds them; duplicating axis coverage
+#     amplifies the wrong signals.
+#
+# Step 3 commits this AFTER its candidate analysis and BEFORE
+# committing category_calls — the choice shapes what categories make
+# sense to commit. Surfacing it on TraitDecomposition lets stage-4
+# branch the across-category fold mechanically.
+class TraitCombineMode(StrEnum):
+    FRAMINGS = "framings"
+    FACETS = "facets"

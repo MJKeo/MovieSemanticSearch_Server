@@ -53,6 +53,7 @@ from schemas.enums import (
     Polarity,
     ReceptionMode,
     ReleaseFormat,
+    TraitCombineMode,
 )
 from schemas.implicit_expectations import ImplicitExpectationsResult
 from schemas.media_type_translation import (
@@ -155,8 +156,12 @@ class TraitWithEndpoints:
 
     `surface_text` is included for traceability in downstream logs and
     debug tooling — not strictly required by consumers but cheap and
-    useful. `step_3_error` populated only when Step 3 failed for this
-    trait; `category_calls` is empty in that case.
+    useful. `combine_mode` carries Step 3's commit for how stage-4
+    folds per-category scores into a trait_score (FRAMINGS → MAX,
+    FACETS → PRODUCT). Default is FRAMINGS so failure paths and test
+    constructors that don't pass it land on V3-equivalent behavior.
+    `step_3_error` populated only when Step 3 failed for this trait;
+    `category_calls` is empty in that case.
     """
 
     surface_text: str
@@ -165,6 +170,7 @@ class TraitWithEndpoints:
         "required", "elevated", "neutral", "supporting", "diminished"
     ]
     category_calls: list[CategoryCallWithEndpoints]
+    combine_mode: TraitCombineMode = TraitCombineMode.FRAMINGS
     step_3_error: str | None = None
 
 
@@ -371,9 +377,18 @@ async def _run_branch(
     # Per-trait fan-out runs alongside implicit-prior policy. The
     # implicit step consumes only Step-2 output, so it does not need to
     # wait for Step 3 endpoint decomposition.
+    #
+    # Each trait's Step 3 call receives its sibling traits' structural
+    # fields (relationship_role + axis bookkeeping) so positioning
+    # references can drop replaced axes without violating per-trait
+    # isolation. Sibling list is computed here once per trait.
     trait_task = asyncio.gather(
         *(
-            _decompose_and_generate(trait, branch_label=kind)
+            _decompose_and_generate(
+                trait,
+                siblings=[s for s in qa.traits if s is not trait],
+                branch_label=kind,
+            )
             for trait in qa.traits
         )
     )
@@ -423,15 +438,18 @@ async def _run_implicit_expectations_for_branch(
 
 async def _decompose_and_generate(
     trait: Trait,
+    siblings: list[Trait],
     *,
     branch_label: str,
 ) -> TraitWithEndpoints:
     try:
         decomposition, _, _, _ = await _call_with_retry(
-            lambda: run_step_3(trait),
+            lambda: run_step_3(trait, siblings),
             label=f"step_3[{branch_label}/{trait.surface_text!r}]",
         )
     except Exception as exc:  # noqa: BLE001 — soft-fail per trait
+        # Failure path: the trait will contribute zero in stage-4
+        # regardless, so combine_mode default (FRAMINGS) is harmless.
         return TraitWithEndpoints(
             surface_text=trait.surface_text,
             polarity=trait.polarity,
@@ -455,6 +473,7 @@ async def _decompose_and_generate(
         polarity=trait.polarity,
         commitment=trait.commitment,
         category_calls=category_call_results,
+        combine_mode=decomposition.combine_mode,
     )
 
 

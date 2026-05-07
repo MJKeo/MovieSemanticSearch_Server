@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from schemas.enums import TraitCombineMode
 from schemas.trait_category import CategoryName
 
 
@@ -423,6 +424,58 @@ class TraitDecomposition(BaseModel):
             "revise aspects rather than skipping it here."
         ),
     )
+    combine_mode: TraitCombineMode = Field(
+        ...,
+        description=(
+            "Closed-enum commit of how stage-4 will fold this trait's "
+            "per-category scores into a single trait_score. "
+            "PROCEDURALLY committed AFTER candidate analysis and "
+            "BEFORE category_calls — the choice of mode shapes which "
+            "categories make sense to commit.\n"
+            "\n"
+            "FRAMINGS — categories are alternative homes for the same "
+            "underlying thing. Matching ANY ONE is sufficient evidence "
+            "of the criterion. Stage-4 MAX-folds the per-category "
+            "scores; redundant categories REINFORCE each other as "
+            "alternative routes to the same signal. Use when the "
+            "candidate analysis shows multiple categories converging "
+            "on equivalent meanings (e.g. an identity that has clean "
+            "homes in two adjacent categories).\n"
+            "\n"
+            "FACETS — categories cover DIFFERENT axes of a compound "
+            "concept. ALL facets must fire to a degree for the "
+            "criterion to be met. Stage-4 PRODUCT-folds the per-"
+            "category scores; duplicating axis coverage AMPLIFIES the "
+            "wrong signals. Use when the candidate analysis shows "
+            "each dimension's clean-fit category covering a distinct "
+            "identifiable axis the user wants compounded.\n"
+            "\n"
+            "OPERATIONAL TEST: read the candidate analysis. \"Do the "
+            "dimensions cover ONE underlying thing through alternative "
+            "homes (FRAMINGS), or do they cover SEVERAL axes the user "
+            "wants compounded (FACETS)?\" If a fresh reader would "
+            "expect a movie matching only one category to satisfy the "
+            "trait → FRAMINGS. If a fresh reader would expect a movie "
+            "to match across several categories together → FACETS.\n"
+            "\n"
+            "Single-dimensional traits commit FRAMINGS by default — "
+            "with one category, MAX and PRODUCT collapse to passthrough.\n"
+            "\n"
+            "NEVER:\n"
+            "- COMMIT FACETS WHEN CATEGORIES ARE FRAMINGS. Marvel = "
+            "STUDIO_BRAND ∨ FRANCHISE_LINEAGE is FRAMINGS — both fire "
+            "1.0 on an MCU film and matching either is sufficient. "
+            "PRODUCT-folding would penalize the reference for failing "
+            "to surface in BOTH categories simultaneously.\n"
+            "- COMMIT FRAMINGS WHEN CATEGORIES ARE FACETS. Bro movie "
+            "= STORY_THEMATIC_ARCHETYPE ∧ EMOTIONAL_EXPERIENTIAL ∧ "
+            "NARRATIVE_DEVICES is FACETS — the user wants all three "
+            "axes to compound. MAX-folding would let single-facet "
+            "matches win at 1.0.\n"
+            "- DEFAULT-FILL. The mode is a real commit driven by the "
+            "candidate analysis, not a placeholder."
+        ),
+    )
     category_calls: list[CategoryCall] = Field(
         ...,
         description=(
@@ -430,6 +483,20 @@ class TraitDecomposition(BaseModel):
             "per category that ends up owning >=1 expression; when "
             "several dimensions share a best-fit category, they "
             "merge into ONE multi-expression call.\n"
+            "\n"
+            "MODE-AWARE ROUTING. Reads combine_mode (committed "
+            "above):\n"
+            "- FRAMINGS authorizes committing categories whose "
+            "coverage OVERLAPS — the system MAX-folds them, so "
+            "redundancy reinforces as alternative routes to the same "
+            "signal. Multiple framings of one identity (e.g. "
+            "STUDIO_BRAND + FRANCHISE_LINEAGE for a brand) are "
+            "intentional, not padding.\n"
+            "- FACETS DEMANDS choosing categories that COMPLEMENT "
+            "rather than overlap — the system PRODUCT-folds them, so "
+            "duplication of axis coverage amplifies the wrong "
+            "signals. Each committed category should cover a "
+            "distinct axis surfaced by the dimension list.\n"
             "\n"
             "OPERATIONAL TESTS:\n"
             "- COVERAGE. Every Dimension.expression in the "
@@ -440,6 +507,10 @@ class TraitDecomposition(BaseModel):
             "merge or drop.\n"
             "- CANDIDATE-LINK. Every category here appeared as a "
             "candidate on at least one of its owned dimensions.\n"
+            "- MODE-CONSISTENT. For FACETS, no two committed "
+            "categories cover the SAME axis of the trait. For "
+            "FRAMINGS, overlapping coverage across categories is "
+            "permitted and often correct.\n"
             "\n"
             "NEVER:\n"
             "- EMIT A CALL TO A CATEGORY THAT WAS NOT A CANDIDATE "

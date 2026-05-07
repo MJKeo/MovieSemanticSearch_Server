@@ -333,14 +333,16 @@ async def _print_ranked_results(
                 print("    (no trait contributions recorded)")
                 continue
             for tc in contributions:
-                # Trait line: surface text, commitment tier, inner
-                # trait_score in [0, 1] (max over categories for
-                # positives; gate × fuzzy for negatives), weight
-                # (commitment × rarity for positives, commitment for
-                # negatives), and the signed weighted contribution
-                # that fed the §9 sum.
+                # Trait line: surface text, commitment tier, the
+                # across-category scoring method that produced
+                # trait_score (framings = MAX, facets = PRODUCT,
+                # gate×fuzzy for negatives), inner trait_score in
+                # [0, 1], weight (commitment × rarity for positives,
+                # commitment for negatives), and the signed weighted
+                # contribution that fed the §9 sum.
                 print(
-                    f'  trait {tc.surface_text!r} [{tc.commitment}]  '
+                    f'  trait {tc.surface_text!r} '
+                    f"[{tc.commitment} | {tc.scoring_method}]  "
                     f"trait_score={tc.trait_score:.4f}  "
                     f"wt={tc.weight:.3f}  → {tc.contribution:+.4f}"
                 )

@@ -29,9 +29,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from schemas.enums import Polarity
+from schemas.enums import Polarity, TraitRelationshipRole
 
 
 # ---------------------------------------------------------------------
@@ -66,11 +66,30 @@ class ModifyingSignal(BaseModel):
             "HARDENS, FLIPS POLARITY, CONTRASTS. Recommended where "
             "they fit; freeform otherwise.\n"
             "\n"
+            "When a cross-criterion content phrase shapes THIS atom's "
+            "IDENTITY (not just its evaluation) — i.e. removing the "
+            "other atom's content collapses what the user is asking "
+            "for here into something different — additionally include "
+            "the controlled token IDENTITY-SHAPING in the effect text. "
+            "This is the signal the commit phase reads to decide "
+            "whether two atoms should fuse into one compound trait. "
+            "Use sparingly: most cross-modifications shape evaluation "
+            "(scope, qualifier, transposition) without reshaping "
+            "identity.\n"
+            "\n"
             "NEVER:\n"
             "- CATEGORIZE. Describe the effect on evaluation, not "
             "what bucket the signal belongs to.\n"
             "- USE SYSTEM VOCABULARY. No category / endpoint / "
-            "channel names."
+            "channel names.\n"
+            "- USE IDENTITY-SHAPING ON SCOPING / QUALIFIER SIGNALS. "
+            "If the other atom merely changes WHICH instance to score "
+            "(\"shitty shark\" — shitty doesn't reshape what \"shark\" "
+            "means; shark doesn't reshape what \"shitty\" means), the "
+            "shaping is on EVALUATION, not identity. Reserve "
+            "IDENTITY-SHAPING for compounds where each piece's "
+            "meaning depends on the other being present (\"elevated "
+            "horror\", \"godfather but with cowboys\")."
         ),
     )
 
@@ -310,6 +329,134 @@ class Trait(BaseModel):
             "operational implication.\n"
             "- LEAVE BLANK. Substantive description or literal "
             "\"n/a\"."
+        ),
+    )
+    relationship_role: TraitRelationshipRole = Field(
+        ...,
+        description=(
+            "Closed-enum commit of how this trait relates to the rest "
+            "of the query. Read AFTER qualifier_relation — the prose "
+            "you just wrote either describes a positioning relation "
+            "(reference / qualifier) or it does not.\n"
+            "\n"
+            "Three operational shapes:\n"
+            "\n"
+            "INDEPENDENT — the trait stands on its own for retrieval "
+            "and scoring. Covers BOTH parallel filters (criteria the "
+            "user wants intersected) AND qualifier-on-population "
+            "relations (one trait modifies how another's population "
+            "is scored, but each is independently scorable). The "
+            "test: does this trait need ANY information from a "
+            "sibling for Step 3 to decompose it correctly? If no, "
+            "INDEPENDENT — even when sibling traits exist.\n"
+            "\n"
+            "POSITIONING_REFERENCE — the trait names an anchor a "
+            "sibling is comparing, transposing, or scoping against. "
+            "The trait's identity is being used as a TEMPLATE; "
+            "specific axes of that template may be replaced by "
+            "siblings. The user is not asking for the reference "
+            "itself; they are asking for things that match the "
+            "reference along the kept axes. \"like X\", \"X-style\", "
+            "\"X but Y\", \"X meets Y\" patterns place this trait on "
+            "the X side.\n"
+            "\n"
+            "POSITIONING_QUALIFIER — the trait names a substitute "
+            "for some axis on a sibling reference. The qualifier is "
+            "independently scorable, but its meaning in this query "
+            "is SUBSTITUTION on the reference. The Y in \"X but Y\" "
+            "/ \"X with Y\" / \"X meets Y\" patterns is here.\n"
+            "\n"
+            "Recognize the FUNCTION the language plays, not the "
+            "specific connective. \"with\", \"but\", \"-style\", \"like\" "
+            "carry independent or positioning relations depending "
+            "on the content phrases they join. The connective is "
+            "evidence; the role is what the trait is DOING in the "
+            "query.\n"
+            "\n"
+            "OPERATIONAL TEST: read this commit back. \"If I asked a "
+            "fresh reader to decompose this trait standalone, would "
+            "they need to know about a sibling trait to do it "
+            "correctly?\" If no → INDEPENDENT. If yes and this trait "
+            "is the anchor → POSITIONING_REFERENCE. If yes and this "
+            "trait is the modifier → POSITIONING_QUALIFIER.\n"
+            "\n"
+            "NEVER:\n"
+            "- COMMIT BY CONNECTIVE SURFACE. \"with X\" is sometimes "
+            "an independent qualifier, sometimes a positioning "
+            "qualifier — depends on whether X replaces an axis of a "
+            "sibling reference.\n"
+            "- COMMIT POSITIONING_REFERENCE WITHOUT A SIBLING "
+            "QUALIFIER. The role is reciprocal; if no sibling "
+            "qualifies this trait, it is INDEPENDENT.\n"
+            "- COMMIT POSITIONING_QUALIFIER WITHOUT A REPLACES_AXIS. "
+            "If the trait isn't substituting on some axis of a "
+            "sibling, it isn't a positioning qualifier."
+        ),
+    )
+    replaces_axis: str | None = Field(
+        ...,
+        description=(
+            "Required when relationship_role is POSITIONING_QUALIFIER; "
+            "must be None for INDEPENDENT and POSITIONING_REFERENCE.\n"
+            "\n"
+            "A short user-vocabulary noun-phrase naming the AXIS on "
+            "the sibling reference that this qualifier substitutes "
+            "for. The axis is the dimension of evaluation; the "
+            "substitute is the value this trait provides on that "
+            "dimension.\n"
+            "\n"
+            "OPERATIONAL TEST: \"does this name a DIMENSION of "
+            "evaluation, or a VALUE on that dimension?\" Dimension "
+            "→ correct (\"setting\", \"tone\", \"genre\", \"emotional "
+            "register\"). Value → wrong (\"jungle setting\" → use "
+            "\"setting\"; \"comedic tone\" → use \"tone\"; "
+            "\"sci-fi genre\" → use \"genre\").\n"
+            "\n"
+            "Phrasing is in user vocabulary, not category names. "
+            "Multi-axis substitution (the qualifier replaces more "
+            "than one dimension at once) → write a slash-joined "
+            "phrase (\"genre/setting\") rather than emitting two "
+            "qualifier traits.\n"
+            "\n"
+            "NEVER:\n"
+            "- USE CATEGORY / ENDPOINT VOCABULARY. No "
+            "\"NARRATIVE_SETTING\", \"GENRE\", \"EMOTIONAL_EXPERIENTIAL\".\n"
+            "- NAME THE SUBSTITUTE INSTEAD OF THE AXIS. The axis is "
+            "the thing being replaced; the substitute is what THIS "
+            "trait offers in its place.\n"
+            "- LEAVE NON-NULL FOR NON-QUALIFIER ROLES. INDEPENDENT "
+            "and POSITIONING_REFERENCE traits commit None."
+        ),
+    )
+    axes_replaced_by_siblings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Populated when relationship_role is POSITIONING_REFERENCE; "
+            "empty list otherwise.\n"
+            "\n"
+            "Copies VERBATIM the replaces_axis values committed by "
+            "every sibling trait whose relationship_role is "
+            "POSITIONING_QUALIFIER. The reference does not invent or "
+            "paraphrase replacements — it inherits them from the "
+            "siblings that committed them. Step 2 is the only stage "
+            "that sees the whole query, so this list is where the "
+            "cross-trait reasoning lands.\n"
+            "\n"
+            "Step 3 reads this list mechanically when decomposing "
+            "this reference trait: every aspect whose user-"
+            "vocabulary phrasing matches a listed axis is dropped "
+            "from the decomposition (the sibling will handle that "
+            "axis).\n"
+            "\n"
+            "OPERATIONAL TEST: \"for each entry in this list, does a "
+            "sibling trait commit replaces_axis equal to this exact "
+            "phrase?\" If no, the entry was invented — drop it.\n"
+            "\n"
+            "NEVER:\n"
+            "- INVENT REPLACEMENTS not present on a sibling.\n"
+            "- PARAPHRASE the sibling's phrase. Verbatim copy.\n"
+            "- POPULATE FOR NON-REFERENCE ROLES. INDEPENDENT and "
+            "POSITIONING_QUALIFIER traits commit empty list."
         ),
     )
     anchor_reference: str = Field(
@@ -619,3 +766,113 @@ class QueryAnalysis(BaseModel):
             "the earlier source's slot."
         ),
     )
+
+    # Belt-and-suspenders enforcement of the relationship-role
+    # typology's structural invariants. The Step 2 prompt teaches
+    # these rules, but Pydantic doesn't validate cross-field
+    # consistency by default — without this validator, an LLM that
+    # commits POSITIONING_QUALIFIER while the sibling reference
+    # forgets to populate axes_replaced_by_siblings would silently
+    # corrupt Step 3's axis-drop logic. Catching the malformed state
+    # at validation time triggers the orchestrator's retry rather
+    # than letting it through.
+    @model_validator(mode="after")
+    def _validate_relationship_roles(self) -> "QueryAnalysis":
+        traits = self.traits
+
+        # Per-trait field consistency. Each role has one valid
+        # combination of (replaces_axis, axes_replaced_by_siblings).
+        for i, t in enumerate(traits):
+            role = t.relationship_role
+            if role is TraitRelationshipRole.INDEPENDENT:
+                if t.replaces_axis is not None:
+                    raise ValueError(
+                        f"trait[{i}] role=INDEPENDENT but "
+                        f"replaces_axis={t.replaces_axis!r}; expected None"
+                    )
+                if t.axes_replaced_by_siblings:
+                    raise ValueError(
+                        f"trait[{i}] role=INDEPENDENT but "
+                        f"axes_replaced_by_siblings="
+                        f"{t.axes_replaced_by_siblings}; expected []"
+                    )
+            elif role is TraitRelationshipRole.POSITIONING_REFERENCE:
+                if t.replaces_axis is not None:
+                    raise ValueError(
+                        f"trait[{i}] role=POSITIONING_REFERENCE but "
+                        f"replaces_axis={t.replaces_axis!r}; expected None"
+                    )
+                if not t.axes_replaced_by_siblings:
+                    raise ValueError(
+                        f"trait[{i}] role=POSITIONING_REFERENCE but "
+                        "axes_replaced_by_siblings is empty; the "
+                        "reference must inherit at least one axis "
+                        "from a sibling qualifier (without one, the "
+                        "role is INDEPENDENT)"
+                    )
+            elif role is TraitRelationshipRole.POSITIONING_QUALIFIER:
+                if not t.replaces_axis:
+                    raise ValueError(
+                        f"trait[{i}] role=POSITIONING_QUALIFIER but "
+                        f"replaces_axis={t.replaces_axis!r}; the "
+                        "qualifier must name the axis it substitutes "
+                        "on the sibling reference"
+                    )
+                if t.axes_replaced_by_siblings:
+                    raise ValueError(
+                        f"trait[{i}] role=POSITIONING_QUALIFIER but "
+                        f"axes_replaced_by_siblings="
+                        f"{t.axes_replaced_by_siblings}; expected [] "
+                        "(only references inherit axis substitutions)"
+                    )
+
+        # Cross-trait reciprocity. Positioning is a paired relation —
+        # a reference without any qualifier (or vice versa) is
+        # malformed; the orphaned trait should have committed
+        # INDEPENDENT.
+        refs = [
+            t for t in traits
+            if t.relationship_role is TraitRelationshipRole.POSITIONING_REFERENCE
+        ]
+        quals = [
+            t for t in traits
+            if t.relationship_role is TraitRelationshipRole.POSITIONING_QUALIFIER
+        ]
+        if refs and not quals:
+            raise ValueError(
+                "POSITIONING_REFERENCE trait(s) committed but no "
+                "POSITIONING_QUALIFIER sibling exists; references "
+                "commit only when a qualifier targets them"
+            )
+        if quals and not refs:
+            raise ValueError(
+                "POSITIONING_QUALIFIER trait(s) committed but no "
+                "POSITIONING_REFERENCE sibling exists; qualifiers "
+                "substitute on a sibling reference's axis — without "
+                "a reference the role should be INDEPENDENT"
+            )
+
+        # Axis-bookkeeping reciprocity. Every qualifier's
+        # replaces_axis must be inherited by some reference, and
+        # every entry in any reference's axes_replaced_by_siblings
+        # must trace to a sibling qualifier. Verbatim string match
+        # per the schema description ("VERBATIM copy").
+        qual_axes: set[str] = {q.replaces_axis for q in quals if q.replaces_axis}
+        ref_inherit_axes: set[str] = set()
+        for r in refs:
+            ref_inherit_axes.update(r.axes_replaced_by_siblings)
+        missing_on_refs = qual_axes - ref_inherit_axes
+        if missing_on_refs:
+            raise ValueError(
+                "POSITIONING_QUALIFIER replaces_axis values not "
+                "inherited by any sibling reference's "
+                f"axes_replaced_by_siblings: {sorted(missing_on_refs)}"
+            )
+        invented_on_refs = ref_inherit_axes - qual_axes
+        if invented_on_refs:
+            raise ValueError(
+                "POSITIONING_REFERENCE axes_replaced_by_siblings "
+                "entries not committed by any sibling qualifier: "
+                f"{sorted(invented_on_refs)}"
+            )
+        return self

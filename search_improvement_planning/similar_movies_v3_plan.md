@@ -119,15 +119,110 @@ So the only cases where director matters BEYOND what other lanes already cover a
 The throughline: `director_strength = 0.8*pop + 0.2*reception` measures **director popularity**, not **stylistic coherence across films**. For directors whose filmography is genuinely stylistically uniform (Tarantino, Wes Anderson, Lynch, Miyazaki, Coen Bros), directorship is a near-perfect similarity signal. For prolific generalists (Spielberg, Lucas), it's misleading.
 
 **Action**:
-- Maintain a **manual auteur list** for "truly iconic, style-coherent" directors. These get the full director-lane boost.
-  - **Auteur-list composition is explicitly deferred to a follow-up conversation** — see §6 open question #1. The list is the load-bearing artifact of this rework; getting it right matters more than shipping fast.
-  - Stored as a curated mapping (Python list / YAML) from director term IDs to a tier (initially just "auteur" / not — flat boolean). Easy to extend; no MV needed.
-- For directors **not** on the auteur list (single-anchor): **drop director lane entirely**. Their films compete on shape, themes, franchise, etc. The user's reasoning holds: when director matters for non-auteurs, it's via franchise or shape, both of which are already lanes.
-- For **multi-anchor only**: when ≥2 anchors share a non-auteur director, treat that as a true repetition signal (the user explicitly picked multiple films by this director). Director cohesion fires regardless of auteur status. So in the multi case the lane stays cohesion-driven exactly as V2.
-- **Retire `mv_director_strength`** as a lane signal. The auteur list replaces it. The MV may still be useful elsewhere (e.g., the director endpoint in the standard V2 search pipeline) — out of scope to rip out, but stop reading it from `similar_movies.py`.
+- Maintain a **manual auteur list** of style-coherent directors. Lane fires under EITHER of:
+  - **(a)** any anchor's director ∈ auteur list AND candidate shares that director, OR
+  - **(b)** multi-anchor only — ≥2 anchors share a director (auteur or not) AND candidate shares that director.
+- Stored as a Python frozenset of `lex.lexical_dictionary.norm_str` values keyed in the form actually present in the catalog. Initial composition is **60 entries**, verified against `lex.lexical_dictionary` and `lex.inv_director_postings` (table below). Flat boolean tier; easy to extend.
+- **Retire `mv_director_strength`** as a similar-movies lane signal. The auteur list replaces it. The MV may still be useful elsewhere (e.g., the director endpoint in the standard V2 search pipeline) — out of scope to rip out, but stop reading it from `similar_movies.py`.
 
-> **🛑 BLOCKER — DO NOT IMPLEMENT THIS LANE WITHOUT THE AUTEUR LIST.**
-> The auteur list is essential to this rework and must be resolved with the user before code changes begin. If implementation work on the director lane reaches the point of needing the list and it has not been finalized: **STOP, surface the gap to the user, and pause execution until the list is locked.** Do not stub the list, fall back to the V2 MV, or guess at composition. See [docs/TODO.md](../docs/TODO.md) entry "Auteur list composition for similar-movies V3 director lane".
+**Scoring (unified single + multi-anchor)**:
+
+For each director `d` shared between candidate and at least one anchor, with `M_d` = number of anchors that share `d` and `N` = total active anchors:
+
+```
+if N == 1:                          contribution_d = 0.20    # auteur required for lane to fire
+elif d ∈ auteur_list:               contribution_d = 0.20 + 0.10 * (M_d / N)   # caps at 0.30
+else (cohesion-only, M_d ≥ 2):      contribution_d = 0.10 * (M_d / N)          # caps at 0.10
+```
+
+Take `max(contribution_d)` across all shared directors as the candidate's director-lane score.
+
+**Multi-director boost — both boosted independently.** When the anchor set splits between multiple curated directors (e.g., 4 anchors evenly split between Wes Anderson and PTA), candidates matching each director get scored separately under their own `M_d`. A WA candidate computes via `M_WA=2, N=4 → 0.25`; a PTA candidate computes via `M_PTA=2, N=4 → 0.25`. Both boost. The lane never asks "which director wins for this anchor set" — it asks "how strong is the director signal for this candidate."
+
+**Floor (multi-anchor only, ignores auteur status)**:
+```
+if max_d (M_d / N) >= 0.75 AND shape_score >= 0.30:
+    combined_score = max(combined_score, 0.35)
+```
+
+Near-unanimous director cohesion overrides shape regardless of curation — if 3-of-4 anchors share director X, the user has signaled director matters even if X isn't on the list. The 0.75 threshold activates at M/N values of 2-of-2, 3-of-3, 3-of-4, 4-of-4, 4-of-5, 5-of-5 (the 2-of-3 case at 0.667 stays additive-only).
+
+**Curated auteur list — 60 entries.** Each row is the normalized key (the form actually present in `lex.lexical_dictionary` after `normalize_string`); film count is the count of director-postings in the live catalog at finalization (2026-05-07). The selection bar applied: (i) recognizable style across ≥3 features, (ii) general moviegoer awareness, (iii) other films by the director are likely to "feel the same" to a viewer who liked one — the third criterion is the actual recommender bar; "famous + good craft" alone is not enough.
+
+| Group | Display name | Normalized key (DB form) | Catalog films |
+|---|---|---|---:|
+| Visual stylists | Wes Anderson | `wes anderson` | 19 |
+| Visual stylists | Stanley Kubrick | `stanley kubrick` | 16 |
+| Visual stylists | Terrence Malick | `terrence malick` | 11 |
+| Visual stylists | David Fincher | `david fincher` | 12 |
+| Visual stylists | Tim Burton | `tim burton` | 23 |
+| Visual stylists | Guillermo del Toro | `guillermo del toro` | 15 |
+| Visual stylists | Yorgos Lanthimos | `yorgos lanthimos` | 11 |
+| Visual stylists | Sofia Coppola | `sofia coppola` | 9 |
+| Visual stylists | Nicolas Winding Refn | `nicolas winding refn` | 10 |
+| Visual stylists | Denis Villeneuve | `denis villeneuve` | 13 |
+| Visual stylists | Edgar Wright | `edgar wright` | 9 |
+| Visual stylists | Wong Kar-wai | `wong kar-wai` | 15 |
+| Visual stylists | Pedro Almodóvar | `pedro almodovar` | 25 |
+| Visual stylists | Jean-Pierre Jeunet | `jean-pierre jeunet` | 11 |
+| Visual stylists | Baz Luhrmann | `baz luhrmann` | 7 |
+| Visual stylists | Zack Snyder | `zack snyder` | 14 |
+| Tonal / structural | David Lynch | `david lynch` | 23 |
+| Tonal / structural | Christopher Nolan | `christopher nolan` | 14 |
+| Tonal / structural | Darren Aronofsky | `darren aronofsky` | 10 |
+| Tonal / structural | Charlie Kaufman | `charlie kaufman` | 4 |
+| Tonal / structural | Spike Jonze | `spike jonze` | 9 |
+| Tonal / structural | M. Night Shyamalan | `m night shyamalan` | 16 |
+| Tonal / structural | Ari Aster | `ari aster` | 6 |
+| Tonal / structural | Robert Eggers | `robert eggers` | 4 |
+| Tonal / structural | Jordan Peele | `jordan peele` | 3 |
+| Tonal / structural | Bong Joon-ho | `bong joon ho` | 9 |
+| Tonal / structural | Park Chan-wook | `park chan-wook` | 16 |
+| Voice-driven | Quentin Tarantino | `quentin tarantino` | 15 |
+| Voice-driven | Aaron Sorkin | `aaron sorkin` | 3 |
+| Voice-driven | Richard Linklater | `richard linklater` | 24 |
+| Voice-driven | Noah Baumbach | `noah baumbach` | 14 |
+| Voice-driven | Joel Coen | `joel coen` | 21 |
+| Voice-driven | Ethan Coen | `ethan coen` | 23 |
+| Career-spanning masters | Martin Scorsese | `martin scorsese` | 41 |
+| Career-spanning masters | Paul Thomas Anderson | `paul thomas anderson` | 14 |
+| Career-spanning masters | Spike Lee | `spike lee` | 36 |
+| Career-spanning masters | David Cronenberg | `david cronenberg` | 27 |
+| Career-spanning masters | Michael Mann | `michael mann` | 14 |
+| Career-spanning masters | Brian De Palma | `brian de palma` | 30 |
+| Career-spanning masters | John Carpenter | `john carpenter` | 21 |
+| Career-spanning masters | Sam Raimi | `sam raimi` | 17 |
+| Career-spanning masters | Hayao Miyazaki | `hayao miyazaki` | 14 |
+| International auteurs | Akira Kurosawa | `akira kurosawa` | 31 |
+| International auteurs | Federico Fellini | `federico fellini` | 24 |
+| International auteurs | Ingmar Bergman | `ingmar bergman` | 47 |
+| International auteurs | Andrei Tarkovsky | `andrei tarkovsky` | 10 |
+| International auteurs | Werner Herzog | `werner herzog` | 59 |
+| International auteurs | Hirokazu Kore-eda | `hirokazu koreeda` | 16 |
+| International auteurs | Lars von Trier | `lars von trier` | 18 |
+| International auteurs | Michael Haneke | `michael haneke` | 16 |
+| International auteurs | Luca Guadagnino | `luca guadagnino` | 11 |
+| International auteurs | Céline Sciamma | `celine sciamma` | 5 |
+| International auteurs | Jane Campion | `jane campion` | 13 |
+| Modern voices | Damien Chazelle | `damien chazelle` | 6 |
+| Modern voices | Barry Jenkins | `barry jenkins` | 4 |
+| Modern voices | Greta Gerwig | `greta gerwig` | 4 |
+| Modern voices | Steve McQueen | `steve mcqueen` | 6 |
+| Modern voices | Alfonso Cuarón | `alfonso cuaron` | 9 |
+| Modern voices | Alejandro González Iñárritu | `alejandro g inarritu` | 10 |
+| Modern voices | James Wan | `james wan` | 12 |
+
+**Credit-string notes** (cases where the DB form deviates from the most common spelling — verified by direct query):
+- `bong joon ho` — Bong Joon-ho's IMDb credit lacks the hyphen; canonical key has no hyphen, space-separated.
+- `hirokazu koreeda` — Kore-eda is credited as one word in IMDb (no hyphen, no space).
+- `alejandro g inarritu` — credited as "Alejandro G. Iñárritu"; the period collapses to "g", diacritic stripped.
+
+The Coen brothers and any other co-directing pair are stored as **separate keys** (one per person). The lane fires for either credit independently.
+
+**Deliberate exclusions** (so future passes don't re-litigate):
+- Generalist craftsmen with no signature: Ridley Scott, Ron Howard, Steven Soderbergh (distinctive *approach* but genre-promiscuous), Clint Eastwood (visually plain by design), James Cameron, Guy Ritchie (one genre lane), Kevin Smith, Robert Rodriguez.
+- Sample size < 3 features: Jonathan Glazer, Chloé Zhao — reconsider when filmographies grow.
+- Held back pending user call on public-discourse considerations: Woody Allen, Mel Gibson, Roman Polanski. Style signal is real; inclusion is a separate decision.
 
 ### 2.2 Franchise lane — tier system based on lineage + subgroup, with spinoff/crossover handling
 
@@ -468,7 +563,7 @@ By impact (high → low), with recommended priority. Items marked ✅ are alread
 | 4 | Add themes lane (generic IDF over keywords/concepts/genres) to single-anchor | §2.3 | Large — fixes Barbie identity, Get Out, Mad Max-style anchors | pending |
 | 5 | Add country/language multiplier to single-anchor + tune to `1.05`/`0.75` | §1.3, §2.4 | Medium-large — fixes Barbie Telugu #1; tighter cross-tradition bar everywhere | pending |
 | 6 | Franchise rework: structural tier system + spinoff/crossover detection | §2.2 | Medium-large — fixes Star Wars silent-franchise, Barbie suppression, Avengers crossover handling | pending |
-| 7 | Director: manual auteur list only; drop non-curated tier entirely | §2.1 | Medium — fixes Lucas's American Graffiti, Spielberg over-firing, etc. | **BLOCKED** on auteur list (§6 #1) |
+| 7 | Director: manual auteur list only; drop non-curated tier entirely | §2.1 | Medium — fixes Lucas's American Graffiti, Spielberg over-firing, etc. | pending (auteur list locked 2026-05-07) |
 | 8 | Cast lane: generic N-anchor formula — bucket-with-floor on shared top-3 leads (multi-anchor) | §2.5 | Medium — fixes Tom-Hanks-trio scenario | pending |
 | 9 | Rare-keyword lane: tiered IDF (low/moderate/high) + floor on high-rarity hits or rare combos (NEW) | §2.6 | Medium — interpretability + distinctive-match weaving for both single and multi | pending |
 | 10 | Medium multiplier: piecewise — `0.65` for cross-category, V2 formula within category | §3.2 | Medium — fixes animated Batman in TDK, Wallace & Gromit in Toy Story | pending |
@@ -479,7 +574,7 @@ By impact (high → low), with recommended priority. Items marked ✅ are alread
 **Suggested batches** (each batch is testable end-to-end in isolation):
 
 - **Batch A — categorization fixes** (✅ done): items 1, 2. Pure registry edits, low blast radius. Already verified Oppenheimer correctness improvement.
-- **Batch B — single-anchor enrichment**: items 4, 5, 7. Add themes + country to single-anchor; auteur-list director rework. Biggest architectural change in V3 but unlocks Barbie-class cases that V2 silently fails. **Item 7 is blocked** on the auteur list (§6 #1) — items 4 and 5 can ship independently, but Batch B is not "complete" until 7 is unblocked and lands.
+- **Batch B — single-anchor enrichment**: items 4, 5, 7. Add themes + country to single-anchor; auteur-list director rework. Biggest architectural change in V3 but unlocks Barbie-class cases that V2 silently fails. Auteur list is finalized (§2.1) — Batch B is unblocked end-to-end.
 - **Batch C — franchise + weaving + cast**: items 3, 6, 8. Tier-system franchise, format harsh-downrank, cast generic-formula bucket-with-floor. Fixes the rank-order issues that the lane-level reworks alone don't.
 - **Batch D — distinctive-match interpretability**: item 9 (rare-keyword lane). Adds the new lane with tiered IDF and floor; depends on the themes lane (Batch B item 4) being in place since they share the trait pool.
 - **Batch E — multiplier strengthening**: item 10. Asymmetric medium multiplier; small-surface change but high specificity for the live↔anim crossing failures.
@@ -491,7 +586,7 @@ Each batch should be re-run against the same 20 single-anchor + 12 multi-anchor 
 
 ## 6. Open questions / things to verify before V3 implementation
 
-1. **🛑 Auteur list — final composition (BLOCKER for §2.1).** The director rework hinges on this list. Composition has been deferred to a dedicated follow-up conversation with the user; no preliminary list is committed in this plan. **If implementation on the director lane begins before the list is locked, pause and surface the gap.** Tracking entry: [docs/TODO.md](../docs/TODO.md) "Auteur list composition for similar-movies V3 director lane". Decisions still to make in that conversation: (a) inclusion criteria — pure stylistic auteurs only, or include franchise-defining genre directors (Carpenter, Romero)? (b) how to source candidates — hand-pick, external rank (Sight & Sound), or hybrid? (c) data-side resolution — are Coen Brothers one director term or two; is Cronenberg-the-elder vs Cronenberg-the-younger one entry or two?
+1. **Auteur list — RESOLVED 2026-05-07.** The full 60-entry list is now embedded in §2.1 with normalized keys verified against the live DB. Resolutions on the prior open sub-questions: (a) inclusion criteria — pure stylistic auteurs whose *whole catalog* is likely to feel cohesive to a viewer; franchise-defining genre directors are in only when their broader filmography also coheres (Carpenter ✅ for synth-anamorphic-siege fingerprint; not gating on franchise-only fame); (b) sourcing — hand-picked from parametric knowledge plus a research subagent's auteurism survey, then filtered by the three-criterion bar in §2.1; (c) data-side resolution — Coen brothers stored as **two separate keys** (`joel coen`, `ethan coen`); lane fires for either independently. No Cronenberg ambiguity in the list (only David Cronenberg included).
 
 2. **Crossover detection** (§2.2). Verify on actual catalog: do Avengers films *really* carry multiple lineage_entry_ids, or is the data structured with a single "Avengers lineage" that subsumes Iron Man / Cap / Thor lineages? The franchise tier system depends on this. A 2-line query against `movie_card.lineage_entry_ids` for Avengers films will resolve it.
 
