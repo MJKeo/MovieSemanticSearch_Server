@@ -1795,3 +1795,102 @@ The Mission (62.6 + Palme d'Or) misses 65 with-award floor —
 acceptable; can be loosened to 60 in V3.3.3 if recurring.
 Razzie Redeemer Award limitation noted (no schema-level
 distinction; WORST_OTHER excluded as heuristic buffer).
+
+## V5 Phase 2b: REMOVE-KW from EMOTIONAL_EXPERIENTIAL + SEASONAL_HOLIDAY + SPECIFIC_PRAISE_CRITICISM
+Files: schemas/trait_category.py, search_v2/endpoint_fetching/category_handlers/prompts/categories/additional_objective_notes/{emotional_experiential,seasonal_holiday,specific_praise_criticism}.md, search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/{emotional_experiential,seasonal_holiday,specific_praise_criticism}.md, search_improvement_planning/query_categories.md, search_improvement_planning/search_overheaul_test_tracker.md
+Why: Eliminate the F1/F2 failure modes where these three categories
+fired thin keyword commits (BITTERSWEET_ENDING for tone, FEEL_GOOD
+for "wholesome", paraphrastic ALL on STORY_THEMATIC clusters) that
+ADDITIVE-multiplied a registry miss into a category-zero. After
+this phase, all three categories fire a single SEMANTIC endpoint
+under SINGLE_NON_METADATA_ENDPOINT / CategoryCombineType.SINGLE —
+the trip-wire formula `combine_type==additive AND keyword in
+fired_routes` mechanically excludes them.
+Approach: Per-category enum-tuple update (drop KEYWORD route,
+re-bucket, re-combine-type) plus prompt rewrites for each category's
+additional_objective_notes (delete `## Keyword Augmentation` /
+`## Coverage Decision` multi-endpoint framing, keep domain scope and
+boundary rules) and few_shot_examples (full rewrite to the
+`<retrieval_intent>+<expressions>` input shape that
+`build_user_message` actually emits, matching the existing
+SINGLE_NON_METADATA_ENDPOINT siblings like NARRATIVE_SETTING).
+4 examples per category, even-split fire/no-fire, all queries
+disjoint from /tmp/v5_suite.txt per the example-eval separation
+rule. query_categories.md Cat 29 / Cat 33 / Cat 40 endpoint
+descriptions updated for doc/code alignment.
+Design context: search_improvement_planning/rescore_overhaul.md
+§Phase 2b; small-LLM principles from
+docs/conventions.md §483-491 (principle-based constraints, not
+failure catalogs) and §508-513 (example-eval separation);
+search_improvement_planning/category_handler_planning.md §425-430
+(3–5 calibration examples / handler).
+Testing notes: V5 suite re-run via `python -m search_v2.run_specs
+--suite /tmp/v5_suite.txt --json /tmp/run_specs_phase_2b.json
+--concurrent 4`. Headline ADDITIVE_KW_RISK 39 / 85 (45.9%, phase
+2a) → 25 / 82 (30.5%, phase 2b), -15.4 pp. All 23 target rows
+across the suite show `combine_type=single` and `fired_endpoints=
+[semantic]`; 0 KW commits. Positive controls Q9 (held at 2), Q13
+(2 → 1, structural; genuine plural-intent ALL on STORY_THEMATIC
+intact), Q25 (2 → 1, structural; ALL on NARRATIVE_DEVICES intact).
+0 errors, 0 errored_cats. Stage-4 trait_score effect (no
+KW-multiply gate, monotone in semantic gradient) verified
+structurally only — orchestrator_batch sweep deferred per Phase 2a
+precedent (when run_specs surface IS the verification surface,
+stage-4 sweep is optional).
+
+## V5 Phase 3: keyword.md superset test + singular/plural rewrite + bucket partial-abstention sanction
+Files: search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md, schemas/keyword_translation.py, search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md, search_v2/endpoint_fetching/category_handlers/prompts/buckets/audience_suitability_deterministic_first_objective.md, search_v2/endpoint_fetching/category_handlers/prompts/buckets/semantic_preferred_deterministic_support_objective.md, search_improvement_planning/search_overheaul_test_tracker.md
+Why: Reduce F2 (ALL on paraphrase clusters) and F3 (over-coverage
+despite weaknesses naming the over-pull) by replacing the keyword
+endpoint prompt's prescriptive shape language with a single
+principle-based superset test, replacing the cue-word ANY/ALL
+discriminator with a singular-vs-plural framing read off the call's
+expressions, and explicitly sanctioning partial abstention at the
+multi-endpoint bucket level.
+Approach: Three coupled prompt rewrites shipped as one bundle since
+they share an editing surface (keyword.md + the multi-endpoint
+bucket prompts). 3.1 — keyword.md `## Authoring strengths and
+weaknesses per candidate` + `## Near-collision disambiguation`
+collapsed into one `## Commitment: superset test` section
+(verbatim from rescore_overhaul.md §3.1). The strengths/weaknesses
+fields stay in the schema as walk-phase scaffolding; the gate from
+candidates to finalized_keywords becomes the principle-based
+superset test. 3.2 — keyword.md `## Reading the brief for
+scoring_method` rewrite from cue-words ("or"/"and"/"both") to
+singular-vs-plural framing read off the call's expressions
+(verbatim from §3.2). Plus matching updates to BOTH
+KeywordQuerySpec.scoring_method (L215) and
+KeywordQuerySpecSubintent.scoring_method (L393) field descriptions
+in schemas/keyword_translation.py — the schema-as-micro-prompt rule
+demands both holders agree with the endpoint prompt. 3.3 — added a
+fourth local test ("Superset test per endpoint") to the three
+multi-endpoint bucket prompts that previously treated abstention as
+all-or-nothing. character_franchise_fanout_objective.md
+deliberately excluded from the audit (both paths fire by design
+when a referent exists). No category-specific examples in either
+new section — the spec explicitly forbids them so the LLM
+evaluates the underlying property rather than pattern-matching.
+Adheres to small-LLM principles in docs/conventions.md §483-491
+(principle-based, not failure catalogs) and §475-482 (merge
+ambiguous field boundaries — both scoring_method holders updated
+in lockstep).
+Design context: search_improvement_planning/rescore_overhaul.md
+§Phase 3.
+Testing notes: V5 suite re-run via `python -m search_v2.run_specs
+--suite /tmp/v5_suite.txt --json /tmp/run_specs_phase_3.json
+--concurrent 4`. The dominant signal is in the ANY/ALL
+distribution, not the trip-wire headline: ALL ratio 14.6% (phase
+2b) → 5.0% (phase 3); only 2 surviving ALL commits and both are
+genuine plural intent on GENRE under combine=alternatives
+(action+thriller, war+history). Headline trip-wire moved
+modestly (30.5% → 28.8%, -1.7 pp) because the metric tracks
+`additive AND kw fires` not commit strictness; Phase 3 reduces
+brittleness inside trip-wire rows (ALL on paraphrase clusters →
+ANY = movies score on partial matches instead of zeroing on
+missing tag), not the row count. Positive controls Q9 / Q13 / Q25
+held or improved with no over-correction. F3 abstention signal
+weaker than predicted — the superset test landed in the prompt
+but didn't drive more abstention on STORY_THEMATIC over-pulling
+categories (kw_commits 41 → 40 essentially flat). Captured as a
+follow-up iteration target rather than a ship blocker. 0 errors,
+0 errored_cats, 0 schema violations.

@@ -412,20 +412,19 @@ intensity gradient for spectrum-framed asks.
 pitch framing → Cat 27.
 
 ### 29. Seasonal / holiday
-**Endpoints:** KW + CTX + P-EVT (additive combo).
+**Endpoints:** CTX + P-EVT (single semantic call).
 **Handles:** Christmas, Halloween, Thanksgiving, summer-blockbuster.
-**Mechanism:** KW via **proxy chains** — the vocabulary has no
-dedicated seasonal tags, so the LLM rewrites seasonal intent into
-proxy tags at query-generation time (Halloween → horror +
-supernatural + spooky + slasher; Christmas → family + heartwarming
-+ snowed-in + winter). CTX captures seasonal viewing framing
-("Christmas viewing," "Halloween movie night"). P-EVT captures
-seasonal narrative settings ("set on Christmas Eve," "Halloween
-night"). Scores merge additively.
-**Why additive, not tiered:** no channel is authoritative — proxy
-tags are inherently approximate, and the semantic spaces catch
-real signal the proxy chain misses, especially for less-
-canonicalized holidays.
+**Mechanism:** A single semantic call covers the seasonal slice.
+CTX (`watch_context`) captures seasonal viewing framing
+("Christmas viewing," "Halloween movie night"); P-EVT
+(`plot_events`) captures seasonal narrative settings ("set on
+Christmas Eve," "Halloween night"). Combine type is SINGLE — the
+category score is the semantic score directly.
+**Why no keyword channel:** the registry has no dedicated seasonal
+tags; the proxy-chain workaround (Halloween → horror + spooky +
+slasher) was approximate at best, and ADDITIVE-multiplied a KW
+miss into a category-zero. Phase 2b removed that gate (V5
+Iteration 4); semantic alone now owns the seasonal meaning.
 
 ---
 
@@ -471,7 +470,7 @@ character archetype is a static type, story archetype is a story
 shape.
 
 ### 33. Emotional / experiential
-**Endpoints:** VWX + CTX + RCP + KW (additive combo, handler-driven
+**Endpoints:** VWX + CTX + RCP (single semantic call, handler-driven
 field selection).
 **Handles:** all emotional / experiential / feel framings —
 - During-viewing feel: tone, tonal aesthetic (dark, whimsical,
@@ -491,12 +490,15 @@ field selection).
 **Mechanism:** handler-driven field selection across VWX (full
 surface incl. `ending_aftertaste`, `emotional_palette`, `tension`,
 `disturbance`, `sensory_load`, `cognitive_complexity`,
-`tone_self_seriousness`), CTX (`self_experience_motivations`),
+`tone_self_seriousness`), CTX (`self_experience_motivations`), and
 RCP (emotional reception prose: "tearjerker," "comfort-rewatch,"
-"unforgettable"), KW (TEARJERKER, FEEL_GOOD, HAPPY_ENDING,
-TWIST_ENDING, OPEN_ENDING, SAD_ENDING). Tag-perfect short-circuit
-when an emotional or structural-ending tag maps cleanly to the
-trait.
+"unforgettable"). Combine type is SINGLE — the category score is
+the semantic score directly. The KW channel was removed in Phase
+2b (V5 Iteration 4) because it routinely fired thin proxy commits
+(BITTERSWEET_ENDING for tone, FEEL_GOOD for "wholesome",
+[TEARJERKER, TRAGEDY, SAD_ENDING] for "grief") that, under
+ADDITIVE-multiply, zeroed the category whenever the registry
+proxy missed the user's actual felt-effect.
 **Boundaries:** anything emotional or experiential — before,
 during, or after watching — lives here. The merger is deliberate:
 step 2 is worse at fine emotional disambiguation than the handler-
@@ -586,14 +588,18 @@ separately: "old classic" and "modern classic" fire Cat 13 + Cat
 39; "classic" alone does not imply Cat 13.
 
 ### 40. Specific praise / criticism
-**Endpoints:** RCP + KW (additive combo).
+**Endpoints:** RCP (single semantic call).
 **Handles:** reception prose for specific parts, qualities, or
 aspects people liked or disliked — "praised for its tension,"
 "criticized as plodding," "praised for performances," "criticized
 for a weak ending," "loved for its dialogue," "hated for pacing."
 **Mechanism:** RCP `praised_qualities` / `criticized_qualities`
-prose carries the aspect-level like/dislike; KW can fire when the
-praised/criticized aspect corresponds to a canonical concept tag.
+prose carries the aspect-level like/dislike. Combine type is
+SINGLE — the category score is the semantic score directly. The
+KW channel was removed in Phase 2b (V5 Iteration 4): "praised for
+X" is a *judgment*, not a presence claim, and KW commits like
+`[DRAMA]` or `[INDIE]` for "praised for performances" routinely
+collapsed praise into mere presence under ADDITIVE-multiply.
 **Boundaries:** broad cultural/reputation labels ("classic,"
 "cult," "underrated," "overhyped," "divisive," "still holds up,"
 "era-defining") → Cat 39. Numeric prior side is Cat 38. AWD

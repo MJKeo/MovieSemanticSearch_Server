@@ -10,8 +10,9 @@ Your task: walk every declared endpoint concretely with strengths + weaknesses, 
    - **Fire test:** "Does this endpoint contribute a strength the others don't, OR fill a weakness another has?" Yes → fire it.
    - **Drop test:** "Does another endpoint dominate this one's strengths AND weaknesses?" Yes → drop the dominated one.
    - **Sharpness layering:** semantic carries graded experiential signal; a deterministic endpoint with a clean canonical/binary candidate adds gate-style sharpness that semantic alone blurs. When BOTH have useful candidates, BOTH fire.
+   - **Superset test (per endpoint):** apply the endpoint's own commitment principle to its candidates. If the candidates fail the endpoint's commitment criteria (e.g., the keyword candidates fail the keyword endpoint's superset test — gaps in coverage of the user's attribute, or stretching intent beyond what the registry names), drop that endpoint from `coverage_assignments` even if other endpoints fire. This is partial abstention — sanctioned alongside the existing whole-call abstention pathway.
 
-3. **Coverage assignments.** Mechanical commit of the choice argued above. One entry per endpoint that should fire. Empty `coverage_assignments` is valid only when ALL declared endpoint walks surfaced no useful candidate; in that case the whole call abstains.
+3. **Coverage assignments.** Mechanical commit of the choice argued above. One entry per endpoint that should fire. Empty `coverage_assignments` is valid when no endpoint walk surfaced a candidate that passes both the local fire/drop tests and the endpoint's own commitment criteria. Partial commitment (some endpoints fire, others abstain via the superset test or equivalent) is also valid — the per-endpoint criteria are independent.
 
 4. **Thin per-endpoint parameters.** For each endpoint with an assignment, fill its `{route}_parameters` block. The wrapper's `{route}_retrieval_intent` mirrors the slice_description from the matching assignment; the inner parameters draw on that intent and the endpoint's walk above to commit the route-specific translation.
 

@@ -52,33 +52,28 @@ These examples illustrate the principle; the right registry match is often defin
 
 ## Authoring `strengths` and `weaknesses` per candidate
 
-Each `potential_keywords` entry carries a registry member plus two short prose fields. Frame both operationally — what does this member do at retrieval time, given the parent attribute? Four shapes recur:
+Each `potential_keywords` entry carries a registry member plus two short prose fields. They are walk-phase scaffolding: surface what the member would genuinely do at retrieval time given the parent attribute. The commitment phase reads them, but the gate from candidates to `finalized_keywords` is the superset test below — strengths/weaknesses describe the slice; they do not by themselves authorize a commit.
 
-- **clean** — strengths name the slice this member retrieves; weaknesses = "none". Rare; only when the registry has a member whose definition is exactly the attribute.
-- **under-coverage** — strengths name what the member retrieves; weaknesses lead with `under-coverage:` and name the aspects of the attribute the member does NOT carry, with the destination (sibling endpoint or sibling registry member) where possible.
-- **over-coverage** — strengths name the slice the member retrieves; weaknesses lead with `over-coverage:` and name what the member ALSO retrieves beyond the slice. `SPORT` for a "running movies" attribute is the canonical case: it covers running but ALSO pulls football, basketball, hockey, golf — name those over-pulls explicitly.
-- **both** — strengths name the partial slice owned; weaknesses names BOTH `under-coverage:` (what's missing) and `over-coverage:` (what's pulled beyond the slice).
+## Commitment: superset test
 
-The over-coverage axis is what the commitment phase uses to decide whether to fire a sibling endpoint that refines this one. Surface it honestly even when the member is the best registry fit.
+Fire keyword only when the keyword — or the ANY-mode union of keywords — is a true superset of the movies the user is asking for. A superset means: every movie that genuinely satisfies the user's attribute would carry at least one of the chosen keywords.
 
-## Near-collision disambiguation
+**Over-pull is acceptable.** The keywords also covering unrelated movies is not a failure of this test. Semantic refinement on the same call narrows the noise, and broadness in this trait is recovered by another trait's specificity.
 
-Within a family, several members often cover overlapping territory. Four principles decide near-collision picks — apply them when surfacing `potential_keywords` and again when committing `finalized_keywords`:
+**Gaps fail the test.** If a movie that genuinely satisfies the user's attribute could carry none of your chosen keywords, the set is not a superset. Firing will zero genuine matches under ADDITIVE-multiply. Abstain.
 
-**Breadth vs. specificity.** Prefer the broader member absent signal for a narrower one. "Scary movies" → `HORROR`, not `SLASHER_HORROR` / `PSYCHOLOGICAL_HORROR` / `SUPERNATURAL_HORROR`, unless the inputs cite the sub-form's defining premise. Picking narrow on weak evidence silently rejects every movie in the broad category that lacks the specific tag.
+**Stretching intent fails the test.** If the keywords name something semantically adjacent to the user's attribute rather than the attribute itself, you are stretching. Firing will tag-match adjacent-but-irrelevant movies at 1.0 while genuinely relevant movies that lack those tags score 0. Abstain.
 
-**Explicit premise signal.** Prefer a narrower member only when the inputs cite the premise that defines it. `SLASHER_HORROR` needs stalker/killer phrasing. `ZOMBIE_HORROR` needs zombies cited. `HEIST` needs the theft / crew / plan premise. If the premise is not in the text, the broader family member wins.
-
-**Cross-family proximity.** Some concepts sit on family boundaries. "Coming-of-age" (family 12 audience/life-stage) vs "teen drama" (family 5 drama-with-teen-audience). "True story" (family 18 real-world-basis) vs "biography" (same family, narrowed to one named person). "Remake" (generic retelling, family 18) vs a tracked franchise's remake (franchise endpoint's concern). Decide by which feature the inputs emphasize — audience, life stage, person, retelling motion — and pick the family whose definition names that feature.
-
-**Mutually exclusive ending / viewer-response pairs.** Members inside families 19 (endings) and 21 (viewer response) are near-mutually-exclusive. "Makes you cry" → `TEARJERKER`. "Leaves you uplifted" → `FEEL_GOOD`. "Unexpected ending" → `PLOT_TWIST`, not a specific ending-type. Cite the input phrase that names the effect, not your own summary.
+Apply the test once over the union of your finalized members in ANY mode. If the union passes the test, commit; if it fails on any of the three conditions, drop members until the remainder passes — or abstain entirely if no remaining subset passes. In multi-endpoint buckets, abstention means omitting keyword from `coverage_assignments`. In single-endpoint keyword buckets the schema requires at least one finalized member; the test still applies as guidance to pick the best registry fit, since those buckets routed here precisely because the user's attribute is registry-clean.
 
 ## Reading the brief for scoring_method
 
-`scoring_method` is a downstream commitment driven by the brief's framing of how the finalized members combine.
+The scoring_method defaults to ANY. ALL is reserved for the case where the user named multiple distinct attributes that should compound, each independently demanded.
 
-**ANY.** We only care if the movie has at least one of the finalized members, like an "or" case. Movies score equally high for matching 1+ values. Cues: "any kind of", "some flavor of", "or", "either", listing alternatives, one concept paraphrased several ways.
+**Singular intent → ANY.** The user's expression names one attribute. The keyword commit may include multiple registry members because you have converted that one attribute into several registry surface forms — paraphrases, alternative routes, sub-form alternatives. Matching any one is sufficient evidence the user's one thing is present.
 
-**ALL.** We care how many finalized members a given movie matches. Movies score higher depending on how many values they match. Cues: "and", "as well as", "both", "needs to be", separate facets each independently named, AND-style coverage requirements.
+**Plural intent → ALL is on the table.** The user's expression names multiple distinct attributes the user wants present together — separate things, each independently demanded, compoundable. Each must be matched for the call's intent to be satisfied.
 
-When the brief is silent on combination — typical for single-attribute calls — ANY is the safe default.
+**Operational test:** read the call's expressions. One expression with multiple keywords commits to ANY. Multiple expressions naming genuinely distinct attributes that the user conjoined may commit to ALL.
+
+When N=1 (one finalized keyword) the two modes are mathematically identical — default to ANY and move on.

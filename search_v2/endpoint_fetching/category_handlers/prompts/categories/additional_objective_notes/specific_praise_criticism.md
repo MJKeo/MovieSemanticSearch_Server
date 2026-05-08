@@ -1,22 +1,20 @@
-# Additional objective notes
+# Specific praise / criticism - additional objective notes
 
 ## Category Target
 
 Aspect-level reception: what people praised or criticized about a
 specific part of the film. Ask: "Which quality is liked or disliked?"
 
-## Coverage Decision
+## Semantic Decision
 
-- Preferred: Semantic reception. It carries praise/criticism as
-  reception prose.
-- Fallback / augmentation: Keyword only when a canonical tag directly
-  captures the praised or criticized aspect without collapsing it into
-  mere presence.
-- Split: use Semantic for the reception judgment and Keyword only for a
-  crisp aspect signal that improves retrieval.
+This category fires a single semantic call on `reception`. Phrase
+the body as praise or criticism prose pointing at the named aspect
+(pacing, tension, performances, ending, script, dialogue, ...) so
+it matches the audience-language of the indexed reception text.
 
-"Praised for X" is not the same as "has X." If Keyword only says X is
-present, it does not cover the praise/criticism judgment.
+"Praised for X" is not the same as "has X." Keep the prose
+evaluative — describe the *judgment*, not just the presence of the
+aspect.
 
 ## Boundaries
 

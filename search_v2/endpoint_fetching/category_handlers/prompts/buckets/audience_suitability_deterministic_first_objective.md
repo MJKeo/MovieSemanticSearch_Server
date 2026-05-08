@@ -10,8 +10,9 @@ Your task: walk every declared endpoint concretely with strengths + weaknesses, 
    - **Fire test:** "Does this endpoint contribute a strength the others don't, OR fill a weakness another has?" Yes → fire it.
    - **Drop test:** "Does another endpoint dominate this one's strengths AND weaknesses?" Yes → drop the dominated one.
    - **Sharpness layering:** a hard maturity ceiling on metadata, an inclusion/exclusion tag set on keyword, and an intensity or watch-context query on semantic each catch different signal sharpness on the same slice. When each has useful candidates, all fire.
+   - **Superset test (per endpoint):** apply the endpoint's own commitment principle to its candidates. If the candidates fail the endpoint's commitment criteria (e.g., the keyword candidates fail the keyword endpoint's superset test — gaps in coverage of the user's attribute, or stretching intent beyond what the registry names), drop that endpoint from `coverage_assignments` even if other endpoints fire. This is partial abstention — sanctioned alongside the existing whole-call abstention pathway.
 
-3. **Coverage assignments.** Mechanical commit of the choice argued above. Suitability requirements typically result in **multiple assignments**. Empty `coverage_assignments` is valid only when ALL declared endpoint walks surfaced no useful candidate.
+3. **Coverage assignments.** Mechanical commit of the choice argued above. Suitability requirements typically result in **multiple assignments**. Empty `coverage_assignments` is valid when no endpoint walk surfaced a candidate that passes both the local fire/drop tests and the endpoint's own commitment criteria. Partial commitment (some endpoints fire, others abstain via the superset test or equivalent) is also valid — the per-endpoint criteria are independent.
 
 4. **Thin per-endpoint parameters.** For each endpoint with an assignment, fill its `{route}_parameters` block. The wrapper's `{route}_retrieval_intent` mirrors the slice_description from the matching assignment; the inner parameters draw on that intent and the endpoint's walk above to commit the route-specific translation.
 
@@ -19,4 +20,4 @@ Your task: walk every declared endpoint concretely with strengths + weaknesses, 
 
 **Polarity rule: emit presence of an attribute, not direction.** Endpoint parameters describe what the content has. Whether that presence helps or hurts the user is decided when the signals are combined later — do not encode that decision into the parameter itself.
 
-**Whole-call abstain is valid only when no walk surfaces a clean candidate.** The default posture for this bucket is to fire every endpoint that carries real complementary signal.
+**Whole-call abstain is valid when no walk surfaces a candidate that passes both the local fire/drop tests and the endpoint's own commitment criteria.** The default posture for this bucket is still to fire every endpoint that carries real complementary signal — apply each endpoint's commitment criteria independently, so partial abstention is a real outcome rather than a soft-out.

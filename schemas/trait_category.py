@@ -804,9 +804,9 @@ class CategoryName(str, Enum):
             "'documentary about Christmas' → CENTRAL_TOPIC (Christmas is the topic).",
             "'snowed-in plot' → PLOT_EVENTS.",
         ),
-        (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
-        HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
-        CategoryCombineType.ADDITIVE,
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
 
     # -----------------------------------------------------------------
@@ -928,9 +928,9 @@ class CategoryName(str, Enum):
             "'horror' → GENRE.",
             "'nonlinear timeline' → NARRATIVE_DEVICES.",
         ),
-        (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
-        HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
-        CategoryCombineType.ADDITIVE,
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
     VIEWING_OCCASION = (
         "Viewing occasion",
@@ -1130,9 +1130,9 @@ class CategoryName(str, Enum):
             "'highly rated' → GENERAL_APPEAL.",
             "'Oscar-winning' → AWARDS.",
         ),
-        (EndpointRoute.SEMANTIC, EndpointRoute.KEYWORD),
-        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
-        CategoryCombineType.ADDITIVE,
+        (EndpointRoute.SEMANTIC,),
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
+        CategoryCombineType.SINGLE,
     )
 
     # -----------------------------------------------------------------
