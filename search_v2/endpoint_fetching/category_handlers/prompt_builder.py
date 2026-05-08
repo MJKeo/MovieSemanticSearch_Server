@@ -21,7 +21,7 @@ from schemas.award_surface_forms import (
     render_award_name_surface_forms_for_prompt,
     render_ceremony_mappings_for_prompt,
 )
-from schemas.enums import EndpointRoute, HandlerBucket
+from schemas.enums import EndpointRoute, HandlerBucket, TraitCombineMode
 from schemas.production_brand_surface_forms import render_brand_registry_for_prompt
 from schemas.streaming_service_surface_forms import (
     render_tracked_streaming_services_for_prompt,
@@ -309,20 +309,44 @@ def _require_category_chunk(
 # ── User message (per-call XML payload) ───────────────────────────
 
 
-def build_user_message(category_call: CategoryCall) -> str:
+def build_user_message(
+    category_call: CategoryCall,
+    *,
+    sibling_calls: list[CategoryCall] | None = None,
+    combine_mode: TraitCombineMode | None = None,
+) -> str:
     """Serialize the per-call input payload as the XML block the
     handler LLM consumes.
 
-    Two sections only — ``<retrieval_intent>`` and ``<expressions>``
-    — both pulled from the CategoryCall committed by Step 3. The LLM
-    is intentionally not given raw_query, query-level intent
-    framing, sibling traits, or the upstream modifier signals: those
-    are either already folded into ``retrieval_intent`` by Step 3 or
-    deliberately out of scope for this stage (Step 4 translates the
+    Three sections — ``<retrieval_intent>``, ``<expressions>``, and
+    ``<sibling_categories>`` — all derivable from Step 3's commit
+    state, no execution-order dependency. ``<retrieval_intent>`` and
+    ``<expressions>`` come from this CategoryCall. The
+    ``<sibling_categories>`` block lists the OTHER CategoryCalls
+    Step 3 committed for the same trait, plus the trait-level
+    ``combine_mode`` as a wrapper attribute (``facets`` /
+    ``framings`` / ``single``). It is sibling-task context — what
+    the parallel handlers were *tasked with* via their committed
+    retrieval_intent — not feedback on what they produced (handler
+    outputs aren't observable here; the parallel-execution invariant
+    forbids it). The handler reads the block to coordinate
+    commit-vs-abstain decisions when its slice overlaps a sibling's,
+    and to scale strictness against the trait-level fold (FACETS
+    multiplies; FRAMINGS maxes; SINGLE has no siblings).
+
+    The LLM is still not given raw_query, query-level intent
+    framing, sibling Trait surface text, polarity, or commitment —
+    those are either already folded into ``retrieval_intent`` by
+    Step 3 or deliberately out of scope (Step 4 translates the
     committed call; it does not re-interpret the query). Match_mode
     and polarity are applied post-hoc by
-    ``handler.run_query_generation`` from the parent Trait, so they
-    are not emitted by the LLM either.
+    ``handler.run_query_generation`` from the parent Trait.
+
+    For backwards-compat, ``sibling_calls`` and ``combine_mode``
+    default to None — callers that don't pass them get an empty
+    ``<sibling_categories combine_mode="single"/>`` wrapper, which
+    is the same shape a single-category trait emits. Diagnostic and
+    test callers that don't have sibling data can rely on that.
     """
 
     intent = xml_escape(category_call.retrieval_intent)
@@ -330,7 +354,65 @@ def build_user_message(category_call: CategoryCall) -> str:
         f"  <expression>{xml_escape(expr)}</expression>"
         for expr in category_call.expressions
     )
+
+    sibling_block = _render_sibling_block(
+        sibling_calls=sibling_calls or [],
+        combine_mode=combine_mode,
+    )
+
     return (
         f"<retrieval_intent>{intent}</retrieval_intent>\n"
-        f"<expressions>\n{expression_lines}\n</expressions>"
+        f"<expressions>\n{expression_lines}\n</expressions>\n"
+        f"{sibling_block}"
+    )
+
+
+# ── Sibling block ─────────────────────────────────────────────────
+
+
+_COMBINE_MODE_LABELS: dict[TraitCombineMode, str] = {
+    TraitCombineMode.FACETS:   "facets",
+    TraitCombineMode.FRAMINGS: "framings",
+}
+
+
+def _render_sibling_block(
+    *,
+    sibling_calls: list[CategoryCall],
+    combine_mode: TraitCombineMode | None,
+) -> str:
+    """Build the ``<sibling_categories>`` XML wrapper.
+
+    Wrapper attribute ``combine_mode`` reflects the trait-level fold
+    rule that will combine this handler's output with its siblings'
+    at stage-4. ``single`` is emitted when the trait has no siblings
+    (single-category traits, OR a missing combine_mode argument from
+    a backwards-compat callsite). Each sibling lists category +
+    retrieval_intent verbatim — sibling-task context only, no
+    handler outputs (parallel-execution invariant).
+    """
+    # Single-category traits — or any callsite that didn't thread
+    # siblings through — emit an empty wrapper. The prompt's
+    # "Reading sibling context" section sees combine_mode="single"
+    # and falls back to standalone behavior.
+    if not sibling_calls:
+        return '<sibling_categories combine_mode="single"/>'
+
+    label = (
+        _COMBINE_MODE_LABELS[combine_mode]
+        if combine_mode is not None
+        else "single"
+    )
+    sibling_lines: list[str] = []
+    for sib in sibling_calls:
+        sib_intent = xml_escape(sib.retrieval_intent)
+        sibling_lines.append(
+            f'  <sibling category="{xml_escape(sib.category.name)}">\n'
+            f"    <retrieval_intent>{sib_intent}</retrieval_intent>\n"
+            f"  </sibling>"
+        )
+    return (
+        f'<sibling_categories combine_mode="{label}">\n'
+        + "\n".join(sibling_lines)
+        + "\n</sibling_categories>"
     )

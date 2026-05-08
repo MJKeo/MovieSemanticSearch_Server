@@ -73,6 +73,16 @@ In **multi-endpoint buckets**, abstention runs at TWO levels:
 
 In **single-endpoint keyword buckets** the schema requires at least one finalized member — those buckets routed here precisely because the user's attribute is registry-clean. The superset test still applies as guidance to pick the best registry fit, but the verdict pathway above does not apply (single-endpoint walks do not carry verdict fields).
 
+## Sibling context and the superset test
+
+In multi-endpoint buckets the user message carries a `<sibling_categories>` block listing the other categories Step 3 committed for the same trait, plus a `combine_mode` attribute. The bucket-level "Reading sibling context" section spells out the general protocol; the keyword-specific consequence is narrow and precise:
+
+- A keyword commit that satisfies the superset test on its own may still be the WRONG commit when a sibling's `retrieval_intent` already covers the same conceptual slice. Under `facets` fold this materializes as paraphrastic redundancy: your registry members and the sibling's commit duplicate the same axis, the trait's strict compound multiplies a near-zero from one of them and zeros, and the user loses a movie that genuinely satisfies the trait. The keyword response under `facets` with a paraphrastic sibling is to verdict-abstain on the candidates the sibling already covers and commit only on candidates whose slice the sibling cannot reach.
+- Under `framings` the protective force above goes away — folds reinforce by MAX rather than zeroing — so apply the superset test as written and commit when it passes, regardless of sibling overlap.
+- Under `single` the sibling block is empty; apply the superset test as written.
+
+The superset test itself is unchanged. Sibling context calibrates how strictly you honor borderline candidates: under `facets` borderline candidates whose slice a sibling already covers should verdict-abstain (`dominated-by-sibling`), and under `framings` they may verdict-commit because the fold rule absorbs the redundancy.
+
 ## Reading the brief for scoring_method
 
 The scoring_method defaults to ANY. ALL is reserved for the case where the user named multiple distinct attributes that should compound, each independently demanded.

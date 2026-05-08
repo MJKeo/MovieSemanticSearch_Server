@@ -198,6 +198,17 @@ def combine_calls(
     raise ValueError(f"unknown combine_type: {combine_type!r}")
 
 
+# FACETS fold floor (Phase 7 / rescore_overhaul.md "Soft FACETS fold").
+# Each category contribution under FACETS is lifted to at least this
+# value before the geometric mean. The floor keeps a single zeroed
+# category from collapsing the whole trait while preserving
+# multiplicative-compounding semantics — geom_mean of [1.0, EPS] ≈
+# `EPS ** 0.5` (≈ 0.316 at EPS=0.1), so a movie strong on one facet
+# but missing on another still scores well above 0 but well below 1.
+# Tune via the EPS sweep documented in rescore_overhaul.md Phase 7.2.
+_FACETS_FOLD_FLOOR: float = 0.1
+
+
 def combine_categories(
     combine_mode: TraitCombineMode,
     category_scores: list[float],
@@ -209,27 +220,40 @@ def combine_categories(
     (every category was NO_OP, every call failed, etc.) — returns 0.0
     in either mode so an empty trait contributes nothing.
 
-    Modes (per V4 plan in search_deepdive.md):
+    Modes (per V4 plan in search_deepdive.md, with Phase 7 update):
       FRAMINGS — categories are alternative homes for one underlying
                  thing; matching any one is sufficient evidence. MAX
                  over the category scores. Redundant categories
                  reinforce as alternative routes to the same signal.
       FACETS   — categories cover different axes of a compound
-                 concept; ALL facets must fire to a degree for the
-                 criterion to be met. PRODUCT over the category
-                 scores. Strict — any 0 zeros the trait, the same
-                 way within-category ADDITIVE behaves at the
-                 per-category level.
+                 concept; ALL facets must contribute for the
+                 criterion to be met. Geometric mean over each
+                 category's score lifted to a floor of
+                 `_FACETS_FOLD_FLOOR`. The floor preserves
+                 multiplicative-compounding signal (a movie strong
+                 on every facet still scores ≈ 1.0; a movie zero on
+                 one facet still scores ≈ floor^(1/n) instead of
+                 collapsing the trait), while geometric-mean shape
+                 normalizes the product back into [0, 1] independent
+                 of category count. Replaces the strict-PRODUCT fold
+                 used in the original V4 design.
     """
     if not category_scores:
         return 0.0
     if combine_mode is TraitCombineMode.FRAMINGS:
         return max(category_scores)
     if combine_mode is TraitCombineMode.FACETS:
-        out = 1.0
-        for s in category_scores:
-            out *= s
-        return out
+        # Geometric mean with floor. The floor turns a single zero
+        # into a heavy-but-survivable penalty; the geometric mean
+        # keeps the result in [0, 1] regardless of category count.
+        floored = [
+            s if s > _FACETS_FOLD_FLOOR else _FACETS_FOLD_FLOOR
+            for s in category_scores
+        ]
+        product = 1.0
+        for s in floored:
+            product *= s
+        return product ** (1.0 / len(floored))
     # Defensive — keep the type checker honest if a new mode lands
     # without a branch above.
     raise ValueError(f"unknown combine_mode: {combine_mode!r}")

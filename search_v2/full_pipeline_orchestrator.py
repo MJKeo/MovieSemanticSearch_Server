@@ -461,10 +461,26 @@ async def _decompose_and_generate(
     # Fan out per CategoryCall in parallel as soon as Step 3 returns
     # for this trait. Each per-call coroutine soft-fails internally,
     # so default gather (no return_exceptions) is safe.
+    #
+    # Phase 6 — sibling-task context. Each handler receives the OTHER
+    # CategoryCalls Step 3 committed for this trait (self-category
+    # excluded) plus the trait-level combine_mode, so it can
+    # coordinate commit-vs-abstain decisions against the parallel
+    # siblings under the trait's fold rule. Identity-based filter is
+    # safe because each CategoryCall is a distinct object inside this
+    # decomposition.
+    all_calls = list(decomposition.category_calls)
+    combine_mode = decomposition.combine_mode
     category_call_results = await asyncio.gather(
         *(
-            _process_category_call(cc, trait, branch_label=branch_label)
-            for cc in decomposition.category_calls
+            _process_category_call(
+                cc,
+                trait,
+                branch_label=branch_label,
+                sibling_calls=[s for s in all_calls if s is not cc],
+                combine_mode=combine_mode,
+            )
+            for cc in all_calls
         )
     )
 
@@ -473,7 +489,7 @@ async def _decompose_and_generate(
         polarity=trait.polarity,
         commitment=trait.commitment,
         category_calls=category_call_results,
-        combine_mode=decomposition.combine_mode,
+        combine_mode=combine_mode,
     )
 
 
@@ -491,12 +507,16 @@ async def _process_category_call(
     trait: Trait,
     *,
     branch_label: str,
+    sibling_calls: list[CategoryCall],
+    combine_mode: TraitCombineMode,
 ) -> CategoryCallWithEndpoints:
     category = category_call.category
     try:
         generated_specs = await run_query_generation(
             category_call=category_call,
             trait=trait,
+            sibling_calls=sibling_calls,
+            combine_mode=combine_mode,
         )
     except Exception as exc:  # noqa: BLE001 — soft-fail per call
         logger.error(

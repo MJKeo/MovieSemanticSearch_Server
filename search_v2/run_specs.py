@@ -287,10 +287,22 @@ async def _run_one_query(query: str) -> _QuerySummary:
             summary.traits.append(trait_summary)
             continue
 
+        # Phase 6 — sibling-task context per call. Each handler
+        # receives the OTHER CategoryCalls in this trait's
+        # decomposition (self-category excluded) and the trait-level
+        # combine_mode so it can coordinate against parallel siblings
+        # under the trait's fold rule.
+        all_calls = list(decomposition.category_calls)
+        combine_mode = decomposition.combine_mode
         per_call_results = await asyncio.gather(
             *(
-                _run_handler_with_full_output(category_call=call, trait=trait)
-                for call in decomposition.category_calls
+                _run_handler_with_full_output(
+                    category_call=call,
+                    trait=trait,
+                    sibling_calls=[s for s in all_calls if s is not call],
+                    combine_mode=combine_mode,
+                )
+                for call in all_calls
             ),
             return_exceptions=True,
         )

@@ -23,7 +23,13 @@ from implementation.llms.generic_methods import (
     LLMProvider,
     generate_llm_response_async,
 )
-from schemas.enums import EndpointRoute, HandlerBucket, OperationType, Polarity
+from schemas.enums import (
+    EndpointRoute,
+    HandlerBucket,
+    OperationType,
+    Polarity,
+    TraitCombineMode,
+)
 from schemas.media_type_translation import MediaTypeEndpointParameters
 from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall
@@ -72,8 +78,21 @@ async def run_query_generation(
     *,
     category_call: CategoryCall,
     trait: Trait,
+    sibling_calls: list[CategoryCall] | None = None,
+    combine_mode: TraitCombineMode | None = None,
 ) -> list[GeneratedEndpointSpec]:
-    """Generate endpoint specs for one CategoryCall in its Trait context."""
+    """Generate endpoint specs for one CategoryCall in its Trait context.
+
+    `sibling_calls` carries the OTHER CategoryCalls Step 3 committed
+    for the same trait (self-category excluded). `combine_mode` is
+    the trait-level fold rule. Both feed the user-message
+    `<sibling_categories>` block so handlers can coordinate
+    commit-vs-abstain decisions against parallel sibling tasks
+    without violating per-call isolation. Both default to None so
+    legacy callsites (and deterministic / no-op buckets) keep
+    working unchanged — None routes through to the empty-wrapper
+    ``combine_mode="single"`` shape in `build_user_message`.
+    """
     category = category_call.category
 
     if category.bucket is HandlerBucket.EXPLICIT_NO_OP:
@@ -85,6 +104,8 @@ async def run_query_generation(
     output = await _run_handler_llm(
         category=category,
         category_call=category_call,
+        sibling_calls=sibling_calls,
+        combine_mode=combine_mode,
     )
     if output is None:
         return []
@@ -201,9 +222,15 @@ async def _run_handler_llm(
     *,
     category: CategoryName,
     category_call: CategoryCall,
+    sibling_calls: list[CategoryCall] | None = None,
+    combine_mode: TraitCombineMode | None = None,
 ) -> BaseModel | None:
     system_prompt = build_system_prompt(category)
-    user_message = build_user_message(category_call)
+    user_message = build_user_message(
+        category_call,
+        sibling_calls=sibling_calls,
+        combine_mode=combine_mode,
+    )
     response_format = get_output_schema(category)
 
     for attempt in range(LLM_MAX_ATTEMPTS):

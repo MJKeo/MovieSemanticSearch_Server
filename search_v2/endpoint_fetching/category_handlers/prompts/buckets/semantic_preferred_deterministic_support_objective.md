@@ -19,3 +19,26 @@ Your task: walk every declared endpoint concretely with strengths + weaknesses, 
 **Invariant:** every aspect surfaced in the walks must be owned by some commit, OR the candidate that surfaced it should have been dropped per the local tests. There is no soft-out for "this slice is unservable."
 
 **Semantic abstaining is unusual but valid** — only when semantic's walk surfaces no useful space coverage. Do not force a semantic commit when nothing in the 7 spaces carries the call's intent.
+
+## Reading sibling context
+
+The user message includes a `<sibling_categories>` block listing the other categories Step 3 committed for the SAME trait, plus a `combine_mode` attribute. The block is sibling-task context — what parallel handlers were tasked with via their `retrieval_intent` — not feedback on what they produced. Read it before committing.
+
+`combine_mode` names how stage 4 will fold this category's score with its siblings' into a single trait_score:
+
+- `combine_mode="facets"` — the trait's score is the strict compound of every category's score. A zero on any category collapses the compound. Your output multiplies with the siblings'.
+- `combine_mode="framings"` — the trait's score takes the max across categories. Categories are alternative homes for one underlying thing; an abstention here is harmless if any sibling fires.
+- `combine_mode="single"` — no siblings; this category alone scores the trait. Behave as you would standalone.
+
+Two operational reads, in this order:
+
+1. **Slice-overlap check.** Compare your call's `retrieval_intent` against each sibling's. If a sibling's `retrieval_intent` targets the same conceptual slice yours does — same axis, same content, paraphrased — the trait is being covered by paraphrastic homes rather than complementary facets.
+   - Under `facets`: paraphrastic siblings indicate the upstream commit treated the slice as compound when it is one concept covered redundantly. Your safest move is to commit to the NARROWER facet your category specifically owns (the one a sibling would NOT also commit), or to abstain on the deterministic endpoints when semantic alone carries the slice cleanly. Document the observed redundancy in your `coverage_exploration` so the audit trail surfaces it.
+   - Under `framings`: paraphrastic siblings are the design — fold is MAX, redundancy reinforces. Commit cleanly when you have the slice; abstain freely when you do not.
+
+2. **Strictness scaling.** Your endpoint's commitment criteria (the superset test, the over-coverage refinement, the per-candidate verdict) do not change, but the cost of a wrong commit does:
+   - Under `facets` a zero zeros the trait, so honor abstention more aggressively when the endpoint's own criteria are borderline. Borderline-fail → abstain.
+   - Under `framings` a zero is shadowed by any sibling that fires, so honor commitment more readily on borderline cases. Borderline-pass → commit.
+   - Under `single` apply the criteria as written; there is no fold to scale against.
+
+The sibling block does not authorize firing or abstaining on its own. It calibrates how much conservatism the endpoint's own criteria warrant given the fold rule.

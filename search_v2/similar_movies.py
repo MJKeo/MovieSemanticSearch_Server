@@ -83,7 +83,6 @@ LaneName = Literal[
     "themes",
     "cast",
     "specific_award",
-    "rare_keyword",   # V3 §2.6 — distinctive-match lane (NEW)
 ]
 
 # Lanes whose scores feed the additive sum. Studio is intentionally
@@ -93,9 +92,14 @@ LaneName = Literal[
 # only; their weights collapse to 0 in single-anchor flow so the same
 # pipeline handles both cases without branching.
 #
-# V3: director and rare_keyword are passthrough (raw = absolute
-# contribution); they participate in the additive sum but bypass the
-# `_normalize_weights` denominator. See PASSTHROUGH_LANES below.
+# V3: director is passthrough (raw = absolute contribution); it
+# participates in the additive sum but bypasses the `_normalize_weights`
+# denominator. See PASSTHROUGH_LANES below.
+#
+# V3.4.4: rare_keyword lane removed entirely. Tag-overlap scoring is
+# fully absorbed into the themes lane (with a new compounding bonus
+# matching the old combo bonus). Truly-rare match exploration runs
+# through the rare_keyword bucket in the greedy weaver instead.
 ADDITIVE_LANES: tuple[LaneName, ...] = (
     "shape",
     "director",
@@ -106,13 +110,12 @@ ADDITIVE_LANES: tuple[LaneName, ...] = (
     "themes",
     "cast",
     "specific_award",
-    "rare_keyword",
 )
 
 # Lanes whose raw score IS the absolute contribution (no weight scaling).
 # They appear in the additive sum but are excluded from the normalization
 # denominator so adding them doesn't dilute the proportional lanes.
-PASSTHROUGH_LANES: frozenset[LaneName] = frozenset({"director", "rare_keyword"})
+PASSTHROUGH_LANES: frozenset[LaneName] = frozenset({"director"})
 
 # All lanes carried through the debug payload, including the studio
 # multiplier so debug output still shows when on-brand candidates were
@@ -128,7 +131,6 @@ ALL_LANES: tuple[LaneName, ...] = (
     "themes",
     "cast",
     "specific_award",
-    "rare_keyword",
 )
 
 AnchorType = Literal[
@@ -192,10 +194,6 @@ BASE_LANE_WEIGHTS: dict[LaneName, float] = {
     "themes": 0.12,
     "cast": 0.03,
     "specific_award": 0.04,
-    # NEW V3 §2.6 lane — rare-keyword. Passthrough like director (its
-    # tier-summed contributions and floor are computed in absolute
-    # terms by the scoring function).
-    "rare_keyword": 1.00,
 }
 
 # Single-anchor weight deltas applied additively per active anchor type.
@@ -555,11 +553,11 @@ def _as_int_set(value: object) -> set[int]:
 def _normalize_weights(raw: dict[LaneName, float]) -> dict[LaneName, float]:
     """Normalize raw lane weights so the proportional additive lanes sum to 1.0.
 
-    V3: passthrough lanes (director, rare_keyword) carry absolute
-    contributions defined by their scoring functions, so they're
-    excluded from both the denominator AND the per-lane normalization.
-    Their raw weight flows through unchanged (typically 1.0 = identity
-    multiplier). Studio is excluded for the V2 reason (multiplier-only).
+    V3: the director passthrough lane carries an absolute contribution
+    defined by its scoring function, so it's excluded from both the
+    denominator AND the per-lane normalization. Its raw weight flows
+    through unchanged (typically 1.0 = identity multiplier). Studio is
+    excluded for the V2 reason (multiplier-only).
 
     Negative weights (possible after applying anchor-type deltas) get
     clamped to 0 before the division. If every proportional lane is
@@ -1402,7 +1400,8 @@ def _build_results(
     medium_multiplier_by_movie: dict[int, float] | None = None,
     country_consensus_match_by_movie: dict[int, bool] | None = None,
     # V3 floor signals (each gated on shape ≥ floor's shape gate).
-    rare_keyword_floor_by_movie: dict[int, float] | None = None,
+    # V3.4.4: rare_keyword floor removed — distinctive low-shape match
+    # exploration runs through the rare_keyword bucket in the weaver.
     cast_floor_by_movie: dict[int, float] | None = None,
     director_floor_max_ratio_by_movie: dict[int, float] | None = None,
     # V3.1: per-flow director floor params. Defaults preserve V3
@@ -1440,10 +1439,11 @@ def _build_results(
 
     Pipeline:
       1. Sum lane_weights * lane_scores across ADDITIVE_LANES (director
-         and rare_keyword are passthrough lanes — their raw score IS
-         the absolute contribution).
-      2. Apply post-additive multipliers (studio, country/language, medium
-         piecewise, shorts harsh downrank) on shape-qualifying candidates.
+         is a passthrough lane — its raw score IS the absolute
+         contribution).
+      2. Apply post-additive multipliers (studio, V3.4.3 rare-keyword,
+         country/language, medium piecewise, format-mismatch, shorts
+         harsh downrank) on shape-qualifying candidates.
       3. Apply V3 floors (rare-keyword, cast bucket-with-floor, director
          cohesion floor) gated by shape — these allow a candidate with
          strong distinctive-match evidence to override moderate shape
@@ -1463,7 +1463,6 @@ def _build_results(
     studio_score_by_movie = studio_score_by_movie or {}
     medium_multiplier_by_movie = medium_multiplier_by_movie or {}
     country_consensus_match_by_movie = country_consensus_match_by_movie or {}
-    rare_keyword_floor_by_movie = rare_keyword_floor_by_movie or {}
     cast_floor_by_movie = cast_floor_by_movie or {}
     director_floor_max_ratio_by_movie = director_floor_max_ratio_by_movie or {}
     candidate_format_bucket_by_movie = candidate_format_bucket_by_movie or {}
@@ -1488,8 +1487,10 @@ def _build_results(
         if not sources:
             continue
 
-        # Additive sum — director and rare_keyword are passthrough so
-        # their raw value flows in directly via the 1.0 weight.
+        # Additive sum — director is passthrough so its raw value flows
+        # in directly via the 1.0 weight. rare_keyword (formerly
+        # passthrough → V3.4.3 multiplier → V3.4.4 removed entirely)
+        # is no longer a lane; tag overlap scoring lives in themes.
         contributions = {
             lane: lane_weights.get(lane, 0.0) * per_lane[lane]
             for lane in ADDITIVE_LANES
@@ -1590,9 +1591,6 @@ def _build_results(
         # Track each candidate floor so diagnostics show which one won
         # AND which others were available.
         candidate_floors: list[tuple[str, float]] = []
-        rare_keyword_floor = rare_keyword_floor_by_movie.get(movie_id, 0.0)
-        if rare_keyword_floor > 0.0 and shape_score >= RARE_KW_FLOOR_SHAPE_GATE:
-            candidate_floors.append(("rare_keyword", rare_keyword_floor))
         cast_floor = cast_floor_by_movie.get(movie_id, 0.0)
         if cast_floor > 0.0 and shape_score >= CAST_FLOOR_SHAPE_GATE:
             candidate_floors.append(("cast", cast_floor))
@@ -2369,16 +2367,11 @@ async def _run_single_anchor_similarity(
         idf_lookup=themes_idfs,
     )
 
-    # V3 §2.6: rare-keyword lane (NEW). Same trait pool as themes; the
-    # difference is per-trait tiered scoring + floor on rare combos.
-    (
-        single_rare_keyword_scores,
-        single_rare_keyword_floor,
-    ) = _single_anchor_rare_keyword_scores(
-        anchor_traits=anchor_themes_traits,
-        candidate_rows=candidate_rows,
-        idf_lookup=themes_idfs,
-    )
+    # V3.4.4: rare_keyword lane removed entirely. Tag-overlap is
+    # scored via the themes lane (with V3.4.4 compounding bonus); the
+    # rare_keyword bucket in the weaver pulls candidates that share
+    # genuinely-rare (idf >= 0.55) traits with the anchor for
+    # exploration, gated by `_compute_single_anchor_bucket_data`.
 
     # V3 §3.1 shorts harsh downrank requires per-candidate format
     # bucket so `_build_results` can multiply combined score by 0.30
@@ -2404,8 +2397,6 @@ async def _run_single_anchor_similarity(
         # Cast / specific_award stay multi-only.
         "cast": {},
         "specific_award": {},
-        # V3 §2.6: rare-keyword lane (NEW) — single-anchor case.
-        "rare_keyword": single_rare_keyword_scores,
     }
 
     # V3.1 single-anchor director floor: build a per-candidate ratio
@@ -2453,7 +2444,6 @@ async def _run_single_anchor_similarity(
         studio_score_by_movie=studio_scores,
         medium_multiplier_by_movie=medium_multiplier_by_movie,
         country_consensus_match_by_movie=country_consensus_match_by_movie,
-        rare_keyword_floor_by_movie=single_rare_keyword_floor,
         director_floor_max_ratio_by_movie=director_floor_max_ratio_single,
         director_floor_ratio_threshold=DIRECTOR_FLOOR_SINGLE_RATIO_THRESHOLD,
         director_floor_shape_gate=DIRECTOR_FLOOR_SINGLE_SHAPE_GATE,
@@ -2725,8 +2715,8 @@ async def _run_multi_anchor_similarity(
 
     # V3 raw lane weights. Shape scales with mean cohesion (range
     # [0.36, 1.20]); proportional metadata lanes scale by their cohesion
-    # factor. Director and rare_keyword are passthrough (raw = absolute
-    # contribution).
+    # factor. Director is passthrough (raw = absolute contribution).
+    # V3.4.4: rare_keyword is no longer a lane (removed entirely).
     #
     # V3 §4.1 quality bucket-conditional weight: the middle bucket gets
     # half the base weight (0.03 vs 0.06) — V2's 0.06 was over-firing
@@ -2749,7 +2739,6 @@ async def _run_multi_anchor_similarity(
         # encodes cohesion explicitly via 0.05 + 0.10 * ratio).
         "cast": 0.0,
         "specific_award": 0.04 * cohesion_by_lane["specific_award"],
-        "rare_keyword": 1.00,                           # passthrough; raw is absolute
     }
     # `_normalize_weights` is deferred to after cast scoring — see below.
 
@@ -2936,16 +2925,7 @@ async def _run_multi_anchor_similarity(
     )
     raw_lane_weights["cast"] = cast_lane_weight
 
-    # V3 §2.6 rare-keyword: union of anchor trait pools, tiered IDF
-    # additive contributions, plus floor on rare combos / single
-    # super-rare hits.
-    rare_keyword_scores, rare_keyword_floor_by_movie = (
-        _multi_anchor_rare_keyword_scores(
-            anchor_trait_sets=themes_trait_sets,
-            candidate_rows=candidate_rows,
-            idf_lookup=themes_idfs,
-        )
-    )
+    # V3.4.4: rare_keyword lane removed entirely (see single-anchor flow).
 
     # Now finalize the lane weights with the cast lane's cohesion-
     # derived value. Weights downstream of this point use `lane_weights`.
@@ -3025,7 +3005,6 @@ async def _run_multi_anchor_similarity(
         "specific_award": {
             mid: s for mid, s in specific_award_scores.items() if s > 0.0
         },
-        "rare_keyword": rare_keyword_scores,
     }
 
     # V3.4 bucket-weaver inputs for the multi-anchor flow. Includes the
@@ -3053,7 +3032,6 @@ async def _run_multi_anchor_similarity(
         limit=limit,
         studio_score_by_movie=studio_scores,
         country_consensus_match_by_movie=country_consensus_match,
-        rare_keyword_floor_by_movie=rare_keyword_floor_by_movie,
         cast_floor_by_movie=cast_floor_by_movie,
         director_floor_max_ratio_by_movie=director_max_ratio,
         candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
@@ -3140,11 +3118,72 @@ def _country_consensus_per_candidate(
     return out
 
 
+# Generic IDF tier boundaries. Same numeric values as the old
+# rare_keyword tiers — these delineate "common" / "moderate" / "rare"
+# by IDF independent of any specific lane's use. 0.30 separates
+# trivial-overlap tags (DRAMA, COMEDY) from moderately-distinctive
+# ones; 0.55 separates moderate from genuinely-rare (the bucket's
+# own threshold).
+IDF_TIER_LOW_MAX = 0.30        # idf < 0.30 → trivial tier
+IDF_TIER_MODERATE_MAX = 0.55   # 0.30 ≤ idf < 0.55 → moderate; idf ≥ 0.55 → rare
+
+
 # Themes-lane minimum normalizer denominator. Anchors with a small
 # trait pool (e.g., Barbie at IDF mass 2.5) give very small denominators;
 # this floor prevents any single high-IDF trait from monopolizing the
 # score by dividing by something smaller than itself.
 THEMES_MIN_DENOMINATOR = 1.0
+
+# V3.4.5: themes-lane compounding multiplier. Rewards aggregate co-
+# occurrence of moderate-or-rarer tags by *multiplying* the candidate's
+# themes lane score, not adding a flat bonus. The multiplicative shape
+# is what makes the boost actually compound with quantity — additive
+# 0.15 cap (V3.4.4) was too modest to recover candidates like Matrix's
+# Tron/Blade Runner that share multiple moderate-tier sci-fi tags.
+#
+# Why multiplying the lane score is safe (unlike the V3.4.3 multiplier
+# which multiplied the *final* score and caused tail dominance): the
+# themes lane is proportional, weighted at ~0.10 in the additive sum.
+# A 2× lane score multiplier translates to ~+0.05 final-score lift, not
+# runaway amplification. The boost decays naturally with rank because
+# the themes lane itself decays.
+#
+# Random-pair sampling showed p99 of shared moderate+high IDF = 0.000
+# (324 random pairs, zero crossed 0.5), so engaging at threshold 0.30
+# (one shared moderate trait) means anything beyond a single match
+# starts compounding.
+THEMES_COMBO_MIN_IDF   = IDF_TIER_LOW_MAX  # only moderate+ tags compound
+THEMES_COMBO_THRESHOLD = 0.30      # sum of qualifying IDFs to engage
+THEMES_COMBO_FACTOR    = 0.50      # multiplier strength: mult = 1 + factor*excess
+
+
+def _themes_combo_multiplier(
+    shared: set[tuple[int, int]],
+    idf_lookup: dict[tuple[int, int], float],
+) -> float:
+    """V3.4.5: compounding *multiplier* on themes lane scores.
+
+    Rewards aggregate co-occurrence of moderate-or-rarer shared tags.
+    Returns the multiplier to apply to the candidate's base themes
+    score (1.0 means no boost). Shape:
+
+        sum_qualifying = sum(idf for shared if idf >= MIN_IDF)
+        excess = max(0, sum_qualifying - THRESHOLD)
+        mult = 1.0 + FACTOR * excess
+
+    Multiplicative replacement for V3.4.4's additive bonus — same
+    qualifier (shared moderate+high IDF sum) but compounding shape
+    rather than threshold + linear-up-to-cap.
+    """
+    sum_qualifying = sum(
+        idf for trait in shared
+        for idf in [idf_lookup.get(trait, 0.0)]
+        if idf >= THEMES_COMBO_MIN_IDF
+    )
+    excess = sum_qualifying - THEMES_COMBO_THRESHOLD
+    if excess <= 0.0:
+        return 1.0
+    return 1.0 + THEMES_COMBO_FACTOR * excess
 
 
 def _single_anchor_themes_scores(
@@ -3177,164 +3216,21 @@ def _single_anchor_themes_scores(
             continue
         shared_idf = sum(idf_lookup.get(t, 0.0) for t in shared)
         if shared_idf > 0.0:
-            scores[mid] = _clamp(shared_idf / denom)
+            base = shared_idf / denom
+            # V3.4.5 compounding multiplier on aggregate moderate+ overlap.
+            mult = _themes_combo_multiplier(shared, idf_lookup)
+            scores[mid] = _clamp(base * mult)
     return scores
 
 
-# V3 §2.6 rare-keyword tiers (IDF thresholds + per-trait coefficients).
-#
-# CALIBRATION NOTE (2026-05-07): the v3 plan's thresholds were sized
-# for raw `log(N/df)` IDFs in roughly [0, 8]. The actual `mv_trait_idf`
-# table normalizes IDFs to ~[0, 1] (max overall_keyword IDF observed
-# is 1.0; only ~5 keywords sit at >=1.0; ~18 at >=0.65). Under the
-# original 2.5/4.5/5.0/7.0 thresholds every trait fell into the LOW
-# tier and the floor never fired — the lane was effectively capped
-# at 0.05 for every candidate. Thresholds below are recalibrated to
-# the observed distribution; per-trait coefficients are scaled up to
-# keep the lane's max contribution comparable to the original design
-# intent (~0.20-0.55 for very-rare-trait candidates).
-RARE_KW_TIER_LOW_MAX = 0.30        # idf < 0.30 → pooled into the low-tier bucket
-RARE_KW_TIER_MODERATE_MAX = 0.55   # 0.30 ≤ idf < 0.55 → moderate per-trait additive
-# idf >= 0.55 → high per-trait additive AND eligible for floor
-RARE_KW_LOW_COEF = 0.05            # low traits collapse to a single ~0.05-cap pool
-RARE_KW_LOW_POOL_CAP = 0.05
-RARE_KW_MODERATE_COEF = 0.10
-RARE_KW_HIGH_COEF = 0.20
-RARE_KW_FLOOR_HIGH_SINGLE = 0.85   # one super-rare trait at idf >= 0.85 triggers floor
-RARE_KW_FLOOR_COMBO_SUM = 1.50     # OR sum of moderate+high tiers ≥ 1.50 triggers floor
-RARE_KW_FLOOR_BASE = 0.40
-RARE_KW_FLOOR_HIGH_INC = 0.05      # +0.05 per high-tier trait
-RARE_KW_FLOOR_CAP = 0.55
-RARE_KW_FLOOR_SHAPE_GATE = 0.20    # candidate's shape must be ≥ 0.20 to apply floor (V3.1: 0.30 → 0.20 — original gate blocked every observed high-rare-keyword candidate)
-
-# V3.1: moderate-combo bonus on the rare-keyword lane. Rewards the
-# qualitative jump from "shared 1–2 moderate-rarity tags" to "shared
-# 3+". Random-pair sampling over the catalog showed p99 of shared
-# moderate+high IDF = 0.000 (324 random pairs, zero crossed 0.5), so
-# 0.50 sits deep in the long tail — only genuinely related films
-# qualify. The bonus stacks additively with per-trait contributions
-# inside the passthrough lane (no shape gate — the bonus IS itself a
-# shape signal that compensates for vector-distance).
-RARE_KW_COMBO_THRESHOLD = 0.50     # sum of shared moderate+high IDFs to engage
-RARE_KW_COMBO_BASE      = 0.05     # immediate bonus on crossing threshold
-RARE_KW_COMBO_RATE      = 0.05     # per-unit increment above threshold
-RARE_KW_COMBO_CAP       = 0.15     # max combo bonus
-
-
-def _rare_keyword_score_for_traits(
-    shared_traits: set[tuple[int, int]],
-    idf_lookup: dict[tuple[int, int], float],
-) -> tuple[float, float]:
-    """Per-candidate rare-keyword (lane_score, floor_value).
-
-    Returns the tiered additive lane score + the floor value (or 0.0
-    if no floor triggers). The lane score is in absolute terms so the
-    "rare_keyword" lane weight is set to passthrough (1.0).
-    """
-    if not shared_traits:
-        return 0.0, 0.0
-    low_pool = 0.0
-    moderate_total = 0.0
-    high_total = 0.0
-    high_count = 0
-    high_max = 0.0
-    moderate_or_high_sum = 0.0
-    for trait in shared_traits:
-        idf = idf_lookup.get(trait, 0.0)
-        if idf <= 0.0:
-            continue
-        if idf < RARE_KW_TIER_LOW_MAX:
-            low_pool += idf * RARE_KW_LOW_COEF
-        elif idf < RARE_KW_TIER_MODERATE_MAX:
-            moderate_total += idf * RARE_KW_MODERATE_COEF
-            moderate_or_high_sum += idf
-        else:
-            high_total += idf * RARE_KW_HIGH_COEF
-            high_count += 1
-            high_max = max(high_max, idf)
-            moderate_or_high_sum += idf
-    lane_score = (
-        moderate_total + high_total + min(RARE_KW_LOW_POOL_CAP, low_pool)
-    )
-    # V3.1 moderate-combo bonus: rewards aggregate co-occurrence of
-    # moderate-or-rare tags. moderate_or_high_sum is exactly the input
-    # signal we need (sum of shared IDFs in moderate+high tiers).
-    if moderate_or_high_sum >= RARE_KW_COMBO_THRESHOLD:
-        combo_bonus = min(
-            RARE_KW_COMBO_CAP,
-            RARE_KW_COMBO_BASE
-            + RARE_KW_COMBO_RATE
-            * (moderate_or_high_sum - RARE_KW_COMBO_THRESHOLD),
-        )
-        lane_score += combo_bonus
-    # Floor: triggered by single super-rare hit OR rare combo.
-    floor = 0.0
-    if (
-        high_max >= RARE_KW_FLOOR_HIGH_SINGLE
-        or moderate_or_high_sum >= RARE_KW_FLOOR_COMBO_SUM
-    ):
-        floor = min(
-            RARE_KW_FLOOR_CAP,
-            RARE_KW_FLOOR_BASE + RARE_KW_FLOOR_HIGH_INC * high_count,
-        )
-    return _clamp(lane_score), floor
-
-
-def _single_anchor_rare_keyword_scores(
-    *,
-    anchor_traits: set[tuple[int, int]],
-    candidate_rows: dict[int, dict],
-    idf_lookup: dict[tuple[int, int], float],
-) -> tuple[dict[int, float], dict[int, float]]:
-    """V3 §2.6 single-anchor rare-keyword scoring.
-
-    Returns (lane_scores, floor_by_movie) — floor application is
-    deferred to ``_build_results`` so the shape gate runs against the
-    final shape score. Trait pool reuses the themes-lane builder
-    (`_themes_traits_for_movie`) so the same exclusions apply.
-    """
-    if not anchor_traits:
-        return {}, {}
-    lane_scores: dict[int, float] = {}
-    floor_by_movie: dict[int, float] = {}
-    for mid, row in candidate_rows.items():
-        candidate_traits = _themes_traits_for_movie(row)
-        shared = anchor_traits & candidate_traits
-        if not shared:
-            continue
-        score, floor = _rare_keyword_score_for_traits(shared, idf_lookup)
-        if score > 0.0:
-            lane_scores[mid] = score
-        if floor > 0.0:
-            floor_by_movie[mid] = floor
-    return lane_scores, floor_by_movie
-
-
-def _multi_anchor_rare_keyword_scores(
-    *,
-    anchor_trait_sets: list[set[tuple[int, int]]],
-    candidate_rows: dict[int, dict],
-    idf_lookup: dict[tuple[int, int], float],
-) -> tuple[dict[int, float], dict[int, float]]:
-    """V3 §2.6 multi-anchor rare-keyword scoring.
-
-    Per-candidate score / floor are computed against the **union** of
-    all anchor trait sets — matching any anchor's rare keyword is
-    sufficient signal, and rare-trait IDFs don't compound across
-    anchors (a film about the Manhattan Project is a candidate for a
-    Manhattan-Project-ish anchor regardless of how many anchors
-    independently mentioned it). This keeps the lane consistent
-    with the cohesion-floor semantics of director / cast where
-    cohesion gates the *floor* but not the per-trait contribution.
-    """
-    union_anchor_traits: set[tuple[int, int]] = set()
-    for traits in anchor_trait_sets:
-        union_anchor_traits |= traits
-    return _single_anchor_rare_keyword_scores(
-        anchor_traits=union_anchor_traits,
-        candidate_rows=candidate_rows,
-        idf_lookup=idf_lookup,
-    )
+# V3.4.4: the rare_keyword lane (V3 §2.6) is removed entirely. Tag
+# overlap is fully scored by the themes lane (with a compounding bonus
+# migrated from the old combo signal). Rare-match exploration runs
+# through the rare_keyword bucket in the greedy weaver, gated by
+# WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN. The IDF_TIER_* boundaries used
+# by the themes-recall consensus logic are defined earlier in the
+# module (alongside themes constants).
+RARE_KW_BUCKET_SIGNAL_SCALE = 1.00  # idf-sum that maps to bucket signal 1.0
 
 
 # V3 §2.5 cast bucket-with-floor parameters.
@@ -3596,10 +3492,9 @@ def _multi_anchor_consensus_themes_traits(
     `fetch_movie_ids_by_themes_recall` SQL aggregate as the
     single-anchor flow.
 
-    The bar tiers match the rare-keyword scoring tiers
-    (RARE_KW_TIER_LOW_MAX / RARE_KW_TIER_MODERATE_MAX) so cohesion
-    semantics align with what the lane already considers "low /
-    moderate / high rarity".
+    The bar tiers use the generic IDF_TIER_* boundaries (low < 0.30 ≤
+    moderate < 0.55 ≤ rare) so cohesion semantics align with the
+    bucket's notion of "low / moderate / rare" rarity.
     """
     if n <= 0:
         return set()
@@ -3611,9 +3506,9 @@ def _multi_anchor_consensus_themes_traits(
     for pair, count in counts.items():
         cohesion = count / n
         idf = idfs.get(pair, 0.0)
-        if idf < RARE_KW_TIER_LOW_MAX:
+        if idf < IDF_TIER_LOW_MAX:
             bar = THEMES_RECALL_COHESION_BAR_LOW
-        elif idf < RARE_KW_TIER_MODERATE_MAX:
+        elif idf < IDF_TIER_MODERATE_MAX:
             bar = THEMES_RECALL_COHESION_BAR_MOD
         else:
             bar = THEMES_RECALL_COHESION_BAR_HIGH
@@ -3651,9 +3546,11 @@ def _multi_anchor_themes_scores(
         if not shared:
             continue
         numer = sum(idf_lookup.get(pair, 0.0) for pair in shared)
-        score = numer / denom
-        if score > 0.0:
-            out[movie_id] = _clamp(score)
+        base = numer / denom
+        if base > 0.0:
+            # V3.4.5 compounding multiplier on aggregate moderate+ overlap.
+            mult = _themes_combo_multiplier(shared, idf_lookup)
+            out[movie_id] = _clamp(base * mult)
     return out
 
 
@@ -3797,22 +3694,24 @@ async def _low_cohesion_fallback(
 # ---------------------------------------------------------------------------
 
 
-def _high_tier_idf_sum(
+def _rare_tier_idf_sum(
     traits: set[tuple[int, int]],
     idf_lookup: dict[tuple[int, int], float],
 ) -> float:
-    """Sum IDFs for traits whose IDF is in the moderate+high tier
-    (>= RARE_KW_TIER_LOW_MAX, i.e., 0.30).
+    """Sum IDFs for traits in the truly-rare tier
+    (idf >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN, i.e., 0.55).
 
-    Used to derive the rare-keyword bucket signal — the same input the
-    rare-keyword lane's combo bonus uses, so anchor signal strength
-    aligns with the lane's notion of "this anchor has distinctive
-    traits worth surfacing as a row".
+    Drives the rare_keyword bucket *signal* — aligned with the bucket
+    *membership* threshold so "anchor has rare traits → bucket fires"
+    and "candidate shares a rare trait → bucket eligible" reference
+    the same set of traits. Pre-V3.4.4 the signal used a moderate+high
+    threshold (0.30) while membership used 0.55, which silently no-op'd
+    the bucket on tag-rich-but-no-truly-rare-tag anchors.
     """
     return sum(
         idf for trait in traits
         for idf in [idf_lookup.get(trait, 0.0)]
-        if idf >= RARE_KW_TIER_LOW_MAX
+        if idf >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN
     )
 
 
@@ -3855,7 +3754,9 @@ def _compute_single_anchor_bucket_data(
     - franchise: clip(catalog_size/5, 0, 1) × max_member_pop_percentile,
       where catalog_size and max_member are computed over candidates
       with `_franchise_score_v2 >= 0.55` against the anchor.
-    - rare_keyword: anchor's high-tier IDF sum / RARE_KW_FLOOR_COMBO_SUM.
+    - rare_keyword: anchor's rare-tier IDF sum / RARE_KW_BUCKET_SIGNAL_SCALE,
+      where rare-tier means idf >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN
+      (aligned with the bucket's membership threshold in V3.4.4).
     - lead_actor: 0.0 (multi-only).
     """
     signals: dict[str, float] = {b: 0.0 for b in ALL_BUCKETS}
@@ -3887,20 +3788,23 @@ def _compute_single_anchor_bucket_data(
             max_pop = max(franchise_pool)
             signals[BUCKET_FRANCHISE] = catalog_size_factor * max_pop
 
-    # Rare-keyword signal + memberships.
-    high_idf_sum = _high_tier_idf_sum(anchor_themes_traits, themes_idfs)
-    if high_idf_sum > 0.0:
+    # Rare-keyword signal + memberships. V3.4.4: signal and membership
+    # both filter on the same idf >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN
+    # threshold so the bucket is consistent — fires only when the
+    # anchor carries genuinely-rare traits, and eligible candidates
+    # are exactly those that share one of them.
+    rare_idf_sum = _rare_tier_idf_sum(anchor_themes_traits, themes_idfs)
+    if rare_idf_sum > 0.0:
         signals[BUCKET_RARE_KEYWORD] = min(
-            1.0, high_idf_sum / RARE_KW_FLOOR_COMBO_SUM
+            1.0, rare_idf_sum / RARE_KW_BUCKET_SIGNAL_SCALE
         )
-        # Membership: candidate shares any high-tier (>=0.55) anchor trait.
-        anchor_high_tier = {
+        anchor_rare_traits = {
             t for t in anchor_themes_traits
             if themes_idfs.get(t, 0.0) >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN
         }
-        if anchor_high_tier:
+        if anchor_rare_traits:
             for mid, row in candidate_rows.items():
-                if anchor_high_tier & _themes_traits_for_movie(row):
+                if anchor_rare_traits & _themes_traits_for_movie(row):
                     memberships.setdefault(mid, set()).add(BUCKET_RARE_KEYWORD)
 
     # Best-overall is universal — handled inside the weaver.
@@ -3929,8 +3833,8 @@ def _compute_multi_anchor_bucket_data(
       with at least one curated director.
     - franchise: clip(catalog_size/5, 0, 1) × max_member_pop × M_f/N
       where M_f is anchors carrying any lineage_entry_id.
-    - rare_keyword: same formula as single-anchor on the union anchor
-      trait pool (rare-trait IDFs don't compound across anchors).
+    - rare_keyword: V3.4.2 cohesion-weighted IDF sum filtered to
+      idf >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN (V3.4.4 alignment).
     - lead_actor: M_a/N where M_a is the max count of anchors sharing
       any single top-3-billed actor.
     """
@@ -3975,14 +3879,17 @@ def _compute_multi_anchor_bucket_data(
             cohesion = franchise_anchor_count / n
             signals[BUCKET_FRANCHISE] = catalog_size_factor * max_pop * cohesion
 
-    # Rare-keyword — V3.4.2 cohesion-weighted IDF sum. A trait
-    # that appears in only 1/N anchors gets weight 0; weight scales
-    # linearly to 1.0 at full N/N cohesion via cohesion_weight =
-    # max(0, (M_t - 1) / (N - 1)). This prevents one-anchor outlier
-    # traits (Everyone Says I Love You's musical/song traits in the
-    # Slasher cohort) from firing the bucket on heterogeneous cohorts.
-    # The same M_t >= 2 floor applies to membership, so candidates
-    # only qualify by sharing a trait at least 2 anchors carry.
+    # Rare-keyword — V3.4.2 cohesion-weighted IDF sum, V3.4.4 aligned
+    # IDF threshold. A trait that appears in only 1/N anchors gets
+    # weight 0; weight scales linearly to 1.0 at full N/N cohesion via
+    # cohesion_weight = max(0, (M_t - 1) / (N - 1)). This prevents
+    # one-anchor outlier traits (Everyone Says I Love You's musical/song
+    # traits in the Slasher cohort) from firing the bucket on
+    # heterogeneous cohorts. V3.4.4: filter on idf >=
+    # WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN (0.55) so signal and membership
+    # reference the same trait set — pre-V3.4.4 the signal admitted
+    # idf >= 0.30 (moderate-tier) traits that membership then excluded,
+    # silently no-op'ing the bucket on tag-rich anchors.
     trait_anchor_counts: dict[tuple[int, int], int] = {}
     for traits in themes_trait_sets:
         for t in traits:
@@ -3991,7 +3898,7 @@ def _compute_multi_anchor_bucket_data(
     weighted_idf_sum = 0.0
     for t, m_t in trait_anchor_counts.items():
         idf = themes_idfs.get(t, 0.0)
-        if idf < RARE_KW_TIER_LOW_MAX:
+        if idf < WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN:
             continue
         cohesion_weight = max(0.0, (m_t - 1) / cohesion_denom)
         if cohesion_weight == 0.0:
@@ -3999,18 +3906,18 @@ def _compute_multi_anchor_bucket_data(
         weighted_idf_sum += idf * cohesion_weight
     if weighted_idf_sum > 0.0:
         signals[BUCKET_RARE_KEYWORD] = min(
-            1.0, weighted_idf_sum / RARE_KW_FLOOR_COMBO_SUM
+            1.0, weighted_idf_sum / RARE_KW_BUCKET_SIGNAL_SCALE
         )
-        # Membership: candidate must share a high-tier trait that at
+        # Membership: candidate must share a rare-tier trait that at
         # least 2 anchors carry. Same M_t >= 2 floor as the signal.
-        anchor_high_tier = {
+        anchor_rare_traits = {
             t for t, m_t in trait_anchor_counts.items()
             if m_t >= 2
             and themes_idfs.get(t, 0.0) >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN
         }
-        if anchor_high_tier:
+        if anchor_rare_traits:
             for mid, row in candidate_rows.items():
-                if anchor_high_tier & _themes_traits_for_movie(row):
+                if anchor_rare_traits & _themes_traits_for_movie(row):
                     memberships.setdefault(mid, set()).add(BUCKET_RARE_KEYWORD)
 
     # Lead actor — multi-only. Reuses the cast lane's M_a / shared_leads

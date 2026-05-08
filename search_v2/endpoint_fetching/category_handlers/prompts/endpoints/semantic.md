@@ -179,3 +179,13 @@ In multi-endpoint buckets the analysis is hoisted to a bucket-level `semantic_wa
 ## Routing trust and abstention
 
 Upstream routing chose semantic as a candidate for this category, but the walk above the commitment is allowed to surface "no clean fit" when the call's intent doesn't actually land in any of the 7 spaces. In single-endpoint buckets, signal that with `should_run_endpoint=false`. In multi-endpoint buckets, set `coverage_commitments.semantic.verdict = "abstain"` and leave `semantic_parameters` null. Do not coerce out-of-scope intent into a noisy multi-space body. When the walk DOES surface clean coverage, produce the best multi-space query plan the schema allows.
+
+## Sibling context and body shaping
+
+In multi-endpoint buckets the user message carries a `<sibling_categories>` block listing the other categories Step 3 committed for the same trait, plus a `combine_mode` attribute. The bucket-level "Reading sibling context" section spells out the general protocol; the semantic-specific consequence:
+
+- When a sibling's `retrieval_intent` paraphrases the same conceptual slice your call carries, your space-coverage choice should narrow toward the spaces that genuinely complement what the sibling is fetching, not duplicate it. Under `facets` fold, duplicate coverage across categories means the trait's compound is multiplying near-zero contributions on both sides of the same axis when either embedding misses; a focused, complementary semantic body is more robust than a broad one.
+- Under `framings` fold, redundant coverage is the design — a clean body in any one of the categories carries the trait. Choose the spaces that best embed the call's intent and let the MAX absorb whatever overlaps.
+- Under `single` apply space selection on the call's intent alone.
+
+Body content per space and the per-sub-field register rules are unchanged. Sibling context only affects the breadth of space selection and whether borderline-fit spaces should be included or dropped given the fold rule's tolerance for redundancy.

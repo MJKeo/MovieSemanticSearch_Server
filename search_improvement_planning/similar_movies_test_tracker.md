@@ -2179,3 +2179,630 @@ state in `similar_movies.md` once committed.
   anchor thematic surfacing, the right fix is per-anchor
   themes-recall (already V3.1 infrastructure), not relaxing
   the cohesion gate.
+
+### V3.4.3 — rare_keyword reshaped from passthrough additive contribution to multiplier-on-shape
+
+#### Hypothesis
+
+V3.4.2 left the rare_keyword lane as a passthrough additive
+contribution: the lane's raw score (tier-summed shared IDF +
+combo bonus) flowed through with weight 1.0, becoming an
+absolute contribution to the additive sum. Smoke run on Barbie
+exposed two coupled flaws:
+
+1. **Tail dominance.** Proportional lanes (shape, themes,
+   format, quality) decay with rank because their contributions
+   are weight × normalized-lane-score, and lane scores fall as
+   you walk down the rank. Passthrough lanes don't decay — a
+   flat 0.05–0.20 raw rare_keyword contribution stays loud.
+   Result: in the deep tail (slots ~10+), rare_keyword
+   structurally outweighs the proportional lanes that should be
+   doing the work.
+
+2. **Top-10 dominance from low-tier matches.** The lane scores
+   any non-empty trait intersection, including the low-tier
+   pool (`idf < 0.30`). Those tags aren't actually rare —
+   "rare_keyword" was misnamed. On tag-rich anchors like Barbie,
+   hundreds of candidates share at least one moderate-IDF tag
+   (gender_roles, fantasy_comedy, satire) and ride the
+   passthrough into the top section. Pleasantville sat at #8
+   for Barbie with `dominant_lane=rare_keyword` (39% of its
+   final score from rare_keyword passthrough alone). Last
+   Action Hero held #1 partly because rare_keyword contributed
+   0.206 of its 0.641 final score — 32%.
+
+The rare_keyword lane was *intended* to amplify
+on-shape-but-distinctive matches; instead it was carrying
+candidates the shape lane didn't actually believe in. The
+floor mechanism (high_max ≥ 0.85 OR sum ≥ 1.50, gated on
+shape ≥ 0.20) already serves as the path for genuinely
+distinctive low-shape matches.
+
+#### Changes made
+
+**Single change:** rare_keyword reshaped from a passthrough
+additive lane to a multiplier-on-shape (mirroring the studio
+lane pattern).
+
+1. **Removed `rare_keyword` from `ADDITIVE_LANES`** (line 99–
+   115) and from `PASSTHROUGH_LANES`. Lane no longer
+   contributes to the additive sum at all.
+
+2. **Set `BASE_LANE_WEIGHTS["rare_keyword"] = 0.0`** (line ~204)
+   and the same in the multi-anchor `raw_lane_weights` dict
+   (line ~2796). Kept in the dict so debug output still
+   includes the entry; the actual multiplier strength lives
+   in the new constants.
+
+3. **New constants alongside studio multiplier** (line ~282):
+   ```python
+   RARE_KEYWORD_MULTIPLIER_SHAPE_GATE = 0.20  # matches existing floor gate
+   RARE_KEYWORD_MULTIPLIER_STRENGTH   = 0.30  # +30% per unit raw lane score
+   ```
+
+4. **New multiplier block in `_build_results`** placed
+   immediately after the studio multiplier (line ~1542):
+   ```python
+   rare_keyword_raw = per_lane["rare_keyword"]
+   if rare_keyword_raw > 0.0 and shape_score >= RARE_KEYWORD_MULTIPLIER_SHAPE_GATE:
+       rare_keyword_mult = 1.0 + RARE_KEYWORD_MULTIPLIER_STRENGTH * rare_keyword_raw
+       score *= rare_keyword_mult
+       applied_multipliers["rare_keyword"] = rare_keyword_mult
+   ```
+
+5. **Floor mechanism preserved unchanged.** The
+   `rare_keyword_floor_by_movie` path through the floor block
+   continues to fire when `high_max >= 0.85 OR sum >= 1.50`
+   AND `shape >= RARE_KW_FLOOR_SHAPE_GATE` (0.20). Genuinely
+   distinctive low-shape matches still get amplified.
+
+**Director was deliberately NOT converted** despite also being
+passthrough. Director's design is fundamentally different: it
+fires on a tiny curated set per anchor (auteur director match
+only), not on hundreds of moderate-IDF tag overlaps. The 0.20
+single-anchor passthrough is the V3.1 *recall mechanism* for
+auteur matches with weak shape (Lady Bird at shape=0.033 for
+Barbie surfaces precisely because of this passthrough). The
+director floor (`DIRECTOR_FLOOR_MAGNITUDE=0.35` when shape ≥
+0.20 + ratio ≥ 1.0) handles the "amplification when shape
+co-signals" job. Converting to multiplier would zero out
+Lady Bird's contribution at low shape — defeating the V3.1
+win.
+
+#### Observations
+
+V3.4.2 baseline preserved at `/tmp/v3_4_2_baseline_*.md` for
+clean diff. Programmatic title-set diff vs. baseline:
+
+**Single-anchor:** 21/21 cohorts changed. Many cohorts saw
+moderate reshuffling (Barbie, Star Wars, Spirited Away, The
+Room, Sharknado, Fight Club: 1–2 swaps). Several saw heavy
+shifts (Inception, Matrix, Toy Story, Get Out, Back to the
+Future, Titanic: 4–7 swaps).
+
+**Multi-anchor:** 13/14 cohorts changed (Tarantino was
+reorder-only).
+
+**Headline behavioral change:**
+- `rare_keyword` is no longer the dominant lane on any
+  candidate in any cohort (was 1+ instances per tag-rich
+  anchor in V3.4.2; Pleasantville #8 for Barbie was the
+  most visible).
+- Multiplier fires 331 times across all top-10 results, with
+  range ×1.001 to ×1.231 and mean ×1.071. 210 of those
+  fired ≥×1.05 (a real boost to the candidate, not a
+  rounding artifact).
+
+**Strong wins (subjective ranking improvements):**
+- **Inception**: Lost Highway, Fight Club, Vanilla Sky, The
+  Prestige IN — canonical mind-bending psychological thrillers.
+  Sucker Punch, EEAAO, 2001 OUT (the latter is debatable but
+  the rest were weak shape matches inflated by rare_keyword).
+- **Matrix**: Blade Runner (1982), Tenet, Terminator (1984),
+  Ghost in the Shell (1995) IN — sci-fi classics replacing
+  modern blockbusters (Blade Runner 2049, Ready Player One,
+  The Creator, T2). The original sci-fi cuts deeper than the
+  visually-similar sequels.
+- **Back to the Future**: American Graffiti, Adam Project,
+  Time Rewind, FAQ Time Travel IN. Spy Kids, Small Soldiers,
+  Minutemen OUT. Time-travel-specific candidates surface
+  cleanly.
+- **John Wick**: Kill Bill: Vol. 1 IN — strong revenge-action
+  classic. Silent Night, Kate, Boy Kills World OUT.
+- **Spielberg adventure trio**: Lost World, Indiana Jones
+  Temple of Doom, Mummy Returns, LotR: Fellowship IN. Star
+  Wars sequels OUT. Adventure-genre coherence improved
+  meaningfully.
+- **Toy Story**: Inside Out, Up, Ratatouille, Toy Story of
+  Terror IN. Boss Baby, Spider-Verse, Bolt, Wreck-It-Ralph,
+  Zootopia OUT. Cleaner Pixar core.
+- **Nolan trio**: Tenet, Fight Club, Buster's Mal Heart IN.
+  Batman Begins, Dark Knight Rises, Interstellar OUT
+  (Nolan-but-not-mind-bending). Tighter mind-bending bucket.
+- **Dark Knight**: Memento, The Prestige IN; Watchmen, Man of
+  Steel OUT. Nolan auteur tightening.
+
+**Targeted fix (Barbie):**
+- Pleasantville (#8 with `dominant_lane=rare_keyword`,
+  rare_keyword=0.202 contribution) → OUT.
+- Free Guy (#9, rare_keyword=0.153 contribution) → OUT.
+- Last Action Hero #1 (0.641, rare_keyword=0.206 contributing
+  32% of score) → #9 (0.452). Now ranks on actual shape
+  similarity, not rare-tag overlap.
+- IN: Bliss (1985 Australian sci-fi/fantasy comedy — high
+  shape, novel match), Christmas on Cherry Lane (lower-quality
+  romcom, likely noise from low-shape rare_keyword absent).
+
+**Mixed/concerning:**
+- **WW2 epics**: 12 Years a Slave entered at #10 (shape=0.27,
+  themes=0.70). Not WW2 chronologically; surfaces on
+  thematic prestige-suffering overlap with Schindler's List.
+  Whether this is good depends on user intent (literal WW2
+  vs. thematic genocide drama). Lost The Great Escape (1963,
+  classic WW2), Hacksaw Ridge, Black Hawk Down — those had
+  rare_keyword contributions previously inflating them.
+- **Romcom trio**: Lost Sleepless in Seattle, Love Actually,
+  Serendipity, Just Friends, Last Christmas — all canonical
+  romcoms. Gained Goodbye Girl, It Happened One Night (1934
+  classic), Your Place or Mine, For Love or Money, Seven
+  Year Hitch. Top of list (Notting Hill, The Proposal,
+  You've Got Mail, While You Were Sleeping, How to Lose a
+  Guy in 10 Days) is solid; lower half lost some recognized
+  titles for less prominent romcoms. Trade-off — the lost
+  titles probably had high shared romcom-tag overlap that
+  rare_keyword was over-crediting.
+- **Stephen King horror**: The Innocents (1961) → The
+  Innocents (2021). Different film, same title. The 2021
+  Norwegian psychological horror is a defensible substitute
+  for the 1961 Henry James adaptation; both are atmospheric
+  child-supernatural horror. Net neutral.
+- **Female-led / Gerwig**: Lost Atonement, Juno, Jojo Rabbit
+  (V3.4.2 wins). Gained obscure period dramas. Possible
+  regression — those V3.4.2 wins were thematic matches that
+  the rare_keyword lane was carrying.
+
+**Magnitude change**: V3.4.3 is by far the largest single-
+change shift in the V3.4 series. V3.4.2 changed 1/21
+single-anchor cohorts and 7/14 multi-anchor; V3.4.3 changed
+21/21 and 13/14. This reflects rare_keyword's structural
+breadth (it fires on a wide population) — converting it
+from passthrough to multiplier removes lift from many
+candidates at once.
+
+#### Was the hypothesis correct?
+
+**Yes, with caveats.**
+
+Confirmed:
+- rare_keyword tail dominance gone. Lane cannot be dominant
+  on any candidate (it's no longer in `ADDITIVE_LANES`).
+- The Pleasantville-class case (rare_keyword passthrough
+  riding a thematic-tag match into the top 10 without
+  shape backing) is eliminated.
+- Several anchors got demonstrably cleaner top-10s
+  (Inception, Matrix, John Wick, Back to the Future,
+  Spielberg adventure, Nolan, Toy Story, Dark Knight).
+
+Caveats / costs:
+- The lane was carrying *some* legitimate signal alongside
+  the noise. Films sharing genuinely-distinctive prestige/
+  genre tags with anchors (Hacksaw Ridge for WW2 set,
+  Sleepless in Seattle for Ephron-romcom set, Atonement
+  for prestige female-led set) lost the boost they had been
+  getting. Some of those drops are over-corrections.
+- The shift is broader and rougher than typical V3.4
+  calibration changes. V3.4.2 was a precision tool; V3.4.3
+  is a shape-of-the-curve change.
+
+#### Ship it?
+
+**Yes — ship V3.4.3.**
+
+The headline goal (eliminate rare_keyword tail dominance) is
+achieved cleanly and structurally — not via threshold
+tuning that future anchors might escape. The collateral
+ranking shifts are net-positive across the cohort set: the
+strong wins (Inception, Matrix, John Wick, Spielberg
+adventure, Back to the Future, Nolan, Toy Story) outnumber
+and outweigh the trade-offs (WW2 thematic drift, Romcom
+mid-list reshuffling, Female-led losing some V3.4.2 wins).
+
+Update doc: V3.4.3 should be marked as the active
+production state in `similar_movies.md` once committed. The
+calibration constants (`RARE_KEYWORD_MULTIPLIER_STRENGTH=0.30`,
+`RARE_KEYWORD_MULTIPLIER_SHAPE_GATE=0.20`) are tuneable; if
+the trade-offs above (WW2 thematic drift, Romcom mid-list)
+prove to be regressions in real use, raising STRENGTH to
+0.40–0.50 would partially restore the lift to genuinely-
+high-rare-keyword candidates without re-introducing tail
+dominance.
+
+#### Learnings
+
+- **Passthrough additive lanes are structurally fragile.**
+  When a lane's contribution is a flat raw value while
+  every other contribution is weight × normalized-rank,
+  the passthrough lane structurally dominates the tail.
+  This is independent of the lane's "true" signal quality —
+  it's a curve-shape mismatch. Multiplier-on-shape is the
+  correct shape for any "amplifier" lane (studio, rare-
+  keyword) because it inherits the proportional decay of
+  the shape lane it multiplies.
+- **Director is not analogous to rare_keyword.** Two lanes
+  with the same architectural property (passthrough) can
+  serve fundamentally different purposes. Director's
+  passthrough is a *recall* mechanism for the small set
+  of curated auteur matches; rare_keyword's passthrough
+  was an *amplifier* for thematic overlap. Recall
+  mechanisms need to fire even at low shape; amplifiers
+  need shape to amplify. Don't reflexively unify
+  architecturally-similar lanes.
+- **"Rare-keyword" was misnamed.** The lane scored every
+  trait intersection, including `idf < 0.30` low-tier
+  pool tags that aren't actually rare. The name implied a
+  filter that didn't exist in the math. If we wanted a
+  truly "rare" lane, the low-tier pool should have been
+  excluded entirely (this would be a V3.4.4 follow-up if
+  the multiplier conversion turns out to be insufficient).
+- **Shape multiplier on a weight-1.0 strength gives mean
+  ×1.07 boost.** Empirically, raw rare_keyword scores
+  cluster at 0.05–0.30 with a long tail to ~0.60. With
+  STRENGTH=0.30, this maps to multiplier range ×1.015 to
+  ×1.18 — same order of magnitude as the V3.3 shape
+  multiplier (×1.08–×1.15). Calibrated correctly.
+
+### V3.4.4 — rare_keyword lane removed, themes compounding bonus, bucket signal/membership alignment
+
+#### Hypothesis
+
+V3.4.3 reshaped rare_keyword from a passthrough additive lane to a
+shape-multiplier — fixing the tail-dominance problem but leaving the
+underlying issue unaddressed: the lane was scoring tag overlap that
+the themes lane was *also* scoring, plus a low-tier pool of trivial
+tags that aren't actually rare. Two distinct problems were braided
+together:
+
+1. **Double-counting between themes and rare_keyword.** Both lanes
+   computed against the same trait pool (`_themes_traits_for_movie`)
+   with the same IDF lookup. Themes scored aggregate IDF overlap
+   normalized by anchor mass; rare_keyword scored tier-summed IDF
+   absolute (with combo bonus on moderate+high overlap). Most
+   thematic overlap was being counted twice.
+
+2. **Bucket signal misaligned with bucket membership.** The
+   rare_keyword bucket in the V3.4 weaver gates membership on
+   `idf >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN` (0.55 — truly-rare
+   traits only) but computed its bucket signal from
+   `_high_tier_idf_sum` filtered on `idf >= RARE_KW_TIER_LOW_MAX`
+   (0.30 — moderate+high). For Barbie (13 themes traits, zero at
+   ≥0.55), the signal was 1.000 (sum=2.011/1.50) but membership
+   was empty — bucket "fired" with no eligible candidates. Silent
+   no-op on tag-rich-but-no-truly-rare-tag anchors.
+
+Hypothesis: the right architecture is one signal — themes lane handles
+all rarity-weighted tag-overlap scoring, with a compounding bonus for
+multi-tag aggregate overlap (the qualitative jump from 1–2 moderate
+matches to 3+) — and a separate bucket-pull mechanism for genuinely-
+rare matches that surface candidates as exploration rows in the
+weaver. The rare_keyword lane was conflating these two roles.
+
+#### Changes made
+
+**1. Themes lane gains a compounding bonus.** New constants
+`THEMES_COMBO_*` migrated from the old `RARE_KW_COMBO_*` (same values:
+threshold=0.50, base=0.05, rate=0.05, cap=0.15, gated on
+`idf >= IDF_TIER_LOW_MAX = 0.30`). New helper `_themes_combo_bonus`
+called from both `_single_anchor_themes_scores` and
+`_multi_anchor_themes_scores` after the base lane score.
+
+**2. rare_keyword lane removed entirely.** Deleted:
+- `_rare_keyword_score_for_traits`,
+  `_single_anchor_rare_keyword_scores`,
+  `_multi_anchor_rare_keyword_scores`
+- `RARE_KW_TIER_*`, `RARE_KW_LOW_*`, `RARE_KW_MODERATE_*`,
+  `RARE_KW_HIGH_*`, `RARE_KW_FLOOR_*`, `RARE_KW_COMBO_*`,
+  `RARE_KEYWORD_MULTIPLIER_*` constants
+- The V3.4.3 multiplier block in `_build_results`
+- `rare_keyword` from `LaneName`, `ALL_LANES`, `BASE_LANE_WEIGHTS`,
+  `ADDITIVE_LANES` already gone
+- `rare_keyword_floor_by_movie` parameter and floor block in
+  `_build_results`
+- All call sites in `_run_single_anchor_similarity` and
+  `_run_multi_anchor_similarity`
+
+**3. New constant `IDF_TIER_LOW_MAX=0.30`,
+`IDF_TIER_MODERATE_MAX=0.55`** as generic IDF tier boundaries
+independent of any specific lane's use. Old `RARE_KW_TIER_*`
+references in `_consensus_themes_traits` (themes recall) updated.
+
+**4. Bucket signal aligned with membership at idf >= 0.55.**
+- Single-anchor: renamed `_high_tier_idf_sum` to `_rare_tier_idf_sum`,
+  changed filter from `idf >= 0.30` to
+  `idf >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN` (0.55).
+- Multi-anchor `_compute_multi_anchor_bucket_data`: changed
+  cohesion-weighted signal filter from `RARE_KW_TIER_LOW_MAX` (0.30)
+  to `WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN` (0.55). Cohesion weighting
+  unchanged.
+- New constant `RARE_KW_BUCKET_SIGNAL_SCALE = 1.00` (down from
+  `RARE_KW_FLOOR_COMBO_SUM = 1.50`) — recalibrated denominator
+  since the stricter threshold produces smaller sums; 1.00 maps a
+  single solid rare trait (idf ≈ 0.60) to a signal that clears
+  `WEAVER_BUCKET_INSTANTIATE_MIN` (0.50).
+
+**Floor mechanism removed.** No replacement — the rare_keyword
+bucket in the weaver now serves the role the floor used to (surface
+distinctive low-shape matches) more cleanly. If a candidate qualifies
+for the bucket, the weaver allocates it a slot; if not, no parallel
+floor mechanism quietly competes.
+
+#### Observations
+
+V3.4.3 baseline saved at `/tmp/v3_4_3_baseline_*.{md,json}`. Diagnostic
+verification of the bucket alignment fix:
+
+| Anchor | Rare traits (idf≥0.55) | Sum | Signal | Bucket fires? |
+|---|---|---|---|---|
+| Barbie | 0 | 0.000 | 0.000 | No |
+| Dark Knight | 0 | 0.000 | 0.000 | No |
+| Get Out | 0 | 0.000 | 0.000 | No |
+| Oppenheimer | 1 | 0.576 | 0.576 | Yes |
+| Schindler's List | 2 | 1.128 | 1.000 | Yes (strong) |
+| Green Mile | 1 | 0.552 | 0.552 | Yes |
+| Back to the Future | 1 | 0.562 | 0.562 | Yes |
+
+This is the expected behavior — anchors with truly-rare distinctive
+traits fire the bucket; tag-rich-but-not-rare anchors don't.
+
+**Diff vs V3.4.3 (single-anchor, 21 cohorts):**
+- 5 identical, 9 reorder-only, 7 changed.
+
+**Diff vs V3.4.3 (multi-anchor, 14 cohorts):**
+- 2 identical, 6 reorder-only, 6 changed.
+
+Total shift size is ~1/3 of V3.4.3's (V3.4.3 changed 21/21 + 13/14;
+V3.4.4 keeps most of V3.4.3's structure intact and just adjusts the
+edges).
+
+**Notable wins:**
+- **Barbie** — Nights and Weekends (2008) IN at #8. This is a Greta
+  Gerwig early mumblecore film (she co-directed and starred). The
+  auteur bucket pulled it. Christmas on Cherry Lane (V3.4.3 noise)
+  and Last Action Hero (V3.4.3 #9 vestige of rare_keyword crutch)
+  drop out. Barbie: A Fashion Fairytale also IN at #6 via franchise.
+- **Oppenheimer** — Schindler's List IN, Memento IN. Both Nolan
+  auteur (Memento) and prestige biopic with rare-tag overlap. Lost
+  The Pianist and Nixon — debatable.
+- **Dark Knight Rises** — Interstellar IN (Nolan auteur). Man of
+  Steel OUT. Clean upgrade.
+- **Back to the Future** — E.T., Star Wars (1977) IN. Both 1980s
+  family-adventure-classic anchors. Lost FAQ Time Travel (V3.4.3
+  win) and a few obscure time-travel matches; the trade-off favors
+  canonical 80s adventure over niche time-travel.
+- **WW2 epics** — 12 Years a Slave (V3.4.3 over-correction) drops
+  out. Guy Ritchie's The Covenant IN — actual modern war film.
+- **Female-led** — Where'd You Go Bernadette IN (mid-life female-
+  centered drama).
+
+**Trade-offs / mixed:**
+- **Matrix** — Lost Tron, Ghost in the Shell, Blade Runner (1982),
+  Terminator (1984), Tron: Legacy (V3.4.3 sci-fi classic wins).
+  Gained Lucy, Divergent, Terminator 2, Point Break, A Detective
+  Story. Concerning regression — the V3.4.3 multiplier was carrying
+  these classics on rare-tag overlap (cyberpunk/AI/virtual-reality
+  tags). Without the multiplier, their shape alone doesn't surface
+  them. The themes compounding bonus didn't recover them, suggesting
+  the rare-tag overlap with Matrix may have been at moderate tier
+  (0.30–0.55, qualifies for combo) but the candidates' base themes
+  scores are still too low. The candidates ARE in the candidate
+  pool via themes recall (single_idf path catches their idf≥0.55
+  matches with Matrix); they're just outranked by candidates with
+  stronger shape.
+- **Romcom** — Lost While You Were Sleeping (V3.4.3 win); gained
+  Friends with Benefits. Mid-list churn.
+- **LotR** — Lost Hobbit: Battle of Five Armies and Narnia; gained
+  Avatar (1.000 score? — solid epic-adventure match) and Lawrence
+  of Arabia (prestige epic). Shifts from "fantasy adventure" to
+  "epic adventure" — debatable. Avatar topping the list at 1.000
+  via an implicit franchise/auteur connection bears review.
+
+**Reordering-only cases (9 single + 6 multi):** these are cases
+where the same set of candidates ranked, just slightly reordered.
+The themes compounding bonus shifted moderate-overlap candidates
+up by a few percent without crossing the threshold to displace
+neighbors. This is the expected "compounding signal makes the right
+candidates score slightly stronger" behavior.
+
+#### Was the hypothesis correct?
+
+**Yes, with the Matrix caveat.**
+
+Confirmed:
+- Barbie's bucket no longer phantom-fires (signal=0.000, correctly).
+- Oppenheimer / Schindler's / Green Mile / BTTF all fire the bucket
+  on their genuinely-rare traits.
+- Themes compounding bonus rewards the candidates that should win
+  (Patch Town for Barbie at themes=0.352 still ranks #2 — the
+  combo bonus reinforces its prior position).
+- Total architectural simplification: one fewer lane, one fewer
+  multiplier, one fewer floor, one consistent bucket.
+- Zero new regressions in the reorder-only cases.
+
+Caveat:
+- Matrix lost its V3.4.3 sci-fi-classic wins (Tron / Blade Runner /
+  Terminator). The V3.4.3 rare_keyword multiplier was carrying
+  those candidates via cyberpunk/AI tag overlap; under V3.4.4 they
+  enter the pool via themes-recall but get outranked by stronger-
+  shape candidates. If we want them back, the lever is either
+  (a) the bucket — but Matrix would need idf≥0.55 traits to fire
+  it, and "cyberpunk" / "ai" may not clear that bar empirically,
+  or (b) higher themes lane weight (currently 0.12) to amplify the
+  combo bonus's effect. Either is a future tuning question, not a
+  V3.4.4 blocker.
+
+#### Ship it?
+
+**Yes — ship V3.4.4.**
+
+The architectural simplification is significant and structurally
+correct: tag overlap belongs in one lane, exploration via rare
+matches belongs in the bucket, and the two are now disjoint with
+no double-counting. The bucket-signal alignment fix is a pure bug
+fix (the bucket was silently no-op'ing on tag-rich anchors before).
+The Matrix trade-off is real but bounded — V3.4.3 had its own
+trade-offs against V3.4.2 baseline (lost Sleepless in Seattle, etc.)
+and we accepted those for the structural fix. Same calculus here.
+
+V3.4.4 should be marked as the active production state in
+`similar_movies.md` once committed.
+
+#### Learnings
+
+- **Two different mechanisms with similar surfaces are still
+  different mechanisms.** The themes lane (rarity-weighted scoring)
+  and the rare_keyword lane (rarity-weighted scoring) looked the
+  same on paper but operated on different normalizations and tier
+  semantics. Architecturally cleaner to have one mechanism
+  (themes + compounding bonus) than two overlapping ones.
+- **Bucket signal and membership thresholds must reference the
+  same set.** The V3.4.4 alignment fix would have eliminated the
+  Barbie phantom-fire from V3.4 onward if it had been there at
+  bucket introduction. Always check that bucket signal computation
+  (which traits "count" for the bucket to fire) uses the same
+  filter as bucket membership (which candidates can be picked
+  for the bucket). If they differ, the bucket is internally
+  inconsistent and likely a no-op or over-fire on edge cohorts.
+- **Compounding bonus belongs on the lane that does the linear
+  scoring.** Putting the combo bonus inside themes (where the
+  base linear sum lives) keeps the bonus mechanically connected
+  to its trigger. The old design had it in rare_keyword scoring
+  while themes did the linear sum elsewhere — disjoint
+  computations of the same conceptual signal.
+- **Floor mechanisms tend to be redundant when buckets exist.**
+  The V3 rare_keyword floor was designed before the V3.4 weaver
+  introduced bucket-allocated slots. With a working bucket,
+  "candidate has distinctive match → guarantee a slot" is the
+  bucket's job; a parallel floor that "promotes the candidate's
+  score" was the same idea expressed differently. Removing the
+  floor cleaned up the score path; the bucket continues to do
+  its job.
+
+### V3.4.5 — themes compounding bonus reshaped from additive to multiplicative (FACTOR=0.5)
+
+#### Hypothesis
+
+V3.4.4's themes compounding bonus migrated the V3.1 rare_keyword combo bonus
+shape verbatim: additive 0–0.15 once shared moderate+ IDF sum crosses 0.50.
+That shape is too gentle for the themes lane scale. The Matrix regression in
+V3.4.4 (lost Tron, Blade Runner, Terminator, Ghost in the Shell that V3.4.3's
+shape multiplier was carrying) showed the additive bonus didn't recover
+multi-tag-overlap candidates whose shape was just below the line. A
+multiplicative bonus (`themes_score = base * (1 + FACTOR * excess)`) compounds
+with the base lane score and is bounded naturally by the lane's own weight
+(~0.10), so it can't reintroduce the V3.4.3 final-score-multiplier failure
+mode (tail dominance). Themes is proportional → the multiplied lane decays
+with rank.
+
+#### Changes made
+
+- Renamed `_themes_combo_bonus` → `_themes_combo_multiplier`. Returns 1.0
+  (no boost) when shared moderate+ IDF sum below threshold, else
+  `1.0 + FACTOR * excess`.
+- Constants: `THEMES_COMBO_THRESHOLD = 0.30` (lowered from 0.50 — the
+  multiplicative shape needs more headroom to ramp; engaging at one shared
+  moderate trait), `THEMES_COMBO_FACTOR = 0.50`. Removed
+  `THEMES_COMBO_BASE` / `THEMES_COMBO_RATE` / `THEMES_COMBO_CAP`.
+- Both single-anchor and multi-anchor themes scoring functions now compute
+  `score = _clamp(base * mult)` instead of `_clamp(base + bonus)`.
+
+#### Calibration trial
+
+Ran smoke at FACTOR=0.5 and FACTOR=0.3 to compare. Volume of change vs
+V3.4.4 baseline:
+
+| | Single-anchor (21) | Multi-anchor (14) |
+|---|---|---|
+| F=0.3 | 9 identical / 8 reorder / 4 changed | 9 identical / 3 reorder / 2 changed |
+| F=0.5 | 3 identical / 8 reorder / 10 changed | 5 identical / 4 reorder / 5 changed |
+
+F=0.3 is essentially a tiny tweak to V3.4.4. F=0.5 is a real reshape.
+
+Candidate-level differences (where F=0.5 and F=0.3 disagree on a top-10 slot):
+
+| Anchor | F=0.5 brings | F=0.3 brings | Better |
+|---|---|---|---|
+| Matrix | Tron (1982) | Lucy (2014) | F=0.5 |
+| Oppenheimer | The Pianist | 12 Years a Slave | F=0.5 |
+| WW2 epics | Empire of the Sun | Lone Survivor | F=0.5 |
+| Get Out | The Autopsy of Jane Doe | Welcome Home Brother Charles | F=0.5 |
+| Barbie | Last Action Hero | I Am Not an Easy Man | F=0.3 |
+| Back to the Future | Men in Black 3 | E.T. | F=0.3 |
+| John Wick | Marked for Death | Desperado | F=0.3 |
+| Nolan trio | Lost Highway | Fight Club | F=0.3 |
+| Godfather, LotR, Stephen King, Best Picture | various | various | toss-up |
+
+Roughly 4-4 on clear-winner cases, 4 toss-ups.
+
+#### Was the hypothesis correct?
+
+**Mostly.** The multiplicative shape produces visible compounding behavior at
+F=0.5 — it's the only calibration where the bonus actually does what the
+"compound when quantity increases" framing implied. F=0.3 is so gentle it's
+within noise of V3.4.4 (essentially a no-op on most anchors).
+
+The Matrix recovery is partial — F=0.5 brings back Tron (1982) but not Blade
+Runner / Terminator / Ghost in the Shell / TRON: Legacy. The lost classics'
+moderate-tier overlap with Matrix isn't strong enough to clear other
+candidates' shape advantages even with compounding amplification. Recovering
+all of them would require either further weight bump on themes or
+reintroducing per-trait tier coefficients (V3.4.6 candidate if needed).
+
+#### Ship it?
+
+**Yes — ship V3.4.5 with FACTOR=0.5.**
+
+F=0.5 is the answer if "compounding actually does something visible" is the
+goal. F=0.3 is the answer if "minimal disruption to V3.4.4" is the goal. We
+introduced the multiplicative shape *because* additive wasn't compounding
+enough — picking F=0.3 would defeat the purpose of the change.
+
+Strong wins on prestige/genre cohorts:
+- **Matrix**: Tron back at #9 (sci-fi classic recovery).
+- **Oppenheimer**: The Pianist back at #10 (Holocaust biopic — the kind of
+  multi-tag prestige overlap the bonus is designed for).
+- **WW2 epics**: Empire of the Sun IN (Spielberg WW2, literal genre fit).
+- **Get Out**: Autopsy of Jane Doe (better horror match than the F=0.3
+  alternative).
+
+Acknowledged trade-offs:
+- **Barbie**: Last Action Hero returns at #10 (was V3.4.3 noise we wanted
+  out, now earning the spot on genuine meta-comedy theme overlap with
+  Barbie — different mechanism than V3.4.3's rare_keyword crutch). Easy
+  Man drops out of top-10. This is the bonus correctly rewarding multi-tag
+  overlap; whether Last Action Hero "deserves" #10 is debatable.
+- **Nolan**: Lost Highway in, Fight Club out. Both Nolan-adjacent
+  mind-benders; close call.
+- **John Wick / BTTF**: F=0.3 had cleaner picks (Desperado, E.T.). At F=0.5
+  the multiplier shifts the balance toward different but defensible matches.
+
+Update doc: V3.4.5 is the active production state.
+
+#### Learnings
+
+- **Multiplicative compounding is the right shape for "reward quantity of
+  matches".** Additive bonuses cap quickly; multiplicative naturally produces
+  super-linear growth bounded by the lane's normalization. Threshold +
+  multiplier with a low engage threshold (0.30 — one moderate trait) and
+  modest factor (0.50) gives visible compounding without runaway behavior.
+- **Lane-internal multipliers are safe; final-score multipliers are not.**
+  V3.4.3 multiplied the final score and caused tail dominance because final
+  scores are ~order-of-magnitude 0.1–1.0 and the multiplier dwarfed
+  proportional contributions. V3.4.5 multiplies the themes lane score
+  (weighted at ~0.10 in the additive sum) — a 2× lane multiplier translates
+  to ~+0.05 final-score lift. Bounded, decays with rank, doesn't crowd
+  proportional lanes.
+- **Calibration matters more than design when the design is right.** The
+  multiplicative shape is correct; the choice between F=0.3 and F=0.5 is
+  pure tuning. F=0.3 demonstrated that the structural change alone barely
+  moves results; F=0.5 demonstrated the shape working as intended. If real
+  use shows F=0.5 is too aggressive, F=0.4 is the natural retreat — same
+  shape, gentler magnitude.

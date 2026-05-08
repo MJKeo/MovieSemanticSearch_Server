@@ -32,7 +32,7 @@ import json
 from pydantic import BaseModel
 
 from implementation.llms.generic_methods import generate_llm_response_async
-from schemas.enums import HandlerBucket
+from schemas.enums import HandlerBucket, TraitCombineMode
 from schemas.step_2 import Trait
 from schemas.step_3 import CategoryCall, TraitDecomposition
 from schemas.trait_category import CategoryName
@@ -109,6 +109,8 @@ async def _run_handler_with_full_output(
     *,
     category_call: CategoryCall,
     trait: Trait,
+    sibling_calls: list[CategoryCall] | None = None,
+    combine_mode: TraitCombineMode | None = None,
 ) -> tuple[BaseModel | None, list[GeneratedEndpointSpec]]:
     """Run the handler LLM and return BOTH the raw structured output
     (with all reasoning fields intact) and the extracted endpoint
@@ -119,6 +121,11 @@ async def _run_handler_with_full_output(
     discards. For non-LLM categories (deterministic / no-op) we fall
     back to the production function — there's no reasoning to surface,
     just the deterministic output.
+
+    `sibling_calls` + `combine_mode` are threaded through to the user
+    message's ``<sibling_categories>`` block per Phase 6 — None
+    defaults are equivalent to the empty wrapper / `combine_mode=
+    "single"`.
     """
     category = category_call.category
 
@@ -126,13 +133,20 @@ async def _run_handler_with_full_output(
     # is no raw output to surface — defer to the production function.
     if category.bucket in _NON_LLM_BUCKETS:
         specs = await run_query_generation(
-            category_call=category_call, trait=trait
+            category_call=category_call,
+            trait=trait,
+            sibling_calls=sibling_calls,
+            combine_mode=combine_mode,
         )
         return None, specs
 
     # Same prompt + schema the production handler builds.
     system_prompt = build_system_prompt(category)
-    user_message = build_user_message(category_call)
+    user_message = build_user_message(
+        category_call,
+        sibling_calls=sibling_calls,
+        combine_mode=combine_mode,
+    )
     response_format = get_output_schema(category)
 
     # Single attempt here — production retries once on failure, but the
@@ -199,9 +213,17 @@ async def _main_async() -> None:
         return
 
     # Step 3 — fan out across traits in parallel; result order matches
-    # analysis.traits via gather's ordering guarantee.
+    # analysis.traits via gather's ordering guarantee. Pass siblings
+    # per the V4 contract — positioning references need them to honor
+    # axis replacement.
     step_3_results = await asyncio.gather(
-        *(run_step_3(trait) for trait in analysis.traits)
+        *(
+            run_step_3(
+                trait,
+                [s for s in analysis.traits if s is not trait],
+            )
+            for trait in analysis.traits
+        )
     )
 
     print("\n========== STEP 3 ==========")
@@ -225,12 +247,21 @@ async def _main_async() -> None:
             print("(no category calls to generate from)")
             continue
 
+        # Phase 6 — sibling-task context per call. Each handler
+        # receives the OTHER CategoryCalls in this trait's
+        # decomposition (self-category excluded) and the trait-level
+        # combine_mode so it can coordinate against parallel siblings.
+        all_calls = list(decomposition.category_calls)
+        combine_mode = decomposition.combine_mode
         per_call_results = await asyncio.gather(
             *(
                 _run_handler_with_full_output(
-                    category_call=call, trait=trait
+                    category_call=call,
+                    trait=trait,
+                    sibling_calls=[s for s in all_calls if s is not call],
+                    combine_mode=combine_mode,
                 )
-                for call in decomposition.category_calls
+                for call in all_calls
             )
         )
 
