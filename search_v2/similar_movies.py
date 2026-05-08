@@ -23,6 +23,7 @@ from db.postgres import (
     fetch_director_movie_terms,
     fetch_director_term_ids_for_movies,
     fetch_movie_ids_by_overall_keywords,
+    fetch_movie_ids_by_themes_recall,
     fetch_movie_ids_by_production_company_ids,
     fetch_movie_ids_with_title_like,
     fetch_production_company_ids_by_normalized_strings,
@@ -183,7 +184,12 @@ BASE_LANE_WEIGHTS: dict[LaneName, float] = {
     "quality": 0.06,
     "format": 0.04,
     # Multi-only lanes; single-anchor zeros these out.
-    "themes": 0.06,
+    # V3.1: bumped from 0.06 → 0.12 — the V3 smoke run showed themes
+    # raw scores of 0.20–0.95 on genuinely-themed candidates contribute
+    # only 0.012–0.057 at weight 0.06, sub-perceptual against shape
+    # (~0.50 weight). 0.12 doubles thematic recall without tipping
+    # Pixar / MCU / Star-Wars cohesion (still shape-dominated).
+    "themes": 0.12,
     "cast": 0.03,
     "specific_award": 0.04,
     # NEW V3 §2.6 lane — rare-keyword. Passthrough like director (its
@@ -271,7 +277,13 @@ RARE_MEDIUM_IDF_THRESHOLD = 0.50
 LOW_COHESION_VECTOR_THRESHOLD = 0.35
 LOW_COHESION_METADATA_MAX_THRESHOLD = 1.50
 
-DEFAULT_QDRANT_LIMIT = 500
+# V3.1: bumped from 500 → 2000 to widen the shape-recall funnel.
+# Lady-Bird-vs-Barbie style auteur/themes matches whose vector
+# embedding doesn't align with the anchor's surface aesthetic were
+# missing the candidate pool entirely; 4× wider shape pool catches
+# them and lets the new themes-recall + director-floor paths score
+# them on their actual signal.
+DEFAULT_QDRANT_LIMIT = 2000
 DEFAULT_QUALITY_LIMIT = 500
 
 NON_RAZZIE_AWARD_IDS: frozenset[int] = frozenset(
@@ -645,6 +657,18 @@ DIRECTOR_MULTI_ANCHOR_COHESION_RATIO = 0.10
 DIRECTOR_FLOOR_RATIO_THRESHOLD = 0.75
 DIRECTOR_FLOOR_SHAPE_GATE = 0.30
 DIRECTOR_FLOOR_MAGNITUDE = 0.35
+
+# V3.1: single-anchor director floor — mirrors the multi-anchor floor
+# but with a softer shape gate (0.20 vs. 0.30). A curated auteur match
+# in single-anchor is a strong signal on its own (the user explicitly
+# anchored on that filmmaker's work), so the floor doesn't need a
+# strong shape backstop. Single-anchor "ratio" is binary: 1.0 when the
+# candidate shares any auteur director with the anchor, else 0.0 — so
+# the threshold is also 1.0 (any auteur match qualifies). Magnitude
+# matches multi.
+DIRECTOR_FLOOR_SINGLE_RATIO_THRESHOLD = 1.0
+DIRECTOR_FLOOR_SINGLE_SHAPE_GATE = 0.20
+DIRECTOR_FLOOR_SINGLE_MAGNITUDE = 0.35
 
 
 def _single_anchor_director_score(
@@ -1085,6 +1109,13 @@ def _build_results(
     rare_keyword_floor_by_movie: dict[int, float] | None = None,
     cast_floor_by_movie: dict[int, float] | None = None,
     director_floor_max_ratio_by_movie: dict[int, float] | None = None,
+    # V3.1: per-flow director floor params. Defaults preserve V3
+    # multi-anchor behavior; single-anchor callers pass softer values
+    # (shape gate 0.20, ratio threshold 1.0) so a curated-auteur match
+    # with shape ≥ 0.20 floors at 0.35.
+    director_floor_ratio_threshold: float = DIRECTOR_FLOOR_RATIO_THRESHOLD,
+    director_floor_shape_gate: float = DIRECTOR_FLOOR_SHAPE_GATE,
+    director_floor_magnitude: float = DIRECTOR_FLOOR_MAGNITUDE,
     # V3 §3.1 shorts handling.
     candidate_format_bucket_by_movie: dict[int, FormatBucket] | None = None,
     anchor_active_format_bucket: FormatBucket | None = None,
@@ -1223,10 +1254,10 @@ def _build_results(
             candidate_floors.append(("cast", cast_floor))
         director_ratio = director_floor_max_ratio_by_movie.get(movie_id, 0.0)
         if (
-            director_ratio >= DIRECTOR_FLOOR_RATIO_THRESHOLD
-            and shape_score >= DIRECTOR_FLOOR_SHAPE_GATE
+            director_ratio >= director_floor_ratio_threshold
+            and shape_score >= director_floor_shape_gate
         ):
-            candidate_floors.append(("director", DIRECTOR_FLOOR_MAGNITUDE))
+            candidate_floors.append(("director", director_floor_magnitude))
         applied_floor_value = 0.0
         applied_floor_source = ""
         if candidate_floors:
@@ -1592,6 +1623,25 @@ async def _run_single_anchor_similarity(
         else _empty_set()
     )
 
+    # V3.1 themes recall: fetch candidates whose shared anchor traits
+    # qualify by single-trait rarity OR combined-IDF sum. The split by
+    # kind matches the `_themes_traits_for_movie` builder; per-kind
+    # legs let the SQL skip families the anchor doesn't carry.
+    themes_recall_task = fetch_movie_ids_by_themes_recall(
+        keyword_ids=[
+            tid for (kind, tid) in anchor_themes_traits
+            if kind == TRAIT_KIND_OVERALL_KEYWORD
+        ],
+        concept_tag_ids=[
+            tid for (kind, tid) in anchor_themes_traits
+            if kind == TRAIT_KIND_CONCEPT_TAG
+        ],
+        genre_ids=[
+            tid for (kind, tid) in anchor_themes_traits
+            if kind == TRAIT_KIND_TMDB_GENRE
+        ],
+    )
+
     (
         (shape_scores, vector_space_weights),
         director_candidate_terms,
@@ -1603,6 +1653,7 @@ async def _run_single_anchor_similarity(
         source_idfs_pairs,
         themes_idfs,
         medium_idfs,
+        themes_recall_candidate_ids,
     ) = await asyncio.gather(
         shape_task,
         director_task,
@@ -1614,6 +1665,7 @@ async def _run_single_anchor_similarity(
         source_idf_task,
         themes_idf_task,
         medium_idf_task,
+        themes_recall_task,
     )
 
     # Source IDFs come back keyed by (kind, trait_id); flatten to trait_id
@@ -1675,6 +1727,7 @@ async def _run_single_anchor_similarity(
     candidate_ids.update(source_candidate_ids)
     candidate_ids.update(quality_candidate_ids)
     candidate_ids.update(rare_medium_candidate_ids)
+    candidate_ids.update(themes_recall_candidate_ids)  # V3.1 themes recall path
     candidate_ids.discard(anchor_id)
 
     candidate_rows = await fetch_similarity_signal_rows(list(candidate_ids))
@@ -1819,6 +1872,15 @@ async def _run_single_anchor_similarity(
         "rare_keyword": single_rare_keyword_scores,
     }
 
+    # V3.1 single-anchor director floor: build a per-candidate ratio
+    # dict where ratio = 1.0 iff the candidate has any auteur director
+    # match (director_scores is keyed only on auteur matches per
+    # _single_anchor_director_score). Threshold is also 1.0, so any
+    # match qualifies; non-matches stay at 0.0.
+    director_floor_max_ratio_single = {
+        movie_id: 1.0 for movie_id in director_scores
+    }
+
     ranked, counts = _build_results(
         anchor_ids=[anchor_id],
         lane_scores=lane_scores,
@@ -1828,6 +1890,10 @@ async def _run_single_anchor_similarity(
         medium_multiplier_by_movie=medium_multiplier_by_movie,
         country_consensus_match_by_movie=country_consensus_match_by_movie,
         rare_keyword_floor_by_movie=single_rare_keyword_floor,
+        director_floor_max_ratio_by_movie=director_floor_max_ratio_single,
+        director_floor_ratio_threshold=DIRECTOR_FLOOR_SINGLE_RATIO_THRESHOLD,
+        director_floor_shape_gate=DIRECTOR_FLOOR_SINGLE_SHAPE_GATE,
+        director_floor_magnitude=DIRECTOR_FLOOR_SINGLE_MAGNITUDE,
         candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
         anchor_active_format_bucket=anchor_format_bucket,
         anchor_format_bucket=anchor_format_bucket,
@@ -1994,6 +2060,20 @@ async def _run_multi_anchor_similarity(
     anchor_cast_task = fetch_similarity_top_billed_cast(anchor_ids)
     anchor_award_task = fetch_similarity_award_category_tags(anchor_ids)
 
+    # V3.1 themes recall (multi-anchor): we need anchor-side themes
+    # IDFs *before* building candidate_ids so consensus traits can be
+    # computed and the recall query can fire in this same first
+    # gather. Compute themes_union here (themes_trait_sets already
+    # built above) and fetch its IDFs in parallel.
+    themes_union_for_recall: set[tuple[int, int]] = set()
+    for trait_set in themes_trait_sets:
+        themes_union_for_recall |= trait_set
+    themes_recall_idf_task = (
+        fetch_trait_idfs(list(themes_union_for_recall))
+        if themes_union_for_recall
+        else _empty_idf_dict()
+    )
+
     (
         (shape_scores, vector_space_weights, vector_space_cohesion, mean_pairwise_cosine),
         director_candidate_terms,
@@ -2003,6 +2083,7 @@ async def _run_multi_anchor_similarity(
         quality_candidate_ids,
         anchor_cast_by_movie,
         anchor_award_by_movie,
+        themes_recall_idfs,
     ) = await asyncio.gather(
         shape_task,
         director_task,
@@ -2012,6 +2093,34 @@ async def _run_multi_anchor_similarity(
         quality_task,
         anchor_cast_task,
         anchor_award_task,
+        themes_recall_idf_task,
+    )
+
+    # Multi-anchor themes recall: build consensus pool with the
+    # cohesion-IDF tradeoff, then collapse to the same single-anchor
+    # SQL helper.
+    themes_recall_consensus = _multi_anchor_consensus_themes_traits(
+        themes_trait_sets,
+        themes_recall_idfs,
+        n,
+    )
+    themes_recall_candidate_ids: set[int] = (
+        await fetch_movie_ids_by_themes_recall(
+            keyword_ids=[
+                tid for (kind, tid) in themes_recall_consensus
+                if kind == TRAIT_KIND_OVERALL_KEYWORD
+            ],
+            concept_tag_ids=[
+                tid for (kind, tid) in themes_recall_consensus
+                if kind == TRAIT_KIND_CONCEPT_TAG
+            ],
+            genre_ids=[
+                tid for (kind, tid) in themes_recall_consensus
+                if kind == TRAIT_KIND_TMDB_GENRE
+            ],
+        )
+        if themes_recall_consensus
+        else set()
     )
 
     # Cast / specific_award cohesion needs the just-fetched anchor data.
@@ -2067,7 +2176,7 @@ async def _run_multi_anchor_similarity(
         "source": 0.04 * cohesion_by_lane["source"],
         "quality": quality_base * cohesion_by_lane["quality"],
         "format": 0.04 * cohesion_by_lane["format"],
-        "themes": 0.06 * cohesion_by_lane["themes"],
+        "themes": BASE_LANE_WEIGHTS["themes"] * cohesion_by_lane["themes"],
         # Cast weight is finalized after the V3 cast lane runs (it
         # encodes cohesion explicitly via 0.05 + 0.10 * ratio).
         "cast": 0.0,
@@ -2082,6 +2191,7 @@ async def _run_multi_anchor_similarity(
     candidate_ids.update(studio_candidate_ids)
     candidate_ids.update(source_candidate_ids)
     candidate_ids.update(quality_candidate_ids)
+    candidate_ids.update(themes_recall_candidate_ids)  # V3.1 themes recall path
     candidate_ids -= set(anchor_ids)
 
     # Candidate-side reads.
@@ -2480,7 +2590,20 @@ RARE_KW_FLOOR_COMBO_SUM = 1.50     # OR sum of moderate+high tiers ≥ 1.50 trig
 RARE_KW_FLOOR_BASE = 0.40
 RARE_KW_FLOOR_HIGH_INC = 0.05      # +0.05 per high-tier trait
 RARE_KW_FLOOR_CAP = 0.55
-RARE_KW_FLOOR_SHAPE_GATE = 0.30    # candidate's shape must be ≥ 0.30 to apply floor
+RARE_KW_FLOOR_SHAPE_GATE = 0.20    # candidate's shape must be ≥ 0.20 to apply floor (V3.1: 0.30 → 0.20 — original gate blocked every observed high-rare-keyword candidate)
+
+# V3.1: moderate-combo bonus on the rare-keyword lane. Rewards the
+# qualitative jump from "shared 1–2 moderate-rarity tags" to "shared
+# 3+". Random-pair sampling over the catalog showed p99 of shared
+# moderate+high IDF = 0.000 (324 random pairs, zero crossed 0.5), so
+# 0.50 sits deep in the long tail — only genuinely related films
+# qualify. The bonus stacks additively with per-trait contributions
+# inside the passthrough lane (no shape gate — the bonus IS itself a
+# shape signal that compensates for vector-distance).
+RARE_KW_COMBO_THRESHOLD = 0.50     # sum of shared moderate+high IDFs to engage
+RARE_KW_COMBO_BASE      = 0.05     # immediate bonus on crossing threshold
+RARE_KW_COMBO_RATE      = 0.05     # per-unit increment above threshold
+RARE_KW_COMBO_CAP       = 0.15     # max combo bonus
 
 
 def _rare_keyword_score_for_traits(
@@ -2518,6 +2641,17 @@ def _rare_keyword_score_for_traits(
     lane_score = (
         moderate_total + high_total + min(RARE_KW_LOW_POOL_CAP, low_pool)
     )
+    # V3.1 moderate-combo bonus: rewards aggregate co-occurrence of
+    # moderate-or-rare tags. moderate_or_high_sum is exactly the input
+    # signal we need (sum of shared IDFs in moderate+high tiers).
+    if moderate_or_high_sum >= RARE_KW_COMBO_THRESHOLD:
+        combo_bonus = min(
+            RARE_KW_COMBO_CAP,
+            RARE_KW_COMBO_BASE
+            + RARE_KW_COMBO_RATE
+            * (moderate_or_high_sum - RARE_KW_COMBO_THRESHOLD),
+        )
+        lane_score += combo_bonus
     # Floor: triggered by single super-rare hit OR rare combo.
     floor = 0.0
     if (
@@ -2820,6 +2954,57 @@ def _multi_anchor_themes_repeated(
         for pair in traits:
             counts[pair] = counts.get(pair, 0) + 1
     return {pair for pair, c in counts.items() if c >= 2}
+
+
+# V3.1 cohesion-IDF tradeoff for multi-anchor themes recall: rarer
+# traits qualify with weaker cohesion. The intuition (per design
+# discussion): a low-IDF trait is too noisy to fetch on unless ALL
+# anchors carry it; a high-IDF trait is distinctive enough that even
+# half the cohort sharing it is meaningful.
+THEMES_RECALL_COHESION_BAR_LOW  = 1.00  # idf < 0.30: all anchors must carry
+THEMES_RECALL_COHESION_BAR_MOD  = 0.67  # 0.30 ≤ idf < 0.55: ≥ 2/3 of anchors
+THEMES_RECALL_COHESION_BAR_HIGH = 0.50  # idf ≥ 0.55: ≥ half of anchors
+
+
+def _multi_anchor_consensus_themes_traits(
+    themes_trait_sets: list[set[tuple[int, int]]],
+    idfs: dict[tuple[int, int], float],
+    n: int,
+) -> set[tuple[int, int]]:
+    """V3.1 consensus trait pool with cohesion-IDF tradeoff.
+
+    For each (kind, trait_id) appearing in any anchor's themes pool,
+    compute cohesion = M_t / N (fraction of anchors carrying the
+    trait). Apply an IDF-scaled cohesion bar: rarer traits clear the
+    bar at lower cohesion. Returns the consensus set used for
+    multi-anchor themes-recall fetching — which then feeds the same
+    `fetch_movie_ids_by_themes_recall` SQL aggregate as the
+    single-anchor flow.
+
+    The bar tiers match the rare-keyword scoring tiers
+    (RARE_KW_TIER_LOW_MAX / RARE_KW_TIER_MODERATE_MAX) so cohesion
+    semantics align with what the lane already considers "low /
+    moderate / high rarity".
+    """
+    if n <= 0:
+        return set()
+    counts: dict[tuple[int, int], int] = {}
+    for traits in themes_trait_sets:
+        for pair in traits:
+            counts[pair] = counts.get(pair, 0) + 1
+    consensus: set[tuple[int, int]] = set()
+    for pair, count in counts.items():
+        cohesion = count / n
+        idf = idfs.get(pair, 0.0)
+        if idf < RARE_KW_TIER_LOW_MAX:
+            bar = THEMES_RECALL_COHESION_BAR_LOW
+        elif idf < RARE_KW_TIER_MODERATE_MAX:
+            bar = THEMES_RECALL_COHESION_BAR_MOD
+        else:
+            bar = THEMES_RECALL_COHESION_BAR_HIGH
+        if cohesion >= bar:
+            consensus.add(pair)
+    return consensus
 
 
 def _multi_anchor_themes_scores(

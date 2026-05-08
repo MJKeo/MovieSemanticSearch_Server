@@ -1010,3 +1010,535 @@ Default and refinement suite outputs were captured to
 `/tmp/run_specs_default.json` and `/tmp/run_specs_refinement.json`
 during this investigation; regenerate as needed since the LLM is
 non-deterministic and exact keyword commitments will drift.
+
+## Implementation plan
+
+Concrete steps to execute D1 through D5. Each phase is independently
+shippable; recommended sequence below assumes each phase ships +
+stabilizes before the next so its marginal effect on the V5 suite
+metrics is observable in isolation.
+
+### Pre-implementation correction: CULTURAL_STATUS already has no KW
+
+Verification of the live enum at
+[schemas/trait_category.py:1065-1098](../schemas/trait_category.py#L1065-L1098)
+shows CULTURAL_STATUS endpoints are
+`(EndpointRoute.SEMANTIC, EndpointRoute.METADATA)` — KEYWORD is
+already absent. The earlier V5 narrative claimed CULTURAL_STATUS
+needed KW removal; this was incorrect. CULTURAL_STATUS keeps its
+current `ADDITIVE(SEMANTIC × METADATA)` shape, which composes RCP
+status prose with quality/popularity priors — both genuinely
+different signals that benefit from compounding.
+
+The actual REMOVE-KW set is 3 categories, not 4:
+**SEASONAL_HOLIDAY, EMOTIONAL_EXPERIENTIAL, SPECIFIC_PRAISE_CRITICISM.**
+
+### Current state reference table
+
+For each affected category as of this writing
+([schemas/trait_category.py](../schemas/trait_category.py)):
+
+| Category | Line | Endpoints | Bucket | Combine |
+|---|---|---|---|---|
+| CENTRAL_TOPIC | 262 | (KEYWORD, SEMANTIC) | PREFERRED_REPRESENTATION_FALLBACK | ADDITIVE |
+| ELEMENT_PRESENCE | 288 | (KEYWORD, SEMANTIC) | PREFERRED_REPRESENTATION_FALLBACK | ADDITIVE |
+| CHARACTER_ARCHETYPE | 313 | (KEYWORD, SEMANTIC) | PREFERRED_REPRESENTATION_FALLBACK | ADDITIVE |
+| NARRATIVE_DEVICES | 701 | (KEYWORD, SEMANTIC) | PREFERRED_REPRESENTATION_FALLBACK | ADDITIVE |
+| TARGET_AUDIENCE | 731 | (KEYWORD, METADATA, SEMANTIC) | AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST | ADDITIVE |
+| SENSITIVE_CONTENT | 761 | (KEYWORD, METADATA, SEMANTIC) | AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST | ADDITIVE |
+| SEASONAL_HOLIDAY | 786 | (SEMANTIC, KEYWORD) | SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT | ADDITIVE |
+| STORY_THEMATIC_ARCHETYPE | 873 | (KEYWORD, SEMANTIC) | PREFERRED_REPRESENTATION_FALLBACK | ADDITIVE |
+| EMOTIONAL_EXPERIENTIAL | 901 | (SEMANTIC, KEYWORD) | SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT | ADDITIVE |
+| CULTURAL_STATUS | 1065 | (SEMANTIC, METADATA) | SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT | ADDITIVE |
+| SPECIFIC_PRAISE_CRITICISM | 1099 | (SEMANTIC, KEYWORD) | PREFERRED_REPRESENTATION_FALLBACK | ADDITIVE |
+
+Verify line numbers against the live file before editing — they
+will drift as enum members are added/reordered.
+
+### Phase 1 — Code changes
+
+**Change 1.1 — Filter empty-spec categories from the across-category
+fold (D4).**
+
+File: [search_v2/stage_4_execution.py](../search_v2/stage_4_execution.py),
+inside `_score_positive_trait` around line 742-753 where `live_cats`
+is assembled.
+
+Current logic skips NO_OP categories at the top of the loop:
+
+```python
+for cat_idx, cc in enumerate(trait.category_calls):
+    if cc.handler_error is not None:
+        continue
+    combine_type = cc.category.combine_type
+    if combine_type is CategoryCombineType.NO_OP:
+        continue
+    live_pairs: list[...] = []
+    for spec_idx, spec in enumerate(cc.generated_specs):
+        ...
+    live_cats.append((cc, combine_type, live_pairs))
+```
+
+Extend the NO_OP filter to also skip empty-spec categories:
+
+```python
+for cat_idx, cc in enumerate(trait.category_calls):
+    if cc.handler_error is not None:
+        continue
+    combine_type = cc.category.combine_type
+    if combine_type is CategoryCombineType.NO_OP:
+        continue
+    if not cc.generated_specs:
+        # Handler abstained — semantically identical to NO_OP
+        # at scoring time. Skip so the empty fold doesn't
+        # produce a 0.0 that would zero a FACETS trait.
+        continue
+    live_pairs: list[...] = []
+    ...
+```
+
+`combine_calls` itself stays unchanged — the fix is at the upstream
+filter, not inside the math. This way `combine_calls(SINGLE, [])`
+remains 0.0 (correct semantics if the call ever did need to be made
+with empty scores) but the empty-spec categories never reach
+`combine_calls` in the first place.
+
+The negative-trait scoring path
+([stage_4_execution.py:921](../search_v2/stage_4_execution.py#L921))
+does not need this change — the gate × fuzzy formula partitions
+calls structurally and doesn't fold through per-category empty
+checks.
+
+**Verification:** confirmed by inspection that under FRAMINGS-MAX
+removing a 0.0 entry can only raise or hold the max, and under
+FACETS-PRODUCT removing a 0.0 makes the product non-zero. Monotonic-
+safe for both combine_modes.
+
+**Change 1.2 — Post-hoc dedup of identical generator specs (D5).**
+
+File: [search_v2/stage_4_execution.py](../search_v2/stage_4_execution.py),
+Phase B (pool definition).
+
+Current behavior: each trait's CategoryCalls each contribute
+`generated_specs` which all run independently in parallel. When two
+traits commit identical (route, params), the underlying DB query
+executes twice.
+
+Implementation outline:
+
+1. Walk all traits' positive-polarity generator specs into a flat
+   list of `(trait_idx, cat_idx, spec_idx, spec)` tuples.
+2. Build a dedup key from each spec — `(spec.route, dedup_hash(spec.params))`
+   where `dedup_hash` serializes the pydantic params model
+   deterministically (e.g., `json.dumps(spec.params.model_dump(mode="json"), sort_keys=True)`).
+3. Group tuples by dedup key. Execute one representative spec per
+   group, get back its `dict[movie_id, score]`.
+4. Distribute the result map: for every (trait_idx, cat_idx,
+   spec_idx) tuple in the group, register the result map at the
+   same coordinates the per-trait scoring loop would look up
+   (`call_score_maps[(trait_idx, cat_idx, spec_idx)]`).
+
+Score-side semantics unchanged — each trait still reads the result
+map per its own ANY/ALL commit, scoring_method, etc. Per-trait
+rarity computation is unaffected because rarity is computed from the
+matched-set of the generator's score map, which is identical across
+all traits sharing the spec.
+
+**Edge case:** if two traits commit specs that look identical but
+differ in opaque fields the executor consumes, the dedup will fold
+them incorrectly. Mitigate by using the full `model_dump(mode="json")`
+serialization as the hash key — anything that affects execution
+output should be in `model_dump`. Excluded fields (private state,
+non-serializable handles) are the executor's responsibility to
+exclude from `model_dump` already.
+
+**Performance bound:** dedup is O(N_specs) where N_specs is total
+generator count across all traits. Typical query has 2-5 traits ×
+1-3 generators per trait = 5-15 specs. Dedup overhead is negligible
+relative to DB call latency.
+
+### Phase 2a — combine_type changes (single-line edits)
+
+File: [schemas/trait_category.py](../schemas/trait_category.py).
+
+**TARGET_AUDIENCE (line ~759):**
+
+Change `CategoryCombineType.ADDITIVE` to
+`CategoryCombineType.ALTERNATIVES` on the last positional arg of
+the enum tuple. No other changes — endpoints, bucket, and per-
+category prompts stay as-is.
+
+**SENSITIVE_CONTENT (line ~784):**
+
+Same single-line change.
+
+**Why no prompt updates needed for Phase 2a:** The prompts for
+TARGET_AUDIENCE / SENSITIVE_CONTENT do not name the combine_type or
+multiply behavior anywhere. The combine_type is read only by
+`stage_4_execution.combine_calls`, which honors the new value
+immediately.
+
+**Risk surface:** under V3 ADDITIVE, KW × META × SEM compounded.
+Under V5 ALTERNATIVES, MAX(KW, META, SEM) takes whichever is
+strongest. For TARGET_AUDIENCE: a movie inside the maturity range
+gets META=1.0 → category=1.0 regardless of KW/SEM, which encodes
+"maturity-eligible" as the passing signal. For movies outside the
+range, META falls off and KW/SEM still scores. This is closer to
+the intended "gate + inclusion" semantics than ADDITIVE was. Same
+reasoning for SENSITIVE_CONTENT.
+
+### Phase 2b — KW removal (per-category atomic changesets)
+
+Three categories: SEASONAL_HOLIDAY, EMOTIONAL_EXPERIENTIAL,
+SPECIFIC_PRAISE_CRITICISM. Each is a self-contained changeset
+touching 4-5 files. Ship one category at a time, evaluate, then
+proceed to the next — do not batch.
+
+**Common transition logic:** all three categories are currently
+two-endpoint `(SEMANTIC, KEYWORD)` shapes. Removing KEYWORD
+collapses to a single-endpoint SEMANTIC shape. Per the
+"What counts as one call" section of this doc, a category whose
+only endpoint is SEMANTIC is SINGLE-combine at the orchestrator
+level (semantic internally aggregates across vector spaces in one
+call). The bucket therefore moves to `SINGLE_NON_METADATA_ENDPOINT`.
+
+**Per-category changes for each of the three:**
+
+1. **`schemas/trait_category.py`**:
+   - Drop `EndpointRoute.KEYWORD` from the endpoints tuple
+   - Change `HandlerBucket` to `SINGLE_NON_METADATA_ENDPOINT`
+   - Change `CategoryCombineType.ADDITIVE` to
+     `CategoryCombineType.SINGLE`
+
+2. **`search_v2/endpoint_fetching/category_handlers/prompts/categories/additional_objective_notes/<category>.md`**:
+   - Read the file in full
+   - Remove sections naming the keyword endpoint or the
+     `keyword_walk` / `finalized_keywords` / `scoring_method`
+     fields
+   - Remove guidance about KW-vs-SEM coverage tradeoffs (the file
+     was authored under the multi-endpoint shape)
+   - Preserve guidance about the category's domain (what the
+     category is about, what's in vs out of scope) — that is
+     unchanged
+
+3. **`search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/<category>.md`**:
+   - Read the file in full
+   - Remove example outputs that include `keyword_walk`,
+     `coverage_assignments` with a keyword entry, or
+     `keyword_parameters` blocks
+   - If all examples were multi-endpoint, replace with new examples
+     that match the SINGLE_NON_METADATA_ENDPOINT bucket's expected
+     output shape — a single SemanticEndpointParameters payload
+
+4. **Verify `_BUCKET_OBJECTIVES` and `_BUCKET_GUARDRAILS` cover
+   `SINGLE_NON_METADATA_ENDPOINT`** in
+   [search_v2/endpoint_fetching/category_handlers/prompts/buckets/](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/).
+   `single_non_metadata_endpoint_objective.md` and
+   `single_non_metadata_endpoint_guardrails.md` already exist (they
+   power other SINGLE-bucket categories), so no new authoring is
+   needed — just verify they're present and that the bucket
+   produces appropriate output schema for a SEMANTIC-only
+   category.
+
+5. **Verify schema generation:** [schema_factories.py](../search_v2/endpoint_fetching/category_handlers/schema_factories.py)
+   keys per-category schemas off the bucket. With the bucket changed
+   to SINGLE_NON_METADATA_ENDPOINT, the LLM will be asked to emit a
+   schema with only one endpoint slot (SEMANTIC). Run a smoke test
+   on each category after the change to confirm the schema is
+   generated cleanly and the LLM produces a valid output.
+
+**SEASONAL_HOLIDAY specific notes:**
+- The query_categories.md doc Cat 29 description references
+  KW + CTX + P-EVT additive combo. After this change, the doc is
+  out of date with respect to the implementation. **Update
+  query_categories.md Cat 29** to reflect SEMANTIC-only.
+
+**EMOTIONAL_EXPERIENTIAL specific notes:**
+- query_categories.md Cat 33 description references VWX + CTX +
+  RCP + KW. **Update query_categories.md Cat 33** to remove KW
+  from the endpoints list.
+
+**SPECIFIC_PRAISE_CRITICISM specific notes:**
+- query_categories.md Cat 40 description references RCP + KW
+  additive combo. **Update query_categories.md Cat 40** to remove
+  KW.
+
+**Sequence within Phase 2b:** start with EMOTIONAL_EXPERIENTIAL —
+it has the highest ADDITIVE_KW_RISK rate in the V5 suite (most
+queries with vibe-trait failures route here). Then SEASONAL_HOLIDAY
+(seasonal proxy chain is the second-clearest doc-vs-implementation
+mismatch). Then SPECIFIC_PRAISE_CRITICISM (lowest-frequency, easiest
+to verify last).
+
+After each category lands, re-run
+`python -m search_v2.run_specs` and confirm:
+- The category no longer flags ADDITIVE_KW_RISK on any V5 suite
+  query
+- The semantic-only output is structurally valid for the queries
+  that previously routed to the multi-endpoint shape
+- No regressions on queries that didn't previously trigger the
+  category
+
+### Phase 3 — Prompt rewrites
+
+**Change 3.1 — Keyword endpoint prompt: superset test (D2).**
+
+File: [search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md](../search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md).
+
+Current structure (relevant sections):
+- "What does NOT belong here" — unchanged
+- "Where the keyword analysis lives" — unchanged
+- "Classification registry" — unchanged
+- "Reading inputs as keyword facets" — unchanged
+- "Surface forms and aliases" — unchanged
+- "Authoring `strengths` and `weaknesses` per candidate" — REWRITE
+- "Near-collision disambiguation" — REWRITE
+- "Reading the brief for scoring_method" — see Change 3.2
+
+**Replace "Authoring strengths and weaknesses" + "Near-collision
+disambiguation" with a single "Commitment: superset test"
+section.** The strengths/weaknesses fields stay in the schema (the
+LLM walks them as cognitive scaffold) but the gate from candidates
+to `finalized_keywords` becomes the superset test.
+
+Suggested section content (verbatim from D2):
+
+> ## Commitment: superset test
+>
+> Fire keyword only when the keyword — or the ANY-mode union of
+> keywords — is a true superset of the movies the user is asking
+> for. A superset means: every movie that genuinely satisfies the
+> user's attribute would carry at least one of the chosen keywords.
+>
+> **Over-pull is acceptable.** The keywords also covering unrelated
+> movies is not a failure of this test. Semantic refinement on the
+> same call narrows the noise, and broadness in this trait is
+> recovered by another trait's specificity.
+>
+> **Gaps fail the test.** If a movie that genuinely satisfies the
+> user's attribute could carry none of your chosen keywords, the
+> set is not a superset. Firing will zero genuine matches under
+> ADDITIVE-multiply. Abstain.
+>
+> **Stretching intent fails the test.** If the keywords name
+> something semantically adjacent to the user's attribute rather
+> than the attribute itself, you are stretching. Firing will
+> tag-match adjacent-but-irrelevant movies at 1.0 while genuinely
+> relevant movies that lack those tags score 0. Abstain.
+>
+> Apply the test once over the union of your finalized members in
+> ANY mode. If the union passes the test, commit; if it fails on
+> any of the three conditions, drop members until the remainder
+> passes — or abstain entirely if no remaining subset passes.
+
+Do **not** include category-specific examples in this section. The
+test is generalized so the LLM evaluates the underlying property
+rather than pattern-matches on enumerated keyword pairs.
+
+**Schema implication:** the multi-endpoint shape (subintent) already
+allows abstention via not-including-keyword in `coverage_assignments`.
+The single-endpoint shape (`KeywordQuerySpec` with `min_length=1`
+on `finalized_keywords`) does not currently allow full abstention.
+Single-endpoint categories that route exclusively to keyword
+(GENRE when canonical, AWARDS when KW path, etc.) will still need
+to commit at least one member; the superset test still applies as
+guidance to pick the best fit. Do **not** relax `min_length=1` on
+the single-endpoint schema — those categories route to keyword
+because the user's attribute is registry-clean, so abstention is
+not the failure mode there.
+
+**Change 3.2 — Keyword endpoint prompt: scoring_method singular vs
+plural (D3).**
+
+Same file, "Reading the brief for scoring_method" section. Replace
+the existing ANY/ALL discriminator with the singular/plural framing
+(verbatim from D3):
+
+> ## Reading the brief for scoring_method
+>
+> The scoring_method defaults to ANY. ALL is reserved for the case
+> where the user named multiple distinct attributes that should
+> compound, each independently demanded.
+>
+> **Singular intent → ANY.** The user's expression names one
+> attribute. The keyword commit may include multiple registry
+> members because you have converted that one attribute into
+> several registry surface forms — paraphrases, alternative routes,
+> sub-form alternatives. Matching any one is sufficient evidence
+> the user's one thing is present.
+>
+> **Plural intent → ALL is on the table.** The user's expression
+> names multiple distinct attributes the user wants present
+> together — separate things, each independently demanded,
+> compoundable. Each must be matched for the call's intent to be
+> satisfied.
+>
+> **Operational test:** read the call's expressions. One
+> expression with multiple keywords commits to ANY. Multiple
+> expressions naming genuinely distinct attributes that the user
+> conjoined may commit to ALL.
+>
+> When N=1 (one finalized keyword) the two modes are mathematically
+> identical — default to ANY and move on.
+
+Do **not** include category-specific examples in this section
+either.
+
+**Update the matching schema field description.** [schemas/keyword_translation.py:215-238](../schemas/keyword_translation.py#L215-L238)
+contains the `scoring_method` field's description. Edit the prose
+to match the singular-vs-plural framing — the schema description is
+treated as a micro-prompt and must not contradict the endpoint
+prompt.
+
+**Change 3.3 — Bucket prompt: sanction partial abstention.**
+
+File: [search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md).
+
+Current "coverage exploration" phase has three local tests: Fire
+test, Drop test, Over-coverage refinement. Add a fourth:
+
+> - **Superset test (per endpoint):** apply the endpoint's own
+>   commitment principle to its candidates. If the candidates fail
+>   the endpoint's commitment criteria (e.g., the keyword
+>   candidates fail the keyword endpoint's superset test —
+>   gaps in coverage of the user's attribute, or stretching intent
+>   beyond what the registry names), drop that endpoint from
+>   coverage_assignments even if other endpoints fire. This is
+>   partial abstention — sanctioned alongside the existing whole-
+>   call abstention pathway.
+
+Update the section that currently says **"Empty `coverage_assignments`
+is valid only when ALL declared endpoint walks surfaced no useful
+candidate"** to clarify:
+
+> Empty `coverage_assignments` is valid when no endpoint walk
+> surfaced a candidate that passes both the local fire/drop tests
+> and the endpoint's own commitment criteria. Partial commitment
+> (some endpoints fire, others abstain via the superset test or
+> equivalent) is also valid — the per-endpoint criteria are
+> independent.
+
+**Audit other multi-endpoint bucket prompts** for the same wording
+pattern:
+- `audience_suitability_deterministic_first_objective.md`
+- `character_franchise_fanout_objective.md`
+- `semantic_preferred_deterministic_support_objective.md`
+
+Apply the same partial-abstention sanction wherever the prompt
+currently treats abstention as all-or-nothing.
+
+### Recommended sequence
+
+1. **Phase 1** (changes 1.1, 1.2). Pure code, monotonic-safe. Lands
+   without LLM behavior changes. Re-run V5 suite to confirm
+   ADDITIVE_KW_RISK count holds steady (Phase 1 doesn't reduce
+   risk; it just stops empty-spec from zeroing FACETS traits).
+
+2. **Phase 2a** (TARGET_AUDIENCE + SENSITIVE_CONTENT combine_type
+   flips). Single-line edits, no prompt churn. Re-run V5 suite —
+   the trip-wire flag stays on these categories (they still have
+   KW + ADDITIVE-multiply problem? No — combine_type is now
+   ALTERNATIVES, so the trip-wire formula
+   `combine_type==ADDITIVE AND KEYWORD ∈ fired` no longer fires.
+   Confirm flag clears).
+
+3. **Phase 2b**, one category at a time:
+   - EMOTIONAL_EXPERIENTIAL first (highest impact).
+   - SEASONAL_HOLIDAY second.
+   - SPECIFIC_PRAISE_CRITICISM third.
+   - Between each: re-run V5 suite, verify the category is no
+     longer in any ADDITIVE_KW_RISK report, verify no schema-
+     generation errors, smoke-test 3-5 queries that previously
+     hit the category.
+
+4. **Phase 3** prompt rewrites:
+   - 3.1 + 3.2 together (both edit keyword.md and the schema
+     description; do as one changeset).
+   - 3.3 separately, with the audit of sibling bucket prompts.
+   - After each, re-run V5 suite and count: ADDITIVE_KW_RISK
+     categories on the 5 still-keyword-firing categories
+     (CENTRAL_TOPIC, ELEMENT_PRESENCE, CHARACTER_ARCHETYPE,
+     STORY_THEMATIC_ARCHETYPE, NARRATIVE_DEVICES) plus any
+     remaining keyword commits in TARGET_AUDIENCE /
+     SENSITIVE_CONTENT under ALTERNATIVES.
+
+### Out of implementation scope
+
+Per the V5 "Out of decisions" section, the following candidates
+were considered and rejected; do **not** add them to the
+implementation:
+
+- Telling the keyword handler about downstream multiply consequences
+  in prose.
+- Adding `commitment_verdict: Literal["commit", "abstain"]` schema
+  field on `PotentialKeyword`.
+- Per-category ADDITIVE-strictness softening as a global parameter.
+- Threading sibling-trait info into the handler's user message
+  (architectural reversal of per-call isolation).
+- Step 3 keyword-namespace reservations (pushes registry knowledge
+  upstream into Step 3).
+
+### Verification plan
+
+After each phase, the V5 runner produces the headline metric:
+
+```bash
+python -m search_v2.run_specs --json /tmp/v5_after_phase_N.json
+```
+
+Compare ADDITIVE_KW_RISK count against the pre-Phase-1 baseline
+(46% / 12-of-26 default suite, 18-of-39 refinement suite). Expected
+trajectory:
+- After Phase 1: same 46% (Phase 1 fixes a different failure mode —
+  empty-spec trait death — not the trip-wire population).
+- After Phase 2a: trip-wire on TARGET_AUDIENCE / SENSITIVE_CONTENT
+  clears (combine_type no longer ADDITIVE).
+- After Phase 2b (each): trip-wire on the just-removed category
+  clears (KEYWORD no longer fires there).
+- After Phase 3: trip-wire on the 5 still-keyword-firing categories
+  drops as the handler abstains more aggressively under the
+  superset test. Target: <20% on the V5 suite, with abstentions
+  concentrated on non-canonical attributes (sharks, vibes).
+
+**Sticky cases to watch through all phases:**
+- "movies about WWII" CENTRAL_TOPIC — should keep firing keyword
+  (canonical historical event); ANY/ALL should be ANY after Phase 3.
+- "shitty shark movies" ELEMENT_PRESENCE — should abstain from
+  keyword after Phase 3 (sharks not in registry; superset test
+  rejects MONSTER_HORROR/SURVIVAL/HORROR).
+- "feel-good Christmas movies" — both trait categories
+  (EMOTIONAL_EXPERIENTIAL, SEASONAL_HOLIDAY) become semantic-only
+  after Phase 2b. Verify the semantic call still produces
+  reasonable rankings.
+- "movies about loneliness" — should remain pure-SEM (already does
+  today via correct abstention). Should not regress.
+
+### Files touched (full inventory)
+
+Code:
+- [search_v2/stage_4_execution.py](../search_v2/stage_4_execution.py) — Phase 1.1 + 1.2
+
+Schemas:
+- [schemas/trait_category.py](../schemas/trait_category.py) — Phase 2a (2 categories) + Phase 2b (3 categories)
+- [schemas/keyword_translation.py](../schemas/keyword_translation.py) — Phase 3.2 (scoring_method field description)
+
+Prompts (endpoint-level):
+- [search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md](../search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md) — Phase 3.1 + 3.2
+
+Prompts (bucket-level):
+- [search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md) — Phase 3.3
+- Plus `audience_suitability_deterministic_first_objective.md`,
+  `character_franchise_fanout_objective.md`,
+  `semantic_preferred_deterministic_support_objective.md` — Phase 3.3 audit
+
+Prompts (category-level), Phase 2b only:
+- `additional_objective_notes/seasonal_holiday.md`
+- `additional_objective_notes/emotional_experiential.md`
+- `additional_objective_notes/specific_praise_criticism.md`
+- `few_shot_examples/seasonal_holiday.md`
+- `few_shot_examples/emotional_experiential.md`
+- `few_shot_examples/specific_praise_criticism.md`
+
+Documentation:
+- [search_improvement_planning/query_categories.md](query_categories.md) — Phase 2b (Cat 29, Cat 33, Cat 40 endpoint lists)
+- This doc — already updated through V5.

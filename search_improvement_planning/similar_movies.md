@@ -1484,6 +1484,154 @@ V3 is ready to land when the benchmark re-run shows:
 9. **Auteur list (when unblocked) is consistent.** All anchors whose director is on the list see meaningful director-lane contribution; all anchors whose director is *not* on the list see zero director contribution in single-anchor (multi-anchor cohesion path unaffected).
 10. **Debug payload completeness.** Every candidate's evidence bundle includes the V3 lane breakdown (rare-keyword tier, cast floor activation, franchise tier hit) so future regressions are inspectable in lane-level detail.
 
+## V3.1 Calibration Adjustments (Post-Smoke)
+
+V3 shipped and survived hypothesis verification, but the 21-anchor + 14-cohort
+smoke run with the new diagnostic output (`base_score`, per-lane
+`raw→contribution`, multipliers, floor activations) surfaced four
+calibration issues that don't change architecture — only thresholds and
+weights. All four land together as V3.1.
+
+### Diagnosis
+
+1. **Rare-keyword tier thresholds were sized for raw `log(N/df)` IDF,
+   but `mv_trait_idf` normalizes to ~[0, 1]**. Max overall_keyword IDF
+   observed is 1.0; only ~5 keywords sit at ≥1.0; only ~18 at ≥0.65.
+   The original LOW < 2.5 / MODERATE < 4.5 / FLOOR_HIGH ≥ 5.0 thresholds
+   were unreachable — every trait fell into the LOW tier and the lane
+   was effectively capped at 0.05 for every candidate. The floor never
+   fired across the entire smoke set.
+
+2. **Themes lane weight (0.07 base, ~0.06 effective single-anchor) is
+   too small to surface real thematic matches.** Concrete failure case:
+   for the Barbie anchor, *I Am Not an Easy Man* (French gender-flip
+   comedy) scored `themes=0.305` raw — a clear thematic match — but
+   contributed only `0.018` to combined score. *The Favourite* scored
+   `themes=0.139` raw → `0.008` contribution. *Lady Bird* (Gerwig auteur
+   match) sat at #30. The lane is finding the right matches; the budget
+   given to it is sub-perceptual.
+
+3. **Single-anchor director lane has no floor.** Multi-anchor has a
+   `0.35` floor at `M_d/N ≥ 0.75 AND shape ≥ 0.40`. Single-anchor only
+   adds the flat `0.20` contribution, which can't compensate when the
+   anchor's vector embedding doesn't match an auteur sibling
+   (Barbie ↔ Lady Bird shape ≈ 0.0). Auteur-curated single-anchor
+   matches deserve floor protection too — the user explicitly anchored
+   on a film by that director.
+
+4. **Aggregate tag co-occurrence is under-rewarded.** The themes lane
+   captures normalized aggregate overlap but treats each shared trait
+   linearly. Matching 5 moderate-IDF tags is qualitatively a stronger
+   shape signal than matching 2 — random movie-pair sampling shows even
+   the p99 of shared moderate-or-high tier IDF sum is **0.000** (324
+   pairs, zero crossed 0.5). Real co-occurrence is far rarer than IDF
+   independence suggests, and the lane should reward the qualitative
+   jump.
+
+### Decisions
+
+**Decision 1 — Recalibrate rare-keyword tiers for [0,1] IDF range** (✅ shipped).
+
+| Constant | V3 plan | V3.1 |
+|---|---:|---:|
+| `RARE_KW_TIER_LOW_MAX` | 2.5 | **0.30** |
+| `RARE_KW_TIER_MODERATE_MAX` | 4.5 | **0.55** |
+| `RARE_KW_LOW_COEF` | 0.01 | **0.05** |
+| `RARE_KW_MODERATE_COEF` | 0.03 | **0.10** |
+| `RARE_KW_HIGH_COEF` | 0.05 | **0.20** |
+| `RARE_KW_FLOOR_HIGH_SINGLE` | 5.0 | **0.85** |
+| `RARE_KW_FLOOR_COMBO_SUM` | 7.0 | **1.50** |
+
+Verified impact: Star Wars `Empire` rare_keyword 0.020 → 0.556; Oppenheimer
+`Schindler's` 0.020 → 0.319; Pixar trio 0.05–0.23 across top 10.
+
+**Decision 2 — Lower rare-keyword floor's shape gate**.
+`RARE_KW_FLOOR_SHAPE_GATE` 0.30 → **0.20**. The 0.30 gate blocked every
+high-rare-keyword candidate observed in smoke (Schindler shape=0.030,
+Dunkirk shape=0.160). Lowering to 0.20 lets the floor activate for
+candidates that are genuinely on-tradition shape-wise but don't ride
+the strongest vector cluster. Risk: low-shape, single-strong-tag false
+positives. Mitigation: the floor's existing combo / single-super-rare
+gates remain — a candidate still needs `idf ≥ 0.85 single` OR
+`sum_moderate_high ≥ 1.50` to qualify.
+
+**Decision 3 — Bump baseline themes weight 0.07 → 0.12**.
+Effective contributions roughly double: Best Picture trio Pianist themes
+0.065 → 0.11, Barbie *I Am Not an Easy Man* 0.018 → 0.037, Tenet for
+Inception 0.029 → 0.052. Pixar / MCU / Star Wars don't tip rankings
+(shape and franchise dominate); thematic-driven anchors (Barbie, Best
+Picture, Tarantino, Get Out) recover thematic recall. Risk: spurious
+shape-distant matches with one accidental tag overlap. Mitigation: the
+themes denominator is `sum-of-anchor-IDFs`, so anchors with rich tag
+pools have a higher bar; country/medium/format exclusion already
+strips the worst noise.
+
+**Decision 4 — Add single-anchor director floor**.
+Mirrors the multi-anchor floor with softer thresholds:
+- `DIRECTOR_FLOOR_SINGLE_MAGNITUDE = 0.35`
+- `DIRECTOR_FLOOR_SINGLE_SHAPE_GATE = 0.20` (vs. 0.40 in multi —
+  auteur-on-auteur is a stronger signal than M_d/N cohesion, so a
+  weaker shape gate is appropriate)
+- Fires when: anchor has a curated auteur director AND candidate
+  shares that director AND `shape ≥ 0.20`.
+
+Concrete impact: Lady Bird vs. Barbie anchor — current score 0.307
+(director=0.20 + small contributions). New behavior: shape=0 still
+fails the gate, so Lady Bird specifically isn't saved. But *The
+Favourite* (currently #28, shape=0.412) and Frances Ha (if its shape
+clears 0.20) get pulled into the top 10 by the floor. The intent is
+explicit: when the user anchors on a film by a curated director, the
+director's other films deserve floor protection unless their shape is
+truly disjoint.
+
+**Decision 5 — Add a "moderate combo" bonus to rare-keyword lane**.
+Rewards the qualitative jump from "shared 1-2 moderate-rarity tags" to
+"shared 3+ moderate-rarity tags." Applied as an additive bonus to the
+rare-keyword score (not a separate floor — it stacks with the per-trait
+contributions inside the passthrough lane).
+
+Constants (sized from real catalog distribution: 324-pair random
+sample showed p99 of shared moderate+high IDF = 0.000, so even 0.50 is
+deep in the long tail):
+
+- `RARE_KW_COMBO_THRESHOLD = 0.50` — minimum sum of shared moderate+high
+  IDFs before bonus engages.
+- `RARE_KW_COMBO_BASE = 0.05` — immediate bonus on crossing threshold
+  (signals "this matters categorically, not just incrementally").
+- `RARE_KW_COMBO_RATE = 0.05` — additional bonus per unit above
+  threshold.
+- `RARE_KW_COMBO_CAP = 0.15` — max bonus.
+
+Formula: `bonus = clamp(0.05 + 0.05 * (sum_mod_high - 0.5), 0, 0.15)`
+when `sum_mod_high ≥ 0.5`, else 0.
+
+Sanity checks against observed anchor pools:
+- Barbie (5 moderate tags, sum 2.01): a candidate matching all 5 →
+  bonus ≈ 0.13. A candidate matching 2 of 5 → sum ~0.85 → bonus ≈ 0.07.
+- Best Picture trio anchors have sum 1.6-3.4 mod+high IDF; Pianist
+  matching most of one anchor's pool → bonus ≈ 0.12-0.15.
+- Random pair: bonus = 0 (97%+ of random pairs share zero mod+high).
+
+The bonus is the data-driven answer to the "5 not-individually-rare
+tags = a clear shape signature" instinct: it doesn't change the
+abstraction (themes still does proportional aggregate overlap;
+rare_keyword still does tiered per-trait), but it adds the
+qualitative-jump signal that linear-additive can't express.
+
+### Verification harness updates
+
+The 14-cohort multi-anchor harness gained a "Female-led / Gerwig" cohort
+(Barbie + Lady Bird + Little Women) to verify the director floor and
+themes weight changes against an auteur-saturated set. Two existing
+cohort definitions were corrected: "Nolan trio" had ID `49047` (Gravity)
+instead of `1124` (The Prestige); "Tarantino trio" had ID `5915` (Into
+the Wild) instead of `24` (Kill Bill).
+
+The batch runner output (`search_v2/run_similar_movies_batch.py`) now
+prints per-result diagnostics covering base score, per-lane
+`raw→contribution`, applied multipliers, and floor activations — making
+calibration regressions inspectable without reading lane code.
+
 ## V3 Implementation Order
 
 Tracked in detail in [`similar_movies_v3_plan.md`](similar_movies_v3_plan.md) §5 with status flags. Summary:

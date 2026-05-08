@@ -2379,6 +2379,92 @@ async def fetch_movie_ids_by_overall_keywords(
     return {row[0] for row in rows}
 
 
+async def fetch_movie_ids_by_themes_recall(
+    keyword_ids: list[int],
+    concept_tag_ids: list[int],
+    genre_ids: list[int],
+    *,
+    single_idf_threshold: float = 0.55,
+    combo_sum_threshold: float = 0.50,
+) -> set[int]:
+    """V3.1 themes-recall: movie IDs whose shared anchor traits qualify
+    by single-trait rarity OR combined-IDF sum.
+
+    Two recall paths in one SQL aggregate:
+      - Single-trait gate: at least one shared trait with idf >=
+        single_idf_threshold. Catches the "Manhattan Project" case
+        where one super-rare keyword uniquely identifies the candidate.
+      - Combo-sum gate: sum of all shared trait IDFs (across ALL tiers
+        per the V3.1 design call — not filtered to moderate+high)
+        >= combo_sum_threshold. Catches the "comedy + satire +
+        female-lead" case where multiple moderate tags coalesce.
+
+    Trait kinds resolved against `mv_trait_idf` use the constants
+    defined at module top (TRAIT_KIND_OVERALL_KEYWORD = 1,
+    TRAIT_KIND_CONCEPT_TAG = 2, TRAIT_KIND_TMDB_GENRE = 3). Trait pools
+    are split by kind because the source columns on `movie_card` are
+    separate arrays.
+
+    Empty inputs short-circuit. Each kind contributes a UNION ALL leg
+    only if its input list is non-empty — keeps the query plan tight
+    on anchors that lack one or more trait families.
+    """
+    if not keyword_ids and not concept_tag_ids and not genre_ids:
+        return set()
+
+    # Build the UNION ALL dynamically so we don't scan posting lists
+    # for kinds the anchor doesn't carry. Each leg follows the same
+    # shape: pick movies whose array overlaps the anchor trait set,
+    # join mv_trait_idf for IDFs, project (movie_id, idf) pairs.
+    legs: list[str] = []
+    params: list[object] = []
+    if keyword_ids:
+        legs.append(
+            """
+            SELECT m.movie_id, ti.idf
+            FROM public.movie_card m, public.mv_trait_idf ti
+            WHERE ti.trait_kind = 1
+              AND ti.trait_id = ANY(%s::int[])
+              AND m.keyword_ids && ARRAY[ti.trait_id]
+            """
+        )
+        params.append(list(keyword_ids))
+    if concept_tag_ids:
+        legs.append(
+            """
+            SELECT m.movie_id, ti.idf
+            FROM public.movie_card m, public.mv_trait_idf ti
+            WHERE ti.trait_kind = 2
+              AND ti.trait_id = ANY(%s::int[])
+              AND m.concept_tag_ids && ARRAY[ti.trait_id]
+            """
+        )
+        params.append(list(concept_tag_ids))
+    if genre_ids:
+        legs.append(
+            """
+            SELECT m.movie_id, ti.idf
+            FROM public.movie_card m, public.mv_trait_idf ti
+            WHERE ti.trait_kind = 3
+              AND ti.trait_id = ANY(%s::int[])
+              AND m.genre_ids && ARRAY[ti.trait_id]
+            """
+        )
+        params.append(list(genre_ids))
+
+    union_clause = " UNION ALL ".join(legs)
+    query = f"""
+        WITH shared AS ({union_clause})
+        SELECT movie_id
+        FROM shared
+        GROUP BY movie_id
+        HAVING SUM(idf) >= %s OR MAX(idf) >= %s
+    """
+    params.extend([combo_sum_threshold, single_idf_threshold])
+    rows = await _execute_read(query, tuple(params))
+    return {row[0] for row in rows}
+
+
 async def fetch_similarity_top_billed_cast(
     movie_ids: list[int],
     *,
