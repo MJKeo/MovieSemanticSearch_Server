@@ -48,7 +48,7 @@
         "movie_id": 157336,
         "title": "Interstellar",
         "year": 2014,
-        "score": 0.91376,
+        "score": 0.986861,
         "base_score": 0.870248,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -86,13 +86,62 @@
           "rare_keyword": 0.347395
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 2,
+        "movie_id": 1018,
+        "title": "Mulholland Drive",
+        "year": 2001,
+        "score": 0.93164,
+        "base_score": 0.821552,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.86097,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.9641,
+          "format": 1.0,
+          "themes": 0.31323,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.165665
+        },
+        "lane_contributions": {
+          "shape": 0.54377,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.030445,
+          "format": 0.042105,
+          "themes": 0.039566,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.165665
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 3,
         "movie_id": 577922,
         "title": "Tenet",
         "year": 2020,
@@ -140,27 +189,28 @@
         "floor_source": ""
       },
       {
-        "rank": 3,
-        "movie_id": 1018,
-        "title": "Mulholland Drive",
-        "year": 2001,
-        "score": 0.86263,
-        "base_score": 0.821552,
+        "rank": 4,
+        "movie_id": 77,
+        "title": "Memento",
+        "year": 2000,
+        "score": 0.898251,
+        "base_score": 0.792109,
         "dominant_lane": "shape",
         "lanes": [
           "shape",
+          "director",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.86097,
-          "director": 0.0,
+          "shape": 0.497562,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.9641,
+          "quality": 0.966551,
           "format": 1.0,
           "themes": 0.31323,
           "cast": 0.0,
@@ -168,12 +218,12 @@
           "rare_keyword": 0.165665
         },
         "lane_contributions": {
-          "shape": 0.54377,
-          "director": 0.0,
+          "shape": 0.31425,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.030445,
+          "quality": 0.030523,
           "format": 0.042105,
           "themes": 0.039566,
           "cast": 0.0,
@@ -181,13 +231,14 @@
           "rare_keyword": 0.165665
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 4,
+        "rank": 5,
         "movie_id": 68727,
         "title": "Trance",
         "year": 2013,
@@ -234,59 +285,11 @@
         "floor_source": ""
       },
       {
-        "rank": 5,
-        "movie_id": 77,
-        "title": "Memento",
-        "year": 2000,
-        "score": 0.831714,
-        "base_score": 0.792109,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "director",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.497562,
-          "director": 0.2,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.966551,
-          "format": 1.0,
-          "themes": 0.31323,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.165665
-        },
-        "lane_contributions": {
-          "shape": 0.31425,
-          "director": 0.2,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.030523,
-          "format": 0.042105,
-          "themes": 0.039566,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.165665
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 6,
         "movie_id": 62,
         "title": "2001: A Space Odyssey",
         "year": 1968,
-        "score": 0.817174,
+        "score": 0.882548,
         "base_score": 0.778261,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -323,13 +326,62 @@
           "rare_keyword": 0.347395
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 7,
+        "movie_id": 1164,
+        "title": "Babel",
+        "year": 2006,
+        "score": 0.819773,
+        "base_score": 0.722904,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.730709,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.936926,
+          "format": 1.0,
+          "themes": 0.23803,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.159644
+        },
+        "lane_contributions": {
+          "shape": 0.4615,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.029587,
+          "format": 0.042105,
+          "themes": 0.030067,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.159644
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 8,
         "movie_id": 23629,
         "title": "Sucker Punch",
         "year": 2011,
@@ -376,107 +428,62 @@
         "floor_source": ""
       },
       {
-        "rank": 8,
-        "movie_id": 603,
-        "title": "The Matrix",
-        "year": 1999,
-        "score": 0.785275,
-        "base_score": 0.747881,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.511674,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.957149,
-          "format": 1.0,
-          "themes": 0.589487,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.277926
-        },
-        "lane_contributions": {
-          "shape": 0.323162,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.030226,
-          "format": 0.042105,
-          "themes": 0.074462,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.277926
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 9,
-        "movie_id": 638,
-        "title": "Lost Highway",
-        "year": 1997,
-        "score": 0.778954,
-        "base_score": 0.741861,
-        "dominant_lane": "shape",
+        "movie_id": 155,
+        "title": "The Dark Knight",
+        "year": 2008,
+        "score": 0.797827,
+        "base_score": 0.703551,
+        "dominant_lane": "rare_keyword",
         "lanes": [
           "shape",
+          "director",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.737365,
-          "director": 0.0,
+          "shape": 0.159816,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.91262,
+          "quality": 0.974793,
           "format": 1.0,
-          "themes": 0.31323,
+          "themes": 0.508898,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.165665
+          "rare_keyword": 0.265444
         },
         "lane_contributions": {
-          "shape": 0.465704,
-          "director": 0.0,
+          "shape": 0.100936,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.02882,
+          "quality": 0.030783,
           "format": 0.042105,
-          "themes": 0.039566,
+          "themes": 0.064282,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.165665
+          "rare_keyword": 0.265444
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 10,
-        "movie_id": 1164,
-        "title": "Babel",
-        "year": 2006,
-        "score": 0.759049,
-        "base_score": 0.722904,
-        "dominant_lane": "shape",
+        "movie_id": 545611,
+        "title": "Everything Everywhere All at Once",
+        "year": 2022,
+        "score": 0.785975,
+        "base_score": 0.6931,
+        "dominant_lane": "rare_keyword",
         "lanes": [
           "shape",
           "quality",
@@ -485,33 +492,34 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.730709,
+          "shape": 0.249582,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.936926,
+          "quality": 0.956918,
           "format": 1.0,
-          "themes": 0.23803,
+          "themes": 0.731207,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.159644
+          "rare_keyword": 0.370782
         },
         "lane_contributions": {
-          "shape": 0.4615,
+          "shape": 0.157631,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.029587,
+          "quality": 0.030218,
           "format": 0.042105,
-          "themes": 0.030067,
+          "themes": 0.092363,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.159644
+          "rare_keyword": 0.370782
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -567,7 +575,7 @@
         "movie_id": 604,
         "title": "The Matrix Reloaded",
         "year": 2003,
-        "score": 1.582615,
+        "score": 1.709224,
         "base_score": 1.507252,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -605,7 +613,8 @@
           "rare_keyword": 0.573295
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -615,7 +624,7 @@
         "movie_id": 861,
         "title": "Total Recall",
         "year": 1990,
-        "score": 0.85897,
+        "score": 0.927688,
         "base_score": 0.818067,
         "dominant_lane": "shape",
         "lanes": [
@@ -652,7 +661,8 @@
           "rare_keyword": 0.265854
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -662,7 +672,7 @@
         "movie_id": 157350,
         "title": "Divergent",
         "year": 2014,
-        "score": 0.603624,
+        "score": 0.651914,
         "base_score": 0.57488,
         "dominant_lane": "shape",
         "lanes": [
@@ -699,13 +709,62 @@
           "rare_keyword": 0.200409
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 4,
+        "movie_id": 577922,
+        "title": "Tenet",
+        "year": 2020,
+        "score": 0.582354,
+        "base_score": 0.513539,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.670951,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.939582,
+          "format": 1.0,
+          "themes": 0.290908,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.083072
+        },
+        "lane_contributions": {
+          "shape": 0.33228,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.026845,
+          "format": 0.038095,
+          "themes": 0.033247,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.083072
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 5,
         "movie_id": 24660,
         "title": "A Detective Story",
         "year": 2003,
@@ -754,58 +813,11 @@
         "floor_source": ""
       },
       {
-        "rank": 5,
-        "movie_id": 577922,
-        "title": "Tenet",
-        "year": 2020,
-        "score": 0.539216,
-        "base_score": 0.513539,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.670951,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.939582,
-          "format": 1.0,
-          "themes": 0.290908,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.083072
-        },
-        "lane_contributions": {
-          "shape": 0.33228,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.026845,
-          "format": 0.038095,
-          "themes": 0.033247,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.083072
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 6,
         "movie_id": 605,
         "title": "The Matrix Revolutions",
         "year": 2003,
-        "score": 1.399282,
+        "score": 1.511224,
         "base_score": 1.332649,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -843,7 +855,8 @@
           "rare_keyword": 0.605305
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -853,7 +866,7 @@
         "movie_id": 670292,
         "title": "The Creator",
         "year": 2023,
-        "score": 0.888213,
+        "score": 0.95927,
         "base_score": 0.845917,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -890,7 +903,8 @@
           "rare_keyword": 0.610951
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -900,7 +914,7 @@
         "movie_id": 280,
         "title": "Terminator 2: Judgment Day",
         "year": 1991,
-        "score": 0.878555,
+        "score": 0.94884,
         "base_score": 0.836719,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -937,7 +951,8 @@
           "rare_keyword": 0.49619
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -947,7 +962,7 @@
         "movie_id": 624860,
         "title": "The Matrix Resurrections",
         "year": 2021,
-        "score": 0.858106,
+        "score": 0.926754,
         "base_score": 0.817244,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -985,7 +1000,8 @@
           "rare_keyword": 0.330718
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -995,7 +1011,7 @@
         "movie_id": 97,
         "title": "Tron",
         "year": 1982,
-        "score": 0.842896,
+        "score": 0.910328,
         "base_score": 0.802758,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -1032,7 +1048,8 @@
           "rare_keyword": 0.509734
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -1090,7 +1107,7 @@
         "movie_id": 1891,
         "title": "The Empire Strikes Back",
         "year": 1980,
-        "score": 1.819632,
+        "score": 1.965203,
         "base_score": 1.584283,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -1130,7 +1147,8 @@
         },
         "multipliers": {
           "studio": 1.093859,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -1187,7 +1205,7 @@
         "movie_id": 13475,
         "title": "Star Trek",
         "year": 2009,
-        "score": 0.561573,
+        "score": 0.606499,
         "base_score": 0.534831,
         "dominant_lane": "shape",
         "lanes": [
@@ -1224,13 +1242,62 @@
           "rare_keyword": 0.09558
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 4,
+        "movie_id": 54138,
+        "title": "Star Trek Into Darkness",
+        "year": 2013,
+        "score": 0.475033,
+        "base_score": 0.4189,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.500545,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.35,
+          "format": 1.0,
+          "themes": 0.285555,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.09558
+        },
+        "lane_contributions": {
+          "shape": 0.195128,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.065254,
+          "format": 0.033898,
+          "themes": 0.02904,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.09558
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 5,
         "movie_id": 11884,
         "title": "The Last Starfighter",
         "year": 1984,
@@ -1266,53 +1333,6 @@
           "quality": 0.037288,
           "format": 0.033898,
           "themes": 0.031125,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.09558
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 5,
-        "movie_id": 54138,
-        "title": "Star Trek Into Darkness",
-        "year": 2013,
-        "score": 0.439845,
-        "base_score": 0.4189,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.500545,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.35,
-          "format": 1.0,
-          "themes": 0.285555,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.09558
-        },
-        "lane_contributions": {
-          "shape": 0.195128,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.065254,
-          "format": 0.033898,
-          "themes": 0.02904,
           "cast": 0.0,
           "specific_award": 0.0,
           "rare_keyword": 0.09558
@@ -1375,6 +1395,57 @@
       },
       {
         "rank": 7,
+        "movie_id": 140607,
+        "title": "Star Wars: The Force Awakens",
+        "year": 2015,
+        "score": 1.613094,
+        "base_score": 1.335859,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "franchise",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword",
+          "studio"
+        ],
+        "lane_scores": {
+          "shape": 1.0,
+          "director": 0.0,
+          "franchise": 1.0,
+          "studio": 0.648441,
+          "source": 0.0,
+          "quality": 0.552,
+          "format": 1.0,
+          "themes": 0.632826,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.490623
+        },
+        "lane_contributions": {
+          "shape": 0.389831,
+          "director": 0.0,
+          "franchise": 0.254237,
+          "studio": 0.038906,
+          "source": 0.0,
+          "quality": 0.102915,
+          "format": 0.033898,
+          "themes": 0.064355,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.490623
+        },
+        "multipliers": {
+          "studio": 1.064844,
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 8,
         "movie_id": 1893,
         "title": "Star Wars: Episode I - The Phantom Menace",
         "year": 1999,
@@ -1424,7 +1495,7 @@
         "floor_source": ""
       },
       {
-        "rank": 8,
+        "rank": 9,
         "movie_id": 181812,
         "title": "Star Wars: The Rise of Skywalker",
         "year": 2019,
@@ -1468,56 +1539,6 @@
         },
         "multipliers": {
           "studio": 1.063879,
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
-        "movie_id": 140607,
-        "title": "Star Wars: The Force Awakens",
-        "year": 2015,
-        "score": 1.493606,
-        "base_score": 1.335859,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "franchise",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword",
-          "studio"
-        ],
-        "lane_scores": {
-          "shape": 1.0,
-          "director": 0.0,
-          "franchise": 1.0,
-          "studio": 0.648441,
-          "source": 0.0,
-          "quality": 0.552,
-          "format": 1.0,
-          "themes": 0.632826,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.490623
-        },
-        "lane_contributions": {
-          "shape": 0.389831,
-          "director": 0.0,
-          "franchise": 0.254237,
-          "studio": 0.038906,
-          "source": 0.0,
-          "quality": 0.102915,
-          "format": 0.033898,
-          "themes": 0.064355,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.490623
-        },
-        "multipliers": {
-          "studio": 1.064844,
           "country": 1.05
         },
         "floor_value": 0.0,
@@ -1626,7 +1647,7 @@
         "movie_id": 863,
         "title": "Toy Story 2",
         "year": 1999,
-        "score": 1.210961,
+        "score": 1.307838,
         "base_score": 1.056104,
         "dominant_lane": "shape",
         "lanes": [
@@ -1666,7 +1687,8 @@
         },
         "multipliers": {
           "studio": 1.092029,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -1676,7 +1698,7 @@
         "movie_id": 10193,
         "title": "Toy Story 3",
         "year": 2010,
-        "score": 1.127288,
+        "score": 1.217471,
         "base_score": 0.996495,
         "dominant_lane": "shape",
         "lanes": [
@@ -1716,7 +1738,8 @@
         },
         "multipliers": {
           "studio": 1.077384,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -1726,7 +1749,7 @@
         "movie_id": 12,
         "title": "Finding Nemo",
         "year": 2003,
-        "score": 0.557909,
+        "score": 0.602542,
         "base_score": 0.531342,
         "dominant_lane": "shape",
         "lanes": [
@@ -1764,7 +1787,8 @@
           "rare_keyword": 0.094691
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -1774,7 +1798,7 @@
         "movie_id": 929204,
         "title": "Wallace & Gromit: Vengeance Most Fowl",
         "year": 2024,
-        "score": 0.50544,
+        "score": 0.545875,
         "base_score": 0.481371,
         "dominant_lane": "shape",
         "lanes": [
@@ -1811,7 +1835,8 @@
           "rare_keyword": 0.094691
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -1821,7 +1846,7 @@
         "movie_id": 301528,
         "title": "Toy Story 4",
         "year": 2019,
-        "score": 0.876676,
+        "score": 0.946811,
         "base_score": 0.83493,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -1860,7 +1885,8 @@
           "rare_keyword": 0.223367
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -1870,7 +1896,7 @@
         "movie_id": 585,
         "title": "Monsters, Inc.",
         "year": 2001,
-        "score": 0.791315,
+        "score": 0.854621,
         "base_score": 0.753634,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -1908,7 +1934,8 @@
           "rare_keyword": 0.290403
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2009,57 +2036,10 @@
       },
       {
         "rank": 9,
-        "movie_id": 295693,
-        "title": "The Boss Baby",
-        "year": 2017,
-        "score": 0.599725,
-        "base_score": 0.571167,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.212136,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.35,
-          "format": 1.0,
-          "themes": 0.972657,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.290403
-        },
-        "lane_contributions": {
-          "shape": 0.082697,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.065254,
-          "format": 0.033898,
-          "themes": 0.098914,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.290403
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 10,
         "movie_id": 569094,
         "title": "Spider-Man: Across the Spider-Verse",
         "year": 2023,
-        "score": 0.56984,
+        "score": 0.615428,
         "base_score": 0.542705,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -2096,7 +2076,56 @@
           "rare_keyword": 0.223367
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
+        "movie_id": 269149,
+        "title": "Zootopia",
+        "year": 2016,
+        "score": 0.599819,
+        "base_score": 0.528941,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.24583,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.552,
+          "format": 1.0,
+          "themes": 0.744877,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.220545
+        },
+        "lane_contributions": {
+          "shape": 0.095832,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.102915,
+          "format": 0.033898,
+          "themes": 0.07575,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.220545
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2156,7 +2185,7 @@
         "movie_id": 12429,
         "title": "Ponyo",
         "year": 2008,
-        "score": 1.236001,
+        "score": 1.334881,
         "base_score": 1.070131,
         "dominant_lane": "shape",
         "lanes": [
@@ -2196,7 +2225,8 @@
         },
         "multipliers": {
           "studio": 1.1,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2206,7 +2236,7 @@
         "movie_id": 4935,
         "title": "Howl's Moving Castle",
         "year": 2004,
-        "score": 1.203547,
+        "score": 1.299831,
         "base_score": 1.042032,
         "dominant_lane": "shape",
         "lanes": [
@@ -2246,7 +2276,8 @@
         },
         "multipliers": {
           "studio": 1.1,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2256,7 +2287,7 @@
         "movie_id": 8392,
         "title": "My Neighbor Totoro",
         "year": 1988,
-        "score": 0.972947,
+        "score": 1.050783,
         "base_score": 0.926617,
         "dominant_lane": "shape",
         "lanes": [
@@ -2295,7 +2326,8 @@
           "rare_keyword": 0.224215
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2305,7 +2337,7 @@
         "movie_id": 149871,
         "title": "The Tale of The Princess Kaguya",
         "year": 2013,
-        "score": 0.892543,
+        "score": 0.963947,
         "base_score": 0.772765,
         "dominant_lane": "shape",
         "lanes": [
@@ -2344,7 +2376,8 @@
         },
         "multipliers": {
           "studio": 1.1,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2354,7 +2387,7 @@
         "movie_id": 128,
         "title": "Princess Mononoke",
         "year": 1997,
-        "score": 0.869471,
+        "score": 0.939029,
         "base_score": 0.828068,
         "dominant_lane": "shape",
         "lanes": [
@@ -2393,13 +2426,64 @@
           "rare_keyword": 0.216639
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 6,
+        "movie_id": 508883,
+        "title": "The Boy and the Heron",
+        "year": 2023,
+        "score": 0.84783,
+        "base_score": 0.747645,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "director",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword",
+          "studio"
+        ],
+        "lane_scores": {
+          "shape": 0.549119,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 1.0,
+          "source": 0.0,
+          "quality": 0.752,
+          "format": 1.0,
+          "themes": 0.295772,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.05
+        },
+        "lane_contributions": {
+          "shape": 0.27456,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 0.06,
+          "source": 0.0,
+          "quality": 0.153185,
+          "format": 0.037037,
+          "themes": 0.032864,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.05
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 7,
         "movie_id": 10515,
         "title": "Castle in the Sky",
         "year": 1986,
@@ -2448,60 +2532,11 @@
         "floor_source": ""
       },
       {
-        "rank": 7,
-        "movie_id": 508883,
-        "title": "The Boy and the Heron",
-        "year": 2023,
-        "score": 0.785028,
-        "base_score": 0.747645,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "director",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword",
-          "studio"
-        ],
-        "lane_scores": {
-          "shape": 0.549119,
-          "director": 0.2,
-          "franchise": 0.0,
-          "studio": 1.0,
-          "source": 0.0,
-          "quality": 0.752,
-          "format": 1.0,
-          "themes": 0.295772,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.05
-        },
-        "lane_contributions": {
-          "shape": 0.27456,
-          "director": 0.2,
-          "franchise": 0.0,
-          "studio": 0.06,
-          "source": 0.0,
-          "quality": 0.153185,
-          "format": 0.037037,
-          "themes": 0.032864,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.05
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 8,
         "movie_id": 81,
         "title": "Nausica\u00e4 of the Valley of the Wind",
         "year": 1984,
-        "score": 0.582039,
+        "score": 0.628602,
         "base_score": 0.554323,
         "dominant_lane": "director",
         "lanes": [
@@ -2539,7 +2574,8 @@
           "rare_keyword": 0.038766
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2549,7 +2585,7 @@
         "movie_id": 11621,
         "title": "Porco Rosso",
         "year": 1992,
-        "score": 0.574372,
+        "score": 0.620322,
         "base_score": 0.547021,
         "dominant_lane": "director",
         "lanes": [
@@ -2588,7 +2624,8 @@
           "rare_keyword": 0.05
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2598,7 +2635,7 @@
         "movie_id": 110416,
         "title": "Song of the Sea",
         "year": 2014,
-        "score": 0.547732,
+        "score": 0.591551,
         "base_score": 0.730309,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -2635,7 +2672,8 @@
           "rare_keyword": 0.28392
         },
         "multipliers": {
-          "country": 0.75
+          "country": 0.75,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2693,7 +2731,7 @@
         "movie_id": 240,
         "title": "The Godfather Part II",
         "year": 1974,
-        "score": 1.182381,
+        "score": 1.276971,
         "base_score": 1.126077,
         "dominant_lane": "shape",
         "lanes": [
@@ -2732,7 +2770,8 @@
           "rare_keyword": 0.260774
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2742,7 +2781,7 @@
         "movie_id": 769,
         "title": "GoodFellas",
         "year": 1990,
-        "score": 0.584151,
+        "score": 0.630883,
         "base_score": 0.556334,
         "dominant_lane": "shape",
         "lanes": [
@@ -2780,7 +2819,8 @@
           "rare_keyword": 0.08714
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2837,7 +2877,7 @@
         "movie_id": 335,
         "title": "Once Upon a Time in the West",
         "year": 1968,
-        "score": 0.390838,
+        "score": 0.422105,
         "base_score": 0.372227,
         "dominant_lane": "shape",
         "lanes": [
@@ -2874,7 +2914,8 @@
           "rare_keyword": 0.084733
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2884,7 +2925,7 @@
         "movie_id": 242,
         "title": "The Godfather Part III",
         "year": 1990,
-        "score": 0.88419,
+        "score": 0.954925,
         "base_score": 0.842085,
         "dominant_lane": "franchise",
         "lanes": [
@@ -2923,7 +2964,8 @@
           "rare_keyword": 0.193212
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2933,7 +2975,7 @@
         "movie_id": 4147,
         "title": "Road to Perdition",
         "year": 2002,
-        "score": 0.699672,
+        "score": 0.755645,
         "base_score": 0.666354,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -2970,7 +3012,8 @@
           "rare_keyword": 0.258501
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -2980,7 +3023,7 @@
         "movie_id": 15,
         "title": "Citizen Kane",
         "year": 1941,
-        "score": 0.675148,
+        "score": 0.729159,
         "base_score": 0.642998,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -3017,65 +3060,18 @@
           "rare_keyword": 0.228004
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 8,
-        "movie_id": 6075,
-        "title": "Carlito's Way",
-        "year": 1993,
-        "score": 0.645428,
-        "base_score": 0.614693,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "source",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.315886,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.197827,
-          "quality": 0.35,
-          "format": 1.0,
-          "themes": 0.848392,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.307137
-        },
-        "lane_contributions": {
-          "shape": 0.108748,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.019458,
-          "quality": 0.063115,
-          "format": 0.032787,
-          "themes": 0.083448,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.307137
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
         "movie_id": 398978,
         "title": "The Irishman",
         "year": 2019,
-        "score": 0.641981,
+        "score": 0.69334,
         "base_score": 0.611411,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -3113,17 +3109,18 @@
           "rare_keyword": 0.201248
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 10,
+        "rank": 9,
         "movie_id": 947,
         "title": "Lawrence of Arabia",
         "year": 1962,
-        "score": 0.637393,
+        "score": 0.688384,
         "base_score": 0.607041,
         "dominant_lane": "quality",
         "lanes": [
@@ -3161,7 +3158,57 @@
           "rare_keyword": 0.17075
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
+        "movie_id": 7345,
+        "title": "There Will Be Blood",
+        "year": 2007,
+        "score": 0.647116,
+        "base_score": 0.570649,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "source",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.169255,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.197827,
+          "quality": 0.944,
+          "format": 1.0,
+          "themes": 0.629337,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.228004
+        },
+        "lane_contributions": {
+          "shape": 0.058268,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.019458,
+          "quality": 0.17023,
+          "format": 0.032787,
+          "themes": 0.061902,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.228004
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3220,7 +3267,7 @@
         "movie_id": 49026,
         "title": "The Dark Knight Rises",
         "year": 2012,
-        "score": 1.576726,
+        "score": 1.702864,
         "base_score": 1.501644,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -3260,7 +3307,8 @@
           "rare_keyword": 0.486907
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3368,7 +3416,7 @@
         "movie_id": 271110,
         "title": "Captain America: Civil War",
         "year": 2016,
-        "score": 0.466146,
+        "score": 0.503438,
         "base_score": 0.443949,
         "dominant_lane": "shape",
         "lanes": [
@@ -3406,7 +3454,8 @@
           "rare_keyword": 0.073935
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3464,7 +3513,7 @@
         "movie_id": 272,
         "title": "Batman Begins",
         "year": 2005,
-        "score": 1.423303,
+        "score": 1.537167,
         "base_score": 1.355527,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -3504,7 +3553,8 @@
           "rare_keyword": 0.434291
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3560,6 +3610,55 @@
       },
       {
         "rank": 8,
+        "movie_id": 27205,
+        "title": "Inception",
+        "year": 2010,
+        "score": 0.814592,
+        "base_score": 0.718335,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "director",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.185344,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.584,
+          "format": 1.0,
+          "themes": 0.518352,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.265444
+        },
+        "lane_contributions": {
+          "shape": 0.063807,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.105311,
+          "format": 0.032787,
+          "themes": 0.050985,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.265444
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 9,
         "movie_id": 13183,
         "title": "Watchmen",
         "year": 2009,
@@ -3607,13 +3706,13 @@
         "floor_source": ""
       },
       {
-        "rank": 9,
-        "movie_id": 27205,
-        "title": "Inception",
-        "year": 2010,
-        "score": 0.754252,
-        "base_score": 0.718335,
-        "dominant_lane": "rare_keyword",
+        "rank": 10,
+        "movie_id": 872585,
+        "title": "Oppenheimer",
+        "year": 2023,
+        "score": 0.754996,
+        "base_score": 0.665781,
+        "dominant_lane": "director",
         "lanes": [
           "shape",
           "director",
@@ -3623,81 +3722,34 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.185344,
+          "shape": 0.327471,
           "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.584,
+          "quality": 0.872,
           "format": 1.0,
-          "themes": 0.518352,
+          "themes": 0.187186,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.265444
+          "rare_keyword": 0.144601
         },
         "lane_contributions": {
-          "shape": 0.063807,
+          "shape": 0.112736,
           "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.105311,
+          "quality": 0.157246,
           "format": 0.032787,
-          "themes": 0.050985,
+          "themes": 0.018412,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.265444
+          "rare_keyword": 0.144601
         },
         "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 10,
-        "movie_id": 49521,
-        "title": "Man of Steel",
-        "year": 2013,
-        "score": 0.700179,
-        "base_score": 0.666837,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "source",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.526485,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.35212,
-          "quality": 0.35,
-          "format": 1.0,
-          "themes": 0.466673,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.30915
-        },
-        "lane_contributions": {
-          "shape": 0.181249,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.034635,
-          "quality": 0.063115,
-          "format": 0.032787,
-          "themes": 0.045902,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.30915
-        },
-        "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3755,7 +3807,7 @@
         "movie_id": 155,
         "title": "The Dark Knight",
         "year": 2008,
-        "score": 1.627089,
+        "score": 1.757257,
         "base_score": 1.549609,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -3795,7 +3847,8 @@
           "rare_keyword": 0.486907
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3805,7 +3858,7 @@
         "movie_id": 299534,
         "title": "Avengers: Endgame",
         "year": 2019,
-        "score": 0.993959,
+        "score": 1.073476,
         "base_score": 0.946628,
         "dominant_lane": "shape",
         "lanes": [
@@ -3843,7 +3896,8 @@
           "rare_keyword": 0.338076
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3853,7 +3907,7 @@
         "movie_id": 122,
         "title": "The Lord of the Rings: The Return of the King",
         "year": 2003,
-        "score": 0.852238,
+        "score": 0.920417,
         "base_score": 0.811655,
         "dominant_lane": "shape",
         "lanes": [
@@ -3890,7 +3944,8 @@
           "rare_keyword": 0.275119
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3900,7 +3955,7 @@
         "movie_id": 98,
         "title": "Gladiator",
         "year": 2000,
-        "score": 0.757887,
+        "score": 0.818518,
         "base_score": 0.721798,
         "dominant_lane": "shape",
         "lanes": [
@@ -3937,54 +3992,57 @@
           "rare_keyword": 0.205041
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 5,
-        "movie_id": 1895,
-        "title": "Star Wars: Episode III - Revenge of the Sith",
-        "year": 2005,
-        "score": 0.707488,
-        "base_score": 0.673798,
+        "movie_id": 271110,
+        "title": "Captain America: Civil War",
+        "year": 2016,
+        "score": 0.714779,
+        "base_score": 0.630316,
         "dominant_lane": "shape",
         "lanes": [
           "shape",
+          "source",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.659205,
+          "shape": 0.916836,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.94238,
+          "source": 0.35212,
+          "quality": 0.951609,
           "format": 1.0,
-          "themes": 0.438274,
+          "themes": 0.299265,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.272622
+          "rare_keyword": 0.091972
         },
         "lane_contributions": {
-          "shape": 0.290292,
+          "shape": 0.403744,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.025937,
+          "source": 0.038765,
+          "quality": 0.026191,
           "format": 0.036697,
-          "themes": 0.04825,
+          "themes": 0.032947,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.272622
+          "rare_keyword": 0.091972
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -3994,7 +4052,7 @@
         "movie_id": 272,
         "title": "Batman Begins",
         "year": 2005,
-        "score": 1.352936,
+        "score": 1.461171,
         "base_score": 1.288511,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -4034,7 +4092,8 @@
           "rare_keyword": 0.434291
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -4187,48 +4246,49 @@
       },
       {
         "rank": 10,
-        "movie_id": 13183,
-        "title": "Watchmen",
-        "year": 2009,
-        "score": 0.718808,
-        "base_score": 0.684579,
+        "movie_id": 27205,
+        "title": "Inception",
+        "year": 2010,
+        "score": 0.725345,
+        "base_score": 0.639634,
         "dominant_lane": "rare_keyword",
         "lanes": [
           "shape",
-          "source",
+          "director",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.264508,
-          "director": 0.0,
+          "shape": 0.131295,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.35212,
-          "quality": 0.926001,
+          "source": 0.0,
+          "quality": 0.959185,
           "format": 1.0,
-          "themes": 0.646429,
+          "themes": 0.483913,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.395983
+          "rare_keyword": 0.265444
         },
         "lane_contributions": {
-          "shape": 0.116481,
-          "director": 0.0,
+          "shape": 0.057818,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.038765,
-          "quality": 0.025486,
+          "source": 0.0,
+          "quality": 0.0264,
           "format": 0.036697,
-          "themes": 0.071166,
+          "themes": 0.053275,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.395983
+          "rare_keyword": 0.265444
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -4332,7 +4392,7 @@
         "movie_id": 458723,
         "title": "Us",
         "year": 2019,
-        "score": 1.041747,
+        "score": 1.125087,
         "base_score": 0.99214,
         "dominant_lane": "shape",
         "lanes": [
@@ -4370,7 +4430,8 @@
           "rare_keyword": 0.256179
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -4800,6 +4861,57 @@
     "results": [
       {
         "rank": 1,
+        "movie_id": 324552,
+        "title": "John Wick: Chapter 2",
+        "year": 2017,
+        "score": 1.290015,
+        "base_score": 1.06815,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "franchise",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword",
+          "studio"
+        ],
+        "lane_scores": {
+          "shape": 0.84491,
+          "director": 0.0,
+          "franchise": 0.7,
+          "studio": 0.65,
+          "source": 0.0,
+          "quality": 0.947033,
+          "format": 1.0,
+          "themes": 0.858657,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.286433
+        },
+        "lane_contributions": {
+          "shape": 0.418432,
+          "director": 0.0,
+          "franchise": 0.2,
+          "studio": 0.039,
+          "source": 0.0,
+          "quality": 0.027058,
+          "format": 0.038095,
+          "themes": 0.098132,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.286433
+        },
+        "multipliers": {
+          "studio": 1.065,
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 2,
         "movie_id": 458156,
         "title": "John Wick: Chapter 3 - Parabellum",
         "year": 2019,
@@ -4849,61 +4961,11 @@
         "floor_source": ""
       },
       {
-        "rank": 2,
-        "movie_id": 324552,
-        "title": "John Wick: Chapter 2",
-        "year": 2017,
-        "score": 1.194458,
-        "base_score": 1.06815,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "franchise",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword",
-          "studio"
-        ],
-        "lane_scores": {
-          "shape": 0.84491,
-          "director": 0.0,
-          "franchise": 0.7,
-          "studio": 0.65,
-          "source": 0.0,
-          "quality": 0.947033,
-          "format": 1.0,
-          "themes": 0.858657,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.286433
-        },
-        "lane_contributions": {
-          "shape": 0.418432,
-          "director": 0.0,
-          "franchise": 0.2,
-          "studio": 0.039,
-          "source": 0.0,
-          "quality": 0.027058,
-          "format": 0.038095,
-          "themes": 0.098132,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.286433
-        },
-        "multipliers": {
-          "studio": 1.065,
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 3,
         "movie_id": 603692,
         "title": "John Wick: Chapter 4",
         "year": 2023,
-        "score": 1.149069,
+        "score": 1.240995,
         "base_score": 1.02756,
         "dominant_lane": "shape",
         "lanes": [
@@ -4943,7 +5005,8 @@
         },
         "multipliers": {
           "studio": 1.065,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -5000,7 +5063,7 @@
         "movie_id": 541671,
         "title": "Ballerina",
         "year": 2025,
-        "score": 1.072374,
+        "score": 1.158164,
         "base_score": 0.958975,
         "dominant_lane": "shape",
         "lanes": [
@@ -5040,7 +5103,8 @@
         },
         "multipliers": {
           "studio": 1.065,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -5097,7 +5161,7 @@
         "movie_id": 8068,
         "title": "Desperado",
         "year": 1995,
-        "score": 0.744176,
+        "score": 0.80371,
         "base_score": 0.708739,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -5134,7 +5198,8 @@
           "rare_keyword": 0.286433
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -5333,7 +5398,7 @@
         "movie_id": 374720,
         "title": "Dunkirk",
         "year": 2017,
-        "score": 0.943936,
+        "score": 1.01945,
         "base_score": 0.898986,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -5372,7 +5437,8 @@
           "rare_keyword": 0.321242
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -5382,7 +5448,7 @@
         "movie_id": 424,
         "title": "Schindler's List",
         "year": 1993,
-        "score": 0.887503,
+        "score": 0.958503,
         "base_score": 0.845241,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -5420,13 +5486,63 @@
           "rare_keyword": 0.449121
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 3,
+        "movie_id": 5001,
+        "title": "Before Night Falls",
+        "year": 2000,
+        "score": 0.729493,
+        "base_score": 0.643292,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "source",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.573636,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.252061,
+          "quality": 0.576,
+          "format": 1.0,
+          "themes": 0.389504,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.169608
+        },
+        "lane_contributions": {
+          "shape": 0.256087,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.027007,
+          "quality": 0.113143,
+          "format": 0.035714,
+          "themes": 0.041733,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.169608
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 4,
         "movie_id": 27461,
         "title": "Fat Man and Little Boy",
         "year": 1989,
@@ -5466,54 +5582,6 @@
           "cast": 0.0,
           "specific_award": 0.0,
           "rare_keyword": 0.05
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 4,
-        "movie_id": 5001,
-        "title": "Before Night Falls",
-        "year": 2000,
-        "score": 0.675456,
-        "base_score": 0.643292,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "source",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.573636,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.252061,
-          "quality": 0.576,
-          "format": 1.0,
-          "themes": 0.389504,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.169608
-        },
-        "lane_contributions": {
-          "shape": 0.256087,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.027007,
-          "quality": 0.113143,
-          "format": 0.035714,
-          "themes": 0.041733,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.169608
         },
         "multipliers": {
           "country": 1.05
@@ -5574,7 +5642,7 @@
         "movie_id": 1164,
         "title": "Babel",
         "year": 2006,
-        "score": 0.505274,
+        "score": 0.545696,
         "base_score": 0.481213,
         "dominant_lane": "shape",
         "lanes": [
@@ -5611,7 +5679,8 @@
           "rare_keyword": 0.144601
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -5669,7 +5738,7 @@
         "movie_id": 155,
         "title": "The Dark Knight",
         "year": 2008,
-        "score": 0.759986,
+        "score": 0.820785,
         "base_score": 0.723796,
         "dominant_lane": "director",
         "lanes": [
@@ -5707,7 +5776,8 @@
           "rare_keyword": 0.144601
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -5717,7 +5787,7 @@
         "movie_id": 76203,
         "title": "12 Years a Slave",
         "year": 2013,
-        "score": 0.732158,
+        "score": 0.79073,
         "base_score": 0.697293,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -5755,18 +5825,19 @@
           "rare_keyword": 0.305141
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 10,
-        "movie_id": 832964,
-        "title": "Lee",
-        "year": 2024,
-        "score": 0.7295,
-        "base_score": 0.694762,
+        "movie_id": 3683,
+        "title": "Flags of Our Fathers",
+        "year": 2006,
+        "score": 0.77113,
+        "base_score": 0.680009,
         "dominant_lane": "rare_keyword",
         "lanes": [
           "shape",
@@ -5777,33 +5848,34 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.025732,
+          "shape": 0.059655,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.252061,
-          "quality": 0.35,
+          "quality": 0.382,
           "format": 1.0,
-          "themes": 0.958369,
+          "themes": 0.772526,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.449121
+          "rare_keyword": 0.43285
         },
         "lane_contributions": {
-          "shape": 0.011487,
+          "shape": 0.026632,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.027007,
-          "quality": 0.06875,
+          "quality": 0.075036,
           "format": 0.035714,
-          "themes": 0.102682,
+          "themes": 0.082771,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.449121
+          "rare_keyword": 0.43285
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -5904,6 +5976,54 @@
       },
       {
         "rank": 2,
+        "movie_id": 792307,
+        "title": "Poor Things",
+        "year": 2023,
+        "score": 0.598596,
+        "base_score": 0.527862,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.898305,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.96321,
+          "format": 1.0,
+          "themes": 0.061827,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.010306
+        },
+        "lane_contributions": {
+          "shape": 0.444875,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.02752,
+          "format": 0.038095,
+          "themes": 0.007066,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.010306
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 3,
         "movie_id": 248417,
         "title": "Patch Town",
         "year": 2014,
@@ -5942,53 +6062,6 @@
           "cast": 0.0,
           "specific_award": 0.0,
           "rare_keyword": 0.05
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 3,
-        "movie_id": 792307,
-        "title": "Poor Things",
-        "year": 2023,
-        "score": 0.554255,
-        "base_score": 0.527862,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.898305,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.96321,
-          "format": 1.0,
-          "themes": 0.061827,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.010306
-        },
-        "lane_contributions": {
-          "shape": 0.444875,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.02752,
-          "format": 0.038095,
-          "themes": 0.007066,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.010306
         },
         "multipliers": {
           "country": 1.05
@@ -6135,6 +6208,102 @@
       },
       {
         "rank": 7,
+        "movie_id": 2657,
+        "title": "Pleasantville",
+        "year": 1998,
+        "score": 0.516438,
+        "base_score": 0.455413,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.257469,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.931326,
+          "format": 1.0,
+          "themes": 0.537497,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.201772
+        },
+        "lane_contributions": {
+          "shape": 0.127508,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.026609,
+          "format": 0.038095,
+          "themes": 0.061428,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.201772
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 8,
+        "movie_id": 550988,
+        "title": "Free Guy",
+        "year": 2021,
+        "score": 0.508827,
+        "base_score": 0.448701,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.349301,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.928345,
+          "format": 1.0,
+          "themes": 0.50785,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.153055
+        },
+        "lane_contributions": {
+          "shape": 0.172987,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.026524,
+          "format": 0.038095,
+          "themes": 0.05804,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.153055
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 9,
         "movie_id": 515841,
         "title": "I Am Not an Easy Man",
         "year": 2018,
@@ -6181,7 +6350,7 @@
         "floor_source": ""
       },
       {
-        "rank": 8,
+        "rank": 10,
         "movie_id": 198864,
         "title": "Man in Outer Space",
         "year": 1962,
@@ -6220,99 +6389,6 @@
           "cast": 0.0,
           "specific_award": 0.0,
           "rare_keyword": 0.314993
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
-        "movie_id": 2657,
-        "title": "Pleasantville",
-        "year": 1998,
-        "score": 0.478184,
-        "base_score": 0.455413,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.257469,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.931326,
-          "format": 1.0,
-          "themes": 0.537497,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.201772
-        },
-        "lane_contributions": {
-          "shape": 0.127508,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.026609,
-          "format": 0.038095,
-          "themes": 0.061428,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.201772
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 10,
-        "movie_id": 160170,
-        "title": "You Are a Widow, Sir",
-        "year": 1971,
-        "score": 0.476582,
-        "base_score": 0.453888,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.0,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.568013,
-          "format": 1.0,
-          "themes": 0.735027,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.31556
-        },
-        "lane_contributions": {
-          "shape": 0.0,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.016229,
-          "format": 0.038095,
-          "themes": 0.084003,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.31556
         },
         "multipliers": {
           "country": 1.05
@@ -6372,7 +6448,7 @@
         "movie_id": 248504,
         "title": "Sharknado 2: The Second One",
         "year": 2014,
-        "score": 1.268114,
+        "score": 1.458331,
         "base_score": 1.207727,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -6410,65 +6486,18 @@
           "rare_keyword": 0.421853
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 2,
-        "movie_id": 390989,
-        "title": "Sharknado 4: The 4th Awakens",
-        "year": 2016,
-        "score": 1.219585,
-        "base_score": 1.161509,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "franchise",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.946386,
-          "director": 0.0,
-          "franchise": 0.7,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.47872,
-          "format": 1.0,
-          "themes": 0.970843,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.421853
-        },
-        "lane_contributions": {
-          "shape": 0.32055,
-          "director": 0.0,
-          "franchise": 0.169355,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.123541,
-          "format": 0.032258,
-          "themes": 0.093953,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.421853
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 3,
         "movie_id": 56171,
         "title": "Mega Python vs. Gatoroid",
         "year": 2011,
-        "score": 0.518599,
+        "score": 0.573052,
         "base_score": 0.493904,
         "dominant_lane": "shape",
         "lanes": [
@@ -6505,17 +6534,18 @@
           "rare_keyword": 0.05
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 4,
+        "rank": 3,
         "movie_id": 19287,
         "title": "Leprechaun 4: In Space",
         "year": 1997,
-        "score": 0.503869,
+        "score": 0.556775,
         "base_score": 0.479875,
         "dominant_lane": "shape",
         "lanes": [
@@ -6552,7 +6582,56 @@
           "rare_keyword": 0.090606
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 4,
+        "movie_id": 18009,
+        "title": "Leprechaun 2",
+        "year": 1994,
+        "score": 0.480905,
+        "base_score": 0.398265,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.475196,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.420077,
+          "format": 1.0,
+          "themes": 0.225485,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.074825
+        },
+        "lane_contributions": {
+          "shape": 0.160954,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.108407,
+          "format": 0.032258,
+          "themes": 0.021821,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.074825
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -6606,47 +6685,49 @@
       },
       {
         "rank": 6,
-        "movie_id": 24831,
-        "title": "Piranha",
-        "year": 1978,
-        "score": 0.452587,
-        "base_score": 0.431035,
-        "dominant_lane": "shape",
+        "movie_id": 390989,
+        "title": "Sharknado 4: The 4th Awakens",
+        "year": 2016,
+        "score": 1.347641,
+        "base_score": 1.161509,
+        "dominant_lane": "rare_keyword",
         "lanes": [
           "shape",
+          "franchise",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.452456,
+          "shape": 0.946386,
           "director": 0.0,
-          "franchise": 0.0,
+          "franchise": 0.7,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.470679,
+          "quality": 0.47872,
           "format": 1.0,
-          "themes": 0.345687,
+          "themes": 0.970843,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.090606
+          "rare_keyword": 0.421853
         },
         "lane_contributions": {
-          "shape": 0.153251,
+          "shape": 0.32055,
           "director": 0.0,
-          "franchise": 0.0,
+          "franchise": 0.169355,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.121466,
+          "quality": 0.123541,
           "format": 0.032258,
-          "themes": 0.033454,
+          "themes": 0.093953,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.090606
+          "rare_keyword": 0.421853
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -6656,7 +6737,7 @@
         "movie_id": 331446,
         "title": "Sharknado 3: Oh Hell No!",
         "year": 2015,
-        "score": 1.100177,
+        "score": 1.265204,
         "base_score": 1.047788,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -6694,7 +6775,8 @@
           "rare_keyword": 0.343345
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -6704,7 +6786,7 @@
         "movie_id": 523849,
         "title": "The Last Sharknado: It's About Time",
         "year": 2018,
-        "score": 0.795407,
+        "score": 0.878924,
         "base_score": 0.75753,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -6742,7 +6824,8 @@
           "rare_keyword": 0.285979
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -6752,7 +6835,7 @@
         "movie_id": 438970,
         "title": "Sharknado 5: Global Swarming",
         "year": 2017,
-        "score": 0.793505,
+        "score": 0.876823,
         "base_score": 0.755719,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -6790,19 +6873,20 @@
           "rare_keyword": 0.207212
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 10,
-        "movie_id": 284711,
-        "title": "Sharktopus vs. Pteracuda",
-        "year": 2014,
-        "score": 0.636768,
-        "base_score": 0.606445,
-        "dominant_lane": "rare_keyword",
+        "movie_id": 11059,
+        "title": "House of the Dead",
+        "year": 2003,
+        "score": 0.720102,
+        "base_score": 0.596358,
+        "dominant_lane": "quality",
         "lanes": [
           "shape",
           "quality",
@@ -6811,33 +6895,34 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.513977,
+          "shape": 0.253118,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.501618,
+          "quality": 0.9,
           "format": 1.0,
-          "themes": 0.655512,
+          "themes": 0.401926,
           "cast": 0.0,
           "specific_award": 0.0,
           "rare_keyword": 0.207212
         },
         "lane_contributions": {
-          "shape": 0.174089,
+          "shape": 0.085734,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.12945,
+          "quality": 0.232258,
           "format": 0.032258,
-          "themes": 0.063437,
+          "themes": 0.038896,
           "cast": 0.0,
           "specific_award": 0.0,
           "rare_keyword": 0.207212
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -6893,7 +6978,7 @@
         "movie_id": 32148,
         "title": "Space Mutiny",
         "year": 1988,
-        "score": 0.703262,
+        "score": 0.777105,
         "base_score": 0.669773,
         "dominant_lane": "shape",
         "lanes": [
@@ -6930,7 +7015,8 @@
           "rare_keyword": 0.018279
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -6940,7 +7026,7 @@
         "movie_id": 26914,
         "title": "Troll 2",
         "year": 1990,
-        "score": 0.625809,
+        "score": 0.71968,
         "base_score": 0.596009,
         "dominant_lane": "shape",
         "lanes": [
@@ -6977,7 +7063,8 @@
           "rare_keyword": 0.019708
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -6987,7 +7074,7 @@
         "movie_id": 40016,
         "title": "Birdemic: Shock and Terror",
         "year": 2010,
-        "score": 0.583029,
+        "score": 0.670484,
         "base_score": 0.555266,
         "dominant_lane": "shape",
         "lanes": [
@@ -7024,7 +7111,8 @@
           "rare_keyword": 0.009992
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -7034,7 +7122,7 @@
         "movie_id": 44254,
         "title": "The Minis",
         "year": 2009,
-        "score": 0.563357,
+        "score": 0.62251,
         "base_score": 0.536531,
         "dominant_lane": "shape",
         "lanes": [
@@ -7071,7 +7159,8 @@
           "rare_keyword": 0.005292
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -7081,7 +7170,7 @@
         "movie_id": 87818,
         "title": "Movie 43",
         "year": 2013,
-        "score": 0.55096,
+        "score": 0.633604,
         "base_score": 0.524724,
         "dominant_lane": "quality",
         "lanes": [
@@ -7118,111 +7207,18 @@
           "rare_keyword": 0.005292
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 6,
-        "movie_id": 197599,
-        "title": "Fateful Findings",
-        "year": 2013,
-        "score": 0.544233,
-        "base_score": 0.518318,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.713647,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.37356,
-          "format": 1.0,
-          "themes": 0.351746,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.028342
-        },
-        "lane_contributions": {
-          "shape": 0.313003,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.104859,
-          "format": 0.035088,
-          "themes": 0.037026,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.028342
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 7,
-        "movie_id": 482119,
-        "title": "Sex, Marriage and Infidelity",
-        "year": 2014,
-        "score": 0.538068,
-        "base_score": 0.512446,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.919957,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.173333,
-          "format": 1.0,
-          "themes": 0.135673,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.010932
-        },
-        "lane_contributions": {
-          "shape": 0.40349,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.048655,
-          "format": 0.035088,
-          "themes": 0.014281,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.010932
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 8,
         "movie_id": 10513,
         "title": "Plan 9 from Outer Space",
         "year": 1957,
-        "score": 0.532561,
+        "score": 0.612446,
         "base_score": 0.507201,
         "dominant_lane": "shape",
         "lanes": [
@@ -7259,17 +7255,18 @@
           "rare_keyword": 0.009992
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 9,
+        "rank": 7,
         "movie_id": 22293,
         "title": "Manos: The Hands of Fate",
         "year": 1966,
-        "score": 0.529203,
+        "score": 0.608583,
         "base_score": 0.504003,
         "dominant_lane": "quality",
         "lanes": [
@@ -7306,18 +7303,19 @@
           "rare_keyword": 0.019959
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 10,
-        "movie_id": 1217343,
-        "title": "This Is Me\u2026Now",
-        "year": 2024,
-        "score": 0.512564,
-        "base_score": 0.488156,
+        "rank": 8,
+        "movie_id": 197599,
+        "title": "Fateful Findings",
+        "year": 2013,
+        "score": 0.601378,
+        "base_score": 0.518318,
         "dominant_lane": "shape",
         "lanes": [
           "shape",
@@ -7327,33 +7325,130 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.827783,
+          "shape": 0.713647,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.274306,
+          "quality": 0.37356,
           "format": 1.0,
-          "themes": 0.069991,
+          "themes": 0.351746,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.00564
+          "rare_keyword": 0.028342
         },
         "lane_contributions": {
-          "shape": 0.363063,
+          "shape": 0.313003,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.076998,
+          "quality": 0.104859,
           "format": 0.035088,
-          "themes": 0.007368,
+          "themes": 0.037026,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.00564
+          "rare_keyword": 0.028342
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.105
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 9,
+        "movie_id": 482119,
+        "title": "Sex, Marriage and Infidelity",
+        "year": 2014,
+        "score": 0.594566,
+        "base_score": 0.512446,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.919957,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.173333,
+          "format": 1.0,
+          "themes": 0.135673,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.010932
+        },
+        "lane_contributions": {
+          "shape": 0.40349,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.048655,
+          "format": 0.035088,
+          "themes": 0.014281,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.010932
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.105
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
+        "movie_id": 10802,
+        "title": "Showgirls",
+        "year": 1995,
+        "score": 0.584424,
+        "base_score": 0.483995,
+        "dominant_lane": "quality",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.270808,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.789333,
+          "format": 1.0,
+          "themes": 0.477415,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.05831
+        },
+        "lane_contributions": {
+          "shape": 0.118776,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.221567,
+          "format": 0.035088,
+          "themes": 0.050254,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.05831
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.15
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -7409,7 +7504,7 @@
         "movie_id": 687,
         "title": "Dead Man Walking",
         "year": 1995,
-        "score": 0.764909,
+        "score": 0.826102,
         "base_score": 0.728485,
         "dominant_lane": "shape",
         "lanes": [
@@ -7447,13 +7542,110 @@
           "rare_keyword": 0.044738
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 2,
+        "movie_id": 785084,
+        "title": "The Whale",
+        "year": 2022,
+        "score": 0.557375,
+        "base_score": 0.491513,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.547995,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.926474,
+          "format": 1.0,
+          "themes": 0.277751,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.07939
+        },
+        "lane_contributions": {
+          "shape": 0.309977,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.028075,
+          "format": 0.040404,
+          "themes": 0.033667,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.07939
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 3,
+        "movie_id": 565307,
+        "title": "Clemency",
+        "year": 2019,
+        "score": 0.547596,
+        "base_score": 0.471964,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.367019,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.81397,
+          "format": 1.0,
+          "themes": 0.190132,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.176241
+        },
+        "lane_contributions": {
+          "shape": 0.207607,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.024666,
+          "format": 0.040404,
+          "themes": 0.023046,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.176241
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.105
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 4,
         "movie_id": 4415,
         "title": "Les Mis\u00e9rables",
         "year": 1998,
@@ -7501,101 +7693,201 @@
         "floor_source": ""
       },
       {
-        "rank": 3,
-        "movie_id": 785084,
-        "title": "The Whale",
-        "year": 2022,
-        "score": 0.516088,
-        "base_score": 0.491513,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.547995,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.926474,
-          "format": 1.0,
-          "themes": 0.277751,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.07939
-        },
-        "lane_contributions": {
-          "shape": 0.309977,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.028075,
-          "format": 0.040404,
-          "themes": 0.033667,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.07939
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 4,
-        "movie_id": 565307,
-        "title": "Clemency",
-        "year": 2019,
-        "score": 0.495562,
-        "base_score": 0.471964,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.367019,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.81397,
-          "format": 1.0,
-          "themes": 0.190132,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.176241
-        },
-        "lane_contributions": {
-          "shape": 0.207607,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.024666,
-          "format": 0.040404,
-          "themes": 0.023046,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.176241
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 5,
+        "movie_id": 7984,
+        "title": "In the Name of the Father",
+        "year": 1993,
+        "score": 0.631623,
+        "base_score": 0.556986,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.217095,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.95587,
+          "format": 1.0,
+          "themes": 0.463928,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.308582
+        },
+        "lane_contributions": {
+          "shape": 0.122801,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.028966,
+          "format": 0.040404,
+          "themes": 0.056234,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.308582
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 6,
+        "movie_id": 278,
+        "title": "The Shawshank Redemption",
+        "year": 1994,
+        "score": 0.628299,
+        "base_score": 0.554056,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.30665,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.9728,
+          "format": 1.0,
+          "themes": 0.420969,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.259688
+        },
+        "lane_contributions": {
+          "shape": 0.173458,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.029479,
+          "format": 0.040404,
+          "themes": 0.051027,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.259688
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 7,
+        "movie_id": 29740,
+        "title": "I Am a Fugitive from a Chain Gang",
+        "year": 1932,
+        "score": 0.608154,
+        "base_score": 0.536291,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "source",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.22159,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.197827,
+          "quality": 0.893444,
+          "format": 1.0,
+          "themes": 0.430052,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.267362
+        },
+        "lane_contributions": {
+          "shape": 0.125344,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.023979,
+          "quality": 0.027074,
+          "format": 0.040404,
+          "themes": 0.052128,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.267362
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 8,
+        "movie_id": 903,
+        "title": "Cool Hand Luke",
+        "year": 1967,
+        "score": 0.591779,
+        "base_score": 0.521851,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "source",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.192262,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.197827,
+          "quality": 0.964399,
+          "format": 1.0,
+          "themes": 0.430052,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.267362
+        },
+        "lane_contributions": {
+          "shape": 0.108754,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.023979,
+          "quality": 0.029224,
+          "format": 0.040404,
+          "themes": 0.052128,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.267362
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 9,
         "movie_id": 14574,
         "title": "The Boy in the Striped Pyjamas",
         "year": 2008,
@@ -7643,201 +7935,11 @@
         "floor_source": ""
       },
       {
-        "rank": 6,
-        "movie_id": 7984,
-        "title": "In the Name of the Father",
-        "year": 1993,
-        "score": 0.584836,
-        "base_score": 0.556986,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.217095,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.95587,
-          "format": 1.0,
-          "themes": 0.463928,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.308582
-        },
-        "lane_contributions": {
-          "shape": 0.122801,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.028966,
-          "format": 0.040404,
-          "themes": 0.056234,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.308582
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 7,
-        "movie_id": 278,
-        "title": "The Shawshank Redemption",
-        "year": 1994,
-        "score": 0.581758,
-        "base_score": 0.554056,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.30665,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.9728,
-          "format": 1.0,
-          "themes": 0.420969,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.259688
-        },
-        "lane_contributions": {
-          "shape": 0.173458,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.029479,
-          "format": 0.040404,
-          "themes": 0.051027,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.259688
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 8,
-        "movie_id": 29740,
-        "title": "I Am a Fugitive from a Chain Gang",
-        "year": 1932,
-        "score": 0.563105,
-        "base_score": 0.536291,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "source",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.22159,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.197827,
-          "quality": 0.893444,
-          "format": 1.0,
-          "themes": 0.430052,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.267362
-        },
-        "lane_contributions": {
-          "shape": 0.125344,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.023979,
-          "quality": 0.027074,
-          "format": 0.040404,
-          "themes": 0.052128,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.267362
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
-        "movie_id": 903,
-        "title": "Cool Hand Luke",
-        "year": 1967,
-        "score": 0.547944,
-        "base_score": 0.521851,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "source",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.192262,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.197827,
-          "quality": 0.964399,
-          "format": 1.0,
-          "themes": 0.430052,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.267362
-        },
-        "lane_contributions": {
-          "shape": 0.108754,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.023979,
-          "quality": 0.029224,
-          "format": 0.040404,
-          "themes": 0.052128,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.267362
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 10,
         "movie_id": 424,
         "title": "Schindler's List",
         "year": 1993,
-        "score": 0.537976,
+        "score": 0.581014,
         "base_score": 0.512358,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -7875,7 +7977,8 @@
           "rare_keyword": 0.316784
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -7933,7 +8036,7 @@
         "movie_id": 500,
         "title": "Reservoir Dogs",
         "year": 1992,
-        "score": 0.960786,
+        "score": 1.037649,
         "base_score": 0.915034,
         "dominant_lane": "shape",
         "lanes": [
@@ -7971,7 +8074,8 @@
           "rare_keyword": 0.196479
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -8125,7 +8229,7 @@
         "movie_id": 184,
         "title": "Jackie Brown",
         "year": 1997,
-        "score": 0.864216,
+        "score": 0.933353,
         "base_score": 0.823062,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -8164,7 +8268,8 @@
           "rare_keyword": 0.333865
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -8218,105 +8323,10 @@
       },
       {
         "rank": 7,
-        "movie_id": 522627,
-        "title": "The Gentlemen",
-        "year": 2020,
-        "score": 0.603834,
-        "base_score": 0.57508,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword",
-          "studio"
-        ],
-        "lane_scores": {
-          "shape": 0.246566,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.694351,
-          "source": 0.0,
-          "quality": 0.2,
-          "format": 1.0,
-          "themes": 0.703536,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.295849
-        },
-        "lane_contributions": {
-          "shape": 0.123283,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.041661,
-          "source": 0.0,
-          "quality": 0.040741,
-          "format": 0.037037,
-          "themes": 0.078171,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.295849
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 8,
-        "movie_id": 9558,
-        "title": "King of New York",
-        "year": 1990,
-        "score": 0.595334,
-        "base_score": 0.566985,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.219388,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.35,
-          "format": 1.0,
-          "themes": 0.597006,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.282623
-        },
-        "lane_contributions": {
-          "shape": 0.109694,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.071296,
-          "format": 0.037037,
-          "themes": 0.066334,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.282623
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
         "movie_id": 627,
         "title": "Trainspotting",
         "year": 1996,
-        "score": 0.589712,
+        "score": 0.636889,
         "base_score": 0.56163,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -8353,18 +8363,67 @@
           "rare_keyword": 0.220459
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 10,
-        "movie_id": 9401,
-        "title": "2 Days in the Valley",
-        "year": 1996,
-        "score": 0.588186,
-        "base_score": 0.560177,
+        "rank": 8,
+        "movie_id": 769,
+        "title": "GoodFellas",
+        "year": 1990,
+        "score": 0.632361,
+        "base_score": 0.557638,
+        "dominant_lane": "quality",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.367684,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 1.0,
+          "format": 1.0,
+          "themes": 0.413236,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.08714
+        },
+        "lane_contributions": {
+          "shape": 0.183842,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.203704,
+          "format": 0.037037,
+          "themes": 0.045915,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.08714
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 9,
+        "movie_id": 9430,
+        "title": "Go",
+        "year": 1999,
+        "score": 0.623838,
+        "base_score": 0.550122,
         "dominant_lane": "shape",
         "lanes": [
           "shape",
@@ -8374,33 +8433,82 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.787329,
+          "shape": 0.664716,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.2,
+          "quality": 0.35,
           "format": 1.0,
-          "themes": 0.348613,
+          "themes": 0.353185,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.05
+          "rare_keyword": 0.070188
         },
         "lane_contributions": {
-          "shape": 0.393665,
+          "shape": 0.332358,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.040741,
+          "quality": 0.071296,
           "format": 0.037037,
-          "themes": 0.038735,
+          "themes": 0.039243,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.05
+          "rare_keyword": 0.070188
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
+        "movie_id": 398978,
+        "title": "The Irishman",
+        "year": 2019,
+        "score": 0.615408,
+        "base_score": 0.542688,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.132084,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.904,
+          "format": 1.0,
+          "themes": 0.565197,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.192661
+        },
+        "lane_contributions": {
+          "shape": 0.066042,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.184148,
+          "format": 0.037037,
+          "themes": 0.0628,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.192661
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -8455,6 +8563,55 @@
     "results": [
       {
         "rank": 1,
+        "movie_id": 2649,
+        "title": "The Game",
+        "year": 1997,
+        "score": 0.942908,
+        "base_score": 0.831489,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "director",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.5762,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.934118,
+          "format": 1.0,
+          "themes": 0.541465,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.171215
+        },
+        "lane_contributions": {
+          "shape": 0.325931,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.028307,
+          "format": 0.040404,
+          "themes": 0.065632,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.171215
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 2,
         "movie_id": 10851,
         "title": "Revolver",
         "year": 2005,
@@ -8501,55 +8658,56 @@
         "floor_source": ""
       },
       {
-        "rank": 2,
-        "movie_id": 2649,
-        "title": "The Game",
-        "year": 1997,
-        "score": 0.873063,
-        "base_score": 0.831489,
+        "rank": 3,
+        "movie_id": 1359,
+        "title": "American Psycho",
+        "year": 2000,
+        "score": 0.869983,
+        "base_score": 0.767181,
         "dominant_lane": "shape",
         "lanes": [
           "shape",
-          "director",
+          "source",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.5762,
-          "director": 0.2,
+          "shape": 0.587717,
+          "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.934118,
+          "source": 0.197827,
+          "quality": 0.936575,
           "format": 1.0,
-          "themes": 0.541465,
+          "themes": 0.722829,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.171215
+          "rare_keyword": 0.254355
         },
         "lane_contributions": {
-          "shape": 0.325931,
-          "director": 0.2,
+          "shape": 0.332446,
+          "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.028307,
+          "source": 0.023979,
+          "quality": 0.028381,
           "format": 0.040404,
-          "themes": 0.065632,
+          "themes": 0.087616,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.171215
+          "rare_keyword": 0.254355
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 3,
+        "rank": 4,
         "movie_id": 66111,
         "title": "Luster",
         "year": 2010,
@@ -8596,55 +8754,55 @@
         "floor_source": ""
       },
       {
-        "rank": 4,
-        "movie_id": 1359,
-        "title": "American Psycho",
-        "year": 2000,
-        "score": 0.80554,
-        "base_score": 0.767181,
+        "rank": 5,
+        "movie_id": 4553,
+        "title": "The Machinist",
+        "year": 2004,
+        "score": 0.787693,
+        "base_score": 0.694615,
         "dominant_lane": "shape",
         "lanes": [
           "shape",
-          "source",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.587717,
+          "shape": 0.59665,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.197827,
-          "quality": 0.936575,
+          "source": 0.0,
+          "quality": 0.930625,
           "format": 1.0,
-          "themes": 0.722829,
+          "themes": 0.55727,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.254355
+          "rare_keyword": 0.220963
         },
         "lane_contributions": {
-          "shape": 0.332446,
+          "shape": 0.337499,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
-          "source": 0.023979,
-          "quality": 0.028381,
+          "source": 0.0,
+          "quality": 0.028201,
           "format": 0.040404,
-          "themes": 0.087616,
+          "themes": 0.067548,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.254355
+          "rare_keyword": 0.220963
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 5,
+        "rank": 6,
         "movie_id": 12612,
         "title": "Freeze Frame",
         "year": 2004,
@@ -8691,7 +8849,105 @@
         "floor_source": ""
       },
       {
-        "rank": 6,
+        "rank": 7,
+        "movie_id": 65754,
+        "title": "The Girl with the Dragon Tattoo",
+        "year": 2011,
+        "score": 0.766516,
+        "base_score": 0.67594,
+        "dominant_lane": "director",
+        "lanes": [
+          "shape",
+          "director",
+          "source",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.27074,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.197827,
+          "quality": 0.945111,
+          "format": 1.0,
+          "themes": 0.483086,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.171215
+        },
+        "lane_contributions": {
+          "shape": 0.153146,
+          "director": 0.2,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.023979,
+          "quality": 0.02864,
+          "format": 0.040404,
+          "themes": 0.058556,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.171215
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 8,
+        "movie_id": 638,
+        "title": "Lost Highway",
+        "year": 1997,
+        "score": 0.754325,
+        "base_score": 0.66519,
+        "dominant_lane": "shape",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.646673,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.91262,
+          "format": 1.0,
+          "themes": 0.468071,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.1746
+        },
+        "lane_contributions": {
+          "shape": 0.365795,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.027655,
+          "format": 0.040404,
+          "themes": 0.056736,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.1746
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 9,
         "movie_id": 210577,
         "title": "Gone Girl",
         "year": 2014,
@@ -8740,189 +8996,50 @@
         "floor_source": ""
       },
       {
-        "rank": 7,
-        "movie_id": 4553,
-        "title": "The Machinist",
-        "year": 2004,
-        "score": 0.729345,
-        "base_score": 0.694615,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.59665,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.930625,
-          "format": 1.0,
-          "themes": 0.55727,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.220963
-        },
-        "lane_contributions": {
-          "shape": 0.337499,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.028201,
-          "format": 0.040404,
-          "themes": 0.067548,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.220963
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 8,
-        "movie_id": 475557,
-        "title": "Joker",
-        "year": 2019,
-        "score": 0.723491,
-        "base_score": 0.689039,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.665332,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.937054,
-          "format": 1.0,
-          "themes": 0.599571,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.171215
-        },
-        "lane_contributions": {
-          "shape": 0.376349,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.028396,
-          "format": 0.040404,
-          "themes": 0.072675,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.171215
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
-        "movie_id": 1018,
-        "title": "Mulholland Drive",
-        "year": 2001,
-        "score": 0.721068,
-        "base_score": 0.686732,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.580921,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.9641,
-          "format": 1.0,
-          "themes": 0.55727,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.220963
-        },
-        "lane_contributions": {
-          "shape": 0.328602,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.029215,
-          "format": 0.040404,
-          "themes": 0.067548,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.220963
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
         "rank": 10,
-        "movie_id": 452832,
-        "title": "Serenity",
-        "year": 2019,
-        "score": 0.715759,
-        "base_score": 0.681675,
-        "dominant_lane": "shape",
+        "movie_id": 807,
+        "title": "Se7en",
+        "year": 1995,
+        "score": 0.725007,
+        "base_score": 0.639336,
+        "dominant_lane": "director",
         "lanes": [
           "shape",
+          "director",
           "quality",
           "format",
           "themes",
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.663464,
-          "director": 0.0,
+          "shape": 0.233313,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.8536,
+          "quality": 0.946719,
           "format": 1.0,
-          "themes": 0.51445,
+          "themes": 0.553192,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.177754
+          "rare_keyword": 0.171215
         },
         "lane_contributions": {
-          "shape": 0.375293,
-          "director": 0.0,
+          "shape": 0.131975,
+          "director": 0.2,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.025867,
+          "quality": 0.028688,
           "format": 0.040404,
-          "themes": 0.062358,
+          "themes": 0.067054,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.177754
+          "rare_keyword": 0.171215
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -9164,11 +9281,11 @@
       },
       {
         "rank": 5,
-        "movie_id": 54770,
-        "title": "Time Traveller: The Girl Who Leapt Through Time",
-        "year": 2010,
-        "score": 0.410096,
-        "base_score": 0.546795,
+        "movie_id": 12185,
+        "title": "Heaven Can Wait",
+        "year": 1978,
+        "score": 0.420635,
+        "base_score": 0.37093,
         "dominant_lane": "shape",
         "lanes": [
           "shape",
@@ -9178,33 +9295,34 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.577932,
+          "shape": 0.323793,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.113344,
+          "quality": 0.4,
           "format": 1.0,
-          "themes": 0.426211,
+          "themes": 0.178674,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.223125
+          "rare_keyword": 0.118061
         },
         "lane_contributions": {
-          "shape": 0.225295,
+          "shape": 0.126224,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.021132,
+          "quality": 0.074576,
           "format": 0.033898,
-          "themes": 0.043343,
+          "themes": 0.01817,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.223125
+          "rare_keyword": 0.118061
         },
         "multipliers": {
-          "country": 0.75
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -9353,6 +9471,54 @@
       },
       {
         "rank": 9,
+        "movie_id": 429617,
+        "title": "Spider-Man: Far From Home",
+        "year": 2019,
+        "score": 0.653055,
+        "base_score": 0.575886,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.124808,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.35,
+          "format": 1.0,
+          "themes": 0.614581,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.36558
+        },
+        "lane_contributions": {
+          "shape": 0.048654,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.065254,
+          "format": 0.033898,
+          "themes": 0.0625,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.36558
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
         "movie_id": 22371,
         "title": "Minutemen",
         "year": 2008,
@@ -9391,53 +9557,6 @@
           "cast": 0.0,
           "specific_award": 0.0,
           "rare_keyword": 0.43747
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 10,
-        "movie_id": 11551,
-        "title": "Small Soldiers",
-        "year": 1998,
-        "score": 0.62781,
-        "base_score": 0.597915,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.020596,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.2,
-          "format": 1.0,
-          "themes": 0.738135,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.443635
-        },
-        "lane_contributions": {
-          "shape": 0.008029,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.037288,
-          "format": 0.033898,
-          "themes": 0.075065,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.443635
         },
         "multipliers": {
           "country": 1.05
@@ -9496,7 +9615,7 @@
         "movie_id": 49047,
         "title": "Gravity",
         "year": 2013,
-        "score": 1.142299,
+        "score": 1.233683,
         "base_score": 1.087904,
         "dominant_lane": "shape",
         "lanes": [
@@ -9533,7 +9652,8 @@
           "rare_keyword": 0.343193
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -9543,7 +9663,7 @@
         "movie_id": 419704,
         "title": "Ad Astra",
         "year": 2019,
-        "score": 1.093309,
+        "score": 1.180773,
         "base_score": 1.041246,
         "dominant_lane": "shape",
         "lanes": [
@@ -9580,7 +9700,8 @@
           "rare_keyword": 0.275595
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -9637,7 +9758,7 @@
         "movie_id": 70981,
         "title": "Prometheus",
         "year": 2012,
-        "score": 0.897216,
+        "score": 0.968993,
         "base_score": 0.854491,
         "dominant_lane": "shape",
         "lanes": [
@@ -9674,7 +9795,8 @@
           "rare_keyword": 0.29856
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -9684,7 +9806,7 @@
         "movie_id": 62,
         "title": "2001: A Space Odyssey",
         "year": 1968,
-        "score": 0.986795,
+        "score": 1.065739,
         "base_score": 0.939805,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -9721,7 +9843,8 @@
           "rare_keyword": 0.458086
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -9731,7 +9854,7 @@
         "movie_id": 11,
         "title": "Star Wars",
         "year": 1977,
-        "score": 0.957719,
+        "score": 1.034336,
         "base_score": 0.912113,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -9768,7 +9891,8 @@
           "rare_keyword": 0.437939
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -9778,7 +9902,7 @@
         "movie_id": 27205,
         "title": "Inception",
         "year": 2010,
-        "score": 0.956641,
+        "score": 1.033172,
         "base_score": 0.911087,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -9816,64 +9940,18 @@
           "rare_keyword": 0.347395
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 8,
-        "movie_id": 152,
-        "title": "Star Trek: The Motion Picture",
-        "year": 1979,
-        "score": 0.870189,
-        "base_score": 0.828751,
-        "dominant_lane": "shape",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.781394,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.891894,
-          "format": 1.0,
-          "themes": 0.326765,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.223694
-        },
-        "lane_contributions": {
-          "shape": 0.493512,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.028165,
-          "format": 0.042105,
-          "themes": 0.041276,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.223694
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
         "movie_id": 1891,
         "title": "The Empire Strikes Back",
         "year": 1980,
-        "score": 0.858022,
+        "score": 0.926664,
         "base_score": 0.817164,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -9910,19 +9988,20 @@
           "rare_keyword": 0.437939
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 10,
-        "movie_id": 1272,
-        "title": "Sunshine",
-        "year": 2007,
-        "score": 0.849706,
-        "base_score": 0.809244,
-        "dominant_lane": "shape",
+        "rank": 9,
+        "movie_id": 140607,
+        "title": "Star Wars: The Force Awakens",
+        "year": 2015,
+        "score": 0.887987,
+        "base_score": 0.783057,
+        "dominant_lane": "rare_keyword",
         "lanes": [
           "shape",
           "quality",
@@ -9931,33 +10010,82 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.663963,
+          "shape": 0.303014,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.928235,
+          "quality": 0.957022,
           "format": 1.0,
-          "themes": 0.358586,
+          "themes": 0.644531,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.273186
+          "rare_keyword": 0.437939
         },
         "lane_contributions": {
-          "shape": 0.419345,
+          "shape": 0.191377,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.029313,
+          "quality": 0.030222,
           "format": 0.042105,
-          "themes": 0.045295,
+          "themes": 0.081414,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.273186
+          "rare_keyword": 0.437939
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
+        "movie_id": 693134,
+        "title": "Dune: Part Two",
+        "year": 2024,
+        "score": 0.883851,
+        "base_score": 0.77941,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.424296,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.960572,
+          "format": 1.0,
+          "themes": 0.576626,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.366157
+        },
+        "lane_contributions": {
+          "shape": 0.267976,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.030334,
+          "format": 0.042105,
+          "themes": 0.072837,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.366157
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -10016,7 +10144,7 @@
         "movie_id": 121,
         "title": "The Lord of the Rings: The Two Towers",
         "year": 2002,
-        "score": 1.729285,
+        "score": 1.867628,
         "base_score": 1.500165,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10057,7 +10185,8 @@
         },
         "multipliers": {
           "studio": 1.097838,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -10257,7 +10386,7 @@
         "movie_id": 122,
         "title": "The Lord of the Rings: The Return of the King",
         "year": 2003,
-        "score": 1.605227,
+        "score": 1.733645,
         "base_score": 1.395142,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10298,7 +10427,8 @@
         },
         "multipliers": {
           "studio": 1.095794,
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -10308,7 +10438,7 @@
         "movie_id": 11,
         "title": "Star Wars",
         "year": 1977,
-        "score": 1.02607,
+        "score": 1.108156,
         "base_score": 0.97721,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10345,7 +10475,8 @@
           "rare_keyword": 0.558163
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -10355,7 +10486,7 @@
         "movie_id": 1891,
         "title": "The Empire Strikes Back",
         "year": 1980,
-        "score": 0.99989,
+        "score": 1.079882,
         "base_score": 0.952276,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10392,13 +10523,63 @@
           "rare_keyword": 0.604805
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 9,
+        "movie_id": 12445,
+        "title": "Harry Potter and the Deathly Hallows: Part 2",
+        "year": 2011,
+        "score": 0.979348,
+        "base_score": 0.863622,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "source",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.268151,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.197827,
+          "quality": 0.736,
+          "format": 1.0,
+          "themes": 0.756965,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.511886
+        },
+        "lane_contributions": {
+          "shape": 0.092314,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.019458,
+          "quality": 0.132721,
+          "format": 0.032787,
+          "themes": 0.074456,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.511886
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
         "movie_id": 57158,
         "title": "The Hobbit: The Desolation of Smaug",
         "year": 2013,
@@ -10442,53 +10623,6 @@
         },
         "multipliers": {
           "studio": 1.080537,
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 10,
-        "movie_id": 847,
-        "title": "Willow",
-        "year": 1988,
-        "score": 0.931473,
-        "base_score": 0.887117,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.276051,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.35,
-          "format": 1.0,
-          "themes": 0.928996,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.604805
-        },
-        "lane_contributions": {
-          "shape": 0.095034,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.063115,
-          "format": 0.032787,
-          "themes": 0.091377,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.604805
-        },
-        "multipliers": {
           "country": 1.05
         },
         "floor_value": 0.0,
@@ -10591,7 +10725,7 @@
         "movie_id": 9062,
         "title": "Love Story",
         "year": 1970,
-        "score": 0.654003,
+        "score": 0.706323,
         "base_score": 0.62286,
         "dominant_lane": "shape",
         "lanes": [
@@ -10628,7 +10762,8 @@
           "rare_keyword": 0.195322
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -10732,7 +10867,7 @@
         "movie_id": 409,
         "title": "The English Patient",
         "year": 1996,
-        "score": 0.81607,
+        "score": 0.881356,
         "base_score": 0.77721,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10769,7 +10904,8 @@
           "rare_keyword": 0.390037
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -10779,7 +10915,7 @@
         "movie_id": 770,
         "title": "Gone with the Wind",
         "year": 1939,
-        "score": 0.725001,
+        "score": 0.783001,
         "base_score": 0.690477,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10816,7 +10952,8 @@
           "rare_keyword": 0.365498
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
@@ -10826,7 +10963,7 @@
         "movie_id": 142,
         "title": "Brokeback Mountain",
         "year": 2005,
-        "score": 0.715662,
+        "score": 0.772914,
         "base_score": 0.681582,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10863,64 +11000,18 @@
           "rare_keyword": 0.39588
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
         "rank": 8,
-        "movie_id": 4415,
-        "title": "Les Mis\u00e9rables",
-        "year": 1998,
-        "score": 0.693467,
-        "base_score": 0.660445,
-        "dominant_lane": "rare_keyword",
-        "lanes": [
-          "shape",
-          "quality",
-          "format",
-          "themes",
-          "rare_keyword"
-        ],
-        "lane_scores": {
-          "shape": 0.195711,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.901384,
-          "format": 1.0,
-          "themes": 0.634158,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.386164
-        },
-        "lane_contributions": {
-          "shape": 0.123607,
-          "director": 0.0,
-          "franchise": 0.0,
-          "studio": 0.0,
-          "source": 0.0,
-          "quality": 0.028465,
-          "format": 0.042105,
-          "themes": 0.080104,
-          "cast": 0.0,
-          "specific_award": 0.0,
-          "rare_keyword": 0.386164
-        },
-        "multipliers": {
-          "country": 1.05
-        },
-        "floor_value": 0.0,
-        "floor_source": ""
-      },
-      {
-        "rank": 9,
         "movie_id": 254,
         "title": "King Kong",
         "year": 2005,
-        "score": 0.685142,
+        "score": 0.739953,
         "base_score": 0.652516,
         "dominant_lane": "rare_keyword",
         "lanes": [
@@ -10957,18 +11048,19 @@
           "rare_keyword": 0.427495
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""
       },
       {
-        "rank": 10,
-        "movie_id": 43798,
-        "title": "That Hamilton Woman",
-        "year": 1941,
-        "score": 0.680103,
-        "base_score": 0.647717,
+        "rank": 9,
+        "movie_id": 332562,
+        "title": "A Star Is Born",
+        "year": 2018,
+        "score": 0.716432,
+        "base_score": 0.631774,
         "dominant_lane": "rare_keyword",
         "lanes": [
           "shape",
@@ -10978,33 +11070,82 @@
           "rare_keyword"
         ],
         "lane_scores": {
-          "shape": 0.39588,
+          "shape": 0.188802,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.80944,
+          "quality": 0.963105,
           "format": 1.0,
-          "themes": 0.485012,
+          "themes": 0.656461,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.268756
+          "rare_keyword": 0.35709
         },
         "lane_contributions": {
-          "shape": 0.25003,
+          "shape": 0.119244,
           "director": 0.0,
           "franchise": 0.0,
           "studio": 0.0,
           "source": 0.0,
-          "quality": 0.025561,
+          "quality": 0.030414,
           "format": 0.042105,
-          "themes": 0.061265,
+          "themes": 0.082921,
           "cast": 0.0,
           "specific_award": 0.0,
-          "rare_keyword": 0.268756
+          "rare_keyword": 0.35709
         },
         "multipliers": {
-          "country": 1.05
+          "country": 1.05,
+          "shape": 1.08
+        },
+        "floor_value": 0.0,
+        "floor_source": ""
+      },
+      {
+        "rank": 10,
+        "movie_id": 4347,
+        "title": "Atonement",
+        "year": 2007,
+        "score": 0.708716,
+        "base_score": 0.62497,
+        "dominant_lane": "rare_keyword",
+        "lanes": [
+          "shape",
+          "quality",
+          "format",
+          "themes",
+          "rare_keyword"
+        ],
+        "lane_scores": {
+          "shape": 0.10691,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.959312,
+          "format": 1.0,
+          "themes": 0.713962,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.394864
+        },
+        "lane_contributions": {
+          "shape": 0.067522,
+          "director": 0.0,
+          "franchise": 0.0,
+          "studio": 0.0,
+          "source": 0.0,
+          "quality": 0.030294,
+          "format": 0.042105,
+          "themes": 0.090185,
+          "cast": 0.0,
+          "specific_award": 0.0,
+          "rare_keyword": 0.394864
+        },
+        "multipliers": {
+          "country": 1.05,
+          "shape": 1.08
         },
         "floor_value": 0.0,
         "floor_source": ""

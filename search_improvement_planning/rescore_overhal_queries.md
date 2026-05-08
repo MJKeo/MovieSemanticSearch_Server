@@ -8,22 +8,25 @@ every phase, after every phase, and diff the per-query output.
 
 Driver: [search_v2/run_specs.py](../search_v2/run_specs.py).
 
+**Do NOT pass this markdown file directly to `--suite`.**
+`_load_suite` only strips `#`-prefixed and blank lines, so the
+prose between sections (and code-block contents) would be
+dispatched as queries — once burned ~314 prose lines through the
+pipeline before being caught. Always run from the canonical
+plain-text extract `/tmp/v5_suite.txt` (one query per line, no
+markdown), or extract the queries fresh from the
+`## Query list (one per line)` section at the bottom of this
+document.
+
 ```bash
 # baseline before any V5 work
-python -m search_v2.run_specs --suite \
-  search_improvement_planning/rescore_overhal_queries.md \
+python -m search_v2.run_specs --suite /tmp/v5_suite.txt \
   --json /tmp/run_specs_baseline.json
 
 # after each phase ships
-python -m search_v2.run_specs --suite \
-  search_improvement_planning/rescore_overhal_queries.md \
+python -m search_v2.run_specs --suite /tmp/v5_suite.txt \
   --json /tmp/run_specs_phase_<N>.json
 ```
-
-The suite file is plain text — `run_specs.py` already strips
-markdown headers and comment lines, so this document doubles as
-both human-readable and runner-readable. Queries appear at the end
-under `## Query list (one per line)`.
 
 The "what to look for" notes below describe the diagnostic shape we
 want — they are intentionally not pass/fail thresholds. Compare the

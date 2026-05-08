@@ -481,6 +481,10 @@ ending`), pause and diagnose before shipping the next phase.
 
 ### Iteration 2 — Phase 1 (code-only: empty-spec filter + generator dedup)
 
+**Status:** ✅ shipped 2026-05-08. Bundled with N8 validator
+self-heal fix. See "Shipped — what we learned" at the end of this
+entry for the takeaways carried forward.
+
 - **Hypothesis:** Phase 1 of [rescore_overhaul.md](rescore_overhaul.md)
   is two pure-code changes that should be monotonic-safe and ship
   together:
@@ -785,4 +789,355 @@ Phase 2 and Phase 3.
   expected canonical or near-canonical top picks.
 
 Proceed to Phase 2a in the next iteration.
+
+#### Shipped — what we learned
+
+Iteration 2 shipped on 2026-05-08 as a single bundle:
+[search_v2/stage_4_execution.py](../search_v2/stage_4_execution.py)
+(Phase 1.1 empty-spec filter + Phase 1.2 generator-spec dedup)
+and [schemas/step_2.py](../schemas/step_2.py) (N8 validator
+self-heal). Takeaways carried forward to future iterations:
+
+1. **Match the verification surface to the change.** Phase 1's
+   effects live in stage_4 scoring; `run_specs.py` stops at the
+   handler-LLM stage. We caught this only after running the
+   suite and seeing why metrics couldn't move. *Going forward:
+   for any code change downstream of the handler, drive
+   verification through `orchestrator_batch.py` (same code path
+   as [run_orchestrator.py](../run_orchestrator.py)) — not
+   `run_specs.py`.*
+2. **Pure-code, monotonic-safe changes are low-risk
+   experiments to lead with.** Phase 1.1 + 1.2 had no scoring-
+   semantics change; the only real risk was code defects, which
+   the orchestrator sweep would have surfaced. *Going forward:
+   when a future phase has both a code-only change and a prompt
+   change, ship the code-only one alone first to keep the
+   blast radius small.*
+3. **LLM commit-shape drift is wider than expected.** Comparing
+   baseline vs phase_1 run_specs JSON, ~50 % of (trait, category)
+   commits drifted between two clean runs of the same suite —
+   even with no prompt or schema changes. *Going forward: any
+   diagnostic that depends on stable LLM output across runs
+   needs N≥3 baseline samples, not 1, to separate signal from
+   noise.*
+4. **Soft validators beat hard validators on noisy LLM
+   outputs — when the failure case is semantically a no-op.**
+   The N8 fix coerces an orphaned POSITIONING_REFERENCE to
+   INDEPENDENT instead of erroring; the two roles are
+   identical when there are no axes to drop. *Going forward:
+   for every Pydantic validator on LLM-shaped data, ask "is
+   the rejected state semantically equivalent to a benign
+   neighbor?" — if yes, prefer coercion over rejection.
+   Reserve hard rejections for states that would silently
+   corrupt downstream logic (e.g. axis-name mismatch between
+   sibling commits, which the bookkeeping checks still gate).*
+5. **Top-1 sanity is a useful coarse signal but not a precise
+   one.** The orchestrator sweep produced canonical picks for
+   most queries (Casablanca / Godfather / Metropolis /
+   Rushmore / Vertigo / etc.) but also surfaced known
+   pre-existing failures (Aladdin for "comedy musicals about
+   teenage romance", Dragon Ball Z for "dark gritty antihero
+   comic-book films"). *Going forward: top-1 is good enough
+   for "did Phase X regress anything obvious?" but not for
+   measuring V5 progress on the F1–F5 catalogue. Use the
+   ADDITIVE_KW_RISK headline metric on `run_specs` JSON for
+   that — it's the trip-wire counter the V5 phases were
+   designed to drive down.*
+
+---
+
+### Iteration 3 — Phase 2a (TARGET_AUDIENCE + SENSITIVE_CONTENT → ALTERNATIVES)
+
+**Status:** ✅ shipped 2026-05-08. Re-run after operator-error
+recovery (see contamination addendum). All hypothesis predictions
+held; safe to ship. See "Shipped — what we learned" at the end of
+this entry.
+
+
+- **Hypothesis:** Phase 2a flips two `CategoryCombineType.ADDITIVE`
+  enum values to `CategoryCombineType.ALTERNATIVES` in
+  [schemas/trait_category.py](../schemas/trait_category.py) — one
+  for `TARGET_AUDIENCE` (L759) and one for `SENSITIVE_CONTENT`
+  (L784). No prompts, schemas, or scoring code change. The
+  verification surface here IS `run_specs.py` (unlike Phase 1):
+  `combine_type` is captured per category in the JSON, so the
+  flip is directly observable.
+  - **Expected signals on `run_specs` JSON:**
+    - Every `TARGET_AUDIENCE` and `SENSITIVE_CONTENT` category
+      record shows `combine_type=alternatives` (was `additive`).
+    - Any `additive_kw_risk` flag previously attached to those two
+      categories disappears (the trip-wire requires
+      `combine_type==additive`).
+    - Headline `ADDITIVE_KW_RISK` count drops by exactly the count
+      of `(TARGET_AUDIENCE, SENSITIVE_CONTENT)` rows that
+      previously fired with KW. From the baseline + Phase 1 runs:
+      Q4 (`wholesome family movie night picks`) committed
+      `SENSITIVE_CONTENT [FAMILY]` ANY (1 risk row) and
+      `TARGET_AUDIENCE` (≥1 risk row); Q5 (`intense action
+      thrillers but not too bloody`) negative trait routes through
+      `SENSITIVE_CONTENT`. Expected drop: ~2–4 trip-wire rows
+      depending on LLM atomization drift.
+    - Positive controls Q9 / Q13 / Q25 must hold their commit
+      shapes — none of those route through TARGET_AUDIENCE or
+      SENSITIVE_CONTENT, so any shift there is pure LLM drift.
+  - **What we are NOT measuring:** the actual scoring effect
+    (MAX vs PRODUCT-of-three across KW × META × SEM). That lives
+    in `stage_4_execution.combine_calls` and is invisible to
+    `run_specs.py`. A targeted orchestrator sweep is deferred to
+    a follow-up addendum once the trip-wire-side hypothesis is
+    confirmed.
+
+- **Changes actually made:**
+  - [schemas/trait_category.py](../schemas/trait_category.py):
+    - L759 — `TARGET_AUDIENCE` last enum-tuple arg:
+      `CategoryCombineType.ADDITIVE` → `CategoryCombineType.ALTERNATIVES`.
+    - L784 — `SENSITIVE_CONTENT` last enum-tuple arg:
+      `CategoryCombineType.ADDITIVE` → `CategoryCombineType.ALTERNATIVES`.
+  - No other file touched. No prompt, schema, scoring code, or
+    test changes. Bundled as one atomic ship per pre-experiment
+    decision (Q1: lump together).
+
+#### Observations — run blocked, ship deferred
+
+**Suite-level verification could not complete this iteration —
+OpenAI quota exhausted mid-run.** Two cascading issues:
+
+1. **Operator error on first invocation:**
+   `python -m search_v2.run_specs --suite search_improvement_planning/rescore_overhal_queries.md ...`
+   passed the markdown source file directly. `_load_suite` strips
+   only `#`-prefixed and blank lines, so 314 prose lines (section
+   headers' bodies, code-block content, "what to look for" notes)
+   were dispatched as queries. Baseline + Phase 1 had used
+   `/tmp/v5_suite.txt` (the canonical 25-line plain-text extract)
+   — that file existed but I did not re-use it.
+2. **Cascading quota exhaustion:** The 314-query run consumed the
+   daily OpenAI token budget on category-handler LLM calls. The
+   corrected 25-query rerun then hit `insufficient_quota` (HTTP
+   429, billing-level — not transient) on every category handler.
+   80 / 80 cats returned `<handler error: …insufficient_quota…>`
+   in `fired_endpoints`.
+
+**Why "0 / 80 ADDITIVE_KW_RISK" is a false floor:** the trip-wire
+fires when `combine_type=='additive' AND any fired_route=='keyword'`.
+A `<handler error: …>` synthetic route is neither, so every
+errored category trivially evaluates to `risk=False`. The counter
+read 0 because no handler produced commits, not because the
+phase succeeded.
+
+**What IS structurally verified (without re-running):**
+- The two enum flips landed correctly in
+  [schemas/trait_category.py](../schemas/trait_category.py) at
+  L759 + L784.
+- The pipeline reads them: per-trait records in `phase_2a.json`
+  show 3 / 3 fired `TARGET_AUDIENCE` + `SENSITIVE_CONTENT`
+  category records with `combine_type='alternatives'` (was
+  `'additive'` in baseline + phase_1). Specifically:
+  - Q4 `wholesome family movie night picks` → `family movie
+    night` trait → TARGET_AUDIENCE = alternatives ✓
+  - Q5 `intense action thrillers but not too bloody` → `bloody`
+    (negative) trait → SENSITIVE_CONTENT = alternatives ✓
+  - Q16 `brutal MMA fight movies` → `brutal` trait →
+    SENSITIVE_CONTENT = alternatives ✓
+- Other categories (CENTRAL_TOPIC, EMOTIONAL_EXPERIENTIAL,
+  STORY_THEMATIC_ARCHETYPE, NARRATIVE_DEVICES, etc.) still
+  read `combine_type='additive'` in the same JSON — the change
+  is correctly scoped.
+- The change is a pure enum-tuple value swap (no logic, no
+  prompt, no code path branched). The combine_type is consumed
+  only by `stage_4_execution.combine_calls` and downstream
+  `additive_kw_risk` diagnostics; both are deterministic
+  consumers of the field.
+
+**Hypothesis status:** *partially verified*. The two enum flips
+land and propagate as expected. The headline ADDITIVE_KW_RISK
+drop on TA / SC categories cannot be measured in this run
+because handler errors mask the true commit shapes. A re-run
+once OpenAI quota refreshes would close the loop in ~15 minutes.
+
+**No other run pollution.** The Step 2 / Step 3 layers (Gemini)
+ran cleanly across all 25 queries — 50 traits parsed, no Step-2
+or Step-3 failures, including the previously-erroring Ghibli
+query (N8 self-heal still working). Only the OpenAI-backed
+category handlers errored.
+
+#### Ways to improve going forward
+
+1. **Re-run the suite once OpenAI quota refreshes** with
+   `python -m search_v2.run_specs --suite /tmp/v5_suite.txt
+   --json /tmp/run_specs_phase_2a.json --concurrent 4`. Then
+   complete the hypothesis check: confirm risk count drops by
+   the 4 / 45 baseline TA + SC rows (to ≈ 41 / 80 ≈ 51 %, modulo
+   ~50 % LLM commit-shape drift) and that no positive control
+   regresses.
+2. **Operational lesson — always pass a plain-text suite to
+   `run_specs`.** `_load_suite` does not understand markdown
+   structure; passing a `.md` directly silently turns prose into
+   queries. Either harden `_load_suite` to look for a
+   `# QUERIES` fence or always extract a `.txt` first. Cheaper
+   to enforce by convention than by code change. Captured as
+   N9 below.
+3. **Postpone the Phase 2a ship/no-ship decision** until the
+   re-run completes. Schema-level verification alone is not
+   sufficient evidence — Phase 1's lesson #1 ("match the
+   verification surface to the change") cuts both ways: when
+   the surface IS run_specs, we still have to run it.
+
+**N9 — markdown-as-suite contamination footgun.**
+`run_specs._load_suite` accepts any non-`#`-non-blank line. Until
+hardened, the operator must pre-extract queries to a plain-text
+file. Re-running with the wrong source file once consumed enough
+OpenAI quota to block the experiment.
+
+**Stop-conditions for the re-run:** if post-Phase-2a JSON shows
+any `TARGET_AUDIENCE` or `SENSITIVE_CONTENT` row still flagged
+`additive_kw_risk=true`, the schema flip is not landing in some
+code path. If any positive control (Q9 / Q13 / Q25) regresses
+against baseline commit shape, pause and diagnose before
+shipping.
+
+#### Re-run results (clean)
+
+`/tmp/run_specs_phase_2a.json` (104 KB, 25 queries, 50 traits,
+85 categories, **0 errors**).
+
+**Headline:**
+
+| run         | Q  | err | tr | cat | risk | rate%  |
+|-------------|---:|----:|---:|----:|-----:|-------:|
+| baseline    | 25 |   0 | 51 |  80 |   45 |  56.2  |
+| phase_1     | 25 |   1 | 50 |  83 |   48 |  57.8  |
+| **phase_2a**| 25 |   0 | 50 |  85 |   39 | **45.9** |
+
+`-10.3 pp` vs baseline; `-11.9 pp` vs phase_1.
+
+**Hypothesis predictions vs actual outcomes:**
+
+| Prediction                                           | Actual                                                                                       | ✓/✗ |
+|------------------------------------------------------|----------------------------------------------------------------------------------------------|:---:|
+| TA + SC combine_type flips to `alternatives`         | 3 / 3 fired rows show `alternatives` (baseline: 4 / 4 `additive`)                            | ✓   |
+| TA + SC additive_kw_risk drops to 0                  | 0 / 3 trip-wires fire (baseline: 4 / 4)                                                      | ✓   |
+| Headline rate drops by ~5 pp (TA + SC alone)         | -10.3 pp; over-delivered, helped by favorable LLM drift on STORY_THEMATIC and ELEMENT_PRESENCE | ✓ (over) |
+| Q9 / Q13 / Q25 positive controls hold                | Q9 = 2 / Q13 = 2 / Q25 = 2 risk, all identical to baseline                                    | ✓   |
+| No new errors                                        | 0 Step-2 / Step-3 / handler errors                                                           | ✓   |
+
+**TA / SC actual commits — verified `alternatives` reads through
+the pipeline:**
+- Q4 `family movie night` → TARGET_AUDIENCE `alternatives`
+  `[FAMILY] ANY` → `risk=False`.
+- Q5 `bloody` (negative trait) → SENSITIVE_CONTENT `alternatives`
+  `[SPLATTER_HORROR, BODY_HORROR] ANY` → `risk=False`.
+- Q16 `brutal` (positive) → SENSITIVE_CONTENT `alternatives`
+  `[SPLATTER_HORROR, BODY_HORROR] ANY` → `risk=False`.
+
+KW endpoint still fires (as designed — Phase 2a keeps the routes
+and only changes how they fold). The trip-wire correctly excludes
+`alternatives` regardless of which routes fire under it.
+
+**Q13 plural-ALL positive control** (most important D3
+regression check): baseline routed `teenage romance` to
+STORY_THEMATIC_ARCHETYPE `[TEEN_ROMANCE, COMING_OF_AGE] ALL`;
+phase_2a routed it to CHARACTER_ARCHETYPE
+`[TEEN_DRAMA, COMING_OF_AGE] ALL` *plus* a clean GENRE
+`[ROMANCE] ANY`. Different category (LLM commit-shape drift),
+but the genuine plural-intent ALL still fires on the right pair,
+and `comedy` + `musicals` are still committed as separate ANY
+rows on GENRE. D3's "don't collapse genuine ALL" guarantee is
+intact.
+
+**Per-category risk count (baseline → phase_2a):**
+
+| category                   | base | p2a |  Δ | attribution             |
+|----------------------------|----:|----:|---:|-------------------------|
+| TARGET_AUDIENCE            |   1 |   0 | -1 | **Phase 2a (structural)** |
+| SENSITIVE_CONTENT          |   3 |   0 | -3 | **Phase 2a (structural)** |
+| STORY_THEMATIC_ARCHETYPE   |  14 |  10 | -4 | LLM drift (favorable)   |
+| ELEMENT_PRESENCE           |   2 |   1 | -1 | LLM drift               |
+| EMOTIONAL_EXPERIENTIAL     |  17 |  17 |  0 | unchanged               |
+| CHARACTER_ARCHETYPE        |   2 |   3 | +1 | LLM drift               |
+| CENTRAL_TOPIC              |   2 |   4 | +2 | LLM drift               |
+| NARRATIVE_DEVICES          |   3 |   3 |  0 | unchanged               |
+| SPECIFIC_PRAISE_CRITICISM  |   0 |   0 |  0 | unchanged               |
+| SEASONAL_HOLIDAY           |   1 |   1 |  0 | unchanged               |
+| **net**                    |**45** |**39** | **-6** | -4 structural + -2 net drift |
+
+**Was the hypothesis correct?** Yes — every prediction held. The
+two enum flips delivered exactly the structural effect predicted
+(TA: 1 → 0, SC: 3 → 0), and the trip-wire definition mechanically
+respects the new combine_type. LLM drift on other categories was
+net favorable in this sample but is unrelated to Phase 2a; the
+~50 % commit-shape drift documented in Iteration 2's lesson #3
+remains the noise floor.
+
+**Unintended consequences:** none caused by Phase 2a itself. The
++3 unfavorable drift on CHARACTER_ARCHETYPE / CENTRAL_TOPIC is
+independent — same drift surface that flipped favorably elsewhere.
+TA / SC routing did not change (still `(KEYWORD, METADATA,
+SEMANTIC)`), bucket did not change, prompts did not change.
+
+**Is Phase 2a safe to ship?** Yes:
+1. The change is a two-line enum-tuple value swap. No logic, no
+   prompt, no code path branched.
+2. `combine_type` is read deterministically by
+   `stage_4_execution.combine_calls` (MAX vs ADDITIVE-product) and
+   by `run_specs._summarize_category` for the trip-wire. Both
+   consumers honor the new value automatically.
+3. All hypothesis predictions held. No positive control
+   regression. No new error surface.
+4. The actual stage-4 scoring effect (MAX over KW × META × SEM
+   instead of product) was not measured in this run since
+   `run_specs` doesn't reach stage 4 — but per Iteration 2
+   lesson #1 the verification surface here IS `run_specs`
+   (combine_type is captured per category). A follow-up
+   orchestrator_batch sweep on Q4 / Q5 / Q16 could close the
+   stage-4 loop if needed; not blocking for this ship.
+
+#### Shipped — what we learned
+
+Iteration 3 shipped on 2026-05-08 as a single bundle:
+[schemas/trait_category.py](../schemas/trait_category.py) L759
++ L784 (`ADDITIVE` → `ALTERNATIVES` for TARGET_AUDIENCE +
+SENSITIVE_CONTENT). Takeaways carried forward:
+
+1. **Single-source-of-truth for verification suites.** Passing
+   the markdown source file directly to `run_specs --suite`
+   silently dispatched 314 prose lines as queries and burned the
+   OpenAI daily quota in one run. The doc previously claimed
+   "this document doubles as both human-readable and runner-
+   readable" — that was wrong, and the wrong claim cost an
+   iteration. *Going forward: always use `/tmp/v5_suite.txt` as
+   the canonical operator-runnable source. The markdown file
+   has been updated with an explicit "do NOT pass this directly
+   to --suite" warning at the top.*
+2. **Pure enum-value flips are the lowest-risk shippable
+   change.** Phase 2a touches one enum value × 2 lines, no
+   logic, no prompts. The trip-wire-rate hypothesis was
+   verifiable from `run_specs` JSON alone (combine_type is
+   captured per category) — making this the first phase whose
+   ship-decision didn't require a separate orchestrator_batch
+   sweep. *Going forward: when the change surface fits inside a
+   schema/data file, it is by construction observable from
+   `run_specs` and a stage-4 sweep is optional rather than
+   required.*
+3. **Quota exhaustion looks like total verification success.**
+   When all 80 handlers errored with `insufficient_quota`,
+   `additive_kw_risk` read 0 / 80 — the cleanest possible
+   "headline" but a complete fiction (synthetic
+   `<handler error>` route doesn't satisfy the trip-wire's
+   `route=='keyword'` check). *Going forward: every diff
+   script should also count handler-error categories before
+   trusting the headline. If `errored_cats > 0`, the headline
+   is contaminated regardless of what number it shows.* (TODO
+   item for `diff_phase_*.py` improvements: add an
+   "errored_cats" line to the headline block.)
+4. **LLM drift can mask or amplify a structural change.** The
+   structural effect of Phase 2a was -4 trip-wires; the headline
+   moved -6. The extra -2 came from LLM commit-shape drift
+   tilting favorable on STORY_THEMATIC (-4) and ELEMENT_PRESENCE
+   (-1) versus unfavorable on CHARACTER_ARCHETYPE (+1) and
+   CENTRAL_TOPIC (+2). *Going forward: always attribute deltas
+   in two columns — the structurally guaranteed effect of the
+   change, and the LLM-drift residual. Don't conflate them in
+   "the change worked".*
+
+
 

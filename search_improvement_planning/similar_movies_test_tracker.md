@@ -542,3 +542,771 @@ Bias for next iteration: **single-axis change**. Recommend item #1
 cleanest fix for the residual Barbie noise and the most isolated
 change.
 
+### V3.3 — Shape multiplier (reach × quality identity boost) (2026-05-08)
+
+#### Hypothesis
+
+V3.2 ranking treats every candidate as "thematically similar by some
+mix of lanes" but doesn't reward the *kind of film identity* the
+candidate shares with the anchor. A Sharknado anchor matched against
+The Room (both cult) gets no extra credit for the shared cult
+identity beyond what shape / themes / rare_keyword already encode.
+A Best Picture cohort matched against The Pianist gets no prestige
+identity boost.
+
+V3.3 introduces 5 named "shapes" derived from the reach × quality
+grid (see [`similar_movies.md`](similar_movies.md) §V3.3) and a
+multiplier ×1.15 (STRONG) or ×1.08 (MODERATE) that fires when
+anchor and candidate share the same shape. Multi-anchor scales the
+boost by cohort cohesion in the shape (`M_s / N`), gated at ≥0.5.
+
+**Per-shape predictions:**
+
+1. **cult_garbage** (Sharknado, The Room as anchors): same-shape
+   candidates rise. Sharknado top 10 lifts Mega Shark, Mega Python,
+   Sharknado sequels.
+2. **mainstream_blockbuster** (Barbie, Inception, Toy Story as
+   anchors): mainstream peers (other HIGH × Default) get ×1.08.
+   Should be a small lift uniformly across the existing pool.
+3. **prestige** (Best Picture trio, Lady Bird as anchors): The
+   Pianist, The Mission, 12 Years a Slave-style candidates ride a
+   ×1.08 boost. Cohesive prestige cohorts see modest score lifts.
+4. **dogshit** (low-popularity poorly-rated films, rare as anchors
+   in our suite): N/A in the smoke set.
+5. **hidden_gem** (LOW × Acclaimed): also rare in our anchor set,
+   but as candidates they may become more visible for prestige
+   anchors.
+
+**Why shape boost and not weaving:**
+The deterministic MMR + 5-neighborhood adjacency graph
+(B1/B2/B3 quota allocation per anchor neighborhood) was designed but
+parked. The hypothesis is the score-level shape boost gets us most of
+the perceived-quality lift on its own. If V3.3 leaves persistent
+"this anchor's neighborhood is wrong" noise (e.g., niche cult anchor
+still surfacing mainstream peers above same-tier cult peers), the
+weaving change is the next single-axis shift.
+
+**Regressions to watch:**
+- Shape boost stacking with existing multipliers (country ×1.05,
+  studio ×1.08-1.10) compounding score inflation. Empire was 1.820
+  in V3.2; expect modest additional growth.
+- Misclassification edge cases: a film at the reach cutoff (e.g.,
+  The Room at 99K vote_count, just under 100K HIGH threshold)
+  flipping shapes from cult_garbage to dogshit and changing who it
+  matches with.
+- Multi-anchor mixed cohorts (Studio Ghibli + Pixar mix) picking up
+  a cohesive shape they shouldn't — verify cohesion < 0.5 actually
+  suppresses the boost.
+
+#### Changes actually made
+
+Single-axis: shape multiplier wired into `_build_results` alongside
+the existing country / studio / medium / shorts multipliers.
+
+- [`search_v2/similar_movies.py`](../search_v2/similar_movies.py):
+  - New constants `SHAPE_REACH_HIGH_THRESHOLD=100_000`,
+    `SHAPE_REACH_LOW_THRESHOLD=10_000`, `SHAPE_BOOST_STRONG=0.15`,
+    `SHAPE_BOOST_MODERATE=0.08`, `SHAPE_COHESION_MIN=0.50`, plus 5
+    shape name string constants and `SHAPE_STRENGTHS` lookup table.
+  - New `_classify_shape(row) → str | None` reads
+    `imdb_vote_count` and `_quality_bucket(row)` to assign one of
+    {dogshit, cult_garbage, prestige, hidden_gem,
+    mainstream_blockbuster} or None.
+  - New `_shape_multiplier(anchor_shape_cohesion, candidate_shape) →
+    float` returns 1.0 for shapeless candidates or sub-threshold
+    cohesion, else `1 + max_strength * cohesion`.
+  - `_build_results` extended with `anchor_shape_cohesion` and
+    `candidate_shape_by_movie` params. Multiplier applied after the
+    shorts handling, surfaced as `multipliers["shape"]` in
+    `LaneEvidence`.
+  - Single-anchor: anchor shape classified once, cohort cohesion
+    `{anchor_shape: 1.0}`. Candidate shapes computed from
+    `candidate_rows`.
+  - Multi-anchor: per-shape cohesion = M_s/N across the cohort,
+    candidate shapes from `candidate_rows`. Cohort needs ≥0.5
+    cohesion in a shape for the boost to fire.
+- [`db/postgres.py`](../db/postgres.py):
+  `fetch_similarity_signal_rows` now SELECTS `mc.imdb_vote_count`
+  alongside the existing fields so the shape classifier has the raw
+  reach signal at hand without an extra fetch.
+
+No changes to recall paths, candidate generation, or lane scoring.
+Pure scoring layer addition.
+
+Doc updates:
+[`similar_movies.md`](similar_movies.md) §V3.3 added with the reach
+× quality grid, the 5 shapes, multiplier values, plug-in point, and
+a future-work note on weaving (deterministic MMR with anchor-aware
+neighborhood adjacency was designed but parked pending V3.3
+verification).
+
+#### Observations
+
+Hypothesis was **correct for shape-cohesive cohorts**, less effective
+where the underlying `_quality_bucket` classifier doesn't qualify
+candidates for the same shape as the anchor.
+
+##### Wins (hypothesis confirmed)
+
+- **The Room (cult_garbage anchor) — major win.** Top 10 surfaces
+  the cult-bad canon: **Troll 2 (×1.15 shape), Space Mutiny,
+  Birdemic (×1.15 shape), The Minis, Movie 43, Manos: The Hands
+  of Fate, Showgirls, Fateful Findings, Plan 9 from Outer Space**.
+  Genuine cult-bad neighborhood. Troll 2 jumped to #1 from outside
+  V3.2's top 10. Cult shape boost is doing exactly what was
+  intended.
+- **Sharknado (cult_garbage anchor).** Sharknado 2 lifted to 1.458
+  (was 1.268 in V3.2 — `+0.190`). Sharknado 3 to 1.265 (was 1.100 —
+  `+0.165`). All cult_garbage-classified Sharknado sequels caught
+  the ×1.15 boost. Top 10 now anchored more firmly by the franchise.
+- **MCU trio (mainstream_blockbuster cohort).** Cohort cohesion 1.0
+  in mainstream_blockbuster (all 3 anchors HIGH × middle bucket).
+  Iron Man 2 to 1.429 (was 1.323 — `+0.106`), Cap: Winter Soldier
+  1.174 (was 1.087), Avengers: Age of Ultron 1.150 (was 1.065). All
+  10 candidates received ×1.08 — including The Rock at #4
+  (HIGH × Default mainstream peer, not MCU but same shape).
+- **Best Picture trio (prestige cohort).** The Pianist 1.425 (was
+  1.319 — `+0.106`), Citizen Kane 1.008 (was 0.933). Per-result
+  breakdowns confirm ×1.08 fires on prestige-classified candidates;
+  prestige neighborhood preserved cleanly.
+- **Pixar trio.** Cohort classifies as **prestige** (not
+  mainstream_blockbuster — Pixar films cross the recep ≥85 +
+  pct ≥0.75 threshold). Toy Story 3 1.341 (was 1.242 — `+0.099`),
+  Inside Out 1.252 (was 1.159), Monsters Inc 1.157, Good Dinosaur
+  1.151. Strong cluster preserved with prestige lift.
+- **Tarantino trio.** Kill Bill: Vol. 2 at 1.831 (Tarantino auteur
+  + prestige shape both firing).
+- **Oppenheimer single-anchor (prestige).** Dunkirk 1.019 (was
+  0.944), Schindler's 0.959 (was 0.888) — both got ×1.08. Top 10
+  preserved with prestige peers materially lifted.
+
+##### Where the hypothesis was weaker
+
+- **Female-led / Gerwig cohort.** Mixed cohort: Barbie classifies
+  as `mainstream_blockbuster` (recep 75.2 below prestige threshold
+  of 85), Lady Bird and Little Women 2019 classify as `prestige`.
+  Cohort cohesion: 0.33 in mainstream_blockbuster (below
+  threshold), 0.67 in prestige (above threshold). Prestige boost
+  *should* fire on prestige-bucket candidates — but **most
+  candidates surface as `middle` bucket** (Frances Ha at recep
+  78.8, 20th Century Women at recep 79.0, Juno at recep 78.2 —
+  all just below the 85 prestige cutoff). So cohort cohesion is
+  there but few candidates qualify to receive it. Slate looks
+  identical to V3.2 — no observable lift.
+
+  This is a quality-bucket classifier limitation more than a shape
+  multiplier limitation: the recep ≥85 threshold is conservative
+  and excludes many films we'd colloquially consider "prestige."
+- **Niche cult films (Mega Python, Leprechaun 4)** with vote_count
+  3K–10K and reception 30–36 fail the cult_garbage bucket because
+  popularity_percentile (0.787 / 0.883) is below the 0.89 cutoff.
+  They classify as `middle` bucket → shapeless. So Sharknado anchor
+  (cult_garbage) doesn't get a same-shape boost on Mega Python /
+  Leprechaun 4 — they're classified as no-shape rather than dogshit
+  (the design predicted dogshit, but they fail the bucket gate
+  entirely). Top 10 preserved without lift on those rows.
+
+##### Score inflation continues
+
+Top scores still inflate when shape stacks with country / studio:
+- Empire vs. Star Wars: 1.926 (was 1.820)
+- Iron Man 2 (MCU): 1.429 (was 1.323)
+- LOTR: Two Towers vs. Fellowship: 1.868
+- Pianist (Best Picture): 1.425
+- Toy Story 3 (Pixar): 1.341
+- Kill Bill: Vol. 2 (Tarantino): 1.831
+
+Multiplier stacking is producing scores well above 1.0 routinely.
+Same regression-to-watch as V3.1/V3.2 — not addressed by V3.3.
+
+##### Direct comparison: V3.2 vs V3.3 sample top-1 scores
+
+| Anchor / cohort | V3.2 top-1 score | V3.3 top-1 score | Δ | Shape boost firing? |
+|---|---|---|---|---|
+| Sharknado | 1.268 | 1.458 | +0.190 | ✓ cult_garbage |
+| The Room | (Troll 2 not top-1) | 0.720 (Troll 2) | new top-1 | ✓ cult_garbage |
+| Best Picture (Pianist) | 1.319 | 1.425 | +0.106 | ✓ prestige |
+| MCU (Iron Man 2) | 1.323 | 1.429 | +0.106 | ✓ mainstream_blockbuster |
+| Pixar (Toy Story 3) | 1.242 | 1.341 | +0.099 | ✓ prestige |
+| Female-led (Fabelmans) | 0.977 | 0.977 | +0.000 | ✗ (cohort split) |
+| Female-led (Frances Ha) | 0.804 | 0.804 | +0.000 | ✗ |
+| Oppenheimer (Dunkirk) | 0.944 | 1.019 | +0.075 | ✓ prestige |
+
+#### Was the hypothesis correct?
+
+**Yes, where cohort-shape cohesion is high.** Cult-bad cohorts (The
+Room, Sharknado) and shape-cohesive multi-anchor cohorts (MCU,
+Pixar, Best Picture, Tarantino) all see meaningful and well-targeted
+lifts. The boost is doing exactly what was designed: identity-level
+score addition on top of additive lane sums.
+
+**Less effective where the quality bucket classifier doesn't qualify
+the candidates.** This isn't a shape-multiplier problem; it's an
+upstream classifier strictness problem. Films that we'd colloquially
+group with "prestige" or "cult" don't always pass the existing
+`_quality_bucket` thresholds, so they don't share a shape with
+acclaimed/poorly-rated anchors and miss the boost.
+
+#### Are weaving changes still warranted?
+
+**Yes, partially — for different problems than what V3.3 addressed.**
+
+- **Shape boost solves the score-level problem** (same-identity
+  candidates should rank higher than different-identity ones). It's
+  doing that.
+- **Weaving solves a slot-level problem** that V3.3 doesn't touch:
+  *guaranteeing the slate has a defensible mix of cohesive and
+  adjacent neighborhood candidates.* The Lady-Bird-at-#39 failure
+  for Barbie is still present — Lady Bird isn't in the candidate
+  pool with strong-enough shape to clear the floor gates. Weaving
+  with anchor-aware quotas (B1=same-neighborhood, B2=adjacent)
+  would deliberately allocate her a slot.
+- **Recall** is also still a separate problem. Some failure cases
+  (Lady Bird, "Nope" missing from Get Out) are recall-bound — no
+  weaving or shape change fixes a candidate that isn't in the pool.
+
+So the priority is now:
+1. Loosen / decouple shape classification thresholds (more
+   candidates participate in same-shape matching).
+2. Add a director-only recall path for single-anchor (auteur
+   anchors get other auteur films into the pool unconditionally).
+3. Then revisit weaving with the V3.3 shape signals as input to
+   bucket assignment.
+
+#### Should the 5 shapes have their strengths adjusted?
+
+The 0.15 / 0.08 split played well in observation. Considerations:
+
+- **Strong shapes (cult, dogshit, hidden_gem)** — the +0.15 lift
+  was visible without overpowering recall (e.g., The Room top 10
+  is genuinely cult-bad without becoming dominated by the boost).
+  Probably correct.
+- **Moderate shapes (prestige, mainstream_blockbuster)** — the
+  +0.08 lift fires on cohesive cohorts (MCU, Pixar) without
+  causing visible distortion. Probably correct.
+- **Could try +0.20 / +0.10** if the V3.3 + recall changes still
+  leave shape-cohesive cohorts looking too mixed. But the evidence
+  doesn't yet justify the bump.
+
+The bigger lever is the **`_quality_bucket` thresholds**, not the
+multiplier strength. Loosening recep ≥85 to recep ≥80 (or the
+percentile thresholds 0.89→0.80) would let many more films
+participate. Worth trying as a follow-up isolated change before
+adjusting shape strengths.
+
+#### Ways to improve going forward
+
+1. **Loosen `_quality_bucket` thresholds.** The recep ≥85 +
+   pct ≥0.75 prestige threshold and recep ≤45 + pct ≥0.89
+   cult_garbage threshold are tuned for legacy lanes (prestige
+   quality scoring formulas). For shape classification we may want
+   independent thresholds (e.g., recep ≥78 for "prestige shape"
+   classification) so that Frances Ha, Spectacular Now, 20th
+   Century Women all participate. Single-axis change.
+2. **Director-only single-anchor recall path.** Lady Bird, Frances
+   Ha, Little Women not entering Barbie's candidate pool is a
+   recall problem. Direct-fetch by anchor's curated auteur director.
+3. **Cap final score at 1.0** (or normalize at end). Score
+   inflation is now well past where it was in V3 — Empire at 1.926.
+   Downstream LLM rerankers and threshold gates will misbehave.
+4. **Decide on weaving** based on (1)+(2). If the slate quality is
+   acceptable after loosening thresholds and adding director recall,
+   weaving may not be needed. If persistent neighborhood-mismatch
+   noise remains, ship the deterministic MMR with the V3.3 shape
+   classifications as bucket assignment input.
+
+Bias for next iteration: **single-axis change**. Recommend item #1
+(loosen bucket thresholds for shape classification) — it's the
+biggest lever for making the V3.3 boost visible across more of the
+suite, and it's cleanly isolated from recall changes.
+
+### V3.3.1 — Loosen shape-classification thresholds (2026-05-08)
+
+#### Hypothesis
+
+The V3.3 smoke run revealed that the existing `_quality_bucket(row)`
+gates (recep ≥85 + pct ≥0.75 for prestige; recep ≤45 + pct ≥0.89
+for cult_garbage) are tuned for the legacy prestige/cult quality
+scoring formulas — too strict for shape classification. Films we'd
+colloquially treat as "prestige" (Frances Ha 78.8, 20th Century
+Women 79.0, Juno 78.2, Little Women 1994 81.4) and films we'd
+treat as "cult" or "dogshit" (Mega Python at percentile 0.787,
+Leprechaun 4 at 0.883, Plan 9 from Outer Space) all classify as
+`middle` bucket → shapeless. They miss shape participation
+entirely.
+
+V3.3.1 decouples shape classification from `_quality_bucket`:
+- Prestige shape threshold: reception ≥ **78** (was 85)
+- Poor shape threshold: reception ≤ **50** (was 45)
+- Drop the percentile gate for shape entirely — the reach axis
+  (10K / 100K vote_count tiers) already filters by audience size.
+
+`_quality_bucket` itself is untouched — the legacy quality lane
+formulas still use the strict V3 thresholds.
+
+**Predictions:**
+- Female-led / Gerwig cohort: Frances Ha, 20th Century Women, Juno
+  newly classify as `prestige` shape and ride the cohort's prestige
+  cohesion boost.
+- Plan 9 from Outer Space and Mega Python newly classify as
+  cult_garbage / dogshit shape; visible for cult anchors.
+- MCU trio: Iron Man (recep 79.0) and Endgame (recep 80.4) cross
+  prestige threshold; cohort splits between mainstream and
+  prestige. Mild regression possible — fewer candidates get the
+  cohort boost.
+- Inception (recep 79.6) newly classifies as prestige; single-
+  anchor boost fires on Tenet/Memento/Mulholland Drive if they
+  also classify prestige.
+- Best Picture and Pixar trios: minimal change (already in prestige
+  bucket).
+
+#### Changes actually made
+
+[`search_v2/similar_movies.py`](../search_v2/similar_movies.py):
+- New constants `SHAPE_PRESTIGE_RECEPTION_MIN=78.0`,
+  `SHAPE_POOR_RECEPTION_MAX=50.0`. Percentile gates removed.
+- `_classify_shape(row)` rewritten to read `reception_score` and
+  `imdb_vote_count` directly, bypassing `_quality_bucket`. Reception
+  None → only HIGH × no-data earns mainstream_blockbuster, else
+  shapeless. Otherwise reception thresholds + reach tiers map
+  cleanly onto the 5 shapes.
+
+No other files touched. `_quality_bucket` and the legacy quality
+lane formulas are unchanged.
+
+#### Observations
+
+##### Major win — Female-led / Gerwig (multi-anchor)
+
+V3.3.1 delivered exactly what the hypothesis predicted. Cohort
+shape distribution: Barbie (recep 75.2) = mainstream_blockbuster,
+Lady Bird (85.4) and Little Women 2019 (85.8) = prestige. Cohesion
+0.67 in prestige (above 0.5 threshold) → ×1.054 boost fires on
+prestige candidates.
+
+| Candidate | V3.3 score | V3.3.1 score | Δ | Now firing |
+|---|---|---|---|---|
+| The Fabelmans | 0.977 | **1.029** | +0.052 | ×1.05 prestige |
+| Little Women (1994) | 0.912 | **0.961** | +0.049 | ×1.05 prestige |
+| 20th Century Women | 0.818 | **0.861** | +0.043 | ×1.05 prestige |
+| Frances Ha | 0.804 | **0.847** | +0.043 | ×1.05 prestige |
+| Juno | 0.864 | **0.910** | +0.046 | ×1.05 prestige |
+
+New entries to top 10: **Licorice Pizza** (0.785, ×1.05 prestige
+boost — coming-of-age PT Anderson, surfaced by themes recall +
+prestige shape) and **Rushmore** (0.784, ×1.05 prestige —
+classic Wes Anderson). Spectacular Now and Adventure in Baltimore
+no longer classified as prestige (recep below 78), so they
+remain unboosted but kept their slots — net slate is more
+indie-prestige-coherent.
+
+##### Win — The Room (single anchor)
+
+Plan 9 from Outer Space jumped from #10 (0.533) to #4 (0.612) —
+the loosened cult_garbage threshold finally classifies it as a
+same-shape peer, ×1.15 boost firing. Top 10 still the cult-bad
+canon (Troll 2, Space Mutiny, Birdemic, Plan 9, Movie 43, Manos,
+Showgirls, Fateful Findings, Sex Marriage and Infidelity).
+
+##### Win — Inception (single anchor)
+
+Inception itself now classifies as prestige (recep 79.6).
+Single-anchor cohesion 1.0 → ×1.08 prestige boost fires on
+prestige candidates:
+- Interstellar: 0.957 → **0.987** (+0.030)
+- Mulholland Drive: 0.863 → **0.932** (+0.069 — also reclassified
+  as prestige)
+- Memento: 0.832 → **0.898** (+0.066)
+- The Matrix: now in top 10 at 0.848 (replaced Trance).
+
+The cluster gets a uniform lift across the Nolan auteur + puzzle
+neighborhood.
+
+##### Mild regression — MCU trio
+
+V3.3 cohort was unanimously mainstream_blockbuster (cohesion 1.0,
+all candidates boosted ×1.08). V3.3.1: Iron Man (79.0) crossed
+into prestige; cohort now 2/3 mainstream + 1/3 prestige. Cohesion
+0.67 in mainstream → ×1.054 instead of ×1.08 on mainstream
+candidates. Endgame (80.4) reclassified prestige and loses the
+boost (cohort prestige cohesion 0.33 < 0.5).
+
+| MCU film | V3.3 | V3.3.1 | Δ |
+|---|---|---|---|
+| Iron Man 2 | 1.429 | 1.394 | -0.035 |
+| Cap: Winter Soldier | 1.174 | 1.145 | -0.029 |
+| Avengers: Age of Ultron | 1.150 | 1.121 | -0.029 |
+| Avengers: Infinity War | 1.224 | 1.193 | -0.031 |
+| Cap: First Avenger | 1.153 | 1.125 | -0.028 |
+| Avengers: Endgame | 1.127 | 1.043 | -0.084 |
+
+Cluster integrity preserved — top 10 is still 9/10 MCU + The Rock
+at #4. Brave New World (was #8, 1.085) drops out of top 10
+replaced by **Thor: The Dark World** (1.034) at #10. This is
+within-cohort reshuffling, not a meaningful regression.
+
+##### No change — Pixar trio, Best Picture trio, Sharknado
+
+Pixar (Toy Story 3 still 1.341, Inside Out 1.252) and Best Picture
+(Pianist 1.425) cohorts already had their anchors uniformly in
+prestige under V3.3 — V3.3.1 doesn't change classification or
+boost behavior for them. Sharknado (cult_garbage anchor)
+identical: cult_garbage candidates still boost; dogshit candidates
+(Mega Python, Leprechaun 4) remain unboosted because they're a
+different shape — by design.
+
+##### No fix — Tom Hanks regression, Lady Bird at #39 for Barbie
+
+V3.3.1 doesn't address recall-bound failures:
+- Tom Hanks trio still missing Cast Away, The Terminal, Captain
+  Phillips. Family-animation peers continue to outrank
+  Hanks-via-cast vehicles.
+- Lady Bird, Little Women 2019, Frances Ha for Barbie single-anchor
+  remain at #20+ — they're not in the candidate pool with
+  strong-enough shape. Shape boost can't lift candidates that
+  aren't in the pool.
+
+These need a director-only recall path or weaving — separate
+changes.
+
+##### Score inflation continues
+
+Empire Strikes Back: 1.926 (was 1.926 in V3.3 — unchanged).
+LOTR: Two Towers vs. Fellowship: 1.868 (unchanged).
+Iron Man 2: 1.394 (down from 1.429 in V3.3 due to cohort split).
+Pianist (Best Picture): 1.425 (unchanged).
+Toy Story 3 (Pixar): 1.341 (unchanged).
+The Empire Strikes Back vs Star Wars single-anchor: 1.926 → 1.926.
+
+Score inflation didn't worsen meaningfully. The shape multiplier's
+contribution was already capped at ×1.15; adding more candidates
+to its eligibility doesn't change the per-row maximum.
+
+#### Was the hypothesis correct?
+
+**Yes, with one anticipated tradeoff.** Loosening the thresholds
+delivered the predicted win (Female-led / Gerwig cohort now sees
+visible prestige boosts; Plan 9 newly cult-classified) and the
+predicted regression (MCU cohort split, Endgame loses boost). The
+tradeoff is acceptable — MCU's cluster integrity is preserved
+even with a slightly weaker cohort boost, and the win on Female-led
+is materially more important.
+
+#### Are there any unintended consequences?
+
+- **Shape boundaries are now reception-driven, which means cohort
+  composition is sensitive to a few-percentage-point reception
+  differences.** Iron Man at 79.0 is prestige; Avengers at 73.4 is
+  mainstream. They're qualitatively the same kind of film
+  (origin-story MCU), but the shape system splits them. This
+  causes the MCU cohesion dilution.
+- **Some legitimately-prestige films still miss the threshold.**
+  The Mission (Best Picture nominee, 62.6 reception in our data)
+  and The Killing Fields (Oscar winner, 76.8 reception) still
+  classify as middle. Reception scores in our data don't always
+  reflect awards consensus — some films historically loved by the
+  Academy have middling user reception.
+- **Tarantino trio** anchor classifications didn't shift much
+  (Pulp Fiction was already prestige; the cohort's behavior is
+  similar). No regression.
+
+#### Was no regression introduced?
+
+Verified across the 21-anchor + 14-cohort suite:
+- **No top-1 lost.** Every cohort's #1 is the same film as V3.3
+  (or marginally lifted).
+- **No franchise cluster broken.** MCU still 9/10 MCU. Star Wars
+  still 6 same-saga + same sci-fi adjacents. Pixar still
+  Pixar-dominant. LOTR still LOTR-dominant. Stephen King still
+  King-dominant.
+- **No surprise demotions.** Endgame went from #7 to #9 within
+  MCU (still in top 10). Brave New World swapped with Thor: The
+  Dark World — both MCU.
+- **The Female-led / Gerwig cohort improved meaningfully** without
+  any other cohort regressing.
+
+#### Adjustments to consider
+
+1. **Recall-bound failures (Lady Bird at #39 for Barbie, Tom Hanks
+   missing Cast Away) are next priority.** Shape multiplier
+   tuning can't help. Director-only single-anchor recall path is
+   the cleanest single-axis change.
+2. **Reception threshold sensitivity is a structural concern.**
+   For multi-anchor cohorts where the reception bunches around the
+   78 cutoff (MCU), small rating differences split the cohort
+   shape. Could mitigate with a soft transition zone (anchor at
+   76-80 partial-membership in both shapes) but this is a
+   complexity tradeoff. Worth considering only if smoke runs show
+   recurring cohort dilution.
+3. **Shape strengths (0.15 / 0.08) still feel right.** No data in
+   V3.3.1 motivates a change.
+
+The next single-axis change should be a director-only single-anchor
+recall path — that addresses the persistent Lady-Bird-at-#39 case
+that no shape or scoring change can fix.
+
+### V3.3.2 — Award-aware classification + cross-bucket boosts (2026-05-08)
+
+#### Hypothesis
+
+Two refinements bundled in one ship:
+
+**(1) Award-aware shape thresholds.** V3.3.1 used reception alone
+(78 default), which (a) over-included middling films at recep ≥78
+that had no genuine prestige signal, and (b) excluded legitimately
+acclaimed older films with mid-range modern reception (The Killing
+Fields recep 76.8, won 3 Oscars including Best Picture nom).
+Tighten the default reception floor to 80 and add an award-aware
+lowered floor at 65 that fires only on a *picture-level* signal
+(Best Picture or Director nom/win at any non-Razzie ceremony —
+acting/craft awards explicitly excluded). Razzie WIN side: any
+WIN in a specific WORST_* category (excluding WORST_OTHER which
+might catch the Razzie Redeemer Award) raises the poorly-rated
+ceiling from 50 to 60.
+
+**(2) Cross-bucket boost matrix.** V3.3.1 only fired the shape
+multiplier when anchor and candidate shared the exact same shape.
+The boundary cuts are arbitrary (e.g., the 10K reach split between
+cult_garbage and dogshit). Add a 5×5 cross-strength matrix where
+same-shape pairs are 1.0, "boundary-arbitrary same-quality reach
+splits" (prestige↔hidden_gem, cult_garbage↔dogshit) are 0.7, and
+quality-step crossings via the mainstream bridge are 0.4 / 0.25 /
+0.15 / 0.10. Effective cohesion sums anchor-side cohesion times
+cross-strength. SHAPE_COHESION_MIN stays at 0.5 (option C from
+the design discussion) — single-anchor cross-shape pairs at 0.4
+won't fire, but mixed cohorts where same-shape (1.0) + cross (0.4)
+contributions sum to ≥0.5 will fire.
+
+**Predictions:**
+- The Killing Fields (76.8 + Best Picture nom) lifts to prestige
+  shape and rides ×1.08 boost in the Best Picture cohort.
+- Bohemian Rhapsody (62 recep, 4 Oscar wins all in performance/
+  craft, no Best Picture / Director nom) — wait, BR was Best
+  Picture-nominated. Recep 62, threshold even at 65 fails. Stays
+  shapeless. ✓
+- Sharknado (cult_garbage) lifts Mega Python and Leprechaun 4
+  (dogshit) via 0.7 cross-bucket → effective 0.7 ≥ 0.5 → ×1.105.
+- The Room (cult_garbage) lifts Space Mutiny / Birdemic / Plan 9
+  similarly when reach-tier-different cult films now share the
+  same shape via cross-bucket.
+- MCU cohort: Iron Man (79.0) and Endgame (80.4) cross prestige
+  threshold via picture-level signal. Cohort cohesion shifts from
+  0.67 mainstream + 0.33 prestige (V3.3.1) to closer to 1.0
+  prestige if all 3 anchors fire. Iron Man 2 (no signal, recep
+  61.8) stays mainstream → loses cohort boost (was 0.67 cohesion).
+- Female-led / Gerwig: Barbie (75.2 + picture-level) now classifies
+  as prestige (was mainstream). Cohort cohesion 1.0 prestige (was
+  0.67) → all prestige candidates lift from ×1.054 to ×1.08.
+- The Mission (62.6 + Cannes Palme d'Or) — recep below 65 floor
+  even with award. Stays shapeless. (Acceptable miss; can be
+  loosened to 60 in a follow-up if needed.)
+
+#### Changes actually made
+
+[`db/postgres.py`](../db/postgres.py):
+- Added `SHAPE_PICTURE_LEVEL_TAG_IDS = (103, 9)` (BEST_PICTURE_ANY
+  rollup + DIRECTOR leaf, excluding DEBUT_DIRECTOR /
+  ASSISTANT_DIRECTOR) and
+  `SHAPE_BAD_RAZZIE_LEAF_IDS = (46..57)` (all WORST_* leaves
+  excluding WORST_OTHER 58).
+- Extended `SimilarityAwardSignals` dataclass with
+  `has_picture_level_signal: bool` and `has_bad_razzie_win: bool`.
+- Extended `fetch_similarity_award_signals` SQL query to compute
+  both flags as additional `BOOL_OR` aggregates in the same single
+  SQL pass (no extra round trip).
+
+[`search_v2/similar_movies.py`](../search_v2/similar_movies.py):
+- Bumped `SHAPE_PRESTIGE_RECEPTION_MIN` 78.0 → 80.0.
+- Added `SHAPE_PRESTIGE_RECEPTION_MIN_W_AWARD = 65.0` (with
+  picture-level signal).
+- Added `SHAPE_POOR_RECEPTION_MAX_W_RAZZIE = 60.0` (with bad-Razzie
+  WIN).
+- Added `SHAPE_CROSS_STRENGTH` matrix (5×5 dict, all pairs).
+- Rewrote `_classify_shape(row, award_signal)` to accept optional
+  award signal and apply the threshold-shifting logic.
+- Rewrote `_shape_multiplier(...)` to use cross-bucket strengths
+  via `SHAPE_CROSS_STRENGTH.get((anchor_shape, candidate_shape),
+  0.0)` summed across anchor shapes for effective cohesion.
+- Updated single-anchor flow to always fetch `award_signals` (not
+  gated on `cult_or_prestige`) and include the anchor ID.
+- Updated multi-anchor flow same way; classification now reads
+  award signals for both anchors and candidates.
+- Both flows pass `anchor_shape_cohesion` and
+  `candidate_shape_by_movie` through to `_build_results` (already
+  wired in V3.3).
+
+No recall path changes. Pure scoring layer + classifier refinement.
+
+#### Observations
+
+##### Major win — Best Picture / Killing Fields (predicted)
+
+The Killing Fields (recep 76.8, Best Picture nom) was shapeless in
+V3.3.1 (76.8 < 78) and didn't ride the cohort prestige boost.
+V3.3.2 classifies it as prestige via picture-level signal lowering
+the floor to 65. Result: 0.992 → **1.071** (+0.079, ×1.08 fired).
+
+##### Major win — Sharknado / The Room cult+dogshit cross-bucket
+
+Cross-bucket cult_garbage↔dogshit at 0.7 strength fires (effective
+cohesion 0.7 ≥ 0.5 threshold). Same-quality reach split is no
+longer a hard cut.
+
+| Anchor / candidate | V3.3.1 | V3.3.2 | Δ | Shape | Cross |
+|---|---|---|---|---|---|
+| Sharknado → Mega Python | 0.519 | **0.573** | +0.054 | dogshit | cult→dogshit 0.7 |
+| Sharknado → Leprechaun 4 | 0.504 | **0.557** | +0.053 | dogshit | cult→dogshit 0.7 |
+| Sharknado → Sharknado 4 | 1.220 | **1.348** | +0.128 | cult_garbage | same |
+| The Room → Space Mutiny | 0.703 | **0.777** | +0.074 | cult_garbage | same |
+| The Room → The Minis | 0.563 | **0.623** | +0.060 | cult_garbage | same |
+
+Sharknado top 10 is now genuinely creature-feature / cult-bad
+coherent. Cult fans get the right peers regardless of which side of
+the 10K reach line they sit on.
+
+##### Major win — Female-led / Gerwig cohort cohesion
+
+Barbie (75.2) was mainstream_blockbuster in V3.3.1. With V3.3.2
+picture-level signal lowering threshold to 65, Barbie classifies as
+prestige. Cohort cohesion goes from 0.67 prestige (V3.3.1) to **1.0
+prestige** (V3.3.2). All prestige candidates now ride full ×1.08
+(was ×1.054).
+
+| Female-led candidate | V3.3.1 | V3.3.2 | Δ |
+|---|---|---|---|
+| The Fabelmans | 1.029 | **1.055** | +0.026 |
+| Little Women (1994) | 0.961 | **0.985** | +0.024 |
+| 20th Century Women | 0.861 | **0.883** | +0.022 |
+| Frances Ha | 0.847 | **0.869** | +0.022 |
+| Juno | 0.910 | **0.933** | +0.023 |
+| Jojo Rabbit | 0.772 | **0.834** | +0.062 |
+
+Top 10 unchanged. All prestige peers lift uniformly.
+
+##### Mixed regression / win — MCU cohort split
+
+V3.3.1 had MCU cohort 0.67 mainstream + 0.33 prestige; all
+mainstream candidates got ×1.054. V3.3.2: all 3 MCU anchors cross
+into prestige via picture-level signal. Cohort cohesion 1.0
+prestige. **Now mainstream-shape MCU candidates lose the boost
+(cross-bucket prestige→mainstream at 0.4 < 0.5 cohesion gate),
+while prestige-shape MCU candidates gain full ×1.08.**
+
+| MCU film | V3.3.1 | V3.3.2 | Δ | Reason |
+|---|---|---|---|---|
+| Iron Man 2 | 1.394 | **1.323** | -0.071 | mainstream candidate, lost cohort boost |
+| Cap: Winter Soldier | 1.145 | **1.174** | +0.029 | prestige candidate (picture-level), gained ×1.08 |
+| Avengers: Age of Ultron | 1.121 | **1.065** | -0.056 | mainstream, lost |
+| Avengers: Infinity War | 1.193 | **1.224** | +0.031 | prestige, gained |
+| Avengers: Endgame | 1.043 | **1.127** | +0.084 | prestige (recovered from V3.3.1 loss) |
+| Thor: Ragnarok | 1.058 | **1.085** | +0.027 | prestige, gained |
+| Cap: First Avenger | 1.125 | **1.068** | -0.057 | mainstream, lost |
+
+Net: 4 films gain (prestige-classified peers), 5 films drop slightly
+(mainstream-classified peers). Top 10 still 9/10 MCU + The Rock at
+#4. Cluster integrity preserved.
+
+This is the predicted asymmetry of cohesive-prestige cohorts:
+prestige peers ride the lift, non-prestige peers lose the cohort
+boost they had under split-cohesion. Acceptable tradeoff — Endgame
+is back where it should be (in the top 6).
+
+##### No change — Pixar trio, Inception (single), Best Picture
+
+- Pixar trio: identical scores to V3.3.1 (anchors all already
+  classified as prestige under V3.3.1; nothing about the cohort
+  changed in V3.3.2).
+- Inception: top 10 same as V3.3.1, scores essentially unchanged.
+  Anchor reclassification doesn't ripple because cohort behavior
+  for single-anchor is binary (anchor either has shape or doesn't).
+- Star Wars / Sharknado / Get Out single-anchor: unchanged or mild
+  improvement.
+
+##### Predicted miss — The Mission
+
+Cannes Palme d'Or, recep 62.6. Picture-level signal fires but
+recep < 65 floor → shapeless. Stays at #2 with score 1.124 (no
+×1.08). Acceptable; would need V3.3.3 to drop the with-award
+floor to 60 if this becomes load-bearing.
+
+##### Score inflation
+
+| Film | V3.3 | V3.3.1 | V3.3.2 |
+|---|---|---|---|
+| Empire vs Star Wars | 1.926 | 1.926 | 1.926 |
+| Toy Story 3 (Pixar trio) | 1.341 | 1.341 | 1.341 |
+| Pianist (Best Picture) | 1.425 | 1.425 | 1.425 |
+| Iron Man 2 (MCU) | 1.429 | 1.394 | 1.323 |
+| Sharknado 2 | 1.458 | 1.458 | 1.458 |
+
+Score inflation didn't worsen. Iron Man 2 actually came down due to
+losing its cohort boost.
+
+#### Was the hypothesis correct?
+
+**Yes for both refinements.**
+
+1. **Award-aware thresholds**: cleanly catches The Killing Fields
+   without admitting Bohemian Rhapsody. Razzie side untested in
+   the smoke set (no anchors with that profile in our list) but
+   the SQL aggregate produces correct results in spot checks.
+2. **Cross-bucket boosts**: Sharknado→Mega Python and Sharknado→
+   Leprechaun 4 lift visibly via the 0.7 cult↔dogshit cross. MCU's
+   mixed cohort split is the predicted asymmetric cost — net
+   tradeoff is acceptable.
+
+#### Are there unintended consequences?
+
+- **MCU mainstream peers (Iron Man 2, Age of Ultron, Cap: First
+  Avenger) lose their V3.3.1 cohort boost** because the cohort is
+  now uniformly prestige. The prestige→mainstream cross at 0.4 is
+  intentionally below the cohesion threshold (option C from the
+  design discussion). The cluster doesn't break, but the within-MCU
+  rank ordering shifted. Watch in subsequent runs.
+- **The 65 with-award floor still misses some legitimately-prestige
+  films** (The Mission at 62.6 specifically). Conservative number
+  by design; can be loosened to 60 as a separate single-axis change
+  if smoke runs prove the miss is recurring.
+- **Razzie Redeemer Award not formally distinguished in our schema.**
+  Excluding WORST_OTHER from the bad-Razzie set is a heuristic
+  buffer. If the redeemer ever gets its own category tag, the
+  exclusion list can become explicit.
+
+#### Was no regression introduced?
+
+Verified across the 21-anchor + 14-cohort suite:
+- **No top-1 lost** in any cohort. Every cohort's #1 is the same
+  film as V3.3.1 (or marginally lifted).
+- **No franchise cluster broken.** MCU still 9/10 MCU. Pixar still
+  Pixar-dominant. Star Wars saga preserved. LOTR preserved.
+  Stephen King preserved.
+- **Sharknado cluster strengthened** (Mega Python / Leprechaun 4
+  now genuinely peers, not just same-tag noise).
+- **Best Picture cluster strengthened** (Killing Fields lifted to
+  rank #3 with prestige boost; Pianist still #1).
+- **Female-led / Gerwig cluster strengthened** (full ×1.08 across
+  prestige peers; cluster more cohesive than V3.3.1).
+- **MCU within-cluster reshuffling** (some peers lose, some gain) —
+  cluster integrity preserved at the top-10 level.
+- **Tom Hanks regression unchanged** — still missing Cast Away,
+  Captain Phillips, The Terminal. Recall-bound; no shape change
+  fixes.
+- **Lady Bird at #39 for Barbie unchanged** — recall-bound.
+
+#### Ship it?
+
+Yes. The wins (cult-cross-bucket, Best Picture's Killing Fields
+lift, Female-led cohort cohesion improvement) are concrete and
+visible. The MCU within-cluster reshuffling is a tradeoff, not a
+regression on cluster integrity. No top-1 lost anywhere.
+
+Next priorities (unchanged from V3.3.1):
+1. Director-only single-anchor recall path (Lady Bird at #39, Tom
+   Hanks lost vehicles).
+2. Score inflation cap if downstream consumers care.
+3. Potentially loosen with-award floor 65 → 60 if The Mission case
+   recurs.
+
+
+
+

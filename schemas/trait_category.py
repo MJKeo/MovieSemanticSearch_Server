@@ -756,7 +756,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
         HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
-        CategoryCombineType.ADDITIVE,
+        CategoryCombineType.ALTERNATIVES,
     )
     SENSITIVE_CONTENT = (
         "Sensitive content",
@@ -781,7 +781,7 @@ class CategoryName(str, Enum):
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.METADATA, EndpointRoute.SEMANTIC),
         HandlerBucket.AUDIENCE_SUITABILITY_DETERMINISTIC_FIRST,
-        CategoryCombineType.ADDITIVE,
+        CategoryCombineType.ALTERNATIVES,
     )
     SEASONAL_HOLIDAY = (
         "Seasonal / holiday",

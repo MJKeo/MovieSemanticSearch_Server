@@ -2008,6 +2008,7 @@ async def fetch_similarity_signal_rows(movie_ids: list[int]) -> dict[int, dict]:
             mc.release_ts,
             mc.reception_score,
             mc.popularity_score,
+            mc.imdb_vote_count,
             mvp.percentile AS popularity_percentile,
             mc.source_material_type_ids,
             mc.production_company_ids,
@@ -2031,6 +2032,7 @@ async def fetch_similarity_signal_rows(movie_ids: list[int]) -> dict[int, dict]:
         "release_ts",
         "reception_score",
         "popularity_score",
+        "imdb_vote_count",
         "popularity_percentile",
         "source_material_type_ids",
         "production_company_ids",
@@ -2227,16 +2229,64 @@ async def fetch_similarity_quality_candidates(
     return {row[0] for row in rows}
 
 
+# V3.3.2 shape classification: picture-level prestige tags. A nom or
+# win in any of these categories at a non-Razzie ceremony is the
+# threshold that lowers the prestige reception floor from 80 to 65.
+# - 103 = BEST_PICTURE_ANY (rollup that catches all best-picture
+#   variants including drama/comedy-musical/action/horror-scifi/
+#   crime-adventure splits)
+# - 9   = DIRECTOR (excludes DEBUT_DIRECTOR=10 and ASSISTANT_DIRECTOR=11
+#   on purpose — debut director is a different signal, assistant is
+#   a craft credit)
+SHAPE_PICTURE_LEVEL_TAG_IDS: tuple[int, ...] = (103, 9)
+
+# V3.3.2 shape classification: bad-Razzie WIN leaves. A win in any of
+# these specific WORST_* categories at the Razzie ceremony lowers the
+# poorly-rated reception ceiling from 50 to 60. WORST_OTHER (id 58) is
+# excluded — it's a catchall that could plausibly include the Razzie
+# Redeemer Award (which is itself positive recognition for
+# filmmakers who reformed). Excluding it is a heuristic; if/when the
+# scraping schema starts distinguishing the redeemer, this list can
+# become more inclusive.
+SHAPE_BAD_RAZZIE_LEAF_IDS: tuple[int, ...] = (
+    46,  # WORST_PICTURE
+    47,  # WORST_LEAD_ACTOR
+    48,  # WORST_LEAD_ACTRESS
+    49,  # WORST_SUPPORTING_ACTOR
+    50,  # WORST_SUPPORTING_ACTRESS
+    51,  # WORST_DIRECTOR
+    52,  # WORST_SCREENPLAY
+    53,  # WORST_REMAKE_OR_SEQUEL
+    54,  # WORST_CAST_OR_COUPLE
+    55,  # WORST_MUSIC
+    56,  # WORST_VISUAL_EFFECTS
+    57,  # WORST_DEBUT_OR_NEWCOMER
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SimilarityAwardSignals:
-    """Award signals consumed by the V2 quality lane.
+    """Award signals consumed by the V2 quality lane and V3.3.2 shape
+    classifier.
 
     `non_razzie_score` powers the prestige-bucket formula; `razzie_score`
     powers the cult_garbage formula. Lumped into one struct so callers
     fetch both with a single query rather than firing two parallel reads.
+
+    V3.3.2 added two flags driving the shape classifier's award-aware
+    threshold shifts:
+      - `has_picture_level_signal`: a Best Picture or Director nom/win
+        at any non-Razzie ceremony. Lowers prestige reception floor
+        from 80 to 65.
+      - `has_bad_razzie_win`: a Razzie WIN in one of the WORST_*
+        categories (excluding WORST_OTHER to give the Razzie Redeemer
+        Award benefit of the doubt). Raises poorly-rated reception
+        ceiling from 50 to 60.
     """
-    non_razzie_score: float   # 1.0 win, 0.75 nom, else 0.0
-    razzie_score: float       # 1.0 if any Razzie nom/win, else 0.0
+    non_razzie_score: float            # 1.0 win, 0.75 nom, else 0.0
+    razzie_score: float                # 1.0 if any Razzie nom/win, else 0.0
+    has_picture_level_signal: bool     # V3.3.2: BP or Director nom/win at non-Razzie ceremony
+    has_bad_razzie_win: bool           # V3.3.2: Razzie WIN in a WORST_* leaf (excluding WORST_OTHER)
 
 
 async def fetch_similarity_award_signals(
@@ -2246,7 +2296,9 @@ async def fetch_similarity_award_signals(
 
     Single SQL pass over `public.movie_awards` with conditional aggregates
     so cult_garbage / prestige scoring can read both sides without firing
-    two queries. Movies absent from the result have no relevant award rows.
+    two queries. V3.3.2 added picture-level and bad-Razzie-win flags
+    used by the shape classifier. Movies absent from the result have no
+    relevant award rows.
     """
     if not movie_ids:
         return {}
@@ -2256,7 +2308,16 @@ async def fetch_similarity_award_signals(
             movie_id,
             BOOL_OR(outcome_id = %s AND ceremony_id <> %s) AS has_non_razzie_win,
             BOOL_OR(outcome_id = %s AND ceremony_id <> %s) AS has_non_razzie_nom,
-            BOOL_OR(ceremony_id = %s)                      AS has_razzie
+            BOOL_OR(ceremony_id = %s)                      AS has_razzie,
+            BOOL_OR(
+                ceremony_id <> %s
+                AND category_tag_ids && %s::int[]
+            ) AS has_picture_level_signal,
+            BOOL_OR(
+                ceremony_id = %s
+                AND outcome_id = %s
+                AND category_tag_ids && %s::int[]
+            ) AS has_bad_razzie_win
         FROM public.movie_awards
         WHERE movie_id = ANY(%s::bigint[])
         GROUP BY movie_id
@@ -2269,11 +2330,23 @@ async def fetch_similarity_award_signals(
             AwardOutcome.NOMINEE.outcome_id,
             AwardCeremony.RAZZIE.ceremony_id,
             AwardCeremony.RAZZIE.ceremony_id,
+            AwardCeremony.RAZZIE.ceremony_id,
+            list(SHAPE_PICTURE_LEVEL_TAG_IDS),
+            AwardCeremony.RAZZIE.ceremony_id,
+            AwardOutcome.WINNER.outcome_id,
+            list(SHAPE_BAD_RAZZIE_LEAF_IDS),
             movie_ids,
         ),
     )
     out: dict[int, SimilarityAwardSignals] = {}
-    for movie_id, has_win, has_nom, has_razzie in rows:
+    for (
+        movie_id,
+        has_win,
+        has_nom,
+        has_razzie,
+        has_picture_level,
+        has_bad_razzie_win,
+    ) in rows:
         if has_win:
             non_razzie = 1.0
         elif has_nom:
@@ -2281,10 +2354,17 @@ async def fetch_similarity_award_signals(
         else:
             non_razzie = 0.0
         razzie = 1.0 if has_razzie else 0.0
-        if non_razzie > 0.0 or razzie > 0.0:
+        if (
+            non_razzie > 0.0
+            or razzie > 0.0
+            or has_picture_level
+            or has_bad_razzie_win
+        ):
             out[movie_id] = SimilarityAwardSignals(
                 non_razzie_score=non_razzie,
                 razzie_score=razzie,
+                has_picture_level_signal=bool(has_picture_level),
+                has_bad_razzie_win=bool(has_bad_razzie_win),
             )
     return out
 

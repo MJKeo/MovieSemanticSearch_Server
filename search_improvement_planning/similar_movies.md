@@ -1751,6 +1751,159 @@ Themes-recall thresholds are function defaults on
   first regression to confirm/deny since user opted to include
   all-tier IDFs in the SUM gate.
 
+## V3.3 Shape Multiplier (Reach × Quality Identity Boost)
+
+The V3.2 smoke run made one pattern clear: candidates that share the
+*same identity* as the anchor — Sharknado vs. The Room (both cult),
+Schindler's vs. The Pianist (both prestige) — should ride a small,
+explicit boost on top of the additive lane sum. The existing system
+encodes this implicitly via lane scoring but never names it as a
+first-class signal. V3.3 adds a `shape` multiplier alongside the
+existing country / studio / format multipliers.
+
+### The reach × quality grid
+
+Two orthogonal axes already in the data:
+
+- **Reach** from `imdb_vote_count`, three zones:
+  - **HIGH** ≥ 100K (well-known to general audiences)
+  - **MID** 10K–100K (genre-aware audiences)
+  - **LOW** < 10K (deep-cut, requires effort to find)
+- **Quality** from `_quality_bucket(row)` (already computed from
+  reception_score + popularity_percentile):
+  - **Acclaimed** (`prestige` bucket)
+  - **Default** (`middle` bucket)
+  - **Poorly rated** (`cult_garbage` bucket)
+
+The 9-cell grid:
+
+|             | **HIGH** (≥100K)                 | **MID** (10K–100K)             | **LOW** (<10K)                |
+|---          |---                               |---                             |---                            |
+| **Acclaimed** | Prestige cinema                  | Indie/festival darlings         | Deep-cut prestige             |
+| **Default** | Mainstream blockbusters          | Mid-tier mainstream             | Forgotten mainstream          |
+| **Poorly rated** | Mass cult                  | Niche cult                     | Just bad                      |
+
+### The 5 shapes
+
+Each shape is a coherent identity that absorbs one or more cells:
+
+| Shape | Strength | Cells | Examples |
+|---|---|---|---|
+| **dogshit** | STRONG | LOW × Poorly rated | Mega Python, most direct-to-streaming horror |
+| **cult_garbage** | STRONG | HIGH × Poorly rated, MID × Poorly rated | Sharknado, The Room, Plan 9 |
+| **prestige** | MODERATE | HIGH × Acclaimed, MID × Acclaimed | Schindler's List, Lady Bird, 20th Century Women |
+| **hidden_gem** | STRONG | LOW × Acclaimed | Foreign festival films, archival rediscoveries |
+| **mainstream_blockbuster** | MODERATE | HIGH × Default | Inception, Barbie, Avengers |
+
+Films in shapeless cells (MID × Default, LOW × Default) get no shape
+boost — they're "just normal." A film classifies into exactly one
+shape (or none).
+
+Strength asymmetry rationale: cult, dogshit, and hidden-gem are
+sharply distinctive identities (they say "this kind of movie" — a
+shared search context). Prestige and mainstream-blockbuster overlap
+heavily with general cinema, so the same-shape signal is weaker.
+
+### Multiplier values
+
+```
+SHAPE_BOOST_STRONG   = 0.15    # max ×1.15
+SHAPE_BOOST_MODERATE = 0.08    # max ×1.08
+```
+
+Comparable to existing multipliers (studio ×1.08–1.10, country boost
+×1.05). Multiplicative — applied alongside the existing stack.
+
+### Single-anchor application
+
+If anchor and candidate share the same shape, multiplier =
+`1.0 + max_strength`. If shapes differ or either is shapeless,
+multiplier = 1.0.
+
+### Multi-anchor application — cohesion-weighted
+
+For each shape, compute cohort cohesion as `M_s / N` (number of
+anchors carrying the shape, divided by cohort size). Then for each
+candidate:
+
+```
+cohesion = anchor_shape_cohesion.get(candidate.shape, 0.0)
+if cohesion < 0.5:
+    multiplier = 1.0    # cohort doesn't have this shape strongly enough
+else:
+    multiplier = 1.0 + max_strength * cohesion
+```
+
+Examples:
+- Pixar trio (Toy Story, Finding Nemo, Up — all mainstream_blockbuster):
+  cohesion 1.0 → ×(1 + 0.08·1.0) = ×1.08 for mainstream candidates.
+- Best Picture trio (all prestige): cohesion 1.0 → ×1.08 for
+  prestige candidates.
+- Studio Ghibli + Pixar mix: shape cohesion < 0.5 in any single
+  shape → no boost. Right behavior — mixed-tradition cohort doesn't
+  earn an identity lift.
+
+### Plug-in point
+
+Same multiplier stack as existing pipeline:
+
+```
+final_score = base_score
+            × country_multiplier
+            × studio_multiplier
+            × medium_multiplier
+            × shorts_multiplier
+            × shape_multiplier         # NEW (V3.3)
+```
+
+Surfaced in `LaneEvidence.multipliers["shape"]` for diagnostics.
+
+### Future change: weaving
+
+V3.3 ships only the score-level shape boost. The slot-allocation
+(MMR with anchor-aware quotas across B1=same-neighborhood / B2=adjacent
+/ B3=spark) was designed but parked — the hypothesis is the shape
+multiplier alone gets us most of the perceived-quality lift. If a
+post-V3.3 smoke shows persistent neighborhood-mismatch noise (a
+prestige anchor surfacing too many mainstream peers, a niche cult
+anchor surfacing too many mainstream peers, etc.), revisit weaving as
+V3.4. The full design is captured in the test-tracker conversation:
+
+- 5 neighborhoods (Cult, Prestige, HIGH × Default, MID × Default,
+  LOW × Default) connected by an adjacency graph (Prestige—HIGH×Default
+  edge, Cult—HIGH×Default edge, no Cult—Prestige edge, Default reach
+  chain).
+- B1/B2/B3 buckets via graph distance from anchor neighborhood.
+- Anchor-aware quotas (HIGH × Default 6:3:1, Cult/Prestige 5:4:1,
+  LOW × Default 4:5:1).
+- Deterministic MMR with `λ ∈ [0.65, 0.85]` driven by result-side
+  cohesion (max share of any single cell among top-30 candidates),
+  decimal target_quotas, linear filled-ratio penalty.
+- Soft within-B1 reach proximity penalty so cult/prestige B1 isn't
+  an undifferentiated soup across reach tiers.
+
+### Expected outcomes to verify
+
+**Wins**:
+- Sharknado top 10 lifts cult sequels and same-tier cult peers
+  (Mega Shark, Mega Python, etc.) without losing The Room as the
+  mass-cult bridge.
+- Best Picture trio (multi) preserves prestige cluster with a
+  modest score boost (×1.08) on prestige candidates.
+- Pixar trio (multi) preserves mainstream-blockbuster cluster.
+- Schindler's List, Inception, Lady Bird as anchors all see
+  identity-aligned candidates rise modestly.
+
+**Regressions to watch**:
+- Shape boost compounding with existing multipliers pushing scores
+  >1.0 even more. Empire was already 1.820; expect modest further
+  inflation.
+- A wrong shape classification on a prestige anchor pulling cult
+  films closer (or vice versa) — exclusivity check needed.
+- Multi-anchor mixed cohorts (Studio Ghibli + Pixar mix) inadvertently
+  picking up a cohesive shape — need to confirm cohesion < 0.5 actually
+  suppresses the boost.
+
 ## V3 Implementation Order
 
 Tracked in detail in [`similar_movies_v3_plan.md`](similar_movies_v3_plan.md) §5 with status flags. Summary:

@@ -256,6 +256,107 @@ MEDIUM_CROSS_CATEGORY_MULTIPLIER = 0.65
 COUNTRY_CONSENSUS_BOOST = 1.05
 COUNTRY_CONSENSUS_PENALTY = 0.75
 
+# V3.3: Shape multiplier — identity-level boost for candidates that
+# share the anchor's reach × quality "shape." Five named shapes derived
+# from imdb_vote_count tier × _quality_bucket(row); see
+# similar_movies.md §V3.3 for the full grid + design rationale.
+#
+# STRONG shapes carry a sharply distinctive identity (cult, dogshit,
+# hidden_gem); MODERATE shapes (prestige, mainstream_blockbuster)
+# overlap heavily with general cinema and so deserve a smaller lift.
+SHAPE_REACH_HIGH_THRESHOLD = 100_000     # ≥100K vote_count → HIGH zone
+SHAPE_REACH_LOW_THRESHOLD  = 10_000      # <10K vote_count   → LOW zone
+SHAPE_BOOST_STRONG    = 0.15             # max ×1.15 for cohesion 1.0
+SHAPE_BOOST_MODERATE  = 0.08             # max ×1.08 for cohesion 1.0
+SHAPE_COHESION_MIN    = 0.50             # multi-anchor: cohort needs
+                                          # ≥50% of anchors carrying the
+                                          # shape for the boost to fire
+
+# V3.3.1/V3.3.2: Shape classification thresholds — independent of
+# `_quality_bucket` (which drives the legacy prestige/cult quality
+# scoring formulas and is conservatively gated). Decoupling lets the
+# shape multiplier participate on indie / cult / dogshit films without
+# altering legacy lane behavior.
+#
+# V3.3.2 raised the default prestige floor from 78 → 80 (single
+# award-less reception data is too noisy a prestige signal at 78);
+# added an award-aware lowered floor at 65 that fires only when a
+# film carries a *picture-level* signal (Best Picture or Director
+# nom/win at non-Razzie ceremony — see SHAPE_PICTURE_LEVEL_TAG_IDS
+# in db/postgres.py). Acting and craft category awards explicitly
+# don't elevate (Bohemian Rhapsody won 4 Oscars in performance/craft
+# categories; the *film* isn't prestige). Multi-ceremony win count
+# was considered but dropped — too many films pick up a win in
+# craft categories at multiple ceremonies without being prestige.
+#
+# The Razzie side: any Razzie WIN in a specific WORST_* category
+# (excluding WORST_OTHER which might catch the Razzie Redeemer Award)
+# raises the poorly-rated ceiling from 50 to 60. Razzie nominations
+# alone don't shift; only WINS count for the elevation.
+SHAPE_PRESTIGE_RECEPTION_MIN          = 80.0   # default (V3.3.2: 78.0 → 80.0)
+SHAPE_PRESTIGE_RECEPTION_MIN_W_AWARD  = 65.0   # with picture-level signal
+SHAPE_POOR_RECEPTION_MAX              = 50.0
+SHAPE_POOR_RECEPTION_MAX_W_RAZZIE     = 60.0   # with bad-Razzie WIN
+# Percentile gates dropped — the reach axis (vote-count tiers) already
+# filters by audience size, so a separate percentile floor would just
+# duplicate that signal and exclude legitimate dogshit/cult candidates
+# (Mega Python at percentile 0.787, Leprechaun 4 at 0.883 both fail
+# the legacy 0.89 cult cutoff).
+
+SHAPE_DOGSHIT                = "dogshit"
+SHAPE_CULT_GARBAGE           = "cult_garbage"
+SHAPE_PRESTIGE               = "prestige"
+SHAPE_HIDDEN_GEM             = "hidden_gem"
+SHAPE_MAINSTREAM_BLOCKBUSTER = "mainstream_blockbuster"
+
+SHAPE_STRENGTHS: dict[str, float] = {
+    SHAPE_DOGSHIT:                SHAPE_BOOST_STRONG,
+    SHAPE_CULT_GARBAGE:           SHAPE_BOOST_STRONG,
+    SHAPE_HIDDEN_GEM:             SHAPE_BOOST_STRONG,
+    SHAPE_PRESTIGE:               SHAPE_BOOST_MODERATE,
+    SHAPE_MAINSTREAM_BLOCKBUSTER: SHAPE_BOOST_MODERATE,
+}
+
+# V3.3.2: Cross-bucket shape multiplier matrix. Strength on [0, 1];
+# multiplied by the candidate's shape's max strength (STRONG 0.15 /
+# MODERATE 0.08) and the cohort cohesion to compute the effective
+# boost. Missing pairs default to 0.0 (no cross-shape boost).
+#
+# Same-shape pairs are 1.0 (identity boost). The 0.7 pairs are
+# "boundary-arbitrary same-quality reach splits" (prestige/hidden_gem,
+# cult_garbage/dogshit) — the system's reach cutoff at 10K is
+# arbitrary and the audience overlap is huge. The 0.4/0.25/0.15/0.10
+# pairs are quality-step crossings via the mainstream blockbuster
+# bridge — they don't fire on single-anchor under SHAPE_COHESION_MIN
+# (0.5) but DO fire on mixed cohorts where same-shape and cross-shape
+# contributions sum to ≥0.5.
+SHAPE_CROSS_STRENGTH: dict[tuple[str, str], float] = {
+    # Same-shape (identity)
+    (SHAPE_PRESTIGE,               SHAPE_PRESTIGE):               1.0,
+    (SHAPE_HIDDEN_GEM,             SHAPE_HIDDEN_GEM):             1.0,
+    (SHAPE_MAINSTREAM_BLOCKBUSTER, SHAPE_MAINSTREAM_BLOCKBUSTER): 1.0,
+    (SHAPE_CULT_GARBAGE,           SHAPE_CULT_GARBAGE):           1.0,
+    (SHAPE_DOGSHIT,                SHAPE_DOGSHIT):                1.0,
+    # 0.7 — same quality, reach split (boundary-arbitrary)
+    (SHAPE_PRESTIGE,     SHAPE_HIDDEN_GEM): 0.7,
+    (SHAPE_HIDDEN_GEM,   SHAPE_PRESTIGE):   0.7,
+    (SHAPE_CULT_GARBAGE, SHAPE_DOGSHIT):    0.7,
+    (SHAPE_DOGSHIT,      SHAPE_CULT_GARBAGE): 0.7,
+    # 0.4 — same HIGH reach, quality step via mainstream bridge
+    (SHAPE_PRESTIGE,               SHAPE_MAINSTREAM_BLOCKBUSTER): 0.4,
+    (SHAPE_MAINSTREAM_BLOCKBUSTER, SHAPE_PRESTIGE):               0.4,
+    # 0.25 — overlapping reach, quality step (cult ↔ mainstream)
+    (SHAPE_CULT_GARBAGE,           SHAPE_MAINSTREAM_BLOCKBUSTER): 0.25,
+    (SHAPE_MAINSTREAM_BLOCKBUSTER, SHAPE_CULT_GARBAGE):           0.25,
+    # 0.15 / 0.10 — diagonal (reach + quality both differ)
+    (SHAPE_MAINSTREAM_BLOCKBUSTER, SHAPE_HIDDEN_GEM): 0.15,
+    (SHAPE_HIDDEN_GEM,             SHAPE_MAINSTREAM_BLOCKBUSTER): 0.15,
+    (SHAPE_MAINSTREAM_BLOCKBUSTER, SHAPE_DOGSHIT):    0.10,
+    (SHAPE_DOGSHIT,                SHAPE_MAINSTREAM_BLOCKBUSTER): 0.10,
+    # All other pairs (prestige↔cult/dogshit, hidden_gem↔cult/dogshit)
+    # default to 0.0 — opposite quality poles, no audience overlap.
+}
+
 # Selective rare-medium retrieval gate (V2 single-anchor): anchor medium
 # tags with idf >= this threshold trigger a candidate-pool expansion via
 # fetch_movie_ids_by_overall_keywords. LIVE_ACTION is always excluded
@@ -459,6 +560,143 @@ def _quality_bucket(row: dict) -> str:
     if reception is not None and reception >= 85 and percentile >= 0.75:
         return "prestige"
     return "middle"
+
+
+def _classify_shape(
+    row: dict,
+    award_signal: "SimilarityAwardSignals | None" = None,
+) -> str | None:
+    """V3.3.2: classify a movie into one of 5 reach × quality shapes.
+
+    Returns one of SHAPE_DOGSHIT / SHAPE_CULT_GARBAGE / SHAPE_PRESTIGE /
+    SHAPE_HIDDEN_GEM / SHAPE_MAINSTREAM_BLOCKBUSTER, or None for films in
+    shapeless cells ("just normal" films with no identity-level signal).
+
+    V3.3.2 award-aware thresholds:
+      - Prestige floor is `SHAPE_PRESTIGE_RECEPTION_MIN` (80) by default,
+        lowered to `SHAPE_PRESTIGE_RECEPTION_MIN_W_AWARD` (65) when the
+        film carries a *picture-level* signal (Best Picture or Director
+        nom/win at any non-Razzie ceremony). Acting/craft awards alone
+        don't elevate; the signal is film-level only.
+      - Poor ceiling is `SHAPE_POOR_RECEPTION_MAX` (50) by default,
+        raised to `SHAPE_POOR_RECEPTION_MAX_W_RAZZIE` (60) when the film
+        won a Razzie in a specific WORST_* category (excluding
+        WORST_OTHER which may catch the positive Razzie Redeemer Award).
+      - Award signals can also classify a film as prestige or poor when
+        reception data is missing entirely.
+
+    Conflict resolution: if a film has both a picture-level signal AND
+    a bad Razzie win (rare), Razzie wins at low reception (≤60) and
+    picture-level wins at mid-to-high reception (65–79). The branches
+    below are ordered so Razzie elevation runs first and only fires on
+    appropriately-low reception.
+    """
+    reception = row.get("reception_score")
+    votes = row.get("imdb_vote_count") or 0
+    has_picture_level = (
+        award_signal is not None and award_signal.has_picture_level_signal
+    )
+    has_bad_razzie_win = (
+        award_signal is not None and award_signal.has_bad_razzie_win
+    )
+
+    poor_ceiling = (
+        SHAPE_POOR_RECEPTION_MAX_W_RAZZIE
+        if has_bad_razzie_win
+        else SHAPE_POOR_RECEPTION_MAX
+    )
+    prestige_floor = (
+        SHAPE_PRESTIGE_RECEPTION_MIN_W_AWARD
+        if has_picture_level
+        else SHAPE_PRESTIGE_RECEPTION_MIN
+    )
+
+    if reception is None:
+        # No reception data — fall back to award signals if present.
+        # Razzie win wins ties because a Razzie is more distinctive
+        # than "the film won an Oscar but we have no critical reception".
+        if has_bad_razzie_win:
+            return (
+                SHAPE_DOGSHIT
+                if votes < SHAPE_REACH_LOW_THRESHOLD
+                else SHAPE_CULT_GARBAGE
+            )
+        if has_picture_level:
+            return (
+                SHAPE_HIDDEN_GEM
+                if votes < SHAPE_REACH_LOW_THRESHOLD
+                else SHAPE_PRESTIGE
+            )
+        # No signal of any kind — only HIGH reach earns mainstream
+        # blockbuster (it's known by sheer audience size).
+        return (
+            SHAPE_MAINSTREAM_BLOCKBUSTER
+            if votes >= SHAPE_REACH_HIGH_THRESHOLD
+            else None
+        )
+
+    if reception <= poor_ceiling:
+        # Poorly rated films at LOW reach are "dogshit" (just bad);
+        # at HIGH or MID reach they're "cult_garbage" (loved-for-badness).
+        return (
+            SHAPE_DOGSHIT
+            if votes < SHAPE_REACH_LOW_THRESHOLD
+            else SHAPE_CULT_GARBAGE
+        )
+    if reception >= prestige_floor:
+        # Acclaimed films at LOW reach are "hidden_gem"; at HIGH/MID
+        # they're standard "prestige" cinema.
+        return (
+            SHAPE_HIDDEN_GEM
+            if votes < SHAPE_REACH_LOW_THRESHOLD
+            else SHAPE_PRESTIGE
+        )
+    # Reception falls in the middle band — neither poor nor acclaimed
+    # under the active thresholds. Only HIGH reach earns
+    # mainstream_blockbuster; MID and LOW middle-quality films are
+    # shapeless.
+    if votes >= SHAPE_REACH_HIGH_THRESHOLD:
+        return SHAPE_MAINSTREAM_BLOCKBUSTER
+    return None
+
+
+def _shape_multiplier(
+    anchor_shape_cohesion: dict[str, float],
+    candidate_shape: str | None,
+) -> float:
+    """V3.3.2: shape boost with cross-bucket support.
+
+    `anchor_shape_cohesion` maps shape → cohesion in [0, 1]:
+      - Single-anchor: {anchor.shape: 1.0} if anchor has a shape, else {}.
+      - Multi-anchor: {shape: M_s/N for each shape with at least one
+        anchor carrying it} where M_s is the count of anchors in that
+        shape and N is the cohort size.
+
+    V3.3.2 introduces cross-bucket boosts via the `SHAPE_CROSS_STRENGTH`
+    matrix. Effective cohesion sums each anchor shape's contribution
+    multiplied by its cross-strength to the candidate's shape. The
+    SHAPE_COHESION_MIN gate (0.5) still applies to the *summed* effective
+    cohesion — so single-anchor cross-pairs at 0.4 don't fire alone, but
+    mixed cohorts where same-shape (1.0) + cross-shape (0.4) contributions
+    sum to ≥0.5 do fire (this is what catches the V3.3.1 MCU regression
+    on Endgame's prestige boost).
+
+    Returns 1.0 (no boost) when:
+      - candidate has no shape (shapeless cell), or
+      - effective cohesion is below SHAPE_COHESION_MIN.
+
+    Otherwise returns 1.0 + max_strength[candidate.shape] * effective_cohesion.
+    """
+    if candidate_shape is None:
+        return 1.0
+    effective_cohesion = sum(
+        cohesion
+        * SHAPE_CROSS_STRENGTH.get((anchor_shape, candidate_shape), 0.0)
+        for anchor_shape, cohesion in anchor_shape_cohesion.items()
+    )
+    if effective_cohesion < SHAPE_COHESION_MIN:
+        return 1.0
+    return 1.0 + SHAPE_STRENGTHS[candidate_shape] * effective_cohesion
 
 
 def _major_award_win_score(row: dict) -> float:
@@ -1120,6 +1358,13 @@ def _build_results(
     candidate_format_bucket_by_movie: dict[int, FormatBucket] | None = None,
     anchor_active_format_bucket: FormatBucket | None = None,
     apply_shorts_downrank: bool = True,
+    # V3.3 shape multiplier — anchor cohort's per-shape cohesion AND
+    # per-candidate shape classification. When the candidate's shape
+    # matches a shape the cohort has cohesion ≥0.5 in, apply
+    # ×(1 + max_strength * cohesion). Defaults preserve no-shape-boost
+    # behavior.
+    anchor_shape_cohesion: dict[str, float] | None = None,
+    candidate_shape_by_movie: dict[int, str | None] | None = None,
     # When the multi-anchor anchor set is shorts-dominant (≥50% of
     # anchors are shorts), the short candidates get a small positive
     # boost via SHORTS_MULTI_ANCHOR_BOOST. Mutually exclusive with the
@@ -1160,6 +1405,8 @@ def _build_results(
     cast_floor_by_movie = cast_floor_by_movie or {}
     director_floor_max_ratio_by_movie = director_floor_max_ratio_by_movie or {}
     candidate_format_bucket_by_movie = candidate_format_bucket_by_movie or {}
+    anchor_shape_cohesion = anchor_shape_cohesion or {}
+    candidate_shape_by_movie = candidate_shape_by_movie or {}
 
     # Whether the shorts harsh downrank fires for this flow. Disabled
     # when the anchor IS a short (or multi-anchor with shorts dominance);
@@ -1238,6 +1485,17 @@ def _build_results(
         elif apply_shorts_boost and candidate_bucket == "short":
             score *= SHORTS_MULTI_ANCHOR_BOOST
             applied_multipliers["shorts_boost"] = SHORTS_MULTI_ANCHOR_BOOST
+
+        # V3.3 shape multiplier — applied alongside studio/country/medium.
+        # Fires only when candidate's shape matches a shape the anchor
+        # cohort has cohesion ≥0.5 in. Strong shapes (cult_garbage,
+        # dogshit, hidden_gem) get up to ×1.15; moderate shapes
+        # (prestige, mainstream_blockbuster) up to ×1.08.
+        candidate_shape = candidate_shape_by_movie.get(movie_id)
+        shape_mult = _shape_multiplier(anchor_shape_cohesion, candidate_shape)
+        if shape_mult != 1.0:
+            score *= shape_mult
+            applied_multipliers["shape"] = shape_mult
 
         # V3 floor application — apply the strongest applicable floor
         # (max over the three sources). Each floor has its own shape
@@ -1731,12 +1989,13 @@ async def _run_single_anchor_similarity(
     candidate_ids.discard(anchor_id)
 
     candidate_rows = await fetch_similarity_signal_rows(list(candidate_ids))
-    # Always-on quality lane needs award signals for prestige/cult buckets;
-    # middle-bucket flow uses popularity+reception only and skips the read.
-    award_signals = (
-        await fetch_similarity_award_signals(list(candidate_ids))
-        if cult_or_prestige
-        else {}
+    # V3.3.2: always fetch award signals for both anchor and candidates —
+    # the shape classifier needs them to apply the picture-level prestige
+    # threshold lift (80 → 65) and the bad-Razzie-WIN poor ceiling lift
+    # (50 → 60). Including the anchor in the same query lets the shape
+    # cohesion math reuse the same dict for anchor-side classification.
+    award_signals = await fetch_similarity_award_signals(
+        list(candidate_ids) + [anchor_id]
     )
 
     # ----- Per-lane scoring -----
@@ -1881,6 +2140,18 @@ async def _run_single_anchor_similarity(
         movie_id: 1.0 for movie_id in director_scores
     }
 
+    # V3.3 shape multiplier — single-anchor: cohort cohesion is binary
+    # (anchor either has a shape or doesn't). Classify the anchor and
+    # every candidate using movie_card row data + award signals (V3.3.2).
+    anchor_shape = _classify_shape(anchor_row, award_signals.get(anchor_id))
+    anchor_shape_cohesion: dict[str, float] = (
+        {anchor_shape: 1.0} if anchor_shape is not None else {}
+    )
+    candidate_shape_by_movie: dict[int, str | None] = {
+        movie_id: _classify_shape(row, award_signals.get(movie_id))
+        for movie_id, row in candidate_rows.items()
+    }
+
     ranked, counts = _build_results(
         anchor_ids=[anchor_id],
         lane_scores=lane_scores,
@@ -1898,6 +2169,8 @@ async def _run_single_anchor_similarity(
         anchor_active_format_bucket=anchor_format_bucket,
         anchor_format_bucket=anchor_format_bucket,
         enforce_format_top_lock=True,
+        anchor_shape_cohesion=anchor_shape_cohesion,
+        candidate_shape_by_movie=candidate_shape_by_movie,
     )
     return SimilarMoviesSearchResult(
         anchor_movie_ids=[anchor_id],
@@ -2206,10 +2479,11 @@ async def _run_multi_anchor_similarity(
         if cohesion_by_lane["specific_award"] > 0.0
         else _empty_movie_set_dict()
     )
-    award_signals_task = (
-        fetch_similarity_award_signals(list(candidate_ids))
-        if repeated_quality_bucket is not None and cohesion_by_lane["quality"] > 0.0
-        else _empty_award_signals()
+    # V3.3.2: always fetch award signals for both anchors and candidates —
+    # the shape classifier needs them regardless of repeated_quality_bucket.
+    # Anchors' award signals also drive the cohort's shape composition.
+    award_signals_task = fetch_similarity_award_signals(
+        list(candidate_ids) + list(anchor_ids)
     )
     # Source IDFs across the union of source types touched by anchors.
     source_idf_pairs_task = (
@@ -2419,6 +2693,30 @@ async def _run_multi_anchor_similarity(
         for mid, row in candidate_rows.items()
     }
 
+    # V3.3 shape multiplier — multi-anchor: build per-shape cohesion
+    # (M_s/N) across the cohort. V3.3.2 award-aware classification
+    # consumes per-movie award signals; cross-bucket strengths inside
+    # `_shape_multiplier` let mixed cohorts apply partial boosts on
+    # cross-shape candidates. Threshold gating happens inside the
+    # multiplier helper.
+    anchor_shape_counts: dict[str, int] = {}
+    for anchor_id_for_shape in anchor_ids:
+        anchor_s = _classify_shape(
+            anchor_rows[anchor_id_for_shape],
+            award_signals.get(anchor_id_for_shape),
+        )
+        if anchor_s is not None:
+            anchor_shape_counts[anchor_s] = (
+                anchor_shape_counts.get(anchor_s, 0) + 1
+            )
+    anchor_shape_cohesion: dict[str, float] = {
+        shape: count / float(n) for shape, count in anchor_shape_counts.items()
+    }
+    candidate_shape_by_movie: dict[int, str | None] = {
+        movie_id: _classify_shape(row, award_signals.get(movie_id))
+        for movie_id, row in candidate_rows.items()
+    }
+
     lane_scores: dict[LaneName, dict[int, float]] = {
         "shape": shape_scores,
         "director": {mid: s for mid, s in director_scores.items() if s > 0.0},
@@ -2453,6 +2751,8 @@ async def _run_multi_anchor_similarity(
         apply_shorts_boost=shorts_dominant,
         anchor_format_bucket=repeated_format_bucket,
         enforce_format_top_lock=repeated_format_bucket is not None,
+        anchor_shape_cohesion=anchor_shape_cohesion,
+        candidate_shape_by_movie=candidate_shape_by_movie,
     )
 
     active_anchor_types: list[AnchorType] = ["standard_shape"]
