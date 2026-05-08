@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.trait_category import CategoryName
@@ -50,56 +50,6 @@ from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
 # output gets additionalProperties: false on every sub-object.
 class _HandlerOutputBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-# Walk-then-commit buckets (5/6/8) inherit from this so the keyword-
-# walk-driven derivation of `finalized_keywords` runs once on every
-# bucket output. Phase 5 design: the LLM populates `verdict` on every
-# PotentialKeyword in the walk, and `finalized_keywords` on the
-# downstream KeywordQuerySpecSubintent is overwritten with the deduped
-# union of verdict-commits. The LLM is instructed to emit `[]` there;
-# this validator is what turns the verdict choice into the executor-
-# visible commit list.
-class _WalkThenCommitOutputBase(_HandlerOutputBase):
-    @model_validator(mode="after")
-    def _derive_keyword_finalized_from_verdicts(self):
-        # The bucket may or may not declare a keyword endpoint; only
-        # walk-then-commit buckets that DO declare keyword carry these
-        # two fields. Gracefully no-op when keyword isn't declared.
-        keyword_walk = getattr(self, "keyword_walk", None)
-        keyword_params_wrapper = getattr(self, "keyword_parameters", None)
-        if keyword_walk is None or keyword_params_wrapper is None:
-            return self
-
-        # Walk every potential_keyword across every attribute and
-        # collect the verdict-committed members. Dedupe in declaration
-        # order so the executor sees the same shape as the prior
-        # finalized_keywords field validator produced.
-        derived: list[str] = []
-        seen: set[str] = set()
-        for attribute in keyword_walk.attributes:
-            for candidate in attribute.potential_keywords:
-                if candidate.verdict != "commit":
-                    continue
-                # use_enum_values=True on PotentialKeyword means the
-                # field carries the string value already; coerce
-                # defensively in case the upstream config drifts.
-                member = candidate.keyword
-                if hasattr(member, "value"):
-                    member = member.value
-                if member in seen:
-                    continue
-                seen.add(member)
-                derived.append(member)
-
-        inner = getattr(keyword_params_wrapper, "parameters", None)
-        if inner is not None:
-            # Overwrite whatever the LLM emitted (should be []) with
-            # the derived list. Never trust LLM-emitted finalized_keywords
-            # in multi-endpoint contexts post-Phase-5.
-            inner.finalized_keywords = derived
-
-        return self
 
 
 # ── Shared Field descriptions ─────────────────────────────────────
@@ -242,8 +192,9 @@ _ENDPOINT_COMMITMENT_VERDICT_REASON_DESC = (
     "- dominated-by-sibling: another declared endpoint covers "
     "{route}'s strengths AND weaknesses strictly better.\n"
     "- commitment-criteria-fail: {route}'s walk has candidates but "
-    "they fail {route}'s own commitment criteria (e.g., keyword "
-    "candidates that all verdict-abstain).\n"
+    "the union of any subset that could be committed fails {route}'s "
+    "own commitment criteria (e.g., for keyword the union has a gap "
+    "or stretches beyond the slice no matter which subset is taken).\n"
     "\n"
     "Cite the walk's text — do NOT generate fresh reasoning here."
 )
@@ -409,31 +360,33 @@ def _build_walk_then_commit(
     #   Phase 1: per-endpoint walks. For each declared endpoint, a
     #   `{route}_walk` field holds the registry/space/column-grounded
     #   analysis (KeywordWalk / SemanticWalk / MetadataWalk). Each
-    #   candidate carries strengths + weaknesses; for keyword each
-    #   also carries verdict_reason → verdict (Phase 5).
+    #   candidate carries strengths + weaknesses.
     #
     #   Phase 2: coverage exploration + commitment.
     #   `coverage_exploration` argues which endpoints contribute
     #   distinct strengths or fill each other's weaknesses, BEFORE
-    #   the structural commit. `coverage_commitments` (Phase 5;
-    #   replaces the prior `coverage_assignments` list) is a
+    #   the structural commit. `coverage_commitments` is a
     #   fixed-shape object with one required EndpointCommitment slot
-    #   per declared endpoint. Abstention is now an active
+    #   per declared endpoint. Abstention is an active
     #   verdict=abstain choice with required reasoning, not a
-    #   passive omission.
+    #   passive omission. (Iter 9: this is the SOLE structural
+    #   abstention pathway; Phase 5's per-candidate verdict pathway
+    #   on PotentialKeyword was reverted because it could not
+    #   express union-level superset reasoning naturally.)
     #
     #   Phase 3: per-endpoint thin params. One Optional
     #   `{route}_parameters` per declared endpoint, populated iff
-    #   `coverage_commitments.{route}.verdict == "commit"`.
+    #   `coverage_commitments.{route}.verdict == "commit"`. The
+    #   keyword wrapper's `finalized_keywords` is LLM-emitted with
+    #   `min_length=1`; an empty commit cannot be expressed
+    #   structurally, and an empty wrapper at extraction time is
+    #   handled by output_extractor's vacuous-spec filter.
     #
     # Field declaration order matches that phase ordering — Pydantic
     # structured output emits top-down, so the LLM walks all endpoints
     # concretely before committing to who fires. coverage_exploration
     # sits between walks and commitments so the LLM reasons about
     # composition before structurally committing.
-    #
-    # Inheritance from _WalkThenCommitOutputBase wires the keyword-
-    # walk-driven derivation of `finalized_keywords` (Phase 5).
     pairs = _resolve_wrappers_for_bucket(category, bucket)
     if not pairs:
         return None
@@ -496,7 +449,7 @@ def _build_walk_then_commit(
 
     return create_model(
         _output_class_name(category.name),
-        __base__=_WalkThenCommitOutputBase,
+        __base__=_HandlerOutputBase,
         __module__=__name__,
         **fields,
     )

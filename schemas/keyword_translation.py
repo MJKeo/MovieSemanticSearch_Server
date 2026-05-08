@@ -42,8 +42,6 @@
 # as LLM response_format" convention, both propagate into the JSON
 # schema sent on every API call.
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, constr, field_validator
 
 from schemas.endpoint_parameters import EndpointParameters
@@ -288,140 +286,25 @@ class KeywordEndpointParameters(EndpointParameters):
 #   - KeywordWalk lives at the bucket level, emitted BEFORE the
 #     coverage_commitments commitment phase. It carries the
 #     registry-grounded analysis of how the keyword endpoint could
-#     cover the call's retrieval_intent. Each candidate carries an
-#     explicit verdict (commit/abstain) plus a single-claim reason.
+#     cover the call's retrieval_intent. Same AttributeAnalysis shape
+#     as the single-endpoint variant — no per-candidate verdict.
 #   - KeywordQuerySpecSubintent lives inside the per-endpoint
 #     keyword_parameters slot, populated only when the bucket-level
 #     coverage_commitments delegates a slice to this endpoint. Its
-#     `finalized_keywords` is server-derived from the walk's verdict
-#     commits — the LLM no longer emits the commit list directly.
+#     `finalized_keywords` is LLM-emitted with `min_length=1`, the
+#     same shape as the single-endpoint commit.
 #
-# The Phase 5 schema enforcement (verdict_reason → verdict on every
-# PotentialKeyword in the multi-endpoint walk) makes the abstention
-# pathway a hard structural choice between two valid outputs, instead
-# of soft prose preference. `finalized_keywords` becomes a derivation
-# of those verdicts, eliminating the LLM's ability to commit a member
-# whose verdict is "abstain" or to commit a member not in the walk.
-
-
-class PotentialKeywordWithVerdict(PotentialKeyword):
-    """Multi-endpoint walk variant of PotentialKeyword.
-
-    Adds a verdict_reason → verdict pair AFTER the strengths /
-    weaknesses fields so the LLM's prose reasoning lands first and
-    the structural commit reads off it. The bucket-level model
-    validator collects every potential_keyword whose verdict is
-    "commit" and overwrites the downstream KeywordQuerySpecSubintent's
-    finalized_keywords with that derived list.
-    """
-
-    # Field order: keyword → strengths → weaknesses (inherited) →
-    # verdict_reason → verdict. Reasoning before the commit so prose
-    # serves as evidence, not post-hoc justification.
-
-    verdict_reason: constr(strip_whitespace=True, min_length=1) = Field(
-        ...,
-        description=(
-            "One short sentence justifying the verdict below, citing "
-            "the strengths or weaknesses text already written above. "
-            "Single-claim only — do NOT write OR-disjunctions ('clean "
-            "superset OR near-clean'); pick one claim and commit.\n"
-            "\n"
-            "For 'commit': name the single superset condition the "
-            "candidate satisfies, citing the strengths text. Example "
-            "shape (paraphrase the framing, do not echo): 'covers the "
-            "named attribute with no gap; over-pull is acceptable.'\n"
-            "\n"
-            "For 'abstain': name exactly ONE of the three failure "
-            "modes:\n"
-            "- gaps: some attribute-satisfying movies carry none of "
-            "the tags this candidate represents.\n"
-            "- stretching: the tag names something semantically "
-            "adjacent to the attribute rather than the attribute "
-            "itself.\n"
-            "- dominated-by-sibling: another candidate in this same "
-            "walk covers strictly more of the attribute with no "
-            "additional weakness, making this one redundant.\n"
-            "\n"
-            "Cite the weaknesses text or the dominating sibling. Do "
-            "NOT generate fresh reasoning at the verdict step — read "
-            "what you already wrote and pin it to one claim."
-        ),
-    )
-
-    verdict: Literal["commit", "abstain"] = Field(
-        ...,
-        description=(
-            "Active commit choice for this candidate, read off the "
-            "verdict_reason just written.\n"
-            "\n"
-            "- 'commit' → this candidate (alone or in ANY-mode union "
-            "with the other commits in this walk) passes the keyword "
-            "endpoint's superset test. Every movie that genuinely "
-            "satisfies the parent attribute carries at least one of "
-            "the committed tags. Over-pull is acceptable.\n"
-            "- 'abstain' → this candidate fails the superset bar via "
-            "one of the three failure modes named in verdict_reason "
-            "(gaps / stretching / dominated-by-sibling). The "
-            "candidate stays in the walk for inspection but is "
-            "EXCLUDED from finalized_keywords.\n"
-            "\n"
-            "Default to 'abstain' when the analysis is ambiguous. "
-            "'commit' requires a single named superset condition. "
-            "Abstention is not a fallback for difficulty; it is the "
-            "principled outcome when committing would harm retrieval. "
-            "finalized_keywords is server-derived from the verdicts "
-            "across this walk's potential_keywords — the LLM does NOT "
-            "populate finalized_keywords directly."
-        ),
-    )
-
-
-class AttributeAnalysisWithVerdict(AttributeAnalysis):
-    """Multi-endpoint walk variant of AttributeAnalysis.
-
-    Overrides potential_keywords to use PotentialKeywordWithVerdict
-    so each candidate carries an explicit verdict. Single-endpoint
-    keyword buckets continue to use the base AttributeAnalysis class
-    with no verdict fields — the verdict pathway is multi-endpoint-
-    only per the Phase 5 scope.
-    """
-
-    potential_keywords: list[PotentialKeywordWithVerdict] = Field(
-        ...,
-        min_length=1,
-        description=(
-            "Registry members that could plausibly answer THIS "
-            "`attribute`, each with strengths + weaknesses + a verdict "
-            "(commit/abstain). One when fit is unambiguous; two or "
-            "three when adjacency is real (broader vs narrower, "
-            "cross-family neighbors); more when the attribute genuinely "
-            "sits between several.\n"
-            "\n"
-            "Surface every plausibly useful candidate. The verdict "
-            "field on each candidate is the active commit choice; "
-            "abstain is sanctioned and frequent — finalized_keywords "
-            "is derived from verdict commits server-side, so a "
-            "candidate that abstains is correctly excluded.\n"
-            "\n"
-            "NEVER:\n"
-            "- LIST ONLY ONE when a definitional adjacency competes — "
-            "surface it so the verdict choice is grounded.\n"
-            "- PAD with members whose strengths you can't substantively "
-            "name.\n"
-            "- DUPLICATE a member within one attribute."
-        ),
-    )
+# The structural abstention pathway is bucket-level
+# `coverage_commitments.keyword.verdict=abstain`; the per-candidate
+# verdict pathway introduced by Phase 5 was reverted in Iter 9 because
+# the per-candidate framing could not natively express the union-level
+# superset reasoning that keyword.md's commit test calls for.
 
 
 class KeywordWalk(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Uses AttributeAnalysisWithVerdict (multi-endpoint variant). Each
-    # candidate carries an explicit verdict_reason → verdict commitment
-    # that the bucket-level model validator harvests to derive
-    # finalized_keywords on the downstream subintent.
-    attributes: list[AttributeAnalysisWithVerdict] = Field(
+    attributes: list[AttributeAnalysis] = Field(
         ...,
         min_length=1,
         description=(
@@ -460,36 +343,50 @@ class KeywordQuerySpecSubintent(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     # Thin commitment-only spec for multi-endpoint contexts. The
-    # analysis layer that previously lived here (`attributes`) has
-    # been lifted up to KeywordWalk at the bucket level — populated
+    # analysis layer that previously lived here (`attributes`) is
+    # lifted up to KeywordWalk at the bucket level — populated
     # BEFORE coverage_commitments so the commitment phase is grounded
     # in concrete registry candidates. This spec carries only the
     # commitment that fires when coverage_commitments delegated a
     # slice to keyword.
-    #
-    # Phase 5: finalized_keywords is server-DERIVED from the upstream
-    # walk's verdict commits. The LLM should emit an empty list `[]`
-    # for this field; a bucket-level model validator overwrites it
-    # post-parse with `[pk.keyword for pk in walk.attributes[*].
-    # potential_keywords if pk.verdict == "commit"]` (deduped). This
-    # eliminates the LLM's chance to commit a non-walked member or a
-    # verdict-abstained one.
 
     finalized_keywords: list[UnifiedClassification] = Field(
-        default_factory=list,
+        ...,
+        min_length=1,
         description=(
-            "Server-DERIVED commitment layer — the LLM should emit "
-            "an empty list `[]` for this field. It is overwritten "
-            "post-parse with the union of `keyword_walk.attributes[*]"
-            ".potential_keywords` whose `verdict == \"commit\"`. The "
-            "verdicts you wrote on the walk above ARE the commit; "
-            "this field exists only to carry the derived list to "
-            "the executor.\n"
+            "Commitment layer. The MINIMUM set of registry members "
+            "whose ANY-mode union covers the slice this endpoint owns "
+            "per `keyword_retrieval_intent`. Pull from members "
+            "surfaced in `keyword_walk.attributes[*].potential_keywords` "
+            "above. (A member not previously walked is allowed but "
+            "signals the walk was incomplete.)\n"
             "\n"
-            "If you find yourself wanting to populate this directly, "
-            "go back to the walk and adjust the verdicts there — "
-            "verdicts are the single source of truth. Do not "
-            "duplicate the commit logic here."
+            "Apply the keyword endpoint's superset test ONCE over the "
+            "union: every movie that genuinely satisfies the slice "
+            "carries at least one of these members; over-pull on the "
+            "union is acceptable; gaps and stretching are not. If no "
+            "subset of walked members passes the superset test, the "
+            "correct outcome is to abstain at the bucket level — set "
+            "`coverage_commitments.keyword.verdict=\"abstain\"` and "
+            "leave `keyword_parameters` null upstream rather than "
+            "emitting a thin or stretched commit here.\n"
+            "\n"
+            "Test per member: 'if I dropped this, would the remaining "
+            "union still pass the superset test for this slice?' Yes "
+            "→ drop. No → keep.\n"
+            "\n"
+            "Validator dedupes server-side. Emit duplicates freely "
+            "when the same member is the best fit for multiple walked "
+            "attributes; do NOT pre-dedupe.\n"
+            "\n"
+            "NEVER:\n"
+            "- INVENT members not in the registry.\n"
+            "- PAD past the minimum covering union.\n"
+            "- LEAVE EMPTY. If no subset passes the superset test, "
+            "abstain at the bucket level instead — the schema "
+            "requires at least one member here, and this slot is "
+            "filled only when the bucket-level commitment is "
+            "`commit`."
         ),
     )
 

@@ -75,6 +75,76 @@ _FANOUT_CHARACTER_QUERY_EXPLORATION_STUB = (
 )
 
 
+# Metadata's MetadataTranslationOutputSubintent has every column
+# nested under .column_spec; "all 10 columns null" is the structural
+# vacuum signal. Listed here as the canonical 10 columns documented
+# on the wrapper's metadata_retrieval_intent description.
+_METADATA_COLUMN_FIELDS: tuple[str, ...] = (
+    "release_date",
+    "runtime",
+    "maturity_rating",
+    "streaming",
+    "audio_language",
+    "country_of_origin",
+    "budget_scale",
+    "box_office",
+    "popularity",
+    "reception",
+)
+
+
+def _is_vacuous_spec(
+    route: EndpointRoute,
+    wrapper: object,
+) -> bool:
+    """True when the wrapper's params are structurally empty.
+
+    Symmetric with `coverage_commitments.{route}.verdict == "abstain"`
+    at the bucket level — covers the case where the LLM committed to
+    fire {route} but produced no actual content. Iter 8 Q5 surfaced
+    this on GENRE keyword: coverage_commitments.keyword.verdict=commit
+    paired with every PotentialKeyword.verdict=abstain, leaving the
+    server-derived finalized_keywords=[]. Without this filter, stage
+    4 runs the empty query and scores 0.0 across the board, which
+    multiplies through within-category ADDITIVE and across-category
+    FACETS folds into trait death (Phase 7's floor mitigates the
+    final-trait-score outcome but does not prevent the empty endpoint
+    from contributing 0.0 in the first place).
+
+    Routes covered:
+    - KEYWORD: parameters.finalized_keywords empty (post Iter 9 the
+      schema enforces min_length=1 directly, but the check stays as
+      a defense-in-depth guard).
+    - SEMANTIC: parameters.space_queries empty (schema-enforced
+      min_length=1 already; check stays as defense-in-depth).
+    - METADATA: every column field on parameters.column_spec is None.
+      Schema does not enforce non-emptiness on the column_spec, so
+      this is a load-bearing check.
+
+    Other routes (entity, franchise, studio, awards) have no
+    structurally-vacuous emission path through this extractor — they
+    either emit non-empty wrapper content or omit the field entirely.
+    """
+    inner = getattr(wrapper, "parameters", None)
+    if inner is None:
+        return True
+    if route is EndpointRoute.KEYWORD:
+        return not getattr(inner, "finalized_keywords", None)
+    if route is EndpointRoute.SEMANTIC:
+        return not getattr(inner, "space_queries", None)
+    if route is EndpointRoute.METADATA:
+        column_spec = getattr(inner, "column_spec", None)
+        if column_spec is None:
+            return True
+        return all(
+            getattr(column_spec, field, None) is None
+            for field in _METADATA_COLUMN_FIELDS
+        )
+    # Other routes carry no vacuous-emission path; the wrapper's
+    # presence is itself the fired signal.
+    return False
+
+
 def extract_fired_endpoints(
     category: CategoryName,
     output: BaseModel,
@@ -111,7 +181,23 @@ def extract_fired_endpoints(
             if value is None:
                 continue
             route_value = field_name.removesuffix("_parameters")
-            fired.append((EndpointRoute(route_value), value))
+            route = EndpointRoute(route_value)
+            # Iter 9 fix #1: a wrapper with structurally vacuous params
+            # is equivalent to coverage_commitments.{route}.verdict ==
+            # "abstain" — the LLM committed at the bucket level but the
+            # per-column / per-keyword choices it owed at the wrapper
+            # level all came up empty. Treat as not-fired so stage 4
+            # doesn't run a content-less query that scores 0.0 across
+            # every candidate (which would multiply through ADDITIVE
+            # within-category and FACETS across-category folds into
+            # trait death). Iter 8 Q5 GENRE was the surfacing case:
+            # coverage_commitments.keyword.verdict=commit but every
+            # PotentialKeyword.verdict abstained, leaving server-derived
+            # finalized_keywords=[]. Phase 7's floor masked the trait-
+            # death; this filter closes the loop.
+            if _is_vacuous_spec(route, value):
+                continue
+            fired.append((route, value))
         return fired
 
     if bucket is HandlerBucket.CHARACTER_FRANCHISE_FANOUT:

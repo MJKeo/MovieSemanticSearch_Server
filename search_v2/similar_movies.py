@@ -254,6 +254,39 @@ WEAVER_FRANCHISE_BUCKET_MIN_SCORE = 0.55
 # ranker's themes / rare_keyword lane contributions, not a separate row.
 WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN = 0.55
 
+# V3.4.6 franchise fatigue (single-anchor only). Strong franchise anchors
+# (John Wick, Star Wars, MCU, etc.) tend to flood the result list with
+# their own sequels because shape similarity + the franchise lane stack
+# additively. The user typically wants *some* franchise siblings but
+# also genuine non-franchise alternatives.
+#
+# Mechanism: in the greedy weaver, after each placement, track the ratio
+# of placed franchise entries to placed non-franchise entries. While
+# `franchise_count > FRANCHISE_FATIGUE_THRESHOLD * non_franchise_count`
+# the weaver hard-bans franchise candidates from every bucket and falls
+# through to the next non-franchise pick. At threshold 0.34 this caps
+# franchise representation at roughly 1:3 (≤25% of the top section).
+#
+# "Franchise" here is defined broadly: candidate's
+# `(lineage_entry_ids ∪ shared_universe_entry_ids)` intersects the
+# anchor's `(lineage_entry_ids ∪ shared_universe_entry_ids)` — any
+# cross-match between either kind on either side qualifies, regardless
+# of subgroup or crossover/spinoff tags. Multi-anchor flow is unaffected:
+# multi-anchor consensus on franchise membership is real signal, not
+# stacking artifact.
+FRANCHISE_FATIGUE_THRESHOLD = 0.34
+
+# V3.4.7 director fatigue (single-anchor only). Same shape as franchise
+# fatigue: auteur anchors (Nolan, Tarantino, Tim Burton, Spielberg)
+# tend to flood results with same-director films because the auteur
+# bucket + director floor + shape often align on those candidates.
+# Predicate: candidate's `director_term_ids` intersects the anchor's
+# `director_term_ids`. Counters are independent of franchise — both
+# gates evaluate separately, so a candidate can be banned by either.
+# Multi-anchor flow is unaffected: multi-anchor consensus on a director
+# is real signal (e.g., a Nolan trio agreeing on Nolan-style is genuine).
+DIRECTOR_FATIGUE_THRESHOLD = 0.34
+
 BUCKET_BEST_OVERALL = "best_overall"
 BUCKET_AUTEUR       = "auteur"
 BUCKET_FRANCHISE    = "franchise"
@@ -1434,6 +1467,17 @@ def _build_results(
     # best-overall-only (equivalent to no weaving past format lock).
     bucket_signals: dict[str, float] | None = None,
     bucket_memberships_by_movie: dict[int, set[str]] | None = None,
+    # V3.4.6 franchise fatigue (single-anchor flow only). When
+    # `enforce_franchise_fatigue=True`, the weaver bans franchise
+    # candidates whenever the placed franchise:non-franchise ratio
+    # exceeds FRANCHISE_FATIGUE_THRESHOLD. `is_franchise_by_movie`
+    # flags each candidate; multi-anchor leaves both at default.
+    enforce_franchise_fatigue: bool = False,
+    is_franchise_by_movie: dict[int, bool] | None = None,
+    # V3.4.7 director fatigue (single-anchor flow only). Symmetric
+    # gate over candidates sharing any director with the anchor.
+    enforce_director_fatigue: bool = False,
+    is_director_match_by_movie: dict[int, bool] | None = None,
 ) -> tuple[list[SimilarMovieResult], dict[LaneName, int]]:
     """Combine per-lane scores into ranked candidates with V3 multipliers + floors.
 
@@ -1644,6 +1688,10 @@ def _build_results(
         enforce_format_top_lock=enforce_format_top_lock,
         candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
         enforce_shorts_cap=apply_shorts,
+        enforce_franchise_fatigue=enforce_franchise_fatigue,
+        is_franchise_by_movie=is_franchise_by_movie,
+        enforce_director_fatigue=enforce_director_fatigue,
+        is_director_match_by_movie=is_director_match_by_movie,
     )
     ranked = [
         SimilarMovieResult(
@@ -1795,14 +1843,42 @@ def _peek_next_eligible_for_bucket(
     candidate_format_bucket_by_movie: dict[int, FormatBucket],
     enforce_shorts_cap: bool,
     shorts_count: int,
+    enforce_franchise_fatigue: bool = False,
+    is_franchise_by_movie: dict[int, bool] | None = None,
+    franchise_count: int = 0,
+    non_franchise_count: int = 0,
+    enforce_director_fatigue: bool = False,
+    is_director_match_by_movie: dict[int, bool] | None = None,
+    director_match_count: int = 0,
+    non_director_match_count: int = 0,
 ) -> tuple[_CandidateScore, int] | None:
     """Walk a bucket's V3-rank queue from ``queue_pos`` to find the next
     pickable candidate — one not already placed, satisfying the format
     top-5 lock at slot indices < TOP_FORMAT_LOCK, and the shorts cap.
 
+    When ``enforce_franchise_fatigue`` is set (single-anchor flow),
+    franchise candidates are skipped while
+    ``franchise_count > FRANCHISE_FATIGUE_THRESHOLD * non_franchise_count``.
+    Director fatigue is the symmetric gate over shared-director
+    candidates. The two gates are independent — a candidate that's
+    both a franchise sibling and a same-director match must clear
+    both. Either gate forces fall-through to the next pick from any
+    bucket.
+
     Returns ``(candidate, new_pos)`` where ``new_pos`` is the index AT
     the candidate (not past it). Caller advances past it on placement.
     """
+    is_franchise_by_movie = is_franchise_by_movie or {}
+    is_director_match_by_movie = is_director_match_by_movie or {}
+    franchise_fatigue_active = (
+        enforce_franchise_fatigue
+        and franchise_count > FRANCHISE_FATIGUE_THRESHOLD * non_franchise_count
+    )
+    director_fatigue_active = (
+        enforce_director_fatigue
+        and director_match_count
+        > DIRECTOR_FATIGUE_THRESHOLD * non_director_match_count
+    )
     pos = queue_pos
     while pos < len(queue):
         c = queue[pos]
@@ -1831,6 +1907,20 @@ def _peek_next_eligible_for_bucket(
         ):
             pos += 1
             continue
+        # V3.4.6 franchise fatigue (single-anchor only): once the placed
+        # ratio of franchise to non-franchise exceeds the threshold,
+        # ban franchise candidates regardless of which bucket is asking.
+        # The weaver re-evaluates fatigue between slots, so the gate
+        # naturally lifts as more non-franchise picks accumulate.
+        if franchise_fatigue_active and is_franchise_by_movie.get(c.movie_id, False):
+            pos += 1
+            continue
+        # V3.4.7 director fatigue (single-anchor only): symmetric gate
+        # over candidates sharing any director with the anchor. Same
+        # threshold (0.34), independent counters.
+        if director_fatigue_active and is_director_match_by_movie.get(c.movie_id, False):
+            pos += 1
+            continue
         return c, pos
     return None
 
@@ -1845,6 +1935,12 @@ def _weave_candidates(
     enforce_format_top_lock: bool = False,
     candidate_format_bucket_by_movie: dict[int, FormatBucket] | None = None,
     enforce_shorts_cap: bool = False,
+    # V3.4.6 franchise fatigue (single-anchor flows pass these in).
+    enforce_franchise_fatigue: bool = False,
+    is_franchise_by_movie: dict[int, bool] | None = None,
+    # V3.4.7 director fatigue (single-anchor flows pass these in).
+    enforce_director_fatigue: bool = False,
+    is_director_match_by_movie: dict[int, bool] | None = None,
 ) -> list[_CandidateScore]:
     """V3.4 bucket-weaver: greedy slot-by-slot fill with MMR-style
     starvation boost.
@@ -1906,6 +2002,17 @@ def _weave_candidates(
     queue_pos: dict[str, int] = {b: 0 for b in target}
     used_movie_ids: set[int] = set()
     shorts_count = 0
+    # V3.4.6 franchise fatigue tracker (single-anchor). Counts placed
+    # candidates partitioned by `is_franchise_by_movie` membership.
+    is_franchise_by_movie = is_franchise_by_movie or {}
+    franchise_count = 0
+    non_franchise_count = 0
+    # V3.4.7 director fatigue tracker (single-anchor). Independent from
+    # franchise — a candidate can be both a franchise sibling and a
+    # same-director match, but the two gates count separately.
+    is_director_match_by_movie = is_director_match_by_movie or {}
+    director_match_count = 0
+    non_director_match_count = 0
     woven: list[_CandidateScore] = []
 
     for slot_index in range(top_section_cap):
@@ -1932,6 +2039,14 @@ def _weave_candidates(
                 candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
                 enforce_shorts_cap=enforce_shorts_cap,
                 shorts_count=shorts_count,
+                enforce_franchise_fatigue=enforce_franchise_fatigue,
+                is_franchise_by_movie=is_franchise_by_movie,
+                franchise_count=franchise_count,
+                non_franchise_count=non_franchise_count,
+                enforce_director_fatigue=enforce_director_fatigue,
+                is_director_match_by_movie=is_director_match_by_movie,
+                director_match_count=director_match_count,
+                non_director_match_count=non_director_match_count,
             )
             if peek is None:
                 continue
@@ -1958,6 +2073,17 @@ def _weave_candidates(
         used_movie_ids.add(c_picked.movie_id)
         if candidate_format_bucket_by_movie.get(c_picked.movie_id) == "short":
             shorts_count += 1
+        # V3.4.6 / V3.4.7: update fatigue counts after every placement
+        # so the next slot's peek sees the current ratios. Franchise
+        # and director are independent dimensions — both update.
+        if is_franchise_by_movie.get(c_picked.movie_id, False):
+            franchise_count += 1
+        else:
+            non_franchise_count += 1
+        if is_director_match_by_movie.get(c_picked.movie_id, False):
+            director_match_count += 1
+        else:
+            non_director_match_count += 1
 
         # Advance the drawn bucket's queue cursor past the picked candidate.
         queue_pos[b_drawn] = pos_at + 1
@@ -1975,14 +2101,43 @@ def _weave_candidates(
                 placed[b_member] += 1
 
     # Past the top section: append remaining candidates in V3-rank order
-    # so callers requesting limit > 10 still get a full list.
+    # so callers requesting limit > 10 still get a full list. The
+    # franchise fatigue gate continues here using the SAME counters
+    # accumulated during the top-section loop — the rule operates over
+    # the whole result list, not per-section. Counters update as we
+    # append so the gate naturally lifts as more non-franchise picks
+    # come in, then re-engages if a streak of franchise candidates
+    # would push the ratio back over threshold.
     if limit > top_section_cap:
         for c in base_sorted:
             if len(woven) >= limit:
                 break
-            if c.movie_id not in used_movie_ids:
-                woven.append(c)
-                used_movie_ids.add(c.movie_id)
+            if c.movie_id in used_movie_ids:
+                continue
+            if (
+                enforce_franchise_fatigue
+                and is_franchise_by_movie.get(c.movie_id, False)
+                and franchise_count
+                > FRANCHISE_FATIGUE_THRESHOLD * non_franchise_count
+            ):
+                continue
+            if (
+                enforce_director_fatigue
+                and is_director_match_by_movie.get(c.movie_id, False)
+                and director_match_count
+                > DIRECTOR_FATIGUE_THRESHOLD * non_director_match_count
+            ):
+                continue
+            woven.append(c)
+            used_movie_ids.add(c.movie_id)
+            if is_franchise_by_movie.get(c.movie_id, False):
+                franchise_count += 1
+            else:
+                non_franchise_count += 1
+            if is_director_match_by_movie.get(c.movie_id, False):
+                director_match_count += 1
+            else:
+                non_director_match_count += 1
 
     return woven[:limit]
 
@@ -2436,6 +2591,34 @@ async def _run_single_anchor_similarity(
         franchise_candidate_ids=franchise_candidate_ids,
     )
 
+    # V3.4.6 franchise fatigue. Define "franchise" broadly: candidate
+    # shares any lineage_entry_id OR shared_universe_entry_id with the
+    # anchor (cross-matching across both kinds — anchor's lineage may
+    # match candidate's universe and vice versa). Subgroup tags are
+    # excluded by design; per the user spec, fatigue gates on the
+    # broadest sense of "this candidate is part of the anchor's
+    # franchise". The dict feeds the weaver's hard-ban check.
+    anchor_franchise_pool: set[int] = anchor_lineage | anchor_universe
+    is_franchise_by_movie: dict[int, bool] = {}
+    if anchor_franchise_pool:
+        for movie_id, row in candidate_rows.items():
+            cand_pool = (
+                _as_int_set(row.get("lineage_entry_ids"))
+                | _as_int_set(row.get("shared_universe_entry_ids"))
+            )
+            is_franchise_by_movie[movie_id] = bool(
+                cand_pool & anchor_franchise_pool
+            )
+
+    # V3.4.7 director fatigue: candidate shares a director with the
+    # anchor iff its movie_id is in `director_candidate_terms` (which
+    # was populated by `fetch_director_movie_terms(anchor_directors)`
+    # above — every movie returned has at least one anchor-director
+    # term in its director_term set). No extra DB calls.
+    is_director_match_by_movie: dict[int, bool] = {
+        movie_id: True for movie_id in director_candidate_terms
+    }
+
     ranked, counts = _build_results(
         anchor_ids=[anchor_id],
         lane_scores=lane_scores,
@@ -2456,6 +2639,10 @@ async def _run_single_anchor_similarity(
         candidate_shape_by_movie=candidate_shape_by_movie,
         bucket_signals=bucket_signals,
         bucket_memberships_by_movie=bucket_memberships,
+        enforce_franchise_fatigue=True,
+        is_franchise_by_movie=is_franchise_by_movie,
+        enforce_director_fatigue=True,
+        is_director_match_by_movie=is_director_match_by_movie,
     )
     return SimilarMoviesSearchResult(
         anchor_movie_ids=[anchor_id],

@@ -34,14 +34,14 @@
       "studio": 0.0
     },
     "candidate_counts_by_lane": {
-      "shape": 11141,
+      "shape": 11143,
       "director": 14,
       "franchise": 0,
       "studio": 0,
       "source": 0,
       "quality": 0,
-      "format": 10853,
-      "themes": 10617,
+      "format": 10854,
+      "themes": 10618,
       "cast": 0,
       "specific_award": 1329
     },
@@ -4242,8 +4242,8 @@
       "studio": 0,
       "source": 21183,
       "quality": 498,
-      "format": 24928,
-      "themes": 24789,
+      "format": 24930,
+      "themes": 24792,
       "cast": 0,
       "specific_award": 4741
     },

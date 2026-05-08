@@ -2358,3 +2358,285 @@ lane score).
   compounding amplification alone. Recovering them would require
   themes weight bump (0.12 → 0.15) or reintroducing per-trait tier
   coefficients — V3.4.6 candidate if it bothers anyone in real use.
+
+## V3.4.6 — Franchise fatigue (single-anchor)
+Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
+
+### Intent
+Strong franchise anchors (Star Wars, John Wick, MCU, DC, Sharknado,
+LOTR/Hobbit) flooded the single-anchor top section with their own
+sequels because shape similarity + the franchise lane stack additively.
+The user wants *some* franchise siblings in results but also genuine
+non-franchise alternatives. The fix is a hard ratio cap on franchise
+vs. non-franchise placements in the greedy weaver.
+
+### Key Decisions
+- **Threshold = 0.34** (≈1:3 franchise-to-non ratio cap; ≤25% of top 10).
+  Permits 2-3 franchise entries before forcing non-franchise picks.
+  Per user direction.
+- **Hard ban, not soft demotion.** No score modification — the weaver
+  simply skips franchise candidates from every bucket while the gate
+  is active. Clarity wins; no interaction with the multiplier/floor
+  stack to reason about.
+- **"Franchise" defined broadly per user spec**: candidate's
+  `(lineage_entry_ids ∪ shared_universe_entry_ids)` intersects the
+  anchor's `(lineage_entry_ids ∪ shared_universe_entry_ids)`. Cross-
+  matching anchor lineage ↔ candidate universe and vice versa. Subgroup
+  tags excluded.
+- **Single-anchor only.** Multi-anchor consensus on franchise membership
+  is real signal, not stacking artifact. Multi-anchor flow doesn't pass
+  the new params; gate is inert there.
+
+### Implementation
+- New constant `FRANCHISE_FATIGUE_THRESHOLD = 0.34`.
+- `_peek_next_eligible_for_bucket` gains `enforce_franchise_fatigue`,
+  `is_franchise_by_movie`, `franchise_count`, `non_franchise_count`
+  kwargs. Skip logic mirrors format-lock/shorts-cap patterns.
+- `_weave_candidates` tracks counts alongside `shorts_count` and
+  forwards into peek.
+- `_build_results` forwards the two new params.
+- `_run_single_anchor_similarity` builds `is_franchise_by_movie` once
+  from `candidate_rows` data (no extra DB calls) and passes
+  `enforce_franchise_fatigue=True`.
+
+### Verification
+- 21-anchor single-anchor smoke: 11 IDENT / 2 REORD / 8 DIFF
+- Multi-anchor smoke: byte-identical (as expected)
+- Non-franchise anchors all IDENT (Inception, Get Out, Oppenheimer,
+  Pulp Fiction, etc.) — no over-fire risk
+- Wins are uniformly franchise-cleanup: Star Wars (6 SW films
+  displaced), Dark Knight (3 Batman films), Matrix (Resurrections +
+  Animatrix), Sharknado, John Wick, LOTR
+- Baselines: /tmp/v3_4_5_factor05_*.{md,json} (pre), /tmp/v3_4_6_*.{md,json} (post)
+
+### Re-run
+- `python -m search_v2.run_similar_movies_batch --multi --limit 10`
+
+## V3.4.6.1 — Extend franchise fatigue gate to tail-append loop
+Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
+
+V3.4.6 only enforced the fatigue gate inside the greedy top-section
+loop (slots 0..TOP_SECTION_SIZE-1). For `limit > 10`, the tail-append
+loop walked V3-rank candidates and appended unconditionally, so
+franchise siblings banned from the top section reappeared at rows 11+.
+
+Fix: tail-append now consults the same `franchise_count` /
+`non_franchise_count` counters from the top-section loop, applies the
+same threshold check, and updates counters as it appends. The rule
+operates over the **whole result list** — counters are shared across
+both loops so the cap remains coherent end-to-end.
+
+Verified at limit=20 against franchise-heavy anchors:
+- Batman 1989: 5 franchise / 15 non (25%)
+- Star Wars 1977: 3 franchise / 17 non (15%)
+- John Wick: 3 franchise / 17 non (15%) — Ballerina out entirely
+
+## V5 Iter 8 + Iter 9 — Phase 6 sibling-task context, Phase 7 soft FACETS fold, vacuous-spec extraction filter, drop per-candidate verdict pathway
+Files:
+- search_v2/endpoint_fetching/category_handlers/prompt_builder.py (Iter 8, Phase 6)
+- search_v2/endpoint_fetching/category_handlers/handler.py (Iter 8, Phase 6)
+- search_v2/full_pipeline_orchestrator.py (Iter 8, Phase 6)
+- search_v2/run_query_generation.py, search_v2/run_specs.py (Iter 8, Phase 6 — diagnostic threading)
+- search_v2/stage_4_execution.py (Iter 8, Phase 7)
+- search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md (Iter 8 + Iter 9)
+- search_v2/endpoint_fetching/category_handlers/prompts/buckets/semantic_preferred_deterministic_support_objective.md (Iter 8 + Iter 9)
+- search_v2/endpoint_fetching/category_handlers/prompts/buckets/audience_suitability_deterministic_first_objective.md (Iter 8 + Iter 9)
+- search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md (Iter 8 + Iter 9)
+- search_v2/endpoint_fetching/category_handlers/prompts/endpoints/semantic.md (Iter 8 only)
+- search_v2/endpoint_fetching/category_handlers/output_extractor.py (Iter 9 — vacuous-spec filter)
+- schemas/keyword_translation.py (Iter 9 — drop verdict pathway)
+- search_v2/endpoint_fetching/category_handlers/schema_factories.py (Iter 9 — drop _WalkThenCommitOutputBase)
+- search_improvement_planning/search_overheaul_test_tracker.md (Iter 8 + Iter 9 entries + active catalog updates)
+
+### Intent
+
+Two iterations bundled in one uncommitted working tree. Iter 8
+shipped Phase 6 (sibling-task context as evidence-injection at the
+handler) + Phase 7 (soft FACETS fold via geometric-mean-with-floor
+`_FACETS_FOLD_FLOOR=0.1`). Iter 9 followed up with two scoped
+fixes flagged from Iter 8 verification: a vacuous-spec extraction
+filter to close the residual edge case Phase 7's floor was
+masking, and a revert of Phase 5's per-candidate verdict pathway
+on the multi-endpoint keyword walk because the per-candidate
+abstraction could not natively express the union-level superset
+reasoning that keyword.md's commit test calls for.
+
+### Key Decisions
+
+- **Phase 6 — sibling-task context, not sibling-result feedback.**
+  The handler user message gains a `<sibling_categories
+  combine_mode="...">` block listing each parallel category's
+  `retrieval_intent` verbatim. Sibling tasks (instruction-time,
+  parallel-safe) preserve per-call isolation; sibling results
+  (would require sequencing) do not. Iter 8 confirmed this is the
+  first intervention class to move the trip-wire ceiling that
+  held across four prompt-edit iterations (Iter 5/6/7/7.x).
+- **Phase 7 — geometric-mean-with-floor (EPS=0.1).** FACETS PRODUCT
+  becomes `geomean([max(s, 0.1) for s in scores])`. Single-zero on
+  a 2-cat trait scores 0.316 instead of zeroing; n-cat traits
+  scale at `floor^(1/n)`. Synthetic numerical sweep across
+  representative score patterns confirmed all-clean cases
+  unchanged and single-zero cases survivable. Real-query EPS sweep
+  deferred — `run_full_pipeline` requires the FastAPI Postgres pool
+  startup hook, no orchestrator_batch CLI yet.
+- **Iter 9 Change 1 — vacuous-spec extraction filter (kept).** New
+  `_is_vacuous_spec(route, wrapper)` helper in
+  `output_extractor.py` filters wrappers whose params are
+  structurally empty (keyword `finalized_keywords=[]`, semantic
+  `space_queries=[]`, all-null metadata `column_spec`). Symmetric
+  with `coverage_commitments.{route}.verdict=abstain`. Closes
+  the Q5 GENRE empty-commit edge case at the extraction layer as
+  defense-in-depth.
+- **Iter 9 Change 2 — per-candidate verdict pathway reverted (per
+  user direction "Go with option 3").** Deleted
+  `PotentialKeywordWithVerdict`, `AttributeAnalysisWithVerdict`,
+  `_WalkThenCommitOutputBase`. `KeywordWalk.attributes` reverts to
+  `list[AttributeAnalysis]`. `KeywordQuerySpecSubintent.finalized_keywords`
+  reverts to LLM-emitted with `min_length=1` (was server-derived
+  from verdicts). The bucket-level
+  `coverage_commitments.{route}.verdict_reason→verdict` pathway is
+  retained — that operates at the union level naturally and was
+  the part of Phase 5 that delivered value. Prompt sections in
+  keyword.md and the three bucket objectives reframed to one
+  abstention level only.
+
+### Iter 8 outcome
+
+V5 suite (run_specs across 25 queries):
+- cats 86 → 82, risk 26 → 21 (below phase_3 baseline of 23 for
+  the first time across all V5 iterations).
+- STORY_THEMATIC_ARCHETYPE kw 16 → 13 (matched phase_3 plateau).
+- Q15 GENRE narrowed 5 paraphrastic → 1 canonical FANTASY; Q18
+  STORY_THEMATIC abstained on stretching (sub-shape C wins).
+- Positive controls Q9 / Q12 / Q25 held; schema validation errors
+  at 0.
+- One concern flagged for follow-up: Q5 GENRE empty-commit
+  (`keyword_finalized=[]` paired with `coverage_commitments.keyword.verdict=commit`)
+  — Phase 7 floor masked the trait-death damage but the underlying
+  verdict-pathway-vs-bucket-commit inconsistency drove Iter 9.
+
+### Iter 9 outcome — mixed; not a clean ship
+
+V5 suite (run_specs across 25 queries):
+- cats 82 → 90 (regressed +8), risk 21 → 25 (regressed +4, also
+  above phase_3 baseline of 23).
+- F2 ALL count 0 → 1: **Q5 plural-intent `[ACTION, THRILLER] ALL`
+  restored** — the empty-commit case is structurally closed by
+  the schema's `min_length=1` revert + the extraction-time
+  filter. This is the unambiguous structural win.
+- empty kw_finalized count 1 → 0.
+- Per-query narrowing wins: Q21 folk horror 3→1 paraphrases
+  collapsed; Q22 reconciliation FEEL_GOOD stretch dropped; Q23
+  psychological mysteries 3→1 narrowed; Q16 brutal MMA narrowed
+  + improved.
+- Per-query narrowing regressions: Q12 PLOT_TWIST returned (Iter
+  8 had dropped); Q18 Donnie Darko STORY_THEMATIC stretching
+  re-emerged (Iter 8 sub-shape C win partially undone) plus new
+  GENRE stretches; Q15 GENRE singular → paraphrase pair
+  (sub-shape C win partially undone); Q14 passion projects new
+  4-paraphrase NARRATIVE_DEVICES commit; Q20 dark trait commits
+  the canonical-stretching `[DRAMA]`.
+
+### Verdict
+
+Per the brief's own stop conditions, Iter 9 is NOT auto-shippable:
+trip-wire risk regressed past phase_8 AND past phase_3 baseline.
+Per-candidate verdicts WERE doing real narrowing work that the
+union-level commit cannot natively replicate; the brief's
+hypothesis that union-level reasoning would match or improve was
+falsified by the data. The Q5 plural-intent ALL restoration is a
+real structural win driven by the `min_length=1` revert plus the
+extraction filter (both halves of Change 2 + Change 1 were
+load-bearing). Iter 8's evidence-injection win (sibling-context)
+held architecturally — the regressions are downstream of removing
+the per-candidate abstention mechanism that translated
+sibling-context steering into commit-shape changes.
+
+### Recommendation surfaced for user direction
+
+The tracker entry at `### Iteration 9` documents three forward
+paths: (a) ship as-is, accepting Q5 win and narrowing
+regressions; (b) revert Change 2, keep Change 1 — preserves
+Iter 8 narrowing wins and retains extraction-time defense-in-depth
+on vacuous specs; (c) keep Change 2 architecturally and invest in
+tightening the union-level prompt to recover narrowing power. The
+working tree currently reflects (a); the user decides.
+
+### Testing notes
+
+- V5 suite (run_specs) does NOT replace per-trait trait_score
+  validation on real candidates. Per Iter 7 lesson #3 (now
+  confirmed for the FOURTH time on Iter 9: Q5 trait `bloody`
+  flipped FACETS↔FRAMINGS, Q11 atomization fluctuated 1↔2
+  traits, Q14 NARRATIVE_DEVICES newly fired), single-run-on-25-queries
+  cannot distinguish intervention signal from cross-run Step 2
+  noise on marginal cases. Multi-run aggregation is now a
+  measurement prerequisite for any future iteration.
+- Phase 7 EPS sweep on real catalog queries deferred — needs an
+  orchestrator_batch CLI runner that can stand the FastAPI
+  Postgres pool up standalone.
+- Sibling-task context propagation tested via run_specs (the
+  diagnostic runner threads `sibling_calls` + `combine_mode`
+  through both Step 3 V4 and the per-call handler invocation).
+  Production code path uses
+  `_decompose_and_generate` → `_process_category_call` to compute
+  siblings once and propagate; identity-based filter
+  (`s for s in all_calls if s is not cc`) correct because each
+  CategoryCall is a distinct object inside its decomposition.
+- Tests not modified per .claude/rules/test-boundaries.md. The
+  existing `unit_tests/test_full_pipeline_promotion_tiers.py`
+  mocks remain compatible because dataclass defaults preserve
+  pre-existing call sites; the keyword schema's revert to
+  LLM-emitted `finalized_keywords` matches the pre-Phase-5
+  shape, so any test stubbing that field continues to work.
+
+## V3.4.7 — Director fatigue (single-anchor)
+Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
+
+### Intent
+Auteur anchors (Nolan, Tarantino, Tim Burton, Miyazaki, Peter Jackson)
+flood single-anchor results with same-director films because the
+auteur bucket + director floor + shape similarity all align. Symmetric
+with V3.4.6 franchise fatigue: hard-ban candidates sharing a director
+with the anchor once the placed director-match ratio exceeds 0.34.
+
+### Key Decisions
+- **Same threshold (0.34)** as franchise. Per user direction.
+- **Independent counters** from franchise — a candidate can be both a
+  franchise sibling and a same-director match (TDK is both relative
+  to Batman 1989), but the two gates count separately and ban
+  independently. Sharing counters would conflate distinct dimensions.
+- **No extra DB calls.** `is_director_match_by_movie` is built from
+  `director_candidate_terms.keys()` — every entry there is already a
+  candidate sharing ≥1 director with the anchor.
+- **Single-anchor only.** Multi-anchor consensus on a director is real
+  signal (Nolan trio agreeing on Nolan-style is genuine). Multi-anchor
+  flow doesn't pass the new params; gate is inert there.
+- **Tail loop also gated.** Same shared-counter pattern as V3.4.6.1 —
+  the rule operates over the whole result list at any limit.
+
+### Implementation
+- New constant `DIRECTOR_FATIGUE_THRESHOLD = 0.34`.
+- `_peek_next_eligible_for_bucket` gains parallel `enforce_director_fatigue`,
+  `is_director_match_by_movie`, `director_match_count`,
+  `non_director_match_count` kwargs. Independent skip clause.
+- `_weave_candidates` tracks both pairs of counters and updates after
+  every placement. Tail-append loop checks both gates and updates
+  both counter pairs.
+- `_build_results` forwards the two new params.
+- `_run_single_anchor_similarity` builds `is_director_match_by_movie`
+  from `director_candidate_terms.keys()` and passes
+  `enforce_director_fatigue=True`.
+
+### Verification
+- 21-anchor smoke: 10 IDENT / 5 REORD / 6 DIFF
+- Multi-anchor: byte-identical (as expected)
+- 6 DIFFs are all auteur anchors (TDK, Spirited Away, Inception,
+  Oppenheimer, Pulp Fiction, LOTR Fellowship); non-auteur anchors all
+  IDENT or REORD
+- Limit=20 Tim Burton anchor (Batman 1989): only 4 Burton films
+  surface vs. ~9-10 pre-fix; tail loop confirmed gating
+- Baseline saved at /tmp/v3_4_7_*.{md,json}
+
+### Re-run
+- `python -m search_v2.run_similar_movies_batch --multi --limit 10`

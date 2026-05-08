@@ -2806,3 +2806,177 @@ Update doc: V3.4.5 is the active production state.
   moves results; F=0.5 demonstrated the shape working as intended. If real
   use shows F=0.5 is too aggressive, F=0.4 is the natural retreat — same
   shape, gentler magnitude.
+
+---
+
+## V3.4.6 — Franchise fatigue (single-anchor only)
+
+**Date:** 2026-05-08
+**Active:** yes
+
+#### Hypothesis
+
+Franchise-heavy single anchors (John Wick, Star Wars, MCU, DC, Sharknado,
+LOTR/Hobbit) flood the top section with their own sequels because shape
+similarity + the franchise lane stack additively. The user typically
+wants *some* franchise siblings but also genuine non-franchise
+alternatives. A hard ratio cap on franchise vs. non-franchise placements
+in the greedy weaver should clear out the long sequel tails without
+touching anchors that aren't part of a franchise.
+
+#### Mechanism
+
+- New constant `FRANCHISE_FATIGUE_THRESHOLD = 0.34`. While
+  `franchise_count > THRESHOLD * non_franchise_count` after any
+  placement, the weaver hard-bans franchise candidates from every
+  bucket on subsequent slot picks. The gate naturally lifts as more
+  non-franchise picks accumulate.
+- "Franchise" defined broadly per user spec: candidate's
+  `(lineage_entry_ids ∪ shared_universe_entry_ids)` intersects the
+  anchor's `(lineage_entry_ids ∪ shared_universe_entry_ids)`. Cross-
+  matching: anchor lineage may match candidate universe and vice
+  versa. Subgroup tags excluded by design.
+- Single-anchor only. Multi-anchor consensus on franchise membership
+  is real signal (e.g., Avengers cohort agreeing on Marvel siblings),
+  not stacking artifact.
+
+#### Implementation
+
+- `_peek_next_eligible_for_bucket` gains `enforce_franchise_fatigue`,
+  `is_franchise_by_movie`, `franchise_count`, `non_franchise_count`
+  kwargs. When the gate fires, franchise candidates are skipped during
+  the queue walk just like format-locked or shorts-capped candidates.
+- `_weave_candidates` tracks `franchise_count`/`non_franchise_count`
+  alongside `shorts_count`, incrementing after every placement based
+  on `is_franchise_by_movie.get(movie_id, False)`.
+- `_build_results` forwards the two new params; `_run_single_anchor_similarity`
+  builds `is_franchise_by_movie` from candidate row data and passes
+  `enforce_franchise_fatigue=True`. `_run_multi_anchor_similarity`
+  doesn't pass either, so the gate is inert there.
+
+#### Smoke (V3.4.5 → V3.4.6, 21 single anchors, top 10)
+
+- 11 identical / 2 reorder / 8 changed
+- Multi-anchor: byte-identical (gate is single-only)
+- Anchors with no/minimal franchise lineage: all IDENT (no over-fire)
+
+| Anchor | Out (franchise) | In (non-franchise) |
+|---|---|---|
+| Star Wars | Phantom Menace, Rise of Skywalker, Last Jedi, Revenge of the Sith, Solo, Attack of the Clones | Avatar, Star Trek, LOTR ROTK, Raiders, Fifth Element, LOTR TT |
+| The Dark Knight | Batman, The Batman, Batman Returns | Interstellar, Captain America Civil War, L.A. Confidential |
+| The Dark Knight Rises | The Batman, Batman, Batman Returns | Man of Steel, Hobbit BoFA, Batman Forever |
+| The Matrix | Matrix Resurrections, A Detective Story | Lucy, Ready Player One |
+| Toy Story | Toy Story of Terror! | Wreck-It Ralph |
+| Sharknado | Sharknado 5, The Last Sharknado | Mega Shark vs. Giant Octopus, Maximum Overdrive |
+| John Wick | Ballerina | Desperado |
+| LOTR Fellowship | The Hobbit: An Unexpected Journey | Lawrence of Arabia |
+
+The Godfather and BTTF reorder slightly (likely Godfather II/III and
+BTTF II/III competing inside the cap).
+
+#### Learnings
+
+- **The gate is "right-sized" at 0.34 for a 10-slot top section.** It
+  permits ~2-3 franchise entries before forcing non-franchise picks,
+  which matches the user's intuition for franchise representation.
+- **Non-franchise anchors are unaffected.** Inception, Get Out,
+  Oppenheimer, Pulp Fiction, etc. are identical because
+  `anchor_franchise_pool` is empty → `is_franchise_by_movie` ends up
+  empty → fatigue can never fire.
+- **Hard ban beats soft demotion for clarity.** No score modification
+  means no surprise interaction with the multiplier/floor stack. The
+  weaver simply skips franchise candidates when the gate is active.
+
+#### Follow-up: V3.4.6.1 — extend gate to tail-append loop
+
+The initial V3.4.6 implementation only enforced the gate inside the
+top-section greedy loop (slots 0..TOP_SECTION_SIZE-1). Past slot 10,
+the weaver fell through to a tail-append loop that walked V3-rank
+candidates and appended unconditionally — so for any `limit > 10`,
+franchise siblings the gate banned from the top section came right
+back in at rows 11+.
+
+Fix: the tail-append loop now consults the same `franchise_count` /
+`non_franchise_count` counters accumulated during the top-section
+loop, applies the same threshold check, and updates the counters as
+it appends. The rule operates over the **whole result list**, not
+per-section. Counters are shared across both loops so the cap remains
+coherent end-to-end.
+
+Verified at limit=20 against franchise-heavy anchors:
+- **Batman (1989)**: 5 franchise / 15 non (25%) — Batman Returns,
+  Batman Begins, The Batman, Long Halloween Pt 2, BvS appear spaced
+  across the list as the ratio ebbs and flows under the cap.
+- **Star Wars (1977)**: 3 franchise / 17 non (15%) — Empire, Force
+  Awakens, ROTJ. All prequels and Disney sequels banned out.
+- **John Wick**: 3 franchise / 17 non (15%) — JW2, JW3, JW4.
+  Ballerina (row 10 pre-fix in V3.4.5) banned out entirely.
+
+---
+
+## V3.4.7 — Director fatigue (single-anchor only)
+
+**Date:** 2026-05-08
+**Active:** yes
+
+#### Hypothesis
+
+Auteur anchors (Nolan, Tarantino, Tim Burton, Spielberg, Miyazaki,
+Peter Jackson) flood single-anchor results with same-director films
+because the auteur bucket + director floor + shape similarity all
+align on those candidates. The pattern is identical to franchise
+fatigue and the fix is symmetric: hard-ban candidates sharing a
+director with the anchor when the placed director-match ratio
+exceeds the threshold. Same threshold as franchise (0.34).
+
+#### Mechanism
+
+- New constant `DIRECTOR_FATIGUE_THRESHOLD = 0.34`. Independent
+  counters from franchise (`director_match_count` /
+  `non_director_match_count`).
+- Predicate: candidate's `director_term_ids` intersects the anchor's.
+  Built from `director_candidate_terms` (already populated by
+  `fetch_director_movie_terms(anchor_directors)`) — every key in that
+  dict is a candidate that shares ≥1 director with the anchor. No
+  extra DB calls.
+- Symmetric with franchise: both gates evaluate independently in
+  `_peek_next_eligible_for_bucket` and the tail-append loop. A
+  candidate that's both a franchise sibling and a same-director match
+  must clear both. Multi-anchor flow is unaffected (single-anchor
+  only, like franchise).
+
+#### Smoke (V3.4.6 → V3.4.7, 21 single anchors, top 10)
+
+- 10 identical / 5 reorder / 6 changed
+- Multi-anchor: byte-identical (gate is single-only)
+- DIFF anchors are uniformly the auteur anchors
+
+| Anchor | Out (same-director) | In (other directors) |
+|---|---|---|
+| The Dark Knight | Inception, Dunkirk, Memento, The Prestige, Interstellar (all Nolan) | Man of Steel, Godfather II, Chinatown, Se7en, Watchmen |
+| Spirited Away | Boy and the Heron, Princess Mononoke, Castle in the Sky, Nausicaä, Porco Rosso, The Wind Rises (all Miyazaki) | Kubo, Song of the Sea, Wolfwalkers, Brave Story, Mary and the Witch's Flower, Secret World of Arrietty |
+| Inception | The Prestige (Nolan) | Birdman |
+| Oppenheimer | Interstellar (Nolan) | 12 Years a Slave |
+| Pulp Fiction | Django Unchained (Tarantino) | Carlito's Way |
+| LOTR Fellowship | Hobbit: Desolation of Smaug (Jackson) | Raiders of the Lost Ark |
+
+Verified at limit=20 against Tim Burton (Batman 1989 anchor): only 4
+Burton films appear (Batman Returns #1, Sweeney Todd #6, Sleepy
+Hollow #9, Big Eyes #13) instead of the ~9-10 that previously filled
+rows 11-18. Tail loop respects the gate via shared counters from
+V3.4.6.1.
+
+#### Learnings
+
+- **Same scaffolding works for any "same-attribute" dimension.** Franchise
+  and director are conceptually identical: both are attributes shared
+  between anchor and candidate that, when combined with shape
+  similarity, drive over-representation. Adding director fatigue was
+  ~30 lines of plumbing because the V3.4.6 scaffolding already existed.
+- **Independent counters matter.** A Nolan-Batman film (TDK) is both
+  same-director and same-franchise relative to Batman 1989. Sharing
+  counters would conflate two distinct caps. Independent counters
+  let each gate fire on its own basis.
+- **Tail loop must mirror top-section logic for both gates.** V3.4.6.1's
+  fix for franchise generalizes — the tail loop now checks both gates
+  with shared counters across both loops.

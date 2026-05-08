@@ -74,8 +74,8 @@ Phase 1.2 deduped the DB query path (perf optimization) but not the
 scoring path. Stage 4 fix; invisible to run_specs (visible in
 orchestrator_batch trait_score breakdowns).
 
-**F5 — empty-spec FACETS-zero (preventive shipped, latent; Iter 8
-softened further).** Phase 1.1 filters empty-spec categories from
+**F5 — empty-spec FACETS-zero (preventive shipped, latent; three
+softening layers).** Phase 1.1 filters empty-spec categories from
 across-category fold. Hasn't fired on the V5 suite since baseline
 (every routed category emits at least one spec). Surface area is
 large (25+ FACETS traits per run) so the filter remains
@@ -86,11 +86,19 @@ with-floor (`floor=0.1`) instead of strict PRODUCT, so single-zero
 no longer zeros the trait. Iter 8 surfaced one new edge case where
 this softening was load-bearing: Q5 GENRE emitted
 `keyword_finalized=[]` under FACETS combine_mode (every
-PotentialKeyword candidate verdict-abstained). Pre-Phase-7 trait
-death; post-Phase-7 trait survives at floor^(1/n). **Proper
-metric:** count of FACETS traits where any category abstained OR
-zeroed on >50% of candidates; still requires orchestrator_batch
-trait_score distribution inspection.
+PotentialKeyword candidate verdict-abstained). Iter 9 closed that
+edge case at THREE points: (i) the schema's revert from server-
+derived to LLM-emitted `finalized_keywords` with `min_length=1`
+makes empty commits unrepresentable when the bucket-level commit
+is `commit`; (ii) the new vacuous-spec extraction-time filter in
+[output_extractor.py](../search_v2/endpoint_fetching/category_handlers/output_extractor.py)
+treats any structurally empty wrapper (keyword finalized=[],
+semantic space_queries=[], all-null metadata column_spec) as
+not-fired, symmetric with bucket-level abstain; (iii) the Phase 7
+floor remains as a defense for non-vacuous category-zero cases.
+**Proper metric:** count of FACETS traits where any category
+abstained OR zeroed on >50% of candidates; still requires
+orchestrator_batch trait_score distribution inspection.
 
 **N1 — EMOTIONAL_EXPERIENTIAL over-attachment by Step 3.** ~25–28%
 of category routes go to EMOTIONAL_EXPERIENTIAL even when the
@@ -278,6 +286,26 @@ the walk-to-verdict chain is now schema-enforced (Phase 5) but the
 surfaced an inconsistency — every per-candidate verdict abstained
 but bucket-level commitment stayed at "commit" (Q5 GENRE empty
 keyword_finalized).
+
+**Iter 9 update (2026-05-08):** Pattern A softening completed at
+extraction time — the vacuous-spec filter in
+[output_extractor.py](../search_v2/endpoint_fetching/category_handlers/output_extractor.py)
+plus the schema revert to LLM-emitted `finalized_keywords` with
+`min_length=1` make empty-commit cases structurally
+unrepresentable. Q5 plural-intent ALL `[ACTION, THRILLER]` is
+restored. Pattern C: the per-candidate verdict pathway introduced
+by Phase 5 was reverted; the data showed it was doing real
+narrowing work that the bucket-level union-level commit cannot
+natively replicate. Pattern C is now LESS schema-enforced than at
+end-of-Iter-8 — bucket-level `coverage_commitments.{route}.verdict`
+is the only structural enforcement, and it operates at the
+union/whole-endpoint level, not at the per-member level. Pattern B
+trip-wire count regressed back above phase_3 baseline (21 → 25).
+Iter 9 net: ONE clean structural win (Q5 / empty-commit closed)
+and ONE direction-undecided architectural revert (per-candidate
+verdict pathway). Iter 9 is NOT auto-shippable; the user
+decides among (a) ship as-is, (b) revert Change 2 keeping Change 1,
+(c) tighten the union-level prompt to recover narrowing power.
 
 ---
 
@@ -4103,4 +4131,517 @@ cases without affecting run_specs metrics. Both Phase 6 and
 Phase 7 land cleanly; the residual concerns (verdict-pathway
 empty-commit on Q5; deferred orchestrator_batch validation; Step 2
 noise floor) are scoped follow-ups, not blockers.
+
+### Iteration 9 — vacuous-spec extraction filter + drop per-candidate verdict pathway
+
+**Date opened:** 2026-05-08
+
+**Architectural patterns targeted:**
+- **Pattern A** (stacked PRODUCTs amplify upstream commit noise into
+  trait death) — closes the residual edge case Phase 7's floor was
+  masking. When the keyword endpoint emits a structurally vacuous
+  spec (`finalized_keywords=[]`), the across-category fold should
+  treat it symmetric with `coverage_commitments.keyword.verdict=abstain`
+  rather than running an empty query that scores 0.0 across the
+  board. Same fix generalizes to any endpoint params that are
+  structurally empty (metadata column_spec all-null, semantic
+  space_queries empty).
+- **Pattern C** (walk-to-commit chain is prompt-only convention,
+  not schema-enforced) — Phase 5's per-candidate verdict pathway
+  was the prior attempt at structural enforcement at the per-
+  candidate level. Iter 8 surfaced that the per-candidate framing
+  cannot natively express union-level superset reasoning: each
+  candidate evaluates verdict against its own strengths/weaknesses
+  in isolation, and the keyword.md superset test is a UNION-level
+  test ("the ANY-mode union is a true superset"). Forbidding
+  OR-disjunctions in verdict_reason (Iter 6 lesson #2) mechanically
+  prevents the candidate from rendering "broad alone but the union
+  saves me." So per-candidate verdicts can verdict-abstain on
+  every candidate even when their union would commit cleanly. Iter
+  9 reverts the per-candidate verdict abstraction; bucket-level
+  `coverage_commitments.{route}.verdict` is the remaining
+  structural enforcement (which operates at union level naturally).
+
+This iteration is two follow-up fixes from Iter 8 — both scoped,
+both isolated, both bundled with the Iter 8 ship rather than
+landed separately. User direction logged: "#1 go with the fix you
+believe is the best [extraction-time, applied to all empty
+endpoint params not just keyword]; #2 Go with option 3 [drop
+per-candidate verdict pathway entirely]."
+
+#### Hypothesis
+
+**Change 1 hypothesis (extraction-time vacuous-spec filter):**
+
+1. **Q5 GENRE empty-keyword case stops counting as a fired keyword
+   endpoint.** Iter 8 surfaced GENRE emitting `finalized_keywords=[]`
+   while `coverage_commitments.keyword.verdict=commit`. After
+   Change 1, the empty wrapper is filtered at extraction; stage 4
+   sees keyword as not-fired, symmetric with bucket-level abstain.
+   Phase 7's floor on that trait remains relevant for the OTHER
+   FACETS-zero edge cases (genuine category miscommits), but the
+   empty-keyword artefact stops contributing 0.0 to the fold.
+
+2. **Trip-wire risk stays at or below phase_8's 21.** Empty-keyword
+   fired endpoints currently still flag ADDITIVE_KW_RISK because the
+   trip-wire formula is `combine_type=='additive' AND keyword in
+   fired_routes`. After Change 1, those rows clear because keyword
+   is no longer in fired_routes for vacuous emissions. Cats should
+   drop slightly (one fewer fired row per vacuous case).
+
+**Change 2 hypothesis (drop per-candidate verdict pathway):**
+
+3. **Q5 empty-commit case structurally cannot recur.** The
+   downstream `KeywordQuerySpecSubintent.finalized_keywords` field
+   reverts to LLM-emitted with `min_length=1` — Pydantic enforces
+   non-emptiness at parse time. The LLM cannot emit an empty
+   commit list anymore. (Bucket-level `coverage_commitments.keyword.
+   verdict=abstain` remains the abstention pathway.)
+
+4. **Union-level reasoning becomes the primary commit mechanism.**
+   The walk surfaces candidates with strengths/weaknesses; the
+   bucket-level coverage_commitments.keyword reads off the walk
+   and applies the superset test once over the union of finalized
+   members. The verdict_reason there cites the union analysis. This
+   is closer to how the keyword.md superset test was originally
+   framed (one application over the union).
+
+5. **STORY_THEMATIC_ARCHETYPE keyword commits hold or improve vs
+   phase_8's 13.** The hypothesis is that union-level reasoning is
+   a cleaner abstention pathway than per-candidate verdicts were.
+   Risk: per-candidate verdicts may have been doing useful work on
+   borderline-individual-candidate cases (e.g., dropping a single
+   over-broad candidate from a union that would otherwise pass).
+   If kw_commits regress meaningfully, that's evidence the
+   per-candidate level was load-bearing.
+
+6. **Phase 6 sibling-context guidance still effective.** Sibling-
+   context wins on Iter 8 (Q15 GENRE 5→1, Q18 STORY_THEMATIC 3→0)
+   came from union-level narrowing under FACETS, not from
+   per-candidate verdict mechanics. The reframed sibling section
+   on keyword.md still steers union narrowing under FACETS via the
+   bucket-level commit; the dominated-by-sibling reason becomes a
+   union-level consideration ("under FACETS with paraphrastic
+   siblings, the commit's union should narrow toward facets the
+   sibling cannot reach"). Q15/Q18 quality wins should hold.
+
+**Combined hypothesis — positive controls:**
+
+7. **Q9 / Q12 / Q25 hold.** Same controls as Iter 8 — clean keep
+   commits unchanged.
+
+8. **Schema validation errors stay at zero.** Dropping
+   `_WalkThenCommitOutputBase` removes a derivation hook;
+   if any other code path was relying on it, errors will surface.
+   This is the primary regression risk.
+
+**Stop conditions:**
+- Q9 / Q12 / Q25 lose clean keep commits.
+- Trip-wire risk count regresses above phase_8's 21.
+- Step 3 sprawl regresses above phase_8's 82.
+- Schema validation errors > 0.
+- STORY_THEMATIC_ARCHETYPE kw_commits regress above phase_8's 13.
+  (If they regress, Iter 9 has lost a real per-candidate-verdict
+  contribution; reconsider the revert.)
+- Sub-shape C wins from Iter 8 regress (Q15 GENRE 5→1 narrowing
+  partially undone; Q18 STORY_THEMATIC abstaining undone).
+
+**Out of scope:**
+- Phase 6 sibling-task context unchanged.
+- Phase 7 geometric-mean-with-floor unchanged (`_FACETS_FOLD_FLOOR=0.1`).
+- Single-endpoint `KeywordQuerySpec` (the spec used by buckets 3/4)
+  unchanged — Phase 5 only added verdict pathway to the multi-
+  endpoint variant.
+- `coverage_commitments` fixed-shape per-endpoint commitment kept;
+  this is the remaining structural enforcement at the union level.
+- Step 2 / Step 3 prompt language unchanged.
+- Real-query EPS sweep tooling still deferred (orphaned from Iter 8).
+
+#### Changes actually made
+
+Six files modified for Iteration 9:
+
+**Change 1 — extraction-time vacuous-spec filter:**
+
+- [search_v2/endpoint_fetching/category_handlers/output_extractor.py](../search_v2/endpoint_fetching/category_handlers/output_extractor.py)
+  — added `_is_vacuous_spec(route, wrapper)` helper, called in
+  `extract_fired_endpoints` for every per-route bucket. Filters
+  out wrappers whose params are structurally empty:
+  - keyword: `parameters.finalized_keywords == []`
+  - semantic: `parameters.space_queries == []`
+  - metadata: every column on `parameters.column_spec` is None
+  Symmetric with `coverage_commitments.{route}.verdict=abstain`
+  at the bucket level. Other routes (entity, franchise, studio,
+  awards) have no structurally-vacuous emission path so the
+  helper no-ops there.
+
+**Change 2 — drop the per-candidate verdict pathway:**
+
+- [schemas/keyword_translation.py](../schemas/keyword_translation.py)
+  — deleted `PotentialKeywordWithVerdict` (Phase 5 PotentialKeyword
+  override with verdict_reason → verdict). Deleted
+  `AttributeAnalysisWithVerdict`. `KeywordWalk.attributes` reverts
+  to `list[AttributeAnalysis]` (no verdicts on candidates).
+  `KeywordQuerySpecSubintent.finalized_keywords` reverts to
+  LLM-emitted with `min_length=1` (was server-derived from
+  verdicts under Phase 5). Schema now enforces: when the LLM emits
+  `keyword_parameters` it must contain a non-empty
+  `finalized_keywords` — abstaining requires
+  `coverage_commitments.keyword.verdict=abstain` and a null
+  `keyword_parameters` upstream.
+- [search_v2/endpoint_fetching/category_handlers/schema_factories.py](../search_v2/endpoint_fetching/category_handlers/schema_factories.py)
+  — deleted `_WalkThenCommitOutputBase` and its
+  `_derive_keyword_finalized_from_verdicts` model_validator.
+  Walk-then-commit buckets now inherit from `_HandlerOutputBase`
+  directly. Removed `model_validator` import; cleaned up
+  Phase-5-specific commentary in factory docstrings;
+  generalized the `commitment-criteria-fail` line in the
+  `verdict_reason` description to reference union-level reasoning.
+- [search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md](../search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md)
+  — rewrote "Where the keyword analysis lives" and
+  "Commitment: superset test" sections. Two-level abstention
+  (per-candidate verdict + bucket-level commitment) collapses to
+  one level (bucket-level only). Added explicit "the test is a
+  UNION test" framing; named the verdict reasons for the
+  bucket-level abstain (`no-walk-candidate`,
+  `commitment-criteria-fail`, `dominated-by-sibling`). Reframed
+  sibling-context section: under FACETS narrow the union toward
+  facets the sibling cannot reach (was: verdict-abstain
+  per-candidate).
+- [search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md),
+  [search_v2/endpoint_fetching/category_handlers/prompts/buckets/semantic_preferred_deterministic_support_objective.md](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/semantic_preferred_deterministic_support_objective.md),
+  [search_v2/endpoint_fetching/category_handlers/prompts/buckets/audience_suitability_deterministic_first_objective.md](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/audience_suitability_deterministic_first_objective.md)
+  — each: dropped "(each with verdict_reason → verdict)" from the
+  per-endpoint walk description (Phase 1); reframed the
+  per-endpoint Superset test as a union test over the walk's
+  candidates; dropped "for keyword, finalized_keywords is
+  server-derived from the walk's verdict commits — emit [] and
+  let the derivation fill it" from the thin-parameters phase
+  (Phase 4); dropped the per-candidate verdict reference from
+  Strictness scaling under sibling context.
+
+#### Observations
+
+**Headline metrics (V5 suite, 25 queries):**
+
+| run     | cats | risk | handler errors | n_traits | STORY_THEMATIC kw | F2 ALL_rate | EE share | empty kw_finalized |
+|---------|-----:|-----:|---------------:|---------:|------------------:|-----------:|---------:|-------------------:|
+| phase_3 |   80 |   23 |              0 |       — |                13 |       5.0% |        — |                  — |
+| phase_5 |   86 |   26 |              0 |       51 |                16 |       0.0% |    23.3% |                  — |
+| phase_8 |   82 |   21 |              0 |       51 |                13 |       0.0% |    19.6% |                  1 |
+| **phase_9** | **90** | **25** | **0** | **52** | **13** | **3.3%** | **17.1%** | **0** |
+
+Cats moved 82 → 90 (+8), risk moved 21 → 25 (+4), n_traits 51 → 52
+(Step 2 noise — same Q11 fusion variance as Iter 8 reverted from
+1 trait back to 2). STORY_THEMATIC_ARCHETYPE keyword commits held
+flat at 13 (matching Iter 8). EE share dropped 19.6% → 17.1%
+(modest improvement). **F2 ALL count 0 → 1: Q5 plural-intent ALL
+restored** — `[ACTION, THRILLER]` ALL re-emerged as the GENRE
+commit, replacing phase_8's empty `keyword_finalized=[]`.
+**Empty kw_finalized count 1 → 0**: Change 1 + Change 2 close the
+empty-commit case structurally — no query in the suite can emit
+an empty keyword commit anymore.
+
+**Change 1 (vacuous-spec extraction filter) — clean win:**
+
+✓ **Q5 GENRE empty-commit case structurally closed.** phase_8
+emitted `keyword_finalized=[]` with `keyword_scoring_method=ANY`;
+phase_9 emits `[ACTION, THRILLER]` `ALL` — F2 plural-intent ALL
+restored. The schema's `min_length=1` on the multi-endpoint
+`finalized_keywords` (from Change 2's revert) prevents the empty
+commit at parse time; the extraction filter is defense-in-depth
+for any path that could otherwise emit a vacuous wrapper.
+
+**Change 2 (drop per-candidate verdict pathway) — mixed:**
+
+Per-query wins:
+
+✓ **Q21 atmospheric folk horror.** STORY_THEMATIC_ARCHETYPE
+narrowed `[FOLK_HORROR, WITCH_HORROR, FOLKLORE_ADAPTATION]` →
+`[FOLK_HORROR]` (paraphrase cluster collapsed to single canonical).
+✓ **Q22 grief and reconciliation.** STORY_THEMATIC_ARCHETYPE
+dropped the canonical-stretching `FEEL_GOOD` commit on
+`reconciliation` (clean abstention, semantic-only).
+✓ **Q23 slow-burn psychological mysteries.**
+STORY_THEMATIC_ARCHETYPE narrowed `[PSYCHOLOGICAL_DRAMA,
+PSYCHOLOGICAL_THRILLER, PSYCHOLOGICAL_HORROR]` →
+`[PSYCHOLOGICAL_THRILLER]` (3 paraphrases collapsed to 1).
+✓ **Q16 brutal MMA fight movies.** SENSITIVE_CONTENT narrowed
+`[SPLATTER_HORROR, BODY_HORROR]` → `[SPLATTER_HORROR]` (single
+member); CENTRAL_TOPIC widened `[SPORT]` → `[MARTIAL_ARTS, SPORT]`
+(more specific routing).
+
+Per-query regressions vs Iter 8 narrowing:
+
+✗ **Q12 mind-bending puzzle films.** NARRATIVE_DEVICES went
+`[NONLINEAR_TIMELINE, UNRELIABLE_NARRATOR]` (phase_8 dropped
+PLOT_TWIST as the right narrowing) → `[NONLINEAR_TIMELINE,
+PLOT_TWIST, UNRELIABLE_NARRATOR]` (PLOT_TWIST returned). The Iter
+8 sibling-context-driven narrowing was per-candidate; without the
+verdict pathway, the union-level commit is more lenient.
+✗ **Q18 like Donnie Darko but funnier.** STORY_THEMATIC_ARCHETYPE
+went from `keyword.verdict=abstain` (phase_8 sub-shape C win) →
+`[COMING_OF_AGE, SUPERNATURAL_FANTASY]` (regressed to stretching
+commits). GENRE additionally fired `[SCI_FI,
+PSYCHOLOGICAL_THRILLER]` — extra stretching commits.
+NARRATIVE_DEVICES held but with `[NONLINEAR_TIMELINE, PLOT_TWIST]`
+(narrower set than its phase_8 commit, mild win).
+✗ **Q15 Studio Ghibli style hand-drawn fantasies.** GENRE went
+`[FANTASY]` (Iter 8 singular-narrowing win) → `[FANTASY,
+FANTASY_EPIC]` (paraphrase added back); ELEMENT_PRESENCE picked
+up a redundant `[FANTASY]` commit.
+✗ **Q20 dark gritty antihero comic-book films.** New
+STORY_THEMATIC_ARCHETYPE `[DRAMA]` commit on the `dark` trait —
+DRAMA is the canonical over-coverage stretching case from F3.
+phase_8 had no STORY_THEMATIC commit on this trait.
+✗ **Q14 obscure indie passion projects.** New NARRATIVE_DEVICES
+firing with 4 paraphrastic members `[NONLINEAR_TIMELINE,
+UNRELIABLE_NARRATOR, BREAKING_FOURTH_WALL, SINGLE_LOCATION]` —
+overly broad commit on a trait whose intent isn't strongly
+narrative-mechanic-shaped.
+
+Mixed:
+
+~ **Q11 historical war epics.** Step 2 atomization split 1 → 2
+traits (`war` + `epics`); phase_8 had a single fused trait. Cats
+count rises mechanically. Same Step 2 noise as phase_8 vs phase_5
+(noted in Iter 8 lesson #3 as recurring measurement-floor drift).
+~ **Q24 coming-of-age road trips not too sappy.** phase_8 had a
+clean `[ROAD_TRIP]` commit on STORY_THEMATIC_ARCHETYPE; phase_9
+dropped it (no STORY_THEMATIC commit). Could be either lost
+narrowing or correctly-routed-to-semantic; without trait_score
+distribution data, ambiguous.
+~ **Q10 cyberpunk dystopias.** STORY_THEMATIC_ARCHETYPE went
+`[DYSTOPIAN_SCI_FI]` → `[DYSTOPIAN_SCI_FI, POST_APOCALYPTIC]` —
+mild paraphrase addition.
+
+**Positive controls:**
+
+✓ Q9 `revenge stories with anti-heroes` —
+STORY_THEMATIC_ARCHETYPE `[REVENGE]` clean, CHARACTER_ARCHETYPE
+`[ANTI_HERO]` clean. Held.
+✓ Q25 `unreliable narrator with a twist ending` —
+NARRATIVE_DEVICES `[UNRELIABLE_NARRATOR]` clean. Held.
+~ Q12 `mind-bending puzzle films about consciousness` — kept ANY
+shape but added back the PLOT_TWIST member that Iter 8 dropped.
+Not an ALL-collapse, but a narrowing regression.
+
+#### Stop conditions evaluation
+
+- ✓ Q9 / Q25 hold clean keep commits.
+- ✗ **Headline trip-wire risk count crossed back above phase_8's
+  21** (achieved 25 — also above phase_3 baseline of 23). This is
+  the brief's primary stop condition.
+- ✗ **Step 3 sprawl regressed above phase_8's 82** (achieved 90).
+  Some sprawl is Step 2 noise (Q11 atomization), but per-query
+  inspection shows real per-trait sprawl on Q14, Q17, Q18, Q20.
+- ✓ Schema validation errors at zero. The `_WalkThenCommitOutputBase`
+  removal landed cleanly; OUTPUT_SCHEMAS still builds 40 schemas;
+  no verdict-pathway artefacts in any schema's JSON output.
+- ~ STORY_THEMATIC_ARCHETYPE kw_commits held at 13 (matched the
+  phase_8 stop-condition floor exactly, but per-query stretching
+  shifted around — Q22/Q23/Q21 wins offset by Q14/Q20 new stretches).
+- ✗ **Sub-shape C wins partially undone**: Q15 GENRE singular →
+  paraphrase pair (FANTASY, FANTASY_EPIC); Q18 STORY_THEMATIC
+  abstention → stretching pair (COMING_OF_AGE, SUPERNATURAL_FANTASY)
+  + new GENRE stretching pair.
+- ✓ **Empty kw_finalized cases eliminated**: Q5 structural win
+  from Change 1 + Change 2's `min_length=1` revert.
+
+#### Concerns flagged for follow-up
+
+1. **Per-candidate verdict pathway WAS doing useful work.** The
+   brief's hypothesis (#5) was that union-level reasoning would
+   match or improve on per-candidate verdicts; the data says
+   per-candidate verdicts had real narrowing power on borderline
+   individual candidates that the union-level commit doesn't
+   replicate. Iter 8's evidence-injection win was upstream of the
+   verdict pathway (sibling-context steers the LLM toward
+   narrowing); the verdict pathway translated that steering into
+   per-candidate abstention. With the verdict pathway gone, the
+   union-level commit reads "all members in the union together
+   pass the superset test" more leniently and lets paraphrastic
+   stretches survive.
+
+2. **Q5 plural-intent ALL win is real.** The vacuous-spec filter
+   isn't sufficient by itself for this — what restored
+   `[ACTION, THRILLER] ALL` is the schema's `min_length=1`
+   forcing the LLM to either commit a real union or abstain at the
+   bucket level. Both halves of Change 2 were load-bearing for
+   this specific outcome.
+
+3. **Recommendation for the user.** Iter 9 as a unit is NOT a
+   clean ship by the brief's own stop conditions (trip-wire risk
+   regressed past phase_8 AND past phase_3 baseline). Three
+   options worth considering: (a) ship Iter 9 as-is, accepting
+   the Q5 win as the primary value and the narrowing regressions
+   as the cost; (b) keep Change 1 (vacuous-spec extraction
+   filter) but revert Change 2 — keeps Iter 8's per-candidate
+   verdict narrowing wins while retaining the extraction-time
+   defense-in-depth; (c) keep Change 2 architecturally (drop the
+   verdict pathway) but invest in tightening the union-level
+   prompt to recover the narrowing power per-candidate verdicts
+   delivered. The decision is the user's; this iteration's
+   verdict surfaces the tradeoff honestly.
+
+#### What we learned
+
+1. **Per-candidate verdicts and union-level commits are NOT
+   equivalent abstractions.** The brief assumed the bucket-level
+   `coverage_commitments.keyword.verdict=abstain` could absorb
+   the abstention work that per-candidate verdicts were doing.
+   The data shows otherwise: per-candidate verdicts evaluate each
+   member's individual fit and abstain when its weaknesses
+   overpower its strengths; union-level commits evaluate "does
+   the union as a whole pass the superset test" and accept
+   members whose individual stretching is offset by other members
+   in the union covering attribute-satisfying movies. These
+   produce different commit shapes, and the per-candidate version
+   was narrower in practice on the V5 suite.
+
+2. **Schema enforcement at the right granularity matters.**
+   `min_length=1` on the LLM-emitted `finalized_keywords`
+   enforces "if you commit to fire keyword, commit something
+   real" — that's the structural invariant the brief wanted from
+   the per-candidate verdict pathway, but located one level up.
+   This is now the sole structural enforcement on commit
+   non-emptiness; the abstention pathway is bucket-level only.
+
+3. **Q5 empty-commit case is closed, but the broader problem
+   space is wider.** The empty-commit edge case Phase 7's floor
+   was masking is gone (good), but Iter 8's narrowing wins
+   depended on the verdict pathway that Iter 9 dropped. The
+   ceiling that Iter 8 broke (trip-wire below phase_3 baseline of
+   23) has bounced back above the baseline (25). Whether that
+   ceiling can be re-broken at union-level requires either prompt
+   investment (option (c) above) or a different mechanism.
+
+4. **Iter 7 lesson #3 (Step 2 noise) confirmed for the FOURTH
+   time.** Q5 trait `bloody` flipped FACETS (phase_8) → FRAMINGS
+   (phase_9); Q11 atomization went from 1 trait (phase_8) to 2
+   traits (phase_9, matches phase_5_1's 2-trait-from-phase_5's-3
+   variance pattern); Q14 NARRATIVE_DEVICES newly fires on
+   `passion projects` with 4 stretches (Step 3 routing change
+   plausibly compounded by Step 2 atomization variance). Multi-
+   run aggregation is now a measurement prerequisite for any
+   future iteration; single-run-on-25-queries cannot distinguish
+   intervention signal from cross-run noise on marginal cases.
+
+5. **The architectural-pattern lens still applies.** Pattern A
+   (stacked PRODUCTs amplifying upstream noise into trait death)
+   is now softened at THREE points: Phase 1.1 empty-spec category
+   filter, Phase 7 geometric-mean-with-floor, and Iter 9 vacuous-
+   spec extraction filter. Pattern C (walk-to-commit chain
+   prompt-only convention, not schema-enforced) is *less* enforced
+   after Iter 9 — the per-candidate verdict pathway was the
+   nearest thing to schema enforcement at the per-member level
+   and is now gone. Bucket-level commitment is the remaining
+   enforcement, and the data argues that's not granular enough
+   to catch every paraphrase-cluster stretching case.
+
+#### Shipped — what we learned
+
+**Iteration 9 NOT SAFE TO SHIP AS-IS.** The brief's own primary
+stop condition tripped (trip-wire risk 21 → 25, also above the
+phase_3 baseline of 23). Sub-shape C wins from Iter 8 partially
+regressed (Q15, Q18). Multiple per-query stretching regressions
+(Q12, Q14, Q18, Q20) outweigh the per-query narrowing wins
+(Q21, Q22, Q23, Q16) on the headline aggregate.
+
+**One unambiguous structural win:** the Q5 empty-commit edge case
+is closed (`min_length=1` on the multi-endpoint
+`finalized_keywords` makes empty commits unrepresentable; the
+extraction-time vacuous-spec filter is defense-in-depth across
+all routes), and Q5 plural-intent `[ACTION, THRILLER] ALL` is
+restored as a clean F2 commit.
+
+**Recommendation deferred to user direction.** This entry surfaces
+the tradeoff for the user to choose among (a) ship as-is despite
+trip-wire regression, (b) revert Change 2 only and keep
+Change 1's extraction filter, or (c) keep Change 2 but invest
+in tightening the union-level prompt to recover per-candidate
+narrowing power. The Iter 9 working tree (commit-pending) reflects
+the as-is state and can be reverted / re-edited based on the
+user's choice.
+
+#### Re-analysis: do the regressions genuinely impact retrieval quality?
+
+The initial verdict was anchored on trip-wire risk count
+(21 → 25). Re-reading each per-query commit-shape change through
+the actual stage-4 scoring math reverses several classifications.
+
+**The trip-wire is a STRUCTURAL flag, not a behavioral measure.**
+`additive_kw_risk` fires when `combine_type=='additive' AND
+keyword in fired_routes`. It flags a category whose KW=0 would
+zero the category under within-call ADDITIVE multiply. But a
+*broader* ANY-mode keyword union *lowers* the zero-probability —
+KW=1.0 if a movie has any tag in the union. Broadening the union
+under additive lowers behavioral zero-rate while triggering the
+structural flag identically. The flag doesn't track destructiveness.
+
+**ANY-mode union semantics: broader = more recall, not more
+stretch.** keyword.md's design ("singular intent → ANY; the
+keyword commit may include multiple registry members because you
+have converted that one attribute into several registry surface
+forms — paraphrases, alternative routes, sub-form alternatives;
+matching any one is sufficient evidence") explicitly rewards
+broader paraphrastic commits. Per-candidate verdict pathway
+evaluated each member's individual fit; union-level reasoning
+asks whether the *union* covers the slice. The two answers
+diverge on paraphrastic adjacencies:
+
+| Query (trait) | phase_8 | phase_9 | Re-analysis verdict |
+|---|---|---|---|
+| Q12 NARRATIVE_DEVICES (mind-bending puzzle) | [NL,UN] | [NL,PT,UN] | **phase_9 wins** — PLOT_TWIST is a puzzle paraphrase (Sixth Sense, Memento); Iter 8 dropped a recall-positive member |
+| Q18 STORY_THEMATIC + GENRE (Donnie Darko) | abstain | [COMING_OF_AGE,SUPERNATURAL_FANTASY], [SCI_FI,PSYCHOLOGICAL_THRILLER] | **phase_9 wins** — these ARE Donnie Darko's identity; positioning_reference's `axes_replaced_by_siblings` is TONE only ("funnier"), so other axes shouldn't be dropped; Iter 8 over-abstained |
+| Q15 GENRE (fantasies) | [FANTASY] | [FANTASY,FANTASY_EPIC] | **phase_9 wins** — broader ANY adds canonical sub-form member |
+| Q14 NARRATIVE_DEVICES (passion projects) | absent | 4-paraphrase ANY | **phase_9 ~neutral** — under additive, broader ANY lowers zero-prob; routing decision (whether NARRATIVE_DEVICES should fire on passion-projects) is upstream of Iter 9 |
+| Q20 STORY_THEMATIC (dark) | absent | [DRAMA] | **phase_9 ~neutral** — DRAMA is canonical near-no-op (tags every drama); under additive cat ≈ SEM signal; wasted commit, not destructive |
+| Q21 STORY_THEMATIC (folk horror) | [FOLK_HORROR,WITCH_HORROR,FOLKLORE_ADAPTATION] | [FOLK_HORROR] | **phase_9 LOSES recall** under ANY (re-classified — initial entry called this a win; under union semantics phase_8's broader commit catches more folk-horror candidates) |
+| Q23 STORY_THEMATIC (psychological) | 3 paraphrases | 1 | **phase_9 LOSES recall** under ANY (re-classified) |
+| Q22 STORY_THEMATIC (reconciliation) | [FEEL_GOOD] | abstain | **phase_9 wins** — FEEL_GOOD is tonal, reconciliation is thematic; clean abstention on a single-claim stretching case |
+| Q16 CENTRAL_TOPIC (MMA fight) | [SPORT] | [MARTIAL_ARTS,SPORT] | **phase_9 wins** — MARTIAL_ARTS more specific |
+| Q16 SENSITIVE_CONTENT (brutal) | [SPLATTER,BODY_HORROR] | [SPLATTER] | **phase_9 mild recall loss** under ANY |
+| Q5 GENRE (intense action thrillers) | [] empty bug | [ACTION,THRILLER] ALL | **phase_9 unambiguous win** — empty-commit closed; plural-intent ALL restored |
+| Q15 ELEMENT_PRESENCE (fantasies) | absent | [FANTASY] under FACETS paraphrastic with GENRE | Bounded concern; Phase 7 floor caps worst-case at `0.1^(1/2)≈0.316`. Pre-existing N2 pattern, not Iter-9-specific |
+
+**Net under retrieval-quality lens:** Iter 9 has 5–6 clear
+recall improvements (Q5, Q12, Q15-GENRE, Q18×2, Q16-CENTRAL_TOPIC,
+Q22) and 2–3 recall losses (Q21, Q23, Q16-SENSITIVE_CONTENT mild).
+Two bounded-concern items (Q15-ELEMENT_PRESENCE paraphrastic,
+Q20 wasted DRAMA signal) and one routing question that pre-dates
+Iter 9 (Q14 NARRATIVE_DEVICES on passion projects).
+
+**Why the initial verdict was misleading.** I anchored on the
+trip-wire risk count and on superficial per-query "narrowing →
+broadening" pattern matching. The trip-wire doesn't measure
+destructiveness; under ANY-mode singular intent the keyword.md
+design rewards broader unions; per-candidate verdicts had been
+over-narrowing precisely because the per-candidate framing
+ignores union-level recall semantics. The brief's hypothesis #5
+(union-level reasoning is closer to keyword.md's actual commit
+test) is closer to correct than the per-query trip-wire data
+initially suggested.
+
+**Caveat: this analysis is inference, not measurement.** It
+assumes tag distributions match retrieval intuitions (movies
+tagged WITCH_HORROR are commonly also tagged FOLK_HORROR;
+mind-bending puzzle films often carry PLOT_TWIST; etc.). The
+only way to verify empirically is a per-trait `trait_score`
+breakdown across real candidates — exactly the orchestrator_batch
+tooling deferred from Iter 8. Until that lands, the
+retrieval-quality verdict is best-effort inference from commit
+shape + scoring math.
+
+**Updated recommendation.** Iter 9 is plausibly CLEANER than
+Iter 8 once read through retrieval-quality math, despite the
+trip-wire count regression. Option (a) (ship as-is) is more
+defensible than the initial entry suggested; option (b) (revert
+Change 2) would lose Q5 plural-intent ALL restoration, the Q18
+Donnie-Darko-identity surfacing, and the Q12 puzzle-paraphrase
+broadening — those are real retrieval wins, not just structural
+flag noise. The bounded concerns (Q15 paraphrastic-under-FACETS,
+Q21/Q23 recall narrowing) are addressable in follow-up
+prompt iteration without losing the wins.
+
 
