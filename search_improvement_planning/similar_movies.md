@@ -1904,6 +1904,734 @@ V3.4. The full design is captured in the test-tracker conversation:
   picking up a cohesive shape — need to confirm cohesion < 0.5 actually
   suppresses the boost.
 
+## V3.4 Bucket-Weaver — Multi-Source Recommendation Layer (Planned)
+
+V3.1–V3.3.x improved the unified ranker (lane reweighting, themes recall,
+shape multiplier, award-aware shape classification). The Barbie failure
+case after V3.3.2 showed the architectural limit: Lady Bird scores
+0.423 at rank 25, with director lane firing at 0.20 raw, but its
+shape=0.033 burns most of the 0.495 shape weight. Director floor
+(0.35) doesn't fire because the additive base already exceeds it. No
+amount of unified-ranker re-weighting fixes this without distorting
+mainstream / cult / franchise anchors.
+
+The fix isn't to re-weight the unified ranker. The fix is to recognize
+that movie-similarity browsing is a *recommendation* problem (rows
+grouped by why), not a *search* problem (one ordered list). A user
+looking at Barbie may want three different things in one top-10:
+movies that feel like Barbie (best-overall), more Greta Gerwig
+(auteur director), and surreal female-led satire (themes / rare
+keyword). Forcing all three into a single scalar score is the
+distortion.
+
+### Architecture: a thin weaver layer on top of V3 scoring
+
+```
+1. Run V3 unified ranker → ranked list of N=200 candidates with
+   evidence (lanes, multipliers, floors)
+2. Compute per-anchor bucket-signal scores → which buckets to
+   instantiate
+3. For each instantiated bucket, filter the V3 list to its members
+4. Allocate slots: floor for best-overall + signal-weighted remainder
+5. Greedy weave with dedup
+```
+
+This preserves every V3 invariant. Failures localize to a bucket's
+filter or gating threshold, not the global score.
+
+### The five buckets
+
+After enumerating every signal in V3 (shape, director, franchise,
+studio, source, quality, format, themes, cast, specific_award,
+rare_keyword, country, medium) against the criterion *"would a user
+say yes I want a separate row of these?"*, the shortlist is:
+
+| Bucket | Gate | Source of candidates |
+|---|---|---|
+| **Best overall** | always | V3 unified ranker top-N |
+| **Auteur director** | anchor's director ∈ `AUTEUR_NORM_STRINGS` | movies sharing that director |
+| **Franchise** | candidate's V3 `_franchise_score_v2` ≥ 0.55 | movies in same lineage, or shared subgroup + universe |
+| **Rare keyword** | high-IDF trait present (reuses `RARE_KW_FLOOR_HIGH_SINGLE` or `RARE_KW_FLOOR_COMBO_SUM` gate) | movies sharing that rare keyword |
+| **Lead actor** (multi-anchor only) | cast cohesion ≥ 0.5 ∧ shared actor billed top-3 | movies with same lead actor |
+
+### Decisions and rationale
+
+**Decision 1 — Why no themes bucket.** Every movie has themes. Making
+themes its own bucket dilutes the bucket concept; the themes lane
+(0.12 weight) and themes-recall path already drive thematic surfacing
+in the best-overall bucket. Don't double-count.
+
+**Decision 2 — Why no source-material bucket.** Concrete data:
+`mv_trait_idf` for `trait_kind = 4` has only **10 distinct entries**
+across 33,710 tagged movies. IDF range 0.198–0.547. These are broad
+categories (novel, comic_book, true_story, video_game) — not
+granular author / IP IDs. The "Stephen King novels" or "Tolkien"
+recommendation lens is encoded in keywords / concept_tags and
+surfaces via the rare-keyword bucket. Source lane stays as a small
+additive contribution (weight 0.04) in the unified ranker but doesn't
+merit a bucket.
+
+**Decision 3 — Why no studio bucket.** Outside Pixar / Ghibli / a few
+others, studio is a weak stylistic signal. Studio cohesion is already
+captured by the multiplier (×1.0–×1.10) and by franchise
+(Pixar films share lineage). A separate studio bucket would either
+exclude legitimate Pixar candidates (gated too tight) or include
+random Sony films (gated too loose).
+
+**Decision 4 — Why no quality / award / shape bucket.** These are
+*style modifiers* on what kind of movie this is, not recommendation
+*sources*. They modify the best-overall bucket's ranking via the V3.3
+shape multiplier and the prestige / cult AnchorType deltas; they
+don't merit independent rows.
+
+**Decision 5 — Why no format / medium / country bucket.** Format is a
+hard top-5 sequencing rule (similar_movies.py:1601 in
+`_can_select_candidate` with `enforce_format_top_lock=True`) plus a
+small additive lane — not a recommendation source. Medium is a
+multiplier (×0.65 cross / ×0.85+ within). Country is a multiplier
+(×1.05 boost / ×0.75 penalty). All three refine the unified ranker;
+none represent a "more like this" angle.
+
+**Decision 6 — Franchise bucket gate at score ≥ 0.55, not membership.**
+The V3 `_franchise_score_v2` 5-tier matrix already encodes the
+relationship-quality structure:
+
+| Tier | Score | Example | In bucket? |
+|---|---|---|---|
+| 1 | 1.00 | Star Wars 1977 ↔ Empire (same lineage + shared subgroup) | yes |
+| 2 | 0.70 | Star Wars 1977 ↔ Rogue One (same lineage, different subgroup) | yes |
+| 3 | 0.55 | Iron Man ↔ Captain America (different hero-lineages, share MCU subgroup + universe) | yes |
+| 4 | 0.30 | Iron Man ↔ Eternals (shared universe only) | **no** |
+| 5 | 0.00 | disjoint | no |
+
+Tier 4 is the "all Marvel movies ever" failure — universe-only,
+subgroups have drifted, structural connection is loose. Excluding it
+keeps the franchise bucket meaningful for MCU / Star Wars / LOTR /
+Toy Story without leaking spinoffs and tonally-distant universe
+members. Tier 3 is borderline but kept (cross-mainline MCU pairs are
+canonical "if you liked X you'll like Y" matches).
+
+**Decision 7 — Lead-actor bucket is multi-anchor only.** Single-anchor
+"more Tom Hanks vehicles" is too aggressive: the user picked one
+Hanks film, not necessarily because of Hanks. Multi-anchor with cast
+cohesion ≥ 0.5 (existing CAST_FLOOR_RATIO_THRESHOLD) is concrete
+evidence the user wants more from that actor (the H9 Tom Hanks trio
+is the canonical example).
+
+**Decision 8 — Multi-bucket credit on placement: full credit (placed
++= 1 to every bucket the candidate is a member of), not fractional.**
+The intuition is "if a movie is already credited toward bucket A's
+quota when picked from bucket B, we don't need extra picks for A."
+
+Counterintuitively, fractional credit (0.5 each across 2 buckets,
+0.33 across 3) makes the over-saturation problem *worse* than full
+credit, not better. Worked example with an Inception anchor where
+best-overall's top 5 happen to all be Nolan films:
+
+- **Full credit**: each best-overall pick increments both
+  `placed[best_overall]` and `placed[auteur]` by 1. After 3
+  best-overall picks, `placed[auteur] = 3` → deficit_ratio = 0 →
+  auteur bucket is satisfied. No extra "auteur slots" added on top.
+  Final list has at most 5 Nolan films (the 3 from early
+  best-overall picks plus up to 2 more if best-overall keeps
+  surfacing them later).
+- **Fractional credit (0.5 each)**: same 3 best-overall picks bring
+  `placed[auteur]` to only 1.5 → deficit_ratio = 0.5 → auteur thinks
+  it still needs 1.5 more films. Greedy then adds Nolan picks on top
+  of the implicit ones. Final list has 6+ Nolan films — the
+  double-down failure the user explicitly wanted to avoid.
+
+So: a placed candidate carries a set of bucket memberships, and
+placement bumps the count in every membership. The candidate's
+"drawn-from bucket" still matters for the greedy step (we walk each
+bucket's V3-rank queue to pick its top representative), but its
+*credit* on placement is membership-wide.
+
+### Per-anchor bucket-signal scores
+
+Each instantiable bucket emits a signal score on [0, 1]. Only buckets
+with `signal ≥ 0.30` get instantiated. The score then determines the
+slot share among instantiated buckets.
+
+```python
+# Auteur — binary, scaled by multi-anchor cohesion
+signal[auteur] = 1.0  if anchor_director ∈ AUTEUR_NORM_STRINGS else 0.0
+                 (multi-anchor: × M_d/N where M_d = anchors with auteur)
+
+# Franchise — catalog presence × popularity gate
+signal[franchise] = clip(catalog_franchise_size / 5.0, 0, 1)
+                  × max_member_popularity_percentile
+                  if anchor has lineage_entry_ids else 0.0
+                 (multi-anchor: × M_f/N where M_f = anchors in franchise)
+
+# Rare keyword — reuses the existing rare-keyword floor gate
+signal[rare_keyword] = min(1.0,
+    aggregate_high_tier_idf / RARE_KW_FLOOR_COMBO_SUM
+)  # already computed by V3 for the rare-keyword floor
+
+# Lead actor — multi-anchor only
+signal[lead_actor] = M_a/N    # multi-anchor cohesion (existing cast lane)
+                              # single-anchor: 0
+```
+
+Notes:
+- The signal-score formulas are the **working draft**; final
+  thresholds (catalog_franchise_size denominator, popularity gate
+  cutoff, the 0.30 instantiation threshold) need calibration against
+  the existing 21-anchor + 14-cohort smoke harness before ship.
+- The auteur curated list is already calibrated (V3 §2.1
+  three-criterion bar); no extra threshold needed for that bucket.
+- Lead actor reuses the existing `CAST_FLOOR_RATIO_THRESHOLD = 0.5`
+  for cohort cohesion.
+
+### Slot allocation
+
+Constants:
+
+```python
+TOTAL_SLOTS              = 10
+BEST_OVERALL_FLOOR       = 5     # always reserved for best-overall
+BUCKET_CAP               = 3     # max slots any one signal-bucket can take
+BUCKET_INSTANTIATE_MIN   = 0.30  # signal threshold to instantiate a bucket
+LAMBDA                   = 0.5   # MMR blend (relevance vs. starvation)
+```
+
+Target counts derive from a ratio-based intent (50% best-overall +
+remaining 50% distributed by signal strength) but compute as fixed
+integer counts at runtime for debuggability:
+
+```python
+# 1. Decide which buckets are instantiated
+instantiated = [b for b in candidate_buckets if signal[b] >= BUCKET_INSTANTIATE_MIN]
+
+# 2. Targets — best-overall gets the floor, signal-buckets share the
+#    remaining 5 slots proportional to signal, capped per-bucket
+target = {"best_overall": BEST_OVERALL_FLOOR}
+remaining = TOTAL_SLOTS - BEST_OVERALL_FLOOR  # = 5
+total_signal = sum(signal[b] for b in instantiated)
+
+for b in instantiated:
+    raw_share = signal[b] / total_signal
+    target[b] = min(BUCKET_CAP, round(remaining * raw_share))
+
+# 3. Slack — slots from capped/un-instantiated capacity flow back to
+#    best-overall (it's the always-on bucket, never capped at K=10
+#    since BUCKET_CAP < TOTAL_SLOTS / 2)
+slack = remaining - sum(target[b] for b in instantiated)
+target["best_overall"] += slack
+```
+
+### Greedy weave with MMR-style starvation boost
+
+Slot-by-slot greedy fill. At each slot, the top-V3-ranked unplaced
+candidate from each eligible bucket competes via an MMR-style adjusted
+score:
+
+```
+adjusted_score(c, b) = (1 − λ) · relevance(c)  +  λ · deficit_ratio(b)
+```
+
+where:
+- `relevance(c)` = V3 unified score normalized to [0, 1] against the
+  global V3 top score (so best-overall's top candidate ≈ 1.0,
+  signal-bucket tops are typically < 1.0)
+- `deficit_ratio(b)` = `(target[b] − placed[b]) / target[b]` ∈ [0, 1]
+- `λ = 0.5` default
+
+Higher adjusted score wins. Ties broken by signal-bucket signal
+strength (best-overall always wins ties at slot 1 since all deficits
+start at 1.0 and best-overall has the strongest relevance).
+
+Full algorithm:
+
+```python
+final_list = []
+placed = {b: 0 for b in target}
+
+for slot in 1..TOTAL_SLOTS:
+    eligible_picks = []
+    for b in target:
+        if placed[b] >= target[b]:
+            continue  # cap reached for this bucket
+        # Walk queue[b] (V3-rank order) to find the highest-ranked
+        # unplaced candidate that satisfies the format top-5 lock
+        # if slot ≤ TOP_FORMAT_LOCK
+        c = first_unplaced_format_eligible(queue[b], slot, anchor_format_bucket)
+        if c is None:
+            continue
+        adj = (1 − λ) * relevance(c) + λ * (target[b] − placed[b]) / target[b]
+        eligible_picks.append((b, c, adj))
+
+    if not eligible_picks:
+        break  # no candidate satisfies any bucket's constraints — stop
+
+    (b_drawn, c_picked, _) = max(eligible_picks, key=lambda x: x[2])
+    final_list.append(c_picked)
+
+    # Multi-bucket full credit: bump placed[] for every bucket
+    # the candidate is a member of, not just b_drawn.
+    for b_member in bucket_memberships(c_picked):
+        if b_member in target:
+            placed[b_member] += 1
+```
+
+`bucket_memberships(c)` returns the set of buckets the candidate
+qualifies for (auteur if shares an auteur director with anchor;
+franchise if `_franchise_score_v2(anchor, c) ≥ 0.55`; rare_keyword
+if shares a high-tier IDF trait with anchor's rare-keyword pool;
+lead_actor if shares a top-3-billed actor in a cohort with cast
+cohesion ≥ 0.5; best_overall is universal).
+
+### Format top-5 lock interaction
+
+The V3 format lock (similar_movies.py:1601, `_can_select_candidate`
+with `enforce_format_top_lock=True`) is layered into the eligibility
+step. For slots 1–5, a bucket's queue is walked past any candidate
+whose format bucket doesn't match the anchor; if no format-matching
+candidate exists in a bucket's remaining queue at that slot, the
+bucket is *temporarily ineligible* for that slot and another bucket
+fills in. From slot 6+, all candidates become eligible regardless of
+format.
+
+This lets cross-format candidates surface in slots 6–10 when
+genuinely strong, while preserving the slot-1–5 narrative-feature /
+no-shorts guarantee from V3 H3.
+
+### Trace example — λ = 0.5
+
+Buckets: best_overall (target 5), auteur (target 3), rare_kw
+(target 2). Realistic V3 scores normalized to [0, 1]:
+
+- best_overall queue: 1.00, 0.85, 0.78, 0.74, 0.70, 0.66, 0.62, …
+- auteur queue: 0.42, 0.40, 0.38, …
+- rare_kw queue: 0.60, 0.55, …
+
+Multi-bucket memberships disabled for trace clarity (assume queues
+are disjoint).
+
+| Slot | best_overall (def, adj) | auteur (def, adj) | rare_kw (def, adj) | Picked |
+|---|---|---|---|---|
+| 1 | 1.00, **1.00** | 1.00, 0.71 | 1.00, 0.80 | best_overall |
+| 2 | 0.80, **0.825** | 1.00, 0.71 | 1.00, 0.80 | best_overall |
+| 3 | 0.60, 0.69 | 1.00, 0.71 | 1.00, **0.80** | rare_kw |
+| 4 | 0.60, 0.69 | 1.00, **0.71** | 0.50, 0.525 | auteur |
+| 5 | 0.60, **0.69** | 0.67, 0.535 | 0.50, 0.525 | best_overall |
+| 6 | 0.40, **0.57** | 0.67, 0.535 | 0.50, 0.525 | best_overall |
+| 7 | 0.20, 0.45 | 0.67, **0.535** | 0.50, 0.525 | auteur |
+| 8 | 0.20, 0.45 | 0.33, 0.355 | 0.50, **0.525** | rare_kw |
+| 9 | 0.20, **0.45** | 0.33, 0.355 | done | best_overall |
+| 10 | 0.00, 0.33 | 0.33, **0.355** | done | auteur |
+
+Sequence: **B B R A B B A R B A**. Counts: best_overall=5 ✓,
+auteur=3 ✓, rare_kw=2 ✓. Targets honored, woven naturally.
+
+Slot 10 illustrates cap behavior cleanly: best_overall has hit its
+target (deficit=0, starvation term zeros out → adjusted = 0.33);
+auteur is still under target with deficit 0.33 → its adjusted 0.355
+narrowly beats and takes the last slot.
+
+### λ tuning intuition
+
+| λ | Behavior |
+|---|---|
+| 0.0 | Pure relevance: best-overall takes every slot until exhausted |
+| 0.3 | Light interleaving; signal-buckets only win on high deficit |
+| 0.5 | Balanced (default) |
+| 0.7 | Diversity-forward; signal-buckets often beat mid-quality best-overall |
+| 1.0 | Pure deficit-driven: relevance ignored once deficit ≠ 0 |
+
+Default `λ = 0.5`. Calibrate against observed lists from the smoke
+harness: raise to 0.6 if best-overall feels like it's hogging too
+much; drop to 0.4 if signal-bucket weak candidates surface too high.
+
+### Why ratio-based intent at runtime, not ratio-based starvation
+
+Considered using cumulative-share-vs-target-share as the deficit
+signal (continuous KL-style starvation), but at K=10 with 3 buckets
+the math is near-equivalent to fixed counts and fixed counts are
+easier to debug ("auteur was allocated 3 slots, used 2" beats
+"auteur target share 0.30, current share 0.18, deviation −0.12").
+Ratio formulation also has early-list jitter: at slot 1, every
+bucket is at 0% or 100% share, way off any target ratio — the
+deficit term is noisy until a few slots are placed.
+
+If the API later supports variable K (5 / 10 / 20 results) or
+streaming (page 2 of similar movies), refactor to ratio-based
+deficit. The algorithm shape doesn't change — only the deficit
+formula.
+
+### Expected outcomes to verify (forward-looking)
+
+- **Barbie**: top 10 contains 1–2 Gerwig films (Lady Bird, Little
+  Women '19) via auteur bucket, plus best-overall continues to surface
+  Poor Things / The Favourite / Free Guy / I Am Not an Easy Man.
+- **Star Wars**: franchise bucket fills with mainline saga + Rogue
+  One; American Graffiti stays out (Lucas not curated); standalone
+  Star Wars TV/spinoffs gated by tier-4 exclusion.
+- **MCU trio**: franchise bucket fills with mainline MCU
+  (Iron Man 2/3, Cap, Thor, Avengers); Eternals / Madame Web stay
+  out via tier-4 exclusion.
+- **Inception**: auteur bucket fills with other Nolan films; rare
+  keyword bucket fills with mind-bending puzzle films; best-overall
+  takes the rest.
+- **No regressions on already-good cohorts**: Pixar trio, Ghibli trio,
+  Tarantino trio, Best Picture trio top-10s should look ≥ as good as
+  V3.3.2 outputs.
+
+### Risks to monitor
+
+- **Bucket starvation**: if a bucket's filter has too few candidates
+  in the V3 top-N, it can't fill its allocated slots. Need either
+  bucket-aware recall extension or graceful slot reallocation.
+- **Hard-tier cliff at franchise score 0.55**: borderline-quality
+  tier-3 candidates (Phase-1 ↔ Phase-4 MCU with drifted subgroups)
+  may flip in/out of the bucket on small data changes.
+- **Over-filtering by single-placement dedup**: a movie that's
+  legitimately strong in two buckets (Tenet for Inception: auteur
+  AND best-overall) gets placed once. Single-placement assigns it to
+  the strongest-signal bucket; the other bucket's slot goes to
+  someone else. Need to confirm that doesn't surface weak candidates.
+
+## V3.4.1 Bucket-Weaver — Calibration Pass (Planned)
+
+V3.4 shipped functionally correct: the canonical wins from the
+hypothesis (Lady Bird/Little Women in Barbie top 5 via auteur
+bucket; Frances Ha entering Female-led/Gerwig top 10; The Mission
+#2 in Best Picture trio; tier-4 universe-only spinoffs excluded
+from MCU) all confirmed in the 21-anchor + 14-cohort smoke run.
+
+But the smoke also surfaced three calibration regressions, all
+traced to bucket *instantiation* being too lenient (signal buckets
+fire on weak/heterogeneous evidence) and signal-bucket *membership*
+allowing cross-format candidates to compete past the format top-5
+lock cliff. V3.4.1 ships three local calibration changes — no
+architectural changes — that resolve the regressions while
+preserving every V3.4 win.
+
+### The three regressions (concrete examples)
+
+**1. Slasher trio (multi)** — auteur bucket fires on a single
+auteur-anchor cohort:
+- Anchor IDs `(1091, 9716, 4233)` resolve to The Thing,
+  Everyone Says I Love You, Scream 2 (test_set.md doc says
+  Carrie/Halloween — labelling drift, not V3.4 issue).
+- V3.4 top 10 included **In the Mouth of Madness #3**
+  (Carpenter), **Pennies from Heaven #4** (Steve Martin musical),
+  **Mamma Mia! Here We Go Again #7** (musical romcom).
+- Mechanism: Carpenter is curated and directs only The Thing
+  among the 3 anchors → `M_d_auteur / N = 1/3 = 0.333`. With
+  `WEAVER_BUCKET_INSTANTIATE_MIN = 0.30`, this *barely clears*
+  the gate → auteur bucket instantiates → pulls In the Mouth of
+  Madness. Pennies from Heaven and Mamma Mia surface via the
+  rare_keyword bucket on shared "musical" / "song" tags from
+  Everyone Says I Love You (one-anchor outlier in the union pool).
+
+**2. Barbie meta-docs (single)** — franchise bucket lineage tag
+includes documentaries:
+- V3.4 top 10 included **Tiny Shoulders: Rethinking Barbie #7**
+  and **Barbie Nation: An Unauthorized Tour #8** (both
+  documentaries about the Barbie product itself, not about the
+  film).
+- Mechanism: verified via runtime debug — both carry membership
+  `{'franchise'}`. They share the Barbie lineage tag with the
+  anchor → `_franchise_score_v2 ≥ 0.55` → franchise bucket
+  members → format top-5 lock disengages at slot 6 → they crack
+  top 10 with score 0.578.
+
+**3. Pixar trio (multi)** — non-Pixar animations injected:
+- V3.4 inserted **The Lego Movie #4**, **Madagascar #6**,
+  **Rescuers Down Under #8**, displacing Bolt / Ratatouille /
+  Wreck-It Ralph from V3.3.2's 10/10 Pixar top.
+- Mechanism: shared moderate-tier traits (talking-animals,
+  family, child) push `signal[rare_keyword] = min(1.0, sum/1.5)
+  = 1.0` from sums far exceeding the 0.45-trigger gate. Lego
+  Movie / Madagascar share at least one trait at IDF≥0.55 →
+  membership → competing for rare_keyword bucket slots.
+- **Decision**: accept this regression as-is per user
+  assessment ("not very bad — those alternate suggestions are
+  reasonable"). The three changes below partially mitigate
+  (tighter gate, λ=0.6 may marginally worsen but the broader
+  fixes outweigh).
+
+### The three V3.4.1 changes
+
+#### Change 1 — Cohesion gate `WEAVER_BUCKET_INSTANTIATE_MIN: 0.30 → 0.50`
+
+The single cohesion knob inside the weaver. All multi-anchor
+signals encode cohesion via `M_x / N` factors that flow through
+this gate. Bumping to 0.50 forces ≥half of anchors to participate
+in the bucket's signal source.
+
+| Bucket | Signal formula | At 0.30 fires when… | At 0.50 fires when… |
+|---|---|---|---|
+| auteur | `M_d_auteur / N` | 1 anchor with curated director (N=3 → 0.333) | ≥half of anchors with curated director |
+| franchise | `clip(catalog/5, 0, 1) × max_pop × M_f/N` | M_f/N ≈ 0.4 (with full catalog/pop) | M_f/N ≥ 0.5 / 0.6 / 0.7 (tightening as catalog/pop drops) |
+| rare_keyword | `min(1.0, sum_high_tier_idf / 1.50)` | sum ≥ 0.45 | sum ≥ 0.75 |
+| lead_actor | `M_a / N` | (already gated internally at 0.5 via `CAST_FLOOR_RATIO_THRESHOLD`) | unchanged |
+
+**Verified single-anchor unaffected at the gate**:
+- auteur is binary 1.0 — Inception, Barbie, Pulp Fiction,
+  Spirited Away, Get Out, Fight Club, Oppenheimer, The Dark
+  Knight all clear.
+- franchise single-anchor signal = `catalog × max_pop` —
+  Star Wars (1.0 × 0.99 = 0.99), Barbie (0.89), John Wick
+  (~0.95), MCU mainline (~0.95), LotR (~0.95), Toy Story
+  (~0.95) all clear. Niche franchises (Sharknado: 1.0 × ~0.78
+  = 0.78) clear. The Room (no franchise) doesn't apply.
+- rare_keyword single-anchor: anchors with truly distinctive
+  traits (Inception "non-linear narrative", Star Wars
+  "jedi/force", Oppenheimer "Manhattan Project") clear by
+  far. Anchors with only moderate-rarity traits (Titanic) may
+  not — that's intentional, those don't merit a separate row.
+
+```python
+# search_v2/similar_movies.py
+WEAVER_BUCKET_INSTANTIATE_MIN = 0.50  # was 0.30
+```
+
+#### Change 2 — MMR weight `WEAVER_LAMBDA: 0.50 → 0.60`
+
+V3.4 surfaced a subtle interaction between multi-bucket full
+credit (Decision 8) and λ=0.5: signal buckets get
+partially-satisfied via cross-membership, which leaves their
+unique candidates in the queue but with insufficient deficit
+pressure to win against best-overall's relevance gradient.
+
+**Concrete trace — Pulp Fiction (single anchor, V3.4 result)**:
+target = `{best_overall: 5, auteur: 3, rare_keyword: 2}`. Slot 1
+picks Reservoir Dogs (1.038, member of best+auteur+rare_kw → all
+three placed[] bumped). Slot 2 picks Jackie Brown (0.933,
+best+auteur+rare_kw). After slot 2: placed = `{best:2, auteur:2,
+rare_kw:2}`. Auteur deficit = 1/3 = 0.333. At λ=0.5 the auteur
+deficit weight contributes 0.5 × 0.333 = 0.167. Best_overall's
+next pick (True Romance at relevance 0.840) carries 0.5 × 0.840
+= 0.420. Auteur's next (Kill Bill ~0.578 relevance) → 0.5 × 0.578
++ 0.167 = 0.456. Best wins, picks True Romance. Same dynamic
+holds at slot 4–5: Kill Bill, Django, Inglourious Basterds (all
+auteur-unique, V3 score ~0.55–0.60) never surface.
+
+**At λ=0.6 the same trace plays out**:
+- auteur deficit 1/3 → MMR contribution 0.6 × 0.333 = 0.200
+- best_overall slot 3 candidate (relevance 0.840) → 0.4 × 0.840
+  = 0.336 + 0.6 × deficit (best_overall placed=2/5 → deficit
+  3/5 = 0.6) = 0.336 + 0.360 = 0.696
+- auteur slot 3 (relevance 0.578) → 0.4 × 0.578 + 0.6 × 0.333 =
+  0.231 + 0.200 = 0.431
+- Best still wins this slot (large relevance gap), but at slot 5
+  with placed[best]=4 → deficit 1/5 = 0.2, best's adj = 0.4 ×
+  rel_5 + 0.6 × 0.2 = 0.4 × ~0.7 + 0.12 = 0.40, while auteur's
+  adj stays 0.431 (deficit unchanged at 1/3 because auteur
+  membership of Reservoir Dogs / Jackie Brown already credited
+  it to 2/3). Auteur wins → Kill Bill or Hateful Eight enters.
+
+The λ=0.6 setting also slightly amplifies the Pixar non-Pixar
+issue (more starvation pull = more rare_keyword competing). Per
+user direction, accept that trade-off.
+
+```python
+# search_v2/similar_movies.py
+WEAVER_LAMBDA = 0.60  # was 0.50
+```
+
+#### Change 3 — Extend format lock to signal-bucket queues across all 10 slots
+
+Currently `_peek_next_eligible_for_bucket` enforces format match
+for `slot_index < TOP_FORMAT_LOCK` (slots 0–4) regardless of
+bucket. Past slot 5 the lock disengages and any candidate with
+`format_score = 0` (different format bucket from anchor) becomes
+eligible. This is the Tiny Shoulders / Barbie Nation entry path
+(franchise bucket members surface at slots 7–8 with
+`format_score = 0`).
+
+V3.4.1 distinguishes by bucket type:
+
+- **best_overall queue**: format lock for slots 0–4 only
+  (current behavior preserved). A strong cross-format candidate
+  can still surface naturally on relevance from slot 6+.
+- **signal-bucket queues** (`auteur`, `franchise`, `rare_keyword`,
+  `lead_actor`): format lock for ALL slots 0–9. Recommendation
+  framing "more in this franchise" / "more from this auteur" /
+  "more rare-keyword matches" / "more lead-actor films" is
+  same-format-only.
+
+Implementation sketch (modify
+`_peek_next_eligible_for_bucket` signature to accept
+`bucket_name`):
+
+```python
+def _peek_next_eligible_for_bucket(
+    queue: list[_CandidateScore],
+    queue_pos: int,
+    used_movie_ids: set[int],
+    *,
+    bucket_name: str,                    # NEW
+    slot_index: int,
+    anchor_format_bucket: FormatBucket | None,
+    enforce_format_top_lock: bool,
+    candidate_format_bucket_by_movie: dict[int, FormatBucket],
+    enforce_shorts_cap: bool,
+    shorts_count: int,
+) -> tuple[_CandidateScore, int] | None:
+    pos = queue_pos
+    while pos < len(queue):
+        c = queue[pos]
+        if c.movie_id in used_movie_ids:
+            pos += 1
+            continue
+        # Format gate: best_overall keeps the slot-5 cliff;
+        # signal buckets always require format match.
+        if (
+            enforce_format_top_lock
+            and anchor_format_bucket is not None
+            and c.lane_scores.get("format", 0.0) < 1.0
+        ):
+            is_signal_bucket = bucket_name != BUCKET_BEST_OVERALL
+            if is_signal_bucket or slot_index < TOP_FORMAT_LOCK:
+                pos += 1
+                continue
+        # …shorts cap unchanged…
+        return c, pos
+    return None
+```
+
+Caller (`_weave_candidates`) passes `bucket_name=b` through the
+peek call — existing variable, just add to the kwargs.
+
+### Predicted outcomes
+
+#### Wins to confirm preserved (no degradation)
+
+- **Barbie (single)**: auteur signal=1.0 unaffected; Lady Bird
+  #3 + Little Women '19 #5 should hold. Format-lock extension
+  blocks Tiny Shoulders / Barbie Nation from franchise queue at
+  slots 6–9 → they drop out. Slots 7–10 backfill with
+  best_overall picks (likely Pleasantville, The Dressmaker,
+  Patch Town etc. that already populate slot 6+).
+- **Female-led / Gerwig (multi)**: Gerwig auteur cohesion 3/3 =
+  1.0 → bucket fires unchanged. Frances Ha (auteur or themes
+  surfacing) holds top 10. Nights and Weekends (`director=0.300
+  → 0.300`, single-Gerwig auteur match) needs auteur cohesion
+  ≥0.50 in multi-anchor — 3/3 = 1.0 clears.
+- **Best Picture trio**: franchise/quality not affected by the
+  three changes; The Mission #2 holds.
+- **MCU trio**: franchise cohesion 3/3 = 1.0 → bucket unchanged.
+  Tier-4 exclusion at score≥0.55 unchanged. 10/10 mainline
+  preserved.
+- **Pulp Fiction (single)**: λ=0.6 may surface Kill Bill /
+  Django / Hateful Eight / Inglourious Basterds in top 10 (V3
+  scores 0.51–0.59) — would be a *new* win, not a regression.
+  Watch for it.
+- **Inception (single)**: auteur=1.0, rare_keyword=high (Manhattan
+  Project / non-linear narrative IDFs ≥ 0.55). Both fire.
+  Tenet, Memento, TDK, Interstellar in top 10 preserved.
+- **Star Wars (single)**: franchise signal=0.99, rare_keyword=
+  high. Both fire. Full saga preserved.
+- **Tarantino trio (multi)**: auteur cohesion 3/3 = 1.0; Kill
+  Bill 2, Django, Reservoir Dogs, Inglourious, Jackie Brown
+  cluster preserved.
+- **Ghibli trio (multi)**: studio dominance preserved at the
+  unified ranker layer; bucket changes don't affect.
+
+#### Regressions to confirm fixed
+
+- **Slasher trio**: Carpenter cohesion `1/3 = 0.333 < 0.50` →
+  auteur bucket NO LONGER instantiates → In the Mouth of Madness
+  drops from #3 to outside top 10. Rare_keyword union sum on
+  Everyone-Says-I-Love-You musical traits is one-anchor-only
+  weight; with 0.50 gate (sum≥0.75 required), unlikely to clear
+  → Pennies from Heaven / Mamma Mia drop.
+- **Barbie meta-docs**: Tiny Shoulders / Barbie Nation are
+  documentaries (`format_score = 0` against narrative-feature
+  Barbie). Signal-bucket format lock extended to all slots →
+  they're skipped from franchise queue at every slot. They can
+  still enter via best_overall past slot 5, but their score 0.578
+  ranks below at least 5–10 best_overall candidates with format
+  match → effectively excluded from top 10.
+
+#### Regressions to monitor
+
+- **Bucket starvation**: at 0.50 instantiation gate, more cohorts
+  may have only best_overall instantiated. Confirm:
+  - Tom Hanks trio (H9): `M_a/N = 2/3 = 0.667` (Hanks in 2 of 3)
+    or `3/3 = 1.0` (in all 3) — both clear 0.50. Lead_actor
+    bucket fires.
+  - Nolan trio (multi): auteur 3/3 = 1.0; rare_keyword high.
+    Both fire.
+  - Spielberg adventure trio: Spielberg NOT curated → auteur
+    silent. Franchise cohesion: Indy films share lineage,
+    Jurassic Park doesn't — `M_f/N = 2/3 = 0.667`, but
+    catalog × max_pop × 0.667 must clear 0.50 (Indy catalog ≥ 5
+    franchise candidates × pop ≥ 0.85 × 0.667 ≈ 0.567 — clears).
+- **λ=0.6 over-pulling**: signal-bucket weak candidates may
+  surface too aggressively in cohorts where auteur/franchise *do*
+  fire but their queue's top is weak. Spot-check Female-led tail
+  (slots 7–10) and Inception slots 6–10.
+- **Pixar non-Pixar persistence**: Lego Movie / Madagascar /
+  Rescuers Down Under share at least one IDF≥0.55 trait with
+  Pixar trio → still rare_keyword bucket members. With 0.50
+  instantiation gate, rare_keyword needs sum≥0.75 from Pixar
+  trio's union — moderate+ shared traits like
+  "talking-animals"+"family"+"child"+"3D-animation" likely sum
+  to >0.75. Bucket still fires. λ=0.6 may amplify. Acceptable
+  per user direction.
+
+### Out of scope (deferred to V3.5)
+
+The architectural fix for Barbie meta-docs (Problem 3) — adding
+a format-mismatch multiplier symmetric with the existing medium
+piecewise multiplier:
+
+```python
+# Conceptual addition for V3.5
+FORMAT_CROSS_BUCKET_MULTIPLIER = 0.65  # cross-format penalty,
+                                       # mirrors MEDIUM_CROSS_CATEGORY_MULTIPLIER
+```
+
+This would penalize cross-format candidates *regardless of which
+bucket queue they enter* — applied in `_build_results` alongside
+the medium / country / shape multipliers, not in the weaver. It
+fixes:
+- Cross-format surfacing from `best_overall` past slot 5 (V3.4.1
+  Change 3 only addresses signal-bucket queues).
+- Cross-format surfacing from non-V3.4 code paths (Stage 4
+  search, etc.).
+
+Deferred because: (a) requires validation against documentary
+*anchors* — when the anchor IS a documentary, the multiplier
+mustn't fire (need format-bucket-aware logic), (b) interacts with
+the V3.3 medium piecewise → may compound penalties on cross-medium
++ cross-format pairs (e.g., animated documentary candidate vs.
+live-action narrative anchor → 0.65 × 0.65 = 0.42 × combined,
+likely too punitive), (c) Change 3's bucket-layer guardrail is
+sufficient for V3.4.1 ship. Track in `docs/TODO.md` as a V3.5
+candidate.
+
+### Verification harness
+
+Re-run the same 21-anchor + 14-cohort smoke after applying
+Changes 1–3:
+```bash
+python -m search_v2.run_similar_movies_batch --multi --limit 10
+```
+Compare `search_v2/similar_movies_batch_results.md` and
+`search_v2/similar_movies_multi_anchor_results.md` against the
+pre-V3.4.1 baseline (saved to `/tmp/v34_*_results.md` before
+applying changes). Pass criteria:
+1. Every "preserved" anchor in the V3.4 wins list still surfaces
+   the same auteur/franchise picks at top 10 (rank may shift
+   ±2).
+2. Slasher trio: In the Mouth of Madness, Pennies from Heaven,
+   Mamma Mia! all out of top 10.
+3. Barbie: Tiny Shoulders, Barbie Nation out of top 10.
+4. No new regressions on Star Wars / MCU / Pixar / Ghibli /
+   Best Picture / Tarantino top 10s.
+5. Tom Hanks trio still gets Hanks-vehicle surfacing at slots
+   1–5 (Toy Story 2/3 + at least one of Iron Giant / Heaven Can
+   Wait remains).
+
+If any of these fail, document in tracker and iterate before
+ship.
+
 ## V3 Implementation Order
 
 Tracked in detail in [`similar_movies_v3_plan.md`](similar_movies_v3_plan.md) §5 with status flags. Summary:

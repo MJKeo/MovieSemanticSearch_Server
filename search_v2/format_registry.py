@@ -10,13 +10,19 @@ keeps the head of the result list format-coherent.
 A movie is bucketed into the most specific group present in its
 ``keyword_ids``. Priority order (most specific first):
 
-    mockumentary > performance > news > tv_format > short
-                 > documentary > narrative_feature
+    performance > news > tv_format > short
+                > documentary > narrative_feature
 
-Mockumentary outranks documentary because its conventions are
-documentary-style but the experience is fictional. Films with no
-matching keyword fall through to the implicit ``narrative_feature``
-bucket — that's the bulk of the catalog.
+Films with no matching keyword fall through to the implicit
+``narrative_feature`` bucket — that's the bulk of the catalog.
+
+``MOCKUMENTARY`` was intentionally removed from the format taxonomy
+after audit: mockumentary is a *style* tag that overlays a narrative
+experience (Spinal Tap, What We Do in the Shadows, Best in Show),
+not a different content category. Treating it as its own bucket
+prevented mockumentary candidates from competing on the
+narrative-feature anchor's top section. It now feeds the themes
+lane as a high-signal keyword via ``_themes_traits_for_movie``.
 
 Keys reference ``OverallKeyword.<member>.keyword_id`` so a typo in the
 enum surfaces at import time.
@@ -30,7 +36,6 @@ from implementation.classes.overall_keywords import OverallKeyword
 
 
 FormatBucket = Literal[
-    "mockumentary",
     "performance",
     "news",
     "tv_format",
@@ -65,10 +70,6 @@ DOCUMENTARY_KEYWORD_IDS: frozenset[int] = frozenset(
         OverallKeyword.SPORTS_DOCUMENTARY.keyword_id,
         OverallKeyword.TRAVEL_DOCUMENTARY.keyword_id,
     }
-)
-
-MOCKUMENTARY_KEYWORD_IDS: frozenset[int] = frozenset(
-    {OverallKeyword.MOCKUMENTARY.keyword_id}
 )
 
 SHORT_KEYWORD_IDS: frozenset[int] = frozenset(
@@ -109,11 +110,8 @@ TV_FORMAT_KEYWORD_IDS: frozenset[int] = frozenset(
 )
 
 
-# Bucket priority — most specific first. Order matters: a movie tagged
-# both DOCUMENTARY and MOCKUMENTARY (uncommon, but possible) goes to
-# mockumentary because the experience is fictional.
+# Bucket priority — most specific first.
 _PRIORITY: tuple[tuple[FormatBucket, frozenset[int]], ...] = (
-    ("mockumentary", MOCKUMENTARY_KEYWORD_IDS),
     ("performance", PERFORMANCE_KEYWORD_IDS),
     ("news", NEWS_KEYWORD_IDS),
     ("tv_format", TV_FORMAT_KEYWORD_IDS),

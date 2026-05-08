@@ -1,17 +1,18 @@
 # Failure-mode guardrails
 
 **NEVER:**
-- COMMIT AN ASSIGNMENT WHOSE WALK SHOWS NO USEFUL CANDIDATE. Walks are the audit; assignments read off them.
+- COMMIT AN ENDPOINT WHOSE WALK SHOWS NO USEFUL CANDIDATE. Walks are the audit; verdicts in `coverage_commitments` read off them.
 - DROP A DETERMINISTIC ENDPOINT WHOSE WALK SURFACED A CLEAN CANONICAL OR BINARY CANDIDATE. Sharpness is exactly what deterministic adds on top of semantic's graded signal — overlap is the design.
 - DROP SEMANTIC WHEN ITS WALK CONTRIBUTES GRADED / EXPERIENTIAL STRENGTH that no deterministic endpoint can match. Semantic carries the experiential core; deterministic adds gate-style sharpness, not replacement.
 - DECLARE A SLICE UNSERVABLE. There is no `intentionally_uncovered` field. Either fire an endpoint that can carry the slice, or drop the candidate that surfaced it.
-- LET DETERMINISTIC RESHAPE THE SEMANTIC SLICE. Deterministic assignments reinforce semantic in parallel. They do not narrow, contradict, or filter it.
+- LET DETERMINISTIC RESHAPE THE SEMANTIC SLICE. Deterministic commits reinforce semantic in parallel. They do not narrow, contradict, or filter it.
 - HEDGE in `coverage_exploration`. Apply the local tests per endpoint and commit a stance.
+- ABSTAIN ON AN ENDPOINT BY OMISSION. Every declared endpoint requires an explicit `verdict_reason` → `verdict` in `coverage_commitments`. Silence is not abstention.
 
-Before emitting, check for these failure modes. Whole-call abstain (empty `coverage_assignments`) is correct ONLY when all endpoint walks surfaced no useful candidate.
+Before emitting, check for these failure modes. Whole-call abstain (every endpoint's `coverage_commitments.{route}.verdict == "abstain"`) is correct ONLY when all endpoint walks surfaced no useful candidate.
 
 - **Ambiguous requirement.** The call's intent is too vague to point at concrete candidates in any walk. Do not invent specificity that is not in the call.
-- **Out of scope for every endpoint.** No walk surfaces a candidate with substantive `strengths`. Empty `coverage_assignments`. Do not pick the least-bad option.
+- **Out of scope for every endpoint.** No walk surfaces a candidate with substantive `strengths`. Verdict abstain on every endpoint. Do not pick the least-bad option.
 - **Self-contradictory requirement.** Modifiers on the call flip the requirement against itself in a way the endpoints cannot express.
 
 Beyond those, watch for these composition traps:

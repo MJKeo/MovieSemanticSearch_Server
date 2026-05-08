@@ -226,6 +226,49 @@ TOP_FORMAT_LOCK = 5             # top-5 must share the anchor format bucket
 MAX_TOP_DOMINANT_LANE = 4
 MAX_TOP_FRANCHISE = 3
 
+# V3.4 Bucket-Weaver constants. The weaver replaces the V3 dominance /
+# franchise / competitive-band caps inside `_weave_candidates` with an
+# explicit slot-allocation + greedy-MMR pass. Per-bucket cap (3) and
+# best-overall floor (5) together prevent any single bucket from
+# saturating the top section. λ=0.5 balances relevance vs. starvation.
+# See similar_movies.md §V3.4 for full design rationale.
+WEAVER_TOTAL_SLOTS            = 10
+WEAVER_BEST_OVERALL_FLOOR     = 5
+WEAVER_BUCKET_CAP             = 3
+# V3.4.1: bumped 0.30 → 0.50 to require ≥half-anchor cohesion before
+# instantiating signal buckets. Eliminates Slasher trio's auteur firing
+# at 1/3 cohesion and rare_keyword firing on heterogeneous one-anchor
+# outlier traits. Single-anchor signals are unaffected (auteur=1.0,
+# franchise=catalog×max_pop typically clears 0.50).
+WEAVER_BUCKET_INSTANTIATE_MIN = 0.50
+WEAVER_LAMBDA                 = 0.5
+
+# Franchise bucket gating: candidates with structural score < 0.55 are
+# tier-4 universe-only (e.g., Iron Man ↔ Eternals, Phase-1 ↔ Phase-4
+# MCU with drifted subgroups). Excluded from the franchise bucket per
+# V3.4 Decision 6 to avoid the "all Marvel movies ever" failure mode.
+WEAVER_FRANCHISE_BUCKET_MIN_SCORE = 0.55
+
+# Rare-keyword bucket membership: a candidate qualifies when a shared
+# anchor trait has IDF >= this threshold (matching the high-tier cutoff
+# in the rare-keyword scoring lane). Candidates with only moderate-tier
+# matches don't qualify for the bucket — those rely on the unified
+# ranker's themes / rare_keyword lane contributions, not a separate row.
+WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN = 0.55
+
+BUCKET_BEST_OVERALL = "best_overall"
+BUCKET_AUTEUR       = "auteur"
+BUCKET_FRANCHISE    = "franchise"
+BUCKET_RARE_KEYWORD = "rare_keyword"
+BUCKET_LEAD_ACTOR   = "lead_actor"
+ALL_BUCKETS: tuple[str, ...] = (
+    BUCKET_BEST_OVERALL,
+    BUCKET_AUTEUR,
+    BUCKET_FRANCHISE,
+    BUCKET_RARE_KEYWORD,
+    BUCKET_LEAD_ACTOR,
+)
+
 # V3 §2.2: V2's franchise-confidence and low-confidence-multiplier paths
 # are retired. The structural matrix in `_franchise_score_v2` scores
 # every hit additively; "low-confidence" lineages now show up as 0.30
@@ -247,6 +290,21 @@ STUDIO_MULTIPLIER_STRENGTH = 0.10            # +10% per unit studio_score
 MEDIUM_MULTIPLIER_FLOOR = 0.85
 MEDIUM_MULTIPLIER_RANGE = 0.15
 MEDIUM_CROSS_CATEGORY_MULTIPLIER = 0.65
+
+# V3.4.2 format-mismatch multiplier. Symmetric with the medium piecewise
+# multiplier but harsher: the format buckets (narrative_feature /
+# documentary / short / performance / news / tv_format) are categorical
+# *content types*, not style variations within the same form. A
+# documentary about Barbie is fundamentally not "a movie like Barbie"
+# in a way that animated-vs-live-action animation simply isn't. Lane-
+# level format scoring already gates the top-5 lock; this multiplier
+# extends the penalty across all 10 slots so cross-format candidates
+# can't ride high-V3 scores into slots 6–10 (the Barbie meta-doc case).
+# Mockumentary was deliberately removed from the format taxonomy and
+# is treated as a high-signal theme keyword instead — narrative-styled
+# mockumentaries (Spinal Tap, What We Do in the Shadows) shouldn't
+# eat this multiplier when the anchor is a narrative feature.
+FORMAT_CROSS_CATEGORY_MULTIPLIER = 0.35
 
 # Country/language coherence multiplier. V3 §2.4: extended to single-
 # anchor (V2 was multi-only) and recalibrated. The looser V2 boost
@@ -1373,6 +1431,10 @@ def _build_results(
     apply_shorts_boost: bool = False,
     anchor_format_bucket: FormatBucket | None = None,
     enforce_format_top_lock: bool = False,
+    # V3.4 bucket-weaver inputs. When omitted, the weaver collapses to
+    # best-overall-only (equivalent to no weaving past format lock).
+    bucket_signals: dict[str, float] | None = None,
+    bucket_memberships_by_movie: dict[int, set[str]] | None = None,
 ) -> tuple[list[SimilarMovieResult], dict[LaneName, int]]:
     """Combine per-lane scores into ranked candidates with V3 multipliers + floors.
 
@@ -1470,6 +1532,30 @@ def _build_results(
         if medium_mult != 1.0:
             applied_multipliers["medium"] = medium_mult
 
+        # V3.4.2 format-mismatch multiplier — applied whenever the
+        # anchor has a format bucket and the candidate falls in a
+        # different bucket. The lane-level format score already gates
+        # the top-5 weave lock; this multiplier extends the penalty
+        # to slots 6–10 so high-V3 cross-format candidates (Barbie
+        # meta-docs) can't ride relevance into the tail. Short
+        # candidates are deliberately skipped here: the dedicated
+        # shorts downrank/boost path below already special-cases
+        # shorts asymmetrically (×0.30 against non-short anchors,
+        # ×1.05 in shorts-dominant cohorts), and stacking
+        # ×0.30 × ×0.35 = ×0.105 would over-penalize. Same-bucket
+        # candidates are unaffected.
+        if anchor_format_bucket is not None:
+            cand_fmt = candidate_format_bucket_by_movie.get(movie_id)
+            if (
+                cand_fmt is not None
+                and cand_fmt != anchor_format_bucket
+                and cand_fmt != "short"
+            ):
+                score *= FORMAT_CROSS_CATEGORY_MULTIPLIER
+                applied_multipliers["format_mismatch"] = (
+                    FORMAT_CROSS_CATEGORY_MULTIPLIER
+                )
+
         # V3 §3.1 shorts harsh downrank — fires when the anchor isn't a
         # short and the candidate IS. The combined-score multiplier
         # (0.30) makes shorts uncompetitive even with strong shape,
@@ -1554,6 +1640,8 @@ def _build_results(
     woven = _weave_candidates(
         candidates,
         limit=limit,
+        bucket_signals=bucket_signals,
+        bucket_memberships_by_movie=bucket_memberships_by_movie,
         anchor_format_bucket=anchor_format_bucket,
         enforce_format_top_lock=enforce_format_top_lock,
         candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
@@ -1629,87 +1717,276 @@ def _can_enter_top_section(
     return True
 
 
+def _compute_bucket_targets(
+    bucket_signals: dict[str, float],
+    *,
+    total_slots: int,
+) -> dict[str, int]:
+    """V3.4: derive per-bucket slot targets from anchor signal scores.
+
+    Best-overall always gets the floor (5/10) plus any slack from
+    capped or un-instantiated signal buckets. Signal buckets share the
+    remaining 5 slots proportional to their signal strength, capped
+    individually at WEAVER_BUCKET_CAP (3).
+
+    Buckets with `signal < WEAVER_BUCKET_INSTANTIATE_MIN` (0.30) are
+    not instantiated — their slots flow back to best-overall. This
+    is what makes the weaver respect "if the auteur isn't notable,
+    don't include an auteur row".
+    """
+    target = {BUCKET_BEST_OVERALL: WEAVER_BEST_OVERALL_FLOOR}
+    remaining = total_slots - WEAVER_BEST_OVERALL_FLOOR
+    if remaining <= 0:
+        target[BUCKET_BEST_OVERALL] = total_slots
+        return target
+
+    instantiated = [
+        b for b, sig in bucket_signals.items()
+        if b != BUCKET_BEST_OVERALL and sig >= WEAVER_BUCKET_INSTANTIATE_MIN
+    ]
+    if not instantiated:
+        target[BUCKET_BEST_OVERALL] = total_slots
+        return target
+
+    total_signal = sum(bucket_signals[b] for b in instantiated)
+    if total_signal <= 0.0:
+        target[BUCKET_BEST_OVERALL] = total_slots
+        return target
+
+    # Hamilton's largest-remainder method — distributes integer slots
+    # proportional to signal strength while guaranteeing the sum stays
+    # within `remaining`. Plain `round()` per-bucket can overshoot when
+    # all three signal buckets sit at equal strength (e.g. 3 × round(1.667)
+    # = 6 > 5 remaining slots), which would steal from best-overall's
+    # floor; the largest-remainder pass distributes the leftover slots
+    # explicitly and respects WEAVER_BUCKET_CAP.
+    shares = {
+        b: remaining * bucket_signals[b] / total_signal for b in instantiated
+    }
+    floored = {b: min(WEAVER_BUCKET_CAP, int(shares[b])) for b in instantiated}
+    leftover = remaining - sum(floored.values())
+    if leftover > 0:
+        remainders = sorted(
+            instantiated,
+            key=lambda b: -(shares[b] - int(shares[b])),
+        )
+        for b in remainders:
+            if leftover <= 0:
+                break
+            if floored[b] < WEAVER_BUCKET_CAP:
+                floored[b] += 1
+                leftover -= 1
+
+    for b in instantiated:
+        target[b] = floored[b]
+    # Any remaining slack (from per-bucket cap saturation) flows back
+    # to best-overall, preserving the always-on bucket invariant.
+    slack = remaining - sum(floored.values())
+    target[BUCKET_BEST_OVERALL] += max(0, slack)
+    return target
+
+
+def _peek_next_eligible_for_bucket(
+    queue: list[_CandidateScore],
+    queue_pos: int,
+    used_movie_ids: set[int],
+    *,
+    slot_index: int,
+    anchor_format_bucket: FormatBucket | None,
+    enforce_format_top_lock: bool,
+    candidate_format_bucket_by_movie: dict[int, FormatBucket],
+    enforce_shorts_cap: bool,
+    shorts_count: int,
+) -> tuple[_CandidateScore, int] | None:
+    """Walk a bucket's V3-rank queue from ``queue_pos`` to find the next
+    pickable candidate — one not already placed, satisfying the format
+    top-5 lock at slot indices < TOP_FORMAT_LOCK, and the shorts cap.
+
+    Returns ``(candidate, new_pos)`` where ``new_pos`` is the index AT
+    the candidate (not past it). Caller advances past it on placement.
+    """
+    pos = queue_pos
+    while pos < len(queue):
+        c = queue[pos]
+        if c.movie_id in used_movie_ids:
+            pos += 1
+            continue
+        # Format top-5 lock: while filling slots 0..TOP_FORMAT_LOCK-1
+        # with `enforce_format_top_lock` set, only same-format candidates
+        # may be placed. From slot TOP_FORMAT_LOCK onward, format lock
+        # disengages and any candidate may be placed.
+        if (
+            enforce_format_top_lock
+            and anchor_format_bucket is not None
+            and slot_index < TOP_FORMAT_LOCK
+            and c.lane_scores.get("format", 0.0) < 1.0
+        ):
+            pos += 1
+            continue
+        # Shorts cap: at most SHORTS_TOP_SECTION_MAX (1) short in the
+        # top section when the anchor isn't a short. Implemented by
+        # skipping shorts once the cap is reached.
+        if (
+            enforce_shorts_cap
+            and shorts_count >= SHORTS_TOP_SECTION_MAX
+            and candidate_format_bucket_by_movie.get(c.movie_id) == "short"
+        ):
+            pos += 1
+            continue
+        return c, pos
+    return None
+
+
 def _weave_candidates(
     candidates: list[_CandidateScore],
     *,
     limit: int,
+    bucket_signals: dict[str, float] | None = None,
+    bucket_memberships_by_movie: dict[int, set[str]] | None = None,
     anchor_format_bucket: FormatBucket | None = None,
     enforce_format_top_lock: bool = False,
     candidate_format_bucket_by_movie: dict[int, FormatBucket] | None = None,
     enforce_shorts_cap: bool = False,
 ) -> list[_CandidateScore]:
-    """Order candidates with V2 lane-variety + V3 shorts cap constraints.
+    """V3.4 bucket-weaver: greedy slot-by-slot fill with MMR-style
+    starvation boost.
 
-    Top section is built greedily from the score-sorted candidates. The
-    first ``TOP_FORMAT_LOCK`` slots only accept candidates sharing the
-    anchor format bucket (when ``enforce_format_top_lock`` is set);
-    after that, regular dominance/franchise caps apply through slot 10.
-    Anything that didn't make the top section is appended in score order
-    so callers still receive a full ``limit``-sized list.
+    Replaces the V3 dominance/franchise/competitive-band caps in
+    ``_can_enter_top_section`` with explicit per-bucket targets. When
+    ``bucket_signals`` is empty or no bucket clears
+    ``WEAVER_BUCKET_INSTANTIATE_MIN``, the algorithm collapses to "all
+    10 slots from best_overall in V3-rank order" — equivalent to no
+    weaving past the format lock + shorts cap.
 
-    V3 §3.1 ``enforce_shorts_cap``: when set, limits the top section
-    to ``SHORTS_TOP_SECTION_MAX`` (1) short film overall — covers the
-    Toy Story case where V2 let shorts pile up at slots 8/9/10 even
-    though they were locked out of the top 5.
+    Algorithm per slot 1..min(limit, TOP_SECTION_SIZE):
+    1. For each bucket whose target isn't met, peek the top unplaced
+       format-eligible candidate from its V3-rank queue.
+    2. Compute adjusted_score = (1−λ)*relevance + λ*deficit_ratio.
+    3. Pick the bucket with the highest adjusted score; place its
+       candidate; bump placed[] for every bucket the candidate is a
+       member of (full credit on placement).
+
+    Past slot TOP_SECTION_SIZE, append remaining unplaced candidates in
+    V3-rank order so the API can still return up to ``limit`` items.
     """
     if not candidates or limit <= 0:
         return []
 
+    bucket_signals = bucket_signals or {}
+    bucket_memberships_by_movie = bucket_memberships_by_movie or {}
     candidate_format_bucket_by_movie = candidate_format_bucket_by_movie or {}
 
     base_sorted = sorted(candidates, key=_base_sort_key)
-    best_score = base_sorted[0].score
-    top: list[_CandidateScore] = []
-    deferred: list[_CandidateScore] = []
-    dominant_counts: dict[LaneName, int] = {}
-    franchise_count = 0
-    shorts_count = 0
     top_section_cap = min(TOP_SECTION_SIZE, limit)
+    if not base_sorted:
+        return []
 
-    # Single pass: each candidate either enters top, gets deferred to the
-    # remainder, or rolls past once the top section is full.
-    for candidate in base_sorted:
-        if len(top) >= top_section_cap:
-            deferred.append(candidate)
-            continue
-        top_format_lock_active = (
-            enforce_format_top_lock
-            and anchor_format_bucket is not None
-            and len(top) < TOP_FORMAT_LOCK
-        )
-        # V3 §3.1: max-1 shorts in the top section when the anchor
-        # isn't a short.
-        is_short_candidate = (
-            candidate_format_bucket_by_movie.get(candidate.movie_id) == "short"
-        )
-        if (
-            enforce_shorts_cap
-            and is_short_candidate
-            and shorts_count >= SHORTS_TOP_SECTION_MAX
-        ):
-            deferred.append(candidate)
-            continue
-        if _can_enter_top_section(
-            candidate,
-            best_score=best_score,
-            dominant_counts=dominant_counts,
-            franchise_count=franchise_count,
-            top_format_lock_active=top_format_lock_active,
-        ):
-            top.append(candidate)
-            dominant_counts[candidate.dominant_lane] = (
-                dominant_counts.get(candidate.dominant_lane, 0) + 1
+    # Targets: best_overall is always present; signal-buckets only when
+    # they clear the instantiation threshold.
+    target = _compute_bucket_targets(bucket_signals, total_slots=top_section_cap)
+
+    # Per-bucket queues — V3-rank order. best_overall is the universal
+    # queue (every candidate is a member). Other buckets only include
+    # their qualifying candidates.
+    queue_by_bucket: dict[str, list[_CandidateScore]] = {b: [] for b in target}
+    for c in base_sorted:
+        memberships = bucket_memberships_by_movie.get(c.movie_id, set()) | {
+            BUCKET_BEST_OVERALL
+        }
+        for b in memberships:
+            if b in target:
+                queue_by_bucket[b].append(c)
+
+    # MMR relevance is the V3 score normalized by the global top score
+    # (so best_overall's top candidate ≈ 1.0 and signal-bucket tops are
+    # typically < 1.0). Avoid division by zero on degenerate cohorts.
+    best_score = base_sorted[0].score
+    if best_score <= 0.0:
+        best_score = 1.0
+
+    placed: dict[str, int] = {b: 0 for b in target}
+    queue_pos: dict[str, int] = {b: 0 for b in target}
+    used_movie_ids: set[int] = set()
+    shorts_count = 0
+    woven: list[_CandidateScore] = []
+
+    for slot_index in range(top_section_cap):
+        # For each bucket that still has a deficit, peek the top unplaced
+        # format-eligible candidate. Compute the MMR-adjusted score.
+        # Best-overall is the always-on bucket — it competes on every
+        # slot regardless of placed[] count. Multi-bucket full credit
+        # can drive placed[best_overall] past target via cross-bucket
+        # placements (a Toy Story 3 picked from best_overall also
+        # increments rare_keyword and lead_actor); without this carve-
+        # out, best_overall would gate out by slot 5 and the algorithm
+        # would short-circuit before filling the 10-slot top section.
+        eligible: list[tuple[str, _CandidateScore, float, int]] = []
+        for b, target_count in target.items():
+            if b != BUCKET_BEST_OVERALL and placed[b] >= target_count:
+                continue
+            peek = _peek_next_eligible_for_bucket(
+                queue_by_bucket[b],
+                queue_pos[b],
+                used_movie_ids,
+                slot_index=slot_index,
+                anchor_format_bucket=anchor_format_bucket,
+                enforce_format_top_lock=enforce_format_top_lock,
+                candidate_format_bucket_by_movie=candidate_format_bucket_by_movie,
+                enforce_shorts_cap=enforce_shorts_cap,
+                shorts_count=shorts_count,
             )
-            if candidate.lane_scores["franchise"] > 0.0:
-                franchise_count += 1
-            if is_short_candidate:
-                shorts_count += 1
-        else:
-            deferred.append(candidate)
+            if peek is None:
+                continue
+            c, pos_at = peek
+            relevance = c.score / best_score
+            # Clamp deficit at 0: once a bucket has exceeded its target
+            # via multi-bucket credit, its starvation pull falls to 0
+            # and only relevance carries the adjustment.
+            deficit_ratio = (
+                max(0.0, (target_count - placed[b]) / target_count)
+                if target_count > 0 else 0.0
+            )
+            adj = (1.0 - WEAVER_LAMBDA) * relevance + WEAVER_LAMBDA * deficit_ratio
+            eligible.append((b, c, adj, pos_at))
 
-    seen = {candidate.movie_id for candidate in top}
-    remainder = [candidate for candidate in base_sorted if candidate.movie_id not in seen]
-    return (top + remainder)[:limit]
+        if not eligible:
+            break
+
+        # Pick max adjusted score. Tie-break by relevance (best_overall
+        # naturally wins ties because it always carries the global top).
+        eligible.sort(key=lambda x: (-x[2], -x[1].score, x[1].movie_id))
+        b_drawn, c_picked, _, pos_at = eligible[0]
+        woven.append(c_picked)
+        used_movie_ids.add(c_picked.movie_id)
+        if candidate_format_bucket_by_movie.get(c_picked.movie_id) == "short":
+            shorts_count += 1
+
+        # Advance the drawn bucket's queue cursor past the picked candidate.
+        queue_pos[b_drawn] = pos_at + 1
+
+        # Multi-bucket full credit: bump placed[] for every bucket the
+        # candidate is a member of (per V3.4 Decision 8). This prevents
+        # the "best-overall surfaces 3 Nolan films, then auteur double-
+        # downs with 3 more" failure mode by giving auteur its quota
+        # credit for the films that already went via best-overall.
+        memberships = bucket_memberships_by_movie.get(c_picked.movie_id, set()) | {
+            BUCKET_BEST_OVERALL
+        }
+        for b_member in memberships:
+            if b_member in target:
+                placed[b_member] += 1
+
+    # Past the top section: append remaining candidates in V3-rank order
+    # so callers requesting limit > 10 still get a full list.
+    if limit > top_section_cap:
+        for c in base_sorted:
+            if len(woven) >= limit:
+                break
+            if c.movie_id not in used_movie_ids:
+                woven.append(c)
+                used_movie_ids.add(c.movie_id)
+
+    return woven[:limit]
 
 
 async def _resolve_similarity_title_anchor(flow_data: SimilarityFlowData) -> int | None:
@@ -2152,6 +2429,22 @@ async def _run_single_anchor_similarity(
         for movie_id, row in candidate_rows.items()
     }
 
+    # V3.4 bucket-weaver: derive per-anchor signal scores + per-candidate
+    # bucket memberships from the lane data already computed. Lead-actor
+    # bucket is multi-only; we pass empty dicts for the multi-anchor-only
+    # arguments. The weaver collapses to "best-overall takes all 10 slots
+    # in V3-rank order" when no signal-bucket clears WEAVER_BUCKET_INSTANTIATE_MIN.
+    bucket_signals, bucket_memberships = _compute_single_anchor_bucket_data(
+        anchor_row=anchor_row,
+        anchor_directors=anchor_directors,
+        auteur_term_ids=auteur_term_ids,
+        anchor_themes_traits=anchor_themes_traits,
+        themes_idfs=themes_idfs,
+        candidate_rows=candidate_rows,
+        director_candidate_terms=director_candidate_terms,
+        franchise_candidate_ids=franchise_candidate_ids,
+    )
+
     ranked, counts = _build_results(
         anchor_ids=[anchor_id],
         lane_scores=lane_scores,
@@ -2171,6 +2464,8 @@ async def _run_single_anchor_similarity(
         enforce_format_top_lock=True,
         anchor_shape_cohesion=anchor_shape_cohesion,
         candidate_shape_by_movie=candidate_shape_by_movie,
+        bucket_signals=bucket_signals,
+        bucket_memberships_by_movie=bucket_memberships,
     )
     return SimilarMoviesSearchResult(
         anchor_movie_ids=[anchor_id],
@@ -2733,6 +3028,24 @@ async def _run_multi_anchor_similarity(
         "rare_keyword": rare_keyword_scores,
     }
 
+    # V3.4 bucket-weaver inputs for the multi-anchor flow. Includes the
+    # lead-actor bucket (single-anchor's silent counterpart) when cohort
+    # cast cohesion clears the gate. Memberships are derived from the
+    # same per-lane data already computed above, no extra DB reads.
+    bucket_signals, bucket_memberships = _compute_multi_anchor_bucket_data(
+        anchor_ids=anchor_ids,
+        anchor_rows=anchor_rows,
+        director_trait_sets=director_trait_sets,
+        auteur_term_ids=auteur_term_ids,
+        themes_trait_sets=themes_trait_sets,
+        themes_idfs=themes_idfs,
+        candidate_rows=candidate_rows,
+        director_candidate_terms=director_candidate_terms,
+        franchise_candidate_ids=franchise_candidate_ids,
+        candidate_top_billing=candidate_cast_by_movie,
+        cast_trait_sets=cast_trait_sets,
+    )
+
     ranked, counts = _build_results(
         anchor_ids=anchor_ids,
         lane_scores=lane_scores,
@@ -2753,6 +3066,8 @@ async def _run_multi_anchor_similarity(
         enforce_format_top_lock=repeated_format_bucket is not None,
         anchor_shape_cohesion=anchor_shape_cohesion,
         candidate_shape_by_movie=candidate_shape_by_movie,
+        bucket_signals=bucket_signals,
+        bucket_memberships_by_movie=bucket_memberships,
     )
 
     active_anchor_types: list[AnchorType] = ["standard_shape"]
@@ -3475,6 +3790,251 @@ async def _low_cohesion_fallback(
             low_cohesion_fallback_used=True,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# V3.4 Bucket-Weaver helpers
+# ---------------------------------------------------------------------------
+
+
+def _high_tier_idf_sum(
+    traits: set[tuple[int, int]],
+    idf_lookup: dict[tuple[int, int], float],
+) -> float:
+    """Sum IDFs for traits whose IDF is in the moderate+high tier
+    (>= RARE_KW_TIER_LOW_MAX, i.e., 0.30).
+
+    Used to derive the rare-keyword bucket signal — the same input the
+    rare-keyword lane's combo bonus uses, so anchor signal strength
+    aligns with the lane's notion of "this anchor has distinctive
+    traits worth surfacing as a row".
+    """
+    return sum(
+        idf for trait in traits
+        for idf in [idf_lookup.get(trait, 0.0)]
+        if idf >= RARE_KW_TIER_LOW_MAX
+    )
+
+
+def _candidate_franchise_score_against_anchors(
+    candidate_row: dict,
+    anchor_rows: list[dict],
+) -> float:
+    """Max V3 structural franchise score across all anchors.
+
+    For multi-anchor cohorts, a candidate's franchise membership is
+    determined by its strongest pairwise structural match — a Star
+    Wars film paired with a Pixar anchor and a Star Wars anchor scores
+    1.00 against the SW anchor and is therefore franchise-bucket
+    eligible at score >= 0.55.
+    """
+    best = 0.0
+    for anchor_row in anchor_rows:
+        score = _franchise_score_v2(anchor_row, candidate_row)
+        if score > best:
+            best = score
+    return best
+
+
+def _compute_single_anchor_bucket_data(
+    *,
+    anchor_row: dict,
+    anchor_directors: set[int],
+    auteur_term_ids: frozenset[int],
+    anchor_themes_traits: set[tuple[int, int]],
+    themes_idfs: dict[tuple[int, int], float],
+    candidate_rows: dict[int, dict],
+    director_candidate_terms: dict[int, set[int]],
+    franchise_candidate_ids: set[int],
+) -> tuple[dict[str, float], dict[int, set[str]]]:
+    """V3.4: build bucket signal scores + per-candidate memberships for
+    single-anchor flow.
+
+    Signals (each in [0, 1]):
+    - auteur: 1.0 iff anchor's director is curated, else 0.0.
+    - franchise: clip(catalog_size/5, 0, 1) × max_member_pop_percentile,
+      where catalog_size and max_member are computed over candidates
+      with `_franchise_score_v2 >= 0.55` against the anchor.
+    - rare_keyword: anchor's high-tier IDF sum / RARE_KW_FLOOR_COMBO_SUM.
+    - lead_actor: 0.0 (multi-only).
+    """
+    signals: dict[str, float] = {b: 0.0 for b in ALL_BUCKETS}
+    memberships: dict[int, set[str]] = {
+        mid: set() for mid in candidate_rows
+    }
+
+    # Auteur signal + memberships.
+    auteur_intersect = anchor_directors & auteur_term_ids
+    if auteur_intersect:
+        signals[BUCKET_AUTEUR] = 1.0
+        for mid, dirs in director_candidate_terms.items():
+            if dirs & auteur_intersect:
+                memberships.setdefault(mid, set()).add(BUCKET_AUTEUR)
+
+    # Franchise signal + memberships.
+    if franchise_candidate_ids:
+        franchise_pool: list[float] = []
+        for mid in franchise_candidate_ids:
+            row = candidate_rows.get(mid)
+            if row is None:
+                continue
+            score = _franchise_score_v2(anchor_row, row)
+            if score >= WEAVER_FRANCHISE_BUCKET_MIN_SCORE:
+                memberships.setdefault(mid, set()).add(BUCKET_FRANCHISE)
+                franchise_pool.append(row.get("popularity_percentile") or 0.0)
+        if franchise_pool:
+            catalog_size_factor = min(1.0, len(franchise_pool) / 5.0)
+            max_pop = max(franchise_pool)
+            signals[BUCKET_FRANCHISE] = catalog_size_factor * max_pop
+
+    # Rare-keyword signal + memberships.
+    high_idf_sum = _high_tier_idf_sum(anchor_themes_traits, themes_idfs)
+    if high_idf_sum > 0.0:
+        signals[BUCKET_RARE_KEYWORD] = min(
+            1.0, high_idf_sum / RARE_KW_FLOOR_COMBO_SUM
+        )
+        # Membership: candidate shares any high-tier (>=0.55) anchor trait.
+        anchor_high_tier = {
+            t for t in anchor_themes_traits
+            if themes_idfs.get(t, 0.0) >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN
+        }
+        if anchor_high_tier:
+            for mid, row in candidate_rows.items():
+                if anchor_high_tier & _themes_traits_for_movie(row):
+                    memberships.setdefault(mid, set()).add(BUCKET_RARE_KEYWORD)
+
+    # Best-overall is universal — handled inside the weaver.
+    return signals, memberships
+
+
+def _compute_multi_anchor_bucket_data(
+    *,
+    anchor_ids: list[int],
+    anchor_rows: dict[int, dict],
+    director_trait_sets: list[set[int]],
+    auteur_term_ids: frozenset[int],
+    themes_trait_sets: list[set[tuple[int, int]]],
+    themes_idfs: dict[tuple[int, int], float],
+    candidate_rows: dict[int, dict],
+    director_candidate_terms: dict[int, set[int]],
+    franchise_candidate_ids: set[int],
+    candidate_top_billing: dict[int, set[int]],
+    cast_trait_sets: list[set[int]],
+) -> tuple[dict[str, float], dict[int, set[str]]]:
+    """V3.4: build bucket signals + per-candidate memberships for
+    multi-anchor cohorts.
+
+    Multi-anchor signal scaling:
+    - auteur: M_d_auteur / N where M_d_auteur is the count of anchors
+      with at least one curated director.
+    - franchise: clip(catalog_size/5, 0, 1) × max_member_pop × M_f/N
+      where M_f is anchors carrying any lineage_entry_id.
+    - rare_keyword: same formula as single-anchor on the union anchor
+      trait pool (rare-trait IDFs don't compound across anchors).
+    - lead_actor: M_a/N where M_a is the max count of anchors sharing
+      any single top-3-billed actor.
+    """
+    n = max(1, len(anchor_ids))
+    signals: dict[str, float] = {b: 0.0 for b in ALL_BUCKETS}
+    memberships: dict[int, set[str]] = {
+        mid: set() for mid in candidate_rows
+    }
+
+    # Auteur — count anchors with any auteur director, weighted by N.
+    auteur_anchor_count = sum(
+        1 for dirs in director_trait_sets if dirs & auteur_term_ids
+    )
+    auteur_union = set().union(*director_trait_sets) & auteur_term_ids
+    if auteur_anchor_count > 0 and auteur_union:
+        signals[BUCKET_AUTEUR] = auteur_anchor_count / n
+        for mid, dirs in director_candidate_terms.items():
+            if dirs & auteur_union:
+                memberships.setdefault(mid, set()).add(BUCKET_AUTEUR)
+
+    # Franchise — anchor cohesion + catalog size + popularity.
+    franchise_anchor_count = sum(
+        1 for aid in anchor_ids
+        if _as_int_set(anchor_rows[aid].get("lineage_entry_ids"))
+    )
+    if franchise_anchor_count > 0 and franchise_candidate_ids:
+        anchor_row_list = [anchor_rows[aid] for aid in anchor_ids]
+        franchise_pool: list[float] = []
+        for mid in franchise_candidate_ids:
+            row = candidate_rows.get(mid)
+            if row is None:
+                continue
+            score = _candidate_franchise_score_against_anchors(
+                row, anchor_row_list
+            )
+            if score >= WEAVER_FRANCHISE_BUCKET_MIN_SCORE:
+                memberships.setdefault(mid, set()).add(BUCKET_FRANCHISE)
+                franchise_pool.append(row.get("popularity_percentile") or 0.0)
+        if franchise_pool:
+            catalog_size_factor = min(1.0, len(franchise_pool) / 5.0)
+            max_pop = max(franchise_pool)
+            cohesion = franchise_anchor_count / n
+            signals[BUCKET_FRANCHISE] = catalog_size_factor * max_pop * cohesion
+
+    # Rare-keyword — V3.4.2 cohesion-weighted IDF sum. A trait
+    # that appears in only 1/N anchors gets weight 0; weight scales
+    # linearly to 1.0 at full N/N cohesion via cohesion_weight =
+    # max(0, (M_t - 1) / (N - 1)). This prevents one-anchor outlier
+    # traits (Everyone Says I Love You's musical/song traits in the
+    # Slasher cohort) from firing the bucket on heterogeneous cohorts.
+    # The same M_t >= 2 floor applies to membership, so candidates
+    # only qualify by sharing a trait at least 2 anchors carry.
+    trait_anchor_counts: dict[tuple[int, int], int] = {}
+    for traits in themes_trait_sets:
+        for t in traits:
+            trait_anchor_counts[t] = trait_anchor_counts.get(t, 0) + 1
+    cohesion_denom = max(1, n - 1)
+    weighted_idf_sum = 0.0
+    for t, m_t in trait_anchor_counts.items():
+        idf = themes_idfs.get(t, 0.0)
+        if idf < RARE_KW_TIER_LOW_MAX:
+            continue
+        cohesion_weight = max(0.0, (m_t - 1) / cohesion_denom)
+        if cohesion_weight == 0.0:
+            continue
+        weighted_idf_sum += idf * cohesion_weight
+    if weighted_idf_sum > 0.0:
+        signals[BUCKET_RARE_KEYWORD] = min(
+            1.0, weighted_idf_sum / RARE_KW_FLOOR_COMBO_SUM
+        )
+        # Membership: candidate must share a high-tier trait that at
+        # least 2 anchors carry. Same M_t >= 2 floor as the signal.
+        anchor_high_tier = {
+            t for t, m_t in trait_anchor_counts.items()
+            if m_t >= 2
+            and themes_idfs.get(t, 0.0) >= WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN
+        }
+        if anchor_high_tier:
+            for mid, row in candidate_rows.items():
+                if anchor_high_tier & _themes_traits_for_movie(row):
+                    memberships.setdefault(mid, set()).add(BUCKET_RARE_KEYWORD)
+
+    # Lead actor — multi-only. Reuses the cast lane's M_a / shared_leads
+    # logic. Bucket fires when cohesion >= CAST_FLOOR_RATIO_THRESHOLD
+    # (0.5), matching the cast floor's gate; membership is candidates
+    # sharing any lead the cohort has cohesion ≥0.5 in.
+    if cast_trait_sets:
+        m_per_actor: dict[int, int] = {}
+        for billing in cast_trait_sets:
+            for actor in billing:
+                m_per_actor[actor] = m_per_actor.get(actor, 0) + 1
+        if m_per_actor:
+            max_m = max(m_per_actor.values())
+            ratio = max_m / n
+            if ratio >= CAST_FLOOR_RATIO_THRESHOLD:
+                signals[BUCKET_LEAD_ACTOR] = ratio
+                shared_leads = {
+                    a for a, m in m_per_actor.items() if m == max_m
+                }
+                for mid, billing in candidate_top_billing.items():
+                    if billing & shared_leads:
+                        memberships.setdefault(mid, set()).add(BUCKET_LEAD_ACTOR)
+
+    return signals, memberships
 
 
 async def _empty_set() -> set[int]:

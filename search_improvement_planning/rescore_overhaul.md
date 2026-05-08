@@ -1427,6 +1427,728 @@ pattern:
 Apply the same partial-abstention sanction wherever the prompt
 currently treats abstention as all-or-nothing.
 
+---
+
+## Architecturally-driven phases (post-Iteration-5)
+
+Phases 1–3 above were the original V5 plan. After shipping them
+(Iterations 2–5 in [search_overheaul_test_tracker.md](search_overheaul_test_tracker.md)),
+phase_3's residual failures revealed four cross-cutting
+architectural patterns that no single principle-based prompt rewrite
+could address:
+
+- **A.** Stacked PRODUCTs (ADDITIVE within-category × FACETS
+  across-category) amplify upstream commit noise into trait death.
+- **B.** Every prompt layer biases toward firing — abstention is one
+  bullet against many fire-bullets. Phase 3.1's superset test
+  landed in the prompt but didn't move kw_commit count because the
+  prompt opening primes "fire-default" and the abstention sanction
+  reads as a soft override.
+- **C.** The walk-then-commit chain-of-thought scaffold is a
+  prompt-level convention, not a schema-enforced invariant. The
+  LLM writes `weaknesses: over-coverage: pulls every drama` and
+  commits DRAMA anyway — nothing in the schema links the analysis
+  to the commit.
+- **D.** Step 3 commits combine_mode before handler-side reality is
+  observable. Each handler has zero context on its sibling
+  categories or the trait-level fold; commit strictness can't adapt
+  to FACETS vs FRAMINGS or to paraphrase-cluster routing mistakes.
+
+See
+[search_overheaul_test_tracker.md §Architectural root-cause patterns](search_overheaul_test_tracker.md)
+for evidence and discussion. Phases 4–7 below address each pattern
+in turn. Phases 4–6 attack upstream commit imprecision at three
+different pipeline layers; Phase 7 softens the fold so residual
+imprecision doesn't kill traits. Ship 4–6 first so 7's calibration
+is informed by the post-upstream-fix state.
+
+> **⚠ Iteration 6 architectural insight — read before
+> implementing any phase below.**
+>
+> Phase 4 was attempted in Iteration 6 (2026-05-08) and reverted.
+> The deliberate-default frame was implemented as designed —
+> opening + thread-through + schema-as-micro-prompt + bucket
+> reorder — and *every* behavioral target regressed: total
+> category routes 80 → 92 (+15%), kw_commits in keep cats 23 → 25,
+> Q5 + Q11 genuine plural-intent ALL collapsed, Q21 sprawled 2 → 6.
+> Full numbers in
+> [search_overheaul_test_tracker.md](search_overheaul_test_tracker.md)
+> Iteration 6 entry; full post-mortem in the Phase 4 section below.
+>
+> **The load-bearing rule extracted from that failure:**
+>
+> > **Prompt prose can REDEFINE a task. It cannot RAISE a bar.**
+>
+> Iteration 5 Phase 3.2's success (F2 ALL_rate 14.6% → 5.0%) came
+> from changing *what question the LLM is answering* (cue-words →
+> singular-vs-plural intent). Iteration 5 Phase 3.1 and Iteration
+> 6 Phase 4 both tried to *raise the threshold* on existing
+> questions — both plateaued, then regressed. Threshold-language
+> is read as soft preference under the LLM's autoregressive
+> pressure to commit.
+>
+> **Two corollaries that bind every phase below:**
+>
+> 1. **Avoid OR-disjunctions in abstention criteria.** Two lanes
+>    to justify is two ways to commit. Single high-bar claims or
+>    AND-conjunctions push harder. Treat OR as a smell when
+>    authoring verdict-criterion prose, schema-field descriptions,
+>    or bucket-prompt rules. (Phase 4's deliberate-default OR-clause
+>    is the canonical failure case.)
+> 2. **Step-3-routing-time fragmentation can't be repaired at
+>    handler-time.** When Step 3 splits compound user intent
+>    across categories (Q11 `[WAR, HISTORY]` → GENRE `[WAR]` +
+>    STORY_THEMATIC `[EPIC, HISTORICAL_EPIC]`), no keyword-handler-
+>    layer fix can reassemble it. Phase 5 (keyword verdict) is
+>    neutral on this; Phase 6 (sibling context) is the layer
+>    designed to detect and repair it. Don't pile fragmentation-
+>    repair work into Phase 5.
+>
+> Phase 5 — schema-level verdict fields — is the next ship target.
+> It is *structurally* different from Phase 4 (required enum +
+> reason field forces the LLM to render the abstention choice as
+> a commitment between two valid outputs, not as soft prose
+> preference). The Iteration 6 evidence corroborates that schema
+> enforcement is the load-bearing fix Phase 4's prompt-only
+> intervention was a proxy for.
+
+
+### Phase 4 — Deliberate-default at Step 3 + bucket prompt openings (D6) — **ATTEMPTED, REVERTED 2026-05-08**
+
+**Status:** ❌ **DID NOT SHIP.** Implemented as designed in
+Iteration 6, ran the V5 suite, observed regression on every
+behavioral target, reverted before commit. The original plan is
+preserved below as historical record; **do not re-attempt without
+addressing the lessons in the post-mortem that follows.**
+
+#### Iteration 6 post-mortem
+
+The Phase 4 plan was a prompt-only intervention against
+architectural Pattern B (fire-default everywhere). Two changes
+shipped to the working tree:
+- **4.1** — `_CATEGORY_ROUTING` in
+  [search_v2/step_3.py](../search_v2/step_3.py) rewritten with a
+  deliberate-default opening and a new `ABSTENTION-DEFAULT
+  (FIRST)` operational test threaded through the existing test
+  block. `TraitDecomposition.category_calls` field description on
+  [schemas/step_3.py](../schemas/step_3.py) mirrored the change
+  for schema-as-micro-prompt parity.
+- **4.2** — Three multi-endpoint bucket objective prompts
+  (`preferred_representation_fallback`, `audience_suitability_deterministic_first`,
+  `semantic_preferred_deterministic_support`) opened with an
+  abstention-first reframe; `## Coverage exploration` sub-tests
+  reordered so the per-endpoint Superset Test (Phase 3.3) ran
+  first.
+
+V5 suite outcome (full numbers in
+[search_overheaul_test_tracker.md](search_overheaul_test_tracker.md)
+Iteration 6 entry):
+
+| target metric                              | phase_3 | phase_4 | direction |
+|--------------------------------------------|--------:|--------:|:---------:|
+| total category routes                      |      80 |      92 | ❌ +12 (sprawl regressed) |
+| KW commits in 5 keep cats                  |      23 |      25 | ❌ +2 (F3 abstention regressed) |
+| STORY_THEMATIC_ARCHETYPE KW commits        |      13 |      13 | — held (target was DOWN) |
+| F2 ALL_rate                                |    5.0% |    0.0% | ❌ both surviving genuine plural ALL collapsed |
+| Q11 `[WAR, HISTORY]` ALL commit            | preserved | broke (HISTORY dropped, new STORY_THEMATIC trip-wire) | ❌ |
+| Q21 atmospheric folk horror cat count      |       2 |       6 | ❌ +4 (worst single-query sprawl regression observed) |
+| EE share of total routes                   |   27.5% |   25.0% | ✓ -2.5pp (modest N1 win) |
+| Q9/Q12/Q25 named positive controls         |   clean |   clean | ✓ held |
+| schema validation errors                   |       0 |       0 | ✓ clean |
+| headline trip-wire rate                    |   28.8% |   27.2% | ~ -1.6pp but masked +12-cat sprawl (Iteration 5 lesson #1 in sharper form) |
+
+#### Why Phase 4 failed (the load-bearing lesson)
+
+The deliberate-default OR-clause was too permissive. "Does this
+category add retrievable signal not already covered, **OR** does
+the trait's intent specifically demand its lens?" provided two
+lanes to justify routing, and the LLM walked both lanes per
+category and found at least one that passed. For Q21 atmospheric
+folk horror, VISUAL_CRAFT_ACCLAIM does add signal EE doesn't carry
+and MUSIC_SCORE_ACCLAIM does add signal neither has — each
+individually justifies under the OR, none individually rejects
+under it. The frame articulates the criterion but does not
+operationalize "high bar"; it just adds permission for two
+distinct ways to commit. Result: more careful per-category walks
+→ more committable categories.
+
+The same shape was attempted in Phase 3.3 (appended partial-
+abstention sanction): kw_commits 41 → 40, plateau. Phase 4 went
+past the plateau into regression because the deliberate-default
+frame applied at *more* layers (opening + thread-through + schema
++ bucket reorder) gave the LLM more permission to commit, not
+more pressure to abstain.
+
+**The generalizable rule (Iteration 6 architectural insight):**
+
+> **Prompt prose can REDEFINE a task. It cannot RAISE a bar.**
+>
+> Iteration 5 Phase 3.2 succeeded at swapping ANY/ALL framing
+> from cue-words to singular-vs-plural intent because it changed
+> *what question the LLM is answering*. F2 ALL_rate
+> 14.6% → 5.0% — clean win on the redefined task.
+>
+> Iteration 5 Phase 3.1 and Iteration 6 Phase 4 both tried to
+> *raise the threshold* on existing questions ("when is a
+> superset clean enough to commit?", "when does a category
+> demand routing?"). Both failed: principle landed, behavior
+> didn't shift. Threshold-language is read as soft preference
+> under autoregressive pressure to commit.
+>
+> The pattern: structural changes (combine_type flips,
+> REMOVE-KW, code-level filters) and task-redefinitions in
+> prompts succeed; threshold-tightening in prompts plateaus
+> then regresses. The next abstention-driving move is **schema
+> enforcement** (Phase 5 — required `verdict` field with
+> explicit values), not stronger prompt language.
+
+#### Two Iteration 6 corollaries inherited by Phase 5
+
+1. **No OR-disjunctions in abstention criteria.** When verdict
+   criteria are written into Phase 5's `verdict_reason`
+   description, single-claim or AND-conjunction criteria push
+   harder than OR-disjunctions. Two lanes to justify is two ways
+   to commit.
+2. **Step-3-routing-time fragmentation can't be repaired at
+   handler-time.** Q11 `[WAR, HISTORY]` broke because Step 3
+   routed WAR to GENRE and split EPIC/HISTORICAL_EPIC off into
+   STORY_THEMATIC — the user's compound intent fragmented at
+   routing, not at commit. Phase 5's keyword-handler verdict
+   field can't recover this. **Phase 6 (sibling context) is the
+   right place to address it** — handlers seeing siblings'
+   retrieval_intent can detect compound-intent fragmentation
+   and adapt. Add a verification-time read for this on Phase 6.
+
+#### Phase 4's targets (sprawl reduction, F3 abstention) reassigned
+
+The metrics Phase 4 was supposed to move (kw_commits in keep
+categories, total category routes per query, EE share) are
+inherited by **Phase 5** at the keyword-handler layer and **Phase
+6** at the routing-context layer. Phase 5's `verdict` field on
+`PotentialKeyword` is the structural mechanism the deliberate-
+default frame was a prompt-level proxy for; Phase 6's sibling
+context is the structural mechanism Phase 4's "default abstain
+under FACETS / commit cautiously" prose was trying to
+operationalize.
+
+---
+
+#### Original Phase 4 plan (preserved as historical record — DO NOT IMPLEMENT)
+
+> The plan below is preserved verbatim for future readers
+> investigating why a similar shape might have been considered.
+> It is NOT a roadmap. The Iteration 6 evidence above explains
+> why this shape regressed. Future architectural-Pattern-B work
+> should target schema enforcement (Phase 5) or context-flow
+> changes (Phase 6), not prompt-language re-priors.
+
+**Original plan: prompt-opening reorder, not just clause edits.**
+Phase 3.3 appended a partial-abstention sanction to bucket
+prompts that open with "Endpoints are puzzle pieces — overlap is
+the design." Small-LLM principle: the opening primes the prior,
+and an appended override is fighting that prior. The Iteration 5
+evidence: kw_commits held flat (41 → 40) on still-keyword-firing
+categories because the prior wasn't overridden. The plan re-opens
+both Step 3's category routing prompt and the multi-endpoint
+bucket prompts so the deliberate-default is the prior, with
+inclusion requiring positive justification. Same content;
+different attention placement.
+
+(Original 4.1 / 4.2 detail elided to keep this section focused on
+what to do *next*. The full original plan, including the
+deliberate-default opening prose, the operational-test
+thread-through, the bucket-opening reframe, and the sub-test
+reorder, exists in
+[git history](https://docs.github.com/en/repositories/working-with-files/using-files/viewing-a-file)
+on this file at the commit prior to 2026-05-08, where the plan
+was structurally complete enough that future readers can
+reconstruct it from the Iteration 6 entry in
+[search_overheaul_test_tracker.md](search_overheaul_test_tracker.md)
+if archeology becomes necessary.)
+
+### Phase 5 — Schema-level verdict fields (D7)
+
+**Architectural pattern addressed:** C (walk-to-commit is prompt
+convention, not schema invariant). **Also inherits Pattern B
+targets** (deliberate-default abstention) from the failed Phase 4 —
+schema enforcement is the structural mechanism the prompt-only
+deliberate-default frame was a proxy for.
+
+**Why schema enforcement.** The LLM autoregressively writes
+`PotentialKeyword.weaknesses = "over-coverage: pulls every drama"`
+and then writes `finalized_keywords = [DRAMA, ...]` because the
+schema doesn't link the two. Principle-only abstention (Phase 3.1)
+can't override the schema's required-fire pressure (`min_length=1`)
+plus the surrounding fire-default prose. **Iteration 6 sharpened
+this**: prompt-language re-priors at every layer (opening +
+operational tests + schema-as-micro-prompt + bucket reorder) did
+not raise the abstention bar. The only mechanism that forces
+commit to flow from analysis is schema enforcement.
+
+This change reverses the
+[§Out of implementation scope](#out-of-implementation-scope) item
+"Adding `commitment_verdict: Literal['commit', 'abstain']` schema
+field on `PotentialKeyword`." The Iteration-5 evidence on Pattern C
+*and* the Iteration-6 evidence on prompt-only Pattern-B intervention
+are both architectural arguments for the reversal — schema-side
+enforcement is the only mechanism that makes the LLM's
+autoregressive bias work *for* abstention rather than against it.
+
+**Two Iteration 6 corrections to bake into the design:**
+
+1. **Avoid OR-disjunctions in `verdict_reason` criteria.** The
+   Phase 4 deliberate-default OR ("trait demands its lens, OR adds
+   retrievable signal not already covered") gave the LLM two lanes
+   to commit and at least one always passed. Phase 5 verdict
+   reasons should require a **single high-bar claim** (the
+   superset condition the candidate satisfies, OR a single named
+   abstain reason — not a disjunction inside the commit criterion
+   itself). Treat OR as a smell when authoring verdict-criterion
+   prose.
+2. **Phase 5 cannot repair Step-3-routing-time fragmentation.**
+   Q11's `[WAR, HISTORY]` ALL broke in Iteration 6 because Step 3
+   split user intent across categories at routing time, not at
+   commit time. Phase 5's keyword-handler verdict field operates
+   *after* Step 3 has already routed. Phase 6 (sibling context) is
+   the layer that lets handlers detect compound-intent
+   fragmentation. The Phase 5 verification plan should explicitly
+   audit Q11 and Q5 (the two surviving genuine-plural-intent ALL
+   commits at end of phase_3) to confirm Phase 5 doesn't
+   *introduce* fragmentation but accept that *fixing* fragmentation
+   is a Phase 6 responsibility.
+
+**Change 5.1 — Per-walk-candidate verdict on `PotentialKeyword`.**
+
+File: [schemas/keyword_translation.py](../schemas/keyword_translation.py).
+
+Add two required fields to `PotentialKeyword`:
+
+```python
+verdict: Literal["commit", "abstain"] = Field(
+    ...,
+    description=(
+        "Active choice: does this candidate pass the keyword "
+        "endpoint's superset test as committed in the strengths "
+        "and weaknesses fields above?\n"
+        "- 'commit' → the candidate (alone or in ANY-mode union "
+        "with sibling commits) is a true superset of the user's "
+        "attribute. The single bar: every movie that genuinely "
+        "satisfies the attribute carries at least one of the "
+        "committed tags. Over-pull is acceptable; gaps fail.\n"
+        "- 'abstain' → the candidate fails the superset bar. "
+        "Three named failure modes (commit ONE in verdict_reason; "
+        "do not list multiple): GAPS — some attribute-satisfying "
+        "movies carry none of the tags. STRETCHING — the tag "
+        "names something adjacent to the attribute rather than the "
+        "attribute itself. DOMINATED-BY-SIBLING — another walk "
+        "candidate covers strictly more of the attribute with no "
+        "additional weakness, making this candidate redundant.\n"
+        "Default: abstain. Commit only when you can name the "
+        "single superset condition this candidate satisfies. "
+        "Abstention is not a fallback for difficulty; it is the "
+        "principled outcome when commit would harm retrieval. "
+        "Note: this field is the architectural-pattern-B fix that "
+        "Phase 4's prompt-only deliberate-default frame failed to "
+        "deliver — the required-enum + reason combo forces the "
+        "LLM to RENDER the abstention choice as a structural "
+        "commitment between two valid outputs, rather than treat "
+        "abstention as soft preference under prose pressure."
+    ),
+)
+verdict_reason: constr(strip_whitespace=True, min_length=1) = Field(
+    ...,
+    description=(
+        "One short sentence citing the strengths or weaknesses "
+        "text above to justify the verdict. Single-claim only — "
+        "do not write OR-disjunctions ('clean superset OR "
+        "near-clean'); pick one claim and commit. For 'commit': "
+        "name the single superset condition the candidate "
+        "satisfies, citing the strengths text. For 'abstain': "
+        "name exactly ONE of (gaps, stretching, "
+        "dominated-by-sibling), citing the weaknesses text or "
+        "the dominating sibling. The verdict_reason is the "
+        "Iteration 6 fix for permissive OR-clauses — single "
+        "claims raise the bar, disjunctions lower it."
+    ),
+)
+```
+
+`finalized_keywords` becomes a derived field — server-side compute
+`[pk.member for pk in potential_keywords if pk.verdict == "commit"]`
+after parsing. The LLM emits the walk; the system derives the
+commit. This eliminates the LLM's chance to commit a member not in
+the walk OR to commit a member whose verdict is "abstain."
+
+**Single-endpoint keyword buckets keep `min_length=1` on
+`KeywordQuerySpec.finalized_keywords`.** Those buckets routed
+exclusively to keyword precisely because the user's attribute is
+registry-clean — the assumption is that one of the walk candidates
+will pass the superset test. If 0 candidates verdict-commit, that
+indicates the routing-time assumption was wrong (rare; treat as a
+schema validation error worth investigating, not a normal abstention
+pathway).
+
+**Change 5.2 — Per-endpoint verdict on `coverage_assignments`.**
+
+Files: schemas where multi-endpoint bucket output lives — verify the
+exact path during implementation; likely
+[schemas/](../schemas/) and the bucket-specific output classes.
+
+Today the LLM abstains on an endpoint by *omitting* it from
+`coverage_assignments`. Omission is the over-fill bias trap — LLMs
+reliably fill rather than omit. Replace the variable-length list
+with a fixed-shape object that has one slot per declared endpoint:
+
+```python
+class EndpointCommitment(BaseModel):
+    verdict: Literal["commit", "abstain"]
+    verdict_reason: constr(strip_whitespace=True, min_length=1)
+    slice_description: str | None  # required iff verdict == "commit"
+
+class CoverageCommitments(BaseModel):
+    # one field per declared endpoint for the bucket
+    keyword: EndpointCommitment | None  # None iff bucket doesn't declare keyword
+    semantic: EndpointCommitment | None
+    metadata: EndpointCommitment | None
+    # ... etc per bucket
+```
+
+The handler's output schema gets a `coverage_commitments` field
+(replacing or paralleling `coverage_assignments`). Each *declared*
+endpoint gets a required commitment object. Abstention is now an
+active "verdict: abstain" choice with required reasoning, not a
+passive omission.
+
+Implementation note: the bucket schema factory in
+[search_v2/endpoint_fetching/category_handlers/schema_factories.py](../search_v2/endpoint_fetching/category_handlers/schema_factories.py)
+already builds per-bucket schemas dynamically. Extend it to emit
+`CoverageCommitments`-shaped fields keyed off the bucket's declared
+endpoints. The single-endpoint buckets stay as-is (no
+coverage_commitments needed; one endpoint, no abstention pathway
+beyond the schema's required fire).
+
+**Change 5.3 — Update keyword.md and bucket prompts to reference
+the new fields.**
+
+Add a section to keyword.md (and to each multi-endpoint bucket
+prompt) explaining:
+- The verdict field is your active commitment choice. It must
+  reflect what your strengths/weaknesses analysis already concluded
+  — read what you wrote, then mark verdict.
+- Default to abstain when the analysis is ambiguous; commit only
+  when the analysis named clean superset coverage.
+- `verdict_reason` must cite the strengths or weaknesses text you
+  wrote — don't generate fresh reasoning at the verdict step.
+
+**Verification:**
+- **Proper metric (primary):** per-walk-candidate abstain rate.
+  Pre-Phase-5 every potential_keyword that survived to finalized
+  had committed regardless of weaknesses content. Post-Phase-5
+  expect a measurable abstain rate on weaknesses-naming-over-
+  coverage candidates. Target: ≥ 15% abstain rate on candidates
+  whose `weaknesses` text contains the substring "over-coverage" or
+  "over-pull" or "pulls every".
+- **Inherited Phase 4 targets:** kw_commits per still-keyword-
+  firing keep category should drop (Phase 4 went +2 in the wrong
+  direction; Phase 5 needs to deliver the reduction Phase 4
+  failed to). Target: STORY_THEMATIC_ARCHETYPE kw_commits below 13
+  (the held-flat number through Iter 4 / 5 / 6); ELEMENT_PRESENCE
+  / NARRATIVE_DEVICES / CENTRAL_TOPIC / CHARACTER_ARCHETYPE in
+  aggregate below 10.
+- **Genuine plural-intent ALL preservation (Iter 6 regression
+  guard):** Q5 `[ACTION, THRILLER]` ALL on GENRE-alternatives and
+  Q11 `[WAR, HISTORY]` ALL on GENRE-alternatives must be preserved
+  (or the user's compound intent must be visibly preserved across
+  whatever routing emerges). Iteration 6 broke both — Phase 5's
+  keyword-layer enforcement may be neutral here (GENRE candidates
+  for war + history both pass superset cleanly), but verify
+  explicitly. If routing-time fragmentation persists, that's a
+  **Phase 6 problem**, not a Phase 5 ship blocker.
+- **Q9 / Q12 / Q25 named positive controls** held clean through
+  Iter 5 + Iter 6 (cleanly committed `[REVENGE]`, `[ANTI_HERO]`,
+  `[NONLINEAR_TIMELINE, PLOT_TWIST, UNRELIABLE_NARRATOR]`,
+  `[UNRELIABLE_NARRATOR]`). Phase 5 must hold them clean.
+
+**Stop conditions:**
+- **Schema validation errors at runtime > 5%** — the prompt
+  explanation needs more work, or the LLM consistently mis-fills
+  verdicts. (Iter 6 baseline: 0 errors; Phase 5 introduces required
+  fields the LLM must populate — over-fill bias should help but
+  watch.)
+- **Single-endpoint keyword buckets fail with 0 commits regularly**
+  — the routing-time assumption was wrong; likely a Step 3 routing
+  fix rather than a Phase 5 problem.
+- **Step 3 sprawl regresses** (total category routes increases vs
+  phase_3's 80 baseline) — Phase 5 is keyword-layer; if Step 3
+  routing changes for unrelated reasons, investigate before
+  shipping. Iteration 6 saw +12 cats from prompt-only intervention;
+  Phase 5 is schema-layer and should be neutral on Step 3 routing.
+- **Q5 / Q11 plural-intent regression on the keyword-layer side**
+  (e.g., GENRE [WAR] alone instead of [WAR, HISTORY]) — over-
+  correction at the verdict layer; the LLM is verdict-abstaining
+  on legitimate plural-intent commits. (Routing-time fragmentation
+  of the same intent is Phase 6's concern, not Phase 5's.)
+- **Headline trip-wire INCREASES** — direction reversal, pause.
+  (Iter 6 lesson: don't trust the rate alone — also check absolute
+  cat count and absolute trip-wire count. Phase 5 is keyword-layer
+  so cat count should be approximately stable.)
+
+### Phase 6 — Sibling context in handler user message (D8)
+
+**Architectural pattern addressed:** D (Step 3 commits combine_mode
+before handler-side reality is observable).
+
+**Critical framing: this is context, not feedback.** The handler
+sees what siblings were *tasked with* (Step 3's retrieval_intent
+commits, available at Step-3 commit time), not what siblings
+*produced* (handler outputs, only available after parallel
+execution). Per-call isolation is preserved; no execution-order
+dependency is introduced.
+
+This change reverses the
+[§Out of implementation scope](#out-of-implementation-scope) item
+"Threading sibling-trait info into the handler's user message
+(architectural reversal of per-call isolation)." The reversal
+argument: the original rejection conflated context with feedback.
+Sibling-task context is parallel-safe and is the only mechanism
+that lets each handler shape its commit knowing the trait-level
+fold and the parallel siblings.
+
+**Change 6.1 — Extend `build_user_message` with sibling context block.**
+
+File: [search_v2/endpoint_fetching/category_handlers/prompt_builder.py](../search_v2/endpoint_fetching/category_handlers/prompt_builder.py).
+
+Today the user message has two blocks (`<retrieval_intent>` and
+`<expressions>`). Add a third:
+
+```xml
+<sibling_categories combine_mode="facets">
+  <sibling category="STORY_THEMATIC_ARCHETYPE">
+    <retrieval_intent>...sibling's retrieval_intent verbatim...</retrieval_intent>
+  </sibling>
+  <sibling category="ELEMENT_PRESENCE">
+    <retrieval_intent>...sibling's retrieval_intent verbatim...</retrieval_intent>
+  </sibling>
+</sibling_categories>
+```
+
+`combine_mode` is an attribute on the wrapper element (one of
+`facets` / `framings` / `single`). Each sibling lists its category
+name and retrieval_intent. **Self-category is not listed.** Single-
+category traits emit `<sibling_categories combine_mode="single"/>`
+(no siblings).
+
+**What NOT to include:** sibling expressions (already implicit in
+retrieval_intent), sibling commitment status (parallel execution —
+unavailable), sibling polarity (handler operates on positive-trait
+scoring; polarity is upstream), full trait surface text (already
+encoded in retrieval_intent).
+
+**Change 6.2 — Update bucket and endpoint prompts to read sibling context.**
+
+Add a section to the multi-endpoint bucket objective prompts:
+
+> ## Reading sibling context
+>
+> The user message includes `<sibling_categories>` listing the other
+> categories Step 3 committed for the same trait, plus the trait-level
+> `combine_mode` (FACETS = product across categories; FRAMINGS = max
+> across categories; SINGLE = your category alone).
+>
+> **Under FACETS combine_mode:** your output multiplies with siblings'.
+> Abstaining or scoring 0 zeros the trait. Commit only what you can
+> support cleanly. If your retrieval_intent is textually similar to a
+> sibling's, you are in a paraphrase situation — coordinate by
+> committing to the narrower facet your category specifically owns,
+> not the whole concept.
+>
+> **Under FRAMINGS combine_mode:** your output maxes with siblings'.
+> Abstention is fine — siblings cover the slice. Commit cautiously;
+> an abstain here doesn't hurt the trait if any sibling fires.
+>
+> **Under SINGLE:** your category alone scores the trait. Commit on
+> the principle you'd apply standalone; sibling context is empty.
+>
+> **Sibling redundancy.** If two or more sibling retrieval_intents
+> target overlapping concept space, the trait is being covered by
+> paraphrastic homes (a FRAMINGS-shaped situation that may have been
+> miscommitted as FACETS upstream). Take this into account: under
+> FACETS, prefer narrower commitments that minimize the chance one
+> sibling zeros the trait. Document the redundancy in your
+> coverage_exploration so future iterations can audit Step 3's
+> combine_mode commits.
+
+Add corresponding read-the-context guidance to keyword.md and the
+semantic endpoint prompt — those are the endpoints whose commitment
+strictness should adapt to combine_mode.
+
+**Change 6.3 — Wire sibling info through the orchestrator.**
+
+Files:
+- [search_v2/full_pipeline_orchestrator.py](../search_v2/full_pipeline_orchestrator.py)
+  — extend `_decompose_and_generate` and the per-call dispatch in
+  `_run_branch` (around L374-379) to compute sibling lists per trait
+  once and pass them to each handler invocation.
+- [search_v2/run_query_generation.py](../search_v2/run_query_generation.py)
+  and [search_v2/run_specs.py](../search_v2/run_specs.py) — same
+  threading for the diagnostic runners. (The Step 3 fan-out in
+  run_specs already computes sibling traits for the V4 contract; this
+  extends the same idea down one layer.)
+
+The handler entry function today takes `category_call` and `trait`.
+Extend its signature to also accept `sibling_calls: list[CategoryCall]`
+and `combine_mode: TraitCombineMode`. The orchestrator already has
+the full decomposition at the call site; sibling computation is
+trivial (filter category_calls to those with category != self).
+
+**Verification:**
+- Proper metric (per active catalog): N1 (EE route count / total
+  routes) and N2 (FACETS-over-paraphrastic-set count / total FACETS
+  traits).
+- F3 abstention should also move further — handlers under FACETS
+  with paraphrastic siblings should commit narrower, and handlers
+  under FRAMINGS should abstain more freely.
+- **Routing-time fragmentation repair (inherited from Iteration 6):**
+  Q11 `[WAR, HISTORY]` ALL broke in Iter 6 because Step 3 routed
+  WAR to GENRE and split EPIC/HISTORICAL_EPIC off into
+  STORY_THEMATIC. Phase 6's sibling context lets the GENRE handler
+  see the STORY_THEMATIC retrieval_intent and detect that the
+  user's compound intent is fragmented across categories. Verify:
+  on Q11, when STORY_THEMATIC is routed alongside GENRE, does the
+  STORY_THEMATIC handler abstain (recognizing GENRE covers WAR and
+  HISTORY together) OR does the GENRE handler expand to
+  `[WAR, HISTORY]` (recognizing STORY_THEMATIC's redundant
+  retrieval_intent for "epic / historical epic")? Either outcome
+  preserves the compound; both routing-fragmenting AND
+  both-handlers-firing is the failure mode to catch.
+- Headline trip-wire likely modest movement; the bigger signal is
+  in N1/N2 plus the routing-fragmentation repair.
+
+**Stop conditions:**
+- Handlers start abstaining categorically because "siblings cover
+  this" — over-correction. Watch trait-score on positive controls
+  (Q9, Q13, Q25) via orchestrator_batch.
+- Q9 / Q13 / Q25 commit shapes drift unfavorably (any new ALL on
+  STORY_THEMATIC, any abstention on Q9 STORY_THEMATIC).
+- **Q5 / Q11 plural-intent fragmentation persists** — Phase 6's
+  sibling context did not enable the handlers to detect compound-
+  intent fragmentation across categories. Indicates the sibling
+  block needs to surface combine_mode + retrieval_intent overlap
+  more prominently, or the bucket prompt's "Reading sibling
+  context" section needs a fragmentation-detection sub-test.
+- Per-handler latency increase > 25% — the sibling block is
+  over-padded; trim retrieval_intent length or drop attributes.
+
+### Phase 7 — Soft FACETS fold (geometric mean with floor)
+
+**Architectural pattern addressed:** A (stacked PRODUCTs amplify
+upstream commit noise into trait death).
+
+**Why ship this last.** Softening the fold compensates for upstream
+commit imprecision. Shipping it before Phases 4–6 would tolerate
+noisy commits forever and let upstream regression hide behind a
+forgiving fold. Shipping it after gives the data point: "have
+Phases 4–6 made the fold's brittleness moot?" If yes, defer Phase 7.
+If no (residual trait deaths persist on otherwise-good queries),
+Phase 7 closes the gap.
+
+This change reverses the
+[§Out of implementation scope](#out-of-implementation-scope) item
+"Per-category ADDITIVE-strictness softening as a global parameter"
+in spirit — that item was about within-category ADDITIVE softening;
+Phase 7 is about across-category FACETS softening. Same softening
+philosophy applied to a different operator. ADDITIVE itself stays
+hard-multiply.
+
+**Change 7.1 — Replace FACETS PRODUCT with geometric-mean-with-floor.**
+
+File: [search_v2/stage_4_execution.py](../search_v2/stage_4_execution.py)
+— the `_score_positive_trait` function's `combine_mode` branch
+(currently around L735).
+
+Current:
+
+```python
+if combine_mode == TraitCombineMode.FRAMINGS:
+    out[mid] = max(category_scores) if category_scores else 0.0
+elif combine_mode == TraitCombineMode.FACETS:
+    out[mid] = product(category_scores) if category_scores else 0.0
+```
+
+New FACETS branch:
+
+```python
+elif combine_mode == TraitCombineMode.FACETS:
+    if not category_scores:
+        out[mid] = 0.0
+    else:
+        # Geometric mean with floor. Replace 0 contributions with
+        # EPS before geometric mean — a single zero is heavily
+        # penalized but no longer fatal. Preserves multiplicative
+        # compounding semantics; eliminates trait death from a
+        # single category miscommit when other facets scored well.
+        EPS = 0.1
+        floored = [max(s, EPS) for s in category_scores]
+        product_val = reduce(operator.mul, floored, 1.0)
+        out[mid] = product_val ** (1.0 / len(floored))
+```
+
+EPS = 0.1 starting point. A single zero contribution registers as
+0.1 instead of 0, so geomean of [1.0, 0.1] ≈ 0.316 instead of
+[1.0, 0.0] = 0. A movie strong on one facet but missing entirely
+on another scores ≈ 0.3 instead of 0. A movie strong on both facets
+scores ≈ 1.0 (no degradation when both clean). Floor is small enough
+to preserve "all axes should contribute" semantics; geometric-mean
+shape preserves multiplicative compounding signal.
+
+FRAMINGS branch unchanged (max).
+
+**Change 7.2 — Tune EPS via observation.**
+
+Run V5 suite + an orchestrator_batch sweep on 5–10 known FACETS-trait
+queries (`cyberpunk dystopias`, `dark gritty antihero comic-book films`,
+`Studio Ghibli style hand-drawn fantasies`, `films about grief and
+reconciliation`, `Wes Anderson aesthetic coming-of-age`) and inspect:
+- Top-1 / top-5 picks: do they show the right movies after the fold
+  change?
+- `score_breakdowns`: are FACETS traits no longer dying on partial
+  coverage?
+
+If EPS = 0.1 over-corrects (FACETS becomes too forgiving — single
+facet matches dominate), drop to 0.05. If still under-corrects
+(PRODUCT-zeros persist via small but non-zero contributions
+multiplying down), raise to 0.2. Document the chosen value in the
+commit and in the active failure-mode catalog (F5 entry, plus a
+note on Pattern A).
+
+**Change 7.3 — Update the active failure-mode catalog.**
+
+File: [search_overheaul_test_tracker.md](search_overheaul_test_tracker.md).
+
+Update the F5 catalog entry (preventive shipped; the empty-spec
+case is now soft-zero rather than hard zero) and the Architectural
+pattern A entry (Phase 7 softens the fold so upstream noise no
+longer triggers trait death).
+
+**Verification:**
+- Proper metric: trait_score distribution on FACETS traits,
+  observable only via orchestrator_batch (not run_specs).
+  Pre-Phase-7: a meaningful tail of FACETS traits with score = 0
+  due to single-category zero-out. Post-Phase-7: that tail collapses
+  into a score ≈ EPS^(1/n) cluster.
+- Top-1 quality on the V5 suite's known-bad FACETS cases — does the
+  right movie now surface?
+- run_specs metrics (trip-wire count, ANY/ALL distribution) should
+  be unchanged — Phase 7 doesn't touch the LLM commit shapes.
+
+**Stop conditions:**
+- Top-1 quality regresses on positive-control queries that don't
+  have FACETS-zero issues. If Q9 top-1 changes meaningfully, EPS
+  is too high — soft floor is contaminating well-scoring traits.
+- FACETS traits start scoring uniformly high regardless of partial
+  coverage (would mean EPS approaches 1.0 effectively, defeating
+  the multiplicative semantics).
+
 ### Recommended sequence
 
 1. **Phase 1** (changes 1.1, 1.2). Pure code, monotonic-safe. Lands
@@ -1462,21 +2184,78 @@ currently treats abstention as all-or-nothing.
      remaining keyword commits in TARGET_AUDIENCE /
      SENSITIVE_CONTENT under ALTERNATIVES.
 
+5. **Phase 4** — ❌ **ATTEMPTED, REVERTED** (Iteration 6, 2026-05-08).
+   Prompt-only deliberate-default frame at Step 3 + bucket prompt
+   openings did not deliver. Regressed +12 categories of sprawl,
+   +2 trip-wires in keep cats, broke genuine plural-intent ALL
+   on Q5 + Q11. See Phase 4 section above for the full post-mortem
+   and the `prompt prose can REDEFINE, not RAISE` lesson. **Skip
+   Phase 4 entirely; the targets it was supposed to hit are
+   inherited by Phase 5 (keyword-layer abstention via schema
+   enforcement) and Phase 6 (routing-time fragmentation repair via
+   sibling context).**
+
+6. **Phase 5** — schema-level verdict fields on `PotentialKeyword`
+   and `coverage_assignments`. Schema + prompt change coupled.
+   `finalized_keywords` becomes server-derived. **This is the next
+   ship target after Iteration 6.** Re-run V5 suite AND inspect
+   schema-validation error rate (should be ≪ 5%). Watch for
+   over-correction on single-endpoint keyword buckets (GENRE when
+   canonical, AWARDS when KW path). Bake in the two Iteration 6
+   corrections: no OR-disjunctions in `verdict_reason` criteria
+   (single-claim only); explicit Q5 / Q11 audit (Phase 5 must not
+   *introduce* fragmentation but accept that *fixing* it is Phase
+   6's responsibility).
+
+7. **Phase 6** — sibling context in handler user message.
+   Orchestrator + prompt + diagnostic-runner change coupled.
+   Re-run V5 suite — track N1 (EE route count / total routes)
+   and N2 (FACETS-over-paraphrastic-set count) from the active
+   failure-mode catalog. Per-handler latency should not increase
+   by more than 25%.
+
+8. **Phase 7** — soft FACETS fold (geometric mean with floor) on
+   stage_4_execution.py. Code-only change; visible to
+   orchestrator_batch, not to run_specs (no LLM commit-shape
+   change). Run V5 suite to confirm no run_specs metric movement,
+   then run orchestrator_batch sweep on the FACETS-trait queries
+   from the active catalog (`cyberpunk dystopias`,
+   `dark gritty antihero comic-book films`, `Studio Ghibli style
+   hand-drawn fantasies`, `films about grief and reconciliation`,
+   `Wes Anderson aesthetic coming-of-age`) to verify trait_score
+   distribution shifts and top-1 quality holds.
+
 ### Out of implementation scope
 
-Per the V5 "Out of decisions" section, the following candidates
-were considered and rejected; do **not** add them to the
-implementation:
+Per the original V5 "Out of decisions" section, the following
+candidates were considered and rejected at design time. Three of
+them have been **revisited and reversed** based on Iteration 5
+evidence; the rationale is documented inside each reversing phase
+above. The currently out-of-scope items are:
 
 - Telling the keyword handler about downstream multiply consequences
-  in prose.
-- Adding `commitment_verdict: Literal["commit", "abstain"]` schema
-  field on `PotentialKeyword`.
-- Per-category ADDITIVE-strictness softening as a global parameter.
-- Threading sibling-trait info into the handler's user message
-  (architectural reversal of per-call isolation).
+  in prose. (Phase 6 supersedes this — context-aware handler input
+  via sibling-task context, not in-prose meta-commentary.)
 - Step 3 keyword-namespace reservations (pushes registry knowledge
-  upstream into Step 3).
+  upstream into Step 3 — still rejected).
+
+**Reversed (now in scope):**
+
+- ~~Adding `commitment_verdict: Literal["commit", "abstain"]` schema
+  field on `PotentialKeyword`.~~ → reversed in **Phase 5**. Iteration
+  5 evidence: principle-only abstention can't compete with the
+  schema's required-fire pressure; schema-side enforcement is the
+  only mechanism that forces commit to flow from analysis.
+- ~~Per-category ADDITIVE-strictness softening as a global
+  parameter.~~ → partially reversed in **Phase 7** (FACETS softening,
+  not ADDITIVE; same softening philosophy applied to a different
+  operator). ADDITIVE itself stays hard-multiply.
+- ~~Threading sibling-trait info into the handler's user message
+  (architectural reversal of per-call isolation).~~ → reversed in
+  **Phase 6**. The original rejection conflated context with
+  feedback. Sibling-task context (instruction-time, parallel-safe)
+  preserves per-call isolation; only sibling-result feedback
+  (execution-time, requires sequencing) would violate it.
 
 ### Verification plan
 
@@ -1499,6 +2278,28 @@ trajectory:
   drops as the handler abstains more aggressively under the
   superset test. Target: <20% on the V5 suite, with abstentions
   concentrated on non-canonical attributes (sharks, vibes).
+- After Phase 4: ❌ **NOT ACHIEVED** (attempted, reverted).
+  Iteration 6 delivered the opposite — Step 3 sprawl regressed
+  (+12 cats), kw_commits in keep cats regressed (+2), genuine
+  plural-intent ALL collapsed. Targets reassigned to Phase 5
+  (kw_commits via schema enforcement) and Phase 6 (sprawl + EE
+  share via routing-time sibling context).
+- After Phase 5: kw_commits in keep cats drop below the iter-3-
+  through-iter-6 plateau (STORY_THEMATIC_ARCHETYPE below 13;
+  aggregate of EP/ND/CT/CA below 10). Per-walk-candidate abstain
+  rate becomes measurable (was 0% pre-Phase-5 because the schema
+  didn't expose verdicts; target ≥ 15% on weaknesses-name-over-
+  coverage candidates). Schema-validation error rate stays ≪ 5%.
+  **Q5 / Q11 plural-intent ALL preserved at the keyword layer**
+  even if routing-time fragmentation persists (deferred to Phase 6).
+- After Phase 6: N2 metric (FACETS-over-paraphrastic-set count)
+  drops as handlers under FACETS commit narrower in paraphrase
+  situations and handlers under FRAMINGS abstain more freely.
+  Per-handler latency stays within +25% of pre-Phase-6.
+- After Phase 7: run_specs metrics unchanged. orchestrator_batch
+  trait_score distribution shifts on FACETS traits — the score=0
+  tail collapses into a score≈EPS^(1/n) cluster. Top-1 quality on
+  positive controls (Q9, Q13, Q25) holds.
 
 **Sticky cases to watch through all phases:**
 - "movies about WWII" CENTRAL_TOPIC — should keep firing keyword
@@ -1516,20 +2317,30 @@ trajectory:
 ### Files touched (full inventory)
 
 Code:
-- [search_v2/stage_4_execution.py](../search_v2/stage_4_execution.py) — Phase 1.1 + 1.2
+- [search_v2/stage_4_execution.py](../search_v2/stage_4_execution.py) — Phase 1.1 + 1.2 + Phase 7 (FACETS soft fold)
+- ~~[search_v2/step_3.py](../search_v2/step_3.py) — Phase 4.1 (`_CATEGORY_ROUTING` rewrite)~~ — **REVERTED 2026-05-08** (Iteration 6 evidence: prompt-only deliberate-default frame regressed; targets inherited by Phase 5 schema enforcement)
+- [search_v2/full_pipeline_orchestrator.py](../search_v2/full_pipeline_orchestrator.py) — Phase 6.3 (sibling threading)
+- [search_v2/run_query_generation.py](../search_v2/run_query_generation.py) and [search_v2/run_specs.py](../search_v2/run_specs.py) — Phase 6.3 (diagnostic-runner sibling threading)
+- [search_v2/endpoint_fetching/category_handlers/prompt_builder.py](../search_v2/endpoint_fetching/category_handlers/prompt_builder.py) — Phase 6.1 (`<sibling_categories>` block)
+- [search_v2/endpoint_fetching/category_handlers/schema_factories.py](../search_v2/endpoint_fetching/category_handlers/schema_factories.py) — Phase 5.2 (`CoverageCommitments` schema generation per bucket)
 
 Schemas:
 - [schemas/trait_category.py](../schemas/trait_category.py) — Phase 2a (2 categories) + Phase 2b (3 categories)
-- [schemas/keyword_translation.py](../schemas/keyword_translation.py) — Phase 3.2 (scoring_method field description)
+- [schemas/keyword_translation.py](../schemas/keyword_translation.py) — Phase 3.2 (scoring_method field description) + Phase 5.1 (`PotentialKeyword.verdict` + `verdict_reason`; derived `finalized_keywords`)
+- Bucket-output schemas (verify exact paths during implementation) — Phase 5.2 (`coverage_assignments` → `coverage_commitments` with per-endpoint required `EndpointCommitment`)
 
 Prompts (endpoint-level):
-- [search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md](../search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md) — Phase 3.1 + 3.2
+- [search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md](../search_v2/endpoint_fetching/category_handlers/prompts/endpoints/keyword.md) — Phase 3.1 + 3.2 + Phase 5.3 (verdict-field guidance) + Phase 6.2 (combine_mode-aware commit strictness)
+- Semantic endpoint prompt — Phase 6.2 (combine_mode-aware commit strictness)
 
 Prompts (bucket-level):
-- [search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md) — Phase 3.3
+- [search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md](../search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md) — Phase 3.3 + ~~Phase 4.2 (deliberate-default opening — REVERTED)~~ + Phase 5.3 (verdict guidance) + Phase 6.2 (sibling-context section)
 - Plus `audience_suitability_deterministic_first_objective.md`,
-  `character_franchise_fanout_objective.md`,
-  `semantic_preferred_deterministic_support_objective.md` — Phase 3.3 audit
+  `character_franchise_fanout_objective.md` (Phase 3.3 audit only —
+  excluded from Phase 5.2 / 6.2 because the bucket forces both
+  paths to fire by design),
+  `semantic_preferred_deterministic_support_objective.md` — same
+  Phase 3.3 ~~+ 4.2 (REVERTED)~~ + 5.3 + 6.2 set.
 
 Prompts (category-level), Phase 2b only:
 - `additional_objective_notes/seasonal_holiday.md`
@@ -1541,4 +2352,5 @@ Prompts (category-level), Phase 2b only:
 
 Documentation:
 - [search_improvement_planning/query_categories.md](query_categories.md) — Phase 2b (Cat 29, Cat 33, Cat 40 endpoint lists)
-- This doc — already updated through V5.
+- [search_improvement_planning/search_overheaul_test_tracker.md](search_overheaul_test_tracker.md) — Phase 7.3 (catalog F5 + Pattern A entries)
+- This doc — updated through V5 + Phases 4–7.

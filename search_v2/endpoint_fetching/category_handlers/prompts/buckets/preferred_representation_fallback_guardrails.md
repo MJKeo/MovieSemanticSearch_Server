@@ -1,17 +1,18 @@
 # Failure-mode guardrails
 
 **NEVER:**
-- COMMIT AN ASSIGNMENT WHOSE WALK SHOWS NO USEFUL CANDIDATE. The walks are the audit; assignments must be readable off them.
+- COMMIT AN ENDPOINT WHOSE WALK SHOWS NO USEFUL CANDIDATE. The walks are the audit; verdicts in `coverage_commitments` must be readable off them.
 - DROP AN ENDPOINT WHOSE WALK CONTRIBUTES A DISTINCT STRENGTH OR FILLS ANOTHER'S WEAKNESS. Drop only when another endpoint dominates the same content strictly better, or its walk surfaced no useful candidate.
 - FIRE A SINGLE ENDPOINT WHEN ANOTHER ENDPOINT'S WALK CLEANLY FILLS A WEAKNESS. The most common failure: keyword's walk shows over-coverage (e.g. SPORT pulls football and basketball alongside running), semantic's walk has a clean candidate that isolates the slice, but only keyword fires. The over-coverage signal exists for exactly this case.
 - DECLARE A SLICE UNSERVABLE. There is no `intentionally_uncovered` field. Either fire an endpoint that can carry the slice, or drop the candidate that surfaced it.
 - HEDGE in `coverage_exploration`. Apply the local tests per endpoint and commit a stance.
 - SPLIT ONE SLICE ACROSS ENDPOINTS to look thorough. Let the endpoint that owns the slice own it cleanly.
+- ABSTAIN ON AN ENDPOINT BY OMISSION. Every declared endpoint requires an explicit `verdict_reason` → `verdict` in `coverage_commitments`. Silence is not abstention.
 
-Before emitting, check for these failure modes. Abstaining at the whole-call level is correct ONLY when ALL endpoint walks surfaced no useful candidate.
+Before emitting, check for these failure modes. Abstaining at the whole-call level (every endpoint's `coverage_commitments.{route}.verdict == "abstain"`) is correct ONLY when ALL endpoint walks surfaced no useful candidate.
 
 - **Ambiguous requirement.** The call's intent is too vague to point at concrete candidates in any walk. Do not invent specificity that is not in the call.
-- **Out of scope for every endpoint.** No walk surfaces a candidate with substantive `strengths`. Empty `coverage_assignments`. Do not pick the least-bad option.
+- **Out of scope for every endpoint.** No walk surfaces a candidate with substantive `strengths`. Verdict abstain on every endpoint. Do not pick the least-bad option.
 - **Self-contradictory requirement.** Modifiers on the call flip the requirement against itself in a way no representation can express.
 
 Beyond those, watch for these walk-vs-commitment traps:

@@ -13,13 +13,13 @@ When decomposing `attributes` from the call's intent, ignore content from these 
 - Free-form thematic / tonal / experiential qualifiers without a registry member ("cozy", "unsettling but not gory", "rainy-day melancholy") → semantic endpoint.
 - Awards → award endpoint.
 
-A sibling category handler in the same firing owns those facets. If nothing in the call's intent maps onto the registry, keyword has no clean fit — surface that honestly via empty `potential_keywords` on the walk attribute, or via `weaknesses` that names the gap. The bucket-level commitment is allowed to leave keyword unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets by simply omitting keyword from `coverage_assignments`). Do not coerce out-of-scope intent into a poor registry match.
+A sibling category handler in the same firing owns those facets. If nothing in the call's intent maps onto the registry, keyword has no clean fit — surface that honestly via empty `potential_keywords` on the walk attribute, or via `weaknesses` that names the gap. The bucket-level commitment is allowed to leave keyword unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets via `coverage_commitments.keyword.verdict = "abstain"`). Do not coerce out-of-scope intent into a poor registry match.
 
 ## Where the keyword analysis lives
 
 In single-endpoint buckets the analysis (`attributes` / `potential_keywords`) and the commitment (`finalized_keywords` / `scoring_method`) live together in one `KeywordQuerySpec`.
 
-In multi-endpoint buckets (preferred-fallback, semantic+augmentation, audience-suitability) the analysis is hoisted to a bucket-level `keyword_walk` field that sits BEFORE the coverage_assignments commitment, while the commitment lives in a thin `keyword_parameters` slot AFTER it. Same content, just split in two so the LLM walks the registry concretely before the bucket decides whether to fire keyword at all. Refer to the schema descriptors for exact field locations.
+In multi-endpoint buckets (preferred-fallback, semantic+augmentation, audience-suitability) the analysis is hoisted to a bucket-level `keyword_walk` field that sits BEFORE the `coverage_commitments` commitment, while the commitment lives in a thin `keyword_parameters` slot AFTER it. Same content, just split in two so the LLM walks the registry concretely before the bucket decides whether to fire keyword at all. Each candidate in the walk carries an explicit `verdict_reason` → `verdict` (commit/abstain) — `finalized_keywords` on the downstream `keyword_parameters` is then server-derived from the verdict commits. The LLM does not populate `finalized_keywords` directly in multi-endpoint contexts. Refer to the schema descriptors for exact field locations.
 
 ## Classification registry
 
@@ -64,7 +64,14 @@ Fire keyword only when the keyword — or the ANY-mode union of keywords — is 
 
 **Stretching intent fails the test.** If the keywords name something semantically adjacent to the user's attribute rather than the attribute itself, you are stretching. Firing will tag-match adjacent-but-irrelevant movies at 1.0 while genuinely relevant movies that lack those tags score 0. Abstain.
 
-Apply the test once over the union of your finalized members in ANY mode. If the union passes the test, commit; if it fails on any of the three conditions, drop members until the remainder passes — or abstain entirely if no remaining subset passes. In multi-endpoint buckets, abstention means omitting keyword from `coverage_assignments`. In single-endpoint keyword buckets the schema requires at least one finalized member; the test still applies as guidance to pick the best registry fit, since those buckets routed here precisely because the user's attribute is registry-clean.
+Apply the test once over the union of your finalized members in ANY mode. If the union passes the test, commit; if it fails on any of the three conditions, drop members until the remainder passes — or abstain entirely if no remaining subset passes.
+
+In **multi-endpoint buckets**, abstention runs at TWO levels:
+
+1. **Per-candidate verdict on every `PotentialKeyword`.** Each candidate carries `verdict_reason` → `verdict` (commit/abstain). Read what you wrote in `strengths` and `weaknesses`, pin the verdict to ONE single-claim reason: for commit, the specific superset condition this candidate satisfies; for abstain, exactly one of `gaps` / `stretching` / `dominated-by-sibling`. `verdict_reason` comes BEFORE `verdict` in the field order — write the reasoning first, then commit. Do NOT generate fresh reasoning at the verdict step. `finalized_keywords` is server-derived from the deduped union of `verdict == "commit"` candidates; you do not populate it directly.
+2. **Per-endpoint commitment in `coverage_commitments.keyword`.** This commits whether to fire keyword AT ALL for the call. Abstain here when every candidate verdict-abstained, when the keyword walk surfaced nothing useful, or when another endpoint dominates keyword on the same content.
+
+In **single-endpoint keyword buckets** the schema requires at least one finalized member — those buckets routed here precisely because the user's attribute is registry-clean. The superset test still applies as guidance to pick the best registry fit, but the verdict pathway above does not apply (single-endpoint walks do not carry verdict fields).
 
 ## Reading the brief for scoring_method
 

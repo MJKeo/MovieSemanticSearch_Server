@@ -24,7 +24,7 @@ These signal types route to other endpoints upstream and should not normally rea
 - Production companies / studios → studio.
 - Awards (any wins, nominations, ceremonies, prizes) → award.
 
-If a phrase looks like one of those, surface that honestly in the column-candidate audit (no column cleanly fits) rather than coercing it into a metadata column. The bucket-level commitment is allowed to leave metadata unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets by simply omitting metadata from `coverage_assignments`). Do not coerce out-of-scope intent into a poor column match.
+If a phrase looks like one of those, surface that honestly in the column-candidate audit (no column cleanly fits) rather than coercing it into a metadata column. The bucket-level commitment is allowed to leave metadata unfired (single-endpoint buckets via `should_run_endpoint=false`; multi-endpoint buckets via `coverage_commitments.metadata.verdict = "abstain"`). Do not coerce out-of-scope intent into a poor column match.
 
 ## Authoring `strengths` and `weaknesses` per column candidate
 
@@ -41,7 +41,7 @@ The over-coverage axis is what the commitment phase uses to decide whether to fi
 
 In single-endpoint buckets the analysis (`column_candidates`) and the commitment (`scoring_method_reasoning` / `column_spec` / `scoring_method`) live together in one `MetadataTranslationOutput`, with `search_picture` as the holistic restatement.
 
-In multi-endpoint buckets the analysis is hoisted to a bucket-level `metadata_walk` field that sits BEFORE the coverage_exploration / coverage_assignments commitment, while the commitment lives in a thin `metadata_parameters` slot AFTER it. `search_picture` is dropped in the multi-endpoint shape because the bucket-level `coverage_assignments[kind=metadata].slice_description` plus `metadata_retrieval_intent` already supply the holistic restatement. Refer to the schema descriptors for exact field locations.
+In multi-endpoint buckets the analysis is hoisted to a bucket-level `metadata_walk` field that sits BEFORE the `coverage_exploration` / `coverage_commitments` commitment, while the commitment lives in a thin `metadata_parameters` slot AFTER it. `search_picture` is dropped in the multi-endpoint shape because the bucket-level `coverage_commitments.metadata.slice_description` plus `metadata_retrieval_intent` already supply the holistic restatement. Refer to the schema descriptors for exact field locations.
 
 ## The ten attribute columns
 

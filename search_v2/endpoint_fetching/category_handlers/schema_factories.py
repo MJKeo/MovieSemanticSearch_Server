@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.trait_category import CategoryName
@@ -50,6 +50,56 @@ from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
 # output gets additionalProperties: false on every sub-object.
 class _HandlerOutputBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# Walk-then-commit buckets (5/6/8) inherit from this so the keyword-
+# walk-driven derivation of `finalized_keywords` runs once on every
+# bucket output. Phase 5 design: the LLM populates `verdict` on every
+# PotentialKeyword in the walk, and `finalized_keywords` on the
+# downstream KeywordQuerySpecSubintent is overwritten with the deduped
+# union of verdict-commits. The LLM is instructed to emit `[]` there;
+# this validator is what turns the verdict choice into the executor-
+# visible commit list.
+class _WalkThenCommitOutputBase(_HandlerOutputBase):
+    @model_validator(mode="after")
+    def _derive_keyword_finalized_from_verdicts(self):
+        # The bucket may or may not declare a keyword endpoint; only
+        # walk-then-commit buckets that DO declare keyword carry these
+        # two fields. Gracefully no-op when keyword isn't declared.
+        keyword_walk = getattr(self, "keyword_walk", None)
+        keyword_params_wrapper = getattr(self, "keyword_parameters", None)
+        if keyword_walk is None or keyword_params_wrapper is None:
+            return self
+
+        # Walk every potential_keyword across every attribute and
+        # collect the verdict-committed members. Dedupe in declaration
+        # order so the executor sees the same shape as the prior
+        # finalized_keywords field validator produced.
+        derived: list[str] = []
+        seen: set[str] = set()
+        for attribute in keyword_walk.attributes:
+            for candidate in attribute.potential_keywords:
+                if candidate.verdict != "commit":
+                    continue
+                # use_enum_values=True on PotentialKeyword means the
+                # field carries the string value already; coerce
+                # defensively in case the upstream config drifts.
+                member = candidate.keyword
+                if hasattr(member, "value"):
+                    member = member.value
+                if member in seen:
+                    continue
+                seen.add(member)
+                derived.append(member)
+
+        inner = getattr(keyword_params_wrapper, "parameters", None)
+        if inner is not None:
+            # Overwrite whatever the LLM emitted (should be []) with
+            # the derived list. Never trust LLM-emitted finalized_keywords
+            # in multi-endpoint contexts post-Phase-5.
+            inner.finalized_keywords = derived
+
+        return self
 
 
 # ── Shared Field descriptions ─────────────────────────────────────
@@ -163,13 +213,59 @@ _COVERAGE_EXPLORATION_DESC = (
     "memorialize."
 )
 
-_COVERAGE_ASSIGNMENT_ENDPOINT_KIND_DESC = (
-    "Which declared endpoint this assignment delegates a slice to. "
-    "Must be one of the routes whose grounded walk appears above on "
-    "this bucket schema."
+
+# ── coverage_commitments — fixed-shape per declared endpoint ───────
+#
+# Phase 5: replaces the variable-length `coverage_assignments` list
+# (where the LLM abstained on an endpoint by OMITTING it) with a
+# fixed-shape object that has one required slot per declared endpoint.
+# Each slot carries `verdict_reason` (prose, written FIRST so the
+# reasoning lands before the commit) → `verdict` (commit/abstain) →
+# `slice_description` (required iff verdict == "commit"). Abstention
+# is now an active choice with required reasoning, not a passive
+# omission. Default omission bias becomes default explicit-choice bias.
+
+_ENDPOINT_COMMITMENT_VERDICT_REASON_DESC = (
+    "One short sentence justifying the verdict below, citing the "
+    "{route} walk's strengths or weaknesses already written above. "
+    "Single-claim only — do NOT write OR-disjunctions ('contributes "
+    "X OR fills Y'); pick one claim and commit.\n"
+    "\n"
+    "For 'commit': name the single distinct strength the {route} "
+    "walk surfaced that the other endpoints don't carry, OR the "
+    "specific weakness on a sibling endpoint that {route} fills. "
+    "Cite the walk's candidate detail.\n"
+    "\n"
+    "For 'abstain': name exactly ONE failure mode:\n"
+    "- no-walk-candidate: the {route} walk surfaced nothing useful "
+    "(empty candidates or all-weakness candidates).\n"
+    "- dominated-by-sibling: another declared endpoint covers "
+    "{route}'s strengths AND weaknesses strictly better.\n"
+    "- commitment-criteria-fail: {route}'s walk has candidates but "
+    "they fail {route}'s own commitment criteria (e.g., keyword "
+    "candidates that all verdict-abstain).\n"
+    "\n"
+    "Cite the walk's text — do NOT generate fresh reasoning here."
 )
 
-_COVERAGE_ASSIGNMENT_SLICE_DESCRIPTION_DESC = (
+_ENDPOINT_COMMITMENT_VERDICT_DESC = (
+    "Active commit choice for the {route} endpoint, read off the "
+    "verdict_reason just written.\n"
+    "\n"
+    "- 'commit' → fire this endpoint. Fill `{route}_parameters` "
+    "below with the thin commitment payload. The slice_description "
+    "below names which aspect(s) of the call's intent {route} owns.\n"
+    "- 'abstain' → do NOT fire this endpoint. Leave `{route}_"
+    "parameters` null. Abstention here is sanctioned and frequent — "
+    "the schema requires a verdict for every declared endpoint so "
+    "the choice is rendered explicitly rather than buried in "
+    "omission.\n"
+    "\n"
+    "Default to 'abstain' when the analysis is ambiguous. 'commit' "
+    "requires a single named contribution-or-gap-fill claim."
+)
+
+_ENDPOINT_COMMITMENT_SLICE_DESCRIPTION_DESC = (
     "The slice of the call's intent this endpoint owns, written "
     "specifically enough that the per-endpoint parameters below can "
     "translate it without re-reading the upstream retrieval_intent. "
@@ -178,40 +274,39 @@ _COVERAGE_ASSIGNMENT_SLICE_DESCRIPTION_DESC = (
     "spaces / columns) and what aspect(s) of the call's intent they "
     "address. This string flows to the wrapper's "
     "<endpoint>_retrieval_intent field as the per-endpoint "
-    "commitment record."
+    "commitment record.\n"
+    "\n"
+    "Required when verdict is 'commit'. When verdict is 'abstain', "
+    "leave this null — the endpoint is not firing, so no slice is "
+    "owned."
 )
 
-_COVERAGE_ASSIGNMENTS_DESC = (
-    "Mechanical commitment of the choice argued in "
-    "coverage_exploration above. One entry per endpoint that should "
-    "fire (per the local tests on coverage_exploration), naming the "
-    "slice of the call's intent it owns. Overlap is the design — "
-    "multiple assignments catching distinct facets, or one endpoint's "
-    "strength filling another's weakness, is expected.\n"
+_COVERAGE_COMMITMENTS_DESC = (
+    "Per-endpoint commitment record. One required field per "
+    "declared endpoint, each carrying verdict_reason (prose) → "
+    "verdict (commit/abstain) → slice_description (required iff "
+    "commit). Mechanical commit of the composition argued in "
+    "coverage_exploration above.\n"
     "\n"
-    "EMPTY is valid only when ALL declared endpoint walks surfaced no "
-    "useful candidate. In that case the whole call abstains.\n"
+    "Every declared endpoint MUST receive an explicit verdict here. "
+    "Abstention is a sanctioned choice with required reasoning — "
+    "you cannot abstain on an endpoint by silence. Read off the "
+    "strengths + weaknesses already written on each walk; the "
+    "verdict reflects what the walk concluded, it does not generate "
+    "fresh reasoning.\n"
     "\n"
-    "NEVER:\n"
-    "- DELEGATE TO AN ENDPOINT WHOSE WALK SHOWS NO USEFUL CANDIDATE. "
-    "Assignments must be readable off the strengths recorded above.\n"
-    "- DROP AN ENDPOINT WHOSE WALK CONTRIBUTES A DISTINCT STRENGTH OR "
-    "FILLS ANOTHER'S WEAKNESS. Drop only when another endpoint "
-    "dominates it on the same content, or its walk surfaced no useful "
-    "candidate.\n"
-    "- DUPLICATE AN ENDPOINT (one assignment per endpoint kind).\n"
-    "- SPLIT ONE SLICE ACROSS ENDPOINTS to look thorough; let the "
-    "endpoint that owns the slice own it cleanly."
+    "All-endpoint abstain is valid when no walk surfaced a candidate "
+    "that passes both the local fire/drop tests and the endpoint's "
+    "own commitment criteria — in that case the whole call abstains."
 )
 
 _THIN_PARAMETERS_DESC_TEMPLATE = (
     "Thin commitment payload for the {route} endpoint. Fill it iff "
-    "coverage_assignments above contains an entry whose endpoint_kind "
-    "is {route!r}; null otherwise. The wrapper's "
-    "`{route}_retrieval_intent` mirrors the matching assignment's "
-    "slice_description; the inner parameters draw on that intent and "
-    "the upstream `{route}_walk` analysis to commit the route-specific "
-    "translation."
+    "`coverage_commitments.{route}.verdict == \"commit\"`; null "
+    "otherwise. The wrapper's `{route}_retrieval_intent` mirrors the "
+    "matching commitment's slice_description; the inner parameters "
+    "draw on that intent and the upstream `{route}_walk` analysis to "
+    "commit the route-specific translation."
 )
 
 
@@ -309,56 +404,39 @@ def _build_walk_then_commit(
     bucket: HandlerBucket,
 ) -> type[BaseModel] | None:
     # Buckets 5/6/8 share one shape — three sequential phases at the
-    # bucket level that together replace the bucket-specific
-    # coverage-reasoning fields used previously:
+    # bucket level:
     #
     #   Phase 1: per-endpoint walks. For each declared endpoint, a
     #   `{route}_walk` field holds the registry/space/column-grounded
     #   analysis (KeywordWalk / SemanticWalk / MetadataWalk). Each
-    #   candidate carries strengths + weaknesses so the commitment
-    #   phase can compose endpoints by reading off real signals.
+    #   candidate carries strengths + weaknesses; for keyword each
+    #   also carries verdict_reason → verdict (Phase 5).
     #
-    #   Phase 2: coverage exploration + commitment. `coverage_exploration`
-    #   argues which endpoints contribute distinct strengths or fill
-    #   each other's weaknesses, BEFORE the structural commit.
-    #   `coverage_assignments` (a list of CoverageAssignment with
-    #   Literal-bounded endpoint_kind) is then the mechanical commit,
-    #   one entry per endpoint that should fire.
+    #   Phase 2: coverage exploration + commitment.
+    #   `coverage_exploration` argues which endpoints contribute
+    #   distinct strengths or fill each other's weaknesses, BEFORE
+    #   the structural commit. `coverage_commitments` (Phase 5;
+    #   replaces the prior `coverage_assignments` list) is a
+    #   fixed-shape object with one required EndpointCommitment slot
+    #   per declared endpoint. Abstention is now an active
+    #   verdict=abstain choice with required reasoning, not a
+    #   passive omission.
     #
     #   Phase 3: per-endpoint thin params. One Optional
-    #   `{route}_parameters` per declared endpoint, populated iff a
-    #   matching coverage_assignments entry exists.
+    #   `{route}_parameters` per declared endpoint, populated iff
+    #   `coverage_commitments.{route}.verdict == "commit"`.
     #
-    # Field declaration order matches that phase ordering — which
-    # matters because Pydantic structured output emits top-down, so
-    # the LLM walks all endpoints concretely before committing to who
-    # fires. coverage_exploration sits between walks and assignments
-    # so the LLM reasons about composition before structurally
-    # committing.
+    # Field declaration order matches that phase ordering — Pydantic
+    # structured output emits top-down, so the LLM walks all endpoints
+    # concretely before committing to who fires. coverage_exploration
+    # sits between walks and commitments so the LLM reasons about
+    # composition before structurally committing.
+    #
+    # Inheritance from _WalkThenCommitOutputBase wires the keyword-
+    # walk-driven derivation of `finalized_keywords` (Phase 5).
     pairs = _resolve_wrappers_for_bucket(category, bucket)
     if not pairs:
         return None
-
-    # Build the per-category CoverageAssignment with a Literal of the
-    # declared route values. Same dynamic-Literal pattern that the
-    # prior augmentation/coverage opportunity models used; lifted up
-    # to the new shared shape.
-    declared_route_values = tuple(r.value for r, _ in pairs)
-    endpoint_kind_type = Literal[declared_route_values]  # type: ignore[valid-type]
-
-    coverage_assignment_model = create_model(
-        f"{_pascal(category.name)}CoverageAssignment",
-        __base__=_HandlerOutputBase,
-        __module__=__name__,
-        endpoint_kind=(
-            endpoint_kind_type,
-            Field(..., description=_COVERAGE_ASSIGNMENT_ENDPOINT_KIND_DESC),
-        ),
-        slice_description=(
-            str,
-            Field(..., description=_COVERAGE_ASSIGNMENT_SLICE_DESCRIPTION_DESC),
-        ),
-    )
 
     fields: dict[str, tuple] = {}
 
@@ -382,18 +460,24 @@ def _build_walk_then_commit(
             Field(..., description=_walk_desc_for(route)),
         )
 
-    # Phase 2: coverage exploration (argue composition) → coverage
-    # assignments (mechanical commit). `intentionally_uncovered` was
-    # removed; empty `coverage_assignments` is the abstain signal, and
-    # the puzzle-pieces framing in coverage_exploration replaces the
-    # prior soft-out of declaring a slice unservable.
+    # Phase 2: coverage exploration (argue composition) →
+    # coverage_commitments (mechanical commit, fixed-shape).
     fields["coverage_exploration"] = (
         str,
         Field(..., description=_COVERAGE_EXPLORATION_DESC),
     )
-    fields["coverage_assignments"] = (
-        list[coverage_assignment_model],
-        Field(..., description=_COVERAGE_ASSIGNMENTS_DESC),
+
+    # Build the per-bucket CoverageCommitments object: one required
+    # EndpointCommitment field per declared endpoint, named after the
+    # route value. The LLM cannot abstain by omission; every declared
+    # endpoint requires an explicit verdict.
+    coverage_commitments_model = _build_coverage_commitments_model(
+        category=category,
+        declared_routes=tuple(r for r, _ in pairs),
+    )
+    fields["coverage_commitments"] = (
+        coverage_commitments_model,
+        Field(..., description=_COVERAGE_COMMITMENTS_DESC),
     )
 
     # Phase 3: per-endpoint thin params, one Optional per declared
@@ -412,9 +496,86 @@ def _build_walk_then_commit(
 
     return create_model(
         _output_class_name(category.name),
-        __base__=_HandlerOutputBase,
+        __base__=_WalkThenCommitOutputBase,
         __module__=__name__,
         **fields,
+    )
+
+
+def _build_coverage_commitments_model(
+    category: CategoryName,
+    declared_routes: tuple[EndpointRoute, ...],
+) -> type[BaseModel]:
+    """Build the per-bucket CoverageCommitments shape.
+
+    Phase 5: replaces the variable-length `coverage_assignments` list
+    with a fixed-shape object whose fields are exactly the bucket's
+    declared endpoints, each required and typed as a per-bucket
+    EndpointCommitment. The EndpointCommitment is also built per
+    bucket (not per endpoint) so the {route} placeholders in the
+    field descriptions can be specialized per route — a keyword
+    commitment description references registry candidates, a
+    semantic commitment description references vector spaces, and
+    so on.
+
+    All endpoint commitments follow the same field order:
+    verdict_reason → verdict → slice_description. Reasoning lands
+    BEFORE the verdict so the prose is generated as fresh evidence,
+    not post-hoc justification (per the Iteration 6 design lesson:
+    Pydantic emits fields in declaration order under structured
+    output).
+    """
+    commitment_fields: dict[str, tuple] = {}
+    for route in declared_routes:
+        # Per-route EndpointCommitment with route-specialized field
+        # descriptions. Built per route so the prose is concrete.
+        endpoint_commitment_model = create_model(
+            f"{_pascal(category.name)}{_pascal(route.value)}Commitment",
+            __base__=_HandlerOutputBase,
+            __module__=__name__,
+            verdict_reason=(
+                str,
+                Field(
+                    ...,
+                    description=_ENDPOINT_COMMITMENT_VERDICT_REASON_DESC.format(
+                        route=route.value
+                    ),
+                ),
+            ),
+            verdict=(
+                Literal["commit", "abstain"],
+                Field(
+                    ...,
+                    description=_ENDPOINT_COMMITMENT_VERDICT_DESC.format(
+                        route=route.value
+                    ),
+                ),
+            ),
+            slice_description=(
+                Optional[str],
+                Field(
+                    default=None,
+                    description=_ENDPOINT_COMMITMENT_SLICE_DESCRIPTION_DESC,
+                ),
+            ),
+        )
+        commitment_fields[route.value] = (
+            endpoint_commitment_model,
+            Field(
+                ...,
+                description=(
+                    f"Commitment record for the {route.value} endpoint. "
+                    f"Required slot — render an explicit verdict, do not "
+                    f"abstain by silence."
+                ),
+            ),
+        )
+
+    return create_model(
+        f"{_pascal(category.name)}CoverageCommitments",
+        __base__=_HandlerOutputBase,
+        __module__=__name__,
+        **commitment_fields,
     )
 
 

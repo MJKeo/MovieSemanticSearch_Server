@@ -1,6 +1,64 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## V3.4 Bucket-Weaver — multi-source recommendation layer
+Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
+
+### Intent
+Replace V3's dominance/franchise/competitive-band caps inside
+`_weave_candidates` with an explicit slot-allocation + greedy-MMR pass
+over 5 named recommendation buckets (best_overall, auteur, franchise,
+rare_keyword, lead_actor). Movie similarity is a recommendation
+problem (rows by *why*) not a single-list search problem; the unified
+ranker can't elevate Lady Bird for Barbie without distorting
+mainstream/cult/franchise anchors. The weaver is a thin layer on top
+of V3 scoring — preserves all V3 invariants (lanes, multipliers,
+floors); only the top-section ordering changes.
+
+### Key Decisions
+- **5-bucket set** chosen by enumerating every V3 signal against
+  "would a user say yes to a separate row of these?" — themes /
+  source / studio / quality / format / medium / country rejected as
+  style modifiers, not recommendation sources (similar_movies.md
+  §V3.4 Decisions 1–5).
+- **Allocation**: 5/10 floor for best-overall + 5 distributed by
+  signal strength via Hamilton's largest-remainder (capped at 3 per
+  bucket). Slack flows back to best-overall.
+- **Greedy weave with MMR** (`λ=0.5`): per-slot picks
+  `argmax((1−λ)·relevance + λ·deficit_ratio)`. Best-overall is a
+  carve-out always-on (`placed[]` can exceed target via cross-
+  membership; bucket-gate skips it explicitly). Without this, multi-
+  bucket full credit drives best-overall past target by slot 5 and
+  the algorithm short-circuits before filling the 10-slot top
+  section.
+- **Multi-bucket full credit** on placement (Decision 8): placing a
+  candidate bumps `placed[]` for every bucket it qualifies for.
+  Prevents the "best-overall surfaces 3 Nolan films, then auteur
+  double-downs with 3 more" failure.
+- **Format top-5 lock interaction**: layered into the per-bucket peek
+  helper; bucket queues skip past format-mismatched candidates while
+  slot < 5.
+- **Bucket gating constants (working draft)**:
+  `WEAVER_FRANCHISE_BUCKET_MIN_SCORE=0.55` (excludes tier-4 universe-
+  only — Decision 6); `WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN=0.55`
+  (matches V3 high-tier cutoff). Post-run analysis suggests the
+  rare-keyword gate should bump to ~0.70 to suppress Pixar-trio
+  non-Pixar injections.
+
+### Planning Context
+Full design in similar_movies.md §V3.4 (lines 1907–2294). Hypothesis
+in similar_movies_test_tracker.md §V3.4.
+
+### Testing Notes
+21-anchor + 14-cohort smoke harness re-run: canonical wins confirmed
+(Lady Bird + Little Women in Barbie top 5; Frances Ha into Female-led
+Gerwig top 10; The Mission #2 in Best Picture trio). Regressions in
+cohorts where rare_keyword bucket fires on weak/heterogeneous
+evidence (Pixar trio non-Pixar injections at #4/6/8; Slasher trio
+Mamma Mia/Pennies from Heaven; Barbie documentary metas at slots
+7–8). Recommended next iteration: tighten rare_keyword bucket IDF
+gate before ship.
+
 ## Rescore overhaul: separate pool definition from per-trait scoring
 Files: schemas/enums.py, schemas/trait_category.py, search_v2/stage_4_execution.py
 
@@ -1894,3 +1952,190 @@ but didn't drive more abstention on STORY_THEMATIC over-pulling
 categories (kw_commits 41 → 40 essentially flat). Captured as a
 follow-up iteration target rather than a ship blocker. 0 errors,
 0 errored_cats, 0 schema violations.
+
+## V5 Iteration 6 attempt: Phase 4 (deliberate-default at Step 3 + bucket prompt openings) — UNSHIPPED, REVERTED 2026-05-08
+Files reverted via `git checkout HEAD --` (no longer modified):
+search_v2/step_3.py, schemas/step_3.py,
+search_v2/endpoint_fetching/category_handlers/prompts/buckets/preferred_representation_fallback_objective.md,
+search_v2/endpoint_fetching/category_handlers/prompts/buckets/audience_suitability_deterministic_first_objective.md,
+search_v2/endpoint_fetching/category_handlers/prompts/buckets/semantic_preferred_deterministic_support_objective.md,
+search_improvement_planning/search_overheaul_test_tracker.md
+
+### Intent
+Phase 4 of rescore_overhaul.md targeted architectural pattern B
+(fire-default everywhere) via prompt-only intervention: rewrite
+_CATEGORY_ROUTING at Step 3 with deliberate-default opening,
+thread the abstention frame through the operational tests as a
+new ABSTENTION-DEFAULT (FIRST) test, mirror in
+TraitDecomposition.category_calls field description (schema-as-
+micro-prompt parity per Iteration 5 lesson #2), and re-open the
+three multi-endpoint bucket prompts so abstention is the prior
+with the per-endpoint Superset test reordered to be the first
+local test in coverage_exploration.
+
+### Outcome
+Hypothesis NOT validated. Phase 4 produced:
+- F3 abstention moved in WRONG direction: KW commits in 5 keep
+  categories went 23 → 25 (+2). STORY_THEMATIC_ARCHETYPE
+  unmoved at 13.
+- Step 3 sprawl regressed: total category routes 80 → 92
+  (+15%). Q21 atmospheric folk horror went 2 → 6 cats
+  (worst single-query regression).
+- Genuine plural-intent ALL collapsed on Q5 (`[ACTION,
+  THRILLER]` → ANY) and Q11 (`[WAR, HISTORY]` → broke
+  entirely: GENRE `[WAR]` ANY + new STORY_THEMATIC
+  `[EPIC, HISTORICAL_EPIC]` trip-wire).
+- Headline rate dropped 28.8% → 27.2% (1.6pp) — but this is
+  the structural-axis metric Iteration 5 flagged as misleading;
+  absolute counts went up on every behavioral axis.
+- Q9 / Q12 / Q25 named positive controls held clean. 0 errors,
+  0 schema violations.
+
+Recommendation: REVERT all five code/prompt files. Keep the
+tracker entry — it documents the failed experiment for
+posterity and corroborates the architectural-pattern-B
+diagnosis (prompt-only interventions plateau then regress).
+Phase 5 (schema-level verdict fields per rescore_overhaul.md
+§Phase 5) is the next move; the failure of Phase 4 as designed
+is corroborating evidence that schema enforcement is the
+load-bearing intervention.
+
+### Reverted (2026-05-08)
+The five implementation files (search_v2/step_3.py,
+schemas/step_3.py, three bucket prompts) have been reverted via
+`git checkout HEAD --`. The tracker entry under
+search_improvement_planning/search_overheaul_test_tracker.md is
+PRESERVED — it captures Iteration 6's results, lessons, and
+revert decision, and is part of the standing test-tracker
+history. DIFF_CONTEXT entries describing this aborted
+iteration may be cleared at the next commit.
+
+Run output: /tmp/run_specs_phase_4.json (102KB),
+/tmp/diff_phase_4.py.
+
+## V3.4.1 Bucket-Weaver calibration pass
+Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
+
+### Intent
+Calibrate the V3.4 weaver to fix three regressions surfaced by the
+post-V3.4 smoke run: Pixar trio non-Pixar injection (Lego Movie,
+Madagascar), Slasher trio musical leakage (Pennies from Heaven,
+Mamma Mia), and Barbie meta-doc surfacing past slot 5 (Tiny
+Shoulders, Barbie Nation).
+
+### Key Decisions
+- **Change 1 — `WEAVER_BUCKET_INSTANTIATE_MIN: 0.30 → 0.50`.** Single
+  cohesion knob; requires ≥half-anchor cohesion before instantiating
+  signal buckets. Prevents weak-cohesion auteur firing on
+  heterogeneous cohorts (Carpenter on The Thing only, McQueen on 12
+  Years a Slave only).
+- **Change 2 — `WEAVER_LAMBDA: 0.50 → 0.60`.** Increased MMR
+  starvation pull intended to push bucket-unique candidates (Kill
+  Bill, Django for Pulp Fiction) into top 10 by narrowing the
+  relevance-vs-deficit margin.
+- **Change 3 — Signal-bucket format lock all-slots.** Extended
+  format lock from slots 0–4 to all 10 slots for auteur / franchise /
+  rare_keyword / lead_actor queues. `_peek_next_eligible_for_bucket`
+  now takes `bucket_name`; best_overall keeps the slot-5 cliff so
+  cross-format candidates can still surface past slot 5 on relevance.
+
+### Smoke run outcome (mixed)
+- Change 1 VALIDATED — clean wins on Stephen King horror (Kubrick
+  films Full Metal Jacket / 2001 dropped, replaced by The Innocents /
+  Night House) and Best Picture trio (McQueen films Hunger / Widows
+  dropped, replaced by Oppenheimer / The Irishman).
+- Change 2 INVALIDATED — Pulp Fiction unchanged (relevance gap too
+  wide for λ=0.6 to flip); Pixar trio worse (Lego Movie #4→#3,
+  Madagascar #6→#5); Slasher trio worse (Mamma Mia #7→#5, Can't
+  Stop the Music entered #8).
+- Change 3 INVALIDATED — Barbie meta-docs at IDENTICAL ranks (#7,
+  #8). Diagnosis was wrong: Tiny Shoulders / Barbie Nation enter via
+  best_overall queue (high V3 base score 0.550), not the franchise
+  queue. Format lock on signal buckets had zero observable effect.
+
+### Ship recommendation
+**Partial ship: keep Change 1, revert Changes 2 and 3.** The
+cohesion gate is sound; the other two were misdirected. Defer
+Barbie meta-doc fix to V3.5 format-mismatch multiplier (symmetric
+with `MEDIUM_CROSS_CATEGORY_MULTIPLIER = 0.65`), which penalizes
+cross-format candidates regardless of placement queue.
+
+### Testing notes
+- Smoke run output: search_v2/similar_movies_batch_results.md and
+  search_v2/similar_movies_multi_anchor_results.md (V3.4.1).
+- V3.4 baseline preserved at /tmp/v3_4_baseline_*.md for diff.
+- 8 of 14 multi-anchor cohorts unchanged; 4 changed sets (2 wins,
+  1 mixed regression, 1 loss); 2 reordered. 0 single-anchor sets
+  changed.
+- Awaiting user decision on partial-revert before any further code
+  changes.
+
+## V3.4.2 Cohesion-weighted rare_keyword + format-mismatch multiplier + mockumentary demotion
+Files: search_v2/similar_movies.py, search_v2/format_registry.py, search_improvement_planning/similar_movies_test_tracker.md
+
+### Intent
+Close the V3.4 regression loop: kill the rare_keyword 1/N-cohesion
+bug that was firing musical traits on Slasher trio and non-Pixar
+traits on Pixar trio, and add a hard format-mismatch multiplier
+that displaces Barbie meta-docs (Tiny Shoulders, Barbie Nation)
+from top 10. Demote mockumentary from format taxonomy to themes
+since it's a style overlay on narrative comedy, not a separate
+content category.
+
+### Key Decisions
+- **Cohesion-weighted rare_keyword formula**:
+  `cohesion_weight(M_t, N) = max(0, (M_t-1) / (N-1))` applied
+  per-trait inside the IDF sum. Single-anchor traits contribute
+  zero; weight scales linearly to 1.0 at full N/N cohesion.
+  Membership bound by same M_t ≥ 2 floor. Generalizes naturally
+  across cohort sizes; alternative was a hard 2/N threshold (less
+  smooth) or a quadratic scaling (over-aggressive). Slasher
+  pre/post numerical proof: signal 1.000 → 0.149.
+- **`FORMAT_CROSS_CATEGORY_MULTIPLIER = 0.35`**: harsher than
+  medium (×0.65) because format buckets are categorical content
+  types, not style variations. Symmetric with medium piecewise.
+  Skips short candidates so the existing `SHORTS_DOWNRANK_MULTIPLIER
+  = 0.30` doesn't compound. User-approved value (rejected ×0.65
+  parity as too soft, ×0.25 as needlessly aggressive).
+- **Mockumentary removed from format**: Spinal Tap / What We Do
+  in the Shadows are narrative comedies stylistically dressed as
+  docs. Treating them as their own bucket prevented them from
+  competing on a narrative-anchor's top section. Now flows into
+  themes lane via `_themes_traits_for_movie` (which subtracts
+  `FORMAT_KEYWORD_IDS_ALL`, no longer including mockumentary).
+- **V3.4.1 changes 2 (λ=0.6) and 3 (signal-bucket format-lock
+  all-slots) reverted** before this work. λ back to 0.50;
+  `_peek_next_eligible_for_bucket` back to original signature.
+
+### Smoke run outcome (full ship)
+Set-diff vs. V3.4 baseline (clean comparison after V3.4.1 partial
+revert):
+
+- **Single-anchor**: 1 of 21 cohorts changed. Barbie: Tiny
+  Shoulders/Barbie Nation OUT, Free Guy/I Am Not an Easy Man IN.
+  20 cohorts unchanged.
+- **Multi-anchor**: 7 of 14 cohorts changed, all wins. Pixar
+  (Lego/Madagascar/Rescuers OUT, Bolt/Ratatouille/Wreck-It Ralph
+  IN), Slasher (Pennies/Mamma Mia OUT, Fog/Pandorum IN), Stephen
+  King (Kubrick films OUT, Innocents/Night House IN), Best
+  Picture (McQueen films OUT, Irishman/There Will Be Blood IN),
+  Female-led (Brooklyn IN), Nolan (mild upgrade), Tom Hanks
+  (body-swap thematic tail traded for tighter Pixar cluster).
+- **Format multiplier verification**: zero `format_mismatch`
+  entries in top-10 outputs — correct behavior since penalized
+  candidates fall out of top 10 entirely. Empirical proof =
+  Barbie meta-docs disappearing.
+
+### Testing notes
+- `python -m search_v2.run_similar_movies_batch --multi --limit 10`
+  output written to search_v2/similar_movies_*_results.{json,md}.
+- V3.4 baseline preserved at /tmp/v3_4_baseline_*.md.
+- I Am Not an Easy Man surfacing on Barbie closes the V3.1 themes
+  hypothesis loop unresolved through V3.3.
+- Trade-off acknowledged: Tom Hanks loses body-swap thematic tail
+  (Heaven Can Wait, 13 Going on 30, Being John Malkovich) to
+  cohesion gate. Per user principle "don't fire on 1/N cohesion
+  ever". If single-anchor thematic surfacing matters for some
+  cohort, the correct lever is per-anchor themes-recall (V3.1
+  infrastructure), not relaxing the cohesion gate.
+- 0 new regressions across 35 cohorts.
