@@ -1467,3 +1467,139 @@ Re-ran targeted smoke after fixes:
 - Best Picture trio: rare_keyword lane fires for all 10 candidates (was ~7 pre-fix).
 - Regression check on H3 (Toy Story shorts), H6 (Star Wars franchise), H7 (Star Wars no Lucas), H9 (Hanks trio): all preserved. Hanks trio scores shifted slightly upward (Toy Story 3 0.997 → 1.016) because the cast-lane normalization is now correctly cohesion-driven without the 0.05 dilution from no-cohesion cohorts.
 - Score relativities: same orderings as before in all V2 baseline cohorts.
+
+## V3.1 similar-movies — calibration + recall expansion
+Files: search_v2/similar_movies.py, db/postgres.py, search_v2/run_similar_movies_batch.py, search_improvement_planning/similar_movies.md
+
+### Intent
+The V3 smoke run with the new diagnostic harness exposed calibration
+and recall gaps. V3 had the right architecture but couldn't surface
+the matches it was scoring correctly: themes lane weight was
+sub-perceptual (0.06), single-anchor director had no floor, the rare-
+keyword tiers were sized for raw `log(N/df)` IDFs but the catalog
+normalizes to ~[0,1], and there was only one broad-recall path
+(Qdrant top-500 shape) so vector-distant auteur/themes matches like
+Lady Bird vs. Barbie never entered the pool. V3.1 lands seven changes
+in one bundle, no architectural changes — only thresholds, weights,
+and recall paths.
+
+### Key Decisions
+- **Themes weight 0.06 → 0.12.** Bumps thematic contribution to a
+  perceptual range. Pixar/MCU/Star-Wars cohesion stays intact (still
+  shape-dominated); thematic-driven anchors (Barbie, Best Picture,
+  Tarantino) recover thematic recall. Multi-anchor weight reads from
+  `BASE_LANE_WEIGHTS` instead of the previous hardcoded 0.06 so the
+  bump applies to both flows.
+- **Rare-keyword floor shape gate 0.30 → 0.20.** The 0.30 gate
+  blocked every observed high-rare-keyword candidate in smoke
+  (Schindler shape=0.030, Dunkirk shape=0.160). Lowering catches
+  shape-borderline candidates with strong distinctive-match evidence.
+- **Single-anchor director floor (NEW).** Mirrors the multi-anchor
+  floor with softer thresholds: magnitude 0.35, shape gate 0.20,
+  ratio threshold 1.0 (binary — any auteur match qualifies). New
+  constants `DIRECTOR_FLOOR_SINGLE_*`. `_build_results` now accepts
+  per-flow floor parameters; defaults preserve V3 multi-anchor
+  behavior. Single-anchor caller threads the softer values.
+- **Moderate-combo bonus on rare-keyword lane (NEW).** Additive
+  bonus on the passthrough lane: `0.05 + 0.05 * (sum_mod_high - 0.50)`,
+  capped at 0.15, fires when shared moderate+high tier IDF sum ≥ 0.50.
+  Not gated on shape — the bonus IS itself a shape signal that
+  compensates for vector distance. Sized from real catalog: 324
+  random pairs all had p99 = 0.000 mod+high IDF, so 0.50 sits deep in
+  the long tail. Constants `RARE_KW_COMBO_*`.
+- **Themes-recall candidate fetch (NEW path).** New
+  `fetch_movie_ids_by_themes_recall` in db/postgres.py runs a single
+  SQL aggregate joining `movie_card` array columns to `mv_trait_idf`
+  per kind, GROUP BY movie_id, HAVING `SUM(idf) >= combo_sum_thr OR
+  MAX(idf) >= single_idf_thr`. Defaults: `single=0.55, combo=0.50`.
+  Per user direction, the SUM gate includes **all-tier** IDFs (not
+  filtered to moderate+high) — "even if individual tags aren't rare,
+  matching a bunch is rare." Risk monitored. Wired into single-anchor
+  candidate-id union alongside rare_medium recall.
+- **Multi-anchor consensus traits with cohesion-IDF tradeoff.** New
+  helper `_multi_anchor_consensus_themes_traits` computes M_t/N
+  cohesion per trait and applies an IDF-scaled bar (LOW < 0.30 needs
+  cohesion 1.0; MOD 0.30-0.55 needs 0.67; HIGH ≥ 0.55 needs 0.50).
+  The consensus pool feeds the same single-anchor SQL helper —
+  multi-anchor logic collapses to a single fetch path with a tighter
+  trait set. Fetched in the first parallel gather (themes IDFs added
+  alongside it).
+- **Qdrant `DEFAULT_QDRANT_LIMIT` 500 → 2000.** Catches vector-
+  distant matches that targeted themes-recall can't help (Lady Bird
+  shares zero high-IDF or combo-eligible traits with Barbie's pool).
+  Per-anchor latency expected to grow ~150ms → ~400-500ms; tradeoff
+  acceptable for recall gain.
+
+### Planning Context
+Documented in
+[search_improvement_planning/similar_movies.md](search_improvement_planning/similar_movies.md)
+"V3.1 Calibration Adjustments" section with full Decisions 1–7,
+constants matrix, and "Expected outcomes" subsection enumerating
+wins to confirm and regressions to watch.
+
+### Testing Notes
+Verification deferred to next user-driven harness run. Wins to
+confirm: Lady Bird and The Favourite enter Barbie top 10; I Am Not an
+Easy Man rises; Tenet for Inception preserves #1 with bigger themes
+contribution; Pixar/MCU/Star-Wars/Best-Picture/Tarantino top 10s
+preserve cohesion. Regressions to watch: floor over-firing from
+softer 0.20 shape gate; combo bonus producing weak-shape coincidence-
+match flooding; recall expansion pushing score >1.0 outliers further
+into noise; latency degradation beyond ~500ms; themes-recall pool
+exploding (>10k candidates) on tag-rich anchors — first regression to
+confirm/deny since user opted to include all-tier IDFs in the SUM.
+
+## V5 Phase 1: empty-spec filter + post-hoc generator-spec dedup
+Files: search_v2/stage_4_execution.py, search_improvement_planning/search_overheaul_test_tracker.md
+
+Why: Two pure-code changes from rescore_overhaul.md Phase 1.
+Approach:
+- 1.1 (D4): in `_score_positive_trait`, skip categories whose handler
+  emitted zero generated_specs *before* they reach `combine_calls`.
+  Prevents `combine_calls(SINGLE, []) → 0.0` from zeroing a
+  FACETS-PRODUCT trait when one category abstains. Monotonic-safe in
+  both FRAMINGS-MAX and FACETS-PRODUCT.
+- 1.2 (D5): in `_run_branch` Phase B, group positive-polarity
+  generator specs by `(route, model_dump(mode="json"))` and run one
+  `_dispatch_call` per unique group. Broadcast each result map to all
+  shared `_CallKey`s. Specs with `params is None` skip dedup.
+  Score-side semantics unchanged — each (trait_idx, cat_idx, spec_idx)
+  still reads its own per-coordinate map.
+
+Design context: search_improvement_planning/rescore_overhaul.md
+§Phase 1 (changes 1.1, 1.2); search_overheaul_test_tracker.md
+Iteration 2.
+
+Testing notes: validated by `python -m search_v2.run_specs --suite
+/tmp/v5_suite.txt` against baseline. Aggregate metrics moved within
+LLM noise floor (56.2 % → 57.8 % ADDITIVE_KW_RISK rate; +1.6 pp).
+**run_specs.py stops before Phase B/D and therefore does not
+exercise either change** — the experiment's purpose was to confirm
+non-regression of upstream LLM commits, not visible scoring impact.
+For real verification add a stage-4 unit test that constructs a
+FACETS trait with one abstaining category and asserts trait_score
+reflects the live category alone (deferred per
+.claude/rules/test-boundaries.md).
+
+## Step 2 validator self-heal for orphaned positioning roles
+Files: schemas/step_2.py
+Why: One Phase-1 verification run hit a hard Step-2 ValidationError
+("trait[0] role=POSITIONING_REFERENCE but axes_replaced_by_siblings
+is empty") on `Studio Ghibli style hand-drawn fantasies`. The LLM
+occasionally commits a POSITIONING_REFERENCE without populating
+its `axes_replaced_by_siblings` (or a POSITIONING_QUALIFIER without
+its `replaces_axis`). Both states are semantically no-ops — a
+reference with nothing to drop and a qualifier with nothing to
+substitute behave identically to INDEPENDENT under Step 3. Today
+the validator rejected; the whole query errored.
+Approach: pre-pass in `_validate_relationship_roles` coerces
+orphaned commits to INDEPENDENT (clearing `replaces_axis` /
+`axes_replaced_by_siblings` to keep field consistency invariants).
+After the per-trait coerce, if reciprocity collapses to refs-only
+or quals-only, coerce the surviving orphans too. The strict
+cross-trait axis-bookkeeping checks (`missing_on_refs` /
+`invented_on_refs`) still run — those catch real LLM logic errors
+where sibling commits disagree on axis names. Verified by full-
+pipeline regression sweep: Studio Ghibli now completes cleanly
+(3 traits, 7041 ranked, top='Ramayana: The Legend of Prince Rama')
+and 24/24 other queries still succeed.

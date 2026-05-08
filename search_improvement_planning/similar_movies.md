@@ -1632,6 +1632,125 @@ prints per-result diagnostics covering base score, per-lane
 `raw→contribution`, applied multipliers, and floor activations — making
 calibration regressions inspectable without reading lane code.
 
+**Decision 6 — Themes-recall candidate fetch**.
+The post-smoke run exposed a recall gap: a thematically-aligned
+candidate that misses Qdrant's top-K (current 500) and isn't pulled by
+director / franchise / studio / source / quality / rare-medium has no
+path into the candidate pool. Themes is purely a re-ranker; it never
+adds candidates. Lady Bird vs. Barbie illustrates the problem — shape
+embedding ≈ 0, but the auteur (Gerwig) and themes signals would score
+it well *if* it ever entered the pool.
+
+The fix: a new candidate-generation lane that fetches movies whose
+shared anchor traits qualify by either rarity gate. Single SQL
+aggregate joins `movie_card` array columns to `mv_trait_idf` per kind:
+
+```sql
+WITH shared AS (
+    SELECT m.movie_id, ti.idf
+    FROM public.movie_card m, public.mv_trait_idf ti
+    WHERE ti.trait_kind = 1
+      AND ti.trait_id = ANY(...anchor keyword_ids...)
+      AND m.keyword_ids && ARRAY[ti.trait_id]
+    UNION ALL
+    -- same shape for kind=2 (concept_tag) and kind=3 (tmdb_genre)
+)
+SELECT movie_id
+FROM shared
+GROUP BY movie_id
+HAVING SUM(idf) >= %s OR MAX(idf) >= %s
+```
+
+Two recall paths in one aggregate:
+
+- **Single-trait gate** (`single_idf_threshold = 0.55`): catches the
+  "one super-rare keyword uniquely identifies the candidate" case.
+- **Combo-sum gate** (`combo_sum_threshold = 0.50`): catches the
+  "multiple moderate tags coalesce into a clear signature" case.
+  Per user direction the SUM includes **all-tier** IDFs (not filtered
+  to moderate+high); the rationale is "even if individual tags aren't
+  rare, matching a bunch is rare." Risk monitored — if the pool
+  explodes on tag-rich anchors, raise the threshold.
+
+Random-pair sampling (324 random catalog pairs, all kinds) showed p99
+shared moderate+high IDF = 0.000 — the long tail is *empty*, so any
+candidate clearing 0.50 is genuinely related.
+
+New helper: `fetch_movie_ids_by_themes_recall` in [db/postgres.py](search_v2/../../db/postgres.py),
+mirroring the `fetch_movie_ids_by_overall_keywords` pattern. Wired
+into both single-anchor and multi-anchor candidate-id unions.
+
+**Multi-anchor variant — consensus traits with cohesion-IDF tradeoff**:
+For each (kind, trait_id) appearing in any anchor's themes pool,
+compute cohesion = `M_t / N` and require cohesion ≥ a bar that scales
+with IDF tier:
+
+| IDF tier | Cohesion bar |
+|---|---:|
+| `idf < 0.30` (LOW) | 1.00 (all anchors) |
+| `0.30 ≤ idf < 0.55` (MOD) | 0.67 (≥ 2/3) |
+| `idf ≥ 0.55` (HIGH) | 0.50 (≥ half) |
+
+Rarer traits qualify at lower cohesion because each rare match is
+itself a strong signal. Common traits need everyone to carry them
+(otherwise they're noise). The consensus pool feeds the same
+single-anchor SQL helper — multi-anchor logic collapses to the same
+fetch path with a tighter trait set.
+
+**Decision 7 — Qdrant `DEFAULT_QDRANT_LIMIT` 500 → 2000**.
+The shape funnel has been the only broad-recall path; bumping it 4×
+catches vector-distant matches that the targeted themes-recall fetch
+can't help (e.g., Lady Bird vs. Barbie — shares zero high-IDF or
+combo-eligible traits with Barbie's pool). Cost: per-anchor latency
+expected to grow from ~150ms to ~400-500ms (linear in candidate count
+for the per-lane scoring + `_build_results`). Tradeoff is acceptable
+for the recall gain.
+
+### Constants matrix (V3.1, single source of truth)
+
+| Constant | Value | Use |
+|---|---:|---|
+| `BASE_LANE_WEIGHTS["themes"]` | **0.12** | Themes proportional weight (was 0.06) |
+| `RARE_KW_FLOOR_SHAPE_GATE` | **0.20** | Rare-keyword floor activation (was 0.30) |
+| `DIRECTOR_FLOOR_SINGLE_MAGNITUDE` | 0.35 | Single-anchor director floor magnitude |
+| `DIRECTOR_FLOOR_SINGLE_SHAPE_GATE` | 0.20 | Single-anchor director floor shape gate |
+| `DIRECTOR_FLOOR_SINGLE_RATIO_THRESHOLD` | 1.00 | Binary single-anchor ratio gate |
+| `RARE_KW_COMBO_THRESHOLD` | 0.50 | Combo bonus engagement (sum of mod+high IDFs) |
+| `RARE_KW_COMBO_BASE` | 0.05 | Bonus on crossing |
+| `RARE_KW_COMBO_RATE` | 0.05 | Per-unit increment |
+| `RARE_KW_COMBO_CAP` | 0.15 | Max bonus |
+| `THEMES_RECALL_COHESION_BAR_LOW` | 1.00 | Cohesion required for `idf < 0.30` |
+| `THEMES_RECALL_COHESION_BAR_MOD` | 0.67 | Cohesion required for `0.30 ≤ idf < 0.55` |
+| `THEMES_RECALL_COHESION_BAR_HIGH` | 0.50 | Cohesion required for `idf ≥ 0.55` |
+| `DEFAULT_QDRANT_LIMIT` | **2000** | Qdrant top-K (was 500) |
+
+Themes-recall thresholds are function defaults on
+`fetch_movie_ids_by_themes_recall` (`single_idf_threshold = 0.55`,
+`combo_sum_threshold = 0.50`); not module-level constants.
+
+### Expected outcomes (things to verify in the next re-run)
+
+**Wins to confirm**:
+- Lady Bird and The Favourite enter Barbie top 10 (director floor +
+  themes recall + themes weight bump combine).
+- I Am Not an Easy Man rises (themes weight + combo bonus).
+- Frances Ha surfaces if its shape clears 0.20 (Qdrant 2k recall).
+- Tenet for Inception preserves #1 spot but with bigger themes
+  contribution and unchanged director firing.
+- Star Wars / Pixar / MCU / Best Picture / Tarantino top 10s preserve
+  their cohesive clusters (no regression on V3 wins).
+
+**Regressions to watch**:
+- Floor over-firing from softer 0.20 shape gate.
+- Combo bonus producing weak-shape coincidence-match flooding.
+- Recall expansion pushing score >1.0 outliers further into noise
+  (Empire already at 1.672; expect more candidates with multipliers
+  stacking).
+- Per-anchor latency degradation beyond ~500ms.
+- Themes-recall pool exploding (>10k candidates) on tag-rich anchors —
+  first regression to confirm/deny since user opted to include
+  all-tier IDFs in the SUM gate.
+
 ## V3 Implementation Order
 
 Tracked in detail in [`similar_movies_v3_plan.md`](similar_movies_v3_plan.md) §5 with status flags. Summary:

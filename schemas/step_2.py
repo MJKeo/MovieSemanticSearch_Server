@@ -780,6 +780,60 @@ class QueryAnalysis(BaseModel):
     def _validate_relationship_roles(self) -> "QueryAnalysis":
         traits = self.traits
 
+        # Self-healing pre-pass: degrade noisy positioning commits to
+        # INDEPENDENT rather than rejecting the whole query. Two cases
+        # the LLM occasionally produces with no semantic content:
+        #   (a) POSITIONING_REFERENCE with empty axes_replaced_by_
+        #       siblings — there is no sibling axis to drop, so the
+        #       trait would behave identically to INDEPENDENT under
+        #       Step 3 anyway.
+        #   (b) POSITIONING_QUALIFIER with empty replaces_axis — the
+        #       trait has no axis to substitute, so it cannot do the
+        #       qualifier's job. Treating it as INDEPENDENT loses
+        #       nothing the qualifier role would have added.
+        # After the per-trait fix, recheck reciprocity: if all refs
+        # (or all quals) on one side just collapsed, the surviving
+        # orphans on the other side are also INDEPENDENT in effect.
+        # Strict axis-bookkeeping checks below still run — those
+        # detect non-coercible LLM errors (axis names that don't
+        # match between sibling commits) that would silently corrupt
+        # Step 3's drop logic if let through.
+        for t in traits:
+            role = t.relationship_role
+            if (
+                role is TraitRelationshipRole.POSITIONING_REFERENCE
+                and not t.axes_replaced_by_siblings
+            ):
+                t.relationship_role = TraitRelationshipRole.INDEPENDENT
+                t.replaces_axis = None
+            elif (
+                role is TraitRelationshipRole.POSITIONING_QUALIFIER
+                and not t.replaces_axis
+            ):
+                t.relationship_role = TraitRelationshipRole.INDEPENDENT
+                t.axes_replaced_by_siblings = []
+
+        has_ref = any(
+            t.relationship_role is TraitRelationshipRole.POSITIONING_REFERENCE
+            for t in traits
+        )
+        has_qual = any(
+            t.relationship_role is TraitRelationshipRole.POSITIONING_QUALIFIER
+            for t in traits
+        )
+        if has_ref and not has_qual:
+            for t in traits:
+                if t.relationship_role is TraitRelationshipRole.POSITIONING_REFERENCE:
+                    t.relationship_role = TraitRelationshipRole.INDEPENDENT
+                    t.replaces_axis = None
+                    t.axes_replaced_by_siblings = []
+        elif has_qual and not has_ref:
+            for t in traits:
+                if t.relationship_role is TraitRelationshipRole.POSITIONING_QUALIFIER:
+                    t.relationship_role = TraitRelationshipRole.INDEPENDENT
+                    t.replaces_axis = None
+                    t.axes_replaced_by_siblings = []
+
         # Per-trait field consistency. Each role has one valid
         # combination of (replaces_axis, axes_replaced_by_siblings).
         for i, t in enumerate(traits):

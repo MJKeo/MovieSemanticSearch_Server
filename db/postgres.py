@@ -2386,18 +2386,25 @@ async def fetch_movie_ids_by_themes_recall(
     *,
     single_idf_threshold: float = 0.55,
     combo_sum_threshold: float = 0.50,
+    combo_sum_min_idf: float = 0.30,
 ) -> set[int]:
-    """V3.1 themes-recall: movie IDs whose shared anchor traits qualify
-    by single-trait rarity OR combined-IDF sum.
+    """V3.2 themes-recall: movie IDs whose shared anchor traits qualify
+    by single-trait rarity OR combined moderate+high tier IDF sum.
 
     Two recall paths in one SQL aggregate:
       - Single-trait gate: at least one shared trait with idf >=
         single_idf_threshold. Catches the "Manhattan Project" case
         where one super-rare keyword uniquely identifies the candidate.
-      - Combo-sum gate: sum of all shared trait IDFs (across ALL tiers
-        per the V3.1 design call — not filtered to moderate+high)
-        >= combo_sum_threshold. Catches the "comedy + satire +
-        female-lead" case where multiple moderate tags coalesce.
+      - Combo-sum gate: sum of shared trait IDFs filtered to
+        idf >= combo_sum_min_idf (V3.2 default 0.30 — moderate+high
+        tier only) >= combo_sum_threshold. V3.1 used all-tier sum;
+        smoke run showed this let in low-tier-overlap noise (obscure
+        foreign films sharing common keywords with Barbie). The
+        moderate+high filter aligns the recall gate's tier semantics
+        with the rare_keyword combo bonus inside scoring. Catches the
+        "comedy + satire + female-lead" case where multiple moderate
+        tags coalesce, without admitting "common-tag accumulation"
+        candidates.
 
     Trait kinds resolved against `mv_trait_idf` use the constants
     defined at module top (TRAIT_KIND_OVERALL_KEYWORD = 1,
@@ -2453,14 +2460,19 @@ async def fetch_movie_ids_by_themes_recall(
         params.append(list(genre_ids))
 
     union_clause = " UNION ALL ".join(legs)
+    # V3.2: SUM is filtered to traits at moderate+high tier
+    # (idf >= combo_sum_min_idf, default 0.30) so common-tag
+    # accumulation can't drag low-quality candidates into the pool.
+    # MAX gate is untouched — a single rare trait still qualifies.
     query = f"""
         WITH shared AS ({union_clause})
         SELECT movie_id
         FROM shared
         GROUP BY movie_id
-        HAVING SUM(idf) >= %s OR MAX(idf) >= %s
+        HAVING SUM(idf) FILTER (WHERE idf >= %s) >= %s
+            OR MAX(idf) >= %s
     """
-    params.extend([combo_sum_threshold, single_idf_threshold])
+    params.extend([combo_sum_min_idf, combo_sum_threshold, single_idf_threshold])
     rows = await _execute_read(query, tuple(params))
     return {row[0] for row in rows}
 

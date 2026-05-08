@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -493,14 +494,62 @@ async def _run_branch(
     # ------------------------------------------------------------------
     call_score_maps: dict[_CallKey, dict[int, float] | None] = {}
     if pos_generators:
-        gen_results = await asyncio.gather(
+        # Phase 1.2 (rescore_overhaul.md D5): when two traits commit
+        # generator specs that serialize identically, the underlying DB
+        # query would otherwise execute twice. Group by
+        # (route, model_dump(mode="json")) — the full pydantic dump is
+        # the safest dedup key because anything that affects executor
+        # output is reachable from `model_dump`. Specs with `params is
+        # None` skip dedup (no key to compare on).
+        # Score-side semantics are unchanged: each (trait_idx, cat_idx,
+        # spec_idx) coordinate still gets its own score map entry,
+        # so per-trait combine + rarity logic reads identical inputs.
+        dedup_groups: dict[tuple[str, str], list[_TaggedSpec]] = {}
+        unkeyed: list[_TaggedSpec] = []
+        for tagged in pos_generators:
+            params = tagged.spec.params
+            if params is None:
+                unkeyed.append(tagged)
+                continue
+            key = (
+                tagged.spec.route.value,
+                json.dumps(
+                    params.model_dump(mode="json"),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ),
+            )
+            dedup_groups.setdefault(key, []).append(tagged)
+
+        # Run one representative per group + every unkeyed spec.
+        representatives: list[_TaggedSpec] = [
+            group[0] for group in dedup_groups.values()
+        ] + unkeyed
+        rep_results = await asyncio.gather(
             *(
                 _dispatch_call(t.spec, restrict=None)
-                for t in pos_generators
+                for t in representatives
             )
         )
-        for tagged, scores in zip(pos_generators, gen_results):
-            call_score_maps[tagged.key] = scores
+        rep_map: dict[_CallKey, dict[int, float] | None] = dict(
+            zip((t.key for t in representatives), rep_results)
+        )
+
+        for group in dedup_groups.values():
+            head_scores = rep_map[group[0].key]
+            for tagged in group:
+                call_score_maps[tagged.key] = head_scores
+        for tagged in unkeyed:
+            call_score_maps[tagged.key] = rep_map[tagged.key]
+
+        if logger.isEnabledFor(logging.INFO):
+            n_total = len(pos_generators)
+            n_unique = len(representatives)
+            if n_total != n_unique:
+                logger.info(
+                    "branch %s: generator dedup folded %d → %d specs",
+                    branch.kind, n_total, n_unique,
+                )
 
     union: set[int] = set()
     for tagged in pos_generators:
@@ -744,6 +793,16 @@ def _score_positive_trait(
             continue
         combine_type = cc.category.combine_type
         if combine_type is CategoryCombineType.NO_OP:
+            continue
+        # Phase 1.1 (rescore_overhaul.md D4): a category whose handler
+        # abstained — emitting zero specs — is semantically equivalent
+        # to NO_OP at scoring time. Skipping it here prevents the
+        # downstream `combine_calls(SINGLE, []) → 0.0` from entering
+        # the across-category fold and zeroing a FACETS-PRODUCT trait.
+        # Monotonic-safe under FRAMINGS-MAX (removing a 0.0 can only
+        # raise or hold the max) and FACETS-PRODUCT (removing a 0.0
+        # makes the product non-zero).
+        if not cc.generated_specs:
             continue
         live_pairs: list[tuple[GeneratedEndpointSpec, dict[int, float]]] = []
         for spec_idx, spec in enumerate(cc.generated_specs):
