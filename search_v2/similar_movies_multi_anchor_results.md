@@ -11,20 +11,20 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, watch_context=1.000, narrative_techniques=0.988, reception=0.755, anchor=0.621, plot_analysis=0.408
 
-Lane weights: director=1.000  shape=0.714  themes=0.172  format=0.057  specific_award=0.057
+Lane weights: shape=0.714  themes=0.172  format=0.057  specific_award=0.057
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
 | 1 | Mulholland Drive (2001) `1018` | 1.093 | 0.979 | shape | shape, format, themes, specific_award |
-| 2 | Following (1999) `11660` | 0.767 | 0.697 | director | shape, director, format, themes |
-| 3 | Shutter Island (2010) `11324` | 0.895 | 0.813 | shape | shape, format, themes |
+| 2 | Shutter Island (2010) `11324` | 0.895 | 0.813 | shape | shape, format, themes |
+| 3 | Following (1999) `11660` | 0.568 | 0.397 | shape | shape, director, format, themes |
 | 4 | Trance (2013) `68727` | 0.848 | 0.771 | shape | shape, format, themes |
-| 5 | Tenet (2020) `577922` | 0.675 | 0.613 | director | shape, director, format, themes, specific_award |
-| 6 | The I Inside (2004) `11588` | 0.732 | 0.697 | shape | shape, format, themes |
-| 7 | The Dark Knight (2008) `155` | 0.593 | 0.530 | director | shape, director, format, themes, specific_award |
-| 8 | I'm Thinking of Ending Things (2020) `500840` | 0.684 | 0.622 | shape | shape, format, themes, specific_award |
-| 9 | Buster's Mal Heart (2017) `367147` | 0.676 | 0.644 | shape | shape, format, themes |
-| 10 | Lost Highway (1997) `638` | 0.658 | 0.598 | shape | shape, format, themes |
+| 5 | The I Inside (2004) `11588` | 0.732 | 0.697 | shape | shape, format, themes |
+| 6 | Tenet (2020) `577922` | 0.345 | 0.313 | shape | shape, director, format, themes, specific_award |
+| 7 | I'm Thinking of Ending Things (2020) `500840` | 0.684 | 0.622 | shape | shape, format, themes, specific_award |
+| 8 | Buster's Mal Heart (2017) `367147` | 0.676 | 0.644 | shape | shape, format, themes |
+| 9 | Lost Highway (1997) `638` | 0.658 | 0.598 | shape | shape, format, themes |
+| 10 | Fight Club (1999) `550` | 0.655 | 0.595 | shape | shape, format, themes, specific_award |
 
 ### Per-result breakdown
 
@@ -33,49 +33,49 @@ Lane weights: director=1.000  shape=0.714  themes=0.172  format=0.057  specific_
 - Lanes: shape=1.000→0.714  themes=0.923→0.158  format=1.000→0.057  specific_award=0.859→0.049
 - Adjustments: ×1.05(country)  ×1.06(shape)
 
-**#2 Following (1999) `11660` — score 0.767**
-
-- Lanes: director=0.300→0.300  shape=0.324→0.232  themes=0.633→0.109  format=1.000→0.057
-- Adjustments: ×1.05(country)  ×1.05(shape)
-
-**#3 Shutter Island (2010) `11324` — score 0.895**
+**#2 Shutter Island (2010) `11324` — score 0.895**
 
 - Lanes: shape=0.918→0.655  themes=0.587→0.101  format=1.000→0.057
 - Adjustments: ×1.05(country)  ×1.05(shape)
+
+**#3 Following (1999) `11660` — score 0.568**
+
+- Lanes: shape=0.324→0.232  themes=0.633→0.109  format=1.000→0.057
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.05(shape)
 
 **#4 Trance (2013) `68727` — score 0.848**
 
 - Lanes: shape=0.854→0.610  themes=0.605→0.104  format=1.000→0.057
 - Adjustments: ×1.05(country)  ×1.05(shape)
 
-**#5 Tenet (2020) `577922` — score 0.675**
-
-- Lanes: director=0.300→0.300  shape=0.185→0.132  themes=0.580→0.100  format=1.000→0.057  specific_award=0.435→0.025
-- Adjustments: ×1.05(country)  ×1.05(shape)
-
-**#6 The I Inside (2004) `11588` — score 0.732**
+**#5 The I Inside (2004) `11588` — score 0.732**
 
 - Lanes: shape=0.655→0.468  themes=1.000→0.172  format=1.000→0.057
 - Adjustments: ×1.05(country)
 
-**#7 The Dark Knight (2008) `155` — score 0.593**
+**#6 Tenet (2020) `577922` — score 0.345**
 
-- Lanes: director=0.300→0.300  themes=0.527→0.090  format=1.000→0.057  specific_award=0.800→0.046  shape=0.052→0.037
-- Adjustments: ×1.05(country)  ×1.06(shape)
+- Lanes: shape=0.185→0.132  themes=0.580→0.100  format=1.000→0.057  specific_award=0.435→0.025
+- Adjustments: ×1.05(country)  ×1.05(shape)
 
-**#8 I'm Thinking of Ending Things (2020) `500840` — score 0.684**
+**#7 I'm Thinking of Ending Things (2020) `500840` — score 0.684**
 
 - Lanes: shape=0.650→0.464  themes=0.578→0.099  format=1.000→0.057  specific_award=0.024→0.001
 - Adjustments: ×1.05(country)  ×1.05(shape)
 
-**#9 Buster's Mal Heart (2017) `367147` — score 0.676**
+**#8 Buster's Mal Heart (2017) `367147` — score 0.676**
 
 - Lanes: shape=0.695→0.496  themes=0.526→0.090  format=1.000→0.057
 - Adjustments: ×1.05(country)
 
-**#10 Lost Highway (1997) `638` — score 0.658**
+**#9 Lost Highway (1997) `638` — score 0.658**
 
 - Lanes: shape=0.555→0.396  themes=0.841→0.144  format=1.000→0.057
+- Adjustments: ×1.05(country)  ×1.05(shape)
+
+**#10 Fight Club (1999) `550` — score 0.655**
+
+- Lanes: shape=0.628→0.448  themes=0.514→0.088  format=1.000→0.057  specific_award=0.024→0.001
 - Adjustments: ×1.05(country)  ×1.05(shape)
 
 ## Pixar trio
@@ -89,7 +89,7 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, watch_context=1.000, production=1.000, narrative_techniques=0.899, reception=0.781, anchor=0.593
 
-Lane weights: director=1.000  shape=0.678  themes=0.149  studio=0.120  quality=0.074  format=0.050  specific_award=0.050
+Lane weights: shape=0.678  themes=0.149  studio=0.120  quality=0.074  format=0.050  specific_award=0.050
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -167,72 +167,72 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, production=1.000, watch_context=0.945, narrative_techniques=0.888, reception=0.794, anchor=0.677
 
-Lane weights: director=1.000  shape=0.776  themes=0.168  studio=0.120  format=0.056
+Lane weights: shape=0.776  themes=0.168  studio=0.120  format=0.056
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Ponyo (2008) `12429` | 1.622 | 1.300 | shape | shape, director, format, themes, studio |
-| 2 | Howl's Moving Castle (2004) `4935` | 1.468 | 1.177 | shape | shape, director, format, themes, studio |
-| 3 | Castle in the Sky (1986) `10515` | 1.161 | 1.006 | shape | shape, director, format, themes, studio |
+| 1 | Ponyo (2008) `12429` | 1.622 | 1.000 | shape | shape, director, format, themes, studio |
+| 2 | Howl's Moving Castle (2004) `4935` | 1.422 | 0.877 | shape | shape, director, format, themes, studio |
+| 3 | Castle in the Sky (1986) `10515` | 1.059 | 0.706 | shape | shape, director, format, themes, studio |
 | 4 | The Tale of The Princess Kaguya (2013) `149871` | 1.031 | 0.827 | shape | shape, format, themes, studio |
-| 5 | The Boy and the Heron (2023) `508883` | 0.959 | 0.846 | shape | shape, director, format, themes, studio |
-| 6 | Nausicaä of the Valley of the Wind (1984) `81` | 0.916 | 0.807 | shape | shape, director, format, themes |
-| 7 | Porco Rosso (1992) `11621` | 0.898 | 0.792 | shape | shape, director, format, themes, studio |
-| 8 | The Secret World of Arrietty (2010) `51739` | 0.819 | 0.709 | shape | shape, format, themes, studio |
-| 9 | The Wind Rises (2013) `149870` | 0.799 | 0.705 | shape | shape, director, format, themes, studio |
-| 10 | Pokémon 3: The Movie (2000) `10991` | 0.692 | 0.659 | shape | shape, format, themes |
+| 5 | The Secret World of Arrietty (2010) `51739` | 0.819 | 0.709 | shape | shape, format, themes, studio |
+| 6 | The Boy and the Heron (2023) `508883` | 0.804 | 0.546 | shape | shape, director, format, themes, studio |
+| 7 | Nausicaä of the Valley of the Wind (1984) `81` | 0.748 | 0.507 | shape | shape, director, format, themes |
+| 8 | Porco Rosso (1992) `11621` | 0.726 | 0.492 | shape | shape, director, format, themes, studio |
+| 9 | Pokémon 3: The Movie (2000) `10991` | 0.692 | 0.659 | shape | shape, format, themes |
+| 10 | When Marnie Was There (2014) `242828` | 0.692 | 0.599 | shape | shape, format, themes, studio |
 
 ### Per-result breakdown
 
 **#1 Ponyo (2008) `12429` — score 1.622**
 
-- Lanes: shape=1.000→0.776  director=0.300→0.300  themes=1.000→0.168  studio=1.000→0.120  format=1.000→0.056
-- Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
+- Lanes: shape=1.000→0.776  themes=1.000→0.168  studio=1.000→0.120  format=1.000→0.056
+- Adjustments: ×1.10(studio)  ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
-**#2 Howl's Moving Castle (2004) `4935` — score 1.468**
+**#2 Howl's Moving Castle (2004) `4935` — score 1.422**
 
-- Lanes: shape=0.900→0.699  director=0.300→0.300  themes=0.727→0.122  studio=1.000→0.120  format=1.000→0.056
-- Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.900→0.699  themes=0.727→0.122  studio=1.000→0.120  format=1.000→0.056
+- Adjustments: ×1.10(studio)  ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
-**#3 Castle in the Sky (1986) `10515` — score 1.161**
+**#3 Castle in the Sky (1986) `10515` — score 1.059**
 
-- Lanes: shape=0.678→0.526  director=0.300→0.300  themes=0.735→0.123  studio=1.000→0.120  format=1.000→0.056
-- Adjustments: ×1.10(studio)  ×1.05(country)
+- Lanes: shape=0.678→0.526  themes=0.735→0.123  studio=1.000→0.120  format=1.000→0.056
+- Adjustments: ×1.10(studio)  ×1.30(director)  ×1.05(country)
 
 **#4 The Tale of The Princess Kaguya (2013) `149871` — score 1.031**
 
 - Lanes: shape=0.864→0.671  studio=1.000→0.120  themes=0.596→0.100  format=1.000→0.056
 - Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
 
-**#5 The Boy and the Heron (2023) `508883` — score 0.959**
-
-- Lanes: shape=0.563→0.437  director=0.300→0.300  studio=1.000→0.120  format=1.000→0.056  themes=0.316→0.053
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#6 Nausicaä of the Valley of the Wind (1984) `81` — score 0.916**
-
-- Lanes: shape=0.534→0.415  director=0.300→0.300  format=1.000→0.056  themes=0.220→0.037
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#7 Porco Rosso (1992) `11621` — score 0.898**
-
-- Lanes: shape=0.479→0.372  director=0.300→0.300  studio=1.000→0.120  themes=0.385→0.065  format=1.000→0.056
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#8 The Secret World of Arrietty (2010) `51739` — score 0.819**
+**#5 The Secret World of Arrietty (2010) `51739` — score 0.819**
 
 - Lanes: shape=0.734→0.570  studio=1.000→0.120  themes=0.499→0.084  format=1.000→0.056
 - Adjustments: ×1.10(studio)  ×1.05(country)
 
-**#9 The Wind Rises (2013) `149870` — score 0.799**
+**#6 The Boy and the Heron (2023) `508883` — score 0.804**
 
-- Lanes: shape=0.411→0.319  director=0.300→0.300  studio=1.000→0.120  format=1.000→0.056  themes=0.175→0.029
-- Adjustments: ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.563→0.437  studio=1.000→0.120  format=1.000→0.056  themes=0.316→0.053
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
-**#10 Pokémon 3: The Movie (2000) `10991` — score 0.692**
+**#7 Nausicaä of the Valley of the Wind (1984) `81` — score 0.748**
+
+- Lanes: shape=0.534→0.415  format=1.000→0.056  themes=0.220→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#8 Porco Rosso (1992) `11621` — score 0.726**
+
+- Lanes: shape=0.479→0.372  studio=1.000→0.120  themes=0.385→0.065  format=1.000→0.056
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#9 Pokémon 3: The Movie (2000) `10991` — score 0.692**
 
 - Lanes: shape=0.658→0.511  themes=0.547→0.092  format=1.000→0.056
 - Adjustments: ×1.05(country)
+
+**#10 When Marnie Was There (2014) `242828` — score 0.692**
+
+- Lanes: shape=0.643→0.499  studio=1.000→0.120  format=1.000→0.056  themes=0.262→0.044
+- Adjustments: ×1.10(studio)  ×1.05(country)
 
 ## MCU trio
 
@@ -245,7 +245,7 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, watch_context=0.911, reception=0.898, narrative_techniques=0.782, anchor=0.701, plot_analysis=0.583
 
-Lane weights: director=1.000  shape=0.538  franchise=0.128  themes=0.128  studio=0.120  cast=0.080  source=0.043  format=0.043  specific_award=0.043
+Lane weights: shape=0.538  franchise=0.128  themes=0.128  studio=0.120  cast=0.080  source=0.043  format=0.043  specific_award=0.043
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -323,7 +323,7 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, narrative_techniques=0.747, reception=0.540, watch_context=0.486, plot_analysis=0.381, anchor=0.329
 
-Lane weights: director=1.000  shape=0.669  themes=0.180  source=0.060  format=0.060  specific_award=0.030
+Lane weights: shape=0.669  themes=0.180  source=0.060  format=0.060  specific_award=0.030
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -401,7 +401,7 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, watch_context=0.846, narrative_techniques=0.737, reception=0.587, anchor=0.359, plot_events=0.100
 
-Lane weights: director=1.000  shape=0.590  themes=0.164  quality=0.082  source=0.055  format=0.055  specific_award=0.055
+Lane weights: shape=0.590  themes=0.164  quality=0.082  source=0.055  format=0.055  specific_award=0.055
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -479,72 +479,72 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, reception=0.716, watch_context=0.713, narrative_techniques=0.604, anchor=0.486, plot_analysis=0.349
 
-Lane weights: director=1.000  shape=0.706  themes=0.182  studio=0.101  format=0.061  specific_award=0.051
+Lane weights: shape=0.706  themes=0.182  studio=0.101  format=0.061  specific_award=0.051
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Kill Bill: Vol. 2 (2004) `393` | 1.408 | 1.200 | shape | shape, director, format, themes, specific_award, studio |
-| 2 | Django Unchained (2012) `68718` | 1.230 | 1.118 | shape | shape, director, format, themes, specific_award |
-| 3 | Inglourious Basterds (2009) `16869` | 1.170 | 1.063 | shape | shape, director, format, themes, specific_award |
-| 4 | Reservoir Dogs (1992) `500` | 1.009 | 0.917 | shape | shape, director, format, themes, specific_award |
-| 5 | Kill Bill: The Whole Bloody Affair (2011) `414419` | 0.901 | 0.819 | director | shape, director, format, themes |
-| 6 | Sin City (2005) `187` | 0.877 | 0.785 | director | shape, director, format, themes, specific_award |
-| 7 | Death Proof (2007) `1991` | 0.775 | 0.694 | director | shape, director, format, themes |
-| 8 | Man on Fire (2004) `9509` | 0.743 | 0.665 | shape | shape, format, themes, specific_award |
-| 9 | True Romance (1993) `319` | 0.699 | 0.586 | shape | shape, format, themes, studio |
-| 10 | Jackie Brown (1997) `184` | 0.689 | 0.626 | director | shape, director, format, themes, specific_award, studio |
+| 1 | Kill Bill: Vol. 2 (2004) `393` | 1.373 | 0.900 | shape | shape, director, format, themes, specific_award, studio |
+| 2 | Django Unchained (2012) `68718` | 1.170 | 0.818 | shape | shape, director, format, themes, specific_award |
+| 3 | Inglourious Basterds (2009) `16869` | 1.092 | 0.763 | shape | shape, director, format, themes, specific_award |
+| 4 | Reservoir Dogs (1992) `500` | 0.883 | 0.617 | shape | shape, director, format, themes, specific_award |
+| 5 | Man on Fire (2004) `9509` | 0.743 | 0.665 | shape | shape, format, themes, specific_award |
+| 6 | Kill Bill: The Whole Bloody Affair (2011) `414419` | 0.742 | 0.519 | shape | shape, director, format, themes |
+| 7 | Sin City (2005) `187` | 0.705 | 0.485 | shape | shape, director, format, themes, specific_award |
+| 8 | True Romance (1993) `319` | 0.699 | 0.586 | shape | shape, format, themes, studio |
+| 9 | Sin City: A Dame to Kill For (2014) `189` | 0.590 | 0.528 | shape | shape, format, themes, studio |
+| 10 | The Way of the Gun (2000) `1619` | 0.575 | 0.548 | shape | shape, format, themes |
 
 ### Per-result breakdown
 
-**#1 Kill Bill: Vol. 2 (2004) `393` — score 1.408**
+**#1 Kill Bill: Vol. 2 (2004) `393` — score 1.373**
 
-- Lanes: shape=1.000→0.706  director=0.300→0.300  themes=0.663→0.121  studio=0.667→0.068  format=1.000→0.061  specific_award=0.242→0.012
-- Adjustments: ×1.07(studio)  ×1.05(country)  ×1.05(shape)
+- Lanes: shape=1.000→0.706  themes=0.663→0.121  studio=0.667→0.068  format=1.000→0.061  specific_award=0.242→0.012
+- Adjustments: ×1.07(studio)  ×1.30(director)  ×1.05(country)  ×1.05(shape)
 
-**#2 Django Unchained (2012) `68718` — score 1.230**
+**#2 Django Unchained (2012) `68718` — score 1.170**
 
-- Lanes: shape=0.926→0.654  director=0.300→0.300  themes=0.362→0.066  format=1.000→0.061  specific_award=0.725→0.037
-- Adjustments: ×1.05(country)  ×1.05(shape)
+- Lanes: shape=0.926→0.654  themes=0.362→0.066  format=1.000→0.061  specific_award=0.725→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.05(shape)
 
-**#3 Inglourious Basterds (2009) `16869` — score 1.170**
+**#3 Inglourious Basterds (2009) `16869` — score 1.092**
 
-- Lanes: shape=0.832→0.588  director=0.300→0.300  themes=0.427→0.078  format=1.000→0.061  specific_award=0.725→0.037
-- Adjustments: ×1.05(country)  ×1.05(shape)
+- Lanes: shape=0.832→0.588  themes=0.427→0.078  format=1.000→0.061  specific_award=0.725→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.05(shape)
 
-**#4 Reservoir Dogs (1992) `500` — score 1.009**
+**#4 Reservoir Dogs (1992) `500` — score 0.883**
 
-- Lanes: shape=0.565→0.399  director=0.300→0.300  themes=0.845→0.154  format=1.000→0.061  specific_award=0.077→0.004
-- Adjustments: ×1.05(country)  ×1.05(shape)
+- Lanes: shape=0.565→0.399  themes=0.845→0.154  format=1.000→0.061  specific_award=0.077→0.004
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.05(shape)
 
-**#5 Kill Bill: The Whole Bloody Affair (2011) `414419` — score 0.901**
-
-- Lanes: director=0.300→0.300  shape=0.422→0.298  themes=0.879→0.160  format=1.000→0.061
-- Adjustments: ×1.05(country)  ×1.05(shape)
-
-**#6 Sin City (2005) `187` — score 0.877**
-
-- Lanes: director=0.300→0.300  shape=0.412→0.291  themes=0.728→0.132  format=1.000→0.061  specific_award=0.022→0.001
-- Adjustments: ×1.05(country)  ×1.06(shape)
-
-**#7 Death Proof (2007) `1991` — score 0.775**
-
-- Lanes: director=0.300→0.300  shape=0.320→0.226  themes=0.589→0.107  format=1.000→0.061
-- Adjustments: ×1.05(country)  ×1.06(shape)
-
-**#8 Man on Fire (2004) `9509` — score 0.743**
+**#5 Man on Fire (2004) `9509` — score 0.743**
 
 - Lanes: shape=0.665→0.470  themes=0.732→0.133  format=1.000→0.061  specific_award=0.022→0.001
 - Adjustments: ×1.05(country)  ×1.06(shape)
 
-**#9 True Romance (1993) `319` — score 0.699**
+**#6 Kill Bill: The Whole Bloody Affair (2011) `414419` — score 0.742**
+
+- Lanes: shape=0.422→0.298  themes=0.879→0.160  format=1.000→0.061
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.05(shape)
+
+**#7 Sin City (2005) `187` — score 0.705**
+
+- Lanes: shape=0.412→0.291  themes=0.728→0.132  format=1.000→0.061  specific_award=0.022→0.001
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.06(shape)
+
+**#8 True Romance (1993) `319` — score 0.699**
 
 - Lanes: shape=0.616→0.435  themes=0.500→0.091  studio=0.667→0.068  format=1.000→0.061
 - Adjustments: ×1.07(studio)  ×1.05(country)  ×1.06(shape)
 
-**#10 Jackie Brown (1997) `184` — score 0.689**
+**#9 Sin City: A Dame to Kill For (2014) `189` — score 0.590**
 
-- Lanes: director=0.300→0.300  themes=0.849→0.154  shape=0.140→0.099  studio=0.667→0.068  format=1.000→0.061  specific_award=0.242→0.012
-- Adjustments: ×1.05(country)  ×1.05(shape)
+- Lanes: shape=0.457→0.323  themes=0.797→0.145  studio=0.667→0.068  format=1.000→0.061
+- Adjustments: ×1.05(country)  ×1.06(shape)
+
+**#10 The Way of the Gun (2000) `1619` — score 0.575**
+
+- Lanes: shape=0.544→0.385  themes=0.565→0.103  format=1.000→0.061
+- Adjustments: ×1.05(country)
 
 ## Spielberg adventure trio
 
@@ -557,57 +557,57 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, narrative_techniques=0.611, watch_context=0.560, reception=0.429, anchor=0.231, plot_events=0.100
 
-Lane weights: director=1.000  shape=0.660  themes=0.204  studio=0.101  format=0.068  specific_award=0.068
+Lane weights: shape=0.660  themes=0.204  studio=0.101  format=0.068  specific_award=0.068
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Raiders of the Lost Ark (1981) `85` | 1.177 | 1.051 | shape | shape, director, format, themes, specific_award, studio |
+| 1 | Raiders of the Lost Ark (1981) `85` | 1.175 | 0.985 | shape | shape, director, format, themes, specific_award, studio |
 | 2 | Star Wars (1977) `11` | 0.745 | 0.710 | shape | shape, format, themes, specific_award, studio |
-| 3 | Indiana Jones and the Kingdom of the Crystal Skull (2008) `217` | 0.742 | 0.677 | shape | shape, director, format, themes, specific_award, studio |
-| 4 | Indiana Jones and the Temple of Doom (1984) `87` | 0.685 | 0.625 | shape | shape, director, format, themes, specific_award, studio |
-| 5 | Star Wars: Episode I - The Phantom Menace (1999) `1893` | 0.660 | 0.628 | shape | shape, format, themes, specific_award, studio |
-| 6 | The Lost World: Jurassic Park (1997) `330` | 0.632 | 0.576 | shape | shape, director, format, themes, specific_award |
-| 7 | Star Wars: The Force Awakens (2015) `140607` | 0.624 | 0.595 | shape | shape, format, themes, specific_award, studio |
+| 3 | Indiana Jones and the Kingdom of the Crystal Skull (2008) `217` | 0.713 | 0.610 | shape | shape, director, format, themes, specific_award, studio |
+| 4 | Star Wars: Episode I - The Phantom Menace (1999) `1893` | 0.660 | 0.628 | shape | shape, format, themes, specific_award, studio |
+| 5 | Indiana Jones and the Temple of Doom (1984) `87` | 0.652 | 0.558 | shape | shape, director, format, themes, specific_award, studio |
+| 6 | Star Wars: The Force Awakens (2015) `140607` | 0.624 | 0.595 | shape | shape, format, themes, specific_award, studio |
+| 7 | The Lost World: Jurassic Park (1997) `330` | 0.595 | 0.509 | shape | shape, director, format, themes, specific_award |
 | 8 | Pirates of the Caribbean: The Curse of the Black Pearl (2003) `22` | 0.595 | 0.543 | shape | shape, format, themes, specific_award |
 | 9 | The Lord of the Rings: The Fellowship of the Ring (2001) `120` | 0.587 | 0.559 | shape | shape, format, themes, specific_award |
 | 10 | The Mummy Returns (2001) `1734` | 0.581 | 0.530 | shape | shape, format, themes |
 
 ### Per-result breakdown
 
-**#1 Raiders of the Lost Ark (1981) `85` — score 1.177**
+**#1 Raiders of the Lost Ark (1981) `85` — score 1.175**
 
-- Lanes: shape=1.000→0.660  themes=1.000→0.204  format=1.000→0.068  studio=0.667→0.068  director=0.067→0.067  specific_award=0.773→0.053
-- Adjustments: ×1.07(studio)  ×1.05(country)
+- Lanes: shape=1.000→0.660  themes=1.000→0.204  format=1.000→0.068  studio=0.667→0.068  specific_award=0.773→0.053
+- Adjustments: ×1.07(studio)  ×1.07(director)  ×1.05(country)
 
 **#2 Star Wars (1977) `11` — score 0.745**
 
 - Lanes: shape=0.584→0.385  themes=1.000→0.204  format=1.000→0.068  studio=0.667→0.068  specific_award=0.773→0.053
 - Adjustments: ×1.05(country)
 
-**#3 Indiana Jones and the Kingdom of the Crystal Skull (2008) `217` — score 0.742**
+**#3 Indiana Jones and the Kingdom of the Crystal Skull (2008) `217` — score 0.713**
 
-- Lanes: shape=0.468→0.309  themes=1.000→0.204  format=1.000→0.068  studio=0.667→0.068  director=0.067→0.067  specific_award=0.432→0.029
-- Adjustments: ×1.05(country)  ×1.04(shape)
+- Lanes: shape=0.468→0.309  themes=1.000→0.204  format=1.000→0.068  studio=0.667→0.068  specific_award=0.432→0.029
+- Adjustments: ×1.07(director)  ×1.05(country)  ×1.04(shape)
 
-**#4 Indiana Jones and the Temple of Doom (1984) `87` — score 0.685**
-
-- Lanes: shape=0.391→0.258  themes=0.895→0.182  format=1.000→0.068  studio=0.667→0.068  director=0.067→0.067  specific_award=0.727→0.049
-- Adjustments: ×1.05(country)  ×1.04(shape)
-
-**#5 Star Wars: Episode I - The Phantom Menace (1999) `1893` — score 0.660**
+**#4 Star Wars: Episode I - The Phantom Menace (1999) `1893` — score 0.660**
 
 - Lanes: shape=0.441→0.291  themes=1.000→0.204  format=1.000→0.068  studio=0.667→0.068  specific_award=0.955→0.065
 - Adjustments: ×1.05(country)
 
-**#6 The Lost World: Jurassic Park (1997) `330` — score 0.632**
+**#5 Indiana Jones and the Temple of Doom (1984) `87` — score 0.652**
 
-- Lanes: shape=0.476→0.314  themes=0.495→0.101  format=1.000→0.068  director=0.067→0.067  specific_award=0.386→0.026
-- Adjustments: ×1.05(country)  ×1.04(shape)
+- Lanes: shape=0.391→0.258  themes=0.895→0.182  format=1.000→0.068  studio=0.667→0.068  specific_award=0.727→0.049
+- Adjustments: ×1.07(director)  ×1.05(country)  ×1.04(shape)
 
-**#7 Star Wars: The Force Awakens (2015) `140607` — score 0.624**
+**#6 Star Wars: The Force Awakens (2015) `140607` — score 0.624**
 
 - Lanes: shape=0.391→0.258  themes=1.000→0.204  format=1.000→0.068  studio=0.667→0.068  specific_award=0.955→0.065
 - Adjustments: ×1.05(country)
+
+**#7 The Lost World: Jurassic Park (1997) `330` — score 0.595**
+
+- Lanes: shape=0.476→0.314  themes=0.495→0.101  format=1.000→0.068  specific_award=0.386→0.026
+- Adjustments: ×1.07(director)  ×1.05(country)  ×1.04(shape)
 
 **#8 Pirates of the Caribbean: The Curse of the Black Pearl (2003) `22` — score 0.595**
 
@@ -635,7 +635,7 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, narrative_techniques=0.793, reception=0.482, watch_context=0.361, anchor=0.327, plot_analysis=0.265
 
-Lane weights: director=1.000  shape=0.590  themes=0.173  quality=0.073  format=0.058  specific_award=0.058  source=0.049
+Lane weights: shape=0.590  themes=0.173  quality=0.073  format=0.058  specific_award=0.058  source=0.049
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -648,7 +648,7 @@ Lane weights: director=1.000  shape=0.590  themes=0.173  quality=0.073  format=0
 | 7 | The Patriot (2000) `2024` | 0.557 | 0.507 | shape | shape, format, themes, specific_award |
 | 8 | The Promise (2016) `354859` | 0.552 | 0.502 | shape | shape, format, themes |
 | 9 | 12 Years a Slave (2013) `76203` | 0.550 | 0.493 | themes | shape, source, quality, format, themes, specific_award |
-| 10 | Empire of the Sun (1987) `10110` | 0.538 | 0.481 | shape | shape, director, source, format, themes, specific_award |
+| 10 | Lone Survivor (2013) `193756` | 0.533 | 0.477 | shape | shape, source, format, themes, specific_award |
 
 ### Per-result breakdown
 
@@ -697,9 +697,9 @@ Lane weights: director=1.000  shape=0.590  themes=0.173  quality=0.073  format=0
 - Lanes: themes=1.000→0.173  shape=0.271→0.160  format=1.000→0.058  quality=0.667→0.049  specific_award=0.794→0.046  source=0.150→0.007
 - Adjustments: ×1.05(country)  ×1.06(shape)
 
-**#10 Empire of the Sun (1987) `10110` — score 0.538**
+**#10 Lone Survivor (2013) `193756` — score 0.533**
 
-- Lanes: shape=0.285→0.168  themes=0.877→0.152  director=0.067→0.067  format=1.000→0.058  specific_award=0.535→0.031  source=0.132→0.006
+- Lanes: shape=0.652→0.385  format=1.000→0.058  specific_award=0.241→0.014  themes=0.080→0.014  source=0.150→0.007
 - Adjustments: ×1.05(country)  ×1.06(shape)
 
 ## Slasher trio
@@ -713,20 +713,20 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, narrative_techniques=0.466, watch_context=0.304, reception=0.138, anchor=0.100, plot_events=0.100
 
-Lane weights: director=1.000  shape=0.693  themes=0.206  studio=0.101  format=0.081  specific_award=0.021
+Lane weights: shape=0.693  themes=0.206  studio=0.101  format=0.081  specific_award=0.021
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
 | 1 | Scream (1996) `4232` | 1.015 | 0.909 | shape | shape, format, themes |
 | 2 | Scream 4 (2011) `41446` | 0.875 | 0.783 | shape | shape, format, themes |
-| 3 | In the Mouth of Madness (1995) `2654` | 0.599 | 0.570 | director | shape, director, format, themes |
-| 4 | Cahoots (2001) `286724` | 0.835 | 0.795 | shape | shape, format, themes |
-| 5 | Scream (2022) `646385` | 0.803 | 0.719 | shape | shape, format, themes |
-| 6 | Halloween (1978) `948` | 0.560 | 0.509 | director | shape, director, format, themes |
-| 7 | The Cabin in the Woods (2012) `22970` | 0.782 | 0.710 | shape | shape, format, themes |
-| 8 | Body Bags (1993) `31578` | 0.547 | 0.521 | director | shape, director, format, themes |
-| 9 | My Bloody Valentine (1981) `39874` | 0.754 | 0.718 | shape | shape, format, themes |
-| 10 | Scream VI (2023) `934433` | 0.737 | 0.659 | shape | shape, format, themes |
+| 3 | Cahoots (2001) `286724` | 0.835 | 0.795 | shape | shape, format, themes |
+| 4 | Scream (2022) `646385` | 0.803 | 0.719 | shape | shape, format, themes |
+| 5 | In the Mouth of Madness (1995) `2654` | 0.354 | 0.337 | themes | shape, director, format, themes |
+| 6 | The Cabin in the Woods (2012) `22970` | 0.782 | 0.710 | shape | shape, format, themes |
+| 7 | Halloween (1978) `948` | 0.303 | 0.275 | shape | shape, director, format, themes |
+| 8 | My Bloody Valentine (1981) `39874` | 0.754 | 0.718 | shape | shape, format, themes |
+| 9 | Scream VI (2023) `934433` | 0.737 | 0.659 | shape | shape, format, themes |
+| 10 | Body Bags (1993) `31578` | 0.302 | 0.288 | shape | shape, director, format, themes |
 
 ### Per-result breakdown
 
@@ -740,45 +740,45 @@ Lane weights: director=1.000  shape=0.693  themes=0.206  studio=0.101  format=0.
 - Lanes: shape=0.732→0.507  themes=0.946→0.194  format=1.000→0.081
 - Adjustments: ×1.05(country)  ×1.06(shape)
 
-**#3 In the Mouth of Madness (1995) `2654` — score 0.599**
-
-- Lanes: director=0.233→0.233  themes=0.889→0.183  format=1.000→0.081  shape=0.105→0.073
-- Adjustments: ×1.05(country)
-
-**#4 Cahoots (2001) `286724` — score 0.835**
+**#3 Cahoots (2001) `286724` — score 0.835**
 
 - Lanes: shape=1.000→0.693  format=1.000→0.081  themes=0.102→0.021
 - Adjustments: ×1.05(country)
 
-**#5 Scream (2022) `646385` — score 0.803**
+**#4 Scream (2022) `646385` — score 0.803**
 
 - Lanes: shape=0.626→0.434  themes=0.994→0.204  format=1.000→0.081
 - Adjustments: ×1.05(country)  ×1.06(shape)
 
-**#6 Halloween (1978) `948` — score 0.560**
+**#5 In the Mouth of Madness (1995) `2654` — score 0.354**
 
-- Lanes: director=0.233→0.233  shape=0.180→0.125  format=1.000→0.081  themes=0.336→0.069
-- Adjustments: ×1.05(country)  ×1.05(shape)
+- Lanes: themes=0.889→0.183  format=1.000→0.081  shape=0.105→0.073
+- Adjustments: ×1.05(country)
 
-**#7 The Cabin in the Woods (2012) `22970` — score 0.782**
+**#6 The Cabin in the Woods (2012) `22970` — score 0.782**
 
 - Lanes: shape=0.652→0.451  themes=0.866→0.178  format=1.000→0.081
 - Adjustments: ×1.05(country)  ×1.05(shape)
 
-**#8 Body Bags (1993) `31578` — score 0.547**
+**#7 Halloween (1978) `948` — score 0.303**
 
-- Lanes: director=0.233→0.233  shape=0.151→0.104  themes=0.498→0.102  format=1.000→0.081
-- Adjustments: ×1.05(country)
+- Lanes: shape=0.180→0.125  format=1.000→0.081  themes=0.336→0.069
+- Adjustments: ×1.05(country)  ×1.05(shape)
 
-**#9 My Bloody Valentine (1981) `39874` — score 0.754**
+**#8 My Bloody Valentine (1981) `39874` — score 0.754**
 
 - Lanes: shape=0.642→0.445  themes=0.937→0.193  format=1.000→0.081
 - Adjustments: ×1.05(country)
 
-**#10 Scream VI (2023) `934433` — score 0.737**
+**#9 Scream VI (2023) `934433` — score 0.737**
 
 - Lanes: shape=0.554→0.384  themes=0.946→0.194  format=1.000→0.081
 - Adjustments: ×1.05(country)  ×1.06(shape)
+
+**#10 Body Bags (1993) `31578` — score 0.302**
+
+- Lanes: shape=0.151→0.104  themes=0.498→0.102  format=1.000→0.081
+- Adjustments: ×1.05(country)
 
 ## Romcom trio
 
@@ -791,7 +791,7 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, watch_context=0.925, narrative_techniques=0.771, reception=0.710, anchor=0.388, plot_analysis=0.376
 
-Lane weights: director=1.000  shape=0.709  themes=0.180  format=0.060  specific_award=0.051
+Lane weights: shape=0.709  themes=0.180  format=0.060  specific_award=0.051
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -869,72 +869,72 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, watch_context=0.876, production=0.824, narrative_techniques=0.700, reception=0.665, anchor=0.467
 
-Lane weights: director=1.000  shape=0.689  themes=0.169  studio=0.101  quality=0.071  format=0.056  specific_award=0.014
+Lane weights: shape=0.689  themes=0.169  studio=0.101  quality=0.071  format=0.056  specific_award=0.014
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Ponyo (2008) `12429` | 1.461 | 1.171 | shape | shape, director, format, themes, studio |
-| 2 | Howl's Moving Castle (2004) `4935` | 1.109 | 0.917 | shape | shape, director, format, themes, specific_award, studio |
-| 3 | Castle in the Sky (1986) `10515` | 0.833 | 0.793 | shape | shape, director, format, themes, studio |
-| 4 | Princess Mononoke (1997) `128` | 0.786 | 0.693 | shape | shape, director, format, themes, studio |
-| 5 | Porco Rosso (1992) `11621` | 0.776 | 0.684 | shape | shape, director, format, themes, studio |
-| 6 | The Boy and the Heron (2023) `508883` | 0.745 | 0.657 | director | shape, director, format, themes, specific_award, studio |
-| 7 | The Secret World of Arrietty (2010) `51739` | 0.683 | 0.610 | shape | shape, format, themes, studio |
-| 8 | The Wind Rises (2013) `149870` | 0.641 | 0.565 | director | shape, director, format, themes, specific_award, studio |
-| 9 | The Tale of The Princess Kaguya (2013) `149871` | 0.641 | 0.565 | shape | shape, quality, format, themes, specific_award, studio |
-| 10 | Welcome to the Space Show (2010) `61591` | 0.638 | 0.608 | shape | shape, format, themes |
+| 1 | Ponyo (2008) `12429` | 1.429 | 0.904 | shape | shape, director, format, themes, studio |
+| 2 | Howl's Moving Castle (2004) `4935` | 0.996 | 0.650 | shape | shape, director, format, themes, specific_award, studio |
+| 3 | Castle in the Sky (1986) `10515` | 0.700 | 0.526 | shape | shape, director, format, themes, studio |
+| 4 | The Secret World of Arrietty (2010) `51739` | 0.683 | 0.610 | shape | shape, format, themes, studio |
+| 5 | The Tale of The Princess Kaguya (2013) `149871` | 0.641 | 0.565 | shape | shape, quality, format, themes, specific_award, studio |
+| 6 | Welcome to the Space Show (2010) `61591` | 0.638 | 0.608 | shape | shape, format, themes |
+| 7 | Little Nemo: Adventures in Slumberland (1989) `22611` | 0.622 | 0.592 | shape | shape, format, themes |
+| 8 | Princess Mononoke (1997) `128` | 0.613 | 0.426 | shape | shape, director, format, themes, studio |
+| 9 | Porco Rosso (1992) `11621` | 0.600 | 0.417 | shape | shape, director, format, themes, studio |
+| 10 | The Boy and the Heron (2023) `508883` | 0.560 | 0.390 | shape | shape, director, format, themes, specific_award, studio |
 
 ### Per-result breakdown
 
-**#1 Ponyo (2008) `12429` — score 1.461**
+**#1 Ponyo (2008) `12429` — score 1.429**
 
-- Lanes: shape=1.000→0.689  director=0.267→0.267  themes=0.940→0.159  studio=1.000→0.101  format=1.000→0.056
-- Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
+- Lanes: shape=1.000→0.689  themes=0.940→0.159  studio=1.000→0.101  format=1.000→0.056
+- Adjustments: ×1.10(studio)  ×1.27(director)  ×1.05(country)  ×1.08(shape)
 
-**#2 Howl's Moving Castle (2004) `4935` — score 1.109**
+**#2 Howl's Moving Castle (2004) `4935` — score 0.996**
 
-- Lanes: shape=0.641→0.442  director=0.267→0.267  themes=0.815→0.138  studio=0.667→0.068  format=1.000→0.056  specific_award=1.000→0.014
-- Adjustments: ×1.07(studio)  ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.641→0.442  themes=0.815→0.138  studio=0.667→0.068  format=1.000→0.056  specific_award=1.000→0.014
+- Adjustments: ×1.07(studio)  ×1.27(director)  ×1.05(country)  ×1.08(shape)
 
-**#3 Castle in the Sky (1986) `10515` — score 0.833**
+**#3 Castle in the Sky (1986) `10515` — score 0.700**
 
-- Lanes: shape=0.536→0.370  director=0.267→0.267  themes=0.596→0.101  studio=0.667→0.068  format=1.000→0.056
-- Adjustments: ×1.05(country)
+- Lanes: shape=0.536→0.370  themes=0.596→0.101  studio=0.667→0.068  format=1.000→0.056
+- Adjustments: ×1.27(director)  ×1.05(country)
 
-**#4 Princess Mononoke (1997) `128` — score 0.786**
-
-- Lanes: shape=0.397→0.273  director=0.267→0.267  themes=0.574→0.097  studio=0.667→0.068  format=1.000→0.056
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#5 Porco Rosso (1992) `11621` — score 0.776**
-
-- Lanes: shape=0.408→0.281  director=0.267→0.267  themes=0.474→0.080  studio=0.667→0.068  format=1.000→0.056
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#6 The Boy and the Heron (2023) `508883` — score 0.745**
-
-- Lanes: director=0.267→0.267  shape=0.372→0.256  studio=0.667→0.068  themes=0.373→0.063  format=1.000→0.056  specific_award=1.000→0.014
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#7 The Secret World of Arrietty (2010) `51739` — score 0.683**
+**#4 The Secret World of Arrietty (2010) `51739` — score 0.683**
 
 - Lanes: shape=0.669→0.461  themes=0.549→0.093  studio=0.667→0.068  format=1.000→0.056
 - Adjustments: ×1.07(studio)  ×1.05(country)
 
-**#8 The Wind Rises (2013) `149870` — score 0.641**
-
-- Lanes: director=0.267→0.267  shape=0.302→0.209  studio=0.667→0.068  format=1.000→0.056  themes=0.116→0.020  specific_award=1.000→0.014
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#9 The Tale of The Princess Kaguya (2013) `149871` — score 0.641**
+**#5 The Tale of The Princess Kaguya (2013) `149871` — score 0.641**
 
 - Lanes: shape=0.487→0.336  themes=0.659→0.111  studio=0.667→0.068  format=1.000→0.056  quality=0.667→0.048  specific_award=1.000→0.014
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#10 Welcome to the Space Show (2010) `61591` — score 0.638**
+**#6 Welcome to the Space Show (2010) `61591` — score 0.638**
 
 - Lanes: shape=0.666→0.459  themes=0.549→0.093  format=1.000→0.056
 - Adjustments: ×1.05(country)
+
+**#7 Little Nemo: Adventures in Slumberland (1989) `22611` — score 0.622**
+
+- Lanes: shape=0.615→0.424  themes=0.666→0.112  format=1.000→0.056
+- Adjustments: ×1.05(country)
+
+**#8 Princess Mononoke (1997) `128` — score 0.613**
+
+- Lanes: shape=0.397→0.273  themes=0.574→0.097  studio=0.667→0.068  format=1.000→0.056
+- Adjustments: ×1.27(director)  ×1.05(country)  ×1.08(shape)
+
+**#9 Porco Rosso (1992) `11621` — score 0.600**
+
+- Lanes: shape=0.408→0.281  themes=0.474→0.080  studio=0.667→0.068  format=1.000→0.056
+- Adjustments: ×1.27(director)  ×1.05(country)  ×1.08(shape)
+
+**#10 The Boy and the Heron (2023) `508883` — score 0.560**
+
+- Lanes: shape=0.372→0.256  studio=0.667→0.068  themes=0.373→0.063  format=1.000→0.056  specific_award=1.000→0.014
+- Adjustments: ×1.27(director)  ×1.05(country)  ×1.08(shape)
 
 ## Tom Hanks trio (H9)
 
@@ -947,7 +947,7 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, watch_context=0.879, narrative_techniques=0.818, reception=0.711, anchor=0.349, plot_events=0.100
 
-Lane weights: director=1.000  shape=0.608  themes=0.171  cast=0.107  format=0.057  specific_award=0.057
+Lane weights: shape=0.608  themes=0.171  cast=0.107  format=0.057  specific_award=0.057
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -1025,15 +1025,15 @@ Shorts-dominant cohort: False
 Low-cohesion fallback used: False
 Top vector-space cohesion: viewer_experience=1.000, narrative_techniques=0.830, reception=0.742, watch_context=0.681, plot_analysis=0.395, anchor=0.372
 
-Lane weights: director=1.000  shape=0.594  themes=0.158  cast=0.077  quality=0.067  format=0.053  specific_award=0.053
+Lane weights: shape=0.594  themes=0.158  cast=0.077  quality=0.067  format=0.053  specific_award=0.053
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
 | 1 | The Fabelmans (2022) `804095` | 0.794 | 0.700 | shape | shape, format, themes, specific_award |
 | 2 | Four Friends (1981) `70971` | 0.722 | 0.688 | shape | shape, format, themes, specific_award |
 | 3 | Brooklyn (2015) `167073` | 0.433 | 0.382 | shape | shape, format, themes, cast, specific_award |
-| 4 | Nights and Weekends (2008) `48204` | 0.413 | 0.393 | director | shape, director, format, themes |
-| 5 | 20th Century Women (2016) `342737` | 0.691 | 0.609 | shape | shape, format, themes, specific_award |
+| 4 | 20th Century Women (2016) `342737` | 0.691 | 0.609 | shape | shape, format, themes, specific_award |
+| 5 | Nights and Weekends (2008) `48204` | 0.098 | 0.093 | format | shape, director, format, themes |
 | 6 | Frances Ha (2013) `121986` | 0.674 | 0.594 | shape | shape, format, themes, specific_award |
 | 7 | Circle of Friends (1995) `22625` | 0.660 | 0.628 | shape | shape, format, themes |
 | 8 | I Could Never Be Your Woman (2007) `15019` | 0.254 | 0.242 | shape | shape, format, themes, cast |
@@ -1057,15 +1057,15 @@ Lane weights: director=1.000  shape=0.594  themes=0.158  cast=0.077  quality=0.0
 - Lanes: shape=0.317→0.188  cast=1.000→0.077  format=1.000→0.053  themes=0.217→0.034  specific_award=0.581→0.031
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#4 Nights and Weekends (2008) `48204` — score 0.413**
-
-- Lanes: director=0.300→0.300  format=1.000→0.053  shape=0.055→0.033  themes=0.051→0.008
-- Adjustments: ×1.05(country)
-
-**#5 20th Century Women (2016) `342737` — score 0.691**
+**#4 20th Century Women (2016) `342737` — score 0.691**
 
 - Lanes: shape=0.774→0.460  themes=0.435→0.069  format=1.000→0.053  specific_award=0.537→0.028
 - Adjustments: ×1.05(country)  ×1.08(shape)
+
+**#5 Nights and Weekends (2008) `48204` — score 0.098**
+
+- Lanes: format=1.000→0.053  shape=0.055→0.033  themes=0.051→0.008
+- Adjustments: ×1.05(country)
 
 **#6 Frances Ha (2013) `121986` — score 0.674**
 

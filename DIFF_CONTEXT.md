@@ -2640,3 +2640,143 @@ with the anchor once the placed director-match ratio exceeds 0.34.
 
 ### Re-run
 - `python -m search_v2.run_similar_movies_batch --multi --limit 10`
+
+## V3.4.8 — Director multiplicative-on-shape (replaces V3.4.7 fatigue)
+Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
+
+### Intent
+V3.4.7 director fatigue banned same-director candidates regardless of
+match quality, removing genuinely-good auteur matches (Inception
+losing The Prestige, Spirited Away losing Princess Mononoke).
+The real problem was that the additive director lane gave the same
++0.20 boost regardless of shape similarity, so weak-shape candidates
+rode the boost into prominence. Multiplicative-on-shape attacks the
+cause: amplify only when shape supports the match.
+
+### Key Decisions
+- **Convert director from passthrough additive to multiplicative.**
+  Same gate-and-amplify pattern as studio.
+- **Strength 0.30, gate 0.30.** Lower gate than studio (0.60) because
+  director is a stronger stylistic signal; higher strength than studio
+  (0.10) because director is the primary auteur-sensibility lane.
+- **Revert V3.4.7 fatigue entirely.** No separate counters, no peek
+  gate, no tail-loop check. Cleaner architecture.
+- **Normalize director scores to [0, 1].** Was [0, 0.20]/[0, 0.30].
+  Relative structure preserved (auteur full = 1.0, cohesion scales).
+- **Keep director floor + auteur bucket.** They provide minimum
+  representation; the multiplier controls upper-bound clustering.
+
+### Implementation
+- Remove `director` from `ADDITIVE_LANES` and `PASSTHROUGH_LANES`;
+  set `BASE_LANE_WEIGHTS["director"] = 0` for debug visibility.
+- Add `DIRECTOR_MULTIPLIER_SHAPE_GATE` and `DIRECTOR_MULTIPLIER_STRENGTH`.
+- Update `_single_anchor_director_score` and `_multi_anchor_director_score`
+  to return [0, 1].
+- Apply multiplier in `_build_results` next to studio.
+- Strip out V3.4.7 fatigue: constant, params on
+  `_peek_next_eligible_for_bucket` / `_weave_candidates` /
+  `_build_results`, tail-loop gate, and `is_director_match_by_movie`
+  builder in `_run_single_anchor_similarity`.
+
+### Verification
+- 21-anchor smoke: 12 IDENT / 2 REORD / 7 DIFF
+- Multi-anchor: byte-identical
+- Tim Burton (Batman 1989, limit=20): 9-10 Burton films → 3
+- Nolan (TDK, top 10): 8 → 3
+- Other auteur anchors: modest reductions (3-4 same-director kept)
+- Baselines at /tmp/v3_4_8_*.{md,json}
+
+### Open tuning question
+TDK reduction may be too aggressive (8→3). Caused by TDK's
+normalization weighting shape at only 0.34 (heavy franchise/prestige
+allocation), so removing additive director (+0.20) outweighs the
+×1.30 multiplier gain. If real use shows auteur anchors with high-
+prestige weighting losing too much, bump
+`DIRECTOR_MULTIPLIER_STRENGTH` from 0.30 toward 0.40-0.50.
+
+### Re-run
+- `python -m search_v2.run_similar_movies_batch --multi --limit 10`
+
+## V3.4.9 — Director gap-boost (rubber-band on auteur silence)
+Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
+
+### Intent
+Address the V3.4.8 side effect where the multiplier suppresses
+auteur films too aggressively in the tail (slots 6–10) for some
+anchors. TDK lost most Nolan films because the auteur bucket fills
+its target in early slots and no remaining director match could
+clear the multiplier-gated bar against stronger-shape non-director
+candidates. The rubber-band re-amplifies director matches once the
+weaver has gone several slots without placing one.
+
+### Mechanism
+- Bucket-weaver tracks `consecutive_non_director` (resets on each
+  director-match placement, increments otherwise).
+- Per slot: `k = max(0, gap - DIRECTOR_GAP_THRESHOLD + 1)`,
+  `gap_boost_multiplier = (1 + DIRECTOR_GAP_INCREMENT) ** k`.
+  Boost engages AT the threshold (gap=3 → k=1 → ×1.10), then
+  compounds (gap=4 → ×1.21, gap=5 → ×1.331, …).
+- For MMR comparison only: `effective_score = c.score *
+  gap_boost_multiplier` for director-match candidates, else
+  `c.score`. The persisted score is unchanged so evidence rows
+  still match the deterministic pipeline output.
+- Auteur bucket peek-eligibility is re-opened past quota whenever
+  `gap_boost_multiplier > 1`, so the rubber-band has a candidate
+  to amplify.
+- `director_match` semantics: any candidate sharing a director
+  with the anchor — no shape gate (unlike the V3.4.8 multiplier).
+
+### Key Decisions
+- **Compounding multiplicative, not linear additive.** User
+  framing maps to `1.10^k` naturally. Geometric growth moves tail
+  rankings (k=2 → ×1.21) without needing a large per-step rate.
+  Initial implementation used `score + extra * capacity` and
+  produced zero result changes because `capacity` was gated on
+  V3.4.8's shape gate, leaving the rubber-band with nothing to
+  amplify.
+- **No shape gate on the rubber-band.** V3.4.8 multiplier gates
+  on shape (suppress weak-shape clustering at source). V3.4.9
+  rubber-band gates on placement history (re-amplify when result
+  is silent). Different problems, different gates. If the
+  rubber-band were also shape-gated, it would inherit V3.4.8's
+  suppression and never engage for the weak-shape candidates the
+  user wants surfaced.
+- **Single-anchor only.** Multi-anchor `director` score is
+  cohesion-scaled across anchors, not a single-auteur signal —
+  rubber-band semantics don't carry over. Threaded
+  `enforce_director_gap_boost` flag through `_build_results` and
+  `_weave_candidates`; only `_run_single_anchor_similarity`
+  passes `True`.
+- **Score-vs-effective-score split.** Slot-local MMR adjustment
+  only; persisted `c.score` left untouched. Evidence diagnostics
+  still reflect the deterministic pipeline (multipliers, floors,
+  lane contributions all unchanged from V3.4.8).
+
+### Verification
+- 21-anchor smoke: 1 REORD (TDK) / 20 IDENT
+- Multi-anchor: byte-identical (flag off)
+- TDK: Watchmen (#10, 0.402) replaced by The Prestige (Nolan,
+  0.350). Trace: dir at slots 1,2; non-dir at 3,4; dir at 5; non-
+  dir at 6,7,8,9; entering slot 10 gap=4 → k=2 → ×1.21; Prestige
+  0.350 × 1.21 = 0.424 > Watchmen 0.402.
+- Other 20 anchors stayed identical because either auteur density
+  was already saturated (Spirited Away with 7 Miyazaki films),
+  the pool was exhausted of remaining director matches, or
+  post-boost effective scores were still below competing picks.
+
+### Implementation
+- New constants `DIRECTOR_GAP_THRESHOLD = 3`,
+  `DIRECTOR_GAP_INCREMENT = 0.10`.
+- `_CandidateScore.director_match` kept; the abandoned
+  `dir_boost_capacity` field and corresponding `score_no_dir_mult`
+  parallel tracking in `_build_results` removed.
+- New `enforce_director_gap_boost` param threaded through
+  `_build_results` → `_weave_candidates`. Defaults `False`.
+- Single-anchor caller (`_run_single_anchor_similarity`) sets
+  `True`.
+- Weave loop: compute `gap_boost_multiplier`, apply to
+  director-match candidates' `effective_score` for MMR
+  comparison, advance `auteur_reopen` when active.
+
+### Re-run
+- `python -m search_v2.run_similar_movies_batch --limit 10`

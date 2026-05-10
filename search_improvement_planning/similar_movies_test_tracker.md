@@ -2980,3 +2980,205 @@ V3.4.6.1.
 - **Tail loop must mirror top-section logic for both gates.** V3.4.6.1's
   fix for franchise generalizes — the tail loop now checks both gates
   with shared counters across both loops.
+
+---
+
+## V3.4.8 — Director: multiplicative-on-shape (replaces fatigue)
+
+**Date:** 2026-05-10
+**Active:** yes
+
+#### Hypothesis
+
+V3.4.7's director fatigue was too blunt: it banned same-director
+candidates regardless of how strong their match actually was. Auteur
+anchors lost genuinely-good same-director matches (TDK lost
+Inception/Memento/Prestige; Spirited Away lost Princess Mononoke).
+A multiplicative-on-shape lane should address the real problem
+(weak-shape candidates riding the additive director boost into
+prominence) without banning the genuinely-strong matches.
+
+#### Mechanism
+
+- **Remove director from additive sum.** `ADDITIVE_LANES` no longer
+  contains "director". `PASSTHROUGH_LANES` is now empty. The lane
+  appears in `lane_scores` for debug visibility but contributes 0 to
+  the additive base.
+- **Apply director as multiplier.** Same gate-and-amplify pattern as
+  studio: `score *= 1 + DIRECTOR_MULTIPLIER_STRENGTH * director_score`
+  when `shape_score >= DIRECTOR_MULTIPLIER_SHAPE_GATE`.
+- **Normalize director scores to [0, 1].** Was [0, 0.20] single-anchor
+  and [0, 0.30] multi-anchor (additive contribution magnitudes). New
+  range feeds the multiplier directly. Relative structure preserved
+  (auteur full = 1.0, cohesion partial scales down).
+- Constants: `DIRECTOR_MULTIPLIER_SHAPE_GATE = 0.30`,
+  `DIRECTOR_MULTIPLIER_STRENGTH = 0.30`. Lower gate than studio
+  (0.60) because director is a stronger stylistic signal; higher
+  strength than studio (0.10) because director is the primary
+  auteur-sensibility lane.
+- **Revert V3.4.7 director fatigue entirely.** Constant + plumbing
+  + peek/weave gate logic + tail-loop gate + single-anchor predicate
+  builder all removed.
+- **Director floor untouched.** The floor lifts moderate-shape auteur
+  matches to a minimum 0.35; it provides a different mechanism
+  (representation guarantee) than the multiplier (amplifier on real
+  shape similarity). The auteur bucket in the weaver also still
+  guarantees minimum same-director representation regardless of
+  multiplier outcome.
+
+#### Smoke (V3.4.6 → V3.4.8, 21 single anchors, top 10)
+
+12 identical / 2 reorder / 7 changed. Multi-anchor byte-identical
+(consistent with director changes being applied uniformly across
+both flows but only triggering reorder when auteur signals are
+in play).
+
+Same-director count reduction (the win):
+
+| Anchor | V3.4.6 → V3.4.8 |
+|---|---|
+| Tim Burton (Batman 1989, top 20) | ~9-10 → 3 |
+| Nolan (TDK, top 10) | 8 → 3 |
+| Miyazaki (Spirited Away, top 10) | 9 → 7 |
+| Nolan (Inception, top 10) | 4 → 3 (Tenet, Memento, Prestige preserved) |
+| Nolan (Oppenheimer, top 10) | 4 → 3 |
+| Tarantino (Pulp Fiction, top 10) | 2 → 1 |
+
+The TDK reduction is the most aggressive (8 → 3) because its
+normalization heavily favors franchise/prestige/source lanes —
+shape sits at only 0.34 of the additive sum, so removing the +0.20
+director additive is a much bigger relative hit than the ×1.30
+multiplier compensates for. The Nolan films that fell out
+(Inception, Dunkirk, Memento, Prestige, Interstellar) have moderate
+shape similarity to TDK — they were riding the additive director
+boost to compete with shape-stronger non-Nolan films. If this feels
+too aggressive in real use, the multiplier strength can be tuned
+up (0.40 / 0.50) to recover them without going back to fatigue.
+
+The bucket weaver still allocates auteur-bucket slots regardless of
+multiplier outcome, so same-director films get minimum visibility
+(e.g. Tim Burton's Sweeney Todd at #4 and Sleepy Hollow at #6 on
+Batman 1989 even with low post-multiplier score) — the multiplier
+controls *upper bound* clustering, not lower-bound visibility.
+
+#### Learnings
+
+- **Additive boost over-promotes uniformly; multiplicative boost
+  rewards strong matches and quietly drops weak ones.** This is the
+  right shape for "director sensibility" because the value of
+  same-director is proportional to how stylistically aligned the
+  candidate already is.
+- **Fatigue gates fight the symptom; multipliers attack the cause.**
+  V3.4.7 banned same-director candidates after they'd already
+  surfaced too high. V3.4.8 prevents them from surfacing too high
+  in the first place. Cleaner architecture, no separate counters
+  to track.
+- **The director floor + auteur bucket together provide minimum
+  representation.** With the lane multiplicative, these become the
+  primary mechanisms for "make sure the user sees *some* same-
+  director films" while the multiplier ensures only genuinely-strong
+  matches get amplified beyond bucket quota.
+- **Watch the high-prestige / high-franchise anchors.** When shape's
+  normalized weight is low (TDK at 0.34), removing the additive
+  director boost is felt strongly. If we see auteurs systematically
+  losing too much rank on these anchors, the natural tune is
+  multiplier strength, not lane structure.
+
+### V3.4.9 — Director gap-boost (rubber-band on auteur signal silence)
+
+**Hypothesis.** The V3.4.8 multiplier correctly suppresses
+weak-shape same-director flooding, but in some anchors (notably
+TDK) it suppresses too aggressively: the auteur bucket fills its
+target with the strongest 2–3 director matches in early slots, and
+the multiplier alone isn't enough to bring any further director
+match into the tail (slots 6–10) past stronger-shape non-director
+candidates. A user looking at "movies like The Dark Knight"
+expects the next Nolan film to compete again once the auteur
+signal has gone silent for several slots.
+
+**Mechanism.** Bucket-weaver tracks `consecutive_non_director`,
+incrementing on every non-director-match placement and resetting
+to 0 on every director-match placement. Each slot's MMR comparison
+computes:
+
+```
+k = max(0, consecutive_non_director - DIRECTOR_GAP_THRESHOLD + 1)
+gap_boost_multiplier = (1 + DIRECTOR_GAP_INCREMENT) ** k     # = 1.10^k
+effective_score = c.score * gap_boost_multiplier   if c.director_match
+                  else c.score
+```
+
+with `DIRECTOR_GAP_THRESHOLD = 3`, `DIRECTOR_GAP_INCREMENT = 0.10`.
+Boost engages AT the threshold (gap=3 → k=1 → ×1.10), then compounds.
+
+**Where the boost applies.**
+- `director_match` is True for any candidate sharing a director
+  with the anchor — independent of whether shape clears the V3.4.8
+  multiplier gate. The gap-boost is the rubber-band layer; it
+  doesn't share V3.4.8's "must be shape-strong" precondition.
+- The boost multiplies the full candidate score, mirroring the
+  user's "increase the director boost by 10%" intent on the
+  final ranking, not on a single lane contribution.
+- The boost only affects this slot's MMR comparison — the
+  candidate's persisted `score` field is left unchanged so
+  evidence rows still reflect the deterministic pipeline output.
+- Auteur bucket peek-eligibility is re-opened past its placed
+  quota whenever `gap_boost_multiplier > 1`, so the rubber-band
+  can grab a director candidate the bucket would otherwise have
+  shut off (the gap-boost is useless if no director candidate is
+  even being peeked).
+- Single-anchor only. Multi-anchor leaves
+  `enforce_director_gap_boost=False` — multi-anchor "director
+  match" is cohesion-scaled, not a single-auteur signal, so the
+  rubber-band semantics don't carry over.
+
+**Constants.** `DIRECTOR_GAP_THRESHOLD = 3`,
+`DIRECTOR_GAP_INCREMENT = 0.10` (so the per-step factor is `1.10`,
+compounding multiplicatively across consecutive non-director
+slots past the threshold).
+
+#### Smoke (V3.4.8 → V3.4.9, 21 single anchors, top 10)
+
+1 reorder / 20 identical. Multi-anchor byte-identical (gap-boost
+single-anchor-only by design).
+
+| Anchor | Δ | Detail |
+|---|---|---|
+| TDK | +1 Nolan (5→4 → 5→4 + slot 10) | Watchmen (#10, 0.402) replaced by The Prestige (Nolan, 0.350). Trace: dir at slots 1,2; gap fills through 3,4 (Civil War, LA Confidential); dir at 5 (Batman Begins); gap fills through 6,7,8,9 (Man of Steel, Godfather II, Chinatown, Se7en); entering slot 10 gap=4 → k=2 → ×1.21; 0.350 × 1.21 = 0.424 > 0.402. |
+
+The other 20 anchors stayed byte-identical because either:
+- Auteur density was already saturated in top 10 (Spirited Away
+  with 7 Miyazaki films, gap never reached 3).
+- No further director-match candidates existed past the auteur
+  bucket's early placements (the pool was exhausted before the
+  boost could engage).
+- The director-match candidates that did remain had post-boost
+  effective scores still below the competing non-director picks.
+
+This is the right surface area for a rubber-band: a corner-case
+mechanism that only fires when other forces have driven the
+auteur signal too far down. It's not a blanket re-amplification.
+
+#### Learnings
+
+- **The V3.4.8 multiplier and V3.4.9 gap-boost have intentionally
+  different gating.** Multiplier gates on shape (suppress weak-
+  shape clustering at the *source*). Gap-boost gates on placement
+  history (re-amplify when the *result* is silent). Two different
+  problems, two different gates.
+- **Auteur bucket peek-eligibility must be re-opened.** Without
+  the `auteur_reopen` carve-out, the bucket gates out once
+  `placed[auteur] >= target_count` and the rubber-band has no
+  candidate to amplify. Fixed with `gap_boost_multiplier > 1` as
+  the reopen condition (one-line tie between the two mechanisms).
+- **Compounding > linear for rubber-band semantics.** The user
+  framing ("+10% each additional movie") naturally maps to a
+  compounding `1.10^k` rather than a linear `1 + 0.10k`. The
+  geometric path grows fast enough to actually move tail rankings
+  (k=2 → ×1.21, k=3 → ×1.331) without needing a large per-step
+  rate.
+- **Score-vs-effective-score split.** Keeping the rubber-band as
+  a slot-local MMR adjustment rather than a persisted score
+  mutation means evidence diagnostics still reflect the
+  deterministic pipeline (multipliers, floors, lane contributions
+  all unchanged). The weaver is the only consumer of the boost.

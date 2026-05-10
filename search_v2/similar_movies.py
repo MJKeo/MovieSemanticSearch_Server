@@ -100,9 +100,15 @@ LaneName = Literal[
 # fully absorbed into the themes lane (with a new compounding bonus
 # matching the old combo bonus). Truly-rare match exploration runs
 # through the rare_keyword bucket in the greedy weaver instead.
+#
+# V3.4.8: director removed from the additive sum entirely. The
+# director lane is now a multiplier on shape-qualifying candidates
+# (mirroring the studio multiplier pattern), so same-director matches
+# get amplified when shape similarity is real and barely move when
+# it isn't. This replaces the V3.4.7 director fatigue gate, which
+# was banning genuinely-good auteur matches alongside the bad ones.
 ADDITIVE_LANES: tuple[LaneName, ...] = (
     "shape",
-    "director",
     "franchise",
     "source",
     "quality",
@@ -115,7 +121,9 @@ ADDITIVE_LANES: tuple[LaneName, ...] = (
 # Lanes whose raw score IS the absolute contribution (no weight scaling).
 # They appear in the additive sum but are excluded from the normalization
 # denominator so adding them doesn't dilute the proportional lanes.
-PASSTHROUGH_LANES: frozenset[LaneName] = frozenset({"director"})
+# V3.4.8: empty — director was the only passthrough lane, and it's now
+# a multiplier rather than additive. Kept for future passthrough lanes.
+PASSTHROUGH_LANES: frozenset[LaneName] = frozenset()
 
 # All lanes carried through the debug payload, including the studio
 # multiplier so debug output still shows when on-brand candidates were
@@ -174,12 +182,12 @@ VECTOR_BASE_WEIGHTS_MULTI: dict[VectorName, float] = {
 
 BASE_LANE_WEIGHTS: dict[LaneName, float] = {
     "shape": 0.60,
-    # V3: director is "passthrough" — its raw score is the absolute
-    # contribution defined in the §2.1 unified rule (single-anchor curated
-    # = 0.20; multi curated max = 0.30; cohesion-only max = 0.10). The
-    # weight is excluded from `_normalize_weights`'s denominator so other
-    # lanes don't get diluted, and the raw value flows through unchanged.
-    "director": 1.00,
+    # V3.4.8: director moved from passthrough to multiplier path.
+    # Kept here at 0 weight so debug output still surfaces the raw
+    # director score, but it contributes 0 to the additive sum. The
+    # multiplier path (DIRECTOR_MULTIPLIER_*) handles its actual
+    # influence on combined score.
+    "director": 0.00,
     "franchise": 0.12,
     "studio": 0.06,        # debug-only; the multiplier doesn't read it
     "source": 0.04,
@@ -276,17 +284,6 @@ WEAVER_RARE_KEYWORD_BUCKET_IDF_MIN = 0.55
 # stacking artifact.
 FRANCHISE_FATIGUE_THRESHOLD = 0.34
 
-# V3.4.7 director fatigue (single-anchor only). Same shape as franchise
-# fatigue: auteur anchors (Nolan, Tarantino, Tim Burton, Spielberg)
-# tend to flood results with same-director films because the auteur
-# bucket + director floor + shape often align on those candidates.
-# Predicate: candidate's `director_term_ids` intersects the anchor's
-# `director_term_ids`. Counters are independent of franchise — both
-# gates evaluate separately, so a candidate can be banned by either.
-# Multi-anchor flow is unaffected: multi-anchor consensus on a director
-# is real signal (e.g., a Nolan trio agreeing on Nolan-style is genuine).
-DIRECTOR_FATIGUE_THRESHOLD = 0.34
-
 BUCKET_BEST_OVERALL = "best_overall"
 BUCKET_AUTEUR       = "auteur"
 BUCKET_FRANCHISE    = "franchise"
@@ -309,6 +306,47 @@ ALL_BUCKETS: tuple[str, ...] = (
 # V2 multipliers on combined score (applied post-additive-sum).
 STUDIO_MULTIPLIER_SHAPE_GATE = 0.60
 STUDIO_MULTIPLIER_STRENGTH = 0.10            # +10% per unit studio_score
+
+# V3.4.8 director multiplier (single-anchor + multi-anchor). Replaces
+# the passthrough additive lane. Same shape as studio: candidates
+# clearing the shape gate get score *= 1 + STRENGTH * director_score.
+# Lower gate (0.30) than studio (0.60) because director is a stronger
+# stylistic signal even at moderate shape; larger strength (0.30 vs
+# 0.10) because director is the primary "auteur sensibility" signal.
+# A full match (director_score=1.0) at gate-clearing shape gets a
+# +30% boost; weak-shape candidates with same director don't qualify
+# at all, which fixes the Burton-omnibus / Nolan-flood pattern at
+# the source rather than after the fact via fatigue.
+DIRECTOR_MULTIPLIER_SHAPE_GATE = 0.30
+DIRECTOR_MULTIPLIER_STRENGTH = 0.30
+
+# V3.4.9 director gap-boost (rubber-band). The multiplier on its own
+# can suppress auteur films too aggressively — TDK loses Nolan films
+# past slot 5, but a user looking at "movies like The Dark Knight"
+# expects the next Nolan to surface rather than yet another non-Nolan
+# crime thriller. The gap-boost tracks how many consecutive
+# non-director-match slots have been placed in the top section and
+# progressively amplifies the *full score* of any director-match
+# candidate (compounding 10% per step past the threshold) so a
+# director match can climb back into contention.
+#
+# Mechanism: when ``enforce_director_gap_boost`` is set (single-anchor
+# flow only), the weaver tracks ``consecutive_non_director``. At each
+# slot, compute ``k = max(0, gap - DIRECTOR_GAP_THRESHOLD + 1)``. If
+# k > 0, any director-match candidate's effective score for that slot's
+# MMR comparison is multiplied by ``(1 + DIRECTOR_GAP_INCREMENT) ** k``.
+# The boost has no shape gate — it applies to every candidate sharing
+# a director with the anchor (independent of whether the V3.4.8
+# multiplier fired). The counter resets the moment a director-match
+# film is placed.
+#
+# Worked example: director placed at slot 1, non-director at slots 2,
+# 3, 4. Entering slot 5, gap = 3 → k = 1 → boost = 1.10. Still
+# non-director → slot 6 sees gap = 4 → k = 2 → boost = 1.21. And so
+# on (1.331, 1.464, …) until the next director-match placement, which
+# resets the counter back to 0.
+DIRECTOR_GAP_THRESHOLD = 3
+DIRECTOR_GAP_INCREMENT = 0.10
 
 # Medium multiplier: V3 §3.2 piecewise — cross-category (live-action ↔
 # animation, where MEDIUM_SIMILARITY returns 0.0) gets a hard 0.65× hit;
@@ -564,6 +602,13 @@ class _CandidateScore:
     multipliers: dict[str, float] = field(default_factory=dict)
     floor_value: float = 0.0
     floor_source: str = ""
+    # V3.4.9 gap-boost input. ``director_match`` is True for any
+    # candidate sharing a director with the anchor (independent of
+    # whether shape clears the V3.4.8 multiplier gate). The weaver
+    # uses it both to (a) reset its consecutive-non-director counter
+    # on placement and (b) decide which candidates' effective scores
+    # get the compounding rubber-band multiplier in MMR comparison.
+    director_match: bool = False
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -977,10 +1022,16 @@ def _franchise_score_v2(anchor_row: dict, candidate_row: dict) -> float:
 # over shared directors so a candidate matching multiple shared
 # directors gets the strongest signal (the "WA + PTA 2-2 split"
 # example from §2.1: each candidate scores via its own M_d).
-DIRECTOR_SINGLE_ANCHOR_CONTRIBUTION = 0.20
-DIRECTOR_MULTI_ANCHOR_AUTEUR_BASE = 0.20
-DIRECTOR_MULTI_ANCHOR_AUTEUR_RATIO = 0.10
-DIRECTOR_MULTI_ANCHOR_COHESION_RATIO = 0.10
+# V3.4.8: director score functions return [0, 1] so the value can be
+# fed directly into the multiplier path (`score *= 1 + STRENGTH * raw`).
+# Prior values (0.20 / 0.30 caps) reflected the additive-contribution
+# scale; the multiplier path needs a normalized signal. The relative
+# structure is preserved: full match = 1.0, partial cohesion scales
+# down, non-auteur single-anchor cohesion = 0.
+DIRECTOR_SINGLE_ANCHOR_CONTRIBUTION = 1.00
+DIRECTOR_MULTI_ANCHOR_AUTEUR_BASE = 0.67
+DIRECTOR_MULTI_ANCHOR_AUTEUR_RATIO = 0.33
+DIRECTOR_MULTI_ANCHOR_COHESION_RATIO = 0.33
 DIRECTOR_FLOOR_RATIO_THRESHOLD = 0.75
 DIRECTOR_FLOOR_SHAPE_GATE = 0.30
 DIRECTOR_FLOOR_MAGNITUDE = 0.35
@@ -1003,8 +1054,10 @@ def _single_anchor_director_score(
     anchor_directors: set[int],
     auteur_term_ids: frozenset[int],
 ) -> dict[int, float]:
-    """V3 single-anchor director: 0.20 contribution when the anchor's
-    director is curated AND the candidate shares that director.
+    """V3.4.8 single-anchor director: returns 1.0 when the anchor's
+    director is curated AND the candidate shares that director. The
+    [0, 1] range feeds the multiplier path in `_build_results` —
+    score *= 1 + DIRECTOR_MULTIPLIER_STRENGTH * raw.
 
     Returns an empty dict when the anchor has no curated director — the
     lane is silent for non-auteur anchors per V3 §2.1 (the user's
@@ -1032,14 +1085,15 @@ def _multi_anchor_director_score(
     auteur_term_ids: frozenset[int],
     n: int,
 ) -> tuple[dict[int, float], dict[int, float]]:
-    """V3 multi-anchor director: per-shared-director contribution.
+    """V3.4.8 multi-anchor director: per-shared-director contribution
+    in [0, 1]. The value feeds the multiplier path in `_build_results`.
 
     For each director ``d`` that the candidate shares with at least
     one anchor, with ``M_d`` = number of anchors that share ``d`` and
     ``N`` = total anchors:
 
-      - if d is curated: contribution = 0.20 + 0.10 * (M_d / N)   (caps 0.30)
-      - elif M_d >= 2  : contribution = 0.10 * (M_d / N)          (caps 0.10)
+      - if d is curated: contribution = 0.67 + 0.33 * (M_d / N)  (caps 1.00)
+      - elif M_d >= 2  : contribution = 0.33 * (M_d / N)         (caps 0.33)
       - else           : 0 (single-anchor cohesion of a non-auteur is silent)
 
     Returns the max contribution across shared directors so a candidate
@@ -1474,10 +1528,14 @@ def _build_results(
     # flags each candidate; multi-anchor leaves both at default.
     enforce_franchise_fatigue: bool = False,
     is_franchise_by_movie: dict[int, bool] | None = None,
-    # V3.4.7 director fatigue (single-anchor flow only). Symmetric
-    # gate over candidates sharing any director with the anchor.
-    enforce_director_fatigue: bool = False,
-    is_director_match_by_movie: dict[int, bool] | None = None,
+    # V3.4.9 director gap-boost (single-anchor flow only). When set,
+    # the weaver tracks consecutive non-director-match placements and
+    # applies a compounding (1 + DIRECTOR_GAP_INCREMENT) ** k multiplier
+    # to every director-match candidate's effective score for MMR
+    # comparison once the gap reaches DIRECTOR_GAP_THRESHOLD. Multi-
+    # anchor leaves this off — same-director match in multi-anchor is
+    # cohesion-scaled, not a single-auteur signal.
+    enforce_director_gap_boost: bool = False,
 ) -> tuple[list[SimilarMovieResult], dict[LaneName, int]]:
     """Combine per-lane scores into ranked candidates with V3 multipliers + floors.
 
@@ -1558,6 +1616,22 @@ def _build_results(
             studio_mult = 1.0 + STUDIO_MULTIPLIER_STRENGTH * studio_score
             score *= studio_mult
             applied_multipliers["studio"] = studio_mult
+
+        # V3.4.8 director multiplier — same gate-and-amplify pattern as
+        # studio. director_score is normalized to [0, 1] (single-anchor
+        # = 1.0 when the anchor's director is curated AND the candidate
+        # shares that director; multi-anchor = cohesion-scaled). Below
+        # the shape gate the lane is silent — that's the whole point:
+        # weak-shape same-director candidates no longer ride the lane
+        # into prominence (Burton-omnibus on Batman, Nolan-flood on TDK).
+        # Strong-shape candidates get the boost they'd get from the
+        # additive lane plus a bit more, properly amplified.
+        director_score = per_lane["director"]
+        director_match = director_score > 0.0
+        if director_match and shape_score >= DIRECTOR_MULTIPLIER_SHAPE_GATE:
+            director_mult = 1.0 + DIRECTOR_MULTIPLIER_STRENGTH * director_score
+            score *= director_mult
+            applied_multipliers["director"] = director_mult
 
         # Country/language coherence multiplier — extended to single-anchor
         # in V3 §2.4 by passing `country_consensus_match_by_movie` from the
@@ -1676,6 +1750,7 @@ def _build_results(
                 multipliers=applied_multipliers,
                 floor_value=applied_floor_value,
                 floor_source=applied_floor_source,
+                director_match=director_match,
             )
         )
 
@@ -1690,8 +1765,7 @@ def _build_results(
         enforce_shorts_cap=apply_shorts,
         enforce_franchise_fatigue=enforce_franchise_fatigue,
         is_franchise_by_movie=is_franchise_by_movie,
-        enforce_director_fatigue=enforce_director_fatigue,
-        is_director_match_by_movie=is_director_match_by_movie,
+        enforce_director_gap_boost=enforce_director_gap_boost,
     )
     ranked = [
         SimilarMovieResult(
@@ -1847,10 +1921,6 @@ def _peek_next_eligible_for_bucket(
     is_franchise_by_movie: dict[int, bool] | None = None,
     franchise_count: int = 0,
     non_franchise_count: int = 0,
-    enforce_director_fatigue: bool = False,
-    is_director_match_by_movie: dict[int, bool] | None = None,
-    director_match_count: int = 0,
-    non_director_match_count: int = 0,
 ) -> tuple[_CandidateScore, int] | None:
     """Walk a bucket's V3-rank queue from ``queue_pos`` to find the next
     pickable candidate — one not already placed, satisfying the format
@@ -1859,25 +1929,16 @@ def _peek_next_eligible_for_bucket(
     When ``enforce_franchise_fatigue`` is set (single-anchor flow),
     franchise candidates are skipped while
     ``franchise_count > FRANCHISE_FATIGUE_THRESHOLD * non_franchise_count``.
-    Director fatigue is the symmetric gate over shared-director
-    candidates. The two gates are independent — a candidate that's
-    both a franchise sibling and a same-director match must clear
-    both. Either gate forces fall-through to the next pick from any
-    bucket.
+    The fatigue gate forces the weaver to fall through to the next
+    non-franchise pick from the same or any other bucket.
 
     Returns ``(candidate, new_pos)`` where ``new_pos`` is the index AT
     the candidate (not past it). Caller advances past it on placement.
     """
     is_franchise_by_movie = is_franchise_by_movie or {}
-    is_director_match_by_movie = is_director_match_by_movie or {}
     franchise_fatigue_active = (
         enforce_franchise_fatigue
         and franchise_count > FRANCHISE_FATIGUE_THRESHOLD * non_franchise_count
-    )
-    director_fatigue_active = (
-        enforce_director_fatigue
-        and director_match_count
-        > DIRECTOR_FATIGUE_THRESHOLD * non_director_match_count
     )
     pos = queue_pos
     while pos < len(queue):
@@ -1915,12 +1976,6 @@ def _peek_next_eligible_for_bucket(
         if franchise_fatigue_active and is_franchise_by_movie.get(c.movie_id, False):
             pos += 1
             continue
-        # V3.4.7 director fatigue (single-anchor only): symmetric gate
-        # over candidates sharing any director with the anchor. Same
-        # threshold (0.34), independent counters.
-        if director_fatigue_active and is_director_match_by_movie.get(c.movie_id, False):
-            pos += 1
-            continue
         return c, pos
     return None
 
@@ -1938,9 +1993,8 @@ def _weave_candidates(
     # V3.4.6 franchise fatigue (single-anchor flows pass these in).
     enforce_franchise_fatigue: bool = False,
     is_franchise_by_movie: dict[int, bool] | None = None,
-    # V3.4.7 director fatigue (single-anchor flows pass these in).
-    enforce_director_fatigue: bool = False,
-    is_director_match_by_movie: dict[int, bool] | None = None,
+    # V3.4.9 director gap-boost (single-anchor flow only).
+    enforce_director_gap_boost: bool = False,
 ) -> list[_CandidateScore]:
     """V3.4 bucket-weaver: greedy slot-by-slot fill with MMR-style
     starvation boost.
@@ -2007,15 +2061,26 @@ def _weave_candidates(
     is_franchise_by_movie = is_franchise_by_movie or {}
     franchise_count = 0
     non_franchise_count = 0
-    # V3.4.7 director fatigue tracker (single-anchor). Independent from
-    # franchise — a candidate can be both a franchise sibling and a
-    # same-director match, but the two gates count separately.
-    is_director_match_by_movie = is_director_match_by_movie or {}
-    director_match_count = 0
-    non_director_match_count = 0
+    # V3.4.9 director gap-boost tracker. Counts consecutive non-director
+    # placements; resets to 0 when a director-match film is placed.
+    # Used to compute extra multiplier strength applied to director
+    # candidates' effective scores during MMR comparison.
+    consecutive_non_director = 0
     woven: list[_CandidateScore] = []
 
     for slot_index in range(top_section_cap):
+        # V3.4.9 gap-boost: compounding rubber-band on the full score of
+        # any director-match candidate once we've gone
+        # ``DIRECTOR_GAP_THRESHOLD`` slots without placing one. Exponent
+        # k = max(0, gap - THRESHOLD + 1) so the boost engages AT the
+        # threshold (gap=3 → k=1 → ×1.10), then compounds (gap=4 → ×1.21,
+        # gap=5 → ×1.331, …). Resets the moment a director-match film is
+        # placed. Single-anchor only — multi-anchor leaves the flag off.
+        if enforce_director_gap_boost and consecutive_non_director >= DIRECTOR_GAP_THRESHOLD:
+            gap_boost_exponent = consecutive_non_director - DIRECTOR_GAP_THRESHOLD + 1
+            gap_boost_multiplier = (1.0 + DIRECTOR_GAP_INCREMENT) ** gap_boost_exponent
+        else:
+            gap_boost_multiplier = 1.0
         # For each bucket that still has a deficit, peek the top unplaced
         # format-eligible candidate. Compute the MMR-adjusted score.
         # Best-overall is the always-on bucket — it competes on every
@@ -2025,10 +2090,18 @@ def _weave_candidates(
         # increments rare_keyword and lead_actor); without this carve-
         # out, best_overall would gate out by slot 5 and the algorithm
         # would short-circuit before filling the 10-slot top section.
-        eligible: list[tuple[str, _CandidateScore, float, int]] = []
+        eligible: list[tuple[str, _CandidateScore, float, int, float]] = []
+        # V3.4.9: when the gap-boost is active, keep the auteur bucket
+        # peek-able past its placed quota. Otherwise — once placed[auteur]
+        # hits its target, the bucket gets skipped, and the gap-boost
+        # never gets to peek a director-match candidate. Re-opening
+        # auteur lets the next director film in its V3-rank queue
+        # compete with its score multiplied by gap_boost_multiplier.
+        auteur_reopen = gap_boost_multiplier > 1.0
         for b, target_count in target.items():
             if b != BUCKET_BEST_OVERALL and placed[b] >= target_count:
-                continue
+                if not (b == BUCKET_AUTEUR and auteur_reopen):
+                    continue
             peek = _peek_next_eligible_for_bucket(
                 queue_by_bucket[b],
                 queue_pos[b],
@@ -2043,15 +2116,21 @@ def _weave_candidates(
                 is_franchise_by_movie=is_franchise_by_movie,
                 franchise_count=franchise_count,
                 non_franchise_count=non_franchise_count,
-                enforce_director_fatigue=enforce_director_fatigue,
-                is_director_match_by_movie=is_director_match_by_movie,
-                director_match_count=director_match_count,
-                non_director_match_count=non_director_match_count,
             )
             if peek is None:
                 continue
             c, pos_at = peek
-            relevance = c.score / best_score
+            # V3.4.9 gap-boost: director-match candidates (any candidate
+            # sharing a director with the anchor — no shape gate) get
+            # their full score multiplied by ``gap_boost_multiplier`` for
+            # this slot's MMR comparison. Non-director candidates use
+            # their raw score. The actual returned ``score`` on the
+            # candidate is left untouched; only the slot-local
+            # ranking signal changes.
+            effective_score = (
+                c.score * gap_boost_multiplier if c.director_match else c.score
+            )
+            relevance = effective_score / best_score
             # Clamp deficit at 0: once a bucket has exceeded its target
             # via multi-bucket credit, its starvation pull falls to 0
             # and only relevance carries the adjustment.
@@ -2060,30 +2139,33 @@ def _weave_candidates(
                 if target_count > 0 else 0.0
             )
             adj = (1.0 - WEAVER_LAMBDA) * relevance + WEAVER_LAMBDA * deficit_ratio
-            eligible.append((b, c, adj, pos_at))
+            eligible.append((b, c, adj, pos_at, effective_score))
 
         if not eligible:
             break
 
-        # Pick max adjusted score. Tie-break by relevance (best_overall
-        # naturally wins ties because it always carries the global top).
-        eligible.sort(key=lambda x: (-x[2], -x[1].score, x[1].movie_id))
-        b_drawn, c_picked, _, pos_at = eligible[0]
+        # Pick max adjusted score. Tie-break by effective score so the
+        # gap-boost affects ties too — otherwise a boosted director
+        # candidate would lose ties to a non-director candidate with
+        # equal `adj` but higher raw `score`.
+        eligible.sort(key=lambda x: (-x[2], -x[4], x[1].movie_id))
+        b_drawn, c_picked, _, pos_at, _ = eligible[0]
         woven.append(c_picked)
         used_movie_ids.add(c_picked.movie_id)
         if candidate_format_bucket_by_movie.get(c_picked.movie_id) == "short":
             shorts_count += 1
-        # V3.4.6 / V3.4.7: update fatigue counts after every placement
-        # so the next slot's peek sees the current ratios. Franchise
-        # and director are independent dimensions — both update.
+        # V3.4.6: update fatigue counts after every placement so the
+        # next slot's peek sees current ratio.
         if is_franchise_by_movie.get(c_picked.movie_id, False):
             franchise_count += 1
         else:
             non_franchise_count += 1
-        if is_director_match_by_movie.get(c_picked.movie_id, False):
-            director_match_count += 1
+        # V3.4.9: update gap counter. Director-match placement resets;
+        # any other placement increments.
+        if c_picked.director_match:
+            consecutive_non_director = 0
         else:
-            non_director_match_count += 1
+            consecutive_non_director += 1
 
         # Advance the drawn bucket's queue cursor past the picked candidate.
         queue_pos[b_drawn] = pos_at + 1
@@ -2121,23 +2203,12 @@ def _weave_candidates(
                 > FRANCHISE_FATIGUE_THRESHOLD * non_franchise_count
             ):
                 continue
-            if (
-                enforce_director_fatigue
-                and is_director_match_by_movie.get(c.movie_id, False)
-                and director_match_count
-                > DIRECTOR_FATIGUE_THRESHOLD * non_director_match_count
-            ):
-                continue
             woven.append(c)
             used_movie_ids.add(c.movie_id)
             if is_franchise_by_movie.get(c.movie_id, False):
                 franchise_count += 1
             else:
                 non_franchise_count += 1
-            if is_director_match_by_movie.get(c.movie_id, False):
-                director_match_count += 1
-            else:
-                non_director_match_count += 1
 
     return woven[:limit]
 
@@ -2610,14 +2681,6 @@ async def _run_single_anchor_similarity(
                 cand_pool & anchor_franchise_pool
             )
 
-    # V3.4.7 director fatigue: candidate shares a director with the
-    # anchor iff its movie_id is in `director_candidate_terms` (which
-    # was populated by `fetch_director_movie_terms(anchor_directors)`
-    # above — every movie returned has at least one anchor-director
-    # term in its director_term set). No extra DB calls.
-    is_director_match_by_movie: dict[int, bool] = {
-        movie_id: True for movie_id in director_candidate_terms
-    }
 
     ranked, counts = _build_results(
         anchor_ids=[anchor_id],
@@ -2641,8 +2704,7 @@ async def _run_single_anchor_similarity(
         bucket_memberships_by_movie=bucket_memberships,
         enforce_franchise_fatigue=True,
         is_franchise_by_movie=is_franchise_by_movie,
-        enforce_director_fatigue=True,
-        is_director_match_by_movie=is_director_match_by_movie,
+        enforce_director_gap_boost=True,
     )
     return SimilarMoviesSearchResult(
         anchor_movie_ids=[anchor_id],

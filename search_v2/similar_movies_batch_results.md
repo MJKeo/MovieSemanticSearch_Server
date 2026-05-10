@@ -5,27 +5,27 @@
 Active anchor types: standard_shape, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
+Lane weights: shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Tenet (2020) `577922` | 0.820 | 0.781 | shape | shape, director, quality, format, themes |
+| 1 | Tenet (2020) `577922` | 0.792 | 0.581 | shape | shape, director, quality, format, themes |
 | 2 | Trance (2013) `68727` | 0.770 | 0.734 | shape | shape, quality, format, themes |
 | 3 | Mulholland Drive (2001) `1018` | 0.752 | 0.663 | shape | shape, quality, format, themes |
-| 4 | Babel (2006) `1164` | 0.647 | 0.570 | shape | shape, quality, format, themes |
-| 5 | Memento (2000) `77` | 0.719 | 0.634 | shape | shape, director, quality, format, themes |
+| 4 | Memento (2000) `77` | 0.639 | 0.434 | shape | shape, director, quality, format, themes |
+| 5 | Babel (2006) `1164` | 0.647 | 0.570 | shape | shape, quality, format, themes |
 | 6 | Vanilla Sky (2001) `1903` | 0.622 | 0.592 | shape | shape, quality, format, themes |
-| 7 | Lost Highway (1997) `638` | 0.613 | 0.583 | shape | shape, quality, format, themes |
-| 8 | Fight Club (1999) `550` | 0.595 | 0.567 | shape | shape, quality, format, themes |
-| 9 | Interstellar (2014) `157336` | 0.639 | 0.563 | director | shape, director, quality, format, themes |
+| 7 | The Prestige (2006) `1124` | 0.556 | 0.407 | shape | shape, director, quality, format, themes |
+| 8 | Lost Highway (1997) `638` | 0.613 | 0.583 | shape | shape, quality, format, themes |
+| 9 | Fight Club (1999) `550` | 0.595 | 0.567 | shape | shape, quality, format, themes |
 | 10 | Birdman or (The Unexpected Virtue of Ignorance) (2014) `194662` | 0.594 | 0.523 | shape | shape, quality, format, themes |
 
 ### Per-result breakdown
 
-**#1 Tenet (2020) `577922` — score 0.820**
+**#1 Tenet (2020) `577922` — score 0.792**
 
-- Lanes: shape=0.718→0.454  director=0.200→0.200  themes=0.436→0.055  format=1.000→0.042  quality=0.940→0.030
-- Adjustments: ×1.05(country)
+- Lanes: shape=0.718→0.454  themes=0.436→0.055  format=1.000→0.042  quality=0.940→0.030
+- Adjustments: ×1.30(director)  ×1.05(country)
 
 **#2 Trance (2013) `68727` — score 0.770**
 
@@ -37,14 +37,14 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 - Lanes: shape=0.861→0.544  themes=0.370→0.047  format=1.000→0.042  quality=0.964→0.030
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#4 Babel (2006) `1164` — score 0.647**
+**#4 Memento (2000) `77` — score 0.639**
+
+- Lanes: shape=0.498→0.314  themes=0.370→0.047  format=1.000→0.042  quality=0.967→0.031
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#5 Babel (2006) `1164` — score 0.647**
 
 - Lanes: shape=0.731→0.462  format=1.000→0.042  themes=0.295→0.037  quality=0.937→0.030
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#5 Memento (2000) `77` — score 0.719**
-
-- Lanes: shape=0.498→0.314  director=0.200→0.200  themes=0.370→0.047  format=1.000→0.042  quality=0.967→0.031
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#6 Vanilla Sky (2001) `1903` — score 0.622**
@@ -52,20 +52,20 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 - Lanes: shape=0.757→0.478  themes=0.346→0.044  format=1.000→0.042  quality=0.904→0.029
 - Adjustments: ×1.05(country)
 
-**#7 Lost Highway (1997) `638` — score 0.613**
+**#7 The Prestige (2006) `1124` — score 0.556**
+
+- Lanes: shape=0.462→0.292  themes=0.345→0.044  format=1.000→0.042  quality=0.947→0.030
+- Adjustments: ×1.30(director)  ×1.05(country)
+
+**#8 Lost Highway (1997) `638` — score 0.613**
 
 - Lanes: shape=0.737→0.466  themes=0.370→0.047  format=1.000→0.042  quality=0.913→0.029
 - Adjustments: ×1.05(country)
 
-**#8 Fight Club (1999) `550` — score 0.595**
+**#9 Fight Club (1999) `550` — score 0.595**
 
 - Lanes: shape=0.734→0.464  format=1.000→0.042  themes=0.248→0.031  quality=0.951→0.030
 - Adjustments: ×1.05(country)
-
-**#9 Interstellar (2014) `157336` — score 0.639**
-
-- Lanes: director=0.200→0.200  shape=0.260→0.164  themes=1.000→0.126  format=1.000→0.042  quality=0.958→0.030
-- Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#10 Birdman or (The Unexpected Virtue of Ignorance) (2014) `194662` — score 0.594**
 
@@ -77,7 +77,7 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 Active anchor types: standard_shape, franchise_dominant
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.495  franchise=0.286  themes=0.114  studio=0.060  source=0.038  format=0.038  quality=0.029
+Lane weights: shape=0.495  franchise=0.286  themes=0.114  studio=0.060  source=0.038  format=0.038  quality=0.029
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -149,7 +149,7 @@ Lane weights: director=1.000  shape=0.495  franchise=0.286  themes=0.114  studio
 Active anchor types: standard_shape, prestige, franchise_dominant, studio_lineage
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.390  franchise=0.254  quality=0.186  themes=0.102  studio=0.060  source=0.034  format=0.034
+Lane weights: shape=0.390  franchise=0.254  quality=0.186  themes=0.102  studio=0.060  source=0.034  format=0.034
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -221,7 +221,7 @@ Lane weights: director=1.000  shape=0.390  franchise=0.254  quality=0.186  theme
 Active anchor types: standard_shape, prestige, franchise_dominant, studio_lineage
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.390  franchise=0.254  quality=0.186  themes=0.102  studio=0.060  source=0.034  format=0.034
+Lane weights: shape=0.390  franchise=0.254  quality=0.186  themes=0.102  studio=0.060  source=0.034  format=0.034
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -293,79 +293,79 @@ Lane weights: director=1.000  shape=0.390  franchise=0.254  quality=0.186  theme
 Active anchor types: standard_shape, prestige, studio_lineage, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.500  quality=0.204  franchise=0.111  themes=0.111  studio=0.060  source=0.037  format=0.037
+Lane weights: shape=0.500  quality=0.204  franchise=0.111  themes=0.111  studio=0.060  source=0.037  format=0.037
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Howl's Moving Castle (2004) `4935` | 1.187 | 0.951 | shape | shape, director, quality, format, themes, studio |
-| 2 | The Tale of The Princess Kaguya (2013) `149871` | 0.725 | 0.581 | shape | shape, quality, format, themes, studio |
-| 3 | Kubo and the Two Strings (2016) `313297` | 0.387 | 0.478 | shape | shape, quality, format, themes |
-| 4 | Song of the Sea (2014) `110416` | 0.379 | 0.468 | shape | shape, quality, format, themes |
-| 5 | Ponyo (2008) `12429` | 1.089 | 0.873 | shape | shape, director, quality, format, themes, studio |
-| 6 | Wolfwalkers (2020) `441130` | 0.371 | 0.458 | shape | shape, quality, format, themes |
-| 7 | Brave Story (2006) `17566` | 0.367 | 0.349 | shape | shape, quality, format, themes |
-| 8 | Mary and The Witch's Flower (2017) `430447` | 0.364 | 0.347 | shape | shape, quality, format, themes |
-| 9 | My Neighbor Totoro (1988) `8392` | 0.829 | 0.731 | shape | shape, director, quality, format, themes, studio |
-| 10 | The Secret World of Arrietty (2010) `51739` | 0.363 | 0.345 | shape | shape, quality, format, themes, studio |
+| 1 | Howl's Moving Castle (2004) `4935` | 1.218 | 0.751 | shape | shape, director, quality, format, themes, studio |
+| 2 | Ponyo (2008) `12429` | 1.091 | 0.673 | shape | shape, director, quality, format, themes, studio |
+| 3 | My Neighbor Totoro (1988) `8392` | 0.783 | 0.531 | shape | shape, director, quality, format, themes, studio |
+| 4 | The Boy and the Heron (2023) `508883` | 0.734 | 0.498 | shape | shape, director, quality, format, themes, studio |
+| 5 | The Tale of The Princess Kaguya (2013) `149871` | 0.725 | 0.581 | shape | shape, quality, format, themes, studio |
+| 6 | Castle in the Sky (1986) `10515` | 0.645 | 0.472 | shape | shape, director, quality, format, themes, studio |
+| 7 | Princess Mononoke (1997) `128` | 0.637 | 0.432 | shape | shape, director, quality, format, themes, studio |
+| 8 | Kubo and the Two Strings (2016) `313297` | 0.387 | 0.478 | shape | shape, quality, format, themes |
+| 9 | Song of the Sea (2014) `110416` | 0.379 | 0.468 | shape | shape, quality, format, themes |
+| 10 | Kiki's Delivery Service (1989) `16859` | 0.374 | 0.356 | shape | shape, director, quality, format, themes, studio |
 
 ### Per-result breakdown
 
-**#1 Howl's Moving Castle (2004) `4935` — score 1.187**
+**#1 Howl's Moving Castle (2004) `4935` — score 1.218**
 
-- Lanes: shape=1.000→0.500  director=0.200→0.200  quality=0.680→0.139  themes=0.681→0.076  studio=1.000→0.060  format=1.000→0.037
-- Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
+- Lanes: shape=1.000→0.500  quality=0.680→0.139  themes=0.681→0.076  studio=1.000→0.060  format=1.000→0.037
+- Adjustments: ×1.10(studio)  ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
-**#2 The Tale of The Princess Kaguya (2013) `149871` — score 0.725**
+**#2 Ponyo (2008) `12429` — score 1.091**
+
+- Lanes: shape=0.772→0.386  quality=0.680→0.139  themes=1.000→0.111  studio=1.000→0.060  format=1.000→0.037
+- Adjustments: ×1.10(studio)  ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#3 My Neighbor Totoro (1988) `8392` — score 0.783**
+
+- Lanes: shape=0.529→0.264  quality=0.584→0.119  themes=0.993→0.110  studio=1.000→0.060  format=1.000→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#4 The Boy and the Heron (2023) `508883` — score 0.734**
+
+- Lanes: shape=0.549→0.275  quality=0.752→0.153  studio=1.000→0.060  format=1.000→0.037  themes=0.296→0.033
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#5 The Tale of The Princess Kaguya (2013) `149871` — score 0.725**
 
 - Lanes: shape=0.601→0.300  quality=0.766→0.156  themes=0.789→0.088  studio=1.000→0.060  format=1.000→0.037
 - Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
 
-**#3 Kubo and the Two Strings (2016) `313297` — score 0.387**
+**#6 Castle in the Sky (1986) `10515` — score 0.645**
+
+- Lanes: shape=0.574→0.287  themes=0.689→0.077  quality=0.352→0.072  studio=1.000→0.060  format=1.000→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)
+
+**#7 Princess Mononoke (1997) `128` — score 0.637**
+
+- Lanes: shape=0.457→0.228  themes=0.767→0.085  quality=0.400→0.081  studio=1.000→0.060  format=1.000→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#8 Kubo and the Two Strings (2016) `313297` — score 0.387**
 
 - Lanes: shape=0.482→0.241  quality=0.648→0.132  themes=0.613→0.068  format=1.000→0.037
 - Adjustments: ×0.75(country)  ×1.08(shape)
 
-**#4 Song of the Sea (2014) `110416` — score 0.379**
+**#9 Song of the Sea (2014) `110416` — score 0.379**
 
 - Lanes: shape=0.367→0.183  quality=0.670→0.136  themes=1.000→0.111  format=1.000→0.037
 - Adjustments: ×0.75(country)  ×1.08(shape)
 
-**#5 Ponyo (2008) `12429` — score 1.089**
+**#10 Kiki's Delivery Service (1989) `16859` — score 0.374**
 
-- Lanes: shape=0.772→0.386  director=0.200→0.200  quality=0.680→0.139  themes=1.000→0.111  studio=1.000→0.060  format=1.000→0.037
-- Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
-
-**#6 Wolfwalkers (2020) `441130` — score 0.371**
-
-- Lanes: shape=0.332→0.166  quality=0.718→0.146  themes=0.978→0.109  format=1.000→0.037
-- Adjustments: ×0.75(country)  ×1.08(shape)
-
-**#7 Brave Story (2006) `17566` — score 0.367**
-
-- Lanes: shape=0.517→0.258  format=1.000→0.037  themes=0.296→0.033  quality=0.102→0.021
-- Adjustments: ×1.05(country)
-
-**#8 Mary and The Witch's Flower (2017) `430447` — score 0.364**
-
-- Lanes: shape=0.434→0.217  themes=0.468→0.052  quality=0.200→0.041  format=1.000→0.037
-- Adjustments: ×1.05(country)
-
-**#9 My Neighbor Totoro (1988) `8392` — score 0.829**
-
-- Lanes: shape=0.529→0.264  director=0.200→0.200  quality=0.584→0.119  themes=0.993→0.110  studio=1.000→0.060  format=1.000→0.037
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#10 The Secret World of Arrietty (2010) `51739` — score 0.363**
-
-- Lanes: shape=0.376→0.188  quality=0.336→0.068  studio=1.000→0.060  themes=0.468→0.052  format=1.000→0.037
-- Adjustments: ×1.05(country)
+- Lanes: shape=0.350→0.175  quality=0.488→0.099  studio=1.000→0.060  themes=0.398→0.044  format=1.000→0.037
+- Adjustments: ×1.30(director)  ×0.75(country)  ×1.08(shape)
 
 ## The Godfather (1972) - `238`
 
 Active anchor types: standard_shape, prestige, franchise_dominant, source_material
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  source=0.098  themes=0.098  studio=0.060  format=0.033
+Lane weights: shape=0.344  franchise=0.246  quality=0.180  source=0.098  themes=0.098  studio=0.060  format=0.033
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -437,99 +437,99 @@ Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  sourc
 Active anchor types: standard_shape, prestige, franchise_dominant, source_material, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  source=0.098  themes=0.098  studio=0.060  format=0.033
+Lane weights: shape=0.344  franchise=0.246  quality=0.180  source=0.098  themes=0.098  studio=0.060  format=0.033
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | The Dark Knight Rises (2012) `49026` | 1.155 | 1.019 | shape | shape, director, franchise, source, quality, format, themes |
-| 2 | Captain America: Civil War (2016) `271110` | 0.421 | 0.371 | shape | shape, source, quality, format, themes |
-| 3 | L.A. Confidential (1997) `2118` | 0.417 | 0.367 | quality | shape, quality, format, themes |
-| 4 | Man of Steel (2013) `49521` | 0.411 | 0.391 | shape | shape, source, quality, format, themes |
-| 5 | Batman Begins (2005) `272` | 1.066 | 0.940 | shape | shape, director, franchise, source, quality, format, themes |
-| 6 | The Godfather Part II (1974) `240` | 0.406 | 0.358 | quality | shape, quality, format, themes |
-| 7 | Chinatown (1974) `829` | 0.403 | 0.355 | quality | shape, quality, format, themes |
-| 8 | Se7en (1995) `807` | 0.403 | 0.384 | shape | shape, quality, format, themes |
-| 9 | Oppenheimer (2023) `872585` | 0.596 | 0.525 | director | shape, director, quality, format, themes |
-| 10 | Watchmen (2009) `13183` | 0.402 | 0.383 | shape | shape, source, quality, format, themes |
+| 1 | The Dark Knight Rises (2012) `49026` | 1.207 | 0.819 | shape | shape, director, franchise, source, quality, format, themes |
+| 2 | Oppenheimer (2023) `872585` | 0.480 | 0.325 | quality | shape, director, quality, format, themes |
+| 3 | Captain America: Civil War (2016) `271110` | 0.421 | 0.371 | shape | shape, source, quality, format, themes |
+| 4 | L.A. Confidential (1997) `2118` | 0.417 | 0.367 | quality | shape, quality, format, themes |
+| 5 | Batman Begins (2005) `272` | 1.092 | 0.740 | shape | shape, director, franchise, source, quality, format, themes |
+| 6 | Man of Steel (2013) `49521` | 0.411 | 0.391 | shape | shape, source, quality, format, themes |
+| 7 | The Godfather Part II (1974) `240` | 0.406 | 0.358 | quality | shape, quality, format, themes |
+| 8 | Chinatown (1974) `829` | 0.403 | 0.355 | quality | shape, quality, format, themes |
+| 9 | Se7en (1995) `807` | 0.403 | 0.384 | shape | shape, quality, format, themes |
+| 10 | The Prestige (2006) `1124` | 0.350 | 0.237 | shape | shape, director, quality, format, themes |
 
 ### Per-result breakdown
 
-**#1 The Dark Knight Rises (2012) `49026` — score 1.155**
+**#1 The Dark Knight Rises (2012) `49026` — score 1.207**
 
-- Lanes: shape=0.886→0.305  franchise=1.000→0.246  director=0.200→0.200  quality=0.566→0.102  themes=1.000→0.098  source=0.352→0.035  format=1.000→0.033
-- Adjustments: ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.886→0.305  franchise=1.000→0.246  quality=0.566→0.102  themes=1.000→0.098  source=0.352→0.035  format=1.000→0.033
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
-**#2 Captain America: Civil War (2016) `271110` — score 0.421**
+**#2 Oppenheimer (2023) `872585` — score 0.480**
+
+- Lanes: quality=0.872→0.157  shape=0.327→0.113  format=1.000→0.033  themes=0.230→0.023
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#3 Captain America: Civil War (2016) `271110` — score 0.421**
 
 - Lanes: shape=0.606→0.208  quality=0.398→0.072  source=0.352→0.035  format=1.000→0.033  themes=0.241→0.024
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#3 L.A. Confidential (1997) `2118` — score 0.417**
+**#4 L.A. Confidential (1997) `2118` — score 0.417**
 
 - Lanes: quality=0.896→0.162  shape=0.439→0.151  format=1.000→0.033  themes=0.222→0.022
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#4 Man of Steel (2013) `49521` — score 0.411**
+**#5 Batman Begins (2005) `272` — score 1.092**
+
+- Lanes: shape=0.772→0.266  franchise=1.000→0.246  themes=1.000→0.098  quality=0.350→0.063  source=0.352→0.035  format=1.000→0.033
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#6 Man of Steel (2013) `49521` — score 0.411**
 
 - Lanes: shape=0.526→0.181  themes=0.806→0.079  quality=0.350→0.063  source=0.352→0.035  format=1.000→0.033
 - Adjustments: ×1.05(country)
 
-**#5 Batman Begins (2005) `272` — score 1.066**
-
-- Lanes: shape=0.772→0.266  franchise=1.000→0.246  director=0.200→0.200  themes=1.000→0.098  quality=0.350→0.063  source=0.352→0.035  format=1.000→0.033
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#6 The Godfather Part II (1974) `240` — score 0.406**
+**#7 The Godfather Part II (1974) `240` — score 0.406**
 
 - Lanes: quality=1.000→0.180  shape=0.278→0.096  themes=0.501→0.049  format=1.000→0.033
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#7 Chinatown (1974) `829` — score 0.403**
+**#8 Chinatown (1974) `829` — score 0.403**
 
 - Lanes: quality=0.904→0.163  shape=0.281→0.097  themes=0.637→0.063  format=1.000→0.033
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#8 Se7en (1995) `807` — score 0.403**
+**#9 Se7en (1995) `807` — score 0.403**
 
 - Lanes: shape=0.599→0.206  themes=0.737→0.072  quality=0.400→0.072  format=1.000→0.033
 - Adjustments: ×1.05(country)
 
-**#9 Oppenheimer (2023) `872585` — score 0.596**
+**#10 The Prestige (2006) `1124` — score 0.350**
 
-- Lanes: director=0.200→0.200  quality=0.872→0.157  shape=0.327→0.113  format=1.000→0.033  themes=0.230→0.023
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#10 Watchmen (2009) `13183` — score 0.402**
-
-- Lanes: shape=0.526→0.181  themes=1.000→0.098  quality=0.200→0.036  source=0.352→0.035  format=1.000→0.033
-- Adjustments: ×1.05(country)
+- Lanes: shape=0.251→0.086  quality=0.350→0.063  themes=0.552→0.054  format=1.000→0.033
+- Adjustments: ×1.05(country)  floor=0.350(director)
 
 ## The Dark Knight Rises (2012) - `49026`
 
 Active anchor types: standard_shape, franchise_dominant, source_material, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.440  franchise=0.275  source=0.110  themes=0.110  studio=0.060  format=0.037  quality=0.028
+Lane weights: shape=0.440  franchise=0.275  source=0.110  themes=0.110  studio=0.060  format=0.037  quality=0.028
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | The Dark Knight (2008) `155` | 1.223 | 1.078 | shape | shape, director, franchise, source, quality, format, themes |
+| 1 | The Dark Knight (2008) `155` | 1.295 | 0.878 | shape | shape, director, franchise, source, quality, format, themes |
 | 2 | Avengers: Endgame (2019) `299534` | 0.740 | 0.652 | shape | shape, source, quality, format, themes |
 | 3 | The Lord of the Rings: The Return of the King (2003) `122` | 0.641 | 0.565 | shape | shape, quality, format, themes |
-| 4 | Captain America: Civil War (2016) `271110` | 0.613 | 0.540 | shape | shape, source, quality, format, themes |
-| 5 | Batman Begins (2005) `272` | 1.000 | 0.882 | franchise | shape, director, franchise, source, quality, format, themes |
-| 6 | Gladiator (2000) `98` | 0.599 | 0.528 | shape | shape, quality, format, themes |
-| 7 | Man of Steel (2013) `49521` | 0.533 | 0.508 | shape | shape, source, quality, format, themes |
-| 8 | The Hobbit: The Battle of the Five Armies (2014) `122917` | 0.509 | 0.485 | shape | shape, quality, format, themes |
-| 9 | Interstellar (2014) `157336` | 0.490 | 0.432 | director | shape, director, quality, format, themes |
+| 4 | Interstellar (2014) `157336` | 0.350 | 0.232 | shape | shape, director, quality, format, themes |
+| 5 | Batman Begins (2005) `272` | 1.005 | 0.682 | franchise | shape, director, franchise, source, quality, format, themes |
+| 6 | Captain America: Civil War (2016) `271110` | 0.613 | 0.540 | shape | shape, source, quality, format, themes |
+| 7 | Gladiator (2000) `98` | 0.599 | 0.528 | shape | shape, quality, format, themes |
+| 8 | Man of Steel (2013) `49521` | 0.533 | 0.508 | shape | shape, source, quality, format, themes |
+| 9 | The Hobbit: The Battle of the Five Armies (2014) `122917` | 0.509 | 0.485 | shape | shape, quality, format, themes |
 | 10 | Batman Forever (1995) `414` | 0.494 | 0.470 | franchise | shape, franchise, source, quality, format, themes |
 
 ### Per-result breakdown
 
-**#1 The Dark Knight (2008) `155` — score 1.223**
+**#1 The Dark Knight (2008) `155` — score 1.295**
 
-- Lanes: shape=0.887→0.391  franchise=1.000→0.275  director=0.200→0.200  themes=1.000→0.110  source=0.352→0.039  format=1.000→0.037  quality=0.975→0.027
-- Adjustments: ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.887→0.391  franchise=1.000→0.275  themes=1.000→0.110  source=0.352→0.039  format=1.000→0.037  quality=0.975→0.027
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
 **#2 Avengers: Endgame (2019) `299534` — score 0.740**
 
@@ -541,35 +541,35 @@ Lane weights: director=1.000  shape=0.440  franchise=0.275  source=0.110  themes
 - Lanes: shape=0.949→0.418  themes=0.754→0.083  format=1.000→0.037  quality=0.985→0.027
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#4 Captain America: Civil War (2016) `271110` — score 0.613**
+**#4 Interstellar (2014) `157336` — score 0.350**
+
+- Lanes: shape=0.261→0.115  themes=0.489→0.054  format=1.000→0.037  quality=0.958→0.026
+- Adjustments: ×1.05(country)  ×1.08(shape)  floor=0.350(director)
+
+**#5 Batman Begins (2005) `272` — score 1.005**
+
+- Lanes: franchise=1.000→0.275  shape=0.442→0.195  themes=1.000→0.110  source=0.352→0.039  format=1.000→0.037  quality=0.949→0.026
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#6 Captain America: Civil War (2016) `271110` — score 0.613**
 
 - Lanes: shape=0.917→0.404  source=0.352→0.039  format=1.000→0.037  themes=0.317→0.035  quality=0.952→0.026
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#5 Batman Begins (2005) `272` — score 1.000**
-
-- Lanes: franchise=1.000→0.275  director=0.200→0.200  shape=0.442→0.195  themes=1.000→0.110  source=0.352→0.039  format=1.000→0.037  quality=0.949→0.026
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#6 Gladiator (2000) `98` — score 0.599**
+**#7 Gladiator (2000) `98` — score 0.599**
 
 - Lanes: shape=0.948→0.417  themes=0.437→0.048  format=1.000→0.037  quality=0.948→0.026
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#7 Man of Steel (2013) `49521` — score 0.533**
+**#8 Man of Steel (2013) `49521` — score 0.533**
 
 - Lanes: shape=0.712→0.313  themes=0.852→0.094  source=0.352→0.039  format=1.000→0.037  quality=0.922→0.025
 - Adjustments: ×1.05(country)
 
-**#8 The Hobbit: The Battle of the Five Armies (2014) `122917` — score 0.509**
+**#9 The Hobbit: The Battle of the Five Armies (2014) `122917` — score 0.509**
 
 - Lanes: shape=0.888→0.391  format=1.000→0.037  themes=0.291→0.032  quality=0.928→0.026
 - Adjustments: ×1.05(country)
-
-**#9 Interstellar (2014) `157336` — score 0.490**
-
-- Lanes: director=0.200→0.200  shape=0.261→0.115  themes=0.489→0.054  format=1.000→0.037  quality=0.958→0.026
-- Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#10 Batman Forever (1995) `414` — score 0.494**
 
@@ -581,15 +581,15 @@ Lane weights: director=1.000  shape=0.440  franchise=0.275  source=0.110  themes
 Active anchor types: standard_shape, studio_lineage, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
+Lane weights: shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Us (2019) `458723` | 0.873 | 0.770 | shape | shape, director, quality, format, themes |
-| 2 | Antebellum (2020) `627290` | 0.868 | 0.827 | shape | shape, quality, format, themes |
+| 1 | Antebellum (2020) `627290` | 0.868 | 0.827 | shape | shape, quality, format, themes |
+| 2 | Us (2019) `458723` | 0.840 | 0.570 | shape | shape, director, quality, format, themes |
 | 3 | Weapons (2025) `1078605` | 0.617 | 0.587 | shape | shape, quality, format, themes |
 | 4 | Barbarian (2022) `913290` | 0.541 | 0.515 | shape | shape, quality, format, themes |
-| 5 | Nope (2022) `762504` | 0.520 | 0.496 | director | shape, director, quality, format, themes |
+| 5 | Nope (2022) `762504` | 0.350 | 0.296 | shape | shape, director, quality, format, themes |
 | 6 | Last Shift (2014) `296065` | 0.455 | 0.433 | shape | shape, quality, format, themes |
 | 7 | Arachnophobia (1990) `6488` | 0.442 | 0.421 | shape | shape, quality, format, themes |
 | 8 | The Blackening (2023) `1008392` | 0.438 | 0.417 | shape | shape, quality, format, themes |
@@ -598,15 +598,15 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 
 ### Per-result breakdown
 
-**#1 Us (2019) `458723` — score 0.873**
-
-- Lanes: shape=0.615→0.389  director=0.200→0.200  themes=0.866→0.109  format=1.000→0.042  quality=0.948→0.030
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#2 Antebellum (2020) `627290` — score 0.868**
+**#1 Antebellum (2020) `627290` — score 0.868**
 
 - Lanes: shape=1.000→0.632  themes=1.000→0.126  format=1.000→0.042  quality=0.852→0.027
 - Adjustments: ×1.05(country)
+
+**#2 Us (2019) `458723` — score 0.840**
+
+- Lanes: shape=0.615→0.389  themes=0.866→0.109  format=1.000→0.042  quality=0.948→0.030
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
 **#3 Weapons (2025) `1078605` — score 0.617**
 
@@ -618,10 +618,10 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 - Lanes: shape=0.502→0.317  themes=1.000→0.126  format=1.000→0.042  quality=0.942→0.030
 - Adjustments: ×1.05(country)
 
-**#5 Nope (2022) `762504` — score 0.520**
+**#5 Nope (2022) `762504` — score 0.350**
 
-- Lanes: director=0.200→0.200  shape=0.288→0.182  format=1.000→0.042  themes=0.329→0.042  quality=0.941→0.030
-- Adjustments: ×1.05(country)
+- Lanes: shape=0.288→0.182  format=1.000→0.042  themes=0.329→0.042  quality=0.941→0.030
+- Adjustments: ×1.05(country)  floor=0.350(director)
 
 **#6 Last Shift (2014) `296065` — score 0.455**
 
@@ -653,7 +653,7 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 Active anchor types: standard_shape, franchise_dominant, studio_lineage
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.495  franchise=0.286  themes=0.114  studio=0.060  source=0.038  format=0.038  quality=0.029
+Lane weights: shape=0.495  franchise=0.286  themes=0.114  studio=0.060  source=0.038  format=0.038  quality=0.029
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -725,46 +725,46 @@ Lane weights: director=1.000  shape=0.495  franchise=0.286  themes=0.114  studio
 Active anchor types: standard_shape, prestige, source_material, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.446  quality=0.196  franchise=0.107  source=0.107  themes=0.107  studio=0.060  format=0.036
+Lane weights: shape=0.446  quality=0.196  franchise=0.107  source=0.107  themes=0.107  studio=0.060  format=0.036
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Dunkirk (2017) `374720` | 0.692 | 0.610 | director | shape, director, source, quality, format, themes |
-| 2 | Fat Man and Little Boy (1989) `27461` | 0.650 | 0.619 | shape | shape, source, quality, format, themes |
-| 3 | Before Night Falls (2000) `5001` | 0.548 | 0.483 | shape | shape, source, quality, format, themes |
-| 4 | Schindler's List (1993) `424` | 0.449 | 0.396 | quality | shape, source, quality, format, themes |
-| 5 | The Dark Knight (2008) `155` | 0.664 | 0.585 | director | shape, director, quality, format, themes |
+| 1 | Fat Man and Little Boy (1989) `27461` | 0.650 | 0.619 | shape | shape, source, quality, format, themes |
+| 2 | The Dark Knight (2008) `155` | 0.568 | 0.385 | quality | shape, director, quality, format, themes |
+| 3 | Dunkirk (2017) `374720` | 0.465 | 0.410 | quality | shape, director, source, quality, format, themes |
+| 4 | Before Night Falls (2000) `5001` | 0.548 | 0.483 | shape | shape, source, quality, format, themes |
+| 5 | Schindler's List (1993) `424` | 0.449 | 0.396 | quality | shape, source, quality, format, themes |
 | 6 | The Irishman (2019) `398978` | 0.495 | 0.436 | quality | shape, source, quality, format, themes |
-| 7 | The Godfather Part II (1974) `240` | 0.483 | 0.426 | quality | shape, quality, format, themes |
-| 8 | The Pianist (2002) `423` | 0.478 | 0.422 | quality | shape, source, quality, format, themes |
-| 9 | Inception (2010) `27205` | 0.495 | 0.436 | director | shape, director, quality, format, themes |
+| 7 | Inception (2010) `27205` | 0.268 | 0.236 | quality | shape, director, quality, format, themes |
+| 8 | The Godfather Part II (1974) `240` | 0.483 | 0.426 | quality | shape, quality, format, themes |
+| 9 | The Pianist (2002) `423` | 0.478 | 0.422 | quality | shape, source, quality, format, themes |
 | 10 | 12 Years a Slave (2013) `76203` | 0.473 | 0.417 | quality | shape, source, quality, format, themes |
 
 ### Per-result breakdown
 
-**#1 Dunkirk (2017) `374720` — score 0.692**
-
-- Lanes: director=0.200→0.200  quality=0.904→0.178  themes=0.868→0.093  shape=0.183→0.082  format=1.000→0.036  source=0.208→0.022
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#2 Fat Man and Little Boy (1989) `27461` — score 0.650**
+**#1 Fat Man and Little Boy (1989) `27461` — score 0.650**
 
 - Lanes: shape=1.000→0.446  quality=0.350→0.069  themes=0.381→0.041  format=1.000→0.036  source=0.252→0.027
 - Adjustments: ×1.05(country)
 
-**#3 Before Night Falls (2000) `5001` — score 0.548**
+**#2 The Dark Knight (2008) `155` — score 0.568**
+
+- Lanes: quality=0.896→0.176  shape=0.317→0.142  format=1.000→0.036  themes=0.298→0.032
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
+
+**#3 Dunkirk (2017) `374720` — score 0.465**
+
+- Lanes: quality=0.904→0.178  themes=0.868→0.093  shape=0.183→0.082  format=1.000→0.036  source=0.208→0.022
+- Adjustments: ×1.05(country)  ×1.08(shape)
+
+**#4 Before Night Falls (2000) `5001` — score 0.548**
 
 - Lanes: shape=0.574→0.256  quality=0.576→0.113  themes=0.476→0.051  format=1.000→0.036  source=0.252→0.027
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#4 Schindler's List (1993) `424` — score 0.449**
+**#5 Schindler's List (1993) `424` — score 0.449**
 
 - Lanes: quality=1.000→0.196  themes=1.000→0.107  format=1.000→0.036  shape=0.067→0.030  source=0.252→0.027
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#5 The Dark Knight (2008) `155` — score 0.664**
-
-- Lanes: director=0.200→0.200  quality=0.896→0.176  shape=0.317→0.142  format=1.000→0.036  themes=0.298→0.032
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#6 The Irishman (2019) `398978` — score 0.495**
@@ -772,19 +772,19 @@ Lane weights: director=1.000  shape=0.446  quality=0.196  franchise=0.107  sourc
 - Lanes: quality=0.904→0.178  themes=0.993→0.106  shape=0.201→0.090  format=1.000→0.036  source=0.252→0.027
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#7 The Godfather Part II (1974) `240` — score 0.483**
+**#7 Inception (2010) `27205` — score 0.268**
+
+- Lanes: quality=0.584→0.115  shape=0.160→0.072  format=1.000→0.036  themes=0.134→0.014
+- Adjustments: ×1.05(country)  ×1.08(shape)
+
+**#8 The Godfather Part II (1974) `240` — score 0.483**
 
 - Lanes: quality=1.000→0.196  shape=0.394→0.176  format=1.000→0.036  themes=0.168→0.018
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#8 The Pianist (2002) `423` — score 0.478**
+**#9 The Pianist (2002) `423` — score 0.478**
 
 - Lanes: quality=0.800→0.157  themes=1.000→0.107  shape=0.212→0.095  format=1.000→0.036  source=0.252→0.027
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#9 Inception (2010) `27205` — score 0.495**
-
-- Lanes: director=0.200→0.200  quality=0.584→0.115  shape=0.160→0.072  format=1.000→0.036  themes=0.134→0.014
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#10 12 Years a Slave (2013) `76203` — score 0.473**
@@ -797,20 +797,20 @@ Lane weights: director=1.000  shape=0.446  quality=0.196  franchise=0.107  sourc
 Active anchor types: standard_shape, franchise_dominant, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.495  franchise=0.286  themes=0.114  studio=0.060  source=0.038  format=0.038  quality=0.029
+Lane weights: shape=0.495  franchise=0.286  themes=0.114  studio=0.060  source=0.038  format=0.038  quality=0.029
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
 | 1 | Poor Things (2023) `792307` | 0.587 | 0.518 | shape | shape, quality, format, themes |
 | 2 | Patch Town (2014) `248417` | 0.546 | 0.520 | shape | shape, quality, format, themes |
-| 3 | Little Women (2019) `331482` | 0.368 | 0.324 | director | shape, director, quality, format, themes |
-| 4 | Barbie: Princess Adventure (2020) `738215` | 0.345 | 0.505 | shape | shape, franchise, quality, format, themes |
-| 5 | Lady Bird (2017) `391713` | 0.354 | 0.312 | director | shape, director, quality, format, themes |
+| 3 | Barbie: Princess Adventure (2020) `738215` | 0.345 | 0.505 | shape | shape, franchise, quality, format, themes |
+| 4 | The Dressmaker (2015) `298382` | 0.531 | 0.506 | shape | shape, quality, format, themes |
+| 5 | Little Women (2019) `331482` | 0.141 | 0.124 | format | shape, director, quality, format, themes |
 | 6 | Barbie: A Fashion Fairytale (2010) `44874` | 0.343 | 0.502 | shape | shape, franchise, quality, format |
-| 7 | The Dressmaker (2015) `298382` | 0.531 | 0.506 | shape | shape, quality, format, themes |
+| 7 | Lady Bird (2017) `391713` | 0.127 | 0.112 | format | shape, director, quality, format, themes |
 | 8 | Bliss (1985) `54407` | 0.463 | 0.441 | shape | shape, quality, format, themes |
-| 9 | Nights and Weekends (2008) `48204` | 0.270 | 0.257 | director | director, quality, format |
-| 10 | Last Action Hero (1993) `9593` | 0.446 | 0.425 | shape | shape, quality, format, themes |
+| 9 | Last Action Hero (1993) `9593` | 0.446 | 0.425 | shape | shape, quality, format, themes |
+| 10 | I Am Not an Easy Man (2018) `515841` | 0.445 | 0.594 | shape | shape, quality, format, themes |
 
 ### Per-result breakdown
 
@@ -824,19 +824,19 @@ Lane weights: director=1.000  shape=0.495  franchise=0.286  themes=0.114  studio
 - Lanes: shape=0.869→0.430  themes=0.352→0.040  format=1.000→0.038  quality=0.398→0.011
 - Adjustments: ×1.05(country)
 
-**#3 Little Women (2019) `331482` — score 0.368**
-
-- Lanes: director=0.200→0.200  format=1.000→0.038  shape=0.077→0.038  quality=0.965→0.028  themes=0.179→0.020
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#4 Barbie: Princess Adventure (2020) `738215` — score 0.345**
+**#3 Barbie: Princess Adventure (2020) `738215` — score 0.345**
 
 - Lanes: shape=0.501→0.248  franchise=0.700→0.200  format=1.000→0.038  quality=0.529→0.015  themes=0.032→0.004
 - Adjustments: ×1.05(country)  ×0.65(medium)
 
-**#5 Lady Bird (2017) `391713` — score 0.354**
+**#4 The Dressmaker (2015) `298382` — score 0.531**
 
-- Lanes: director=0.200→0.200  format=1.000→0.038  themes=0.262→0.030  quality=0.966→0.028  shape=0.033→0.016
+- Lanes: shape=0.879→0.435  format=1.000→0.038  quality=0.886→0.025  themes=0.062→0.007
+- Adjustments: ×1.05(country)
+
+**#5 Little Women (2019) `331482` — score 0.141**
+
+- Lanes: format=1.000→0.038  shape=0.077→0.038  quality=0.965→0.028  themes=0.179→0.020
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#6 Barbie: A Fashion Fairytale (2010) `44874` — score 0.343**
@@ -844,32 +844,32 @@ Lane weights: director=1.000  shape=0.495  franchise=0.286  themes=0.114  studio
 - Lanes: shape=0.488→0.242  franchise=0.700→0.200  format=1.000→0.038  quality=0.775→0.022
 - Adjustments: ×1.05(country)  ×0.65(medium)
 
-**#7 The Dressmaker (2015) `298382` — score 0.531**
+**#7 Lady Bird (2017) `391713` — score 0.127**
 
-- Lanes: shape=0.879→0.435  format=1.000→0.038  quality=0.886→0.025  themes=0.062→0.007
-- Adjustments: ×1.05(country)
+- Lanes: format=1.000→0.038  themes=0.262→0.030  quality=0.966→0.028  shape=0.033→0.016
+- Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#8 Bliss (1985) `54407` — score 0.463**
 
 - Lanes: shape=0.762→0.377  format=1.000→0.038  quality=0.641→0.018  themes=0.062→0.007
 - Adjustments: ×1.05(country)
 
-**#9 Nights and Weekends (2008) `48204` — score 0.270**
-
-- Lanes: director=0.200→0.200  format=1.000→0.038  quality=0.670→0.019
-- Adjustments: ×1.05(country)
-
-**#10 Last Action Hero (1993) `9593` — score 0.446**
+**#9 Last Action Hero (1993) `9593` — score 0.446**
 
 - Lanes: shape=0.548→0.271  themes=0.789→0.090  format=1.000→0.038  quality=0.893→0.026
 - Adjustments: ×1.05(country)
+
+**#10 I Am Not an Easy Man (2018) `515841` — score 0.445**
+
+- Lanes: shape=1.000→0.495  format=1.000→0.038  themes=0.312→0.036  quality=0.857→0.024
+- Adjustments: ×0.75(country)
 
 ## Sharknado (2013) - `205321`
 
 Active anchor types: standard_shape, cult_garbage, franchise_dominant
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.339  quality=0.258  franchise=0.242  themes=0.097  studio=0.060  source=0.032  format=0.032
+Lane weights: shape=0.339  quality=0.258  franchise=0.242  themes=0.097  studio=0.060  source=0.032  format=0.032
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -941,7 +941,7 @@ Lane weights: director=1.000  shape=0.339  quality=0.258  franchise=0.242  theme
 Active anchor types: standard_shape, cult_garbage
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.439  quality=0.281  franchise=0.105  themes=0.105  studio=0.060  source=0.035  format=0.035
+Lane weights: shape=0.439  quality=0.281  franchise=0.105  themes=0.105  studio=0.060  source=0.035  format=0.035
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -1013,7 +1013,7 @@ Lane weights: director=1.000  shape=0.439  quality=0.281  franchise=0.105  theme
 Active anchor types: standard_shape, source_material
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.566  franchise=0.121  source=0.121  themes=0.121  studio=0.060  format=0.040  quality=0.030
+Lane weights: shape=0.566  franchise=0.121  source=0.121  themes=0.121  studio=0.060  format=0.040  quality=0.030
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -1085,27 +1085,27 @@ Lane weights: director=1.000  shape=0.566  franchise=0.121  source=0.121  themes
 Active anchor types: standard_shape, prestige, studio_lineage, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.500  quality=0.204  franchise=0.111  themes=0.111  studio=0.060  source=0.037  format=0.037
+Lane weights: shape=0.500  quality=0.204  franchise=0.111  themes=0.111  studio=0.060  source=0.037  format=0.037
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | Reservoir Dogs (1992) `500` | 0.834 | 0.736 | shape | shape, director, quality, format, themes |
+| 1 | Reservoir Dogs (1992) `500` | 0.789 | 0.536 | shape | shape, director, quality, format, themes |
 | 2 | True Romance (1993) `319` | 0.572 | 0.496 | shape | shape, quality, format, themes, studio |
 | 3 | Thursday (1998) `9812` | 0.647 | 0.617 | shape | shape, quality, format, themes |
-| 4 | Go (1999) `9430` | 0.545 | 0.481 | shape | shape, quality, format, themes |
-| 5 | Sin City (2005) `187` | 0.654 | 0.623 | shape | shape, director, quality, format, themes |
-| 6 | Carlito's Way (1993) `6075` | 0.426 | 0.406 | shape | shape, quality, format, themes |
-| 7 | GoodFellas (1990) `769` | 0.538 | 0.475 | quality | shape, quality, format, themes |
-| 8 | 2 Days in the Valley (1996) `9401` | 0.536 | 0.510 | shape | shape, quality, format, themes |
-| 9 | Jackie Brown (1997) `184` | 0.590 | 0.521 | director | shape, director, quality, format, themes, studio |
+| 4 | Sin City (2005) `187` | 0.577 | 0.423 | shape | shape, director, quality, format, themes |
+| 5 | Carlito's Way (1993) `6075` | 0.426 | 0.406 | shape | shape, quality, format, themes |
+| 6 | Jackie Brown (1997) `184` | 0.364 | 0.321 | themes | shape, director, quality, format, themes, studio |
+| 7 | Go (1999) `9430` | 0.545 | 0.481 | shape | shape, quality, format, themes |
+| 8 | GoodFellas (1990) `769` | 0.538 | 0.475 | quality | shape, quality, format, themes |
+| 9 | 2 Days in the Valley (1996) `9401` | 0.536 | 0.510 | shape | shape, quality, format, themes |
 | 10 | L.A. Confidential (1997) `2118` | 0.531 | 0.468 | shape | shape, quality, format, themes |
 
 ### Per-result breakdown
 
-**#1 Reservoir Dogs (1992) `500` — score 0.834**
+**#1 Reservoir Dogs (1992) `500` — score 0.789**
 
-- Lanes: shape=0.558→0.279  director=0.200→0.200  quality=0.672→0.137  themes=0.743→0.083  format=1.000→0.037
-- Adjustments: ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.558→0.279  quality=0.672→0.137  themes=0.743→0.083  format=1.000→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
 **#2 True Romance (1993) `319` — score 0.572**
 
@@ -1117,35 +1117,35 @@ Lane weights: director=1.000  shape=0.500  quality=0.204  franchise=0.111  theme
 - Lanes: shape=1.000→0.500  quality=0.200→0.041  themes=0.350→0.039  format=1.000→0.037
 - Adjustments: ×1.05(country)
 
-**#4 Go (1999) `9430` — score 0.545**
+**#4 Sin City (2005) `187` — score 0.577**
 
-- Lanes: shape=0.665→0.332  quality=0.350→0.071  themes=0.359→0.040  format=1.000→0.037
-- Adjustments: ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.512→0.256  quality=0.456→0.093  format=1.000→0.037  themes=0.331→0.037
+- Adjustments: ×1.30(director)  ×1.05(country)
 
-**#5 Sin City (2005) `187` — score 0.654**
-
-- Lanes: shape=0.512→0.256  director=0.200→0.200  quality=0.456→0.093  format=1.000→0.037  themes=0.331→0.037
-- Adjustments: ×1.05(country)
-
-**#6 Carlito's Way (1993) `6075` — score 0.426**
+**#5 Carlito's Way (1993) `6075` — score 0.426**
 
 - Lanes: shape=0.400→0.200  themes=0.881→0.098  quality=0.350→0.071  format=1.000→0.037
 - Adjustments: ×1.05(country)
 
-**#7 GoodFellas (1990) `769` — score 0.538**
+**#6 Jackie Brown (1997) `184` — score 0.364**
+
+- Lanes: themes=1.000→0.111  shape=0.182→0.091  quality=0.400→0.081  studio=0.939→0.056  format=1.000→0.037
+- Adjustments: ×1.05(country)  ×1.08(shape)
+
+**#7 Go (1999) `9430` — score 0.545**
+
+- Lanes: shape=0.665→0.332  quality=0.350→0.071  themes=0.359→0.040  format=1.000→0.037
+- Adjustments: ×1.05(country)  ×1.08(shape)
+
+**#8 GoodFellas (1990) `769` — score 0.538**
 
 - Lanes: quality=1.000→0.204  shape=0.368→0.184  themes=0.452→0.050  format=1.000→0.037
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#8 2 Days in the Valley (1996) `9401` — score 0.536**
+**#9 2 Days in the Valley (1996) `9401` — score 0.536**
 
 - Lanes: shape=0.787→0.394  quality=0.200→0.041  themes=0.349→0.039  format=1.000→0.037
 - Adjustments: ×1.05(country)
-
-**#9 Jackie Brown (1997) `184` — score 0.590**
-
-- Lanes: director=0.200→0.200  themes=1.000→0.111  shape=0.182→0.091  quality=0.400→0.081  studio=0.939→0.056  format=1.000→0.037
-- Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#10 L.A. Confidential (1997) `2118` — score 0.531**
 
@@ -1157,32 +1157,32 @@ Lane weights: director=1.000  shape=0.500  quality=0.204  franchise=0.111  theme
 Active anchor types: standard_shape, studio_lineage, source_material, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.566  franchise=0.121  source=0.121  themes=0.121  studio=0.060  format=0.040  quality=0.030
+Lane weights: shape=0.566  franchise=0.121  source=0.121  themes=0.121  studio=0.060  format=0.040  quality=0.030
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
-| 1 | The Game (1997) `2649` | 0.761 | 0.671 | shape | shape, director, quality, format, themes |
-| 2 | Revolver (2005) `10851` | 0.750 | 0.714 | shape | shape, quality, format, themes |
+| 1 | Revolver (2005) `10851` | 0.750 | 0.714 | shape | shape, quality, format, themes |
+| 2 | The Game (1997) `2649` | 0.695 | 0.471 | shape | shape, director, quality, format, themes |
 | 3 | Luster (2010) `66111` | 0.670 | 0.639 | shape | shape, quality, format, themes |
 | 4 | American Psycho (2000) `1359` | 0.620 | 0.546 | shape | shape, source, quality, format, themes |
-| 5 | The Girl with the Dragon Tattoo (2011) `65754` | 0.584 | 0.515 | director | shape, director, source, quality, format, themes |
-| 6 | Freeze Frame (2004) `12612` | 0.603 | 0.575 | shape | shape, quality, format, themes |
+| 5 | Freeze Frame (2004) `12612` | 0.603 | 0.575 | shape | shape, quality, format, themes |
+| 6 | The Girl with the Dragon Tattoo (2011) `65754` | 0.357 | 0.315 | shape | shape, director, source, quality, format, themes |
 | 7 | Lost Highway (1997) `638` | 0.569 | 0.502 | shape | shape, quality, format, themes |
-| 8 | The Machinist (2004) `4553` | 0.564 | 0.497 | shape | shape, quality, format, themes |
-| 9 | Se7en (1995) `807` | 0.544 | 0.480 | director | shape, director, quality, format, themes |
+| 8 | Se7en (1995) `807` | 0.350 | 0.280 | shape | shape, director, quality, format, themes |
+| 9 | The Machinist (2004) `4553` | 0.564 | 0.497 | shape | shape, quality, format, themes |
 | 10 | Joker (2019) `475557` | 0.557 | 0.530 | shape | shape, quality, format, themes |
 
 ### Per-result breakdown
 
-**#1 The Game (1997) `2649` — score 0.761**
-
-- Lanes: shape=0.576→0.326  director=0.200→0.200  themes=0.634→0.077  format=1.000→0.040  quality=0.934→0.028
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#2 Revolver (2005) `10851` — score 0.750**
+**#1 Revolver (2005) `10851` — score 0.750**
 
 - Lanes: shape=1.000→0.566  themes=0.675→0.082  format=1.000→0.040  quality=0.862→0.026
 - Adjustments: ×1.05(country)
+
+**#2 The Game (1997) `2649` — score 0.695**
+
+- Lanes: shape=0.576→0.326  themes=0.634→0.077  format=1.000→0.040  quality=0.934→0.028
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
 **#3 Luster (2010) `66111` — score 0.670**
 
@@ -1194,29 +1194,29 @@ Lane weights: director=1.000  shape=0.566  franchise=0.121  source=0.121  themes
 - Lanes: shape=0.588→0.332  themes=1.000→0.121  format=1.000→0.040  quality=0.937→0.028  source=0.198→0.024
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#5 The Girl with the Dragon Tattoo (2011) `65754` — score 0.584**
-
-- Lanes: director=0.200→0.200  shape=0.271→0.153  themes=0.566→0.069  format=1.000→0.040  quality=0.945→0.029  source=0.198→0.024
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#6 Freeze Frame (2004) `12612` — score 0.603**
+**#5 Freeze Frame (2004) `12612` — score 0.603**
 
 - Lanes: shape=0.779→0.441  themes=0.591→0.072  format=1.000→0.040  quality=0.722→0.022
 - Adjustments: ×1.05(country)
+
+**#6 The Girl with the Dragon Tattoo (2011) `65754` — score 0.357**
+
+- Lanes: shape=0.271→0.153  themes=0.566→0.069  format=1.000→0.040  quality=0.945→0.029  source=0.198→0.024
+- Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#7 Lost Highway (1997) `638` — score 0.569**
 
 - Lanes: shape=0.647→0.366  themes=0.558→0.068  format=1.000→0.040  quality=0.913→0.028
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#8 The Machinist (2004) `4553` — score 0.564**
+**#8 Se7en (1995) `807` — score 0.350**
+
+- Lanes: shape=0.233→0.132  themes=0.648→0.079  format=1.000→0.040  quality=0.947→0.029
+- Adjustments: ×1.05(country)  ×1.08(shape)  floor=0.350(director)
+
+**#9 The Machinist (2004) `4553` — score 0.564**
 
 - Lanes: shape=0.597→0.337  themes=0.751→0.091  format=1.000→0.040  quality=0.931→0.028
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#9 Se7en (1995) `807` — score 0.544**
-
-- Lanes: director=0.200→0.200  shape=0.233→0.132  themes=0.648→0.079  format=1.000→0.040  quality=0.947→0.029
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#10 Joker (2019) `475557` — score 0.557**
@@ -1229,7 +1229,7 @@ Lane weights: director=1.000  shape=0.566  franchise=0.121  source=0.121  themes
 Active anchor types: standard_shape, prestige, franchise_dominant
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.390  franchise=0.254  quality=0.186  themes=0.102  studio=0.060  source=0.034  format=0.034
+Lane weights: shape=0.390  franchise=0.254  quality=0.186  themes=0.102  studio=0.060  source=0.034  format=0.034
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
@@ -1301,20 +1301,20 @@ Lane weights: director=1.000  shape=0.390  franchise=0.254  quality=0.186  theme
 Active anchor types: standard_shape, director_signature
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
+Lane weights: shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
 | 1 | Ad Astra (2019) `419704` | 0.905 | 0.798 | shape | shape, quality, format, themes |
 | 2 | Gravity (2013) `49047` | 0.892 | 0.786 | shape | shape, quality, format, themes |
-| 3 | Inception (2010) `27205` | 0.694 | 0.612 | shape | shape, director, quality, format, themes |
+| 3 | Inception (2010) `27205` | 0.608 | 0.412 | shape | shape, director, quality, format, themes |
 | 4 | Contact (1997) `686` | 0.683 | 0.651 | shape | shape, quality, format, themes |
-| 5 | The Dark Knight Rises (2012) `49026` | 0.499 | 0.440 | director | shape, director, quality, format, themes |
-| 6 | Prometheus (2012) `70981` | 0.671 | 0.592 | shape | shape, quality, format, themes |
+| 5 | Prometheus (2012) `70981` | 0.671 | 0.592 | shape | shape, quality, format, themes |
+| 6 | Tenet (2020) `577922` | 0.350 | 0.246 | shape | shape, director, quality, format, themes |
 | 7 | Star Trek: The Motion Picture (1979) `152` | 0.650 | 0.619 | shape | shape, quality, format, themes |
 | 8 | Mission to Mars (2000) `2067` | 0.647 | 0.616 | shape | shape, quality, format, themes |
-| 9 | Tenet (2020) `577922` | 0.468 | 0.446 | director | shape, director, quality, format, themes |
-| 10 | The Midnight Sky (2020) `614911` | 0.609 | 0.580 | shape | shape, quality, format, themes |
+| 9 | The Midnight Sky (2020) `614911` | 0.609 | 0.580 | shape | shape, quality, format, themes |
+| 10 | Star Wars (1977) `11` | 0.603 | 0.532 | shape | shape, quality, format, themes |
 
 ### Per-result breakdown
 
@@ -1328,25 +1328,25 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 - Lanes: shape=0.975→0.616  themes=0.771→0.097  format=1.000→0.042  quality=0.976→0.031
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#3 Inception (2010) `27205` — score 0.694**
+**#3 Inception (2010) `27205` — score 0.608**
 
-- Lanes: shape=0.360→0.227  director=0.200→0.200  themes=0.891→0.113  format=1.000→0.042  quality=0.959→0.030
-- Adjustments: ×1.05(country)  ×1.08(shape)
+- Lanes: shape=0.360→0.227  themes=0.891→0.113  format=1.000→0.042  quality=0.959→0.030
+- Adjustments: ×1.30(director)  ×1.05(country)  ×1.08(shape)
 
 **#4 Contact (1997) `686` — score 0.683**
 
 - Lanes: shape=0.767→0.485  themes=0.751→0.095  format=1.000→0.042  quality=0.929→0.029
 - Adjustments: ×1.05(country)
 
-**#5 The Dark Knight Rises (2012) `49026` — score 0.499**
-
-- Lanes: director=0.200→0.200  shape=0.186→0.117  themes=0.399→0.050  format=1.000→0.042  quality=0.961→0.030
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#6 Prometheus (2012) `70981` — score 0.671**
+**#5 Prometheus (2012) `70981` — score 0.671**
 
 - Lanes: shape=0.672→0.424  themes=0.758→0.096  format=1.000→0.042  quality=0.931→0.029
 - Adjustments: ×1.05(country)  ×1.08(shape)
+
+**#6 Tenet (2020) `577922` — score 0.350**
+
+- Lanes: shape=0.200→0.126  themes=0.378→0.048  format=1.000→0.042  quality=0.940→0.030
+- Adjustments: ×1.05(country)  floor=0.350(director)
 
 **#7 Star Trek: The Motion Picture (1979) `152` — score 0.650**
 
@@ -1358,35 +1358,35 @@ Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio
 - Lanes: shape=0.789→0.499  themes=0.382→0.048  format=1.000→0.042  quality=0.863→0.027
 - Adjustments: ×1.05(country)
 
-**#9 Tenet (2020) `577922` — score 0.468**
-
-- Lanes: director=0.200→0.200  shape=0.200→0.126  themes=0.378→0.048  format=1.000→0.042  quality=0.940→0.030
-- Adjustments: ×1.05(country)
-
-**#10 The Midnight Sky (2020) `614911` — score 0.609**
+**#9 The Midnight Sky (2020) `614911` — score 0.609**
 
 - Lanes: shape=0.708→0.447  themes=0.495→0.062  format=1.000→0.042  quality=0.895→0.028
 - Adjustments: ×1.05(country)
+
+**#10 Star Wars (1977) `11` — score 0.603**
+
+- Lanes: shape=0.526→0.333  themes=1.000→0.126  format=1.000→0.042  quality=0.977→0.031
+- Adjustments: ×1.05(country)  ×1.08(shape)
 
 ## The Lord of the Rings: The Fellowship of the Ring (2001) - `120`
 
 Active anchor types: standard_shape, prestige, franchise_dominant, studio_lineage, source_material
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  source=0.098  themes=0.098  studio=0.060  format=0.033
+Lane weights: shape=0.344  franchise=0.246  quality=0.180  source=0.098  themes=0.098  studio=0.060  format=0.033
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
 | 1 | The Lord of the Rings: The Two Towers (2002) `121` | 1.123 | 0.902 | shape | shape, franchise, source, quality, format, themes, studio |
-| 2 | Star Wars (1977) `11` | 0.491 | 0.433 | quality | shape, quality, format, themes |
-| 3 | Harry Potter and the Deathly Hallows: Part 2 (2011) `12445` | 0.426 | 0.376 | quality | shape, source, quality, format, themes |
-| 4 | Avatar (2009) `19995` | 0.407 | 0.359 | quality | shape, quality, format, themes |
+| 2 | The Hobbit: The Desolation of Smaug (2013) `57158` | 0.501 | 0.441 | shape | shape, source, quality, format, themes, studio |
+| 3 | Star Wars (1977) `11` | 0.491 | 0.433 | quality | shape, quality, format, themes |
+| 4 | Harry Potter and the Deathly Hallows: Part 2 (2011) `12445` | 0.426 | 0.376 | quality | shape, source, quality, format, themes |
 | 5 | The Lord of the Rings: The Return of the King (2003) `122` | 1.055 | 0.849 | shape | shape, franchise, source, quality, format, themes, studio |
-| 6 | The Empire Strikes Back (1980) `1891` | 0.406 | 0.358 | quality | shape, quality, format, themes |
-| 7 | Dune: Part Two (2024) `693134` | 0.382 | 0.336 | quality | shape, source, quality, format, themes |
-| 8 | Lawrence of Arabia (1962) `947` | 0.381 | 0.336 | quality | shape, source, quality, format, themes |
+| 6 | Avatar (2009) `19995` | 0.407 | 0.359 | quality | shape, quality, format, themes |
+| 7 | The Empire Strikes Back (1980) `1891` | 0.406 | 0.358 | quality | shape, quality, format, themes |
+| 8 | Dune: Part Two (2024) `693134` | 0.382 | 0.336 | quality | shape, source, quality, format, themes |
 | 9 | The Lord of the Rings (1978) `123` | 0.451 | 0.661 | shape | shape, franchise, source, quality, format, themes |
-| 10 | Raiders of the Lost Ark (1981) `85` | 0.365 | 0.322 | quality | shape, quality, format, themes |
+| 10 | Lawrence of Arabia (1962) `947` | 0.381 | 0.336 | quality | shape, source, quality, format, themes |
 
 ### Per-result breakdown
 
@@ -1395,19 +1395,19 @@ Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  sourc
 - Lanes: shape=1.000→0.344  franchise=1.000→0.246  quality=0.896→0.162  themes=1.000→0.098  studio=0.978→0.059  format=1.000→0.033  source=0.198→0.019
 - Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
 
-**#2 Star Wars (1977) `11` — score 0.491**
+**#2 The Hobbit: The Desolation of Smaug (2013) `57158` — score 0.501**
+
+- Lanes: shape=0.661→0.228  themes=1.000→0.098  quality=0.350→0.063  studio=0.805→0.048  format=1.000→0.033  source=0.198→0.019
+- Adjustments: ×1.08(studio)  ×1.05(country)
+
+**#3 Star Wars (1977) `11` — score 0.491**
 
 - Lanes: quality=0.936→0.169  shape=0.387→0.133  themes=1.000→0.098  format=1.000→0.033
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#3 Harry Potter and the Deathly Hallows: Part 2 (2011) `12445` — score 0.426**
+**#4 Harry Potter and the Deathly Hallows: Part 2 (2011) `12445` — score 0.426**
 
 - Lanes: quality=0.736→0.133  themes=1.000→0.098  shape=0.268→0.092  format=1.000→0.033  source=0.198→0.019
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#4 Avatar (2009) `19995` — score 0.407**
-
-- Lanes: quality=0.656→0.118  shape=0.318→0.109  themes=1.000→0.098  format=1.000→0.033
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#5 The Lord of the Rings: The Return of the King (2003) `122` — score 1.055**
@@ -1415,19 +1415,19 @@ Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  sourc
 - Lanes: shape=0.791→0.272  franchise=1.000→0.246  quality=1.000→0.180  themes=1.000→0.098  studio=0.958→0.057  format=1.000→0.033  source=0.198→0.019
 - Adjustments: ×1.10(studio)  ×1.05(country)  ×1.08(shape)
 
-**#6 The Empire Strikes Back (1980) `1891` — score 0.406**
+**#6 Avatar (2009) `19995` — score 0.407**
+
+- Lanes: quality=0.656→0.118  shape=0.318→0.109  themes=1.000→0.098  format=1.000→0.033
+- Adjustments: ×1.05(country)  ×1.08(shape)
+
+**#7 The Empire Strikes Back (1980) `1891` — score 0.406**
 
 - Lanes: quality=0.760→0.137  themes=1.000→0.098  shape=0.262→0.090  format=1.000→0.033
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
-**#7 Dune: Part Two (2024) `693134` — score 0.382**
+**#8 Dune: Part Two (2024) `693134` — score 0.382**
 
 - Lanes: quality=0.640→0.115  shape=0.297→0.102  themes=0.677→0.067  format=1.000→0.033  source=0.198→0.019
-- Adjustments: ×1.05(country)  ×1.08(shape)
-
-**#8 Lawrence of Arabia (1962) `947` — score 0.381**
-
-- Lanes: quality=1.000→0.180  shape=0.173→0.059  themes=0.446→0.044  format=1.000→0.033  source=0.198→0.019
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 **#9 The Lord of the Rings (1978) `123` — score 0.451**
@@ -1435,9 +1435,9 @@ Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  sourc
 - Lanes: shape=0.799→0.275  franchise=0.700→0.172  themes=1.000→0.098  quality=0.350→0.063  format=1.000→0.033  source=0.198→0.019
 - Adjustments: ×1.05(country)  ×0.65(medium)
 
-**#10 Raiders of the Lost Ark (1981) `85` — score 0.365**
+**#10 Lawrence of Arabia (1962) `947` — score 0.381**
 
-- Lanes: quality=0.808→0.146  shape=0.225→0.078  themes=0.668→0.066  format=1.000→0.033
+- Lanes: quality=1.000→0.180  shape=0.173→0.059  themes=0.446→0.044  format=1.000→0.033  source=0.198→0.019
 - Adjustments: ×1.05(country)  ×1.08(shape)
 
 ## Titanic (1997) - `597`
@@ -1445,7 +1445,7 @@ Lane weights: director=1.000  shape=0.344  franchise=0.246  quality=0.180  sourc
 Active anchor types: standard_shape
 Anchor format bucket: narrative_feature
 
-Lane weights: director=1.000  shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
+Lane weights: shape=0.632  franchise=0.126  themes=0.126  studio=0.060  source=0.042  format=0.042  quality=0.032
 
 | # | Result | Score | Base | Dominant | Lanes |
 |---:|---|---:|---:|---|---|
