@@ -114,8 +114,11 @@ class CategoryName(str, Enum):
     NAMED_CHARACTER = (
         "Named character",
         (
-            "Specific named persona appearing in films but NOT anchoring "
-            "a film franchise — Yoda, Hermione Granger, Snape, Loki, Aragorn."
+            "Specific named persona appearing in films but NOT anchoring a "
+            "film franchise. The character recurs across films (or appears "
+            "in a notable single film) but is not the binding identity of "
+            "a series. The trait must name the specific character; do not "
+            "route here when the trait names a character type or archetype."
         ),
         (
             "Non-anchoring characters only. Character-anchored franchises "
@@ -142,8 +145,12 @@ class CategoryName(str, Enum):
     STUDIO_BRAND = (
         "Studio / brand",
         (
-            "Production studios and curated brands — Disney, Pixar, A24, "
-            "Studio Ghibli, Blumhouse, Marvel Studios, Dreamworks, Hammer."
+            "Production studios and curated brands — entities that produce, "
+            "finance, or distribute films under a recognizable brand identity. "
+            "Covers major studios, mini-majors, prestige labels, and specialty "
+            "production houses. The trait must name the specific studio; do "
+            "not route here when the trait names a kind of film a studio "
+            "happens to produce."
         ),
         (
             "Entity that made the movie. Franchises a studio owns → "
@@ -168,10 +175,13 @@ class CategoryName(str, Enum):
     FRANCHISE_LINEAGE = (
         "Franchise / universe lineage",
         (
-            "Two things: membership in a character-less franchise (MCU, "
-            "Star Wars, LOTR, Fast & Furious, Star Trek, Mission Impossible) "
-            "AND lineage positioning (sequel/prequel/spinoff/reboot, mainline "
-            "vs offshoot, original vs remake)."
+            "Two things: membership in a character-less film franchise — "
+            "a recurring series whose identity is defined by setting, "
+            "ensemble, or shared universe rather than any single anchoring "
+            "character — AND lineage positioning (sequel/prequel/spinoff/"
+            "reboot, mainline vs offshoot, original vs remake). The trait "
+            "must name the specific franchise; do not route here when the "
+            "trait names a concept that franchises happen to exemplify."
         ),
         (
             "Lineage POSITIONING fires here regardless of franchise type — "
@@ -199,26 +209,30 @@ class CategoryName(str, Enum):
     CHARACTER_FRANCHISE = (
         "Character-franchise",
         (
-            "Named characters whose identity anchors a film franchise — "
-            "Batman, James Bond, Spider-Man, Wolverine, Indiana Jones, "
-            "John Wick, Jason Bourne, Sherlock Holmes, Harry Potter, Barbie."
+            "A named character whose identity anchors a film franchise — "
+            "the same character appears across multiple installments and "
+            "binds the films together such that the franchise is "
+            "recognizable by the character's name. The trait must name "
+            "the specific anchoring character; do not route here when "
+            "the trait names a character type or a kind-of-protagonist "
+            "without naming a specific one."
         ),
         (
             "Names the anchoring character only. Sequel/prequel/spinoff/reboot "
             "is a SEPARATE trait → FRANCHISE_LINEAGE. Non-anchoring characters "
-            "(Yoda, Hermione, Loki) → NAMED_CHARACTER. Character-less franchises "
-            "(Star Wars, LOTR, Fast & Furious) → FRANCHISE_LINEAGE."
+            "(supporting roles or universe inhabitants who do not bind their "
+            "own franchise) → NAMED_CHARACTER. Character-less franchises "
+            "defined by setting or ensemble → FRANCHISE_LINEAGE."
         ),
         (
-            "Anchoring test: 'List of [X] films' Wikipedia entity exists with "
-            "the character as through-line. Bond/Batman/Spider-Man → yes; "
-            "Yoda/Hermione/Loki → no.",
+            "Anchoring test: a 'List of [X] films' Wikipedia entity exists "
+            "with this character as the through-line.",
             "'Sherlock Holmes books' splits: 'Sherlock Holmes' here + 'books' "
             "→ ADAPTATION_SOURCE.",
-            "'Batman spinoffs' splits: 'Batman' here + 'spinoffs' → "
-            "FRANCHISE_LINEAGE.",
+            "Lineage modifiers ('spinoffs', 'reboots') split off the "
+            "character name and route to FRANCHISE_LINEAGE.",
         ),
-        ("Batman", "James Bond", "Barbie"),
+        ("James Bond films", "Indiana Jones movies", "Sherlock Holmes adaptations"),
         (
             "'Yoda appearances' → NAMED_CHARACTER.",
             "'Star Wars movies' → FRANCHISE_LINEAGE.",

@@ -127,17 +127,23 @@ You produce a TraitDecomposition with these coupled layers:
    dimension carries plausible category candidates with what's-\
    covered / what's-missing prose — the routing decisions, not a \
    re-authoring of the aspect.
-4. COMBINE MODE — TraitCombineMode (FRAMINGS / FACETS). Committed \
-   AFTER candidates and BEFORE category_calls. Tells stage-4 how \
-   to fold per-category scores: FRAMINGS → MAX (alternative homes \
-   for one underlying thing); FACETS → PRODUCT (distinct axes of \
-   a compound concept). The mode shapes the next step's category \
-   choice.
-5. COMMITMENT LAYER — category_calls. One call per category that \
+4. ROUTING EXPLORATION — exploratory prose between candidates and \
+   combine_mode. Walks dedup, the granularity gate (identity vs \
+   attribute categories filtered by aspect granularity), the \
+   FRAMINGS-vs-FACETS relationship question, and the minimum-set \
+   commit. Forward reasoning that produces the conclusions \
+   combine_mode and category_calls then read off.
+5. COMBINE MODE — TraitCombineMode (FRAMINGS / FACETS). Mechanical \
+   translation of the relationship conclusion in routing_exploration. \
+   Tells stage-4 how to fold per-category scores: FRAMINGS → MAX \
+   (alternative homes for one underlying thing); FACETS → PRODUCT \
+   (distinct axes of a compound concept).
+6. COMMITMENT LAYER — category_calls. One call per category that \
    ends up owning >=1 expression. Multi-expression calls when one \
-   category cleanly owns several dimensions of this trait. \
-   Choice is mode-aware: FRAMINGS authorizes overlapping coverage; \
-   FACETS demands complementary coverage.
+   category cleanly owns several dimensions of this trait. The \
+   set of categories and the dedup decisions were committed by \
+   routing_exploration above; this layer is the mechanical \
+   structured-call translation.
 
 Read the response schema's field descriptions before producing \
 output.
@@ -148,13 +154,16 @@ ANALYSIS PHASE — produce the trait restatement, then restate the \
 population, commit the role analysis, enumerate aspects (honoring \
 role-driven axis constraints), translate aspects into dimensions, \
 list per-dimension candidates with explicit coverage prose, and \
-commit the combine mode. No calls yet.
+finish with routing_exploration that prunes the candidate set and \
+argues for FRAMINGS vs FACETS. No calls yet.
 
-COMMITMENT PHASE — read the candidates + combine mode and emit \
-minimum calls. Multi-expression calls are the natural shape when \
-one category covers multiple dimensions. Calls describe PRESENCE \
-— even when source trait polarity is negative (committed upstream \
-and applied at merge time, not by you).
+COMMITMENT PHASE — read routing_exploration's conclusions, commit \
+combine_mode (mechanical from the relationship argument), then \
+emit minimum calls (mechanical from the minimum-set conclusion). \
+Multi-expression calls are the natural shape when one category \
+covers multiple dimensions. Calls describe PRESENCE — even when \
+source trait polarity is negative (committed upstream and applied \
+at merge time, not by you).
 
 The sections below cover analysis (trait-role analysis, aspect \
 enumeration, dimension inventory, per-dimension candidates, \
@@ -362,19 +371,39 @@ not belong here.
 
 ---
 
-IDENTITY VS ATTRIBUTE CATEGORIES — a structural rule that follows \
-from relationship_role. Some categories retrieve the named entity \
-itself: PERSON_CREDIT, TITLE_TEXT_LOOKUP, NAMED_CHARACTER, \
-STUDIO/BRAND, FRANCHISE/UNIVERSE_LINEAGE, CHARACTER_FRANCHISE, \
-ADAPTATION_SOURCE_FLAG, BELOW_THE_LINE_CREATOR, \
-NAMED_SOURCE_CREATOR. Others describe attributes a film can have \
-(genre, emotional/experiential, narrative setting, story/thematic \
-archetype, visual-craft acclaim, etc.).
+IDENTITY VS ATTRIBUTE CATEGORIES — a structural rule that combines \
+relationship_role with aspect granularity. Some categories retrieve \
+specific named entities: PERSON_CREDIT, TITLE_TEXT_LOOKUP, \
+NAMED_CHARACTER, STUDIO/BRAND, FRANCHISE/UNIVERSE_LINEAGE, \
+CHARACTER_FRANCHISE, ADAPTATION_SOURCE_FLAG, \
+BELOW_THE_LINE_CREATOR, NAMED_SOURCE_CREATOR. Others describe \
+attributes a film can have (genre, emotional/experiential, \
+narrative setting, story/thematic archetype, visual-craft acclaim, \
+etc.). Two layers govern when identity categories are admissible.
+
+LAYER 1 — GRANULARITY GATE (applies to every trait, every role, \
+both polarities). Identity categories retrieve specific named \
+entities; they are admissible only when the aspect itself names a \
+specific entity that lives in that category. When the aspect \
+names a CATEGORY (a genre, an archetype, a kind-of-movie defined \
+by what its members share), identity categories are out-of-scope \
+even if prior knowledge associates specific named instances with \
+that category. The discriminator is whether the aspect names a \
+MEMBER of the category or names the category itself. This gate is \
+the structural enforcement of Categorical-to-Specific Drift; the \
+ROUTING EXPLORATION step below operates the gate per-dimension.
+
+LAYER 2 — ROLE-DRIVEN RESTRICTIONS (applied after granularity \
+passes).
 
 INDEPENDENT traits: identity OR attribute categories are both \
-fair game — the user IS asking for the entity. The role analysis \
-commits "dimensions describe the subject", and the subject can \
-be defined by an identity category, attribute categories, or both.
+fair game when the aspect passes the granularity gate. The role \
+analysis commits "dimensions describe the subject", and the \
+subject can be defined by an identity category (only when the \
+aspect names a specific entity), attribute categories, or both. \
+A negative-polarity INDEPENDENT trait that names a CATEGORY of \
+films routes only to attribute categories — the granularity gate \
+still applies.
 
 POSITIONING_REFERENCE traits: the named entity is a positioning \
 anchor, not a retrieval target. Committing an identity category \
@@ -733,11 +762,19 @@ COMMON PITFALLS.
 
 
 _PER_DIMENSION_CANDIDATES = """\
-PER-DIMENSION CATEGORY CANDIDATES — structured routing analysis
+PER-DIMENSION CATEGORY CANDIDATES — broad routing analysis to feed \
+the consolidation step
 
 For each dimension, list plausible categories with explicit what-\
 this-covers / what-this-misses prose. Partial fits and adjacency \
-surface explicitly so commitment is grounded.
+surface explicitly so the consolidation step that follows has \
+real evidence to reason against.
+
+LEAN BROAD HERE. The next step (ROUTING EXPLORATION) is where the \
+candidate set gets pruned to the minimum useful commit. This \
+layer's job is to surface ENOUGH options for that pruning to work \
+honestly — not to pre-commit. When in doubt, surface the candidate \
+and let the consolidation step decide.
 
 PROCESS. For each dimension:
 1. Find categories whose description, boundary, or edge_cases \
@@ -754,25 +791,30 @@ PROCESS. For each dimension:
    genuinely sits between several.
 
 When the same category appears as a candidate on multiple \
-dimensions of this trait, those dimensions WILL merge into one \
-multi-expression call. The structure makes the merge visible \
-without prose narration.
+dimensions of this trait, that dedup will be picked up by the \
+consolidation step below. You do not need to narrate it here.
 
 OPERATIONAL TESTS:
 - HONESTY. "If this dimension has only one candidate AND adjacent \
   categories could plausibly compete, am I doing the audit \
   honestly?" Surface the adjacent candidate even if you'll reject \
   it.
-- PADDING. "If I removed this candidate, would the commit step \
-  lose a real routing option?" If no, drop. what_this_covers must \
-  be substantive.
-- BACK-RATIONALIZATION. "Did I list this because I already \
+- SUBSTANCE. what_this_covers must point to a real overlap with \
+  the dimension; "this could fit" is not coverage.
+- NO BACK-RATIONALIZATION. "Did I list this because I already \
   decided to commit, or because the boundary actually puts this \
-  dimension in scope?" Candidates precede commitment.
+  dimension in scope?" Pruning happens in the next step; do not \
+  shortcut by emitting only what you intend to commit.
+- NO INVENTED EXEMPLARS in what_this_covers. The candidate's \
+  coverage is described structurally (what kind of dimension it \
+  serves), not by naming specific entities the model thinks would \
+  match. Naming a particular franchise / character / studio inside \
+  what_this_covers leaks Categorical-to-Specific Drift into the \
+  routing layer.
 
 DON'T COMMIT THE CALL LIST HERE. Candidates is analysis; \
-category_calls is where calls commit. Keeping them separate \
-prevents premature commitment.
+category_calls is where calls commit, after the consolidation step. \
+Keeping them separate prevents premature commitment.
 
 DON'T LEAVE DIMENSIONS WITH AN EMPTY CANDIDATE LIST. If you can't \
 find any category whose boundary even partially covers, the \
@@ -783,15 +825,115 @@ dimension itself is wrong (too abstract, too compound) — revisit.
 """
 
 
+_ROUTING_EXPLORATION = """\
+ROUTING EXPLORATION — think before committing combine_mode and \
+category_calls
+
+After the per-dimension candidate analysis above, BEFORE committing \
+combine_mode and category_calls, walk the candidate set as a whole \
+and decide which categories actually deserve commits. The candidate \
+analysis was deliberately allowed to be broad — this step is where \
+breadth gets pruned to the minimum useful set, AND where the \
+relationship among surviving categories gets named.
+
+Write in FORWARD-REASONING shape: "I see X across these dimensions, \
+so I'm leaning toward Y." Not back-rationalization: "My answer is \
+Y because X." The fields below copy your conclusions; the \
+conclusions themselves are reached here.
+
+WALK FOUR CHECKS, IN ORDER.
+
+(1) DEDUP. Look at category_candidates across all dimensions. \
+When the same category appears as a clean-fit (or near-clean-fit) \
+on more than one dimension, note it — those dimensions will merge \
+into one multi-expression call at the commitment step. Identifying \
+merges here keeps the call list minimal without dropping coverage.
+
+(2) GRANULARITY GATE. For each candidate still in play, ask \
+whether the aspect it serves is at the granularity the category \
+retrieves. Identity categories retrieve specific named entities; \
+they are admissible ONLY when the aspect itself names a specific \
+entity that lives in that category. When the aspect names a \
+CATEGORY — a genre, an archetype, a kind-of-movie defined by what \
+its members share — identity-category candidates are out-of-scope \
+no matter how cleanly prior knowledge associates specific named \
+instances with that category. Drop them here.
+
+The discriminator: does the aspect string name a MEMBER of the \
+category, or does it name the category itself? Members route to \
+identity; categories route to attribute.
+
+(3) RELATIONSHIP. After dedup and granularity pruning, look at \
+the surviving candidates across dimensions and ask: are they \
+alternative HOMES for one underlying thing the trait names \
+(matching any one is sufficient evidence → leans FRAMINGS), or \
+do they describe DIFFERENT axes of a compound concept the user \
+wants compounded (all must fire to a degree → leans FACETS)? \
+State which direction the dimensions actually support and why.
+
+(4) MINIMUM SET. State which categories you will commit and \
+which dimensions each owns. Each surviving category must add NEW \
+signal — if a category is redundant with a stronger sibling and \
+FRAMINGS gives no incremental reinforcement (or FACETS would \
+double-fire on the same axis), drop it.
+
+CATEGORICAL-TO-SPECIFIC DRIFT — the named failure mode this step \
+exists to catch. When the trait names a category (a genre, an \
+archetype, a kind-of-movie defined by what its members share), do \
+not commit a category whose job is to retrieve specific named \
+instances of that category. The category is broader than any \
+single instance; the specific instance covers only a part. \
+Routing the trait to identity categories swaps the trait's truth \
+conditions for a strictly narrower set, and adding multiple \
+specific instances as 'framings' does not heal the gap — it just \
+narrows the scope to a hand-picked subset.
+
+This applies to BOTH polarities. For positive traits, the drift \
+inflates the score on a narrow subset of films that happen to be \
+canonical exemplars of the category, instead of scoring the whole \
+category evenly. For negative traits, the drift over-excludes \
+films that are adjacent to the canonical exemplars while missing \
+other films that genuinely belong to the category. Polarity does \
+not heal the drift; it changes which way the error tilts.
+
+OPERATIONAL TESTS:
+- GRANULARITY PASS. "Did I reach for a particular franchise / \
+  character / studio / person name to justify a candidate the \
+  trait did not itself name?" Yes → drop the candidate; the \
+  Categorical-to-Specific Drift trap is firing.
+- SAME-LEVEL CHECK. "Are the surviving candidates at the same \
+  granularity as the aspects they serve?" If a candidate retrieves \
+  specific instances but the aspect names a category, it does not \
+  survive.
+- MINIMUM-SET CHECK. "If I removed each surviving candidate one \
+  at a time, would the remaining set lose meaningful coverage?" If \
+  no for any candidate, that candidate was padding.
+
+NEVER:
+- WRITE BACKWARD FROM A COMMITTED ANSWER. The reasoning leads the \
+  conclusion, not justifies it.
+- ELABORATE BEYOND THE CANDIDATES. Only categories surfaced in \
+  the candidate analysis above are in scope here.
+- USE THIS FIELD TO INTRODUCE NEW NAMED ENTITIES. The trait \
+  either named the entity or it didn't. The exploration is a \
+  pruning pass, not a re-expansion pass.
+
+---
+
+"""
+
+
 _COMBINE_MODE_COMMIT = """\
 COMBINE MODE — commit how stage-4 will fold this trait's \
 per-category scores into a trait_score
 
-After candidate analysis, BEFORE category_calls. The mode you \
-commit here SHAPES the choice of categories you commit next: \
-FRAMINGS authorizes overlapping coverage; FACETS demands \
-complementary coverage. Get this wrong and the next step's \
-category routing optimizes for the wrong combine.
+After the routing exploration above (which decided the surviving \
+category set AND argued for FRAMINGS vs FACETS), this field is a \
+MECHANICAL TRANSLATION of that conclusion into the closed enum. \
+If you find yourself revisiting the FRAMINGS-vs-FACETS question \
+here, you didn't reason it through above — revise the exploration, \
+then come back. Get this wrong and the next step's category \
+routing optimizes for the wrong combine.
 
 TWO MODES.
 
@@ -880,11 +1022,19 @@ NEVER:
 _CATEGORY_ROUTING = """\
 CATEGORY ROUTING — committing the call list
 
-Read the per-dimension candidates and the combine_mode you just \
-committed. For each category that ends up owning >=1 expression, \
-emit ONE CategoryCall. When several dimensions share a best-fit \
-category, they merge into a single multi-expression call — NOT \
-separate calls.
+Read the routing_exploration's minimum-set conclusion and the \
+combine_mode that followed. The category set, dedup decisions, and \
+granularity pruning were all reasoned through upstream — this \
+field is the mechanical translation into structured calls. For \
+each category that ends up owning >=1 expression, emit ONE \
+CategoryCall. When several dimensions share a best-fit category, \
+they merge into a single multi-expression call — NOT separate \
+calls.
+
+If your call list diverges from the minimum-set the exploration \
+committed (extra calls, missing categories, different dimension \
+ownership), you skipped the upstream reasoning. Go back and \
+revise the exploration; do not paper over the divergence here.
 
 Schema field descriptions cover what category, expressions, and \
 retrieval_intent must contain. Procedural notes:
@@ -1090,6 +1240,7 @@ SYSTEM_PROMPT = (
     + _ASPECT_ENUMERATION
     + _DIMENSION_INVENTORY
     + _PER_DIMENSION_CANDIDATES
+    + _ROUTING_EXPLORATION
     + VAGUE_TEMPORAL_VOCABULARY_COMPACT
     + _COMBINE_MODE_COMMIT
     + _CATEGORY_ROUTING
