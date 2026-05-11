@@ -47,6 +47,9 @@ from implementation.llms.generic_methods import (
 )
 from schemas.trait_category import CategoryName
 from schemas.step_2 import QueryAnalysis
+from search_v2.vague_temporal_vocabulary import (
+    VAGUE_TEMPORAL_VOCABULARY_COMPACT,
+)
 
 
 # ===============================================================
@@ -930,6 +933,7 @@ SYSTEM_PROMPT = (
     + _ATOMICITY
     + _MODIFIER_VS_ATOM
     + _EVALUATIVE_INTENT
+    + VAGUE_TEMPORAL_VOCABULARY_COMPACT
     + _COMMIT_PHASE
     + _POLARITY
     + _COMMITMENT

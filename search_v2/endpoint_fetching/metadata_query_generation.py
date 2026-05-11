@@ -24,6 +24,10 @@ from implementation.classes.watch_providers import (
 )
 from implementation.llms.generic_methods import LLMProvider, generate_llm_response_async
 from schemas.metadata_translation import MetadataTranslationOutput
+from search_v2.vague_temporal_vocabulary import (
+    VAGUE_RELEASE_DATE_DETAILED,
+    VAGUE_RUNTIME_DETAILED,
+)
 
 _TRACKED_STREAMING_SERVICE_NAMES = ", ".join(
     STREAMING_SERVICE_DISPLAY_NAMES[service] for service in StreamingService
@@ -278,11 +282,7 @@ or exact on a given day when the requirement is explicitly that \
 exact day.
 - "Before YEAR" becomes before YEAR-01-01. "After YEAR" becomes \
 after YEAR-12-31.
-- A relative term resolves against today. "Recent" is typically \
-between today minus about three years and today. "New" is \
-typically between today minus about one to two years and today. \
-"Older" or "classic" without a concrete referent is your best \
-judgment — pick a plausible window and commit.
+{VAGUE_RELEASE_DATE_DETAILED}
 - Order doesn't matter for between: the schema will reorder \
 ascending if you pass them reversed.
 
@@ -294,9 +294,7 @@ greater_than 120. "At least 90 minutes" becomes \
 greater_than_or_equal 90. "90 minutes or less" becomes \
 less_than_or_equal 90.
 - A range becomes between. Convert hours to minutes cleanly.
-- Vague length terms ("epic length", "short", "long movie") are \
-best-judgment literal guesses — pick a plausible threshold and \
-commit rather than producing a default.
+{VAGUE_RUNTIME_DETAILED}
 
 Maturity rating — Output one rating from {{g, pg, pg-13, r, nc-17, \
 unrated}} and one match_operation from {{exact, greater_than, \

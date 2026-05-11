@@ -63,6 +63,9 @@ from implementation.llms.generic_methods import (
 from schemas.step_2 import Trait
 from schemas.step_3 import TraitDecomposition
 from schemas.trait_category import CategoryName
+from search_v2.vague_temporal_vocabulary import (
+    VAGUE_TEMPORAL_VOCABULARY_COMPACT,
+)
 
 
 # ===============================================================
@@ -1087,6 +1090,7 @@ SYSTEM_PROMPT = (
     + _ASPECT_ENUMERATION
     + _DIMENSION_INVENTORY
     + _PER_DIMENSION_CANDIDATES
+    + VAGUE_TEMPORAL_VOCABULARY_COMPACT
     + _COMBINE_MODE_COMMIT
     + _CATEGORY_ROUTING
     + _MINIMUM_SET_AND_POLARITY
