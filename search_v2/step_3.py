@@ -112,15 +112,18 @@ You produce a TraitDecomposition with these coupled layers:
    constrains the inventory.
 2. ASPECTS — flat list enumerating every distinguishable axis the \
    trait calls for, in user-vocabulary. Sits between the prose \
-   role analysis and the database-vocabulary dimensions; \
-   separating enumeration from translation prevents axes from \
-   getting lost in the mode-shift. Honors role-driven axis \
-   constraints: POSITIONING_REFERENCE traits drop replaced axes; \
-   POSITIONING_QUALIFIER traits cover the replacement axis.
-3. DIMENSION INVENTORY + CANDIDATES — concrete searchable pieces \
-   in database-vocabulary, each translating one or more aspects, \
-   each with plausible category candidates carrying \
-   what's-covered / what's-missing prose.
+   role analysis and the dimension routing layer. Aspect strings \
+   are LOAD-BEARING: the dimensions step below copies each into \
+   its expression field VERBATIM, character-for-character. Honors \
+   role-driven axis constraints: POSITIONING_REFERENCE traits \
+   drop replaced axes; POSITIONING_QUALIFIER traits cover the \
+   replacement axis.
+3. DIMENSION INVENTORY + CANDIDATES — one dimension per aspect \
+   routed. Each dimension's expression is the aspect string \
+   verbatim (no rewriting, no paraphrasing, no merging). The \
+   dimension carries plausible category candidates with what's-\
+   covered / what's-missing prose — the routing decisions, not a \
+   re-authoring of the aspect.
 4. COMBINE MODE — TraitCombineMode (FRAMINGS / FACETS). Committed \
    AFTER candidates and BEFORE category_calls. Tells stage-4 how \
    to fold per-category scores: FRAMINGS → MAX (alternative homes \
@@ -478,14 +481,19 @@ list every axis it names, even ones that look adjacent or \
 trivial; the dimension layer cannot recover an axis you didn't \
 enumerate here.
 
-Why this step exists. The next step (dimensions) shifts the work \
-into database-vocabulary — categories, vector spaces, structured \
-fields. When enumeration and translation collapse into one step, \
-axes get lost in the shift: prose says "high quality and low \
-visibility and low commercial footprint", and dimensions silently \
-ends up covering only the first two. Separating the steps means \
-you commit to ALL axes first, in a vocabulary close to the user's \
-mental model, before any database-shaped thinking starts.
+Why this step exists. The next step (dimensions) routes each \
+aspect to its plausible categories, with the aspect string itself \
+copied VERBATIM into the dimension's expression field. The \
+dimensions layer does not re-author or translate; it selects \
+which aspects to route and which categories could own them. That \
+makes the aspects you write here load-bearing in two ways: \
+(1) any axis you skip cannot be recovered downstream — the \
+routing step has nothing to route; (2) any awkwardness, vagueness, \
+or drift in an aspect string propagates character-for-character \
+into the expression and on into the endpoint handler — the \
+routing step is forbidden from "fixing it up" later. Get the \
+aspects right HERE so the verbatim copy downstream lands on \
+clean strings.
 
 GROUNDING. Every aspect must trace back to something explicit in \
 target_population or trait_role_analysis. If an aspect doesn't \
@@ -581,113 +589,140 @@ NEVER:
 
 
 _DIMENSION_INVENTORY = """\
-DIMENSION INVENTORY — translate every aspect into a database-\
-vocabulary check
+DIMENSION INVENTORY — emit one dimension per aspect routed, with \
+expression as the aspect verbatim
 
-A dimension is one concrete piece the database can check against \
-a movie: a numeric range or boundary, a structured-attribute \
-match (credit, format, source), a tonal / experiential / thematic \
-check the vector spaces can score against, or a structural plot / \
-narrative attribute. Concrete enough that you could imagine \
-writing the database query from this single dimension.
+A dimension is a routing slot for one aspect: it pairs the aspect \
+(carried VERBATIM in the expression field) with the list of \
+plausible categories that could own it (recorded in \
+category_candidates). The dimension layer is where you decide WHICH \
+aspects to route and WHAT categories they could route to; it is \
+NOT where you re-author the aspects in different words.
+
+VERBATIM EXPRESSION — the load-bearing rule of this layer.
+
+Each Dimension.expression MUST be a character-for-character copy \
+of one of the strings in the aspects list above. No rewriting. \
+No tightening. No rewording. No "close enough" paraphrase. No \
+merging two aspects into one phrase. If an aspect reads "highly \
+praised for performances", the dimension that routes it emits \
+expression="highly praised for performances" — exactly that, not \
+"praised for performances" and not "performances are praised". \
+The translation work — turning user-vocabulary into a database-\
+runnable check — happens DOWNSTREAM in category_candidates and in \
+the endpoint handler. expression is purely a pointer back to the \
+aspect this dimension covers.
+
+If an aspect feels awkward to copy verbatim — too vague, too \
+narrow, oddly phrased — that is a signal the aspect itself is \
+wrong. FIX IT UPSTREAM (revise the aspects list) instead of \
+rephrasing it here. Rephrasing at the dimension layer is the \
+silent path by which truth conditions, named entities, and width \
+constraints get reshaped into something the user did not ask for.
 
 PRIMARY SOURCE: aspects. Walk the aspects list end to end. For \
-EACH aspect, commit at least one dimension that translates that \
-user-vocabulary axis into a database-vocabulary check. The \
-mapping is at-least-one aspect → at-least-one dimension. Even if \
-two aspects feel like they could share a check, keep them as \
-separate dimensions here; merging happens at the category_calls \
-layer, where same-category dimensions collapse into one multi-\
-expression call. Pre-merging at the dimension layer is how \
-aspects get silently dropped.
+EACH aspect, commit at least one dimension whose expression is \
+that aspect verbatim. The mapping is at-least-one aspect → at-\
+least-one dimension. Even if two aspects feel like they could \
+share a routing slot, keep them as separate dimensions here; \
+merging happens at the category_calls layer, where same-category \
+dimensions collapse into one multi-expression call. Pre-merging \
+at the dimension layer is how aspects get silently dropped.
+
+Multiple dimensions MAY share the same aspect-string when the \
+aspect genuinely routes through more than one category — emit \
+one dimension per routing option, each with the SAME verbatim \
+aspect string in expression and DIFFERENT category_candidates \
+lists. This is the rare case; one-dimension-per-aspect is the \
+default.
 
 CONTEXTUAL SOURCES: target_population + trait_role_analysis. \
 Read them to understand each aspect more deeply — what does the \
-axis really mean for this query, what kind of database check \
-honors the role-scope constraint? They are NOT additional \
-sources of dimensions; they are interpretation aids for the \
-aspects you already enumerated.
+axis really mean for this query, what kind of categories honor \
+the role-scope constraint? They are NOT sources of new \
+dimensions and they are NOT inputs that license rephrasing the \
+aspect; they are interpretation aids for choosing category \
+candidates.
 
-ROLE-SCOPE CONSTRAINT. Dimensions must obey the \
-trait_role_analysis. If the analysis constrained dimensions to \
-describe the reference's identifiable attributes (rather than \
-the population), every dimension describes reference attributes \
-— slipping in a population-shaped dimension violates the role \
-commitment.
+ROLE-SCOPE CONSTRAINT. The set of dimensions you emit must obey \
+the trait_role_analysis. If the analysis constrained the trait to \
+describe the reference's identifiable attributes (rather than the \
+population), every dimension's aspect is one of those attributes — \
+slipping in a population-shaped aspect-routing violates the role \
+commitment. The constraint applies to WHICH aspects you route, \
+not to how you phrase them.
 
 COVERAGE IS NON-NEGOTIABLE.
 - Every aspect addressed by at least one dimension. An aspect \
   with no dimension is dropped coverage — the failure mode this \
   whole structure exists to prevent.
-- Every dimension traces back to at least one aspect. A dimension \
-  with no aspect is invented — likely smuggling in a population \
-  detail the role analysis didn't license.
-- An aspect that resists translation does NOT get silently \
-  dropped. If you genuinely cannot translate it, the aspect \
-  itself was wrong (too abstract, not actually a separate \
+- Every dimension's expression is an exact copy of an entry in \
+  the aspects list. A dimension whose expression is not present \
+  verbatim in aspects is either invented (smuggling in content \
+  not in aspects) or rewritten (paraphrasing an aspect into a \
+  different phrase) — both violations.
+- An aspect that seems hard to route does NOT get silently \
+  dropped. If you cannot find any plausible category for it, the \
+  aspect itself was wrong (too abstract, not actually a separate \
   axis) — revise the aspect list, do not skip it here.
 
-CATEGORY-AWARE PHRASING. When phrasing each dimension's \
-expression, the parametric breadth of one aspect (the multiple \
-ways one axis expresses itself within a single category) belongs \
-inside the eventual call's expressions list. Each dimension \
-still gets its own entry — do not pre-merge dimensions because \
-they look like they'll route to the same category. The \
-category_calls layer handles that merge cleanly; the dimension \
-layer must preserve aspect coverage.
-
 OPERATIONAL TESTS:
-- "For each aspect, can I point to the dimension that addresses \
-  it?" Yes → keep. No → add a dimension; do not delete the \
-  aspect.
-- "For each dimension, which aspect does it translate?" Every \
-  dimension must answer this; un-traceable dimensions are \
-  invented.
-- "Could the database engineer point to the field, table, or \
-  vector space they'd score it against?" Yes → keep. No → \
-  decompose further or revise the aspect.
+- "For each aspect string, is there a dimension whose expression \
+  is exactly that string?" Yes → keep. No → add a dimension; do \
+  not delete the aspect.
+- "For each dimension, can I find its expression verbatim in the \
+  aspects list?" Yes → keep. No → fix the expression to match an \
+  aspect verbatim, or fix the aspects list, or drop the dimension.
+- "If I diff each dimension's expression against the aspects \
+  list, is the match character-for-character?" Any non-match \
+  (even a single deleted word, even a tightened phrase) is a \
+  rewrite — undo it.
 
 COMMON PITFALLS.
 
 - DROPPED ASPECT. The aspect appears in the list above but no \
   dimension addresses it. Most common failure mode of this \
-  layer — the aspect "resisted translation" so the model quietly \
-  skipped it. Translate it or revise upstream; never skip.
+  layer — the aspect "felt hard to route" so the model quietly \
+  skipped it. Route it or revise upstream; never skip.
+- REWRITTEN ASPECT. The dimension's expression is recognizably \
+  derived from an aspect but not identical to it ("highly praised \
+  for performances" → "praised for performances"; "won acting \
+  awards" → "acting award wins"). Even small edits violate the \
+  verbatim rule. Copy the aspect string character-for-character.
 - PRE-MERGED ASPECTS. Two aspects collapsed into one dimension \
-  because they "feel adjacent". Merging is category_calls' job; \
-  preserve every aspect at the dimension layer.
-- INVENTED DIMENSION. The dimension doesn't trace to any aspect. \
-  Likely smuggled in from prior knowledge of the trait's typical \
-  shape rather than from the aspects list.
-- ABSTRACTION UP. Vague gestures ("has the right tone", "feels \
-  right") aren't dimensions. Translate into specific checks the \
-  database can run.
+  whose expression blends both ("acting awards" + "acting \
+  nominations" → "acting award wins and nominations"). The \
+  blended expression is no longer verbatim equal to either source \
+  aspect. Emit TWO dimensions, each with its own verbatim aspect \
+  string. Merging is the category_calls layer's job.
+- INVENTED DIMENSION. The dimension's expression isn't present \
+  verbatim in the aspects list. Likely smuggled in from prior \
+  knowledge of the trait's typical shape rather than from the \
+  aspects list. Drop or trace to an aspect.
 - CATEGORY NAMING. Categories belong to candidates / calls, not \
-  expressions. Phrase the dimension as the searchable piece; let \
-  candidates route it.
+  expressions. expression is the aspect verbatim; let \
+  category_candidates record the routing options.
 - ABSENCE FRAMING. Polarity was committed upstream. Even when the \
   trait is negative, expressions describe presence (the attribute \
   being avoided). Merge step flips direction; you don't. If an \
-  aspect was framed as absence ("lack of whimsy"), translate it \
-  to the presence form here ("whimsy", flipped at merge time) — \
-  do not drop it.
+  aspect was framed as absence ("lack of whimsy"), the aspect \
+  itself should be the presence form ("whimsy") — fix it \
+  upstream, not by rephrasing here.
 - BUNDLING UNRELATED CHECKS into one Dimension.expression. One \
-  dimension = one check. Multiple same-category facets aren't \
+  dimension = one aspect. Multiple same-category aspects aren't \
   bundling — they belong as separate dimensions that merge into \
   one multi-expression call later.
-- EXAMPLE-IN-EXPRESSION. The expression embeds parenthetical \
-  lists of representative entities the trait never named — \
-  "(Oscar, BAFTA, etc.)", "(Nolan, Villeneuve, etc.)", "(the 80s, \
-  the 90s, etc.)". The endpoint LLM downstream reads those \
-  parentheticals as filter values, not as illustrations, and pins \
-  its query to the listed exemplars while missing everything else \
-  the category covers. Expressions describe THE CHECK in \
-  database-vocabulary; if the trait named a category ("acting \
-  awards", "auteur directors"), the expression names the category \
-  cleanly. Specific entities appear inside an expression only when \
-  the trait itself named them — never as model-supplied examples \
-  of what the category typically contains.
-- PADDING. Don't add dimensions that don't trace to an aspect.
+- EXAMPLE-IN-EXPRESSION. expression carries example entities the \
+  trait never named — parenthetical lists, "such as X, Y, or Z" \
+  formulations, canonical exemplars. Because expression is now \
+  required to match an aspect verbatim, this pitfall is caught \
+  earlier: if expression has parentheticals, either the aspect \
+  itself has them (fix the aspect — apply the upstream fidelity \
+  rules) or the expression has been rewritten (forbidden by the \
+  verbatim rule). Either way, the fix is upstream, not here.
+- PADDING. Don't add dimensions whose expression isn't present \
+  in the aspects list. Every dimension's expression traces to a \
+  verbatim aspect string.
 
 ---
 

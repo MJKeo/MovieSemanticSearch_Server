@@ -24,7 +24,13 @@ Expected: fire award endpoint with ONE search.
   request doesn't name a ceremony or prize, and an absent
   ceremony/prize filter already spans every tracked ceremony for
   free.
-- `scoring: floor, mark 1`.
+- `scoring: threshold, mark 3`.
+
+Self-check: would a movie with 5 acting-award wins fit this
+request better than a movie with 1? YES — the user named a
+discipline ("acting"), not a specific category or ceremony, so
+more matches genuinely strengthen the fit. That answer is the
+threshold signal; broad-category asks calibrate to mark 3.
 
 Do NOT split this into per-ceremony searches (one for Oscars, one
 for BAFTAs, etc.). The unfiltered ceremony field covers Oscars,
@@ -50,6 +56,12 @@ Expected: one search.
   redundant `ceremonies: ["Academy Awards, USA"]` adds nothing.
 - NO `category_tags` — "Oscar winner" without a category means
   any Oscar category counts.
+
+Self-check: would a movie with 5 Oscar wins fit "Oscar winner"
+better than a movie with 1? NO — the user named a specific prize
+and the request is satisfied by any match. That answer is the
+floor signal; contrast with `award-winning acting` above where
+the discipline-level ask had no specific anchor.
 </example>
 
 <example>
@@ -115,14 +127,22 @@ Input:
 ```
 Expected: TWO searches, `combine: average`.
 
-- search 1: `category_tags: ["acting"]`, `outcome: "winner"`, floor 1.
-- search 2: `category_tags: ["directing"]`, `outcome: "winner"`, floor 1.
+- search 1: `category_tags: ["acting"]`, `outcome: "winner"`,
+  `scoring: threshold, mark 3`.
+- search 2: `category_tags: ["directing"]`, `outcome: "winner"`,
+  `scoring: threshold, mark 3`.
 
 Two searches because acting-wins and directing-wins are
 independent award conditions; one row cannot be both an acting
 win and a directing win. `combine: average` because
 retrieval_intent frames them as jointly desirable with partial
 credit, not as alternatives.
+
+Each search is `threshold` because each names a discipline-level
+category ("acting", "directing") without pinning a specific
+ceremony, prize, or sub-category — more matches inside that
+discipline genuinely strengthen the fit, so the scoring rewards
+the gradient rather than collapsing to a binary cut at one match.
 </example>
 
 <example>

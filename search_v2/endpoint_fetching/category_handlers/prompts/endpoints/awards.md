@@ -86,17 +86,26 @@ If uncertain, follow retrieval_intent. If it frames the searches as "either / an
 
 ## Per-search scoring
 
+Before picking `floor` vs `threshold`, ask one question of the request:
+
+**Would a movie with MORE matching award rows fit this search better than a movie with fewer?**
+
+- **YES (more is better) → THRESHOLD.** The request is a broad generalization — a discipline ("acting awards", "directing awards", "festival recognition"), an intensity ("award-winning", "decorated", "loaded with awards"), or a superlative ("most decorated"). A single one-off win at a single ceremony is genuinely not on par with winning multiple, so the score should reflect that gradient. Generalizations are the signal that the user is reaching for the broader recognition pattern, not a binary line.
+- **NO (the request is satisfied at threshold 1 — more doesn't fit better) → FLOOR.** The user named something specific whose criterion is fully met by any match: a specific ceremony, a specific prize, a specific category, a specific outcome at a named ceremony, or an explicit count that defines the threshold exactly. Specific asks are the signal that more matches do not increase fit — the user said what they wanted, and one match satisfies it.
+
+This question is the central decision. Read the request literally; if the user's wording does not pin a specific ceremony / prize / category, the request is broad and threshold scoring applies.
+
 Score each search from the count of matching award rows.
 
-Use `floor` when the search is a yes/no requirement:
+Use `floor` when the search is a yes/no requirement that more matches cannot strengthen:
 
-- specific ceremony, prize, or category with no intensity language
-- explicit minimum count
-- named count such as "won 5 Oscars"
+- specific ceremony, prize, or category named by the user — any match satisfies; additional matches do not change fit
+- explicit minimum count such as "won 5 Oscars" — the user named the floor exactly
 - "multiple" as a hard count means mark 2
 
 Use `threshold` when more matching award rows should make the movie more strongly satisfy the search:
 
+- broad-category asks ("acting awards", "directing awards", "writing awards", "craft recognition") — the user named a discipline but not a specific ceremony or prize
 - generic "award-winning" with no ceremony / prize / category filter
 - "heavily decorated", "loaded with awards", "swept the ceremony"
 - "most decorated", "most award-winning", "has the most Oscars"
@@ -105,14 +114,15 @@ Count unit: distinct award rows. Different ceremony, prize, category, outcome, o
 
 Calibration:
 
+- broad-category ask ("acting awards", "directing awards", etc.): `threshold` mark 3
 - generic award-winning: `threshold` mark 3
-- specific filter, no count: `floor` mark 1
+- specific filter named by the user, no count: `floor` mark 1
 - explicit count N: `floor` mark N
 - "multiple" as a hard count: `floor` mark 2
-- qualitative plenty: `threshold` mark 5
+- qualitative plenty ("heavily decorated", "loaded with awards"): `threshold` mark 5
 - superlative / "most decorated": `threshold` mark 15
 
-"Oscar-winning" is not generic award-winning. It names a specific prize, so it is a specific filter with `floor` mark 1 unless count/intensity language changes that.
+"Oscar-winning" is not generic award-winning. It names a specific prize, so the more-matches-is-better question answers NO — it is a specific filter with `floor` mark 1 unless count/intensity language explicitly changes that.
 
 ## Filter axes
 
