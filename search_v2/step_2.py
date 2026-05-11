@@ -348,9 +348,46 @@ Recording signals. One entry on modifying_signals per signal:
   commit phase can parse polarity and commitment. Otherwise \
   freeform; describe the specific effect, not a bucket.
 
-Building evaluative_intent. 1-2 sentences. The ONE place where \
-light inference is permitted; the field's whole purpose is \
-consolidating signals into per-criterion meaning.
+Building evaluative_intent. 1-2 sentences. The field's purpose is \
+a FAITHFUL restatement of what the criterion asks for, with each \
+modifying_signal mechanically integrated by its effect. Inference \
+is bounded to integrating signal effects — it is NOT a license to \
+elaborate beyond surface_text and the signals. If the query is \
+concrete and modifying_signals is empty, evaluative_intent is \
+near-paraphrase of surface_text; that is the correct shape.
+
+FIDELITY DISCIPLINE — light inference is for CONSOLIDATING the \
+signals the query carries, not for elaborating beyond them. Every \
+clause of evaluative_intent must trace back to either surface_text \
+or a modifying_signal. evaluative_intent is the source the rest of \
+the pipeline reads as the per-criterion contract; drift here \
+propagates silently through every downstream step. Three drift \
+modes corrupt this layer:
+
+- IMPLICIT BROADENING. surface_text names a narrow constraint and \
+  evaluative_intent widens it into the surrounding category that \
+  contains it, often by adding an "or"-clause that admits \
+  neighboring criteria the user did not articulate. The widened \
+  intent is easier to retrieve against — more candidate films will \
+  match — which is precisely why the model reaches for it.
+- IMPLICIT NARROWING. surface_text names a category and \
+  evaluative_intent pins it to a single canonical exemplar of that \
+  category. The narrower intent retrieves more cleanly because the \
+  exemplar has a clear database fingerprint, which is why the \
+  model reaches for it.
+- INVENTED DETAIL. evaluative_intent introduces specificity the \
+  query never named — particular instances, particular sub-types, \
+  particular bounds — drawn from the model's prior knowledge of \
+  what "typical" instances of this criterion look like. Prior \
+  knowledge belongs to retrieval, not to intent commitment.
+
+FIDELITY TEST. Read evaluative_intent back against surface_text \
+and the modifying_signals list. For each clause in \
+evaluative_intent, point to the word in surface_text or the signal \
+that licensed it. A clause with no anchor in the user's actual \
+language is drift — remove it. The intent stays strictly inside \
+what the user said; downstream steps depend on this layer being \
+faithful.
 
 OPERATIONAL TEST: read your modifying_signals list. For each \
 entry, ask — does my intent statement reflect this signal's \
@@ -372,9 +409,16 @@ Hard guardrails (these still apply with inference allowed):
   commitments live on traits.
 - No expansion of named things.
 - No translation into system vocabulary.
-- If the intent is just a rephrase of surface_text, either the \
-  criterion is genuinely simple (fine) or you've underused \
-  modifying_signals.
+- No broadening, narrowing, or invented detail against \
+  surface_text. evaluative_intent stays inside the user's actual \
+  words; light inference consolidates signals, it does not \
+  elaborate beyond them.
+- A near-paraphrase of surface_text is the CORRECT shape when the \
+  criterion is concrete and modifying_signals is empty. Read this \
+  guardrail in that direction — do NOT treat a near-paraphrase as a \
+  smell that needs elaboration. The only smell is a rephrase that \
+  IGNORES signals that DO exist; with no signals, the rephrase is \
+  the answer.
 
 Common pitfalls:
 - Collapsing two population-bearing criteria into one atom because \
@@ -387,6 +431,48 @@ Common pitfalls:
 - Empty modifying_signals on every atom of a parallel-filter query \
   is the COMMON case. Don't fabricate signals to make atoms look \
   connected.
+
+PATTERNS — what faithful evaluative_intent looks like, as abstract \
+shapes (not domain-specific examples).
+
+- CONCRETE NARROW QUERY, NO SIGNALS. surface_text is a single \
+  concrete criterion and modifying_signals is empty. \
+  evaluative_intent restates surface_text in plain prose at the \
+  same width — same constraint, same granularity, same scope. The \
+  intent is essentially the surface phrase made readable. The \
+  drift form is adding an "or"-clause that admits neighboring \
+  criteria the user did not state, or appending canonical \
+  exemplars / sub-types drawn from prior knowledge of what such \
+  queries "typically" contain. Both are unanchored content; both \
+  are drift.
+
+- CONCRETE QUERY, SINGLE HARDENS/SOFTENS MODIFIER. surface_text \
+  names a concrete criterion and one modifying_signal carries an \
+  intensifying or softening effect. evaluative_intent restates \
+  surface_text and folds in the strength language the effect \
+  produces — preference-strength for SOFTENS, requirement-strength \
+  for HARDENS, no further elaboration. The drift form is reading \
+  the modifier as a license to enumerate canonical instances of \
+  the surrounding category, or to list "or"-clauses that broaden \
+  what the criterion covers. The modifier shapes STRENGTH on the \
+  same criterion; it does not unlock new content.
+
+- CROSS-CRITERION REFERENCE (POSITIONING). One atom refers to \
+  another via cross-criterion language; modifying_signals carries \
+  the reference and its effect. evaluative_intent restates the \
+  criterion and describes the positioning operationally (the \
+  named peer is being treated as a reference rather than a \
+  retrieval target, with the comparison direction the signal \
+  spelled out). No new content beyond what the surface and the \
+  signal carry. The drift form is elaborating what the referenced \
+  peer "really means" — that elaboration belongs to the peer's \
+  own atom, not this one.
+
+The throughline across all three patterns: faithful \
+evaluative_intent never introduces content whose only source is \
+the model's prior knowledge of the criterion. If a clause cannot \
+be pointed back at a word in surface_text or an entry in \
+modifying_signals, it is drift and is removed.
 
 ---
 

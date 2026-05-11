@@ -97,11 +97,19 @@ semantic intent into database-shaped retrieval intents.
 
 You produce a TraitDecomposition with these coupled layers:
 
+0. TRAIT RESTATEMENT — verbatim reproduction of the trait's \
+   upstream commit (contextualized_phrase, evaluative_intent, \
+   relationship_role, axis bookkeeping). Produced FIRST, before \
+   any inference. This is the anchor every later field reads \
+   from; content not present here is content that was not in \
+   the trait, and must not appear downstream.
 1. TRAIT-ROLE ANALYSIS — target_population + trait_role_analysis. \
    Read relationship_role / qualifier_relation / replaces_axis / \
-   axes_replaced_by_siblings mechanically off the user prompt and \
-   commit what they mean for what the dimensions describe. \
-   Pre-dimension; constrains the inventory.
+   axes_replaced_by_siblings mechanically off the trait_restatement \
+   you just produced (these values were committed by Step 2 and \
+   the restatement reproduces them verbatim) and commit what they \
+   mean for what the dimensions describe. Pre-dimension; \
+   constrains the inventory.
 2. ASPECTS — flat list enumerating every distinguishable axis the \
    trait calls for, in user-vocabulary. Sits between the prose \
    role analysis and the database-vocabulary dimensions; \
@@ -130,11 +138,11 @@ output.
 
 Two phases drive the work.
 
-ANALYSIS PHASE — restate the population, commit the role analysis, \
-enumerate aspects (honoring role-driven axis constraints), \
-translate aspects into dimensions, list per-dimension candidates \
-with explicit coverage prose, and commit the combine mode. No \
-calls yet.
+ANALYSIS PHASE — produce the trait restatement, then restate the \
+population, commit the role analysis, enumerate aspects (honoring \
+role-driven axis constraints), translate aspects into dimensions, \
+list per-dimension candidates with explicit coverage prose, and \
+commit the combine mode. No calls yet.
 
 COMMITMENT PHASE — read the candidates + combine mode and emit \
 minimum calls. Multi-expression calls are the natural shape when \
@@ -153,6 +161,74 @@ taxonomy.
 """
 
 
+_TRAIT_RESTATEMENT = """\
+TRAIT RESTATEMENT — the first field you produce, before any \
+inference
+
+Your output schema declares trait_restatement BEFORE every other \
+field. That ordering is load-bearing. The auto-regressive nature \
+of structured generation means whatever you write first becomes \
+the literal scaffold the rest of the response is conditioned on; \
+this field exists to make that scaffold be the upstream commit, \
+not a freely-elaborated paraphrase.
+
+WHAT TO WRITE. Reproduce, in order, character-for-character:
+
+(1) The trait's contextualized_phrase, in double quotes. Copy it \
+    verbatim. No paraphrasing. No tightening. No expansion.
+(2) The trait's evaluative_intent, in double quotes. Copy it \
+    verbatim. No re-interpretation, no summary.
+(3) The trait's relationship_role value, in single quotes.
+(4) If replaces_axis is non-null: that value, in single quotes.
+(5) If axes_replaced_by_siblings is non-empty: the list as a \
+    bracketed series of single-quoted strings.
+
+Items (4) and (5) are omitted when their source fields are \
+empty / null. Items (1)–(3) are always present. Order is fixed.
+
+WHAT THIS FIELD IS FOR. trait_restatement is the anchor every \
+subsequent field reads from. target_population, trait_role_\
+analysis, aspects, every dimension expression, every category \
+call's expressions and retrieval_intent — each of those must \
+describe the trait this restatement names, at the same width and \
+scope. Content not present inside the quoted strings here is \
+content that was not in the trait; do not introduce it \
+downstream.
+
+WHY THIS FIELD EXISTS. Earlier versions of this prompt asked the \
+model to "anchor on upstream commits" via prose rules. The \
+upstream evaluative_intent often described the criterion at the \
+right width, but downstream fields silently broadened, narrowed, \
+or invented detail anyway — because the prose rules sit alongside \
+elaboration-positive language, and the model resolved the tension \
+by elaborating in conventional directions drawn from training-\
+data priors. A required restatement field, produced first, makes \
+the upstream commit explicit in the model's own generation \
+stream. The subsequent fields condition on what is literally \
+present in the restatement, not on what the model "knows" the \
+criterion typically means.
+
+NEVER:
+- PARAPHRASE THE QUOTED STRINGS. The whole point is verbatim \
+  reproduction. "Films that won awards" is NOT a faithful \
+  restatement of "films recognized with awards"; "criteria for X" \
+  is NOT a faithful restatement of "the search prioritizes X". \
+  Copy character-for-character.
+- SUMMARIZE OR TIGHTEN. The downstream fields will paraphrase and \
+  decompose; this field does not. If the upstream string is long, \
+  it is still copied in full.
+- ADD COMMENTARY. No "this means…", no "in other words…", no "the \
+  user is asking for…". The restatement contains only the \
+  enumerated items above, in order, with no surrounding gloss.
+- OMIT FIELDS THAT ARE PRESENT. If replaces_axis or \
+  axes_replaced_by_siblings has content, it appears. The \
+  restatement reflects the actual upstream state.
+
+---
+
+"""
+
+
 _TRAIT_ROLE_ANALYSIS = """\
 TRAIT-ROLE ANALYSIS — translate Step 2's commits into a \
 constraint on what the dimensions list should describe
@@ -161,7 +237,11 @@ Before enumerating dimensions, commit a 1-2 sentence analysis \
 that answers, specifically for this trait: WHAT KIND of \
 dimensions belong, and what kind don't? The fields below are \
 committed upstream by Step 2; read them as the source of truth, \
-do not re-derive from evaluative_intent.
+do not re-derive from evaluative_intent. Anchor every clause of \
+your trait_role_analysis (and the target_population you committed \
+just above it) on the quoted upstream strings inside the \
+trait_restatement field you produced first — they are the \
+in-context record of what the trait actually said.
 
 READ ALL OF THE FOLLOWING. Each one carries information the \
 others don't — do not stop at the first signal, do not skip a \
@@ -262,13 +342,17 @@ unchecked:
   belongs to retrieval, not to the role analysis. If the trait \
   didn't name it, target_population doesn't name it either.
 
-FIDELITY TEST. Read target_population back against \
-evaluative_intent and contextualized_phrase. For each constraint \
-in target_population, point to the words in the trait that licensed \
-it. For each constraint the trait stated, point to the words in \
-target_population that preserved it. A constraint present in one \
-and absent from the other is the drift this stage exists to \
-prevent — fix the population, do not paper over the gap downstream.
+FIDELITY TEST. Read target_population back against the quoted \
+strings inside trait_restatement (the verbatim contextualized_\
+phrase and evaluative_intent the field reproduces). For each \
+constraint in target_population, point to the words inside those \
+quotes that licensed it. For each constraint inside those quotes, \
+point to the words in target_population that preserved it. A \
+constraint present in one and absent from the other is the drift \
+this stage exists to prevent — fix the population, do not paper \
+over the gap downstream. trait_restatement is the authoritative \
+in-context record; if a clause cannot be anchored there, it does \
+not belong here.
 
 ---
 
@@ -409,6 +493,32 @@ appear there, either revise the role analysis (an axis was \
 missed upstream) or drop the aspect (it was invented, not \
 grounded).
 
+TRUTH-CONDITION PRESERVATION. Tracing back to the population is \
+not enough on its own — each aspect must preserve the constraint \
+at the SAME granularity target_population stated it. Three drift \
+modes corrupt the enumeration even when traceability passes:
+
+- IMPLICIT BROADENING. target_population names a narrow truth \
+  condition and the aspect widens it into the surrounding category \
+  by adding an "or"-clause that admits neighboring sub-conditions \
+  the population did not license.
+- IMPLICIT NARROWING. target_population names a category and the \
+  aspect pins it to a single canonical sub-type or exemplar of \
+  that category.
+- INVENTED ADDITIONAL CONDITION. The aspect bundles in a related-\
+  but-not-stated condition the population never named, drawn from \
+  the model's prior knowledge of what "typical" coverage of this \
+  trait looks like.
+
+FIDELITY TEST FOR ASPECTS. Read each aspect back against \
+target_population. The aspect names the same constraint at the \
+same width — no broader, no narrower, no extra conditions bundled \
+in. If an aspect contains a clause target_population does not \
+license, the aspect is drifted; tighten it before moving to \
+dimensions. Drift here propagates directly into the dimension and \
+expression layers — they cannot recover a constraint the aspect \
+already lost.
+
 DISTINCTNESS. Two phrases that name the same axis from different \
 angles collapse into one entry. Two phrases that name independent \
 axes — axes that could vary independently in a candidate film — \
@@ -446,6 +556,12 @@ NEVER:
 - INVENT AXES not grounded in role analysis. Aspect coverage is \
   audited against the prose above, not against the model's prior \
   knowledge of the trait.
+- BROADEN, NARROW, OR BUNDLE EXTRA CONDITIONS against the \
+  constraint target_population stated. Tracing back to the \
+  population is not the same as preserving its width; an aspect \
+  that names the same axis at a looser, tighter, or compounded \
+  granularity is drifted even if its topic appears in the \
+  population prose.
 - KEEP AN ASPECT THAT NAMES A REPLACED AXIS. POSITIONING_REFERENCE \
   traits drop every aspect whose user-vocabulary phrasing matches \
   an entry in axes_replaced_by_siblings. The sibling owns that \
@@ -744,6 +860,18 @@ retrieval_intent must contain. Procedural notes:
   retrieval — as the reference being positioned against, as a \
   threshold candidates must clear, etc. Per the trait_role_analysis \
   you committed.
+- retrieval_intent FIDELITY. Both expressions and retrieval_intent \
+  are read verbatim by the downstream endpoint LLM, which treats \
+  any named entity (ceremony, person, prize, franchise, decade, \
+  studio, or other instance) as a literal filter value rather than \
+  an illustration. Named entities therefore appear in either \
+  string ONLY when the trait itself named them — never as \
+  model-supplied examples of what the category typically contains. \
+  When the trait named a category rather than specific instances, \
+  retrieval_intent describes the category cleanly; parenthetical \
+  example lists and "such as X, Y, or Z" formulations pin the \
+  downstream query to those exemplars and miss everything else the \
+  category covers.
 
 READ COMBINE_MODE:
 - FRAMINGS authorizes committing categories whose coverage \
@@ -919,6 +1047,7 @@ _CATEGORY_TAXONOMY = _build_full_category_taxonomy_section()
 
 SYSTEM_PROMPT = (
     _TASK_FRAMING
+    + _TRAIT_RESTATEMENT
     + _TRAIT_ROLE_ANALYSIS
     + _ASPECT_ENUMERATION
     + _DIMENSION_INVENTORY

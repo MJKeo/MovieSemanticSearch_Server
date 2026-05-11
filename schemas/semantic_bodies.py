@@ -27,6 +27,17 @@
 # guards against silent divergence that would degrade cross-space
 # cosine alignment without a hard failure.
 #
+# Field descriptions in this module are deliberately definitional
+# rather than enumerative. Listing candidate terms inside a field
+# description recruits the LLM to copy them as if they were a menu,
+# regardless of whether the user's trait actually grounded those
+# concepts — a failure mode observed in production (e.g. a request
+# for one archetype producing 2-3 adjacent archetypes from the field's
+# example list). Grounding discipline and register rules live in the
+# semantic endpoint prompt (search_v2/endpoint_fetching/category_
+# handlers/prompts/endpoints/semantic.md) and in per-category
+# additional_objective_notes.
+#
 # See search_improvement_planning/finalized_search_proposal.md
 # (Endpoint 6: Semantic) for the full design rationale.
 
@@ -143,34 +154,29 @@ class PlotEventsBody(BaseModel):
         description=(
             "Synopsis-register prose that mirrors the ingest-side "
             "plot_summary text (past-tense, third-person, no labels). "
-            "Two valid shapes depending on what the user asked for:\n"
+            "Two valid shapes depending on what the user grounded:\n"
             "\n"
-            "1) SPECIFIC EVENT or event-chain query (e.g. 'a heist "
-            "that falls apart due to crew betrayal'): 1-3 dense "
-            "sentences restating only the events the user named, "
-            "phrased as compact synopsis prose. Do NOT invent "
-            "settings, character names, motives, side-events, or "
-            "outcomes the user did not supply. Generic agents are "
-            "fine ('a heist crew', 'the protagonist'); specific ones "
-            "fabricated by you are not.\n"
+            "1) SPECIFIC EVENT or event-chain query: 1-3 dense "
+            "sentences of compact synopsis prose that restate ONLY "
+            "the events the user named. Generic agents are acceptable "
+            "in place of specifics ('a heist crew', 'the "
+            "protagonist'); never invent settings, character names, "
+            "motives, side-events, or outcomes the user did not "
+            "supply.\n"
             "\n"
-            "2) MOTIF / element / setting query (e.g. 'clowns as a "
-            "recurring motif', 'set in 1940s Berlin'): short "
-            "fragments naming the motif or setting in synopsis "
-            "contexts, joined by periods. Examples for the clown "
-            "motif: 'the clown. is a clown. and then the clown. "
-            "encounters a clown. the clown returns.' For setting: "
-            "'the story is set in 1940s berlin. takes place during "
-            "wartime berlin.' These fragments mirror the actual "
-            "phrasings that appear inside real movie synopses — "
-            "they retrieve films that contain the motif/setting "
-            "WITHOUT fabricating a plot around it.\n"
+            "2) MOTIF / element / setting query: short synopsis-prose "
+            "fragments naming the motif or setting in the syntactic "
+            "positions a real movie synopsis would use (the noun "
+            "standing bare; the noun as subject of a generic action; "
+            "the noun recurring), joined by periods. Mirrors the "
+            "phrasings that appear inside real synopses so cosine "
+            "alignment lands on films that contain the motif or "
+            "setting WITHOUT fabricating a plot around it.\n"
             "\n"
-            "Critical: a motif query must NEVER be expanded into "
-            "an invented plot ('a clown chases a woman through a "
-            "carnival as her boyfriend tries to save her'). That "
-            "shifts the retrieval target away from films the user "
-            "actually wants."
+            "Critical: a motif query is NEVER expanded into an "
+            "invented plot. Inventing context around the motif "
+            "shifts the retrieval target away from the films the "
+            "user actually wants."
         ),
     )
 
@@ -195,57 +201,47 @@ class PlotAnalysisBody(BaseModel):
         default=None,
         description=(
             "Log-line capsule, ≤6 words ideal. Generic, no proper "
-            "nouns (replace any name with a role: 'a former pilot', "
-            "'the protagonist', 'a grieving mother'). Examples: "
-            "'parent's love fuels humanity-saving mission', "
-            "'investigation reveals escalating truth', 'romance "
-            "under external pressure'.\n"
+            "nouns (replace any name with a role — a former pilot, "
+            "the protagonist, a grieving mother).\n"
             "\n"
             "CROSS-FIELD REPETITION IS DELIBERATE. The ingest-side "
-            "generator prompt explicitly says it should be 'almost "
-            "comical' how much the load-bearing thematic concepts "
-            "are repeated across elevator_pitch, plot_overview, "
-            "thematic_concepts, and character_arcs — that "
-            "repetition weights the central concept in the embedded "
-            "vector. When you populate this body, REUSE the same "
-            "load-bearing terms across these four fields. A grief "
-            "body should have 'grief' or 'mourning' appear in "
-            "elevator_pitch AND plot_overview AND thematic_concepts "
-            "AND (where applicable) character_arcs."
+            "generator deliberately repeats load-bearing thematic "
+            "terms across elevator_pitch / plot_overview / "
+            "thematic_concepts / character_arcs to weight the "
+            "central concept in the embedded vector. Reuse the same "
+            "load-bearing terms across those four fields when "
+            "populating this body."
         ),
     )
     plot_overview: constr(strip_whitespace=True, min_length=1) | None = Field(
         default=None,
         description=(
             "1-3 sentence thematic plot summary. Generic, NO proper "
-            "nouns (use 'a former pilot' not 'Cooper'; 'a city' not "
-            "'New York'). Repeat the load-bearing thematic terms "
-            "from elevator_pitch and thematic_concepts deliberately "
-            "— this is the cross-field repetition the ingest "
-            "generator emits on purpose."
+            "nouns (use roles in place of names; classes of place in "
+            "place of specific cities). Repeat the load-bearing "
+            "thematic terms from elevator_pitch and thematic_concepts "
+            "deliberately — this is the cross-field repetition the "
+            "ingest generator emits on purpose."
         ),
     )
     genre_signatures: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
             "2-6 short genre-or-subgenre phrases (1-4 words each) "
-            "describing the type of story. Sharp compound labels "
-            "preferred over broad umbrellas. Examples: 'epic space "
-            "odyssey', 'biblical passion drama', 'buddy police "
-            "mystery', 'workplace dramedy', 'survival thriller', "
-            "'coming-of-age dramedy'."
+            "describing the type of story. Prefer sharp compound "
+            "labels over broad umbrella labels. Restate only genre "
+            "signatures the trait grounded — do not pad with "
+            "adjacent-but-unnamed genre flavor."
         ),
     )
     conflict_type: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
             "0-2 generalized 'X vs Y' conflict phrases describing "
-            "the dramatic tension. Generic terms applicable across "
-            "stories, not specific to this movie's universe. "
-            "Examples: 'man vs nature', 'survival of humanity vs "
-            "planetary collapse', 'career ambition vs personal "
-            "relationships', 'individual truth vs institutional "
-            "power'. Empty when the trait does not name a conflict."
+            "the dramatic tension the trait grounded. Generic terms "
+            "applicable across stories, not specific to this movie's "
+            "universe. Empty when the trait does not name a "
+            "conflict."
         ),
     )
     thematic_concepts: list[constr(strip_whitespace=True, min_length=1)] = Field(
@@ -253,10 +249,8 @@ class PlotAnalysisBody(BaseModel):
         description=(
             "0-5 thematic concept labels (2-6 words each) capturing "
             "the territory the story explores plus any moral "
-            "messages. Generic, human-world terms — not movie-"
-            "universe specifics. Examples: 'love as guiding force', "
-            "'redemptive sacrificial suffering', 'identity shaped "
-            "by image', 'human fragility vs nature'. Reuse the "
+            "messages named in the trait. Generic, human-world "
+            "terms — not movie-universe specifics. Reuse the "
             "load-bearing terms from elevator_pitch / plot_overview "
             "here — the ingest side does this on purpose."
         ),
@@ -264,12 +258,10 @@ class PlotAnalysisBody(BaseModel):
     character_arcs: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
-            "0-3 short generalized arc labels (1-4 words). "
-            "Examples: 'sacrificial redemption', 'corruption arc', "
-            "'coming-of-age', 'from resentment to savior', "
-            "'emergent heroism'. Empty when the trait does not "
-            "name a character transformation. Reuse load-bearing "
-            "thematic vocabulary where the arc embodies the theme."
+            "0-3 short generalized arc labels (1-4 words). Empty "
+            "when the trait does not name a character "
+            "transformation. Reuse load-bearing thematic vocabulary "
+            "where the arc embodies the theme."
         ),
     )
 
@@ -321,51 +313,35 @@ class ViewerExperienceBody(BaseModel):
     # Phrases are written like search queries, not sentences. Short:
     # 1-5 words ideal. Common everyday user wording, not academic
     # critic-prose. The ingest generator deliberately includes
-    # redundant near-duplicates per section — synonyms (e.g.
-    # "uplifting", "inspiring", "hopeful"), slang ("tearjerker",
-    # "gorefest", "white knuckle"), and paraphrases ("kept me
-    # guessing", "unpredictable"). First/second-person fragments are
-    # fine ("kept me guessing", "made me nauseous").
+    # redundant near-duplicates per section (synonyms, slang,
+    # paraphrases) so query-side bodies should too. First/second-
+    # person fragments are fine.
     #
     # TRUE SYNONYMS ONLY. Substitution test: "could I show this term
     # to the user instead of their original word, and would they say
     # yes, that's the same thing?" If no, drop it. Adjacent concepts
-    # that drift the meaning ('haunting' → 'eerie / supernatural';
-    # 'bittersweet' → 'tragic') hurt retrieval, not help.
+    # that drift the meaning hurt retrieval rather than help it.
     #
     # ====================================================================
     # CRITICAL: terms and negations BOTH POINT AT THE SAME RETRIEVAL
     # TARGET. They are complementary phrasings of the same concept,
     # NOT opposites:
     #
-    #   - terms = "what films matching this body ARE", no "not"/"no" prefix
+    #   - terms = "what films matching this body ARE", no "not"/"no"
+    #       prefix
     #   - negations = "what films matching this body are NOT", with
-    #                  "not"/"no" prefix
+    #       "not"/"no" prefix
     #
     # Both fields cluster on the SAME side of the embedding. They
-    # reinforce each other.
-    #
-    # CORRECT pairings (terms and negations point the same way):
-    #   - feel-good body:
-    #       terms = ["happy", "uplifting", "joyful"]
-    #       negations = ["not sad", "not depressing", "not bleak"]
-    #     ("happy" and "not sad" are the same idea phrased two ways)
-    #   - gory body (looking for gore-heavy films):
-    #       terms = ["gory", "bloody", "graphic violence"]
-    #       negations = ["not peaceful", "not gentle", "not for kids"]
-    #   - non-gory body (looking for restrained films):
-    #       terms = ["light scares", "tame violence", "restrained"]
-    #       negations = ["no gore", "not too gory", "not bloody"]
-    #
-    # CONTRADICTORY pairings (DO NOT EMIT):
-    #   - terms = ["gory"] + negations = ["not too gory"]   ← contradicts
-    #   - terms = ["happy"] + negations = ["not happy"]     ← contradicts
-    #   - terms = ["uplifting"] + negations = ["not uplifting"] ← contradicts
+    # reinforce each other — an affirmative term and its "not <opposite>"
+    # negation are the same idea phrased two ways.
     #
     # Field signature is mechanical: terms NEVER carry "not"/"no"
     # prefix; negations ALWAYS do. If you find yourself writing
     # "not too X" inside a terms list, move it to negations and check
-    # whether the body's direction matches.
+    # whether the body's direction matches. Contradictory pairings
+    # (affirming a term and then negating that same term in negations)
+    # are never emitted.
     #
     # NEGATIONS DEFAULT-POPULATE. The ingest text routinely emits 1-3
     # negations per active section even when no boundary was named.
@@ -374,181 +350,82 @@ class ViewerExperienceBody(BaseModel):
     # opposite-syntactic-form ("not"/"no") phrasing. Suppress only
     # when the section is barely populated.
     # ====================================================================
-    #
-    # Per-field examples below show BOTH directions a section can take
-    # (e.g. emotional_palette can be feel-good OR sad-leaning), with
-    # paired terms+negations examples for each direction so you can see
-    # how they reinforce one another.
 
     emotional_palette: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
-            "Dominant felt emotions while watching (5-10 terms "
-            "when active).\n"
-            "\n"
-            "DIRECTION A — feel-good / uplifting:\n"
-            "  terms: ['uplifting', 'feel-good', 'heartwarming', "
-            "'joyful', 'cozy', 'warm', 'laugh out loud']\n"
-            "  negations: ['not sad', 'not depressing', "
-            "'not heartbreaking', 'not bleak']\n"
-            "\n"
-            "DIRECTION B — sad / heavy:\n"
-            "  terms: ['heartbreaking', 'tearjerker', "
-            "'devastating', 'bittersweet', 'gut-wrenching']\n"
-            "  negations: ['not feel-good', 'not uplifting', "
-            "'not cheerful', 'not light']\n"
-            "\n"
-            "Pick the direction the trait calls for and keep "
-            "terms+negations BOTH on that side. See class-level "
-            "rules for true-synonym discipline and the "
-            "same-direction reinforcement principle."
+            "Dominant felt emotions while watching (5-10 terms when "
+            "active). Pick the affective direction the trait calls "
+            "for and keep terms+negations BOTH on that side. See "
+            "class-level rules for true-synonym discipline and "
+            "same-direction reinforcement."
         ),
     )
     tension_adrenaline: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
-            "Stress / suspense pressure (3-8 terms when active).\n"
-            "\n"
-            "DIRECTION A — high tension:\n"
-            "  terms: ['edge of your seat', 'white knuckle', "
-            "'tense the whole time', 'high adrenaline', 'nail "
-            "biter']\n"
-            "  negations: ['not relaxed', 'not low-stakes', "
-            "'not chill']\n"
-            "\n"
-            "DIRECTION B — low tension / relaxed:\n"
-            "  terms: ['relaxed', 'chill', 'low stakes', 'easy "
-            "watching']\n"
-            "  negations: ['not stressful', 'not anxiety "
-            "inducing', 'not edge of your seat']"
+            "Stress / suspense pressure (3-8 terms when active). "
+            "Pick the direction the trait calls for and keep "
+            "terms+negations on that side."
         ),
     )
     tone_self_seriousness: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
             "The movie's attitude toward itself (3-8 terms when "
-            "active).\n"
-            "\n"
-            "DIRECTION A — earnest / serious:\n"
-            "  terms: ['earnest', 'heartfelt', 'grounded', "
-            "'sincere', 'serious']\n"
-            "  negations: ['not campy', 'not cheesy', 'not "
-            "ironic', 'not winking']\n"
-            "\n"
-            "DIRECTION B — campy / self-aware:\n"
-            "  terms: ['campy', 'winking self aware', 'cheesy', "
-            "'over the top', 'so bad it\\'s good']\n"
-            "  negations: ['not earnest', 'not grounded', 'not "
-            "serious', 'not solemn']"
+            "active). Pick the direction the trait calls for and "
+            "keep terms+negations on that side."
         ),
     )
     cognitive_complexity: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
-            "Mental effects, ease of follow (3-6 terms when "
-            "active).\n"
-            "\n"
-            "DIRECTION A — cerebral / demanding:\n"
-            "  terms: ['cerebral', 'thought provoking', 'mind-"
-            "bending', 'requires attention', 'layered']\n"
-            "  negations: ['not easygoing', 'not throwaway', "
-            "'not mindless']\n"
-            "\n"
-            "DIRECTION B — easy / digestible:\n"
-            "  terms: ['digestible', 'straightforward', 'easy "
-            "to follow', 'lightweight']\n"
-            "  negations: ['not confusing', 'not hard to "
-            "follow', 'not draining', 'not thought provoking']"
+            "Mental effects and ease of follow (3-6 terms when "
+            "active). Pick the direction the trait calls for and "
+            "keep terms+negations on that side."
         ),
     )
     disturbance_profile: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
-            "Unsettling / fear flavor (3-8 terms when active; "
-            "empty when the movie has no significant disturbing "
-            "elements).\n"
-            "\n"
-            "DIRECTION A — gory / disturbing:\n"
-            "  terms: ['gory', 'bloody', 'graphic violence', "
-            "'splatter', 'body horror', 'gross', 'disturbing', "
-            "'nightmare fuel']\n"
-            "  negations: ['not peaceful', 'not gentle', 'not "
-            "for kids', 'not family friendly']\n"
-            "\n"
-            "DIRECTION B — restrained / non-gory:\n"
-            "  terms: ['light scares', 'tame violence', "
-            "'restrained', 'mild']\n"
-            "  negations: ['no gore', 'not too gory', 'not "
-            "bloody', 'not graphic', 'not disturbing']\n"
-            "\n"
-            "DIRECTION C — psychological / dread (no gore):\n"
-            "  terms: ['creepy', 'unsettling', 'psychological "
-            "horror', 'existential dread', 'paranoia vibes']\n"
-            "  negations: ['no gore', 'no jump scares', 'not "
-            "splatter']"
+            "Unsettling / fear flavor (3-8 terms when active; empty "
+            "when the movie has no significant disturbing elements). "
+            "Pick the specific flavor the trait calls for (gory vs "
+            "restrained vs psychological-dread, etc.) and keep "
+            "terms+negations on that side."
         ),
     )
     sensory_load: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
-            "EXTREME sensory properties only — the kind you'd warn "
-            "someone about. >90% of films have this empty. Populate "
-            "ONLY for genuinely overwhelming sensory bombardment "
-            "(strobe, sustained deafening volume, motion-sickness "
-            "camera) or exceptional calmness (meditative pacing, "
-            "ambient/ASMR). Standard action / standard horror / "
-            "standard spectacle is NOT a sensory_load event — leave "
-            "empty.\n"
-            "\n"
-            "DIRECTION A — overstimulating:\n"
-            "  terms: ['eye-straining', 'overstimulating', "
-            "'ear-popping', 'sensory overload']\n"
-            "  negations: ['not soothing', 'not quiet', "
-            "'not calm']\n"
-            "\n"
-            "DIRECTION B — exceptionally calm:\n"
-            "  terms: ['soothing', 'quiet', 'meditative', "
-            "'ambient']\n"
-            "  negations: ['not loud', 'not overstimulating', "
-            "'not bombastic']"
+            "EXTREME sensory properties only — the kind you would "
+            "warn someone about. More than 90% of films have this "
+            "empty. Populate ONLY for genuinely overwhelming sensory "
+            "bombardment (strobe, sustained deafening volume, "
+            "motion-sickness camera) or exceptional calmness "
+            "(meditative pacing, ambient/ASMR). Standard action, "
+            "standard horror, and standard spectacle are NOT "
+            "sensory_load events — leave empty. When the trait does "
+            "ground it, pick the direction and keep terms+negations "
+            "on that side."
         ),
     )
     emotional_volatility: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
             "How the emotional tone changes over time (2-5 terms "
-            "when active; empty when tone is consistent).\n"
-            "\n"
-            "DIRECTION A — volatile / whiplash:\n"
-            "  terms: ['tonal whiplash', 'laugh then cry', "
-            "'gets dark fast', 'mood swings', 'emotional "
-            "rollercoaster']\n"
-            "  negations: ['not consistent tone', 'not steady']\n"
-            "\n"
-            "DIRECTION B — consistent tone:\n"
-            "  terms: ['consistent tone', 'steady', 'even keel']\n"
-            "  negations: ['no tonal whiplash', 'not all over "
-            "the place', 'not a rollercoaster']"
+            "when active; empty when tone is consistent or "
+            "ungrounded in the trait). Pick the direction the trait "
+            "calls for and keep terms+negations on that side."
         ),
     )
     ending_aftertaste: TermsWithNegationsSection = Field(
         default_factory=TermsWithNegationsSection,
         description=(
-            "Final emotion you leave with (3-6 terms when active; "
-            "empty when no narrative evidence about the ending).\n"
-            "\n"
-            "DIRECTION A — satisfying / happy:\n"
-            "  terms: ['satisfying ending', 'earned payoff', "
-            "'happy ending', 'feel-good payoff']\n"
-            "  negations: ['not a downer ending', 'not "
-            "bleak', 'not unsatisfying']\n"
-            "\n"
-            "DIRECTION B — bleak / haunting:\n"
-            "  terms: ['bittersweet ending', 'haunting "
-            "ending', 'gut punch ending', 'wrecked me', "
-            "'devastating ending']\n"
-            "  negations: ['not a happy ending', 'not "
-            "uplifting', 'not feel-good']"
+            "Final emotion the viewer leaves with (3-6 terms when "
+            "active; empty when the trait gives no signal about the "
+            "ending). Pick the direction the trait calls for and "
+            "keep terms+negations on that side."
         ),
     )
 
@@ -596,61 +473,46 @@ class WatchContextBody(BaseModel):
     # Search-query phrases, not sentences. Short: 1-6 words. Common
     # everyday user wording, intent-framed (from the viewer's
     # perspective). Redundant near-duplicates encouraged for true
-    # synonyms. Crude/vernacular phrasing matches ingest ("stoned
-    # movie", "scared shitless", "cry your eyes out") and should not
-    # be sanitized away. NO plot details, character names, or proper
-    # nouns. TRUE SYNONYMS ONLY — same substitution test as
-    # viewer_experience.
+    # synonyms only — the ingest side deliberately includes synonym
+    # density that query-side bodies should mirror. Crude/vernacular
+    # phrasing matches ingest and should not be sanitized away. NO
+    # plot details, character names, or proper nouns. Same
+    # substitution test as viewer_experience.
 
     self_experience_motivations: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "Self-focused experiential reason someone would seek "
-            "out this movie — what emotional/psychological need it "
-            "fulfills (4-8 terms when active). Frame from the "
+            "out this movie — what emotional or psychological need "
+            "it fulfills (4-8 terms when active). Frame from the "
             "viewer's perspective; capture the PURPOSE of the "
-            "emotion, not the emotion label itself. Examples: "
-            "'need a laugh', 'cathartic watch', 'escape from "
-            "reality', 'test my nerves', 'turn my brain off', "
-            "'will blow my mind', 'cry-your-eyes-out movie', "
-            "'feel small in the universe'."
+            "emotion, not the emotion label itself."
         ),
     )
     external_motivations: TermsSection = Field(
         default_factory=TermsSection,
         description=(
-            "Value the movie provides BEYOND the viewing "
-            "experience itself — cultural significance, social "
-            "currency, conversation starters, relationship "
-            "bonding (2-4 terms when active). Examples: 'sparks "
-            "conversation', 'culturally iconic', 'impress film "
-            "snobs', 'learn something new', 'good for family "
-            "discussion', 'movie for gamers'."
+            "Value the movie provides BEYOND the viewing experience "
+            "itself — cultural significance, social currency, "
+            "conversation starters, relationship bonding (2-4 terms "
+            "when active)."
         ),
     )
     key_movie_feature_draws: TermsSection = Field(
         default_factory=TermsSection,
         description=(
-            "Standout movie attributes that function as 'watch "
-            "this if you want X' draws (2-4 terms when active). "
-            "These are interpretations/evaluations of features, "
-            "positive or negative. Examples: 'incredible "
-            "soundtrack', 'visually stunning', 'compelling "
-            "characters', 'hilariously bad dialogue', 'over the "
-            "top violence', 'epic orchestral score', "
-            "'jack black voice', 'spectacular visuals'."
+            "Standout movie attributes that function as 'watch this "
+            "if you want X' draws (2-4 terms when active). "
+            "Interpretations or evaluations of features, positive or "
+            "negative."
         ),
     )
     watch_scenarios: TermsSection = Field(
         default_factory=TermsSection,
         description=(
-            "Best real-world occasions, contexts, social settings "
-            "for this movie — who to watch with, what time of "
-            "year, what setting (3-6 terms when active). "
-            "Examples: 'date night movie', 'solo movie night', "
-            "'cozy night in', 'halloween movie', 'stoned movie', "
-            "'background at a party', 'family movie night', "
-            "'long flight watch', 'rainy sunday movie'."
+            "Best real-world occasions, contexts, or social settings "
+            "for this movie — who to watch with, what time of year, "
+            "what setting (3-6 terms when active)."
         ),
     )
 
@@ -687,102 +549,94 @@ class NarrativeTechniquesBody(BaseModel):
     # section is typical; rich queries touch 4-6 of the 9 sub-fields,
     # not just one or two.
     #
-    # USE CANONICAL CRAFT LABELS VERBATIM. Established technique
-    # names — "Chekhov's gun", "dramatic irony", "unreliable
-    # narrator", "non-linear timeline", "ticking clock deadline",
-    # "found-footage presentation" — are the exact strings the
-    # ingest side uses. Do NOT paraphrase them ('non-linear
-    # narrative' instead of 'non-linear timeline' is a paraphrase
-    # that costs cosine similarity). Movie-agnostic: no character
+    # USE CANONICAL CRAFT LABELS VERBATIM when the trait names a
+    # recognized technique. Established craft-name spellings are the
+    # exact strings the ingest side uses; paraphrases of canonical
+    # names cost cosine similarity. Movie-agnostic: no character
     # names, actors, places, brands, or unique proper nouns.
+    #
+    # NO SYNONYM PADDING. Unlike viewer_experience and watch_context,
+    # narrative_techniques does NOT benefit from redundant near-
+    # duplicate terms — each term in this space names a distinct
+    # technique. Emit one term per technique the trait grounded; do
+    # NOT add adjacent-but-different techniques as "synonyms".
 
     narrative_archetype: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "Macro story shape — the well-known whole-plot label "
-            "(0-1 phrase). Examples: 'cautionary tale', 'underdog "
-            "rise', 'revenge spiral', 'quest/adventure', 'tragic "
-            "love', 'heist blueprint', 'whodunit mystery'."
+            "(0-1 phrase). Emit only when the trait names a "
+            "recognizable macro shape."
         ),
     )
     narrative_delivery: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "Temporal structure — how time is arranged or "
-            "manipulated (0-2 terms). Use canonical labels "
-            "VERBATIM: 'linear chronology', 'non-linear "
-            "timeline' (NOT 'non-linear narrative'), 'flashback-"
-            "driven structure', 'parallel timelines', 'time loop "
-            "structure', 'reverse chronology'."
+            "manipulated (0-2 terms). Use the canonical craft label "
+            "verbatim when the technique has an established name. "
+            "Emit only when the trait grounds the temporal "
+            "structure."
         ),
     )
     pov_perspective: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "Audience viewpoint and lens reliability (0-2 terms). "
-            "Examples: 'first-person pov', 'third-person limited "
-            "pov', 'multiple pov switching', 'unreliable narrator' "
-            "(canonical — never paraphrase)."
+            "Emit only when the trait grounds a perspective choice "
+            "or reliability framing. Use the canonical craft label "
+            "verbatim."
         ),
     )
     characterization_methods: TermsSection = Field(
         default_factory=TermsSection,
         description=(
-            "How character is conveyed (0-3 terms). Examples: "
-            "'show don't tell actions', 'backstory drip-feed', "
-            "'character foil contrast', 'indirect characterization "
-            "through dialogue', 'mask slips moments'."
+            "How character is conveyed (0-3 terms). Emit only when "
+            "the trait grounds a characterization technique. Use the "
+            "canonical craft label verbatim where one exists."
         ),
     )
     character_arcs: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "How characters change across the story (0-3 terms). "
-            "Movie-agnostic technique labels. Examples: "
-            "'redemption arc', 'corruption arc', 'coming-of-age "
-            "arc', 'disillusionment arc', 'flat arc', "
-            "'tragic flaw spiral'."
+            "Movie-agnostic technique labels. Emit only when the "
+            "trait grounds a character-transformation pattern."
         ),
     )
     audience_character_perception: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "Deliberate audience positioning toward characters "
-            "(0-3 terms). Often UNDER-utilized — surface it when "
-            "the trait grounds it. Examples: 'lovable rogue', "
-            "'love-to-hate antagonist', 'morally gray lead', "
-            "'sympathetic monster', 'misunderstood outsider'."
+            "(0-3 terms). Emit ONLY the audience-positioning the "
+            "trait grounded. Each archetype names a distinct "
+            "audience-character relationship; do not enumerate "
+            "adjacent archetypes the trait did not name."
         ),
     )
     information_control: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "Surprise / suspense / misdirection mechanics (0-2 "
-            "terms). Use canonical labels VERBATIM: 'plot twist / "
-            "reversal', 'dramatic irony', 'red herrings', "
-            "'Chekhov's gun', 'slow-burn reveal', 'misdirection "
-            "editing'."
+            "terms). Use the canonical craft label verbatim. Emit "
+            "only when the trait grounds the mechanic."
         ),
     )
     conflict_stakes_design: TermsSection = Field(
         default_factory=TermsSection,
         description=(
-            "How stakes / pressure are built (0-2 terms). Often "
-            "UNDER-utilized. Examples: 'ticking clock deadline' "
-            "(canonical), 'escalation ladder', 'no-win dilemma', "
-            "'forced sacrifice choice', 'Pyrrhic victory'."
+            "How stakes / pressure are built (0-2 terms). Emit only "
+            "when the trait grounds the stakes-design pattern. Use "
+            "the canonical craft label verbatim where one exists."
         ),
     )
     additional_narrative_devices: TermsSection = Field(
         default_factory=TermsSection,
         description=(
             "Catchall for structural / framing / meta tricks not "
-            "captured above (0-4 terms). Often UNDER-utilized — "
-            "surface it when applicable. Examples: 'cold open', "
-            "'cliffhanger ending', 'framed story', 'story-within-"
-            "a-story', 'found-footage presentation', 'epistolary "
-            "format', 'chaptered structure', 'anthology segments', "
-            "'fourth-wall breaks', 'genre deconstruction'."
+            "captured above (0-4 terms). Emit only when the trait "
+            "grounds a structural device. Use the canonical craft "
+            "label verbatim where one exists."
         ),
     )
 
@@ -837,30 +691,22 @@ class ProductionBody(BaseModel):
         default_factory=list,
         description=(
             "Place names where the film was physically shot. Match "
-            "the user's specificity EXACTLY — do NOT add finer "
-            "geographic detail than the user supplied. If the user "
-            "said 'Iceland', emit ['Iceland'], not ['Reykjavik, "
-            "Iceland'] or ['Iceland, Vatnajökull glacier']. Adding "
-            "city/landmark detail the user did not name changes the "
-            "retrieval target. If the user said 'Tokyo', emit "
-            "['Tokyo']. If they said 'Monument Valley, Utah', emit "
-            "that. The ingest side stores raw IMDB filming-location "
-            "strings (city + country), but query-side specificity "
-            "should be capped at what the user supplied."
+            "the user's geographic specificity EXACTLY — do NOT add "
+            "finer detail than the user supplied. Adding city or "
+            "landmark detail the user did not name changes the "
+            "retrieval target. The ingest side stores raw IMDB "
+            "filming-location strings (city + country), but query-"
+            "side specificity is capped at what the user supplied."
         ),
     )
     production_techniques: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
-            "Concrete making/rendering/capture method terms (0-2 "
-            "typical). Animation modalities and capture methods: "
-            "'hand-drawn animation', 'computer animation', "
-            "'cgi animation', 'stop-motion', 'rotoscope', "
-            "'motion-capture', '3d animation', '2d animation', "
-            "'black-and-white', 'single-take', 'long take', "
-            "'handheld-camera', 'found-footage'. Empty for any "
-            "conventional live-action film without distinctive "
-            "production technique."
+            "Concrete making / rendering / capture method terms "
+            "(0-2 typical). Empty for any conventional live-action "
+            "film without a distinctive production technique. Use "
+            "the canonical craft term verbatim where one exists. "
+            "Emit only when the trait grounds the technique."
         ),
     )
 
@@ -897,37 +743,32 @@ class ReceptionBody(BaseModel):
         default=None,
         description=(
             "1-2 sentence evaluative prose summary of how the film "
-            "was received, in third-person ('audiences praise X, "
-            "while some criticize Y'). Compact and specific — no "
-            "filler. Use only when the trait names whole-work "
-            "reception shape (cult, classic, divisive, era-"
-            "defining). Aspect-level praise/criticism goes in the "
-            "two term lists below."
+            "was received, in third-person. Compact and specific — "
+            "no filler. Use only when the trait names a whole-work "
+            "reception shape (overall critical reception, cultural "
+            "status, divisiveness pattern). Aspect-level praise or "
+            "criticism goes in the two term lists below."
         ),
     )
     praised_qualities: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
             "Aspect-level praise tags (3-6 terms when active). "
-            "ADJECTIVE+NOUN shape, 1-3 words each. Describe "
-            "filmmaking EXECUTION, not subject matter ('sharp "
-            "dialogue' yes, 'engaging debate' no; 'inventive "
-            "structure' yes, 'intriguing premise' no). Movie-"
-            "agnostic — no proper nouns. Examples: 'spectacular "
-            "cinematography', 'evocative score', 'compelling "
-            "performances', 'sharp dialogue', 'ambitious themes', "
-            "'vibrant animation', 'expanded worldbuilding'."
+            "Adjective+noun shape, 1-3 words each. Describe "
+            "filmmaking CRAFT EXECUTION (writing, directing, "
+            "performances, cinematography, score, editing, design) "
+            "— NOT subject matter or premise interest. Movie-"
+            "agnostic — no proper nouns. Emit only the aspects the "
+            "trait grounded."
         ),
     )
     criticized_qualities: list[constr(strip_whitespace=True, min_length=1)] = Field(
         default_factory=list,
         description=(
             "Aspect-level criticism tags (3-6 terms when active). "
-            "Same adjective+noun shape and execution-focus rule "
-            "as praised_qualities. Examples: 'convoluted plot', "
-            "'slow pacing', 'thin character development', "
-            "'predictable plotting', 'derivative sequel', "
-            "'questionable scientific clarity'."
+            "Same adjective+noun shape and craft-execution-focus "
+            "rule as praised_qualities. Emit only the aspects the "
+            "trait grounded."
         ),
     )
 

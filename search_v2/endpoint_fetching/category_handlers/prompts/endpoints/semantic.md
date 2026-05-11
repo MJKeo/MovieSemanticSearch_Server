@@ -56,7 +56,15 @@ Every movie carries 7 named vectors. Each was embedded at ingest from a structur
 
 ## Body authoring — match the ingest side
 
-Each body is the query-side text that gets embedded and compared cosine-wise to the corresponding ingest-side vector. Match the **vocabulary**, **verbosity**, and **register** the ingest side uses for that space. **The per-sub-field descriptions on each Body class (PlotEventsBody, ViewerExperienceBody, WatchContextBody, NarrativeTechniquesBody, PlotAnalysisBody, ProductionBody, ReceptionBody) carry the density, register, vocabulary, and synonym targets — read them before populating.**
+Each body is the query-side text that gets embedded and compared cosine-wise to the corresponding ingest-side vector. Match the **vocabulary**, **verbosity**, and **register** the ingest side uses for that space. **The per-sub-field descriptions on each Body class (PlotEventsBody, ViewerExperienceBody, WatchContextBody, NarrativeTechniquesBody, PlotAnalysisBody, ProductionBody, ReceptionBody) carry the density and register rules — read them before populating.**
+
+### Grounding discipline (applies to ALL spaces, ALL sub-fields)
+
+Every term, phrase, or sentence emitted in any body must trace back to the call's stated intent — read from `semantic_intent` for multi-endpoint buckets, or `retrieval_intent` for single-endpoint buckets. Restate what the user grounded; let unrelated sub-fields stay empty.
+
+Schema field descriptions in `schemas/semantic_bodies.py` are deliberately definitional, not enumerative — they tell you what a field captures and what register to use, but they do not list candidate terms to recruit from. When this prompt or the per-space register table below lists illustrative terms, those illustrate register and shape, never a vocabulary menu.
+
+Common failure mode: the user asks for one specific archetype, motif, or aspect, and the body populates 2–3 adjacent-but-different items pulled from memory of "things this field typically contains." That dilutes the retrieval vector toward films the user did not ask for. If the trait did not ground a concept, the corresponding term does not appear in the body.
 
 ### Per-space register table
 
@@ -70,13 +78,15 @@ Each body is the query-side text that gets embedded and compared cosine-wise to 
 | `production` | filming_locations 1–3, production_techniques 0–2 | strings / 1–3 words | **Match the user's geographic specificity exactly — do NOT add finer detail than asked.** | n/a |
 | `reception` | praised/criticized 3–6 each, summary 1–2 sentences | 1–3 words (terms) | Adjective+noun aspect labels for terms ("evocative score", "convoluted plot"). Evaluative third-person prose for `reception_summary`. | n/a |
 
-### Phrasing rules (term-list spaces — viewer_experience, watch_context, narrative_techniques, reception term lists)
+### Phrasing rules (term-list spaces)
 
 These are the same rules used at ingest time to author the embedded text. Match them so query and document vectors land in the same neighborhood.
 
 1. **Write phrases like search queries, not sentences.** Good: "edge of your seat", "date night movie", "turn my brain off". Bad: "This movie will keep you on the edge of your seat."
 2. **Use common, everyday user wording.** Prefer everyday language over academic terms. ("kept me guessing" beats "narratively unpredictable".)
-3. **Include redundant near-duplicates on purpose, but TRUE synonyms only.** Synonyms that mean the same thing ("uplifting / inspiring / hopeful"), paraphrases ("kept me guessing / unpredictable"), and slang you actually understand ("tearjerker", "gorefest", "edge of your seat") all qualify. **Adjacent concepts that drift the meaning do NOT** — "haunting" → "eerie / supernatural" is drift, not synonymy ("eerie" implies a different feel; "supernatural" is a content claim, not a feel claim). "Bittersweet" → "tragic / melancholic" drifts too — tragic is stronger than bittersweet, melancholic is adjacent.
+3. **Synonym / near-duplicate density is SPACE-SPECIFIC.**
+   - **viewer_experience, watch_context** (and `plot_analysis` for load-bearing thematic terms via the cross-field repetition rule): the ingest side deliberately repeats near-duplicates per section, so query-side bodies should too — but **TRUE SYNONYMS ONLY**. Synonyms that mean the same thing ("uplifting / inspiring / hopeful"), paraphrases ("kept me guessing / unpredictable"), and slang you actually understand ("tearjerker", "gorefest", "edge of your seat") all qualify. **Adjacent concepts that drift the meaning do NOT** — "haunting" → "eerie / supernatural" is drift, not synonymy. "Bittersweet" → "tragic / melancholic" drifts too — tragic is stronger than bittersweet, melancholic is adjacent.
+   - **narrative_techniques, production, reception term lists**: do NOT use synonym density. Each term in these spaces names a distinct technique, location, or aspect; emitting "synonyms" means emitting *different* techniques/locations/aspects the trait did not name. One trait → one term per sub-field. Add another term only when the trait grounds a genuinely different technique/aspect.
 4. **No proper nouns, no character names, no plot details** in the term-list spaces.
 5. **Use canonical craft terms verbatim in `narrative_techniques`** — "Chekhov's gun", "unreliable narrator", "non-linear timeline", "ticking clock deadline". Established technique names should NOT be paraphrased.
 

@@ -283,6 +283,30 @@ class TraitDecomposition(BaseModel):
     precede the dimension inventory; candidates must precede
     category_calls."""
 
+    trait_restatement: str = Field(
+        ...,
+        description=(
+            "ANCHOR FIELD — produced FIRST, before any inference. "
+            "Restate the trait's upstream commit by reproducing, "
+            "verbatim and in order:\n"
+            "(1) the contextualized_phrase exactly as received, in "
+            "double quotes;\n"
+            "(2) the evaluative_intent exactly as received, in "
+            "double quotes;\n"
+            "(3) the relationship_role value, in single quotes;\n"
+            "(4) if non-empty: replaces_axis (single quotes) or "
+            "axes_replaced_by_siblings (bracketed list).\n"
+            "\n"
+            "No paraphrasing. No summarization. No commentary. No "
+            "additions. Copy the upstream strings character-for-"
+            "character. This restatement is the anchor for every "
+            "field below — target_population, trait_role_analysis, "
+            "aspects, dimensions, and category_calls each describe "
+            "the trait this restatement names, no more and no less. "
+            "Content not present in this restatement is content that "
+            "was not in the trait; do not introduce it downstream."
+        ),
+    )
     target_population: str = Field(
         ...,
         description=(
@@ -291,11 +315,25 @@ class TraitDecomposition(BaseModel):
             "movies share? What can vary freely? Seed for the "
             "dimension inventory.\n"
             "\n"
+            "Source: the trait_restatement you just produced. Every "
+            "clause of target_population must trace to a word inside "
+            "the quoted strings in trait_restatement (the verbatim "
+            "contextualized_phrase and evaluative_intent). Do not "
+            "introduce content present nowhere in those quotes — no "
+            "exemplars, no 'or'-clauses admitting neighboring "
+            "criteria, no canonical instances, no sub-types from "
+            "prior knowledge of what this kind of trait 'typically' "
+            "covers. If a clause has no anchor in the restatement, "
+            "remove it.\n"
+            "\n"
             "NEVER:\n"
             "- NAME CATEGORIES OR ENDPOINTS.\n"
-            "- COPY evaluative_intent VERBATIM. Restate in concrete "
-            "population terms; if you're paraphrasing, you're not "
-            "adding signal."
+            "- COPY evaluative_intent VERBATIM (the restatement "
+            "already does that). Restate in concrete population "
+            "terms at the same width the trait carries.\n"
+            "- BROADEN, NARROW, OR INVENT against trait_restatement. "
+            "Same constraint, same granularity, same scope as the "
+            "quoted upstream text."
         ),
     )
     trait_role_analysis: str = Field(
@@ -306,6 +344,15 @@ class TraitDecomposition(BaseModel):
             "off the user prompt — the values were committed in "
             "Step 2 and are the source of truth) mean for what the "
             "dimensions list should describe.\n"
+            "\n"
+            "Source: trait_restatement and target_population, both "
+            "above. The role analysis describes the trait those "
+            "fields name — it does not introduce new content. Every "
+            "clause must trace to a word in the quoted "
+            "contextualized_phrase / evaluative_intent in "
+            "trait_restatement, to target_population, or to the "
+            "relationship_role / axis bookkeeping the restatement "
+            "reproduced.\n"
             "\n"
             "Two questions to answer in your prose:\n"
             "(1) Does this trait name something to RETRIEVE, or "
@@ -333,6 +380,10 @@ class TraitDecomposition(BaseModel):
             "- DERIVE A DIFFERENT ROLE FROM evaluative_intent.\n"
             "- SLOT INTO A FIXED VOCABULARY of relation types. "
             "Describe what THIS query's relation means.\n"
+            "- INTRODUCE CONTENT NOT IN trait_restatement / "
+            "target_population. The role analysis tightens what the "
+            "dimensions should describe; it does not enlarge the "
+            "scope of the trait.\n"
             "- LEAVE GENERIC. \"This trait wants movies that match "
             "it\" is a non-analysis."
         ),
