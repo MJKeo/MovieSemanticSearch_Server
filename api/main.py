@@ -3,6 +3,14 @@ from fastapi import FastAPI
 from db.postgres import pool, check_postgres
 from db.qdrant import qdrant_client, check_qdrant
 from db.redis import init_redis, close_redis, check_redis
+from implementation.misc.event_loop import install_uvloop
+
+# Switch asyncio onto uvloop before uvicorn starts the event loop.
+# ~2x faster than the default selector loop on socket-heavy workloads
+# (concurrent Postgres + Qdrant + Redis + LLM calls). Idempotent and
+# silently no-ops on platforms without uvloop. See
+# implementation/misc/event_loop.py.
+install_uvloop()
 
 
 @asynccontextmanager

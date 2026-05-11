@@ -282,7 +282,7 @@ class CategoryName(str, Enum):
             "'movies with sharks' → ELEMENT_PRESENCE (presence).",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
         CategoryCombineType.ADDITIVE,
     )
     ELEMENT_PRESENCE = (
@@ -307,7 +307,7 @@ class CategoryName(str, Enum):
             "'twist ending' → EMOTIONAL_EXPERIENTIAL.",
         ),
         (EndpointRoute.KEYWORD, EndpointRoute.SEMANTIC),
-        HandlerBucket.PREFERRED_REPRESENTATION_FALLBACK,
+        HandlerBucket.SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT,
         CategoryCombineType.ADDITIVE,
     )
     CHARACTER_ARCHETYPE = (

@@ -108,8 +108,13 @@ def _build_conninfo() -> str:
 # during FastAPI startup via the lifespan handler.
 pool = AsyncConnectionPool(
     conninfo=_build_conninfo(),
-    min_size=2,           # Keep 2 warm connections for steady-state traffic
-    max_size=10,          # Allow up to 10 connections for burst capacity
+    min_size=4,           # Keep 4 warm connections for steady-state traffic
+    # Sized for the similarity flow's fan-out: the single-anchor lane gather
+    # fires up to 11 concurrent ops and the multi-anchor flow has two
+    # gather waves of 9 + 6. With two in-flight requests we want to avoid
+    # pool-acquire serialization, so max_size is set well above the
+    # per-request concurrency.
+    max_size=25,
     max_lifetime=1800,    # Recycle connections after 30 minutes to prevent staleness
     max_idle=300,         # Close idle connections above min_size after 5 minutes
     timeout=5.0,           # Wait up to 5s for a connection before raising PoolTimeout

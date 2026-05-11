@@ -37,6 +37,7 @@ dependencies = [
     "authlib>=1.6.9",
     "tiktoken>=0.12.0",
     "kneed>=0.8",
+    "uvloop>=0.21",
 ]
 
 [dependency-groups]

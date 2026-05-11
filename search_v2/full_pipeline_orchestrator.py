@@ -748,18 +748,24 @@ async def _apply_implicit_prior_rerank(
     branches: list[Step2BranchResult],
     branch_results: list[BranchRankedResults],
 ) -> list[BranchRankedResults]:
-    """Apply implicit quality/popularity multiplicative boosts.
+    """Apply the implicit popularity boost, falling back to quality.
 
-    Stage 4 owns base relevance scoring. This pass only applies the
-    post-score policy produced from Step 2 traits:
+    Stage 4 owns base relevance scoring. This pass applies a single-axis
+    post-score boost:
 
         boosted_score = base_score + prior_base * boost
 
-    where each axis boost is the configured strength cap multiplied by
-    the movie's normalized axis signal. `prior_base` is the movie's
-    positive relevance contribution, or 1.0 when no positive
-    contribution exists. Missing axis data contributes 0.0 so absence
-    of data has no effect.
+    Popularity is the primary axis. The quality axis only fires when
+    popularity is inactive (direction=none) — typically because the
+    query already commits to popularity explicitly and the implicit
+    policy turned it off. Treating popularity as the implicit-prior
+    default keeps it from competing with quality when both are on; in
+    saturated-popularity pools (e.g. tentpole franchise queries) the
+    quality axis used to dominate by accident.
+
+    `prior_base` is the movie's positive relevance contribution, or
+    1.0 when no positive contribution exists. Missing axis data
+    contributes 0.0 so absence of data has no effect.
     """
     if not branches or not branch_results:
         return branch_results
@@ -791,11 +797,23 @@ async def _apply_implicit_prior_rerank_for_branch(
         return result
 
     policy = branch.implicit_expectations
-    quality_strength = policy.quality_prior.strength
-    popularity_strength = policy.popularity_prior.strength
-    quality_cap = QUALITY_PRIOR_BOOSTS[quality_strength]
-    popularity_cap = POPULARITY_PRIOR_BOOSTS[popularity_strength]
-    if quality_cap == 0.0 and popularity_cap == 0.0:
+    quality_cap = QUALITY_PRIOR_BOOSTS[policy.quality_prior.strength]
+    popularity_cap = POPULARITY_PRIOR_BOOSTS[policy.popularity_prior.strength]
+
+    # Popularity is the primary axis. Quality only activates when the
+    # implicit policy has set popularity_prior.direction = "none" —
+    # typically because explicit query coverage already owns the
+    # popularity axis. This avoids the saturated-popularity-pool case
+    # where quality used to silently dominate the boost.
+    popularity_active = (
+        policy.popularity_prior.direction != "none" and popularity_cap > 0.0
+    )
+    quality_active = (
+        not popularity_active
+        and policy.quality_prior.direction != "none"
+        and quality_cap > 0.0
+    )
+    if not popularity_active and not quality_active:
         return result
 
     movie_ids = [movie_id for movie_id, _ in result.ranked]
@@ -804,17 +822,18 @@ async def _apply_implicit_prior_rerank_for_branch(
     reranked: list[tuple[int, float]] = []
     for movie_id, base_score in result.ranked:
         popularity_raw, reception_raw = signals.get(movie_id, (None, None))
-        quality_signal = _quality_signal(
-            reception_raw,
-            direction=policy.quality_prior.direction,
-        )
-        popularity_signal = _popularity_signal(
-            popularity_raw,
-            direction=policy.popularity_prior.direction,
-        )
-        boost = (quality_cap * quality_signal) + (
-            popularity_cap * popularity_signal
-        )
+        if popularity_active:
+            popularity_signal = _popularity_signal(
+                popularity_raw,
+                direction=policy.popularity_prior.direction,
+            )
+            boost = popularity_cap * popularity_signal
+        else:
+            quality_signal = _quality_signal(
+                reception_raw,
+                direction=policy.quality_prior.direction,
+            )
+            boost = quality_cap * quality_signal
         breakdown = result.score_breakdowns.get(movie_id)
         prior_base = (
             breakdown.positive_total

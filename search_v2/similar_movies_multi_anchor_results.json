@@ -33,14 +33,14 @@
       "studio": 0.0
     },
     "candidate_counts_by_lane": {
-      "shape": 11141,
+      "shape": 11143,
       "director": 14,
       "franchise": 0,
       "studio": 0,
       "source": 0,
       "quality": 0,
-      "format": 10853,
-      "themes": 10617,
+      "format": 10854,
+      "themes": 10618,
       "cast": 0,
       "specific_award": 1329
     },
@@ -52,13 +52,13 @@
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
       "anchor": 0.6214474807634518,
-      "plot_events": 0.16842697876109147,
+      "plot_events": 0.1684269787610911,
       "plot_analysis": 0.4083211995257278,
       "viewer_experience": 1.0,
       "watch_context": 1.0,
-      "narrative_techniques": 0.987993444469295,
+      "narrative_techniques": 0.9879934444692939,
       "production": 0.1,
-      "reception": 0.7549766332101467
+      "reception": 0.754976633210146
     },
     "results": [
       {
@@ -562,14 +562,14 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.5932378522291245,
-      "plot_events": 0.17165432459416485,
+      "anchor": 0.5932378522291253,
+      "plot_events": 0.17165432459416524,
       "plot_analysis": 0.4719914770872121,
       "viewer_experience": 1.0,
       "watch_context": 1.0,
       "narrative_techniques": 0.8992249235560206,
       "production": 1.0,
-      "reception": 0.7814034194021521
+      "reception": 0.7814034194021524
     },
     "results": [
       {
@@ -1092,14 +1092,14 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.6774498491545038,
-      "plot_events": 0.25249905597673633,
-      "plot_analysis": 0.5691969568920368,
+      "anchor": 0.6774498491545041,
+      "plot_events": 0.2524990559767356,
+      "plot_analysis": 0.5691969568920379,
       "viewer_experience": 1.0,
-      "watch_context": 0.9451594171155286,
-      "narrative_techniques": 0.8879906444724361,
+      "watch_context": 0.9451594171155283,
+      "narrative_techniques": 0.8879906444724373,
       "production": 1.0,
-      "reception": 0.7944005951122772
+      "reception": 0.7944005951122768
     },
     "results": [
       {
@@ -1621,11 +1621,11 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.701067934672968,
-      "plot_events": 0.35539948947768835,
-      "plot_analysis": 0.5832756135081271,
+      "anchor": 0.7010679346729669,
+      "plot_events": 0.35539948947768907,
+      "plot_analysis": 0.5832756135081263,
       "viewer_experience": 1.0,
-      "watch_context": 0.9110219073271183,
+      "watch_context": 0.9110219073271186,
       "narrative_techniques": 0.7817960240428257,
       "production": 0.1,
       "reception": 0.8976206217675664
@@ -2177,9 +2177,9 @@
       "plot_analysis": 0.3812752314615986,
       "viewer_experience": 1.0,
       "watch_context": 0.4864908313038811,
-      "narrative_techniques": 0.7467184613333019,
+      "narrative_techniques": 0.7467184613333022,
       "production": 0.1,
-      "reception": 0.5396239115506692
+      "reception": 0.5396239115506689
     },
     "results": [
       {
@@ -2677,14 +2677,14 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.35888424550276893,
+      "anchor": 0.3588842455027693,
       "plot_events": 0.1,
       "plot_analysis": 0.1,
       "viewer_experience": 1.0,
-      "watch_context": 0.8455840240243977,
-      "narrative_techniques": 0.7367974590809117,
+      "watch_context": 0.845584024024398,
+      "narrative_techniques": 0.736797459080912,
       "production": 0.1,
-      "reception": 0.5870467044846595
+      "reception": 0.5870467044846599
     },
     "results": [
       {
@@ -3204,14 +3204,14 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.48643667588923284,
+      "anchor": 0.48643667588923245,
       "plot_events": 0.24090606270708953,
       "plot_analysis": 0.3489044804729432,
       "viewer_experience": 1.0,
       "watch_context": 0.712656800202182,
-      "narrative_techniques": 0.6039779219572139,
-      "production": 0.16159515306950886,
-      "reception": 0.7157064863183848
+      "narrative_techniques": 0.6039779219572147,
+      "production": 0.16159515306950997,
+      "reception": 0.7157064863183845
     },
     "results": [
       {
@@ -3735,10 +3735,10 @@
       "plot_events": 0.1,
       "plot_analysis": 0.1,
       "viewer_experience": 1.0,
-      "watch_context": 0.5602317626058914,
-      "narrative_techniques": 0.6106867908617091,
+      "watch_context": 0.5602317626058902,
+      "narrative_techniques": 0.6106867908617094,
       "production": 0.1,
-      "reception": 0.42878735900441634
+      "reception": 0.42878735900441556
     },
     "results": [
       {
@@ -4244,8 +4244,8 @@
       "studio": 0,
       "source": 21183,
       "quality": 498,
-      "format": 24930,
-      "themes": 24792,
+      "format": 24928,
+      "themes": 24789,
       "cast": 0,
       "specific_award": 4741
     },
@@ -4256,14 +4256,14 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.3274323837489035,
+      "anchor": 0.3274323837489039,
       "plot_events": 0.1,
-      "plot_analysis": 0.26516836693376455,
+      "plot_analysis": 0.26516836693376533,
       "viewer_experience": 1.0,
       "watch_context": 0.3613370648071068,
       "narrative_techniques": 0.7932584468993231,
       "production": 0.1,
-      "reception": 0.4822641853030085
+      "reception": 0.4822641853030082
     },
     "results": [
       {
@@ -4785,7 +4785,7 @@
       "watch_context": 0.3043505990692327,
       "narrative_techniques": 0.46619991334013366,
       "production": 0.1,
-      "reception": 0.1378282895351161
+      "reception": 0.13782828953511536
     },
     "results": [
       {
@@ -5283,12 +5283,12 @@
     "vector_space_cohesion": {
       "anchor": 0.38831636766538336,
       "plot_events": 0.37362498634480934,
-      "plot_analysis": 0.37553704417754186,
+      "plot_analysis": 0.37553704417754263,
       "viewer_experience": 1.0,
-      "watch_context": 0.9249478813340025,
+      "watch_context": 0.9249478813340036,
       "narrative_techniques": 0.770966784539345,
       "production": 0.1,
-      "reception": 0.7104967217864604
+      "reception": 0.7104967217864611
     },
     "results": [
       {
@@ -5789,12 +5789,12 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.467331582719985,
+      "anchor": 0.4673315827199842,
       "plot_events": 0.1,
       "plot_analysis": 0.2026168759565498,
       "viewer_experience": 1.0,
       "watch_context": 0.8761286342202468,
-      "narrative_techniques": 0.7002079660613725,
+      "narrative_techniques": 0.7002079660613721,
       "production": 0.8243374642592305,
       "reception": 0.6653722295609898
     },
@@ -6316,12 +6316,12 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.34905956756312917,
+      "anchor": 0.3490595675631303,
       "plot_events": 0.1,
       "plot_analysis": 0.1,
       "viewer_experience": 1.0,
       "watch_context": 0.8790102664870081,
-      "narrative_techniques": 0.8177957217008947,
+      "narrative_techniques": 0.8177957217008954,
       "production": 0.1,
       "reception": 0.7108131499133457
     },
@@ -6827,14 +6827,14 @@
     "shorts_dominant": false,
     "low_cohesion_fallback_used": false,
     "vector_space_cohesion": {
-      "anchor": 0.3724926062274403,
+      "anchor": 0.37249260622743996,
       "plot_events": 0.1,
       "plot_analysis": 0.3946481305694516,
       "viewer_experience": 1.0,
-      "watch_context": 0.6814298291334879,
-      "narrative_techniques": 0.8304808847116726,
+      "watch_context": 0.6814298291334883,
+      "narrative_techniques": 0.8304808847116734,
       "production": 0.1,
-      "reception": 0.7421118821085245
+      "reception": 0.7421118821085237
     },
     "results": [
       {

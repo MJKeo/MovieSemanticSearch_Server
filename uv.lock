@@ -1781,6 +1781,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "tiktoken" },
     { name = "tqdm" },
+    { name = "uvloop" },
 ]
 
 [package.dev-dependencies]
@@ -1824,6 +1825,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "tqdm", specifier = ">=4.66.0" },
+    { name = "uvloop", specifier = ">=0.21" },
 ]
 
 [package.metadata.requires-dev]

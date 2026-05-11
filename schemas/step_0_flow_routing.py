@@ -70,27 +70,46 @@ class ExactTitleFlowData(BaseModel):
     release_year: int | None = Field(default=None)
 
 
+# A single reference movie inside a similarity search payload.
+# - similar_search_title: the canonical reference title the search
+#   would use for this slot. Must be non-empty (each list entry
+#   represents a real referenced movie — an "absent" reference is
+#   represented by the entry not being in the list at all).
+# - release_year: the release year the user EXPLICITLY stated for the
+#   reference title (e.g., "movies like Dune 2021"). Same rule as the
+#   exact-title flow: never inferred from generic context. A cast /
+#   director / unambiguous-installment marker tied to a specific title
+#   ("the batman with michael keaton" → Batman 1989) does count as
+#   explicit identification of an installment and may set release_year
+#   accordingly. None when no installment-specific marker is present.
+class SimilarityReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    similar_search_title: constr(strip_whitespace=True, min_length=1) = Field(...)
+    release_year: int | None = Field(default=None)
+
+
 # Similarity flow decision payload.
 # - should_be_searched: whether the similarity search should execute.
 #   Hard rule: must be False whenever `qualifiers` is non-empty.
 #   Similarity is an "only mode" — once the query carries
 #   descriptive qualifiers, it belongs in the standard flow where
 #   those qualifiers can be applied.
-# - similar_search_title: the canonical reference title the search
-#   would use. Always populated with the LLM's best candidate even
-#   when should_be_searched is False (can be empty string only when
-#   there is genuinely no reference title in the query). When
-#   should_be_searched is True, the string must be non-empty.
-# - release_year: the release year the user EXPLICITLY stated for the
-#   reference title (e.g., "movies like Dune 2021"). Same rule as the
-#   exact-title flow: never inferred, never auto-filled. None when the
-#   user did not state a year.
+# - references: one or more reference movies the similarity search
+#   would use. Populated with every similarity-frame reference observed
+#   in the query, in the order they appear. Always populated with the
+#   LLM's best candidates even when should_be_searched is False (can be
+#   empty only when there is genuinely no similarity reference in the
+#   query). When should_be_searched is True, the list must be non-empty.
+#   Multi-reference similarity (e.g., "kung fu panda meets jaws",
+#   "movies like inception, interstellar, or arrival") is the
+#   load-bearing case for the list shape — downstream merges multiple
+#   anchors into a single similarity search.
 class SimilarityFlowData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     should_be_searched: bool = Field(...)
-    similar_search_title: str = Field(...)
-    release_year: int | None = Field(default=None)
+    references: list[SimilarityReference] = Field(...)
 
 
 # Top-level Step 0 response.
@@ -108,8 +127,10 @@ class SimilarityFlowData(BaseModel):
 # 3. exact_title_flow_data — structured decision for the exact-title
 #    flow (should_be_searched + exact_title_to_search).
 # 4. similarity_flow_data — structured decision for the similarity
-#    flow (should_be_searched + similar_search_title). Blocked by the
-#    presence of any qualifier.
+#    flow (should_be_searched + references list). Blocked by the
+#    presence of any qualifier. The references list carries one entry
+#    per referenced movie so multi-anchor frames ("X meets Y", "like
+#    X, Y, or Z") flow through unchanged.
 # 5. enable_primary_flow — boolean controlling the standard (default)
 #    search flow. Intentionally asymmetric with the other two flow
 #    fields because the standard flow has no title payload.
@@ -202,10 +223,11 @@ class Step0Response(BaseModel):
             )
         if (
             self.similarity_flow_data.should_be_searched
-            and not self.similarity_flow_data.similar_search_title.strip()
+            and not self.similarity_flow_data.references
         ):
             raise ValueError(
-                "similar_search_title must be a non-empty reference title "
-                "when similarity_flow_data.should_be_searched is true."
+                "similarity_flow_data.references must contain at least "
+                "one entry when similarity_flow_data.should_be_searched "
+                "is true."
             )
         return self

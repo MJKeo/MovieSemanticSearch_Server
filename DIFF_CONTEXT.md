@@ -2780,3 +2780,198 @@ weaver has gone several slots without placing one.
 
 ### Re-run
 - `python -m search_v2.run_similar_movies_batch --limit 10`
+
+## Step 0 multi-title similarity wiring
+Files: schemas/step_0_flow_routing.py, search_v2/step_0.py, search_v2/similar_movies.py, search_v2/run_step_0.py
+
+### Intent
+Wire Step 0 to drive the multi-anchor similarity flow already implemented in
+`run_similar_movies_for_ids`. Previously Step 0's `SimilarityFlowData`
+carried a single `similar_search_title` + `release_year`; now it carries
+a list of `SimilarityReference` entries so frames like "kung fu panda
+meets jaws", "movies like inception, interstellar, or arrival", and
+bare title lists "Godfather and Goodfellas" route directly to the
+existing multi-anchor pipeline instead of falling back to standard.
+
+### Key Decisions
+- **List replaces single field (breaking schema change).** Adding a
+  parallel `references` list alongside the old single-title fields
+  would have kept the LLM emitting two parallel sources of truth; the
+  cleaner shape is a single list (length 1 for single-reference
+  frames, length N for multi). Empty list represents "no similarity
+  reference" — no need for the prior empty-string convention. Schema
+  validator now enforces "references non-empty when
+  should_be_searched=True".
+- **Drop-failed-resolve, not all-or-nothing.** Per the user's spec,
+  silently drop references that don't match any movie and continue
+  with the survivors; only return empty results when every reference
+  fails. Implemented in `_resolve_similarity_anchors` (loops over
+  references, dedupes anchor IDs while preserving order).
+- **Installment-disambiguation markers are NOT qualifiers.** A cast/
+  director marker that identifies which installment of a multi-version
+  title the user means ("the batman with michael keaton" → Batman
+  1989) stays inside the TitleObservation and lifts a release_year
+  onto the matching SimilarityReference. Free-standing descriptors
+  ("with kids in it", "from the 80s") remain qualifiers and block
+  similarity. New prompt section + worked example (Example 20)
+  draws this line for the LLM.
+- **enable_primary_flow rule loosened for clean multi-title frames.**
+  Previously `len(titles_observed) > 1` always fired the standard
+  flow as a co-flow. Now multi-title is similarity-only when every
+  title sits inside a single similarity frame (or the bare-title-list
+  shape) and there are no qualifiers — preventing duplicate routing
+  on the canonical multi-anchor query.
+
+### Planning Context
+The downstream similar-movies pipeline (`run_similar_movies_for_ids`)
+already routes single-anchor vs. multi-anchor via list length, so the
+change is contained in: (a) the Step 0 schema/prompt, (b) the title→
+anchor-id resolution helper, (c) the executor entry point. No changes
+to lanes, scoring, or the multi-anchor cohort path itself.
+
+### Testing Notes
+- Mass-eval Step 0 against the boundary-example set in `step_0.py` —
+  Examples 18–21 are the new multi-anchor / installment-disambig
+  cases. Existing examples 6 and 16 had their expected output flipped
+  (Godfather+Goodfellas now → similarity).
+- End-to-end: run `python -m search_v2.run_step_0 "kung fu panda
+  meets jaws"` and `python -m search_v2.run_step_0 "the comedy of
+  bug's life with the animation of klaus"` — the first should fire
+  similarity with 2 anchors, the second should route to standard via
+  qualifier presence.
+- Resolution edge case: a query referencing one real movie and one
+  fictional title ("movies like Inception and Frumblewax") should
+  resolve only the real one and run a single-anchor similarity search.
+
+## Similar-movies execution: latency-only optimizations (no scoring change)
+Files: search_v2/similar_movies.py, db/postgres.py, db/qdrant.py,
+       api/main.py, search_v2/run_step_0.py,
+       search_v2/run_similar_movies_batch.py,
+       implementation/misc/event_loop.py, pyproject.toml
+
+### Intent
+Cut similarity-search end-to-end latency. Every change preserves
+scoring semantics — verified by running the full single + multi
+anchor batch and diffing against the committed baseline JSON: all
+rankings + scores identical (single-anchor: 0 diffs; multi-anchor:
+all 14 cohort rankings identical, 5 cosmetic debug-count
+differences ≤3 candidates each in the tail of the 10-25K candidate
+pool, from numpy vs Python FP precision in the centroid).
+
+### Key Decisions
+- **Parallelize the 4 prefetches in `run_similar_movies_for_ids`.**
+  anchor_rows, anchor_vectors, studio_entries, director_terms are
+  independent — one `asyncio.gather` instead of 4 sequential awaits.
+- **Qdrant `query_batch_points` for the 8-named-vector shape
+  search.** New `_query_spaces_batch` helper replaces the prior
+  `asyncio.gather(*[_query_space(...)])` pattern. Single round
+  trip, server-side parallelism, shared HNSW cache across the
+  batch. `_query_space` removed (was the only caller).
+- **gRPC opt-in via env var `QDRANT_PREFER_GRPC=1`.** Docker-compose
+  currently only exposes port 6333; comment in `db/qdrant.py`
+  documents how to enable (add `6334:6334` to compose, restart,
+  set env var). Default stays HTTP so the batch keeps working
+  unchanged.
+- **Module-cached `_load_studio_entries_by_company_id`.** The
+  Postgres lookup it wraps is a static registry-shape query that
+  never changes within a process; async-lock-guarded
+  initialize-once pattern.
+- **Postgres pool: min_size 2→4, max_size 10→25.** Sized for the
+  similarity flow's fan-out (single-anchor lane gather fires up
+  to 11 concurrent ops; multi-anchor has two waves of 9 + 6).
+  Eliminates pool-acquire serialization at burst.
+- **Multi-anchor cosine + centroid: numpy.** Replaces the
+  `_dot(left, right)` over `zip(...)` loops and the 3072-wide
+  Python list comprehension for centroid mean with `arr @ arr.T`
+  (pairwise) and `arr.mean(axis=0)` (centroid). ULP-level FP
+  differences only.
+- **Auteur fetch folded into the multi-anchor gather.** Was a
+  serial `await fetch_auteur_term_ids()` before the gather; now a
+  small composite task (`_fetch_auteur_and_director`) awaits
+  auteur, applies the gate, and awaits director if needed —
+  running in parallel with shape/franchise/studio/etc.
+- **uvloop install at entry points.** New
+  `implementation/misc/event_loop.py:install_uvloop()` called from
+  `api/main.py`, `search_v2/run_step_0.py`,
+  `search_v2/run_similar_movies_batch.py`. Idempotent, no-ops
+  cleanly if uvloop is missing. ~2x throughput on socket-heavy
+  fan-outs.
+- **Vectorized `_build_results` scoring loop.** The hottest
+  pure-Python phase (10 dict-of-dict lookups × N candidates +
+  weighted sum + 6 conditional multipliers per row over 5K-30K
+  candidates) is now one `score_matrix` build, one BLAS dot for
+  base scores, masked elementwise vector ops for the 7
+  multipliers, vectorized floor selection, then a single Python
+  pass to materialize the diagnostic-bearing `_CandidateScore`
+  objects. Dominant-lane uses an 8-iteration loop over additive
+  lanes to match Python's `max(..., key=...)` first-wins-on-tie
+  semantics exactly. Sources-list ordering preserves the
+  original's "ALL_LANES order, studio appended last".
+- **`_ParsedRowSlice` for orchestrator-level row dedup.** New
+  `_parse_candidate_rows` builds a per-candidate slice
+  (format_bucket, medium_tags, country_tags, themes_traits,
+  franchise_pool) once per request; orchestrator-level
+  duplicate parses (format_bucket called 2x per candidate,
+  franchise pool re-parsed for fatigue check) read from the
+  slice. Scoring helpers still take row dicts — narrow scope
+  keeps the diff small.
+
+### Validation
+- Existing batch baselines preserved at /tmp/perf_baseline/.
+- `python -m search_v2.run_similar_movies_batch --multi` completes
+  cleanly and emits identical ranked output.
+
+## CHARACTER_FRANCHISE fanout — force CENTRAL prominence and prefer_lineage=True
+Files: search_v2/endpoint_fetching/category_handlers/output_extractor.py
+Why: CHARACTER_FRANCHISE referents (Batman, Bond, Spider-Man, Sherlock) by definition anchor their films and name a specific character-anchored franchise main line, so the prominence/lineage signals should never be left to the LLM's discretion in this category.
+Approach: In `_fanout_to_fired_endpoints`, hard-code `prominence_mode=CharacterProminenceMode.CENTRAL` on the synthesized `CharacterTarget` (was `DEFAULT`) and `prefer_lineage=True` on the synthesized `FranchiseQuerySpec` (was unset → default False). Safe because the fanout schema itself does not surface either field to the LLM, and `FranchiseQuerySpec._validate` already soft-coerces `prefer_lineage` back to False when mechanically incompatible (multi-name list, SPINOFF flag, populated subgroup_names — none of which the fanout path emits, but the coercion remains a safety net). Updated the prominence-exploration stub string and adjacent comments to reflect the new behavior.
+Testing notes: Confirm that CHARACTER_FRANCHISE queries (e.g. "Batman movies", "James Bond") rank lineage-only matches above shared-universe-only matches in the franchise path, and that character path scores no longer credit titles where the named character appears only peripherally.
+
+## Implicit-prior rerank — popularity primary, quality only on popularity=none
+Files: search_v2/full_pipeline_orchestrator.py
+Why: For "superman movies" the boost was 20.7% (Man of Steel) vs 26.7% (Donner Cut) because both axes were summed. With popularity saturated for tentpole franchises (0.97 ≈ 0.96), the quality axis silently dominated reranking — Donner Cut's reception 75 vs Man of Steel's 61.4 created a ~6pp swing the user did not want. Fix is to make popularity the only implicit axis when it is active.
+Approach: In `_apply_implicit_prior_rerank_for_branch`, replaced the additive `boost = qual*qual_sig + pop*pop_sig` with a single-axis selector: if `policy.popularity_prior.direction != "none"` and `popularity_cap > 0`, use only popularity; otherwise (popularity inactive — usually because explicit query coverage owns it) fall back to quality alone. Both axes guarded by direction + cap so a None strength still short-circuits the rerank. Updated module docstring to reflect the new contract. Per-category pop/quality weighting design was discussed but deferred — this is the simpler interim policy.
+Testing notes: Smoke-test "superman movies" (Donner gap should collapse), "underrated 90s thrillers" (quality should still apply since popularity_prior would be inverse, but verify direction handling), and an explicit-popularity query like "popular comedies" (popularity should be policy.direction=none → quality fallback kicks in).
+
+## CHARACTER_FRANCHISE fanout — exclude umbrella universes from franchise_forms
+Files: search_v2/endpoint_fetching/category_handlers/endpoint_registry.py
+Why: For "superman movies" the handler LLM emitted `franchise_forms=["Superman", "DC Extended Universe"]`, OR-unioning every DCEU film into the franchise retrieval. The CHARACTER_FRANCHISE_FANOUT bucket is by construction a single character-anchored lineage, and the output_extractor already hard-forces `prefer_lineage=True` — but the validator silently flips it back to False on multi-name lists, so the lineage bias was being defeated by the prompt itself.
+Approach: Rewrote the `franchise_form_exploration` template description in `CharacterFranchiseFanoutSchema` to (1) keep `Umbrella` as a context slot the LLM can acknowledge but (2) explicitly forbid copying it into `Distinct forms`, and (3) restrict `Distinct forms` to true alternative names of the character's own franchise (acronyms, common short/long forms — e.g. "james bond"/"007", "the lord of the rings"/"lotr"). Added concrete worked examples for Superman, James Bond, Spider-Man, and LOTR so the LLM has anchored exemplars. Mirrored the constraint in the `franchise_forms` list-field description so both surfaces agree.
+Design context: The standalone franchise prompt (`search_v2/endpoint_fetching/franchise_query_generation.py`) deliberately INVITES umbrella sweeps via multi-name OR ("marvel" + "marvel cinematic universe"); the fanout case is the opposite because the upstream router already committed to a specific character. Keeping the two prompts divergent is intentional.
+Testing notes: Re-run "superman movies" and confirm `franchise_forms=["superman"]` (or similar single-form list) and that DCEU non-Superman titles no longer appear in the franchise channel. Also spot-check "spider-man movies" (should not pull in Avengers/MCU), "wolverine movies" (should not pull in broader X-Men umbrella unless wolverine's own series is the only natural canonical), and "frodo" / "lotr" (single franchise, alternates allowed). The validator's multi-name → prefer_lineage=False soft coercion remains as a safety net but should no longer fire on these queries.
+
+## CENTRAL_TOPIC — re-route to semantic-preferred bucket; flip keyword policy from preferred→fallback to broader-superset-or-abstain
+Files: schemas/trait_category.py, search_v2/endpoint_fetching/category_handlers/prompts/categories/additional_objective_notes/central_topic.md, search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/central_topic.md
+Why: Old policy treated keyword as primary ("preferred") and semantic as fallback. For "movies about WW2" that produced keyword-only commits on narrow members (e.g., `WAR_EPIC` alone) that biased the category score toward sub-forms and silently zeroed attribute-satisfying films outside that sub-form (e.g., WW2 dramas like *Schindler's List*). Semantic was treated as gap-fill rather than the specificity-bearing channel.
+Approach: (1) Re-routed CENTRAL_TOPIC's bucket from `PREFERRED_REPRESENTATION_FALLBACK` to `SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT`. The SPDS bucket prompt already encodes "semantic almost always fires; deterministic adds parallel sharpness; over-coverage is acceptable" — no bucket prompt edits needed. The keyword endpoint's superset test ("over-pull acceptable, gaps not, stretching not, narrow-only-with-gaps → abstain") was already correct — no schema edits needed. (2) Rewrote the category-specific `additional_objective_notes` to flip the policy: semantic almost always fires (must mirror the request's specificity, not generalize it); keyword fires only when its ANY-mode union is a true superset of the subject; cross-category keyword borrowing is explicitly allowed when the union still passes the superset test; narrow-only commits that would bias toward a sub-form must abstain on keyword and let semantic carry the call. (3) Rewrote the seven few-shot examples to cover the full decision matrix: dual-fire with broad+narrow union (WW2), dual-fire with cross-category union (real singers), dual-fire with single broad tag + semantic specificity (running), dual-fire with perfect-cover tag + semantic framing (biopics), dual-fire with very-broad over-pull + semantic specificity (Princess Diana), keyword-abstain when no member passes superset without stretching (chess), and whole-call no-fire on thematic essence (grief).
+Design context: User policy clarifications captured in this session: (a) when only narrow members are available, abstain on keyword rather than fire-with-bias; (b) cross-family tag borrowing is allowed when the ANY-union genuinely composes the subject; (c) semantic must match the user's specificity rather than over-generalize; (d) score weighting stays equal between keyword and semantic for now — broadness is tolerated because semantic recovers specificity; (e) semantic still fires even when keyword has a perfect-cover tag (the two endpoints layer).
+Testing notes: Run handler LLM on "movies about WW2" (expect WAR + WAR_EPIC ANY-union + semantic WW2 body), "biographical films about real singers" (expect cross-category union TRUE_STORY + BIOGRAPHY + MUSIC + MUSIC_DOCUMENTARY + semantic on real singer narratives), "movies about chess" (expect keyword abstain commitment-criteria-fail + semantic-only), "biopics" (expect BIOGRAPHY + semantic still firing with biographical framing). Verify the LLM does NOT generalize semantic ("WW2" → "war stories" is the failure mode to watch for) and does NOT commit narrow-only keyword unions that would bias the score.
+
+## ELEMENT_PRESENCE — same bucket move as CENTRAL_TOPIC; tighten keyword bar to entailment (not correlation) and add concrete-perception gate
+Files: schemas/trait_category.py, search_v2/endpoint_fetching/category_handlers/prompts/categories/additional_objective_notes/element_presence.md, search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/element_presence.md
+Why: ELEMENT_PRESENCE shared CENTRAL_TOPIC's old "keyword-preferred, semantic-fallback" policy and the same biasing failure mode. It also accumulated mis-routed abstract asks ("twist ending", "anti-hero", "underdog arc") because the existing category-target didn't operationalize "concrete element" as a testable boundary. Two policy gaps unique to this category: (a) the CENTRAL_TOPIC "broader-is-fine" rule does NOT transfer cleanly — for elements, a genre tag that merely correlates with the element (WESTERN for "horses") is stretching, not over-pull, because correlation ≠ presence; (b) the concrete-vs-abstract boundary needs a usable test, not just a list of out-of-scope routes.
+Approach: (1) Re-routed ELEMENT_PRESENCE's bucket from `PREFERRED_REPRESENTATION_FALLBACK` to `SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT`, parallel to CENTRAL_TOPIC. No bucket-prompt or schema changes. (2) Rewrote `additional_objective_notes` with three new emphases: the "see/hear/touch" concrete-perception test as the boundary gate, the entailment-vs-correlation tightening of the keyword superset test (registry tag must NAME the element, not merely co-occur with it — WESTERN ≠ horses, FANTASY ≠ dragons), and the explicit caveat that cross-family borrowing is rare here (since elements live mostly in GENRE/SUB-GENRE). Semantic-always-fires policy and narrow-only-abstain rule carry over from CENTRAL_TOPIC. (3) Rewrote six few-shot examples covering distinct decision paths: direct-tag fire on creature (zombies → ZOMBIE_HORROR), direct-tag fire on activity (heist → HEIST), correlation-not-entailment abstain (horses → WESTERN stretches), narrow-only-entailment abstain (witches → WITCH_HORROR alone has gaps for non-horror witch films), whole-call no-fire on abstract story shape (underdog stories → STORY_THEMATIC_ARCHETYPE), whole-call no-fire on narrative device (unreliable narrator → NARRATIVE_DEVICES). The two no-fire examples teach different boundary mistakes — story shape vs craft device — because these mis-route into ELEMENT_PRESENCE routinely.
+Design context: User clarifications layered on top of the CENTRAL_TOPIC session: ELEMENT_PRESENCE must define "concrete" as perceivable (see/hear/touch) so abstract asks route elsewhere, and the keyword bar is HIGHER here than for CENTRAL_TOPIC because correlation between a genre and an element does not entail presence. The semantic plot_events motif syntax (already documented in semantic.md) is the natural channel — semantic always fires with motif text restating only the named element, no fabrication.
+Testing notes: Run handler LLM on "zombie movies" (expect ZOMBIE_HORROR + semantic motif body), "heist movies" (expect HEIST + heist motif), "movies with horses" (expect keyword abstain stretching + semantic motif), "movies with witches" (expect keyword abstain narrow-only + semantic motif — verify it does NOT fire WITCH_HORROR alone). The two failure modes to watch for: (a) firing a correlating genre tag (WESTERN for horses, FANTASY for dragons) under the old over-pull-is-fine intuition, and (b) firing a narrow sub-form alone (WITCH_HORROR for witches) when broader entailing coverage doesn't exist.
+
+## ELEMENT_PRESENCE — drop whole-call no-fire examples and reframe boundaries
+Files: search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/element_presence.md, search_v2/endpoint_fetching/category_handlers/prompts/categories/additional_objective_notes/element_presence.md
+Why: The previous rewrite included two whole-call no-fire examples (underdog stories → STORY_THEMATIC_ARCHETYPE, unreliable narrator → NARRATIVE_DEVICES). Upstream routing sends those asks to their home categories directly — they never reach the ELEMENT_PRESENCE handler. Teaching "whole-call no-fire" as a pathway here misframes what the handler actually sees and wastes prompt budget on a non-case.
+Approach: Removed both no-fire examples from the few-shot file (4 examples remain: zombies, heists, horses, witches — direct-tag fire ×2, stretching abstain, narrow-only abstain). Removed the "Whole-call no-fire" section from `additional_objective_notes/element_presence.md` and rephrased the Boundaries header to make explicit that the listed siblings are expectations about routing, not fallback paths the handler should attempt to take.
+
+## CENTRAL_TOPIC + ELEMENT_PRESENCE — revoke ANY-union policy; single-keyword (rare multi) clean-cover or abstain
+Files: search_v2/endpoint_fetching/category_handlers/prompts/categories/additional_objective_notes/central_topic.md, search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/central_topic.md, search_v2/endpoint_fetching/category_handlers/prompts/categories/additional_objective_notes/element_presence.md
+Why: Previous revision allowed stitching multiple registry members into an ANY-union to manufacture coverage (e.g., `TRUE_STORY + BIOGRAPHY + MUSIC + MUSIC_DOCUMENTARY` for "real singers", `WAR + WAR_EPIC` for WW2). For "movies about death" the handler then assembled a hodgepodge union (DRAMA / TRAGEDY / WAR / PSYCHOLOGICAL_HORROR) where none of the members actually name death as the subject — the union retrieved a heterogeneous bag of films, not death-focused films, and added noise that semantic had to fight against. The mistake is treating "the union together covers it" as if it were as good as "one member cleanly covers it"; in practice the joint commit dilutes the keyword signal whenever the individual members aren't aligned with the subject.
+Approach: (1) Rewrote CENTRAL_TOPIC's `additional_objective_notes` to state that keyword fires only when a single registry member is a clean superset (perfect cover or just slightly broader where the subject is a meaningful slice of the tag's scope). Added the "too broad to carry useful signal" failure mode (BIOGRAPHY for "real singers") alongside the existing stretching (SPORT for chess) and narrow-only (WAR_EPIC for WW2) failure modes. Multi-keyword commits are now described as rare and only justified when two members jointly carve the subject without either being on its own a clean superset — when in doubt, abstain. (2) Rewrote the six few-shot examples to match: WW2 → `WAR` alone (drops the WAR_EPIC union); biopics → BIOGRAPHY perfect cover; running → SPORT broader-but-aligned; Princess Diana → abstain (BIOGRAPHY too broad — single person is a tiny slice); chess → abstain (stretching); death → abstain (no aligned tag, do not stitch). Dropped the "real singers" cross-category union example entirely (it was the canonical multi-keyword stitching case). Dropped the "grief" whole-call no-fire example for the same reason ELEMENT_PRESENCE dropped its no-fire examples — upstream routing handles those. (3) Updated ELEMENT_PRESENCE's `additional_objective_notes` to remove the "find a broader entailing member to ANY-union with" language, adding an explicit "do not stitch a broader-but-non-entailing genre onto a narrow entailing tag" rule (e.g., do not add DARK_FANTASY / SUPERNATURAL_FANTASY to WITCH_HORROR to plug witch-comedy gaps — that reintroduces stretching). Existing ELEMENT_PRESENCE few-shots already used single-keyword commits; no changes needed there.
+Design context: User policy clarifications captured in this session: (a) revoke the ANY-union-to-cover-the-topic rule from the prior revision; (b) keyword fires only when a single (or rarely multiple) registry member perfectly or just slightly-broadly covers the subject; (c) if no single member is a tight fit, abstain on keyword and rely on semantic; (d) provide at least one new example showing "keywords insufficient → skipped" — death added to CENTRAL_TOPIC alongside the existing chess abstain. The motivating failure was "movies about death" where the handler stitched a noisy union instead of abstaining.
+Testing notes: Run handler LLM on "movies about WW2" (expect `WAR` alone, NOT `WAR + WAR_EPIC` union), "movies about death" (expect keyword abstain commitment-criteria-fail, semantic-only), "about Princess Diana" (expect abstain — verify it no longer fires BIOGRAPHY under the too-broad rule), "movies about real singers" (expect abstain — was previously a 4-way union, should now be semantic-only), "biopics" (BIOGRAPHY perfect-cover commit still applies). Failure modes to watch for: (a) regression to multi-keyword stitching, (b) BIOGRAPHY firing on specific-person subjects, (c) any narrow-only commit.
+
+## Step 3 fidelity discipline + awards few-shot ladder
+Files: search_v2/step_3.py, search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/awards.md
+Why: Diagnostic run of "award winning acting" surfaced three compounding bugs in the award path. (1) Step 3's `target_population` silently widened "winning" to "won or nominated" — drift seeded at the trait-role-analysis layer and carried through aspects, dimensions, and expressions. (2) Step 3's dimension expression embedded a parenthetical example list ("won or nominated for acting awards (Oscar, BAFTA, etc.)") that the downstream endpoint LLM read as filter values rather than illustrations, pinning the query to Oscar+BAFTA and missing every other tracked ceremony. (3) The endpoint LLM over-decomposed into four per-ceremony searches when one unfiltered-ceremony search would have covered all twelve tracked ceremonies for free — the existing few-shot bank only showed narrow-prize-or-ceremony cases, leaving the category-only / no-ceremony shape unmodeled.
+Approach: Three targeted prompt edits, no schema or code changes.
+  (a) `_TRAIT_ROLE_ANALYSIS`: added a FIDELITY DISCIPLINE section enumerating three drift modes (implicit broadening, implicit narrowing, invented detail) and a fidelity read-back test that requires every constraint in `target_population` to trace back to words in the trait and vice versa. Generalized guidance — no awards-specific examples. Added matching NEVER entry ("BROADEN, NARROW, OR INVENT against the trait's stated detail"). Placed the section between the source-priority list and IDENTITY-VS-ATTRIBUTE so all earlier reading feeds into it. Catches drift at the root layer rather than papering over it downstream.
+  (b) `_DIMENSION_INVENTORY` COMMON PITFALLS: added EXAMPLE-IN-EXPRESSION rule. Expressions describe the database check in category-vocabulary; specific entities appear only when the trait named them, never as model-supplied examples of "what the category typically contains". Spelled out the downstream consequence (endpoint LLM reads parentheticals as filter values) so the rule isn't just stylistic.
+  (c) Awards few-shot bank: rewrote from 4 to 12 examples spanning the full specificity range. New cases added: category-only with no ceremony filter (the bug case — explicit instruction not to per-ceremony decompose), prize+category combo, multi-search ANY (Oscar OR BAFTA), multi-search AVERAGE (acting AND directing), explicit count (won 3 Oscars), recognition with null outcome (Cannes), mid-rollup discipline (Best Actor OR Best Actress → `lead-acting`, not enumerate descendants), Razzie explicit-name. Each example shows concrete parameter values (`category_tags`, `ceremonies`, `award_names`, `outcome`, `scoring`) rather than prose only, matching the structured-output shape the LLM must emit.
+Design context: Builds on existing Step 3 discipline that prompt drift compounds downstream — trait-role-analysis output is the contract for everything below. No new convention added; this is a regression fix against existing discipline.
+Testing notes: Re-run "award winning acting" — expect Step 3 `target_population` to preserve "winning" (no nominee expansion), expressions to be category-only with no parenthetical entity examples, and the awards endpoint to emit ONE search with `category_tags=["acting"]`, `outcome="winner"`, no `ceremonies` filter, no `award_names` filter, `floor mark 1`. Other regression checks: "Oscar or BAFTA winner" still produces two searches with `combine: any`; "Oscar-winning Best Director" still emits one search with `award_names=["Oscar"]` and `category_tags=["director"]`; "Best Actor or Best Actress winner" emits `category_tags=["lead-acting"]` (mid-rollup, not enumerated leaves). Failure modes to watch for: (a) regression where target_population re-introduces nominee broadening, (b) Step 3 reverting to parenthetical exemplars in expressions, (c) endpoint LLM ignoring the new few-shot and falling back to per-ceremony decomposition.

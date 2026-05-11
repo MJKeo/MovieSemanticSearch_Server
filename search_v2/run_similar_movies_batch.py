@@ -139,6 +139,16 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_MULTI_MARKDOWN_OUT,
         help="Path for multi-anchor Markdown output.",
     )
+    parser.add_argument(
+        "--qdrant-limit",
+        type=int,
+        default=None,
+        help=(
+            "Override the per-vector-space Qdrant candidate pool size. "
+            "Defaults to the module-level DEFAULT_QDRANT_LIMIT (2000). "
+            "Used for sweep experiments comparing recall vs latency."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -437,12 +447,19 @@ async def _main_async() -> None:
     if postgres_pool._closed:
         await postgres_pool.open()
 
+    # Build common kwargs for the engine. Only forward qdrant_limit when
+    # the caller explicitly overrode it so the engine's own default
+    # (DEFAULT_QDRANT_LIMIT) remains the single source of truth otherwise.
+    engine_kwargs: dict[str, Any] = {"limit": args.limit}
+    if args.qdrant_limit is not None:
+        engine_kwargs["qdrant_limit"] = args.qdrant_limit
+
     if not args.multi_only:
         if not args.ids:
             raise ValueError("at least one TMDB ID is required.")
         batch: list[dict[str, Any]] = []
         for anchor_id in args.ids:
-            result = await run_similar_movies_for_ids([anchor_id], limit=args.limit)
+            result = await run_similar_movies_for_ids([anchor_id], **engine_kwargs)
             batch.append(await _serialize_result(anchor_id, result))
 
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -460,7 +477,7 @@ async def _main_async() -> None:
         for label, ids in DEFAULT_MULTI_ANCHOR_COHORTS:
             print(f"  ... cohort: {label}")
             try:
-                result = await run_similar_movies_for_ids(list(ids), limit=args.limit)
+                result = await run_similar_movies_for_ids(list(ids), **engine_kwargs)
             except LookupError as exc:
                 # A cohort may reference a movie_id that isn't in the
                 # local catalog (e.g., an archival release or one
@@ -485,6 +502,11 @@ async def _main_async() -> None:
 
 
 def main() -> None:
+    # Install uvloop before the event loop starts. ~2x throughput on
+    # socket-heavy fan-outs (Postgres + Qdrant + Redis in parallel) —
+    # see implementation/misc/event_loop.py.
+    from implementation.misc.event_loop import install_uvloop
+    install_uvloop()
     asyncio.run(_main_async())
 
 

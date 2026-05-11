@@ -233,6 +233,45 @@ commitment — those leak interpretive prose. Only structural \
 fields (surface_text, relationship_role, axis bookkeeping) are \
 permitted.
 
+FIDELITY DISCIPLINE — target_population must preserve the trait's \
+truth conditions verbatim, not approximate them. This is the \
+discipline that all the source-priority reading above feeds into: \
+once you have read the sources, the population you commit must \
+match what the trait actually said, no more and no less. Three \
+drift modes silently corrupt this stage downstream when they go \
+unchecked:
+
+- IMPLICIT BROADENING. The trait names a narrow constraint (a \
+  specific outcome, a specific named entity, a specific count, a \
+  specific time bound, a specific qualifier) and target_population \
+  silently widens it into the surrounding category the constraint \
+  is a member of. The widened population is easier to retrieve \
+  against — more candidate films will match — which is precisely \
+  why the model reaches for it. The user committed the narrow \
+  version; preserve it.
+- IMPLICIT NARROWING. The trait calls for a category and \
+  target_population pins it to a single canonical exemplar of that \
+  category. The narrow target retrieves more cleanly because the \
+  exemplar has a clear database fingerprint, which is why the model \
+  reaches for it. The user committed the broader version; preserve \
+  it.
+- INVENTED DETAIL. target_population introduces specificity the \
+  trait never named — particular instances, particular sub-types, \
+  particular bounds — drawn from the model's prior knowledge of \
+  what "typical" matches for this trait look like. Prior knowledge \
+  belongs to retrieval, not to the role analysis. If the trait \
+  didn't name it, target_population doesn't name it either.
+
+FIDELITY TEST. Read target_population back against \
+evaluative_intent and contextualized_phrase. For each constraint \
+in target_population, point to the words in the trait that licensed \
+it. For each constraint the trait stated, point to the words in \
+target_population that preserved it. A constraint present in one \
+and absent from the other is the drift this stage exists to \
+prevent — fix the population, do not paper over the gap downstream.
+
+---
+
 IDENTITY VS ATTRIBUTE CATEGORIES — a structural rule that follows \
 from relationship_role. Some categories retrieve the named entity \
 itself: PERSON_CREDIT, TITLE_TEXT_LOOKUP, NAMED_CHARACTER, \
@@ -283,6 +322,11 @@ NEVER:
   substitution it committed to.
 - COMMIT AN IDENTITY CATEGORY for a POSITIONING_REFERENCE trait. \
   The entity is being positioned against, not retrieved.
+- BROADEN, NARROW, OR INVENT against the trait's stated detail. \
+  target_population reflects the constraints the trait actually \
+  carries — every one of them, and no others. Drift in either \
+  direction propagates through aspects, dimensions, and \
+  expressions; the role-analysis layer is where it must be caught.
 - WRITE A NON-ANALYSIS. "This trait wants movies that match it" \
   doesn't constrain anything.
 
@@ -515,6 +559,18 @@ COMMON PITFALLS.
   dimension = one check. Multiple same-category facets aren't \
   bundling — they belong as separate dimensions that merge into \
   one multi-expression call later.
+- EXAMPLE-IN-EXPRESSION. The expression embeds parenthetical \
+  lists of representative entities the trait never named — \
+  "(Oscar, BAFTA, etc.)", "(Nolan, Villeneuve, etc.)", "(the 80s, \
+  the 90s, etc.)". The endpoint LLM downstream reads those \
+  parentheticals as filter values, not as illustrations, and pins \
+  its query to the listed exemplars while missing everything else \
+  the category covers. Expressions describe THE CHECK in \
+  database-vocabulary; if the trait named a category ("acting \
+  awards", "auteur directors"), the expression names the category \
+  cleanly. Specific entities appear inside an expression only when \
+  the trait itself named them — never as model-supplied examples \
+  of what the category typically contains.
 - PADDING. Don't add dimensions that don't trace to an aspect.
 
 ---

@@ -60,13 +60,16 @@ _PER_ROUTE_PARAMETER_BUCKETS: frozenset[HandlerBucket] = frozenset({
 # CharacterQuerySpec restates the character-side context (single
 # target by design) and prominence_exploration is filled with a fixed
 # sentinel because the fanout schema does not commit a centrality
-# reading — DEFAULT prominence is the safe fallback.
+# reading — CHARACTER_FRANCHISE forces CENTRAL prominence downstream
+# regardless of what the schema does or doesn't say here, since a
+# CHARACTER_FRANCHISE referent (Batman, Bond, Spider-Man) by definition
+# anchors its films.
 # Executors do not read these strings; they exist purely as LLM
 # scaffolding on the spec models, so a stub or a copy preserves
 # schema validity without affecting retrieval behavior.
 _FANOUT_PROMINENCE_EXPLORATION_STUB = (
-    "no centrality signal — fanout retrieval does not commit a "
-    "separate prominence reading."
+    "centrality forced to CENTRAL — CHARACTER_FRANCHISE referents "
+    "anchor their films by definition."
 )
 
 _FANOUT_CHARACTER_QUERY_EXPLORATION_STUB = (
@@ -232,6 +235,10 @@ def _fanout_to_fired_endpoints(
     # multiple distinct characters meant, the routing layer would have
     # produced multiple traits / category calls upstream rather than
     # one shared form list here.
+    # prominence_mode is hard-forced to CENTRAL: a CHARACTER_FRANCHISE
+    # referent (Batman, Bond, Spider-Man) by definition anchors its
+    # films, so we always bias toward titles where the character is
+    # central — the LLM is not given the choice to weaken this.
     character_forms = list(output.character_forms)
     if character_forms:
         character_spec = CharacterQuerySpec(
@@ -241,7 +248,7 @@ def _fanout_to_fired_endpoints(
                     character_exploration=output.character_form_exploration,
                     forms=character_forms,
                     prominence_exploration=_FANOUT_PROMINENCE_EXPLORATION_STUB,
-                    prominence_mode=CharacterProminenceMode.DEFAULT,
+                    prominence_mode=CharacterProminenceMode.CENTRAL,
                 )
             ],
         )
@@ -249,15 +256,20 @@ def _fanout_to_fired_endpoints(
 
     # Franchise path — the franchise endpoint is name-axis-driven for
     # the fanout case. lineage_position / structural_flags / launch_
-    # scope / prefer_lineage are deliberately left unset; the fanout
-    # schema commits no narrative-position or structural reading, so
-    # franchise_names alone is the correct projection.
+    # scope are deliberately left unset; the fanout schema commits no
+    # narrative-position or structural reading. prefer_lineage is hard-
+    # forced to True: CHARACTER_FRANCHISE names a specific character-
+    # anchored franchise, so main-line films should outrank shared-
+    # universe-only matches. FranchiseQuerySpec's validator will coerce
+    # back to False if the franchise_names projection is mechanically
+    # incompatible (multi-name list, etc.), so this is safe to force.
     franchise_forms = list(output.franchise_forms)
     if franchise_forms:
         franchise_wrapper = FranchiseEndpointParameters(
             parameters=FranchiseQuerySpec(
                 request_overview=output.franchise_form_exploration,
                 franchise_names=franchise_forms,
+                prefer_lineage=True,
             ),
         )
         fired.append((EndpointRoute.FRANCHISE_STRUCTURE, franchise_wrapper))

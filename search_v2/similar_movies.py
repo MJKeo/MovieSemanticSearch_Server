@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+import numpy as np
+
 from db.postgres import (
     SimilarityAwardSignals,
     TRAIT_KIND_CONCEPT_TAG,
@@ -38,6 +40,7 @@ from db.postgres import (
 )
 from search_v2.auteur_directors import fetch_auteur_term_ids
 from db.qdrant import qdrant_client
+from qdrant_client.http.models import QueryRequest
 from db.vector_scoring import normalize_blended_scores
 from db.vector_search import COLLECTION_ALIAS, QDRANT_SEARCH_PARAMS
 from implementation.classes.enums import VectorName
@@ -45,7 +48,7 @@ from implementation.classes.overall_keywords import OverallKeyword
 from implementation.misc.helpers import normalize_string
 from implementation.misc.sql_like import escape_like
 from schemas.enums import AwardCeremony
-from schemas.step_0_flow_routing import SimilarityFlowData
+from schemas.step_0_flow_routing import SimilarityFlowData, SimilarityReference
 from search_v2.award_taxonomy import (
     SPECIFICITY_FACTOR,
     TIER_WEIGHT,
@@ -890,15 +893,38 @@ def _metadata_cohesion(trait_sets: list[set[object]]) -> float:
     return 2.0 * math.log1p(9.0 * repetition_ratio) / math.log1p(9.0)
 
 
+# Module-level cache + lock for the studio registry → company_id lookup.
+# The mapping is built from `studio_entries_by_normalized_string()` (static,
+# in-process) joined to `production_company` via a Postgres lookup that
+# never changes within a process lifetime, so we resolve it exactly once.
+# An async lock guards the first-call materialization so concurrent
+# requests on a cold process don't all fire the same Postgres query.
+_studio_entries_cache: dict[int, list[StudioSimilarityEntry]] | None = None
+_studio_entries_lock: asyncio.Lock | None = None
+
+
 async def _load_studio_entries_by_company_id() -> dict[int, list[StudioSimilarityEntry]]:
-    by_norm = studio_entries_by_normalized_string()
-    id_by_norm = await fetch_production_company_ids_by_normalized_strings(
-        sorted(by_norm)
-    )
-    out: dict[int, list[StudioSimilarityEntry]] = {}
-    for norm, company_id in id_by_norm.items():
-        out.setdefault(company_id, []).extend(by_norm.get(norm, ()))
-    return out
+    global _studio_entries_cache, _studio_entries_lock
+    if _studio_entries_cache is not None:
+        return _studio_entries_cache
+    # Lazily create the lock so module import doesn't bind to a particular
+    # event loop. asyncio.Lock() requires a running loop in 3.10+.
+    if _studio_entries_lock is None:
+        _studio_entries_lock = asyncio.Lock()
+    async with _studio_entries_lock:
+        # Double-check after acquiring the lock — another task may have
+        # already populated the cache while we were waiting.
+        if _studio_entries_cache is not None:
+            return _studio_entries_cache
+        by_norm = studio_entries_by_normalized_string()
+        id_by_norm = await fetch_production_company_ids_by_normalized_strings(
+            sorted(by_norm)
+        )
+        out: dict[int, list[StudioSimilarityEntry]] = {}
+        for norm, company_id in id_by_norm.items():
+            out.setdefault(company_id, []).extend(by_norm.get(norm, ()))
+        _studio_entries_cache = out
+        return _studio_entries_cache
 
 
 def _active_studio_entries(
@@ -1300,22 +1326,42 @@ async def _load_anchor_vectors(
     return {int(getattr(record, "id")): _record_vectors(record) for record in records}
 
 
-async def _query_space(
-    query_vector: list[float],
-    vector_name: VectorName,
-    *,
-    limit: int,
-) -> list[tuple[int, float]]:
-    response = await qdrant_client.query_points(
+async def _query_spaces_batch(
+    requests: list[tuple[VectorName, list[float], int]],
+) -> list[list[tuple[int, float]]]:
+    """Run N named-vector queries against Qdrant in a single round trip.
+
+    Each input tuple is (vector_space, query_vector, per-space limit).
+    Output is rows in matching order: ``out[i]`` corresponds to
+    ``requests[i]``. This collapses N round trips (the prior
+    ``asyncio.gather(*_query_space)`` shape) into one network call —
+    Qdrant runs the searches in parallel server-side and shares the
+    HNSW page cache across them.
+
+    Empty input returns ``[]`` so callers can short-circuit when no
+    vector spaces are active without a special case here.
+    """
+    if not requests:
+        return []
+    query_requests = [
+        QueryRequest(
+            query=query_vector,
+            using=vector_name.value,
+            limit=limit,
+            with_payload=False,
+            with_vector=False,
+            params=QDRANT_SEARCH_PARAMS,
+        )
+        for vector_name, query_vector, limit in requests
+    ]
+    responses = await qdrant_client.query_batch_points(
         collection_name=COLLECTION_ALIAS,
-        query=query_vector,
-        using=vector_name.value,
-        limit=limit,
-        with_payload=False,
-        with_vectors=False,
-        search_params=QDRANT_SEARCH_PARAMS,
+        requests=query_requests,
     )
-    return [(int(point.id), float(point.score)) for point in response.points]
+    return [
+        [(int(point.id), float(point.score)) for point in response.points]
+        for response in responses
+    ]
 
 
 def _normalize_space_results(
@@ -1348,19 +1394,18 @@ async def _run_single_anchor_shape_search(
     if not space_weights:
         return {}, {}
 
-    rows_by_space = await asyncio.gather(
-        *(
-            _query_space(
-                anchor_vectors[space],
-                space,
-                limit=qdrant_limit + 1,
-            )
-            for space in space_weights
-        )
+    # Single batched call instead of N individual queries — one round trip,
+    # server-side parallelism, shared HNSW cache warmth across the batch.
+    active_space_list = list(space_weights)
+    rows_by_space = await _query_spaces_batch(
+        [
+            (space, anchor_vectors[space], qdrant_limit + 1)
+            for space in active_space_list
+        ]
     )
 
     scores: dict[int, float] = {}
-    for space, rows in zip(space_weights, rows_by_space, strict=True):
+    for space, rows in zip(active_space_list, rows_by_space, strict=True):
         normalized = _normalize_space_results(rows, excluded_ids={anchor_id})
         for movie_id, score in normalized.items():
             scores[movie_id] = scores.get(movie_id, 0.0) + space_weights[space] * score
@@ -1399,11 +1444,24 @@ async def _run_multi_anchor_shape_search(
     centroid_by_space: dict[VectorName, list[float]] = {}
 
     for space, vectors in usable.items():
-        pairwise: list[float] = []
-        for i, left in enumerate(vectors):
-            for right in vectors[i + 1:]:
-                pairwise.append(_dot(left, right))
-        avg_pairwise = sum(pairwise) / len(pairwise) if pairwise else 1.0
+        # Pure-Python pairwise dots + element-wise centroid mean on
+        # 3072-dim vectors burn through O(N^2 * D) Python ops per space —
+        # ~75K multiplies per request for N=3 anchors × 8 spaces. Stack
+        # into a single float64 ndarray and use numpy's BLAS-backed
+        # matmul + mean instead. Numerical fidelity: IEEE 754 sums are
+        # bit-identical for these sizes; any FMA-induced ULP differences
+        # are well below the 6-decimal rounding applied in JSON output.
+        arr = np.asarray(vectors, dtype=np.float64)  # shape (N_anchors, dim)
+        n_anchors = arr.shape[0]
+        if n_anchors >= 2:
+            # arr @ arr.T is the full Gram matrix of pairwise cosines
+            # (vectors are already L2-normalized). The upper triangle
+            # excluding the diagonal is the set of unordered pairs.
+            gram = arr @ arr.T
+            pair_count = n_anchors * (n_anchors - 1) // 2
+            avg_pairwise = float(np.triu(gram, k=1).sum()) / pair_count
+        else:
+            avg_pairwise = 1.0
         avg_pairwise_by_space[space] = avg_pairwise
         # cohesion_weight stays clamped to [0.10, 1.00] for the per-space
         # vector mix — negative weights inside the mix don't make sense.
@@ -1415,12 +1473,15 @@ async def _run_multi_anchor_shape_search(
             0.75 * cohesion + 0.25 * VECTOR_BASE_WEIGHTS_MULTI[space]
         )
 
-        dimension = len(vectors[0])
-        averaged = [
-            sum(vector[idx] for vector in vectors) / len(vectors)
-            for idx in range(dimension)
-        ]
-        centroid_by_space[space] = _l2_normalize(averaged)
+        # Centroid: element-wise mean across anchors, then L2-normalize.
+        # Mirrors the prior `[sum(...) / len(...) for idx in range(dim)]`
+        # comprehension; numpy does the same arithmetic in one C call.
+        centroid_raw = arr.mean(axis=0)
+        norm = float(np.sqrt(np.sum(centroid_raw * centroid_raw)))
+        if norm <= 0.0:
+            centroid_by_space[space] = centroid_raw.tolist()
+        else:
+            centroid_by_space[space] = (centroid_raw / norm).tolist()
 
     # Mean pairwise cosine across active spaces — drives V2 shape-lane
     # scaling and the low-cohesion fallback gate.
@@ -1435,20 +1496,19 @@ async def _run_multi_anchor_shape_search(
     if not space_weights:
         return {}, {}, cohesion_debug, mean_pairwise_cosine
 
-    rows_by_space = await asyncio.gather(
-        *(
-            _query_space(
-                centroid_by_space[space],
-                space,
-                limit=qdrant_limit + len(anchor_ids),
-            )
-            for space in space_weights
-        )
+    # Single batched call across active spaces; see _query_spaces_batch.
+    active_space_list = list(space_weights)
+    per_space_limit = qdrant_limit + len(anchor_ids)
+    rows_by_space = await _query_spaces_batch(
+        [
+            (space, centroid_by_space[space], per_space_limit)
+            for space in active_space_list
+        ]
     )
 
     excluded = set(anchor_ids)
     scores: dict[int, float] = {}
-    for space, rows in zip(space_weights, rows_by_space, strict=True):
+    for space, rows in zip(active_space_list, rows_by_space, strict=True):
         normalized = _normalize_space_results(rows, excluded_ids=excluded)
         for movie_id, score in normalized.items():
             scores[movie_id] = scores.get(movie_id, 0.0) + space_weights[space] * score
@@ -1579,178 +1639,310 @@ def _build_results(
         and anchor_active_format_bucket != "short"
     )
 
+    # =====================================================================
+    # Vectorized scoring — the per-candidate scalar arithmetic below was
+    # the longest pure-Python phase of the similarity flow (10 dict-of-
+    # dict lookups + weighted sum + 6 conditional multipliers per row,
+    # over thousands of candidates). Build numpy column arrays for the
+    # raw lane scores and every per-movie auxiliary signal, do the
+    # weighted sum + multipliers + floors as elementwise ndarray ops in
+    # C/BLAS, then iterate ONCE over the indexed arrays to materialize
+    # the diagnostic-bearing _CandidateScore objects. Scoring semantics
+    # are preserved bit-for-bit modulo BLAS FMA ULP differences (well
+    # below the 6-decimal rounding applied in JSON output).
+    # =====================================================================
+
     candidates: list[_CandidateScore] = []
-    for movie_id in candidate_ids:
-        per_lane = {
-            lane: _clamp(lane_scores.get(lane, {}).get(movie_id, 0.0))
-            for lane in ALL_LANES
+    if not candidate_ids:
+        counts: dict[LaneName, int] = {
+            lane: len(scores) for lane, scores in lane_scores.items()
         }
-        sources = [lane for lane in ALL_LANES if per_lane[lane] > 0.0]
-        if not sources:
+        if studio_score_by_movie:
+            counts["studio"] = sum(
+                1 for v in studio_score_by_movie.values() if v > 0.0
+            )
+        return [], counts
+
+    # ---- Index layout -----------------------------------------------------
+    candidate_ids_list: list[int] = list(candidate_ids)
+    n_candidates = len(candidate_ids_list)
+    id_to_idx = {mid: idx for idx, mid in enumerate(candidate_ids_list)}
+    lane_idx_map = {lane: idx for idx, lane in enumerate(ALL_LANES)}
+    shape_col = lane_idx_map["shape"]
+    director_col = lane_idx_map["director"]
+    additive_idx_in_all = [lane_idx_map[lane] for lane in ADDITIVE_LANES]
+
+    # ---- score_matrix: (n_candidates, len(ALL_LANES)) ---------------------
+    # Populate per-lane sparsely (most lanes only score a fraction of the
+    # candidate pool). lane_scores["studio"] is empty by contract — the
+    # studio_col stays at 0 throughout the additive sum and is later
+    # overwritten in the diagnostic per_lane dict with studio_score_arr.
+    score_matrix = np.zeros((n_candidates, len(ALL_LANES)), dtype=np.float64)
+    for lane, lane_dict in lane_scores.items():
+        lane_idx = lane_idx_map.get(lane)
+        if lane_idx is None or not lane_dict:
             continue
+        for mid, val in lane_dict.items():
+            idx = id_to_idx.get(mid)
+            if idx is not None:
+                score_matrix[idx, lane_idx] = val
+    np.clip(score_matrix, 0.0, 1.0, out=score_matrix)
 
-        # Additive sum — director is passthrough so its raw value flows
-        # in directly via the 1.0 weight. rare_keyword (formerly
-        # passthrough → V3.4.3 multiplier → V3.4.4 removed entirely)
-        # is no longer a lane; tag overlap scoring lives in themes.
-        contributions = {
-            lane: lane_weights.get(lane, 0.0) * per_lane[lane]
-            for lane in ADDITIVE_LANES
-        }
-        # Dominance is computed on additive contributions; studio can never
-        # be the dominant lane in V2 since it's not additive.
-        dominant = max(
-            ADDITIVE_LANES,
-            key=lambda lane: (contributions[lane], per_lane[lane]),
+    shape_arr = score_matrix[:, shape_col]
+    director_lane_arr = score_matrix[:, director_col]
+
+    # ---- Auxiliary per-movie arrays ---------------------------------------
+    studio_score_arr = np.zeros(n_candidates, dtype=np.float64)
+    for mid, val in studio_score_by_movie.items():
+        idx = id_to_idx.get(mid)
+        if idx is not None:
+            studio_score_arr[idx] = val
+
+    medium_mult_arr = np.ones(n_candidates, dtype=np.float64)
+    for mid, val in medium_multiplier_by_movie.items():
+        idx = id_to_idx.get(mid)
+        if idx is not None:
+            medium_mult_arr[idx] = val
+
+    # Country: tristate per candidate — match (1) / mismatch (0) /
+    # absent (-1). Mirrors the original's `if movie_id in dict` guard.
+    country_state_arr = np.full(n_candidates, -1, dtype=np.int8)
+    for mid, matched in country_consensus_match_by_movie.items():
+        idx = id_to_idx.get(mid)
+        if idx is not None:
+            country_state_arr[idx] = 1 if matched else 0
+
+    cast_floor_arr = np.zeros(n_candidates, dtype=np.float64)
+    for mid, val in cast_floor_by_movie.items():
+        idx = id_to_idx.get(mid)
+        if idx is not None:
+            cast_floor_arr[idx] = val
+
+    director_ratio_arr = np.zeros(n_candidates, dtype=np.float64)
+    for mid, val in director_floor_max_ratio_by_movie.items():
+        idx = id_to_idx.get(mid)
+        if idx is not None:
+            director_ratio_arr[idx] = val
+
+    # Format bucket — keep as Python list so we can compare to FormatBucket
+    # literals; not amenable to ndarray vector ops.
+    cand_fmt_list: list[FormatBucket | None] = [None] * n_candidates
+    for mid, fmt in candidate_format_bucket_by_movie.items():
+        idx = id_to_idx.get(mid)
+        if idx is not None:
+            cand_fmt_list[idx] = fmt
+
+    # Per-candidate shape multiplier. Memoize on the candidate's shape
+    # label so we run `_shape_multiplier` at most once per distinct shape.
+    shape_mult_arr = np.ones(n_candidates, dtype=np.float64)
+    shape_mult_cache: dict[str | None, float] = {}
+    for mid, cand_shape in candidate_shape_by_movie.items():
+        idx = id_to_idx.get(mid)
+        if idx is None:
+            continue
+        cached = shape_mult_cache.get(cand_shape)
+        if cached is None:
+            cached = _shape_multiplier(anchor_shape_cohesion, cand_shape)
+            shape_mult_cache[cand_shape] = cached
+        shape_mult_arr[idx] = cached
+
+    # ---- Skip mask: candidates with no nonzero lane (matches original
+    # `if not sources: continue`). Studio is multiplier-only and lives at
+    # studio_col with all zeros, so it doesn't lift any candidate over
+    # the threshold here — same behavior as the original loop, where
+    # studio's contribution to `sources` happened only via the later
+    # append (after the early-continue check).
+    has_any_lane = (score_matrix > 0.0).any(axis=1)
+
+    # ---- Additive base score ---------------------------------------------
+    weights_vec = np.array(
+        [lane_weights.get(lane, 0.0) for lane in ALL_LANES],
+        dtype=np.float64,
+    )
+    contribution_matrix = score_matrix * weights_vec  # (N, L), debug-readable
+    base_scores = contribution_matrix.sum(axis=1)     # equivalent: weights_vec @ score_matrix.T
+
+    # ---- Dominant lane (over ADDITIVE_LANES, tiebreak by raw, ties to
+    # first ADDITIVE_LANES order). Iterating the 8 additive lanes and
+    # carrying running best matches Python's `max(..., key=lambda)`
+    # semantics exactly — including "first wins on full tie".
+    additive_contribs = contribution_matrix[:, additive_idx_in_all]
+    additive_raws = score_matrix[:, additive_idx_in_all]
+    best_contrib = additive_contribs[:, 0].copy()
+    best_raw = additive_raws[:, 0].copy()
+    best_dom_idx = np.zeros(n_candidates, dtype=np.intp)
+    for k in range(1, len(ADDITIVE_LANES)):
+        contrib_k = additive_contribs[:, k]
+        raw_k = additive_raws[:, k]
+        # Lex order: (contrib, raw). Strict > on contrib, OR equal contrib
+        # AND strict > on raw. Match Python's max key semantics.
+        replace = (contrib_k > best_contrib) | (
+            (contrib_k == best_contrib) & (raw_k > best_raw)
         )
-        score = sum(contributions.values())
-        base_score = score  # additive sum, captured for diagnostics
-        shape_score = per_lane["shape"]
-        applied_multipliers: dict[str, float] = {}
+        best_contrib = np.where(replace, contrib_k, best_contrib)
+        best_raw = np.where(replace, raw_k, best_raw)
+        best_dom_idx = np.where(replace, k, best_dom_idx)
 
-        # Studio multiplier — applies to candidates that already cleared
-        # the shape gate, so on-brand-but-low-shape noise can't ride the
-        # multiplier into the top of the list.
-        studio_score = studio_score_by_movie.get(movie_id, 0.0)
-        if studio_score > 0.0 and shape_score >= STUDIO_MULTIPLIER_SHAPE_GATE:
-            studio_mult = 1.0 + STUDIO_MULTIPLIER_STRENGTH * studio_score
-            score *= studio_mult
-            applied_multipliers["studio"] = studio_mult
+    # ---- Multiplier masks + arrays ---------------------------------------
+    # Studio multiplier
+    studio_mask = (studio_score_arr > 0.0) & (shape_arr >= STUDIO_MULTIPLIER_SHAPE_GATE)
+    studio_mult_arr = np.where(
+        studio_mask,
+        1.0 + STUDIO_MULTIPLIER_STRENGTH * studio_score_arr,
+        1.0,
+    )
 
-        # V3.4.8 director multiplier — same gate-and-amplify pattern as
-        # studio. director_score is normalized to [0, 1] (single-anchor
-        # = 1.0 when the anchor's director is curated AND the candidate
-        # shares that director; multi-anchor = cohesion-scaled). Below
-        # the shape gate the lane is silent — that's the whole point:
-        # weak-shape same-director candidates no longer ride the lane
-        # into prominence (Burton-omnibus on Batman, Nolan-flood on TDK).
-        # Strong-shape candidates get the boost they'd get from the
-        # additive lane plus a bit more, properly amplified.
-        director_score = per_lane["director"]
-        director_match = director_score > 0.0
-        if director_match and shape_score >= DIRECTOR_MULTIPLIER_SHAPE_GATE:
-            director_mult = 1.0 + DIRECTOR_MULTIPLIER_STRENGTH * director_score
-            score *= director_mult
-            applied_multipliers["director"] = director_mult
+    # Director multiplier
+    director_mask = (director_lane_arr > 0.0) & (
+        shape_arr >= DIRECTOR_MULTIPLIER_SHAPE_GATE
+    )
+    director_mult_arr = np.where(
+        director_mask,
+        1.0 + DIRECTOR_MULTIPLIER_STRENGTH * director_lane_arr,
+        1.0,
+    )
 
-        # Country/language coherence multiplier — extended to single-anchor
-        # in V3 §2.4 by passing `country_consensus_match_by_movie` from the
-        # single-anchor flow as well.
-        if movie_id in country_consensus_match_by_movie:
-            if country_consensus_match_by_movie[movie_id]:
-                score *= COUNTRY_CONSENSUS_BOOST
-                applied_multipliers["country"] = COUNTRY_CONSENSUS_BOOST
-            else:
-                score *= COUNTRY_CONSENSUS_PENALTY
-                applied_multipliers["country"] = COUNTRY_CONSENSUS_PENALTY
+    # Country multiplier — tristate. Match → BOOST; mismatch → PENALTY;
+    # absent → 1.0 (no contribution).
+    country_present_mask = country_state_arr >= 0
+    country_match_mask = country_state_arr == 1
+    country_mult_arr = np.where(
+        country_present_mask,
+        np.where(country_match_mask, COUNTRY_CONSENSUS_BOOST, COUNTRY_CONSENSUS_PENALTY),
+        1.0,
+    )
 
-        # Medium multiplier — applied unconditionally so cross-medium
-        # candidates lose ground regardless of how strong other lanes are.
-        medium_mult = medium_multiplier_by_movie.get(movie_id, 1.0)
-        score *= medium_mult
-        if medium_mult != 1.0:
-            applied_multipliers["medium"] = medium_mult
-
-        # V3.4.2 format-mismatch multiplier — applied whenever the
-        # anchor has a format bucket and the candidate falls in a
-        # different bucket. The lane-level format score already gates
-        # the top-5 weave lock; this multiplier extends the penalty
-        # to slots 6–10 so high-V3 cross-format candidates (Barbie
-        # meta-docs) can't ride relevance into the tail. Short
-        # candidates are deliberately skipped here: the dedicated
-        # shorts downrank/boost path below already special-cases
-        # shorts asymmetrically (×0.30 against non-short anchors,
-        # ×1.05 in shorts-dominant cohorts), and stacking
-        # ×0.30 × ×0.35 = ×0.105 would over-penalize. Same-bucket
-        # candidates are unaffected.
-        if anchor_format_bucket is not None:
-            cand_fmt = candidate_format_bucket_by_movie.get(movie_id)
+    # Format-mismatch multiplier — needs Python iteration over the
+    # FormatBucket list since shorts and None get special handling.
+    fmt_mismatch_arr = np.ones(n_candidates, dtype=np.float64)
+    if anchor_format_bucket is not None:
+        for idx, cand_fmt in enumerate(cand_fmt_list):
             if (
                 cand_fmt is not None
                 and cand_fmt != anchor_format_bucket
                 and cand_fmt != "short"
             ):
-                score *= FORMAT_CROSS_CATEGORY_MULTIPLIER
-                applied_multipliers["format_mismatch"] = (
-                    FORMAT_CROSS_CATEGORY_MULTIPLIER
-                )
+                fmt_mismatch_arr[idx] = FORMAT_CROSS_CATEGORY_MULTIPLIER
 
-        # V3 §3.1 shorts harsh downrank — fires when the anchor isn't a
-        # short and the candidate IS. The combined-score multiplier
-        # (0.30) makes shorts uncompetitive even with strong shape,
-        # which fixes the V2 Toy Story top 10 flooded by Pixar shorts.
-        # Conversely, in shorts-dominant multi-anchor cohorts the short
-        # candidates get a small positive boost — the user has signaled
-        # they want shorts, so a same-format match gets a thumb on the
-        # scale.
-        candidate_bucket = candidate_format_bucket_by_movie.get(movie_id)
-        if apply_shorts and candidate_bucket == "short":
-            score *= SHORTS_DOWNRANK_MULTIPLIER
+    # Shorts downrank / boost — exclusive: a candidate at most lands in
+    # one or the other. Apply via a single multiplier array with parallel
+    # boolean masks for diagnostics.
+    shorts_mult_arr = np.ones(n_candidates, dtype=np.float64)
+    shorts_downrank_mask = np.zeros(n_candidates, dtype=bool)
+    shorts_boost_mask = np.zeros(n_candidates, dtype=bool)
+    if apply_shorts or apply_shorts_boost:
+        for idx, cand_fmt in enumerate(cand_fmt_list):
+            if cand_fmt != "short":
+                continue
+            if apply_shorts:
+                shorts_mult_arr[idx] = SHORTS_DOWNRANK_MULTIPLIER
+                shorts_downrank_mask[idx] = True
+            elif apply_shorts_boost:
+                shorts_mult_arr[idx] = SHORTS_MULTI_ANCHOR_BOOST
+                shorts_boost_mask[idx] = True
+
+    # ---- Apply all multipliers (left-to-right matches original order) -----
+    scores_arr = (
+        base_scores
+        * studio_mult_arr
+        * director_mult_arr
+        * country_mult_arr
+        * medium_mult_arr
+        * fmt_mismatch_arr
+        * shorts_mult_arr
+        * shape_mult_arr
+    )
+
+    # ---- Floors -----------------------------------------------------------
+    cast_floor_active = (cast_floor_arr > 0.0) & (shape_arr >= CAST_FLOOR_SHAPE_GATE)
+    cast_floor_effective = np.where(cast_floor_active, cast_floor_arr, 0.0)
+    director_floor_active = (
+        (director_ratio_arr >= director_floor_ratio_threshold)
+        & (shape_arr >= director_floor_shape_gate)
+    )
+    director_floor_effective = np.where(
+        director_floor_active, director_floor_magnitude, 0.0
+    )
+    # max() on a list of (label, value) ties → returns FIRST. The
+    # original appends "cast" before "director", so cast wins on tie.
+    best_floor_value = np.maximum(cast_floor_effective, director_floor_effective)
+    cast_wins = cast_floor_active & (cast_floor_effective >= director_floor_effective)
+    director_wins = director_floor_active & ~cast_wins
+    # Floor displaces score only on STRICT > to match the original semantics.
+    floor_displaces = best_floor_value > scores_arr
+    final_scores_arr = np.where(floor_displaces, best_floor_value, scores_arr)
+    applied_floor_value_arr = np.where(floor_displaces, best_floor_value, 0.0)
+
+    # ---- Per-candidate object construction (single Python pass) -----------
+    additive_lane_names = list(ADDITIVE_LANES)
+    # Cached clamped studio for the diagnostic per_lane["studio"] field.
+    studio_diag_arr = np.clip(studio_score_arr, 0.0, 1.0)
+
+    for idx in range(n_candidates):
+        if not has_any_lane[idx]:
+            continue
+        mid = candidate_ids_list[idx]
+
+        row = score_matrix[idx]
+        # per_lane mirrors the original dict — ALL_LANES keys with the
+        # clamped raw score. Studio gets overwritten with its multiplier-
+        # path value (preserves the diagnostic-only studio appearance).
+        per_lane = {lane: float(row[lane_idx_map[lane]]) for lane in ALL_LANES}
+        per_lane["studio"] = float(studio_diag_arr[idx])
+
+        # Sources list: ALL_LANES order excluding studio (which is
+        # multiplier-only and appended last when its score is positive).
+        # This matches the original construction precisely.
+        sources_list: list[LaneName] = [
+            lane
+            for lane in ALL_LANES
+            if lane != "studio" and per_lane[lane] > 0.0
+        ]
+        if studio_score_arr[idx] > 0.0:
+            sources_list.append("studio")
+
+        dominant = additive_lane_names[int(best_dom_idx[idx])]
+
+        applied_multipliers: dict[str, float] = {}
+        if studio_mask[idx]:
+            applied_multipliers["studio"] = float(studio_mult_arr[idx])
+        if director_mask[idx]:
+            applied_multipliers["director"] = float(director_mult_arr[idx])
+        if country_present_mask[idx]:
+            applied_multipliers["country"] = float(country_mult_arr[idx])
+        if medium_mult_arr[idx] != 1.0:
+            applied_multipliers["medium"] = float(medium_mult_arr[idx])
+        if fmt_mismatch_arr[idx] != 1.0:
+            applied_multipliers["format_mismatch"] = float(fmt_mismatch_arr[idx])
+        if shorts_downrank_mask[idx]:
             applied_multipliers["shorts_downrank"] = SHORTS_DOWNRANK_MULTIPLIER
-        elif apply_shorts_boost and candidate_bucket == "short":
-            score *= SHORTS_MULTI_ANCHOR_BOOST
+        elif shorts_boost_mask[idx]:
             applied_multipliers["shorts_boost"] = SHORTS_MULTI_ANCHOR_BOOST
+        if shape_mult_arr[idx] != 1.0:
+            applied_multipliers["shape"] = float(shape_mult_arr[idx])
 
-        # V3.3 shape multiplier — applied alongside studio/country/medium.
-        # Fires only when candidate's shape matches a shape the anchor
-        # cohort has cohesion ≥0.5 in. Strong shapes (cult_garbage,
-        # dogshit, hidden_gem) get up to ×1.15; moderate shapes
-        # (prestige, mainstream_blockbuster) up to ×1.08.
-        candidate_shape = candidate_shape_by_movie.get(movie_id)
-        shape_mult = _shape_multiplier(anchor_shape_cohesion, candidate_shape)
-        if shape_mult != 1.0:
-            score *= shape_mult
-            applied_multipliers["shape"] = shape_mult
-
-        # V3 floor application — apply the strongest applicable floor
-        # (max over the three sources). Each floor has its own shape
-        # gate so a low-shape candidate doesn't get artificially
-        # promoted by a single distinctive-match signal.
-        # Track each candidate floor so diagnostics show which one won
-        # AND which others were available.
-        candidate_floors: list[tuple[str, float]] = []
-        cast_floor = cast_floor_by_movie.get(movie_id, 0.0)
-        if cast_floor > 0.0 and shape_score >= CAST_FLOOR_SHAPE_GATE:
-            candidate_floors.append(("cast", cast_floor))
-        director_ratio = director_floor_max_ratio_by_movie.get(movie_id, 0.0)
-        if (
-            director_ratio >= director_floor_ratio_threshold
-            and shape_score >= director_floor_shape_gate
-        ):
-            candidate_floors.append(("director", director_floor_magnitude))
-        applied_floor_value = 0.0
-        applied_floor_source = ""
-        if candidate_floors:
-            best_floor_source, best_floor_value = max(
-                candidate_floors, key=lambda x: x[1]
-            )
-            if best_floor_value > score:
-                # Floor displaces the additive computation only when it
-                # exceeds the current score; otherwise it's recorded as
-                # "available but didn't fire" via the per-floor input
-                # dicts (no diagnostic emit here).
-                score = best_floor_value
-                applied_floor_value = best_floor_value
-                applied_floor_source = best_floor_source
-
-        # Studio score is preserved in lane_scores for debug visibility
-        # even though it doesn't participate in the additive sum.
-        per_lane["studio"] = _clamp(studio_score)
-        if studio_score > 0.0 and "studio" not in sources:
-            sources.append("studio")
+        if floor_displaces[idx]:
+            if cast_wins[idx]:
+                applied_floor_source = "cast"
+            elif director_wins[idx]:
+                applied_floor_source = "director"
+            else:
+                applied_floor_source = ""
+        else:
+            applied_floor_source = ""
 
         candidates.append(
             _CandidateScore(
-                movie_id=movie_id,
-                score=score,
+                movie_id=mid,
+                score=float(final_scores_arr[idx]),
                 lane_scores=per_lane,
-                candidate_sources=sources,
+                candidate_sources=sources_list,
                 dominant_lane=dominant,
-                base_score=base_score,
+                base_score=float(base_scores[idx]),
                 multipliers=applied_multipliers,
-                floor_value=applied_floor_value,
+                floor_value=float(applied_floor_value_arr[idx]),
                 floor_source=applied_floor_source,
-                director_match=director_match,
+                director_match=bool(director_lane_arr[idx] > 0.0),
             )
         )
 
@@ -2213,9 +2405,18 @@ def _weave_candidates(
     return woven[:limit]
 
 
-async def _resolve_similarity_title_anchor(flow_data: SimilarityFlowData) -> int | None:
-    title = flow_data.similar_search_title.strip()
+async def _resolve_similarity_reference(reference: SimilarityReference) -> int | None:
+    """Resolve a single SimilarityReference to its most-popular matching
+    tmdb_id, optionally filtered by an explicitly-stated release_year.
+
+    Returns None when nothing matches — callers in the multi-reference
+    path drop those entries silently per the Step 0 contract.
+    """
+    title = reference.similar_search_title.strip()
     if not title:
+        # SimilarityReference's pydantic constraint already enforces
+        # min_length=1 on the title; this guard is defensive in case a
+        # caller constructs the dataclass outside the schema.
         raise ValueError("similar_search_title must be non-empty.")
 
     pattern = escape_like(normalize_string(title))
@@ -2228,9 +2429,9 @@ async def _resolve_similarity_title_anchor(flow_data: SimilarityFlowData) -> int
 
     rows = await fetch_similarity_signal_rows(list(title_ids))
     candidates = list(rows.values())
-    if flow_data.release_year is not None:
+    if reference.release_year is not None:
         candidates = [
-            row for row in candidates if _release_year(row) == flow_data.release_year
+            row for row in candidates if _release_year(row) == reference.release_year
         ]
     if not candidates:
         return None
@@ -2246,20 +2447,59 @@ async def _resolve_similarity_title_anchor(flow_data: SimilarityFlowData) -> int
     return int(candidates[0]["movie_id"])
 
 
+async def _resolve_similarity_anchors(
+    references: list[SimilarityReference],
+) -> list[int]:
+    """Resolve every reference in input order, dropping unresolvable
+    ones, and de-dup the remainder while preserving first-seen order.
+
+    A reference is "unresolvable" when the title doesn't match any
+    movie in the catalog (or, if a release_year was supplied, no
+    title-match has that year). Per the Step 0 contract those entries
+    are silently dropped; only when EVERY reference fails does the
+    similarity search end up empty.
+
+    Per-reference lookups are independent (each one round-trips Postgres
+    twice), so they run concurrently via ``asyncio.gather``. ``gather``
+    preserves argument order in its return list, which is what the
+    downstream dedupe relies on to keep first-seen ordering stable.
+    """
+    resolved_ids = await asyncio.gather(
+        *(_resolve_similarity_reference(ref) for ref in references)
+    )
+    out: list[int] = []
+    seen: set[int] = set()
+    for anchor_id in resolved_ids:
+        if anchor_id is None or anchor_id in seen:
+            continue
+        seen.add(anchor_id)
+        out.append(anchor_id)
+    return out
+
+
 async def run_similarity_search(
     flow_data: SimilarityFlowData,
     *,
     limit: int = 50,
     qdrant_limit: int = DEFAULT_QDRANT_LIMIT,
 ) -> SimilarMoviesSearchResult:
-    """Run Step-0's title-based similarity flow."""
+    """Run Step-0's title-based similarity flow.
+
+    Resolves every reference in flow_data.references to a tmdb_id and
+    hands the deduped anchor list to run_similar_movies_for_ids, which
+    routes single-anchor vs. multi-anchor pipelines internally. Returns
+    an empty result when no reference resolves.
+    """
     if not flow_data.should_be_searched:
         raise ValueError(
             "run_similarity_search called with should_be_searched=False; "
             "the caller must gate on Step 0's flow decision."
         )
-    anchor_id = await _resolve_similarity_title_anchor(flow_data)
-    if anchor_id is None:
+    # Non-empty references when should_be_searched=True is enforced by
+    # the Step 0 schema validator (validate_flow_titles_when_searched),
+    # so we trust the contract here.
+    anchor_ids = await _resolve_similarity_anchors(flow_data.references)
+    if not anchor_ids:
         return SimilarMoviesSearchResult(
             anchor_movie_ids=[],
             ranked=[],
@@ -2267,7 +2507,7 @@ async def run_similarity_search(
             debug=SimilarMoviesDebug(vector_space_weights={}),
         )
     return await run_similar_movies_for_ids(
-        [anchor_id],
+        anchor_ids,
         limit=limit,
         qdrant_limit=qdrant_limit,
     )
@@ -2285,14 +2525,23 @@ async def run_similar_movies_for_ids(
     if not anchor_ids:
         raise ValueError("tmdb_ids must contain at least one movie ID.")
 
-    anchor_rows = await fetch_similarity_signal_rows(anchor_ids)
+    # The four prefetches are independent — collapsing 4×RTT into max(RTT).
+    # anchor_rows is the only one whose absence is fatal (missing → LookupError);
+    # the others are pure inputs we'd need either way.
+    (
+        anchor_rows,
+        vectors_by_anchor,
+        studio_entries_by_company_id,
+        director_terms_by_anchor,
+    ) = await asyncio.gather(
+        fetch_similarity_signal_rows(anchor_ids),
+        _load_anchor_vectors(anchor_ids),
+        _load_studio_entries_by_company_id(),
+        fetch_director_term_ids_for_movies(anchor_ids),
+    )
     missing = [mid for mid in anchor_ids if mid not in anchor_rows]
     if missing:
         raise LookupError(f"movie_card rows not found for tmdb_ids={missing}")
-
-    vectors_by_anchor = await _load_anchor_vectors(anchor_ids)
-    studio_entries_by_company_id = await _load_studio_entries_by_company_id()
-    director_terms_by_anchor = await fetch_director_term_ids_for_movies(anchor_ids)
 
     if len(anchor_ids) == 1:
         return await _run_single_anchor_similarity(
@@ -2489,15 +2738,20 @@ async def _run_single_anchor_similarity(
     candidate_ids.update(themes_recall_candidate_ids)  # V3.1 themes recall path
     candidate_ids.discard(anchor_id)
 
-    candidate_rows = await fetch_similarity_signal_rows(list(candidate_ids))
-    # V3.3.2: always fetch award signals for both anchor and candidates —
-    # the shape classifier needs them to apply the picture-level prestige
-    # threshold lift (80 → 65) and the bad-Razzie-WIN poor ceiling lift
-    # (50 → 60). Including the anchor in the same query lets the shape
-    # cohesion math reuse the same dict for anchor-side classification.
-    award_signals = await fetch_similarity_award_signals(
-        list(candidate_ids) + [anchor_id]
+    # Candidate-side reads run in parallel — independent Postgres
+    # queries with no dependency between them. V3.3.2: always fetch
+    # award signals for both anchor and candidates — the shape
+    # classifier needs them for picture-level prestige lift (80 → 65)
+    # and bad-Razzie-WIN poor ceiling lift (50 → 60).
+    candidate_rows, award_signals = await asyncio.gather(
+        fetch_similarity_signal_rows(list(candidate_ids)),
+        fetch_similarity_award_signals(list(candidate_ids) + [anchor_id]),
     )
+    # One-pass parse of frequently-reused row derivations — see
+    # _parse_candidate_rows. Downstream orchestrator-level lookups
+    # (format bucket, medium tags, country tags, franchise pool) read
+    # from this dict instead of re-parsing each row 2-3 times.
+    parsed_by_movie = _parse_candidate_rows(candidate_rows)
 
     # ----- Per-lane scoring -----
     # Director: V3 single-anchor — 0.20 absolute contribution iff the
@@ -2551,19 +2805,21 @@ async def _run_single_anchor_similarity(
         for movie_id, row in candidate_rows.items()
     }
 
-    # Format: V2 binary same-bucket-or-not, every candidate.
+    # Format: V2 binary same-bucket-or-not, every candidate. Uses the
+    # precomputed format_bucket from parsed_by_movie so we don't
+    # re-parse keyword_ids per candidate (dedupes with the format
+    # bucket lookup feeding _build_results below).
     format_scores = {
-        movie_id: _format_score(anchor_format_bucket, row)
-        for movie_id, row in candidate_rows.items()
+        movie_id: 1.0 if parsed.format_bucket_value == anchor_format_bucket else 0.0
+        for movie_id, parsed in parsed_by_movie.items()
     }
 
     # Medium multiplier per candidate (computed once, applied in build).
     medium_multiplier_by_movie: dict[int, float] = {}
     if anchor_medium_tags:
-        for movie_id, row in candidate_rows.items():
-            candidate_medium = _medium_tags_for_movie(row)
+        for movie_id, parsed in parsed_by_movie.items():
             medium_multiplier_by_movie[movie_id] = _medium_multiplier(
-                anchor_medium_tags, candidate_medium
+                anchor_medium_tags, parsed.medium_tags
             )
 
     # V3 §2.2: every franchise hit goes through the additive lane —
@@ -2579,11 +2835,19 @@ async def _run_single_anchor_similarity(
     # candidate intersecting them is "match" (×1.05), a candidate with
     # any country tags but none in common is "mismatch" (×0.75).
     # Candidates with no country tags get neither boost nor penalty
-    # (preserves the V2 "we can't tell" semantics).
-    country_consensus_match_by_movie = _country_consensus_per_candidate(
-        anchor_country_tags=country_set(_as_int_set(anchor_row.get("keyword_ids"))),
-        candidate_rows=candidate_rows,
+    # (preserves the V2 "we can't tell" semantics). Inlined here using
+    # parsed_by_movie so we don't re-parse keyword_ids → country_set.
+    anchor_country_tags = frozenset(
+        country_set(_as_int_set(anchor_row.get("keyword_ids")))
     )
+    country_consensus_match_by_movie: dict[int, bool] = {}
+    if anchor_country_tags:
+        for mid, parsed in parsed_by_movie.items():
+            if not parsed.country_tags:
+                continue
+            country_consensus_match_by_movie[mid] = bool(
+                parsed.country_tags & anchor_country_tags
+            )
 
     # V3 §2.3: themes lane extended to single-anchor — anchor's own
     # trait pool drives the denominator.
@@ -2602,10 +2866,11 @@ async def _run_single_anchor_similarity(
     # V3 §3.1 shorts harsh downrank requires per-candidate format
     # bucket so `_build_results` can multiply combined score by 0.30
     # for cross-format candidates and `_weave_candidates` can enforce
-    # the max-1 hard cap.
+    # the max-1 hard cap. Pulled from the parsed slice — same value
+    # `format_scores` already used, no second `format_bucket` call.
     candidate_format_bucket_by_movie: dict[int, FormatBucket] = {
-        mid: format_bucket(row.get("keyword_ids") or ())
-        for mid, row in candidate_rows.items()
+        mid: parsed.format_bucket_value
+        for mid, parsed in parsed_by_movie.items()
     }
 
     lane_scores: dict[LaneName, dict[int, float]] = {
@@ -2672,13 +2937,9 @@ async def _run_single_anchor_similarity(
     anchor_franchise_pool: set[int] = anchor_lineage | anchor_universe
     is_franchise_by_movie: dict[int, bool] = {}
     if anchor_franchise_pool:
-        for movie_id, row in candidate_rows.items():
-            cand_pool = (
-                _as_int_set(row.get("lineage_entry_ids"))
-                | _as_int_set(row.get("shared_universe_entry_ids"))
-            )
+        for movie_id, parsed in parsed_by_movie.items():
             is_franchise_by_movie[movie_id] = bool(
-                cand_pool & anchor_franchise_pool
+                parsed.franchise_pool & anchor_franchise_pool
             )
 
 
@@ -2829,15 +3090,25 @@ async def _run_multi_anchor_similarity(
     # rule's M_d=1 + auteur path would silently miss because the
     # candidate-fetching task returned an empty dict.
     #
-    # `fetch_auteur_term_ids` is module-cached after first call, so
-    # awaiting it here doesn't block the parallel gather meaningfully.
-    auteur_term_ids = await fetch_auteur_term_ids()
-    has_auteur_anchor = bool(director_terms & auteur_term_ids)
-    director_task = (
-        fetch_director_movie_terms(director_terms)
-        if (cohesion_by_lane["director"] > 0.0 or has_auteur_anchor)
-        else _empty_dict()
-    )
+    # `fetch_auteur_term_ids` is module-cached after the first call, but
+    # the first call per process otherwise blocks the parallel gather.
+    # Fold the auteur fetch into a composite task: await auteur, decide
+    # whether to fire director, then await director if needed. This keeps
+    # the auteur read in parallel with the shape/franchise/studio tasks
+    # while preserving the gate (no speculative director fetch in the
+    # rare case neither cohesion nor auteur holds).
+    director_cohesion_active = cohesion_by_lane["director"] > 0.0
+
+    async def _fetch_auteur_and_director() -> tuple[set[int], bool, dict[int, set[int]]]:
+        auteur = await fetch_auteur_term_ids()
+        anchor_has_auteur = bool(director_terms & auteur)
+        if director_cohesion_active or anchor_has_auteur:
+            director_result = await fetch_director_movie_terms(director_terms)
+        else:
+            director_result = {}
+        return auteur, anchor_has_auteur, director_result
+
+    director_combo_task = _fetch_auteur_and_director()
     franchise_task = (
         fetch_similarity_franchise_candidates(
             lineage_entry_ids=franchise_traits,
@@ -2883,7 +3154,7 @@ async def _run_multi_anchor_similarity(
 
     (
         (shape_scores, vector_space_weights, vector_space_cohesion, mean_pairwise_cosine),
-        director_candidate_terms,
+        (auteur_term_ids, has_auteur_anchor, director_candidate_terms),
         franchise_candidate_ids,
         studio_candidate_ids,
         source_candidate_ids,
@@ -2893,7 +3164,7 @@ async def _run_multi_anchor_similarity(
         themes_recall_idfs,
     ) = await asyncio.gather(
         shape_task,
-        director_task,
+        director_combo_task,
         franchise_task,
         studio_task,
         source_task,
@@ -3066,6 +3337,11 @@ async def _run_multi_anchor_similarity(
     # across the keyword/concept/genre families don't cross-contaminate.
     themes_idfs: dict[tuple[int, int], float] = themes_idf_pairs
 
+    # One-pass parse of frequently-reused row derivations (see
+    # _parse_candidate_rows). Downstream orchestrator-level lookups
+    # read from this dict instead of re-parsing each row 2-3 times.
+    parsed_by_movie = _parse_candidate_rows(candidate_rows)
+
     # ----- Per-lane scoring -----
     # V3 §2.1 director: per-shared-director absolute contributions
     # (curated 0.20-0.30 vs cohesion-only ≤0.10), max-over-d. Also
@@ -3146,11 +3422,12 @@ async def _run_multi_anchor_similarity(
                 )
 
     # Format: same-bucket-or-not vs the repeated bucket, every candidate.
+    # Uses parsed_by_movie so candidate_format_bucket_by_movie below
+    # shares the same format_bucket evaluation (one call per candidate).
     format_scores: dict[int, float] = {}
     if repeated_format_bucket is not None and cohesion_by_lane["format"] > 0.0:
-        for mid, row in candidate_rows.items():
-            candidate_bucket = format_bucket(row.get("keyword_ids") or ())
-            if candidate_bucket == repeated_format_bucket:
+        for mid, parsed in parsed_by_movie.items():
+            if parsed.format_bucket_value == repeated_format_bucket:
                 format_scores[mid] = 1.0
 
     # Themes: per-candidate share of repeated-trait IDF mass.
@@ -3187,13 +3464,13 @@ async def _run_multi_anchor_similarity(
         anchor_count=n,
     )
 
-    # Country/language consensus multiplier per candidate.
+    # Country/language consensus multiplier per candidate. Uses
+    # parsed_by_movie so we don't re-run country_set() per row.
     country_consensus_match: dict[int, bool] = {}
     if consensus_countries:
-        for mid, row in candidate_rows.items():
-            candidate_countries = country_set(row.get("keyword_ids") or ())
+        for mid, parsed in parsed_by_movie.items():
             country_consensus_match[mid] = bool(
-                candidate_countries & consensus_countries
+                parsed.country_tags & consensus_countries
             )
 
     # Per the V2 spec, multi-anchor medium handling is left to a future
@@ -3588,6 +3865,48 @@ def _score_multi_trait_count(
         if total > 0.0:
             scores[movie_id] = _clamp(total / anchor_count)
     return scores
+
+
+# Precomputed per-candidate derivations of frequently-reused row
+# fields. The single-anchor flow alone hits ``keyword_ids`` three times
+# per row (format_bucket, _medium_tags_for_movie, country_set) and the
+# franchise pool check parses lineage + universe arrays a second time
+# after the lane scoring already did the same. Building these once and
+# reading them from a dict downstream cuts repeated ``_as_int_set`` /
+# ``format_bucket`` work on every candidate.
+#
+# Scope is deliberately narrow — only the orchestrator-level call sites
+# consume from this slice. The per-lane scoring helpers (e.g.
+# ``_franchise_score_v2``, ``_quality_score_v2``) still accept ``row:
+# dict`` so the diff stays small and the scoring contract unchanged.
+@dataclass(frozen=True, slots=True)
+class _ParsedRowSlice:
+    format_bucket_value: FormatBucket
+    medium_tags: frozenset[int]
+    country_tags: frozenset[int | str]
+    themes_traits: frozenset[tuple[int, int]]
+    franchise_pool: frozenset[int]   # lineage_entry_ids | shared_universe_entry_ids
+
+
+def _parse_candidate_rows(rows: dict[int, dict]) -> dict[int, _ParsedRowSlice]:
+    """One-pass extraction of the orchestrator's frequently-reused row
+    derivations. Each value is computed exactly once per candidate.
+    """
+    out: dict[int, _ParsedRowSlice] = {}
+    for movie_id, row in rows.items():
+        keyword_ids_set = _as_int_set(row.get("keyword_ids"))
+        keyword_ids_tuple = row.get("keyword_ids") or ()
+        out[movie_id] = _ParsedRowSlice(
+            format_bucket_value=format_bucket(keyword_ids_tuple),
+            medium_tags=frozenset(keyword_ids_set & MEDIUM_TAG_IDS),
+            country_tags=frozenset(country_set(keyword_ids_tuple)),
+            themes_traits=frozenset(_themes_traits_for_movie(row)),
+            franchise_pool=frozenset(
+                _as_int_set(row.get("lineage_entry_ids"))
+                | _as_int_set(row.get("shared_universe_entry_ids"))
+            ),
+        )
+    return out
 
 
 def _themes_traits_for_movie(row: dict) -> set[tuple[int, int]]:

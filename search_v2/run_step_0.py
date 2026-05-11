@@ -157,10 +157,14 @@ async def _print_similarity_results(
 ) -> None:
     """Render the similar-movies ranked output as a compact table."""
     print("\n[similar_movies_search]")
-    print(
-        f"input: title={flow_data.similar_search_title!r}, "
-        f"release_year={flow_data.release_year}"
-    )
+    # references is a list — render it compactly so the runner stays
+    # readable for both single-anchor and multi-anchor frames.
+    ref_strs = [
+        f"{ref.similar_search_title!r}"
+        + (f"@{ref.release_year}" if ref.release_year is not None else "")
+        for ref in flow_data.references
+    ]
+    print(f"input: references=[{', '.join(ref_strs)}]")
     if result.anchor_movie_ids:
         print(f"anchor_tmdb_ids: {result.anchor_movie_ids}")
     if result.active_anchor_types:
@@ -243,6 +247,8 @@ async def _main_async() -> None:
 
 
 def main() -> None:
+    from implementation.misc.event_loop import install_uvloop
+    install_uvloop()
     asyncio.run(_main_async())
 
 
