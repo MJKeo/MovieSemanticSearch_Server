@@ -1,8 +1,14 @@
 # Few-shot examples
 
 Each example shows a call that survived Step 2's compound-splitting and
-landed at this category as a single atomic genre trait. The expected
-outcome shows which endpoint commits and which abstains — never both.
+landed at this category as a single atomic trait. The expected outcome
+shows which endpoint commits (or in Case B which spaces the semantic
+body fires on) and which abstains.
+
+## Case A — established genre identity
+
+These calls name a registry-clean genre or a recognized sub-genre.
+Exactly one endpoint commits; the other abstains.
 
 <example>
 Input:
@@ -90,14 +96,66 @@ definitionally covers it; firing either would over-pull supernatural
 or creature features that are not cosmic horror.
 </example>
 
+## Case B — pseudo-genre description
+
+These calls describe a film cluster that isn't a registry or canonical
+sub-genre name. Keyword always abstains; semantic always commits and
+authors across the eligible spaces. `plot_analysis` stays empty in every
+Case B commit — that's the load-bearing signal of the Case B branch.
+
 <example>
 Input:
 ```xml
-<retrieval_intent>Identify films in the revenge story archetype.</retrieval_intent>
-<expressions><expression>revenge stories</expression></expressions>
+<retrieval_intent>Identify films whose look matches the comic book visual style.</retrieval_intent>
+<expressions><expression>comic book visual style</expression></expressions>
 ```
-Expected: abstain BOTH endpoints. Revenge is a story shape, not a
-genre identity; this call should have been routed to Story / thematic
-archetype upstream. A misrouted call produces an honest double-abstain,
-not a coerced commit on either side.
+Expected: commit semantic with `production.production_techniques`
+naming the concrete craft choices the cluster is defined by
+("comic-panel framing", "stylized color grading"), plus
+`viewer_experience.sensory_load` for the perceptual texture (`terms`
+like "vibrant", "stylized", "high-contrast"; `negations` like "not
+muted", "not naturalistic"). `plot_analysis.genre_signatures` stays
+empty — the phrase names a visual axis, not a genre identity. Abstain
+keyword with `commitment-criteria-fail` — `COMIC_BOOK_ADAPTATION`
+would tag-match every comic-book adaptation at 1.0 regardless of
+visual style, which is exactly the breadth the user is trying to
+narrow past.
+</example>
+
+<example>
+Input:
+```xml
+<retrieval_intent>Identify films that scratch the slasher itch for viewers seeking that experience.</retrieval_intent>
+<expressions><expression>scratches the slasher itch</expression></expressions>
+```
+Expected: commit semantic with `watch_context.self_experience_motivations`
+naming the viewer appetite ("scratch the slasher itch",
+"stalker-and-victim thrill"), `watch_context.key_movie_feature_draws`
+for the cluster's signature draws ("kill set-pieces", "final-girl
+tension"), and `viewer_experience.tension_adrenaline` +
+`emotional_palette` for the dread-and-thrill texture
+(`tension_adrenaline.terms` like "white-knuckle stalking", "kill-by-kill
+escalation"). `plot_analysis.genre_signatures` stays empty. Abstain
+keyword — firing `SLASHER_HORROR` would commit the canonical sub-genre
+identity, but the call is shaped around the viewer's appetite for that
+experience, not the genre identity itself; tag-matching every slasher
+at 1.0 over-pulls toward the breadth of the sub-genre rather than the
+appetite shape the user described.
+</example>
+
+<example>
+Input:
+```xml
+<retrieval_intent>Identify films known for their noir-style voiceover storytelling.</retrieval_intent>
+<expressions><expression>celebrated noir voiceover storytelling</expression></expressions>
+```
+Expected: commit semantic with `reception.praised_qualities` for the
+acclaim aspect ("voiceover narration", "hardboiled voiceover",
+"noir-style narration") and `narrative_techniques` with the canonical
+craft label verbatim ("voiceover narrator"). `plot_analysis.genre_signatures`
+stays empty. Abstain keyword — `FILM_NOIR` would tag-match the genre
+identity, but the call is pointing at a craft-and-acclaim aspect of
+noir-style films, not noir identity itself; tag-matching every film
+noir at 1.0 would pull films without notable voiceover craft alongside
+the ones the user wants.
 </example>
