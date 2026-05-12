@@ -471,6 +471,25 @@ async def _decompose_and_generate(
     # decomposition.
     all_calls = list(decomposition.category_calls)
     combine_mode = decomposition.combine_mode
+
+    # SOLO contract: exactly one category commit. The prompt instructs
+    # the LLM to emit only the clean-fit primary, but if extras slip
+    # through (or the model committed SOLO inconsistently with a
+    # multi-call list), trim deterministically to the first listed
+    # entry here so dropped categories never fan out to handler-LLM
+    # calls or endpoint fetches. List ordering is the LLM's commit
+    # surface — we trust the first entry is the intended primary.
+    if combine_mode is TraitCombineMode.SOLO and len(all_calls) > 1:
+        logger.info(
+            "SOLO trim: trait %r committed SOLO with %d category_calls; "
+            "keeping only the first (%s) and dropping the rest before "
+            "retrieval.",
+            trait.surface_text,
+            len(all_calls),
+            all_calls[0].category.name,
+        )
+        all_calls = all_calls[:1]
+
     category_call_results = await asyncio.gather(
         *(
             _process_category_call(

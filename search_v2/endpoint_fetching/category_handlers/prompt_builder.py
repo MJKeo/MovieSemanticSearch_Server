@@ -371,6 +371,7 @@ def build_user_message(
 
 
 _COMBINE_MODE_LABELS: dict[TraitCombineMode, str] = {
+    TraitCombineMode.SOLO:     "single",
     TraitCombineMode.FACETS:   "facets",
     TraitCombineMode.FRAMINGS: "framings",
 }

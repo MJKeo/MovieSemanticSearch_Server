@@ -738,10 +738,20 @@ class TraitRelationshipRole(StrEnum):
 # How Phase D (stage-4 across-category fold) collapses a trait's
 # per-category scores into a single trait_score in [0, 1]:
 #
-#   FRAMINGS — categories are alternative homes for the same
-#     underlying thing; matching ANY ONE is sufficient evidence of
-#     the criterion. Phase D MAX-folds them; redundant categories
-#     reinforce each other as alternative routes to the same signal.
+#   SOLO — exactly one surviving category cleanly covers every
+#     dimension the trait calls for. Other candidates surfaced as
+#     adjacency context but do not add coverage the primary doesn't
+#     already provide. Phase D has nothing to fold; the single
+#     category's score IS the trait_score. The orchestrator trims
+#     category_calls to the first entry before retrieval, so dropped
+#     categories never fan out to handler-LLM calls or endpoint
+#     fetches.
+#   FRAMINGS — multiple surviving categories are alternative homes
+#     for the same underlying thing, AND no single category covers
+#     the trait cleanly on its own; matching ANY ONE is sufficient
+#     evidence of the criterion. Phase D MAX-folds them; redundant
+#     categories reinforce each other as alternative routes to the
+#     same signal.
 #   FACETS — categories cover DIFFERENT axes of a compound concept;
 #     ALL facets must fire to a degree for the criterion to be met.
 #     Phase D PRODUCT-folds them; duplicating axis coverage
@@ -749,8 +759,12 @@ class TraitRelationshipRole(StrEnum):
 #
 # Step 3 commits this AFTER its candidate analysis and BEFORE
 # committing category_calls — the choice shapes what categories make
-# sense to commit. Surfacing it on TraitDecomposition lets stage-4
-# branch the across-category fold mechanically.
+# sense to commit. The decision is hierarchical: ask the SOLO
+# coverage question first; only when no single category covers the
+# trait cleanly does the FRAMINGS-vs-FACETS question come into play.
+# Surfacing the commit on TraitDecomposition lets stage-4 branch the
+# across-category fold mechanically.
 class TraitCombineMode(StrEnum):
+    SOLO = "solo"
     FRAMINGS = "framings"
     FACETS = "facets"

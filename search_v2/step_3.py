@@ -16,11 +16,14 @@
 #      in database-vocabulary; each carries a freeform list of
 #      plausible categories with what's-covered / what's-missing
 #      prose.
-#   3. Combine-mode commit — TraitCombineMode (FRAMINGS / FACETS).
-#      Committed AFTER candidates and BEFORE category_calls so the
-#      mode shapes which categories make sense to commit. FRAMINGS
-#      authorizes overlapping coverage (stage-4 MAX-folds); FACETS
-#      demands complementary coverage (stage-4 PRODUCT-folds).
+#   3. Combine-mode commit — TraitCombineMode (SOLO / FRAMINGS /
+#      FACETS). Committed AFTER candidates and BEFORE category_calls
+#      so the mode shapes which categories make sense to commit. The
+#      decision is hierarchical: SOLO when one category cleanly covers
+#      every dimension (single committed call, passthrough at stage-4);
+#      FRAMINGS when multiple categories are alternative homes for one
+#      signal (stage-4 MAX-folds); FACETS when categories cover
+#      distinct compounding axes (stage-4 PRODUCT-folds).
 #   4. Commitment layer — category_calls. The minimum number of
 #      taxonomy-routed calls; one call per category, owning one or
 #      more expressions when the same category cleanly covers
@@ -130,14 +133,17 @@ You produce a TraitDecomposition with these coupled layers:
 4. ROUTING EXPLORATION — exploratory prose between candidates and \
    combine_mode. Walks dedup, the granularity gate (identity vs \
    attribute categories filtered by aspect granularity), the \
-   FRAMINGS-vs-FACETS relationship question, and the minimum-set \
-   commit. Forward reasoning that produces the conclusions \
-   combine_mode and category_calls then read off.
-5. COMBINE MODE — TraitCombineMode (FRAMINGS / FACETS). Mechanical \
-   translation of the relationship conclusion in routing_exploration. \
-   Tells stage-4 how to fold per-category scores: FRAMINGS → MAX \
-   (alternative homes for one underlying thing); FACETS → PRODUCT \
-   (distinct axes of a compound concept).
+   coverage check (does one surviving category cover every \
+   dimension cleanly → SOLO), and only when no SOLO candidate \
+   exists, the FRAMINGS-vs-FACETS relationship question plus \
+   minimum-set commit. Forward reasoning that produces the \
+   conclusions combine_mode and category_calls then read off.
+5. COMBINE MODE — TraitCombineMode (SOLO / FRAMINGS / FACETS). \
+   Mechanical translation of the routing_exploration conclusion. \
+   Tells stage-4 how to fold per-category scores: SOLO → \
+   passthrough (one category covers everything alone); FRAMINGS → \
+   MAX (alternative homes for one signal, no single category \
+   suffices); FACETS → PRODUCT (distinct compounding axes).
 6. COMMITMENT LAYER — category_calls. One call per category that \
    ends up owning >=1 expression. Multi-expression calls when one \
    category cleanly owns several dimensions of this trait. The \
@@ -155,7 +161,7 @@ population, commit the role analysis, enumerate aspects (honoring \
 role-driven axis constraints), translate aspects into dimensions, \
 list per-dimension candidates with explicit coverage prose, and \
 finish with routing_exploration that prunes the candidate set and \
-argues for FRAMINGS vs FACETS. No calls yet.
+argues for SOLO vs FRAMINGS vs FACETS. No calls yet.
 
 COMMITMENT PHASE — read routing_exploration's conclusions, commit \
 combine_mode (mechanical from the relationship argument), then \
@@ -841,7 +847,9 @@ so I'm leaning toward Y." Not back-rationalization: "My answer is \
 Y because X." The fields below copy your conclusions; the \
 conclusions themselves are reached here.
 
-WALK FOUR CHECKS, IN ORDER.
+WALK FOUR CHECKS, IN ORDER. The order is load-bearing — earlier \
+checks shrink the candidate set or short-circuit the decision \
+entirely, so applying them out of sequence inflates the call list.
 
 (1) DEDUP. Look at category_candidates across all dimensions. \
 When the same category appears as a clean-fit (or near-clean-fit) \
@@ -863,19 +871,38 @@ The discriminator: does the aspect string name a MEMBER of the \
 category, or does it name the category itself? Members route to \
 identity; categories route to attribute.
 
-(3) RELATIONSHIP. After dedup and granularity pruning, look at \
-the surviving candidates across dimensions and ask: are they \
-alternative HOMES for one underlying thing the trait names \
-(matching any one is sufficient evidence → leans FRAMINGS), or \
-do they describe DIFFERENT axes of a compound concept the user \
-wants compounded (all must fire to a degree → leans FACETS)? \
-State which direction the dimensions actually support and why.
+(3) COVERAGE — the SOLO short-circuit. After dedup and granularity \
+pruning, ask whether a single surviving category cleanly covers \
+EVERY dimension this trait routes. The per-dimension \
+what_this_misses analysis is the source of truth: a candidate that \
+named no substantive gap (the "Nothing" / no-real-gap form) across \
+every dimension it could serve provides complete coverage by \
+itself. When that is the case, the trait is SOLO — that category \
+is the only commit, every other candidate was adjacency context \
+that surfaced for honesty rather than coverage the primary lacked. \
+State this conclusion explicitly when it applies.
 
-(4) MINIMUM SET. State which categories you will commit and \
-which dimensions each owns. Each surviving category must add NEW \
-signal — if a category is redundant with a stronger sibling and \
-FRAMINGS gives no incremental reinforcement (or FACETS would \
-double-fire on the same axis), drop it.
+The discipline of this check: a candidate whose what_this_misses \
+names a real gap on any dimension does not heal the gap by being \
+paired with another partial candidate that misses something else. \
+What heals a gap is a single category whose own coverage closes it. \
+When such a category exists, the trait commits SOLO regardless of \
+how cleanly adjacent candidates might also have routed.
+
+Only if NO single surviving candidate covers everything cleanly \
+does step (4) come into play.
+
+(4) RELATIONSHIP & MINIMUM SET (skipped when SOLO applies). Among \
+the surviving candidates, are they alternative HOMES for one \
+underlying thing the trait names (matching any one is sufficient \
+evidence → leans FRAMINGS), or do they describe DIFFERENT axes of \
+a compound concept the user wants compounded (all must fire to a \
+degree → leans FACETS)? State which direction the dimensions \
+actually support and why, then commit the minimum set of \
+categories that together cover every dimension. Each surviving \
+category must add NEW signal — if a category is redundant with a \
+stronger sibling and FRAMINGS gives no incremental reinforcement \
+(or FACETS would double-fire on the same axis), drop it.
 
 CATEGORICAL-TO-SPECIFIC DRIFT — the named failure mode this step \
 exists to catch. When the trait names a category (a genre, an \
@@ -905,11 +932,22 @@ OPERATIONAL TESTS:
   granularity as the aspects they serve?" If a candidate retrieves \
   specific instances but the aspect names a category, it does not \
   survive.
+- COVERAGE CHECK. "Is there a single surviving category whose \
+  what_this_misses analysis showed no substantive gap across every \
+  dimension this trait routes?" Yes → SOLO; drop the other \
+  candidates. No → proceed to FRAMINGS vs FACETS.
 - MINIMUM-SET CHECK. "If I removed each surviving candidate one \
   at a time, would the remaining set lose meaningful coverage?" If \
   no for any candidate, that candidate was padding.
 
 NEVER:
+- SKIP THE COVERAGE CHECK and jump straight to FRAMINGS vs FACETS. \
+  When one category cleanly covers the trait, the relationship \
+  question has no work to do — the answer is SOLO.
+- COMMIT EXTRA CATEGORIES AS HEDGES. When a clean primary covers \
+  the trait, partial-coverage adjacents do not reinforce the \
+  signal; they pad the call list. The commit is the minimum \
+  sufficient set, not the broadest defensible set.
 - WRITE BACKWARD FROM A COMMITTED ANSWER. The reasoning leads the \
   conclusion, not justifies it.
 - ELABORATE BEYOND THE CANDIDATES. Only categories surfaced in \
@@ -928,58 +966,68 @@ COMBINE MODE — commit how stage-4 will fold this trait's \
 per-category scores into a trait_score
 
 After the routing exploration above (which decided the surviving \
-category set AND argued for FRAMINGS vs FACETS), this field is a \
-MECHANICAL TRANSLATION of that conclusion into the closed enum. \
-If you find yourself revisiting the FRAMINGS-vs-FACETS question \
-here, you didn't reason it through above — revise the exploration, \
-then come back. Get this wrong and the next step's category \
-routing optimizes for the wrong combine.
+category set AND argued for SOLO vs FRAMINGS vs FACETS), this \
+field is a MECHANICAL TRANSLATION of that conclusion into the \
+closed enum. If you find yourself revisiting the question here, \
+you didn't reason it through above — revise the exploration, then \
+come back. Get this wrong and the next step's category routing \
+optimizes for the wrong combine.
 
-TWO MODES.
+THREE MODES.
 
-FRAMINGS — categories are alternative HOMES for the same \
-underlying thing. Matching ANY ONE is sufficient evidence of the \
+SOLO — exactly one surviving category cleanly covers every \
+dimension the trait calls for. The other candidates surfaced as \
+adjacency context but do not add coverage the primary doesn't \
+already provide. Stage-4 has nothing to fold; the single \
+category's score IS the trait_score. The signature: the routing \
+exploration's coverage check found one candidate whose \
+what_this_misses analysis named no substantive gap across every \
+dimension it could serve.
+
+FRAMINGS — multiple categories are alternative HOMES for the same \
+underlying thing, AND no single category cleanly covers the trait \
+on its own. Matching ANY ONE is sufficient evidence of the \
 criterion. Stage-4 takes the MAX across categories; redundancy \
 between framings reinforces as alternative routes to the same \
-signal. The signature: the candidate analysis surfaces multiple \
-clean-fit categories that DESCRIBE THE SAME THING from different \
-angles (an identity that has clean homes in two adjacent \
-categories; a specific entity expressed via studio-brand AND \
-franchise-lineage).
+signal. The signature: every surviving candidate's \
+what_this_misses named some gap that another surviving candidate's \
+coverage fills — the candidates partition the trait's coverage \
+along the same underlying axis from different angles.
 
 FACETS — categories cover DIFFERENT axes of a compound concept. \
 ALL facets must fire to a degree for the criterion to be met. \
 Stage-4 takes the PRODUCT across categories; duplicating axis \
 coverage AMPLIFIES the wrong signals. The signature: each \
 dimension's clean-fit category covers a DISTINCT IDENTIFIABLE \
-AXIS the user wants compounded (a compound aesthetic decomposing \
-into setting + tone + theme; a compound character concept \
-decomposing into archetype + emotional register + ensemble \
-structure).
+AXIS the user wants compounded — the categories partition the \
+trait into independently-varying conditions, not alternative \
+routes to one signal.
 
-DISCRIMINATOR. Walk the candidate analysis. For each pair of \
-clean-fit categories across dimensions, ask: are these alternative \
-ways of finding the SAME thing (FRAMINGS — matching either is \
-sufficient evidence), or are they NECESSARY axes of a compound \
-(FACETS — matching all is what the user asked for)?
+DISCRIMINATOR. The decision is hierarchical, not a three-way pick. \
+Ask the coverage question first, then the relationship question \
+only if needed:
 
-Then ask the read-back: "if a candidate film matched only ONE of \
-the categories at high score and 0 on the others, would the user \
-agree the trait is satisfied?" If yes → FRAMINGS. If no → FACETS.
+(a) Did the routing exploration find one category whose coverage \
+analysis closed every gap across every dimension this trait \
+routes? Yes → SOLO. Other candidates were adjacency context and \
+do not earn a commit. The downstream pipeline trims any extras \
+emitted under SOLO before retrieval, so the trait_score depends \
+on this single category alone.
 
-Single-dimensional traits commit FRAMINGS by default — with one \
-category, MAX and PRODUCT collapse to passthrough. The default \
-is harmless.
+(b) Only when no single-coverage category exists, ask the \
+read-back: "if a candidate film matched only ONE of the categories \
+at high score and 0 on the others, would the user agree the trait \
+is satisfied?" Yes → FRAMINGS. No → FACETS.
 
 ROUTING IMPLICATIONS the next step will read:
 
+- SOLO means category_calls contains exactly ONE entry. List the \
+  clean-fit primary first; extras are trimmed before retrieval and \
+  never reach the endpoints.
 - FRAMINGS authorizes committing categories whose coverage \
   OVERLAPS. The system MAX-folds them, so multiple framings of \
-  one thing are intentional reinforcement. If the candidate \
-  analysis surfaces two adjacent categories both with \
-  what_this_misses="nothing" for the SAME underlying axis, \
-  FRAMINGS commits both — they are the same evidence reached two \
-  ways, not duplication.
+  one thing are intentional reinforcement when no single category \
+  covers the trait cleanly on its own.
 - FACETS DEMANDS choosing categories that COMPLEMENT rather than \
   overlap. The system PRODUCT-folds them, so duplication of axis \
   coverage amplifies the wrong signals. Each committed category \
@@ -989,28 +1037,31 @@ ROUTING IMPLICATIONS the next step will read:
   twice.
 
 OPERATIONAL TESTS:
-- READ-BACK. "If a candidate film hits ONE of the candidate \
-  categories at 1.0 and scores 0 on the rest, is the trait \
-  satisfied?" Yes → FRAMINGS. No → FACETS.
-- AXIS-COUNT. "Looking at the dimensions list, how many distinct \
-  user-vocabulary axes are present?" One or framings of one → \
-  FRAMINGS. Several → FACETS.
-- IDENTITY VS COMPOUND. "Is this trait an IDENTITY the user is \
-  pointing at (Marvel, Tom Hanks, Christmas)?" → FRAMINGS. "Is \
-  this trait a COMPOUND CONCEPT defined by simultaneous \
-  conditions (cottagecore, bro movie, dark gritty)?" → FACETS.
+- COVERAGE CHECK. "Does a single surviving category close every \
+  gap across every dimension this trait routes?" Yes → SOLO. No → \
+  proceed to the read-back.
+- READ-BACK (when SOLO does not apply). "If a candidate film hits \
+  ONE of the surviving categories at 1.0 and scores 0 on the rest, \
+  is the trait satisfied?" Yes → FRAMINGS. No → FACETS.
+- AXIS-COUNT (when SOLO does not apply). "Looking at the dimensions \
+  list, how many distinct user-vocabulary axes remain uncovered by \
+  any single category?" Multiple framings of one signal → FRAMINGS. \
+  Multiple distinct compounding conditions → FACETS.
 
 NEVER:
+- COMMIT FRAMINGS WHEN ONE CATEGORY COVERS THE TRAIT CLEANLY. \
+  Adding partial-coverage adjacents under FRAMINGS does not \
+  reinforce the signal; it pads the call list. The correct commit \
+  when one category suffices is SOLO.
 - COMMIT FACETS WHEN CATEGORIES ARE FRAMINGS OF ONE IDENTITY. \
-  Marvel ≈ STUDIO_BRAND ∨ FRANCHISE_LINEAGE — both fire 1.0 on an \
-  MCU film. PRODUCT-folding penalizes the reference for failing to \
-  surface in BOTH categories simultaneously, which is wrong for \
-  identity-style traits.
+  PRODUCT-folding penalizes the reference for failing to surface \
+  in EVERY category simultaneously, which is wrong for identity-\
+  style traits with multiple plausible homes.
 - COMMIT FRAMINGS WHEN CATEGORIES ARE FACETS OF A COMPOUND. \
-  Compound aesthetic / cultural concepts where the user wants \
-  several axes to compound do NOT satisfy on a single-axis match. \
-  MAX-folding lets single-facet matches win at 1.0, which is \
-  exactly the failure mode FACETS is designed to prevent.
+  Compound concepts where the user wants several axes to compound \
+  do NOT satisfy on a single-axis match. MAX-folding lets \
+  single-facet matches win at 1.0, which is exactly the failure \
+  mode FACETS is designed to prevent.
 - DEFAULT-FILL. The mode is a real commit driven by the candidate \
   analysis, not a placeholder.
 
@@ -1062,6 +1113,10 @@ retrieval_intent must contain. Procedural notes:
   category covers.
 
 READ COMBINE_MODE:
+- SOLO means category_calls contains EXACTLY ONE entry. The single \
+  clean-fit primary owns every dimension. Any extras emitted under \
+  SOLO are trimmed before retrieval and never reach the endpoints; \
+  list-ordering matters, so place the clean-fit primary first.
 - FRAMINGS authorizes committing categories whose coverage \
   OVERLAPS — the system MAX-folds them, so redundancy reinforces \
   as alternative routes to the same signal. Multiple framings of \
@@ -1092,6 +1147,9 @@ OPERATIONAL TESTS:
 - CANDIDATE-LINK. The category committed must have appeared as a \
   candidate on at least one of its owned dimensions.
 - CLEAN-FIT (mode-dependent).
+  - SOLO: exactly one category is committed — the one whose \
+    coverage analysis closed every gap across every dimension. \
+    Adjacency candidates surfaced earlier do not earn a call.
   - FACETS: if a dimension's candidates list contains one with \
     what_this_misses="nothing", commit ONLY that one. Other \
     candidates were adjacency context surfaced for honesty; \
@@ -1101,7 +1159,8 @@ OPERATIONAL TESTS:
   - FRAMINGS: multiple clean-fit categories across dimensions are \
     PERMITTED — they are alternative routes to the same signal \
     and reinforce under MAX. The CLEAN-FIT-only rule from FACETS \
-    does not apply.
+    does not apply. FRAMINGS only applies when no single category \
+    covers the trait on its own; if one does, the trait is SOLO.
 - POLARITY-DISCIPLINE. Does this call describe presence? Reject \
   any expression or retrieval_intent that includes negation / \
   absence — polarity is upstream.
@@ -1110,9 +1169,10 @@ OPERATIONAL TESTS:
   subject. POSITIONING_REFERENCE → calls describe the reference's \
   kept axes (no replaced axes). POSITIONING_QUALIFIER → at least \
   one call covers replaces_axis.
-- MODE-CONSISTENCY. For FACETS, no two committed categories cover \
-  the SAME axis of the trait. For FRAMINGS, overlapping coverage \
-  across categories is permitted and often correct.
+- MODE-CONSISTENCY. SOLO → exactly one entry. FACETS → no two \
+  committed categories cover the SAME axis of the trait. FRAMINGS \
+  → overlapping coverage across categories is permitted and often \
+  correct.
 
 ---
 
@@ -1142,15 +1202,17 @@ When trait.polarity == "negative":
 MINIMUM SET = set of CategoryCall entries (not expressions). \
 Multiple expressions in one call is the natural shape when a \
 category cleanly covers several dimensions — that's the right \
-collapse, not padding. What IS padding: two calls to the same \
-category; a call whose category was never a candidate on any of \
-its claimed dimensions.
+collapse, not padding. What IS padding: extra calls beyond what \
+coverage demands, two calls to the same category, or a call whose \
+category was never a candidate on any of its claimed dimensions.
 
-Most traits resolve to ONE call. Concrete one-dimensional traits \
-→ one call with one expression. Figurative multi-faceted traits \
-whose dimensions share a category → one call with several \
-expressions. Truly multi-category traits (franchise + \
-chronological-first) → multiple calls.
+Most traits resolve to ONE call (combine_mode SOLO). Concrete \
+single-axis traits → one call with one expression. Figurative \
+multi-faceted traits whose dimensions all share one clean-fit \
+category → one call with several expressions. Traits whose \
+coverage genuinely splits across categories — alternative homes \
+under FRAMINGS or distinct compounding axes under FACETS — are \
+the cases that warrant multiple calls.
 
 Padding the call list dilutes this trait's score sum relative to \
 peer traits — the merge step sums calls within a trait, and a \

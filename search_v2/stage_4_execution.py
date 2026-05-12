@@ -218,9 +218,16 @@ def combine_categories(
 
     Empty `category_scores` means no category fired for the trait
     (every category was NO_OP, every call failed, etc.) — returns 0.0
-    in either mode so an empty trait contributes nothing.
+    in any mode so an empty trait contributes nothing.
 
     Modes (per V4 plan in search_deepdive.md, with Phase 7 update):
+      SOLO     — exactly one surviving category covers the trait
+                 cleanly on its own. The single category's score IS
+                 the trait_score (passthrough). Extras are trimmed
+                 upstream by the orchestrator before retrieval; if
+                 multiple scores arrive here the first is used
+                 deterministically and the invariant breach is
+                 logged.
       FRAMINGS — categories are alternative homes for one underlying
                  thing; matching any one is sufficient evidence. MAX
                  over the category scores. Redundant categories
@@ -240,6 +247,20 @@ def combine_categories(
     """
     if not category_scores:
         return 0.0
+    if combine_mode is TraitCombineMode.SOLO:
+        # SOLO commits exactly one category; the orchestrator trims
+        # any extras emitted under SOLO before retrieval, so by the
+        # time scores reach this fold there should be exactly one.
+        # Defensive log if more arrive — surfaces an upstream trim
+        # gap without corrupting the score.
+        if len(category_scores) > 1:
+            logger.warning(
+                "combine_categories(SOLO) received %d scores; expected 1. "
+                "Taking the first deterministically — the orchestrator's "
+                "SOLO trim should have dropped the extras before retrieval.",
+                len(category_scores),
+            )
+        return category_scores[0]
     if combine_mode is TraitCombineMode.FRAMINGS:
         return max(category_scores)
     if combine_mode is TraitCombineMode.FACETS:
