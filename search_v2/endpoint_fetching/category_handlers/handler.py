@@ -290,11 +290,13 @@ def determine_operation_type(
     if route is EndpointRoute.SEMANTIC:
         return OperationType.POOL_RERANKER
 
+    if route is EndpointRoute.CHRONOLOGICAL:
+        return OperationType.POOL_RERANKER
+
     if route is EndpointRoute.METADATA:
         if category in (
             CategoryName.GENERAL_APPEAL,
             CategoryName.CULTURAL_STATUS,
-            CategoryName.CHRONOLOGICAL,
         ):
             return OperationType.POOL_RERANKER
         return OperationType.CANDIDATE_GENERATOR

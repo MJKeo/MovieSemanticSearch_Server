@@ -443,6 +443,7 @@ class EndpointRoute(StrEnum):
     TRENDING = "trending"
     MEDIA_TYPE = "media_type"
     NEUTRAL_SEED = "neutral_seed"
+    CHRONOLOGICAL = "chronological"
 
 
 # Whether a generated endpoint spec runs as a candidate finder

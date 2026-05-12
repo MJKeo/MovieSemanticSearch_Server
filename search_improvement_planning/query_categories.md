@@ -676,17 +676,28 @@ flow.
 ## Ordinal selection
 
 ### 44. Chronological ordinal
-**Endpoints:** META.release_date (sort-and-pick).
-**Handles:** release-date ordinal position within a scoped
+**Endpoints:** CHRONOLOGICAL (bespoke single-endpoint route;
+`ChronologicalQuerySpec` with one field, `direction`). Bucket:
+SINGLE_NON_METADATA_ENDPOINT.
+**Handles:** release-date position phrasings within a scoped
 candidate set — "first," "last," "earliest," "latest," "most
-recent," "the newest one," "the oldest one."
-**Mechanism:** order the candidate pool (scoped by the rest of
-the query's categories) by `movie_card.release_date` and select
-the top-N position indicated by the phrasing.
-**Boundaries:** ordinal selection only. Range or decay framings
-("90s movies," "recent," "before 2000") → Cat 13. "Most recent"
-is chronology; "best" / "most acclaimed" is reception/status
-superlative (Cats 38/39). "The latest Scorsese" is Cat 44 + Cat 1.
+recent," "the newest one," "the oldest one," "original."
+**Mechanism:** POOL_RERANKER. The endpoint receives the candidate
+pool the rest of the query's categories produced and scores every
+movie on a continuous recency percentile curve over the pool's
+`release_ts` values. Every distinct release date occupies its own
+slot in [0, 1] — a one-day difference always matters. For
+`direction=oldest_first` the oldest movie scores 1.0; for
+`direction=newest_first` the newest scores 1.0. The enum values
+name the winning extreme directly to avoid the "chronological"
+adjective's competing English readings. Movies sharing a release
+date receive identical scores; movies with a missing release_ts
+score 0.0.
+**Boundaries:** position phrasings only. Range / window framings
+("90s movies," "recent," "before 2000") → Cat 13 — those saturate
+above a cap, this curve does not. "Most recent" is chronology;
+"best" / "most acclaimed" is reception/status superlative
+(Cats 38/39). "The latest Scorsese" is Cat 44 + Cat 1.
 
 ---
 
@@ -776,7 +787,7 @@ ordinary mechanical category fits.
 | Post-viewing resonance ("haunting") | Cat 33 | Combo additive |
 | Cultural influence / still-holds-up | Cat 39 | RCP prose + optional META prior |
 | Live trending | Cat 12 | Dedicated endpoint |
-| Chronological ordinal | Cat 44 | META.release_date sort-and-pick |
+| Chronological ordinal | Cat 44 | CHRONOLOGICAL bespoke endpoint (direction: oldest_first / newest_first; percentile-rank pool reranker) |
 | Media type (TV-movie / short / video) | Cat 21 | Dedicated META single-attribute |
 
 ---

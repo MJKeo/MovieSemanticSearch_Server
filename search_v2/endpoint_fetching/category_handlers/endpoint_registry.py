@@ -73,10 +73,12 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.award_translation import AwardEndpointParameters
+from schemas.chronological_translation import ChronologicalQuerySpec
 from schemas.entity_translation import (
     CharacterQuerySpec,
     PersonQuerySpec,
     TitlePatternQuerySpec,
+    WriterOnlyPersonQuerySpec,
 )
 from schemas.enums import EndpointRoute, HandlerBucket
 from schemas.franchise_translation import FranchiseEndpointParameters
@@ -252,6 +254,7 @@ ROUTE_TO_WRAPPER: dict[EndpointRoute, WrapperRef] = {
     EndpointRoute.KEYWORD: KeywordEndpointParameters,
     EndpointRoute.TRENDING: None,
     EndpointRoute.MEDIA_TYPE: MediaTypeEndpointParameters,
+    EndpointRoute.CHRONOLOGICAL: ChronologicalQuerySpec,
 }
 
 
@@ -322,6 +325,11 @@ _ENTITY_DISPATCH: dict[CategoryName, type[BaseModel]] = {
     CategoryName.PERSON_CREDIT: PersonQuerySpec,
     CategoryName.NAMED_CHARACTER: CharacterQuerySpec,
     CategoryName.TITLE_TEXT: TitlePatternQuerySpec,
+    # Source-material authors land in the writer posting table only —
+    # see WriterOnlyPersonQuerySpec, which coerces person_category to
+    # WRITER post-parse so the LLM's role pick cannot route this
+    # category to actor/director/etc.
+    CategoryName.NAMED_SOURCE_CREATOR: WriterOnlyPersonQuerySpec,
 }
 
 

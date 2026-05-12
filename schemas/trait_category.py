@@ -1219,7 +1219,15 @@ class CategoryName(str, Enum):
             "subject) → CHARACTER_FRANCHISE + 'books' → ADAPTATION_SOURCE.",
             "'Christopher Nolan' → PERSON_CREDIT (director).",
         ),
-        (EndpointRoute.SEMANTIC,),
+        # Routes to ENTITY as a writer-credit lookup. IMDB's GraphQL
+        # `writer` category aggregates every writing credit (screenplay,
+        # story, novel, characters, adaptation) into one bucket, and an
+        # audit found near-100% recall on canonical adaptations for
+        # distinctively named source authors. The schema dispatch
+        # (endpoint_registry._ENTITY_DISPATCH) hands this category
+        # WriterOnlyPersonQuerySpec, which coerces person_category to
+        # WRITER so the lookup always hits the writer posting table.
+        (EndpointRoute.ENTITY,),
         HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
         CategoryCombineType.SINGLE,
     )
@@ -1231,12 +1239,15 @@ class CategoryName(str, Enum):
     CHRONOLOGICAL = (
         "Chronological ordinal",
         (
-            "Release-date ordinal position — 'first', 'last', 'earliest', "
-            "'latest', 'most recent', 'the newest one', 'the oldest one'."
+            "Release-date position phrasing — 'first', 'last', 'earliest', "
+            "'latest', 'most recent', 'the newest one', 'the oldest one'. "
+            "Scores the candidate pool on a continuous recency percentile "
+            "curve where every distinct date matters."
         ),
         (
-            "Ordinal position only. Range/decay framings ('90s', 'recent', "
-            "'before 2000') → RELEASE_DATE. Quality superlatives split: "
+            "Position phrasings only. Range/window framings ('90s', "
+            "'recent', 'before 2000') → RELEASE_DATE — those saturate above "
+            "a cap; this curve does not. Quality superlatives split: "
             "'best' → GENERAL_APPEAL; 'most acclaimed' → CULTURAL_STATUS."
         ),
         (
@@ -1249,7 +1260,7 @@ class CategoryName(str, Enum):
             "'best of all time' splits: 'best' → GENERAL_APPEAL + 'of all "
             "time' → CULTURAL_STATUS.",
         ),
-        (EndpointRoute.METADATA,),
-        HandlerBucket.SINGLE_METADATA_ENDPOINT,
+        (EndpointRoute.CHRONOLOGICAL,),
+        HandlerBucket.SINGLE_NON_METADATA_ENDPOINT,
         CategoryCombineType.SINGLE,
     )

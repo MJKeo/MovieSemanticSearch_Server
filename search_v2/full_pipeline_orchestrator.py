@@ -695,7 +695,6 @@ _SEMANTIC_PROMOTION_TIERS: dict[CategoryName, PromotionTier] = {
     CategoryName.PLOT_EVENTS: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
     CategoryName.NARRATIVE_SETTING: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
     CategoryName.FILMING_LOCATION: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
-    CategoryName.NAMED_SOURCE_CREATOR: PromotionTier.CONCRETE_FACT_OR_IDENTIFIER,
     # Tier 2 — concrete element / structural feature.
     CategoryName.ELEMENT_PRESENCE: PromotionTier.CONCRETE_ELEMENT_OR_STRUCTURE,
     CategoryName.GENRE: PromotionTier.CONCRETE_ELEMENT_OR_STRUCTURE,

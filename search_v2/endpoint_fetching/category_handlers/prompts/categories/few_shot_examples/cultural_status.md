@@ -17,7 +17,27 @@
 - `coverage_exploration`: semantic carries the framing; metadata's scalars layer on as priors that reinforce. Both fire — semantic's experiential framing fills metadata's framing weakness; metadata's scalar anchor fills semantic's numerical weakness.
 - `coverage_commitments`: `semantic.verdict=commit` (slice: canonical-stature framing) + `metadata.verdict=commit` (slice: scalar anchor).
 - `semantic_parameters`: `reception` body capturing canonical-stature language.
-- `metadata_parameters`: reception and/or popularity prior; no release-date logic here.
+- `metadata_parameters`: `reception=well_received` and `popularity=popular` as substitutable evidence of canonical stature; `scoring_method=ANY` (either signal alone supports the concept).
+</example>
+
+<example>
+## Input
+```xml
+<raw_query>cult classics</raw_query>
+<target_entry>
+  <captured_meaning>Movies with cult-classic status — niche reach but devoted appreciation.</captured_meaning>
+  <category_name>Cultural status / canonical stature</category_name>
+  <atomic_rewrite>Cult-classic status (niche + well-received compound).</atomic_rewrite>
+</target_entry>
+```
+
+## Expected Decision
+- `semantic_walk`: aspect "cult following / devoted niche reception"; `reception` (strengths: cult-following framing lives in reception prose — devoted fans, midnight screenings, cult-classic language; weaknesses: under-coverage of the niche-vs-mainstream scalar axis that the embedding can't anchor numerically).
+- `metadata_walk`: `popularity` and `reception` columns with strengths: `popularity=niche` anchors the "cult" (low-mainstream) half and `reception=well_received` anchors the "classic" (quality) half; weaknesses: under-coverage of the cult-following nuance (devoted fan-base framing lives in semantic, not scalars).
+- `coverage_exploration`: semantic carries the cult-following nuance; metadata decomposes the compound into its two required scalar axes. Both fire — and within metadata, the two columns are **reinforcing facets** of one compound term, not substitutable evidence of one concept: a niche flop is not a cult classic, and a well-received mainstream film is not a cult classic. Both axes must be present.
+- `coverage_commitments`: `semantic.verdict=commit` (slice: cult-following framing) + `metadata.verdict=commit` (slice: niche + well-received compound).
+- `semantic_parameters`: `reception` body capturing cult-following / devoted-niche language.
+- `metadata_parameters`: `popularity=niche` AND `reception=well_received`; `scoring_method=ALL` (reinforcing facets — both axes required to qualify as a cult classic).
 </example>
 
 <example>

@@ -1063,14 +1063,13 @@ _AUTHORITATIVE_NEGATION_CATEGORIES: frozenset[CategoryName] = frozenset({
     CategoryName.FINANCIAL_SCALE,
     CategoryName.COUNTRY_OF_ORIGIN,
     CategoryName.MEDIA_TYPE,
-    # NOTE: CHRONOLOGICAL is intentionally excluded. It routes through
-    # METADATA but determine_operation_type treats it as POOL_RERANKER
-    # for positive polarity (alongside GENERAL_APPEAL, CULTURAL_STATUS),
-    # so its negative would-be-positive is POOL_RERANKER and the call
-    # never enters the G_a partition regardless of this set. Treating
-    # CHRONOLOGICAL as fuzzy is also defensible semantically — most
-    # decomposer phrasings ("old", "recent", "from the 80s") are
-    # approximate rather than precise.
+    # NOTE: CHRONOLOGICAL is intentionally excluded. It lives on its
+    # own EndpointRoute.CHRONOLOGICAL route and determine_operation_type
+    # pins it to POOL_RERANKER, so its negative would-be-positive is
+    # POOL_RERANKER and the call never enters the G_a partition
+    # regardless of this set. Treating CHRONOLOGICAL as fuzzy is also
+    # defensible semantically — most decomposer phrasings ("old",
+    # "recent", "from the 80s") are approximate rather than precise.
 })
 
 

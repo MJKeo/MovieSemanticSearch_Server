@@ -15,14 +15,19 @@ Ask:
 
 ## Metadata Augmentation
 
-Metadata is a supporting prior only. Fire it when scalar reception or popularity genuinely reinforces the status term.
+Metadata is a supporting prior only. Fire it when scalar reception or popularity genuinely reinforces the status term. Two distinct shapes:
+
+**Single-concept stature** — `classic`, `iconic`, `landmark`, `culturally significant`, `widely canonical`. One underlying idea (canonical stature) with multiple evidencing axes. Fire `reception=well_received` and/or `popularity=popular` as **substitutable** evidence → `scoring_method=ANY`. Either scalar alone is some evidence of canonical stature.
+
+**Compound stature** — `cult classic`, `cult favorite`, `beloved hidden gem`. Two reinforcing axes that BOTH must be present: niche reach + positive reception. Decompose:
+- `cult classic` → `popularity=niche` AND `reception=well_received` → `scoring_method=ALL`. Both are required — niche alone isn't a cult classic (could be an obscure flop), and well-received alone isn't a cult classic (could be a mainstream prestige film). The "cult" half maps to popularity, the "classic" half maps to reception; they reinforce rather than substitute.
+
+**Gap / polarization shapes** — `underrated`, `overhyped`, `divisive`, `ahead of its time`. The intent is a *relationship* between axes (quality > recognition, hype > quality, critic ≠ audience), not the axes themselves. Scalar priors cannot express that relationship even composed with ALL, so metadata abstains and the semantic reception body carries the slice.
 
 Ask:
-- Does the status imply broad quality, broad popularity, or both?
+- Does the status imply broad quality, broad popularity, both, or a gap between them?
+- If both, are they substitutable evidence of one concept (ANY) or reinforcing facets of a compound (ALL)?
 - Would a scalar prior help without changing the semantic status shape?
-- Is the phrase instead a gap or polarization that scalars cannot express?
-
-Good metadata fits: classic, iconic, landmark, culturally significant, widely canonical. Weak or usually no metadata: underrated, overhyped, divisive, cult, ahead of its time.
 
 ## Boundary Checks
 

@@ -29,7 +29,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, conlist, constr
+from pydantic import BaseModel, ConfigDict, Field, conlist, constr, model_validator
 
 from schemas.endpoint_parameters import EndpointParameters
 
@@ -418,3 +418,37 @@ class TitlePatternQuerySpec(EndpointParameters):
 # and are selected per category by endpoint_registry._ENTITY_DISPATCH.
 # This is the analog of how SEMANTIC dispatches per role — entity
 # dispatches per CategoryName.
+
+
+# ---------------------------------------------------------------------
+# Writer-only person query (NAMED_SOURCE_CREATOR)
+# ---------------------------------------------------------------------
+
+
+# Reuses PersonQuerySpec's full shape — including the `person_category`
+# and `prominence_mode` slots the schema requires — but a post-parse
+# validator coerces both to fixed values so the LLM's role pick cannot
+# leak into retrieval. The category is hard-wired to source-author
+# lookups; the writer posting table is the only correct target, and
+# scoring is binary row-presence (see entity_query_execution
+# ._fetch_binary_role_scores), so prominence is meaningless here.
+#
+# The validator REVISES instead of REJECTS — an LLM that emits
+# DIRECTOR for "Stephen King" still produces a usable spec rather than
+# a hard failure, with the offending field silently normalized.
+class WriterOnlyPersonQuerySpec(PersonQuerySpec):
+    @model_validator(mode="after")
+    def _force_writer_role(self) -> "WriterOnlyPersonQuerySpec":
+        # Mutate each target in place. PersonTarget's other fields
+        # (forms, person_exploration, prominence_exploration) stay
+        # untouched — the alias enumeration the LLM did is still useful
+        # because IMDB credits the same source author under slight
+        # variants ("J.R.R. Tolkien" vs. "John Ronald Reuel Tolkien",
+        # "Philip K. Dick" vs. "Philip Kindred Dick").
+        for target in self.targets:
+            target.person_category = PersonCategory.WRITER
+            # Non-actor specific roles ignore prominence_mode at the
+            # executor (see _execute_person_target), so this is purely
+            # a normalization for spec consumers reading the field.
+            target.prominence_mode = PersonProminenceMode.DEFAULT
+        return self

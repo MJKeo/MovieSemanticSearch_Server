@@ -36,6 +36,7 @@ from typing import Any, Coroutine
 
 from qdrant_client import AsyncQdrantClient
 
+from schemas.chronological_translation import ChronologicalQuerySpec
 from schemas.endpoint_parameters import EndpointParameters
 from schemas.endpoint_result import EndpointResult
 from schemas.entity_translation import (
@@ -52,6 +53,9 @@ from search_v2.endpoint_fetching.award_query_execution import execute_award_quer
 from search_v2.endpoint_fetching.category_handlers.endpoint_registry import (
     ROUTE_TO_WRAPPER,
     ROUTE_TO_SUBINTENT_WRAPPER,
+)
+from search_v2.endpoint_fetching.chronological_query_execution import (
+    execute_chronological_query,
 )
 from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
     GeneratedEndpointSpec,
@@ -135,12 +139,22 @@ def build_endpoint_coroutine(
     route = spec.route
     wrapper = spec.params
 
-    # ENTITY is the one route whose `wrapper` IS the spec (the three
-    # per-category specs inherit from EndpointParameters directly,
-    # without an intermediate Entity wrapper). Every other route still
-    # uses the wrapper.parameters indirection.
+    # ENTITY and CHRONOLOGICAL are routes whose `wrapper` IS the spec
+    # — the spec class inherits from EndpointParameters directly with
+    # no intermediate `parameters` wrapper. ENTITY does this because
+    # the three per-category specs each have a different shape and a
+    # union-typed wrapper offered no schema-level narrowing;
+    # CHRONOLOGICAL does it because the spec carries a single
+    # `direction` field and a wrapper indirection would be empty
+    # overhead. Every other route still uses the wrapper.parameters
+    # indirection.
     if route == EndpointRoute.ENTITY:
         return execute_entity_query(
+            wrapper, restrict_to_movie_ids=restrict_to_movie_ids
+        )
+    if route == EndpointRoute.CHRONOLOGICAL:
+        assert isinstance(wrapper, ChronologicalQuerySpec)
+        return execute_chronological_query(
             wrapper, restrict_to_movie_ids=restrict_to_movie_ids
         )
 
