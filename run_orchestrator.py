@@ -41,6 +41,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
+from search_v2 import full_pipeline_orchestrator as _orchestrator_module  # noqa: E402
+from search_v2 import stage_4_execution as _stage4_module  # noqa: E402
 from search_v2.full_pipeline_orchestrator import (  # noqa: E402
     BranchRankedResults,
     CategoryCallWithEndpoints,
@@ -52,6 +54,25 @@ from search_v2.full_pipeline_orchestrator import (  # noqa: E402
 from db.postgres import fetch_movie_cards, pool as postgres_pool  # noqa: E402
 import db.redis as _redis_module  # noqa: E402
 from db.redis import init_redis  # noqa: E402
+
+
+# Per-spec origin map populated by the generation-phase wrapper below.
+# Keyed by `id(spec)` so the execution-phase wrapper can recover the
+# (trait, category) labels for any spec it dispatches without changing
+# the spec's signature. Cleared at the start of every pipeline run so
+# stale ids from prior runs cannot leak across invocations.
+_spec_origin: dict[int, tuple[str, str]] = {}
+
+# Holds spec object references so their ids remain valid for the full
+# lifetime of one pipeline run. Python may otherwise recycle id() of a
+# garbage-collected spec, causing the origin lookup to alias an
+# unrelated object. Cleared together with _spec_origin per run.
+_spec_keepalive: list[GeneratedEndpointSpec] = []
+
+# Timing logger — emits [trait][category][phase] X.XXs lines through the
+# same handler/formatter as the existing pipeline INFO logs so output
+# stays interleaved chronologically.
+_timing_logger = logging.getLogger("run_orchestrator.timing")
 
 
 # Top-N to display from each branch's ranked candidate list. Stage 4
@@ -77,15 +98,126 @@ def _configure_realtime_logging() -> None:
     # Surface per-step events from the front-half orchestrator AND the
     # Stage-4 executor (per-branch ranking timing, auxiliary spec
     # decisions, per-call failure warnings) without pulling in noisy
-    # INFO chatter from httpx / openai / etc.
+    # INFO chatter from httpx / openai / etc. The run_orchestrator
+    # timing logger reuses the same handler so the new
+    # [trait][category][phase] lines interleave with existing events.
     for logger_name in (
         "search_v2.full_pipeline_orchestrator",
         "search_v2.stage_4_execution",
+        "run_orchestrator.timing",
     ):
         sub_logger = logging.getLogger(logger_name)
         sub_logger.setLevel(logging.INFO)
         sub_logger.addHandler(handler)
         sub_logger.propagate = False
+
+
+# ---------------------------------------------------------------------------
+# Per-(trait, category, phase) timing instrumentation.
+#
+# We monkey-patch two pipeline seams from this CLI rather than editing
+# the pipeline modules themselves: the goal is purely diagnostic output
+# for this runner, so the instrumentation lives next to the printer.
+#
+#   * Generation phase — wrap _process_category_call in the front-half
+#     orchestrator. Its inner `run_query_generation` call is the unit
+#     of "category query generation"; we time the whole wrapper because
+#     deterministic / no-op categories also flow through it and should
+#     still surface a (near-zero) timing line for symmetry.
+#
+#   * Execution phase — wrap stage_4_execution._dispatch_call. That is
+#     the single chokepoint every per-spec endpoint call passes through
+#     during Phase B (generators) and Phase C (rerankers). We recover
+#     the (trait, category) provenance from id(spec) using the map the
+#     generation wrapper populates; auxiliary specs (shorts exclusion,
+#     neutral seed) have no trait/category and are logged under a
+#     synthetic "<auxiliary>" label so they remain visible.
+# ---------------------------------------------------------------------------
+
+
+def _install_timing_patches() -> None:
+    """Replace the two pipeline functions with timing-aware wrappers.
+
+    Idempotent — re-installation only attaches our wrapper once, even
+    if the module is reloaded inside the same Python process. The
+    wrappers delegate to the originals, so behavior is identical aside
+    from the new log emissions.
+    """
+    original_process_category_call = _orchestrator_module._process_category_call
+    original_dispatch_call = _stage4_module._dispatch_call
+
+    async def timed_process_category_call(
+        category_call,
+        trait,
+        *,
+        branch_label,
+        sibling_calls,
+        combine_mode,
+    ):
+        # Resolve labels once up front so the log line stays consistent
+        # regardless of whether generation succeeds, errors, or yields
+        # an empty spec list (deterministic NO_OP categories included).
+        trait_label = trait.surface_text
+        category_label = category_call.category.name
+
+        start = time.perf_counter()
+        result = await original_process_category_call(
+            category_call,
+            trait,
+            branch_label=branch_label,
+            sibling_calls=sibling_calls,
+            combine_mode=combine_mode,
+        )
+        elapsed = time.perf_counter() - start
+
+        _timing_logger.info(
+            "[%s][%s][generation] %.2fs",
+            trait_label,
+            category_label,
+            elapsed,
+        )
+
+        # Register every emitted spec so the execution-phase wrapper can
+        # recover (trait, category) by id(spec). Keepalive list pins the
+        # spec objects for the duration of the run so id() reuse cannot
+        # cause origin-map aliasing.
+        for spec in result.generated_specs:
+            _spec_origin[id(spec)] = (trait_label, category_label)
+            _spec_keepalive.append(spec)
+
+        return result
+
+    async def timed_dispatch_call(spec, *, restrict):
+        # Auxiliary specs (shorts exclusion, neutral seed) are not
+        # produced by _process_category_call so they have no origin
+        # entry — label them explicitly rather than dropping the line.
+        origin = _spec_origin.get(id(spec))
+        if origin is None:
+            trait_label, category_label = "<auxiliary>", spec.route.value
+        else:
+            trait_label, category_label = origin
+
+        start = time.perf_counter()
+        result = await original_dispatch_call(spec, restrict=restrict)
+        elapsed = time.perf_counter() - start
+
+        _timing_logger.info(
+            "[%s][%s][execution] %.2fs (route=%s)",
+            trait_label,
+            category_label,
+            elapsed,
+            spec.route.value,
+        )
+        return result
+
+    _orchestrator_module._process_category_call = timed_process_category_call
+    _stage4_module._dispatch_call = timed_dispatch_call
+
+
+def _reset_timing_state() -> None:
+    """Clear per-run origin tracking before each pipeline invocation."""
+    _spec_origin.clear()
+    _spec_keepalive.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +527,10 @@ async def _run(query: str) -> None:
 
     await _ensure_db_ready()
 
+    # Wipe any stale (trait, category) origin entries from a prior run
+    # in the same process before the new pipeline starts emitting specs.
+    _reset_timing_state()
+
     pipeline_start = time.perf_counter()
     result = await run_full_pipeline(query, skip_bypass_steps_0_1=True)
     pipeline_elapsed = time.perf_counter() - pipeline_start
@@ -427,6 +563,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     _configure_realtime_logging()
+    _install_timing_patches()
     args = _parse_args()
     asyncio.run(_run(args.query))
 

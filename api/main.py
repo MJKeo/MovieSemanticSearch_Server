@@ -1,9 +1,20 @@
+import json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from db.postgres import pool, check_postgres
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from db.postgres import (
+    check_postgres,
+    fetch_movie_card_summaries,
+    pool,
+)
 from db.qdrant import qdrant_client, check_qdrant
 from db.redis import init_redis, close_redis, check_redis
 from implementation.misc.event_loop import install_uvloop
+from schemas.api_responses import MovieCard
+from search_v2.similar_movies import run_similar_movies_for_ids
+from search_v2.streaming_orchestrator import stream_full_pipeline
 
 # Switch asyncio onto uvloop before uvicorn starts the event loop.
 # ~2x faster than the default selector loop on socket-heavy workloads
@@ -50,3 +61,95 @@ async def health_check():
     results["redis"] = await check_redis()
     results["qdrant"] = await check_qdrant()
     return results
+
+
+# ---------------------------------------------------------------------------
+# Search endpoints
+# ---------------------------------------------------------------------------
+
+
+class QuerySearchBody(BaseModel):
+    """Request body for POST /query_search."""
+
+    query: str = Field(min_length=1)
+
+
+class SimilaritySearchBody(BaseModel):
+    """Request body for POST /similarity_search."""
+
+    tmdb_ids: list[int] = Field(min_length=1)
+
+
+@app.post("/query_search")
+async def query_search(body: QuerySearchBody):
+    """
+    Stream the multi-channel search pipeline as Server-Sent Events.
+
+    Events (in order, named on the SSE wire):
+      - fetches_ready  — fires once after Steps 0+1. Lists every "fetch"
+                          the pipeline will run (standard branches +
+                          exact-title + similarity).
+      - branch_traits  — fires per standard-flow branch when Step 2
+                          completes (one per branch). Skipped for the
+                          non-standard flows.
+      - branch_results — fires per fetch when its execution finishes.
+                          Per-fetch errors surface in the payload's
+                          `branch_error` field, not the `error` event.
+      - done           — terminal event with `total_elapsed` seconds.
+      - error          — only for fatal failures (Step 0 unrecoverable).
+
+    Returns:
+      HTTP 200 with `text/event-stream` content. Empty `query` → 400.
+    """
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query must be non-empty.")
+
+    async def event_stream():
+        # Translate (event_name, payload) pairs from the orchestrator
+        # into SSE wire frames. We let CancelledError propagate so
+        # Starlette can clean up on client disconnect; the orchestrator's
+        # `finally` block cancels any in-flight tasks before unwinding.
+        async for event_name, payload in stream_full_pipeline(query):
+            yield f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # Disable buffering at common reverse-proxy layers so events
+            # flush to the client immediately rather than accumulating.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/similarity_search", response_model=list[MovieCard])
+async def similarity_search(body: SimilaritySearchBody) -> list[MovieCard]:
+    """
+    Run the similarity-search flow against a caller-supplied anchor set.
+
+    Takes a list of TMDB IDs (the anchors) and returns ranked similar
+    movies as an array of MovieCard objects (tmdb_id, title,
+    release_date, poster_url), sorted by descending similarity score.
+    Bypasses the natural-language pipeline entirely.
+
+    Errors:
+      - Empty `tmdb_ids` → 422 (pydantic).
+      - Unknown TMDB IDs → 422 with the missing IDs in the detail.
+    """
+    try:
+        result = await run_similar_movies_for_ids(body.tmdb_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        # Raised when one or more tmdb_ids don't exist in movie_card.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Hydrate the ranked tmdb_ids into MovieCard summaries. Order is
+    # preserved by fetch_movie_card_summaries, so the response stays
+    # sorted by descending similarity score. FastAPI's response_model
+    # serializes the Pydantic instances to JSON.
+    ranked_ids = [r.movie_id for r in result.ranked]
+    return await fetch_movie_card_summaries(ranked_ids)

@@ -359,29 +359,70 @@ async def _run_branch(
     query: str,
     ui_label: str,
 ) -> Step2BranchResult:
+    # Composition of the two phases below — kept as a one-liner so
+    # existing callers (run_full_pipeline) see no behavior change.
+    partial, qa = await _run_step2_for_branch(kind, query, ui_label)
+    if qa is None:
+        # Step 2 failed; partial already carries branch_error.
+        return partial
+    return await _finish_branch_after_step2(partial, qa, kind)
+
+
+async def _run_step2_for_branch(
+    kind: BranchKind,
+    query: str,
+    ui_label: str,
+) -> tuple[Step2BranchResult, "QueryAnalysis | None"]:
+    """Run Step 2 and return (partial branch, QueryAnalysis or None).
+
+    On Step 2 failure: returns a Step2BranchResult with branch_error
+    populated, and QueryAnalysis=None. On success: returns a partial
+    Step2BranchResult (traits=[] until Step 3 fills them in) and the
+    QueryAnalysis the caller needs to drive Step 3.
+
+    The streaming orchestrator uses this two-phase split so it can emit
+    a `branch_traits` event between Step 2 and Step 3 fan-out.
+    """
     try:
         qa, _, _, _ = await _call_with_retry(
             lambda: run_step_2(query),
             label=f"step_2[{kind}]",
         )
     except Exception as exc:  # noqa: BLE001 — soft-fail per branch
-        return Step2BranchResult(
-            kind=kind,
-            query=query,
-            ui_label=ui_label,
-            traits=[],
-            branch_error=repr(exc),
+        return (
+            Step2BranchResult(
+                kind=kind,
+                query=query,
+                ui_label=ui_label,
+                traits=[],
+                branch_error=repr(exc),
+            ),
+            None,
         )
 
-    implicit_task = _run_implicit_expectations_for_branch(query, qa, kind)
-    # Per-trait fan-out runs alongside implicit-prior policy. The
-    # implicit step consumes only Step-2 output, so it does not need to
-    # wait for Step 3 endpoint decomposition.
-    #
-    # Each trait's Step 3 call receives its sibling traits' structural
-    # fields (relationship_role + axis bookkeeping) so positioning
-    # references can drop replaced axes without violating per-trait
-    # isolation. Sibling list is computed here once per trait.
+    partial = Step2BranchResult(
+        kind=kind,
+        query=query,
+        ui_label=ui_label,
+        traits=[],
+    )
+    return partial, qa
+
+
+async def _finish_branch_after_step2(
+    partial: Step2BranchResult,
+    qa: "QueryAnalysis",
+    kind: BranchKind,
+) -> Step2BranchResult:
+    """Run Step 3 + handler fan-out alongside implicit policy.
+
+    Mirrors the post-Step-2 half of the original `_run_branch`: implicit
+    expectations and per-trait Step 3/handler fan-out run in parallel,
+    then both fold into the returned Step2BranchResult. Constructing
+    the implicit-expectations coroutine here (rather than passing one
+    in) keeps cancellation correct — `asyncio.gather` cancels its inner
+    coroutines when the outer task is cancelled.
+    """
     trait_task = asyncio.gather(
         *(
             _decompose_and_generate(
@@ -394,17 +435,12 @@ async def _run_branch(
     )
     trait_results, (implicit, implicit_error) = await asyncio.gather(
         trait_task,
-        implicit_task,
+        _run_implicit_expectations_for_branch(partial.query, qa, kind),
     )
-
-    return Step2BranchResult(
-        kind=kind,
-        query=query,
-        ui_label=ui_label,
-        traits=trait_results,
-        implicit_expectations=implicit,
-        implicit_expectations_error=implicit_error,
-    )
+    partial.traits = trait_results
+    partial.implicit_expectations = implicit
+    partial.implicit_expectations_error = implicit_error
+    return partial
 
 
 async def _run_implicit_expectations_for_branch(

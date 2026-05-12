@@ -8,11 +8,13 @@ upserting/inserting movie and lexical data.
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Sequence
 from psycopg_pool import AsyncConnectionPool
 from implementation.misc.sql_like import escape_like
 from implementation.classes.schemas import MetadataFilters
+from schemas.api_responses import MovieCard
 from schemas.award_category_tags import tags_for_category
 from schemas.enums import AwardCeremony, AwardOutcome
 from schemas.imdb_models import AwardNomination
@@ -1818,6 +1820,48 @@ async def fetch_movie_cards(movie_ids: list[int]) -> list[dict]:
 
     search_results = await _execute_read(query, (movie_ids,))
     return [dict(zip(columns, row)) for row in search_results]
+
+
+async def fetch_movie_card_summaries(movie_ids: list[int]) -> list[MovieCard]:
+    """Bulk-fetch `MovieCard` API response objects for the given tmdb_ids.
+
+    Thin projection over `fetch_movie_cards` that keeps only the four
+    fields the frontend needs (title, release_date, tmdb_id, poster_url)
+    and converts `release_ts` (Unix seconds) into an ISO YYYY-MM-DD
+    string. Preserves the caller's input order; tmdb_ids absent from
+    `movie_card` are silently dropped — the API treats them as
+    not-yet-ingested rather than as errors.
+
+    Single SQL query (delegated to `fetch_movie_cards`) — never
+    per-candidate, per the cross-codebase invariant.
+    """
+    if not movie_ids:
+        return []
+
+    rows = await fetch_movie_cards(movie_ids)
+    by_id = {row["movie_id"]: row for row in rows}
+
+    cards: list[MovieCard] = []
+    for movie_id in movie_ids:
+        row = by_id.get(movie_id)
+        if row is None:
+            continue
+        cards.append(
+            MovieCard(
+                tmdb_id=int(row["movie_id"]),
+                title=row.get("title"),
+                release_date=_release_ts_to_date(row.get("release_ts")),
+                poster_url=row.get("poster_url"),
+            )
+        )
+    return cards
+
+
+def _release_ts_to_date(release_ts: int | None) -> str | None:
+    """Convert a Unix-seconds timestamp to an ISO YYYY-MM-DD string."""
+    if release_ts is None:
+        return None
+    return datetime.fromtimestamp(release_ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 async def fetch_movie_ids_missing_card(candidate_ids: list[int]) -> list[int]:
