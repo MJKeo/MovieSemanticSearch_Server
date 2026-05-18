@@ -207,6 +207,23 @@ async def _embed_body(body: SemanticBody) -> list[float]:
     return embeddings[0]
 
 
+async def _embed_bodies(bodies: list[SemanticBody]) -> list[list[float]]:
+    """Embed multiple semantic bodies in a single OpenAI call.
+
+    Earlier code did `asyncio.gather(*[_embed_body(b) for b in bodies])`
+    which fans out N parallel single-input HTTP requests. OpenAI's
+    embeddings endpoint accepts a list input, so we collapse the fan-
+    out into one call that round-trips once. Returns embeddings in
+    the same order as the input bodies.
+    """
+    if not bodies:
+        return []
+    return await generate_vector_embedding(
+        [body.embedding_text() for body in bodies],
+        model=EMBEDDING_MODEL,
+    )
+
+
 async def _run_corpus_topn(
     embedding: list[float],
     vector_name: VectorName,
@@ -693,8 +710,11 @@ async def execute_semantic_query(
     scores: dict[int, float] = {}
     for attempt in range(2):
         try:
-            embeddings = await asyncio.gather(
-                *[_embed_body(e.content) for e in inputs.entries]
+            # Batch all space queries into ONE embedding call. The
+            # previous gather-of-singletons paid one HTTP RTT per
+            # entry; the bulk call collapses that to one round-trip.
+            embeddings = await _embed_bodies(
+                [e.content for e in inputs.entries]
             )
             if is_carver:
                 if restrict_to_movie_ids is None:

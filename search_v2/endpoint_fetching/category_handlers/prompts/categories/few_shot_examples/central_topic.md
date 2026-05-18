@@ -251,16 +251,18 @@ Input:
 <retrieval_intent>Find films whose focal subject is dogs.</retrieval_intent>
 <expressions><expression>movies about dogs</expression></expressions>
 ```
-Expected: both endpoints commit. Keyword walk surfaces `ANIMAL` —
-dogs are a meaningful slice of animal films, so ANIMAL is a slightly
-broader single-member superset (every dog film is an animal film;
-the over-pull picks up cat / horse / wildlife films, which is
-acceptable because semantic recovers the dog-specificity on the
-same call). Commit `ANIMAL` alone. Correlation-only members fail
-the test — `FAMILY` fits most dog movies but also covers Pixar /
-family-comedy / holiday films with no dog at all, so it does not
-earn a commit and is not stitched on. Semantic commits exclusively
-on `plot_analysis`:
+Expected: semantic-only commit; keyword abstains with
+`commitment-criteria-fail`. Keyword walk surfaces `ANIMAL_ADVENTURE`
+(narrow sub-form — every ANIMAL_ADVENTURE film features animal
+protagonists, but the tag covers only adventure-genre dog films and
+excludes dog dramas, dog comedies, and family dog stories built
+around other shapes; firing it would score adventure dog films at
+1.0 and zero out the rest) and `FAMILY` (correlation-only — fits
+most dog movies but also covers Pixar / family-comedy / holiday
+films with no dog at all). No single registry member is a clean
+superset of dog-focused films; stitching does not fix the mismatch.
+Abstain on keyword. Semantic carries the call and commits
+exclusively on `plot_analysis`:
 
 ```json
 {

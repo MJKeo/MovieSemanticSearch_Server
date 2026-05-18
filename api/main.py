@@ -1,8 +1,9 @@
-import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+
+import msgspec
 
 from db.postgres import (
     check_postgres,
@@ -12,9 +13,13 @@ from db.postgres import (
 from db.qdrant import qdrant_client, check_qdrant
 from db.redis import init_redis, close_redis, check_redis
 from implementation.misc.event_loop import install_uvloop
-from schemas.api_responses import MovieCard
 from search_v2.similar_movies import run_similar_movies_for_ids
 from search_v2.streaming_orchestrator import stream_full_pipeline
+
+# Shared msgspec JSON encoder. msgspec.Struct types (e.g. MovieCard)
+# encode natively without Pydantic's model_dump round-trip; ~10-50×
+# faster than stdlib json + Pydantic on the wire-format hot path.
+_json_encoder = msgspec.json.Encoder()
 
 # Switch asyncio onto uvloop before uvicorn starts the event loop.
 # ~2x faster than the default selector loop on socket-heavy workloads
@@ -107,11 +112,15 @@ async def query_search(body: QuerySearchBody):
 
     async def event_stream():
         # Translate (event_name, payload) pairs from the orchestrator
-        # into SSE wire frames. We let CancelledError propagate so
-        # Starlette can clean up on client disconnect; the orchestrator's
-        # `finally` block cancels any in-flight tasks before unwinding.
+        # into SSE wire frames. msgspec.json.Encoder handles
+        # MovieCard structs natively, so payloads can carry the
+        # cards without a per-card model_dump materialization.
+        # We let CancelledError propagate so Starlette can clean up
+        # on client disconnect; the orchestrator's `finally` block
+        # cancels any in-flight tasks before unwinding.
         async for event_name, payload in stream_full_pipeline(query):
-            yield f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+            body = _json_encoder.encode(payload).decode("utf-8")
+            yield f"event: {event_name}\ndata: {body}\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -125,8 +134,8 @@ async def query_search(body: QuerySearchBody):
     )
 
 
-@app.post("/similarity_search", response_model=list[MovieCard])
-async def similarity_search(body: SimilaritySearchBody) -> list[MovieCard]:
+@app.post("/similarity_search")
+async def similarity_search(body: SimilaritySearchBody) -> Response:
     """
     Run the similarity-search flow against a caller-supplied anchor set.
 
@@ -149,7 +158,12 @@ async def similarity_search(body: SimilaritySearchBody) -> list[MovieCard]:
 
     # Hydrate the ranked tmdb_ids into MovieCard summaries. Order is
     # preserved by fetch_movie_card_summaries, so the response stays
-    # sorted by descending similarity score. FastAPI's response_model
-    # serializes the Pydantic instances to JSON.
+    # sorted by descending similarity score. MovieCard is a
+    # msgspec.Struct — we encode directly with msgspec, skipping
+    # Pydantic/jsonable_encoder for this hot path.
     ranked_ids = [r.movie_id for r in result.ranked]
-    return await fetch_movie_card_summaries(ranked_ids)
+    cards = await fetch_movie_card_summaries(ranked_ids)
+    return Response(
+        content=_json_encoder.encode(cards),
+        media_type="application/json",
+    )

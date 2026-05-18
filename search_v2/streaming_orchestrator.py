@@ -10,27 +10,47 @@
 #   1. `fetches_ready`  — fires once after Steps 0+1. Lists every
 #                          "fetch" (standard branches + non-standard
 #                          flows) the pipeline will execute.
-#   2. `branch_traits`  — fires per standard-flow branch when Step 2
+#   2. `branch_stage`   — fires whenever a single branch transitions
+#                          between internal phases (e.g. "executing"
+#                          → "rescoring"). Payload:
+#                            { fetch_id, stage, label }
+#                          where `stage` is a stable enum-like string
+#                          and `label` is a human-readable phrase the
+#                          UI can render verbatim. Fires multiple times
+#                          per branch; no global ordering guarantees
+#                          across branches (they run in parallel).
+#   3. `branch_traits`  — fires per standard-flow branch when Step 2
 #                          returns, before Step 3 fan-out. Skipped for
 #                          exact-title / similarity (they have no
 #                          traits stage).
-#   3. `branch_results` — fires per fetch when its execution completes,
+#   4. `branch_results` — fires per fetch when its execution completes,
 #                          in whatever order the underlying tasks
 #                          finish.
-#   4. `done`           — terminal event with total elapsed seconds.
-#   5. `error`          — only on fatal failures (Step 0 fails both
+#   5. `done`           — terminal event with total elapsed seconds.
+#   6. `error`          — only on fatal failures (Step 0 fails both
 #                          attempts). Per-fetch errors surface inside
 #                          the corresponding `branch_results` event via
 #                          a `branch_error` field instead.
+#
+# `branch_stage` is emitted via two channels:
+#   * Direct `yield` from the orchestrator's own coroutines for stages
+#     that happen at task-completion boundaries (e.g. trait emission
+#     after Step 2 finishes).
+#   * An `asyncio.Queue` populated by worker-level emit callbacks for
+#     stages that happen mid-task (e.g. "rescoring" between two awaits
+#     inside `_run_stage4_with_implicit_prior`). The merge loop races
+#     `asyncio.wait` on tasks against `queue.get()` so progress events
+#     flush to the wire as soon as the worker pushes them.
 #
 # Concurrency:
 #   - Non-standard flows (similarity, exact-title) launch immediately
 #     after Step 0 succeeds, in parallel with the standard-flow Step 2
 #     tasks.
-#   - The auxiliary spec computation (shorts exclusion, reranker-only
-#     fallback promotion) is GLOBAL across standard branches, so Stage 4
-#     must wait for every standard-flow Step 2/3 task to resolve before
-#     dispatching. Within that gate, branches are still parallelized.
+#   - Auxiliary spec computation (shorts exclusion, reranker-only
+#     fallback promotion) is PER-BRANCH, so each standard branch
+#     dispatches its own Stage 4 the moment its Step 3 finishes — no
+#     cross-branch gate. Branches finish at independent times and
+#     their `branch_results` events fire as each one lands.
 #   - On client disconnect, the consuming endpoint cancels the generator,
 #     which propagates `GeneratorExit` / `CancelledError`. The `finally`
 #     block here cancels every still-pending task to avoid orphans.
@@ -40,7 +60,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -62,12 +82,12 @@ from search_v2.full_pipeline_orchestrator import (
     BranchKind,
     Step2BranchResult,
     _apply_implicit_prior_rerank_for_branch,
-    _apply_reranker_only_candidate_fallback,
-    _build_auxiliary_specs,
     _call_with_retry,
+    _compute_branch_auxiliary,
     _finish_branch_after_step2,
     _plan_step2_branches,
     _run_step2_for_branch,
+    _step1_needed,
 )
 from search_v2.similar_movies import run_similarity_search
 from search_v2.stage_4_execution import _run_branch as _stage4_run_branch
@@ -100,6 +120,49 @@ _PHASE_STEP2 = "step2"
 _PHASE_STEP3 = "step3"
 _PHASE_STAGE4 = "stage4"
 _PHASE_NONSTANDARD = "nonstandard"
+
+
+# ---------------------------------------------------------------------------
+# branch_stage labels. Stage keys are stable strings the UI can switch on;
+# labels are user-facing prose the UI is free to render verbatim. Kept
+# centralized so the wire vocabulary stays consistent across emit sites.
+# ---------------------------------------------------------------------------
+
+
+_STAGE_LABELS: dict[str, str] = {
+    # Standard-flow stages. With per-branch Stage 4 dispatch there's
+    # no longer a "queries_ready" / waiting state — Step 3 completion
+    # immediately transitions the branch to "executing".
+    "extracting_traits":    "Extracting traits…",
+    "generating_endpoints": "Generating endpoint queries…",
+    "executing":            "Executing queries…",
+    "rescoring":            "Rescoring results…",
+    "hydrating":            "Fetching movie details…",
+    # Exact-title flow
+    "searching_title":      "Searching by exact title…",
+    # Similarity flow
+    "resolving_anchors":    "Resolving similar movies…",
+}
+
+
+def _stage_event(fetch_id: str, stage: str) -> tuple[str, dict[str, Any]]:
+    """Build a `branch_stage` SSE event with a known label."""
+    return (
+        "branch_stage",
+        {
+            "fetch_id": fetch_id,
+            "stage": stage,
+            "label": _STAGE_LABELS.get(stage, stage),
+        },
+    )
+
+
+# Worker-level emit callback. Synchronous (workers don't have to
+# await just to report progress); the closure provided by
+# `stream_full_pipeline` puts a pre-built event onto the shared
+# progress queue, which the merge loop drains alongside task results.
+# Signature: emit_stage(stage_key) -> None.
+StageEmitter = Callable[[str], None]
 
 
 @dataclass
@@ -151,36 +214,54 @@ async def stream_full_pipeline(
     t0 = time.perf_counter()
 
     # ------------------------------------------------------------------
-    # Steps 0 + 1 in parallel. Same retry/timeout discipline as the
-    # non-streaming orchestrator. Step 0 failure is fatal — without
-    # a routing decision there's nothing to dispatch.
+    # Steps 0 + 1 in parallel, but as tasks so we can cancel Step 1
+    # the moment Step 0's routing decision proves spins are unused
+    # (no primary flow, or budget=1 because two non-standard flows
+    # fire). Saves a full Step-1 wall-clock window on those queries.
+    # Step 0 failure is fatal — without routing nothing dispatches.
     # ------------------------------------------------------------------
-    step0_result, step1_result = await asyncio.gather(
-        _call_with_retry(lambda: run_step_0(query), label="step_0"),
-        _call_with_retry(lambda: run_step_1(query), label="step_1"),
-        return_exceptions=True,
+    step0_task = asyncio.create_task(
+        _call_with_retry(lambda: run_step_0(query), label="step_0")
+    )
+    step1_task = asyncio.create_task(
+        _call_with_retry(lambda: run_step_1(query), label="step_1")
     )
 
-    if isinstance(step0_result, BaseException):
-        yield ("error", {"stage": "step_0", "message": repr(step0_result)})
+    try:
+        step0_result = await step0_task
+    except BaseException as step0_exc:
+        step1_task.cancel()
+        try:
+            await step1_task
+        except BaseException:
+            pass
+        yield ("error", {"stage": "step_0", "message": repr(step0_exc)})
         yield ("done", {"total_elapsed": time.perf_counter() - t0})
         return
 
     step0_response: Step0Response = step0_result[0]
-    if isinstance(step1_result, BaseException):
-        step1_response: Step1Response | None = None
+
+    step1_response: Step1Response | None
+    if _step1_needed(step0_response):
+        try:
+            step1_result = await step1_task
+        except BaseException:
+            step1_response = None
+        else:
+            step1_response = step1_result[0]
     else:
-        step1_response = step1_result[0]
+        # Step 1's spins would not feed any branch — cancel.
+        step1_task.cancel()
+        try:
+            await step1_task
+        except BaseException:
+            pass
+        step1_response = None
 
     # ------------------------------------------------------------------
     # Build the fetch list: standard branches + non-standard flows.
     # ------------------------------------------------------------------
     branch_plan = _plan_step2_branches(step0_response, step1_response, query)
-    # Preserve plan order so downstream `auxiliary_specs` sees branches
-    # in the same order as the non-streaming orchestrator would.
-    standard_fetch_ids_ordered: list[str] = [
-        _standard_fetch_id(kind) for kind, _, _ in branch_plan
-    ]
 
     exact_title_firing = step0_response.exact_title_flow_data.should_be_searched
     similarity_firing = step0_response.similarity_flow_data.should_be_searched
@@ -226,17 +307,40 @@ async def stream_full_pipeline(
     yield ("fetches_ready", {"fetches": fetches})
 
     # ------------------------------------------------------------------
+    # Progress queue + per-fetch emit callbacks.
+    # ------------------------------------------------------------------
+    # Workers that span multiple awaits (Stage 4, similarity, exact-
+    # title) push `branch_stage` events onto this queue at each phase
+    # boundary. The merge loop below races task completion against
+    # `queue.get()` so progress flushes to the wire immediately rather
+    # than piling up until the next task resolves.
+    progress_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+
+    def _make_emitter(fetch_id: str) -> StageEmitter:
+        def _emit(stage: str) -> None:
+            progress_queue.put_nowait(_stage_event(fetch_id, stage))
+        return _emit
+
+    # Emit each branch's starting stage right after fetches_ready so the
+    # UI has something to show before any task completes. Standard
+    # branches begin in Step 2 ("extracting traits"); non-standard flows
+    # advertise their respective opening phases. These go through the
+    # queue (rather than direct yields) so they interleave naturally
+    # with later worker-pushed events in queue order.
+    for fetch in fetches:
+        ftype = fetch["type"]
+        if ftype == "standard":
+            progress_queue.put_nowait(_stage_event(fetch["id"], "extracting_traits"))
+        elif ftype == "exact_title":
+            progress_queue.put_nowait(_stage_event(fetch["id"], "searching_title"))
+        elif ftype == "similarity":
+            progress_queue.put_nowait(_stage_event(fetch["id"], "resolving_anchors"))
+
+    # ------------------------------------------------------------------
     # State for the merge loop.
     # ------------------------------------------------------------------
     # Maps live tasks → metadata so we can dispatch results by phase.
     task_info: dict[asyncio.Task, _TaskInfo] = {}
-    # Step 3 results land here so we can pull all branches together
-    # before computing auxiliary specs and dispatching Stage 4. Both
-    # step2-failures and successful step3 completions populate this dict,
-    # so `_all_standard_branches_done` is the single source of truth for
-    # whether the Stage 4 gate can fire.
-    completed_branches: dict[str, Step2BranchResult] = {}
-    stage4_dispatched = False
 
     # Launch standard-flow Step 2 tasks.
     for kind, branch_query, ui_label in branch_plan:
@@ -251,9 +355,14 @@ async def stream_full_pipeline(
     # Launch non-standard tasks (independent of the standard-flow gate).
     # Each wrapper folds its native result into a _FetchOutcome (cards
     # + branch_error) so the merge-loop handler serializes one shape.
+    # Each wrapper also receives an emitter bound to its fetch_id so it
+    # can push `branch_stage` events at its internal phase boundaries.
     if exact_title_firing:
         task = asyncio.create_task(
-            _run_exact_title_with_hydration(step0_response.exact_title_flow_data)
+            _run_exact_title_with_hydration(
+                step0_response.exact_title_flow_data,
+                emit_stage=_make_emitter(_FETCH_ID_EXACT_TITLE),
+            )
         )
         task_info[task] = _TaskInfo(
             fetch_id=_FETCH_ID_EXACT_TITLE,
@@ -261,7 +370,10 @@ async def stream_full_pipeline(
         )
     if similarity_firing:
         task = asyncio.create_task(
-            _run_similarity_with_hydration(step0_response.similarity_flow_data)
+            _run_similarity_with_hydration(
+                step0_response.similarity_flow_data,
+                emit_stage=_make_emitter(_FETCH_ID_SIMILARITY),
+            )
         )
         task_info[task] = _TaskInfo(
             fetch_id=_FETCH_ID_SIMILARITY,
@@ -273,48 +385,60 @@ async def stream_full_pipeline(
         yield ("done", {"total_elapsed": time.perf_counter() - t0})
         return
 
-    needed_step3 = len(branch_plan)
+    # Sentinel task that pulls the next progress event off the queue.
+    # Re-created every time it fires so the merge loop always has
+    # exactly one queue-waiter racing alongside the real worker tasks.
+    progress_waiter: asyncio.Task = asyncio.create_task(progress_queue.get())
 
     try:
         # Merge loop — process tasks as they complete, in any order.
+        # Each iteration races every worker task PLUS the queue waiter.
         while task_info:
             done, _pending = await asyncio.wait(
-                set(task_info.keys()),
+                set(task_info.keys()) | {progress_waiter},
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for finished in done:
+                # Queue-waiter resolved → yield the progress event and
+                # rearm. Don't pop from task_info (it isn't in there).
+                if finished is progress_waiter:
+                    yield finished.result()
+                    progress_waiter = asyncio.create_task(progress_queue.get())
+                    continue
+
                 info = task_info.pop(finished)
                 async for event in _handle_finished_task(
                     finished,
                     info,
-                    completed_branches=completed_branches,
                     task_info=task_info,
+                    make_emitter=_make_emitter,
                 ):
                     yield event
 
-            # Dispatch Stage 4 once every standard branch has resolved
-            # its Step 2 (and Step 3 where applicable). Skip when no
-            # standard flow is firing — non-standard fetches drain on
-            # their own and we exit when task_info empties.
-            if (
-                not stage4_dispatched
-                and needed_step3 > 0
-                and _all_standard_branches_done(
-                    completed_branches, standard_fetch_ids_ordered
-                )
-            ):
-                stage4_dispatched = True
-                _dispatch_stage4(
-                    completed_branches=completed_branches,
-                    standard_fetch_ids_ordered=standard_fetch_ids_ordered,
-                    task_info=task_info,
-                )
+        # All worker tasks have drained. Flush any progress events that
+        # landed in the queue in the same scheduling tick as the final
+        # task completion so the UI sees them before `done`. The waiter
+        # may already have a result we never had a chance to yield (it
+        # resolved between the final asyncio.wait call and the loop
+        # exit) — pull that out first, then drain the rest.
+        if progress_waiter.done():
+            try:
+                yield progress_waiter.result()
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        else:
+            progress_waiter.cancel()
+        while not progress_queue.empty():
+            yield progress_queue.get_nowait()
 
         yield ("done", {"total_elapsed": time.perf_counter() - t0})
     finally:
         # Cancel any task that is still alive (client disconnect, or an
         # unexpected error above). Suppress per-task exceptions so
-        # cleanup itself never raises.
+        # cleanup itself never raises. The progress_waiter is cancelled
+        # here too in case we hit the finally before the happy-path
+        # cancel above (e.g. client disconnect mid-stream).
+        progress_waiter.cancel()
         for pending_task in list(task_info.keys()):
             pending_task.cancel()
         for pending_task in list(task_info.keys()):
@@ -329,40 +453,34 @@ async def stream_full_pipeline(
 # ---------------------------------------------------------------------------
 
 
-def _all_standard_branches_done(
-    completed_branches: dict[str, Step2BranchResult],
-    standard_fetch_ids_ordered: list[str],
-) -> bool:
-    """True iff every standard fetch_id has a Step2BranchResult ready.
-
-    Step 2 failures populate completed_branches with a branch_error;
-    successful branches populate after Step 3 fan-out completes. Either
-    way, presence in the dict means we know the branch's final shape.
-    """
-    return all(fid in completed_branches for fid in standard_fetch_ids_ordered)
-
-
 async def _handle_finished_task(
     task: asyncio.Task,
     info: _TaskInfo,
     *,
-    completed_branches: dict[str, Step2BranchResult],
     task_info: dict[asyncio.Task, _TaskInfo],
+    make_emitter: Callable[[str], StageEmitter],
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    """Process one completed task; may launch follow-on tasks."""
+    """Process one completed task; may launch follow-on tasks.
+
+    Step 3 completions now dispatch *this* branch's Stage 4
+    immediately — no waiting for siblings. Auxiliary specs
+    (shorts-exclusion, reranker-only fallback) are computed
+    per-branch by `_compute_branch_auxiliary`, so each branch has
+    everything it needs to execute on its own as soon as its Step 3
+    resolves.
+    """
     if info.phase == _PHASE_STEP2:
         async for event in _handle_step2_done(
-            task, info, completed_branches=completed_branches, task_info=task_info
+            task, info, task_info=task_info
         ):
             yield event
         return
 
     if info.phase == _PHASE_STEP3:
-        # Branch is fully prepared for Stage 4. Stash and let the
-        # dispatch gate fire when every standard branch is here.
+        # Step 3 just finished for this branch. Dispatch its Stage 4
+        # task right away — no cross-branch gate.
         try:
             branch_result: Step2BranchResult = task.result()
-            completed_branches[info.fetch_id] = branch_result
         except Exception as exc:  # noqa: BLE001 — soft-fail per branch
             # Step 3 raising is unexpected (it has soft-fail discipline
             # internally), but treat it like a branch failure rather
@@ -372,16 +490,36 @@ async def _handle_finished_task(
                 info.fetch_id,
                 exc,
             )
-            completed_branches[info.fetch_id] = Step2BranchResult(
-                kind=_kind_from_fetch_id(info.fetch_id),
-                query="",
-                ui_label="",
-                traits=[],
-                branch_error=repr(exc),
-            )
             yield _branch_results_event(
                 info.fetch_id, cards=[], branch_error=repr(exc)
             )
+            return
+
+        if branch_result.branch_error is not None:
+            # Step 3 soft-failed (downstream LLM call exhausted retries
+            # etc.). No Stage 4 to dispatch — emit terminal results now.
+            yield _branch_results_event(
+                info.fetch_id, cards=[], branch_error=branch_result.branch_error
+            )
+            return
+
+        # Compute per-branch auxiliary specs and launch Stage 4 for
+        # this branch. The fallback helper may mutate the branch's
+        # own specs in place (reranker → candidate generator), so
+        # this must run before the task starts.
+        emitter = make_emitter(info.fetch_id)
+        auxiliary = _compute_branch_auxiliary(branch_result)
+        # Push "executing" through the queue before the task starts
+        # so the UI flips out of "generating_endpoints" the instant
+        # Step 3 completes (the task itself emits its later
+        # sub-stages: rescoring → hydrating).
+        emitter("executing")
+        stage4_task = asyncio.create_task(
+            _run_stage4_with_implicit_prior(branch_result, auxiliary, emitter)
+        )
+        task_info[stage4_task] = _TaskInfo(
+            fetch_id=info.fetch_id, phase=_PHASE_STAGE4
+        )
         return
 
     if info.phase == _PHASE_STAGE4 or info.phase == _PHASE_NONSTANDARD:
@@ -410,7 +548,6 @@ async def _handle_step2_done(
     task: asyncio.Task,
     info: _TaskInfo,
     *,
-    completed_branches: dict[str, Step2BranchResult],
     task_info: dict[asyncio.Task, _TaskInfo],
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """Emit branch_traits (or a branch_error result), then start Step 3."""
@@ -423,13 +560,6 @@ async def _handle_step2_done(
             info.fetch_id,
             exc,
         )
-        completed_branches[info.fetch_id] = Step2BranchResult(
-            kind=_kind_from_fetch_id(info.fetch_id),
-            query="",
-            ui_label="",
-            traits=[],
-            branch_error=repr(exc),
-        )
         yield _branch_results_event(
             info.fetch_id, cards=[], branch_error=repr(exc)
         )
@@ -437,15 +567,19 @@ async def _handle_step2_done(
 
     if qa is None:
         # Step 2 soft-failed; emit a terminal branch_results event now
-        # (no traits, no Stage 4) and record the branch so the global
-        # gate still ticks.
-        completed_branches[info.fetch_id] = partial
+        # (no traits, no Stage 4). With per-branch dispatch there's no
+        # cross-branch gate to keep ticking.
         yield _branch_results_event(
             info.fetch_id, cards=[], branch_error=partial.branch_error
         )
         return
 
-    # Happy path — emit traits, then launch Step 3 fan-out as a task.
+    # Happy path — emit traits, signal the next phase, then launch
+    # Step 3 fan-out as a task. The `generating_endpoints` stage runs
+    # for as long as Step 3 takes (per-trait LLM decomposition +
+    # handler-LLM endpoint translation). When Step 3 finishes,
+    # `_handle_finished_task` dispatches this branch's Stage 4
+    # without waiting for siblings.
     yield (
         "branch_traits",
         {
@@ -453,6 +587,7 @@ async def _handle_step2_done(
             "traits": [_trait_to_dict(t) for t in qa.traits],
         },
     )
+    yield _stage_event(info.fetch_id, "generating_endpoints")
     step3_task = asyncio.create_task(
         _finish_branch_after_step2(
             partial, qa, _kind_from_fetch_id(info.fetch_id)
@@ -463,44 +598,10 @@ async def _handle_step2_done(
     )
 
 
-def _dispatch_stage4(
-    *,
-    completed_branches: dict[str, Step2BranchResult],
-    standard_fetch_ids_ordered: list[str],
-    task_info: dict[asyncio.Task, _TaskInfo],
-) -> None:
-    """Compute auxiliary specs and launch one Stage 4 task per branch.
-
-    Branches whose Step 2 failed have already emitted their final
-    branch_results event; skip Stage 4 for them. The auxiliary
-    computation still receives the full ordered list so its global view
-    (shorts-exclusion detection, reranker-only fallback) matches the
-    non-streaming orchestrator's behavior — empty-trait branches
-    contribute no MEDIA_TYPE call and no rerank specs, so passing them
-    in is a safe no-op.
-    """
-    branches_in_order = [
-        completed_branches[fid] for fid in standard_fetch_ids_ordered
-    ]
-    auxiliary = (
-        _apply_reranker_only_candidate_fallback(branches_in_order)
-        + _build_auxiliary_specs(branches_in_order)
-    )
-    for fid in standard_fetch_ids_ordered:
-        branch = completed_branches[fid]
-        if branch.branch_error is not None:
-            # Step 2 already failed — branch_results event already
-            # emitted with the error. Skip Stage 4 dispatch.
-            continue
-        task = asyncio.create_task(
-            _run_stage4_with_implicit_prior(branch, auxiliary)
-        )
-        task_info[task] = _TaskInfo(fetch_id=fid, phase=_PHASE_STAGE4)
-
-
 async def _run_stage4_with_implicit_prior(
     branch: Step2BranchResult,
     auxiliary: list[GeneratedEndpointSpec],
+    emit_stage: StageEmitter,
 ) -> _FetchOutcome:
     """Run Stage 4 for one branch, rerank, then hydrate movie cards.
 
@@ -508,11 +609,20 @@ async def _run_stage4_with_implicit_prior(
     handler — lets parallel branches' Postgres lookups overlap.
     Returns the uniform _FetchOutcome shape so the handler doesn't
     need to discriminate on phase to serialize.
+
+    Emits `branch_stage` events at each internal await boundary so the
+    UI can show "rescoring" / "hydrating" instead of going silent
+    through the longest phase of the pipeline. The caller has already
+    emitted "executing" before this task started.
     """
+    # Execute candidate-generator + reranker specs and score traits.
     result = await _stage4_run_branch(branch, auxiliary)
+    emit_stage("rescoring")
+    # Apply the implicit-prior post-rerank pass.
     result = await _apply_implicit_prior_rerank_for_branch(branch, result)
     if result.branch_error is not None:
         return _FetchOutcome(cards=[], branch_error=result.branch_error)
+    emit_stage("hydrating")
     movie_ids = [int(mid) for mid, _ in result.ranked]
     cards = await fetch_movie_card_summaries(movie_ids)
     return _FetchOutcome(cards=cards, branch_error=None)
@@ -520,9 +630,16 @@ async def _run_stage4_with_implicit_prior(
 
 async def _run_similarity_with_hydration(
     flow_data: SimilarityFlowData,
+    emit_stage: StageEmitter,
 ) -> _FetchOutcome:
-    """Run the similarity flow then hydrate the ranked tmdb_ids."""
+    """Run the similarity flow then hydrate the ranked tmdb_ids.
+
+    The caller emits the initial `resolving_anchors` stage before this
+    task starts; we flip to `hydrating` between the similarity search
+    and the Postgres card lookup so the UI sees the transition.
+    """
     result = await run_similarity_search(flow_data)
+    emit_stage("hydrating")
     movie_ids = [int(r.movie_id) for r in result.ranked]
     cards = await fetch_movie_card_summaries(movie_ids)
     return _FetchOutcome(cards=cards, branch_error=None)
@@ -530,9 +647,16 @@ async def _run_similarity_with_hydration(
 
 async def _run_exact_title_with_hydration(
     flow_data: ExactTitleFlowData,
+    emit_stage: StageEmitter,
 ) -> _FetchOutcome:
-    """Run the exact-title flow then hydrate the ranked tmdb_ids."""
+    """Run the exact-title flow then hydrate the ranked tmdb_ids.
+
+    The caller emits the initial `searching_title` stage before this
+    task starts; we flip to `hydrating` between the title search and
+    the Postgres card lookup so the UI sees the transition.
+    """
     result = await run_exact_title_search(flow_data)
+    emit_stage("hydrating")
     movie_ids = [int(mid) for mid, _ in result.ranked]
     cards = await fetch_movie_card_summaries(movie_ids)
     return _FetchOutcome(cards=cards, branch_error=None)
@@ -603,7 +727,10 @@ def _branch_results_event(
         "branch_results",
         {
             "fetch_id": fetch_id,
-            "results": [card.model_dump() for card in cards],
+            # MovieCard is a msgspec.Struct — msgspec.json.encode at
+            # the endpoint will encode it natively, no per-card
+            # model_dump() materialization needed.
+            "results": cards,
             "branch_error": branch_error,
         },
     )

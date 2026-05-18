@@ -97,13 +97,11 @@ logger = logging.getLogger(__name__)
 # Tunables
 # ---------------------------------------------------------------------------
 
-# Per-attempt timeout for any individual LLM call. Each call gets up to
-# 2 attempts (initial + 1 retry), each independently bounded by this.
-TIMEOUT_SECONDS = 25.0
-
-# Total attempts per LLM call (initial + retries). The user spec is
-# "1 retry", which means 2 attempts total.
-LLM_MAX_ATTEMPTS = 2
+# Timeout / retry / jitter discipline now lives at the lowest layer
+# inside `implementation.llms.generic_methods.generate_llm_response_async`.
+# This module no longer wraps step calls with its own retry — see
+# `_call_with_retry` below, which is now a transparent passthrough so
+# callers and tests keep their existing call shape.
 
 QUALITY_PRIOR_BOOSTS: dict[str, float] = {
     "none": 0.0,
@@ -213,11 +211,14 @@ class FullPipelineResult:
     similarity_result: SimilarMoviesSearchResult | None = None
     similarity_error: str | None = None
     branches: list[Step2BranchResult] = field(default_factory=list)
-    # Endpoint specs not attached to any trait — global fetches that
-    # apply to the full result set rather than scoring a single trait.
-    # Today the only entry is the default shorts-exclusion MEDIA_TYPE
-    # fetch injected when no branch/trait emitted a MEDIA_TYPE call.
-    auxiliary_endpoint_specs: list[GeneratedEndpointSpec] = field(
+    # Per-branch auxiliary endpoint specs — parallel to `branches`.
+    # Each inner list is the auxiliary specs that were applied to the
+    # branch at the same index (shorts-exclusion MEDIA_TYPE fetch when
+    # that branch didn't already emit a MEDIA_TYPE call; neutral seed
+    # when the branch's specs were all rerankers and nothing was
+    # promotable). Per-branch rather than global so each branch can
+    # dispatch Stage 4 independently as soon as its Step 3 finishes.
+    auxiliary_endpoint_specs_per_branch: list[list[GeneratedEndpointSpec]] = field(
         default_factory=list
     )
     # Stage-4 output: per-branch ranked candidate lists. Empty list
@@ -257,53 +258,24 @@ async def _call_with_retry(
     *,
     label: str,
 ) -> T:
-    """Run `coro_factory()` with a per-attempt timeout and one retry.
+    """Run `coro_factory()` and time it.
 
-    The factory is invoked fresh on each attempt because awaitables
-    are single-shot — retrying must build a new awaitable rather than
-    re-await the prior one. Re-raises the last exception when both
-    attempts fail; the caller decides whether to soft-fail or
-    propagate.
+    Retry / timeout / jitter live one layer below us, inside
+    `generate_llm_response_async`. This wrapper still exists so
+    callers (including the streaming orchestrator) keep their
+    existing call shape, and so the per-step "completed in Xs"
+    INFO log keeps surfacing for live runners.
+
+    Exceptions from the inner call propagate untouched.
     """
-    last_exc: BaseException | None = None
-    for attempt in range(LLM_MAX_ATTEMPTS):
-        attempt_start = time.perf_counter()
-        try:
-            result = await asyncio.wait_for(
-                coro_factory(), timeout=TIMEOUT_SECONDS
-            )
-        except Exception as exc:  # noqa: BLE001 — broad catch is intentional
-            last_exc = exc
-            if attempt < LLM_MAX_ATTEMPTS - 1:
-                logger.warning(
-                    "LLM call %s failed on attempt %d; retrying (%r)",
-                    label,
-                    attempt + 1,
-                    exc,
-                )
-                continue
-            logger.error(
-                "LLM call %s failed on final attempt %d (%r)",
-                label,
-                attempt + 1,
-                exc,
-            )
-            # Loop is about to end — fall through to the assert/raise
-            # below rather than continue-to-no-iteration.
-            break
-        # Emit a per-call completion event so runners can surface
-        # progress in real time. Uses INFO so default-verbose runners
-        # see it; quiet callers can filter at the handler level.
-        logger.info(
-            "step %s completed in %.2fs (attempt %d)",
-            label,
-            time.perf_counter() - attempt_start,
-            attempt + 1,
-        )
-        return result
-    # Both attempts failed — last_exc is guaranteed to be set.
-    assert last_exc is not None
-    raise last_exc
+    started = time.perf_counter()
+    result = await coro_factory()
+    logger.info(
+        "step %s completed in %.2fs",
+        label,
+        time.perf_counter() - started,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +283,25 @@ async def _call_with_retry(
 # count of non-standard flows that also fire, so the overall result
 # UI shows three lists across all flows.
 # ---------------------------------------------------------------------------
+
+
+def _step1_needed(step0: Step0Response) -> bool:
+    """True iff Step 0's routing decision could consume Step 1 spins.
+
+    Spins are consumed only when the standard flow runs AND its
+    budget leaves room for at least one spin. Budget = 3 - number of
+    non-standard flows firing; spins fire when budget ≥ 2. Anything
+    else means Step 1's output is throw-away work the orchestrator
+    can cancel as soon as Step 0 returns.
+    """
+    if not step0.enable_primary_flow:
+        return False
+    non_standard_firing = (
+        int(step0.exact_title_flow_data.should_be_searched)
+        + int(step0.similarity_flow_data.should_be_searched)
+    )
+    budget = 3 - non_standard_firing
+    return budget >= 2
 
 
 def _plan_step2_branches(
@@ -607,17 +598,21 @@ async def _process_category_call(
 # ---------------------------------------------------------------------------
 
 
-def _has_media_type_call(branches: list[Step2BranchResult]) -> bool:
-    # True iff any branch has any trait with at least one CategoryCall
+def _branch_has_media_type_call(branch: Step2BranchResult) -> bool:
+    # True iff the branch has any trait with at least one CategoryCall
     # whose category is MEDIA_TYPE. We check at the category level
     # only — a category call is enough to mean the user's media-type
-    # preference is already represented, regardless of whether the
-    # deterministic translator produced any concrete formats.
-    for branch in branches:
-        for trait in branch.traits:
-            for cc in trait.category_calls:
-                if cc.category is CategoryName.MEDIA_TYPE:
-                    return True
+    # preference is already represented in this branch, regardless of
+    # whether the deterministic translator produced any concrete
+    # formats. Decisions are per-branch now: each branch independently
+    # decides whether it needs the shorts-exclusion auxiliary spec,
+    # which is what lets the streaming orchestrator dispatch Stage 4
+    # for a branch the moment its Step 3 completes — no cross-branch
+    # gate.
+    for trait in branch.traits:
+        for cc in trait.category_calls:
+            if cc.category is CategoryName.MEDIA_TYPE:
+                return True
     return False
 
 
@@ -664,33 +659,52 @@ def _build_neutral_seed_spec() -> GeneratedEndpointSpec:
 
 
 def _build_auxiliary_specs(
-    branches: list[Step2BranchResult],
+    branch: Step2BranchResult,
 ) -> list[GeneratedEndpointSpec]:
-    if _has_media_type_call(branches):
+    """Per-branch auxiliary specs.
+
+    Returns the shorts-exclusion MEDIA_TYPE spec when *this* branch
+    didn't emit its own MEDIA_TYPE call. Previously this was a global
+    decision across all branches; making it per-branch lets the
+    streaming pipeline dispatch each branch's Stage 4 as soon as its
+    Step 3 completes (no cross-branch gate). Semantic note: a branch
+    that doesn't mention media type now gets shorts-excluded
+    independently of what its sibling branches did — which is the
+    right call, because each branch represents an isolated intent.
+    """
+    if _branch_has_media_type_call(branch):
         return []
     return [_build_shorts_exclusion_spec()]
 
 
 def _apply_reranker_only_candidate_fallback(
-    branches: list[Step2BranchResult],
+    branch: Step2BranchResult,
 ) -> list[GeneratedEndpointSpec]:
-    """Promote minimum-tier rerankers or emit the neutral seed spec.
+    """Per-branch reranker-only fallback.
 
-    Runs only when every trait-derived endpoint spec is currently a
-    reranker. This function deliberately ignores auxiliary specs
-    (shorts exclusion, neutral seed) so only user-derived calls decide
-    whether fallback promotion is needed.
+    If *this* branch's trait-derived endpoint specs are all rerankers
+    (no candidate generator anywhere in the branch), promote the
+    lowest-tier reranker to a CANDIDATE_GENERATOR or, if nothing is
+    promotable, emit a neutral seed spec. Previously this decision
+    spanned every branch — but in practice each branch needs its own
+    candidate generator to produce a non-empty pool in Stage 4 Phase
+    B, so per-branch fallback is strictly more correct: a branch that
+    happened to be all-reranker would silently produce no results
+    just because a sibling had a candidate generator.
+
+    Auxiliary specs (shorts exclusion, neutral seed) are deliberately
+    ignored when deciding whether to promote — only user-derived
+    calls drive fallback.
     """
     endpoint_refs: list[
         tuple[CategoryName, GeneratedEndpointSpec, Polarity]
     ] = []
-    for branch in branches:
-        for trait in branch.traits:
-            for category_call in trait.category_calls:
-                for spec in category_call.generated_specs:
-                    endpoint_refs.append(
-                        (category_call.category, spec, trait.polarity)
-                    )
+    for trait in branch.traits:
+        for category_call in trait.category_calls:
+            for spec in category_call.generated_specs:
+                endpoint_refs.append(
+                    (category_call.category, spec, trait.polarity)
+                )
 
     if not endpoint_refs:
         return []
@@ -723,6 +737,22 @@ def _apply_reranker_only_candidate_fallback(
             spec.was_promoted = True
 
     return []
+
+
+def _compute_branch_auxiliary(
+    branch: Step2BranchResult,
+) -> list[GeneratedEndpointSpec]:
+    """Convenience: full per-branch auxiliary list.
+
+    Concatenates the reranker-only fallback (which may mutate the
+    branch's own specs in place) and the shorts-exclusion check.
+    Order matches the previous global call sites so behavior stays
+    stable for a single-branch case.
+    """
+    return (
+        _apply_reranker_only_candidate_fallback(branch)
+        + _build_auxiliary_specs(branch)
+    )
 
 
 _SEMANTIC_PROMOTION_TIERS: dict[CategoryName, PromotionTier] = {
@@ -975,11 +1005,12 @@ async def run_full_pipeline(
         # No fan-out needed for a single branch — skip gather's
         # task-scheduling overhead.
         branch_list = [await _run_branch("original", query, "Original Query")]
-        auxiliary = (
-            _apply_reranker_only_candidate_fallback(branch_list)
-            + _build_auxiliary_specs(branch_list)
+        # One branch → one auxiliary list. Same helper as the
+        # multi-branch standard path uses, just trivially scalar.
+        auxiliary_per_branch = [_compute_branch_auxiliary(branch_list[0])]
+        branch_results = await execute_branches(
+            branch_list, auxiliary_per_branch
         )
-        branch_results = await execute_branches(branch_list, auxiliary)
         branch_results = await _apply_implicit_prior_rerank(
             branch_list,
             branch_results,
@@ -995,34 +1026,55 @@ async def run_full_pipeline(
             similarity_result=None,
             similarity_error=None,
             branches=branch_list,
-            auxiliary_endpoint_specs=auxiliary,
+            auxiliary_endpoint_specs_per_branch=auxiliary_per_branch,
             branch_results=branch_results,
             total_elapsed=time.perf_counter() - total_start,
         )
 
-    # Steps 0 and 1 in parallel. return_exceptions=True so a Step 1
-    # failure does not cancel Step 0 (or vice versa) before we can
-    # decide what to do with each.
-    step0_result, step1_result = await asyncio.gather(
-        _call_with_retry(lambda: run_step_0(query), label="step_0"),
-        _call_with_retry(lambda: run_step_1(query), label="step_1"),
-        return_exceptions=True,
+    # Steps 0 and 1 in parallel, but launched as tasks so we can
+    # cancel Step 1 the moment Step 0's routing decision proves
+    # spins are not needed (no primary flow at all, or budget=1
+    # because two non-standard flows are firing). This shaves a
+    # full Step-1 wall-clock window off those queries without
+    # affecting the cache-warm Step 1 path.
+    step0_task = asyncio.create_task(
+        _call_with_retry(lambda: run_step_0(query), label="step_0")
+    )
+    step1_task = asyncio.create_task(
+        _call_with_retry(lambda: run_step_1(query), label="step_1")
     )
 
-    # Step 0 failure is fatal — without a routing decision we have
-    # nothing to dispatch. Re-raise so the caller knows.
-    if isinstance(step0_result, BaseException):
-        raise step0_result
-    step0_response: Step0Response = step0_result[0]
+    try:
+        step0_result = await step0_task
+    except BaseException:
+        # Step 0 failed — Step 1's output cannot be used either way.
+        step1_task.cancel()
+        try:
+            await step1_task
+        except BaseException:
+            pass
+        raise
+    step0_response = step0_result[0]
 
-    # Step 1 may have failed independently — capture the error and
-    # keep going. The standard flow falls back to the original-query
-    # branch only.
-    if isinstance(step1_result, BaseException):
-        step1_response: Step1Response | None = None
-        step1_error: str | None = repr(step1_result)
+    step1_response: Step1Response | None
+    step1_error: str | None
+    if _step1_needed(step0_response):
+        try:
+            step1_result = await step1_task
+        except BaseException as exc:
+            step1_response = None
+            step1_error = repr(exc)
+        else:
+            step1_response = step1_result[0]
+            step1_error = None
     else:
-        step1_response = step1_result[0]
+        # Step 1 would not feed any branch — cancel it.
+        step1_task.cancel()
+        try:
+            await step1_task
+        except BaseException:
+            pass
+        step1_response = None
         step1_error = None
 
     # Non-standard flows are TODO placeholders today; surface their
@@ -1058,11 +1110,17 @@ async def run_full_pipeline(
             *(_run_branch(kind, q, label) for kind, q, label in branch_plan)
         )
 
-    auxiliary = (
-        _apply_reranker_only_candidate_fallback(branches)
-        + _build_auxiliary_specs(branches)
-    )
-    branch_results = await execute_branches(branches, auxiliary)
+    # Per-branch auxiliary specs — each branch decides independently
+    # whether it needs shorts-exclusion / reranker-only fallback. The
+    # fallback helper may mutate the branch's own specs in place (to
+    # promote a reranker), so order matters: compute aux before
+    # executing Stage 4.
+    auxiliary_per_branch: list[list[GeneratedEndpointSpec]] = [
+        _compute_branch_auxiliary(branch) for branch in branches
+    ]
+    # Each branch runs its own Stage 4 in parallel — no cross-branch
+    # gate, since auxiliary is now per-branch.
+    branch_results = await execute_branches(branches, auxiliary_per_branch)
     branch_results = await _apply_implicit_prior_rerank(
         branches,
         branch_results,
@@ -1078,7 +1136,7 @@ async def run_full_pipeline(
         similarity_result=similarity_result,
         similarity_error=similarity_error,
         branches=branches,
-        auxiliary_endpoint_specs=auxiliary,
+        auxiliary_endpoint_specs_per_branch=auxiliary_per_branch,
         branch_results=branch_results,
         total_elapsed=time.perf_counter() - total_start,
     )

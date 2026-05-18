@@ -38,6 +38,11 @@ dependencies = [
     "tiktoken>=0.12.0",
     "kneed>=0.8",
     "uvloop>=0.21",
+    # msgspec — 10-50× faster than Pydantic for the leaf DTOs the API
+    # serializes per request (MovieCard). Pydantic stays at LLM
+    # structured-output boundaries; msgspec covers the wire-format hot
+    # path where Pydantic's validation overhead is unearned.
+    "msgspec>=0.18",
 ]
 
 [dependency-groups]

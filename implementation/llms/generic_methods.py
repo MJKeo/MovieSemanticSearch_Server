@@ -4,8 +4,12 @@ import json
 import re
 import sys
 import csv
+import asyncio
+import random
+import logging
 
 import gradio as gr
+import httpx
 from openai import OpenAI, AsyncOpenAI
 import anthropic
 from anthropic import AsyncAnthropic
@@ -627,6 +631,21 @@ _PROVIDER_DISPATCH = {
 _PROVIDERS_WITHOUT_MODEL_PARAM = {LLMProvider.KIMI}
 
 
+# Per-attempt timeout for every routed LLM call. Lives here at the
+# lowest layer (the actual SDK invocation) rather than being nested
+# at orchestrator + handler levels. One retry total — a second
+# failure re-raises so the caller decides whether to soft-fail.
+LLM_PER_ATTEMPT_TIMEOUT_SECONDS = 25.0
+LLM_MAX_ATTEMPTS = 2
+# Backoff window between attempts. Jitter avoids the "retry storm"
+# pattern where many concurrent calls all wake up at the same
+# wall-clock moment after a transient 5xx / rate-limit.
+_LLM_RETRY_BACKOFF_MIN_SECONDS = 0.05
+_LLM_RETRY_BACKOFF_MAX_SECONDS = 0.25
+
+_llm_logger = logging.getLogger(__name__)
+
+
 async def generate_llm_response_async(
     provider: LLMProvider,
     user_prompt: str,
@@ -635,48 +654,108 @@ async def generate_llm_response_async(
     model: str,
     **kwargs,
 ) -> Tuple[BaseModel, int, int]:
-    """Route a structured-output request to the appropriate provider.
+    """Route a structured-output request to the appropriate provider,
+    with timeout + jittered single retry applied at this layer.
 
     Accepts provider-agnostic params (prompts, response_format, model) plus
     any provider-specific kwargs (e.g. reasoning_effort for OpenAI,
     enable_thinking for Kimi, temperature for Gemini/Groq/Alibaba).
-    Errors from the underlying provider method propagate unchanged.
+
+    The timeout / retry / jitter discipline lives here (the lowest
+    layer) rather than being duplicated at orchestrator + handler
+    levels. A pathological hang therefore burns at most one
+    `LLM_PER_ATTEMPT_TIMEOUT_SECONDS * LLM_MAX_ATTEMPTS` window
+    instead of compounding across stacked retry wrappers.
 
     Returns a tuple of (parsed_response, input_tokens, output_tokens).
     """
     generate_fn = _PROVIDER_DISPATCH[provider]
+    pass_model = provider not in _PROVIDERS_WITHOUT_MODEL_PARAM
 
-    # Some providers (Kimi) hardcode their model internally
-    if provider in _PROVIDERS_WITHOUT_MODEL_PARAM:
-        return await generate_fn(
-            user_prompt=user_prompt,
-            system_prompt=system_prompt,
-            response_format=response_format,
-            **kwargs,
-        )
+    last_exc: BaseException | None = None
+    for attempt in range(LLM_MAX_ATTEMPTS):
+        try:
+            if pass_model:
+                return await asyncio.wait_for(
+                    generate_fn(
+                        user_prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        response_format=response_format,
+                        model=model,
+                        **kwargs,
+                    ),
+                    timeout=LLM_PER_ATTEMPT_TIMEOUT_SECONDS,
+                )
+            return await asyncio.wait_for(
+                generate_fn(
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    response_format=response_format,
+                    **kwargs,
+                ),
+                timeout=LLM_PER_ATTEMPT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 — broad catch is intentional
+            last_exc = exc
+            if attempt < LLM_MAX_ATTEMPTS - 1:
+                # Short jittered backoff — long enough to dodge a
+                # rate-limit window, short enough that a recovered
+                # call still feels snappy.
+                backoff = random.uniform(
+                    _LLM_RETRY_BACKOFF_MIN_SECONDS,
+                    _LLM_RETRY_BACKOFF_MAX_SECONDS,
+                )
+                _llm_logger.warning(
+                    "LLM call %s/%s failed on attempt %d; retrying after %.2fs (%r)",
+                    provider.value, model, attempt + 1, backoff, exc,
+                )
+                await asyncio.sleep(backoff)
+                continue
+            _llm_logger.error(
+                "LLM call %s/%s failed on final attempt %d (%r)",
+                provider.value, model, attempt + 1, exc,
+            )
+    assert last_exc is not None
+    raise last_exc
 
-    return await generate_fn(
-        user_prompt=user_prompt,
-        system_prompt=system_prompt,
-        response_format=response_format,
-        model=model,
-        **kwargs,
-    )
+
+# Module-level singleton client for embeddings with an explicit httpx
+# pool. The prior implementation constructed a fresh AsyncOpenAI per
+# call (citing openai-python #769 about silent hangs) — but that bug
+# was about not closing clients, not about reuse. Each fresh-client
+# call paid a TCP + TLS handshake. With explicit Limits the pool is
+# bounded and keepalive connections are reused across requests.
+_embedding_http_client = httpx.AsyncClient(
+    limits=httpx.Limits(
+        max_connections=100,
+        max_keepalive_connections=20,
+        keepalive_expiry=60.0,
+    ),
+    timeout=httpx.Timeout(10.0, connect=2.0),
+)
+_embedding_client = AsyncOpenAI(
+    api_key=openai_api_key,
+    http_client=_embedding_http_client,
+    max_retries=0,  # We handle retries at the caller level.
+)
 
 
 async def generate_vector_embedding(
     text: list[str],
     model: str = "text-embedding-3-large",
 ) -> list[list[float]]:
-    # Create a fresh AsyncOpenAI client per call to avoid httpx connection
-    # pool exhaustion that causes silent hangs when reusing a single instance.
-    # See: https://github.com/openai/openai-python/issues/769
-    async with AsyncOpenAI(api_key=openai_api_key, timeout=5.0) as client:
-        try:
-            response = await client.embeddings.create(
-                model=model,
-                input=text,
-            )
-            return [item.embedding for item in response.data]
-        except Exception as e:
-            raise ValueError(f"OpenAI failed to generate vector embedding: {e}")
+    """Embed a batch of texts in a single OpenAI call.
+
+    The OpenAI embeddings endpoint accepts a list of up to 2048
+    inputs per call; callers that need multiple embeddings should
+    pass them all in `text` rather than fanning out N single-input
+    calls. Returns one embedding vector per input, in the same order.
+    """
+    try:
+        response = await _embedding_client.embeddings.create(
+            model=model,
+            input=text,
+        )
+        return [item.embedding for item in response.data]
+    except Exception as e:
+        raise ValueError(f"OpenAI failed to generate vector embedding: {e}")

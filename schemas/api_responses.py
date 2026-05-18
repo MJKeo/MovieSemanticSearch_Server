@@ -1,18 +1,24 @@
 """
 Shared API response models.
 
-Pydantic models returned by the HTTP layer (api/main.py) to the
+Wire-format DTOs returned by the HTTP layer (api/main.py) to the
 frontend. These are intentionally thin — only the fields needed to
 render a result tile — so the wire payload stays small and the
 contract is stable across endpoints.
+
+Implemented as `msgspec.Struct` rather than a Pydantic model: the
+search hot path serializes these tens of times per request and
+msgspec.json.encode is ~10-50× faster than Pydantic's model_dump +
+json.dumps round-trip. Pydantic still owns the LLM structured-output
+boundary; msgspec earns its keep here on the wire-format hot path.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+import msgspec
 
 
-class MovieCard(BaseModel):
+class MovieCard(msgspec.Struct, omit_defaults=True, frozen=True):
     """Minimal movie summary returned by the search API.
 
     Backed by `public.movie_card`. `release_date` is the ISO
@@ -21,8 +27,6 @@ class MovieCard(BaseModel):
     convert. Every field except `tmdb_id` may be null when the
     underlying row is missing the data.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     tmdb_id: int
     title: str | None = None

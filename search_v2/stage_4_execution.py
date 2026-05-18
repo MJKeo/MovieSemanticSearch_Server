@@ -39,11 +39,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Literal, NamedTuple
+
+import numpy as np
 
 from db.postgres import fetch_neutral_reranker_seed_ids
 from db.qdrant import qdrant_client
@@ -461,19 +463,32 @@ class _TaggedSpec(NamedTuple):
 
 async def execute_branches(
     branches: list["Step2BranchResult"],
-    auxiliary_specs: list[GeneratedEndpointSpec],
+    auxiliary_specs_per_branch: list[list[GeneratedEndpointSpec]],
 ) -> list[BranchRankedResults]:
     """Run every branch in parallel and return ranked candidate lists.
 
     Each branch is independent: it runs its own Phase B/C/D/E using
-    its own auxiliary spec view. Errors in one branch do not affect
-    siblings.
+    its own auxiliary spec view. Auxiliary specs are now per-branch
+    (parallel list to `branches`) so each branch's shorts-exclusion /
+    reranker-only fallback decisions can differ — which lets the
+    streaming orchestrator dispatch Stage 4 for each branch as soon
+    as that branch's Step 3 finishes, with no cross-branch gate.
+    Errors in one branch do not affect siblings.
     """
     if not branches:
         return []
+    if len(auxiliary_specs_per_branch) != len(branches):
+        raise ValueError(
+            "auxiliary_specs_per_branch must have one entry per branch "
+            f"(got {len(auxiliary_specs_per_branch)} aux lists for "
+            f"{len(branches)} branches)"
+        )
     return list(
         await asyncio.gather(
-            *(_run_branch(branch, auxiliary_specs) for branch in branches)
+            *(
+                _run_branch(branch, aux)
+                for branch, aux in zip(branches, auxiliary_specs_per_branch)
+            )
         )
     )
 
@@ -542,28 +557,21 @@ async def _run_branch(
         # Phase 1.2 (rescore_overhaul.md D5): when two traits commit
         # generator specs that serialize identically, the underlying DB
         # query would otherwise execute twice. Group by
-        # (route, model_dump(mode="json")) — the full pydantic dump is
-        # the safest dedup key because anything that affects executor
-        # output is reachable from `model_dump`. Specs with `params is
-        # None` skip dedup (no key to compare on).
+        # (route, _params_identity(params)) — the identity helper builds
+        # a hashable structural fingerprint without paying for a
+        # full Pydantic model_dump + json.dumps sort. Specs with
+        # `params is None` skip dedup (no key to compare on).
         # Score-side semantics are unchanged: each (trait_idx, cat_idx,
         # spec_idx) coordinate still gets its own score map entry,
         # so per-trait combine + rarity logic reads identical inputs.
-        dedup_groups: dict[tuple[str, str], list[_TaggedSpec]] = {}
+        dedup_groups: dict[tuple[str, object], list[_TaggedSpec]] = {}
         unkeyed: list[_TaggedSpec] = []
         for tagged in pos_generators:
             params = tagged.spec.params
             if params is None:
                 unkeyed.append(tagged)
                 continue
-            key = (
-                tagged.spec.route.value,
-                json.dumps(
-                    params.model_dump(mode="json"),
-                    sort_keys=True,
-                    ensure_ascii=False,
-                ),
-            )
+            key = (tagged.spec.route.value, _params_identity(params))
             dedup_groups.setdefault(key, []).append(tagged)
 
         # Run one representative per group + every unkeyed spec.
@@ -800,18 +808,18 @@ def _score_positive_trait(
 ) -> tuple[dict[int, float], dict[int, list[CategoryScore]]]:
     """Compute per-candidate trait_score in [0, 1] for one positive trait.
 
-    For each candidate, walk the trait's categories. Skip categories
-    whose combine_type is NO_OP (defense-in-depth — handler emits zero
-    specs for EXPLICIT_NO_OP categories anyway, so no specs land in
-    call_score_maps for them). For each non-NO_OP category, collect
-    the per-call scores from call_score_maps keyed by
-    (trait_idx, cat_idx, spec_idx); failed calls (None) are skipped,
-    successful calls missing this candidate contribute 0.0. Apply
-    `combine_calls` to fold the call scores into one per-category
-    score, then apply `combine_categories` keyed on the trait's
-    combine_mode (FRAMINGS → MAX; FACETS → PRODUCT) to fold across
-    categories into the trait_score. Returns 0.0 for the candidate
-    when no category fired.
+    The math (combine_calls fold across specs per category, then
+    combine_categories fold across categories) is identical to the
+    pre-vectorized version. The per-mid Python loop is replaced with
+    numpy array ops: per-spec score arrays are computed once via a
+    sparse scatter, combined into per-category arrays with the
+    category's fold rule (SINGLE = identity, ADDITIVE = product,
+    ALTERNATIVES = max), then folded across categories per the
+    trait's combine_mode (FRAMINGS = max, FACETS = floor + geom
+    mean, SOLO = first category). The dataclass-construction pass
+    over candidates is preserved so `score_breakdowns` stays
+    semantically identical for downstream display + implicit-prior
+    rerank.
 
     Returns a 2-tuple: `(trait_score_by_mid, category_scores_by_mid)`.
     The second element decomposes each candidate's trait_score into
@@ -820,12 +828,7 @@ def _score_positive_trait(
     without re-running the combine logic.
     """
     # Resolve the live-call (spec, score-map) pairs once per (trait,
-    # category) outside the per-candidate loop. With unions in the
-    # tens of thousands, redoing the (trait_idx, cat_idx, spec_idx)
-    # tuple construction + `is None` filter per mid is wasted work —
-    # those values are constant across the union. Specs are kept
-    # alongside the score maps so the per-mid loop can label each
-    # endpoint with its route in the surfaced breakdown.
+    # category) outside the per-candidate loop.
     live_cats: list[
         tuple[
             "CategoryCallWithEndpoints",
@@ -844,9 +847,6 @@ def _score_positive_trait(
         # to NO_OP at scoring time. Skipping it here prevents the
         # downstream `combine_calls(SINGLE, []) → 0.0` from entering
         # the across-category fold and zeroing a FACETS-PRODUCT trait.
-        # Monotonic-safe under FRAMINGS-MAX (removing a 0.0 can only
-        # raise or hold the max) and FACETS-PRODUCT (removing a 0.0
-        # makes the product non-zero).
         if not cc.generated_specs:
             continue
         live_pairs: list[tuple[GeneratedEndpointSpec, dict[int, float]]] = []
@@ -856,39 +856,114 @@ def _score_positive_trait(
                 live_pairs.append((spec, scores))
         live_cats.append((cc, combine_type, live_pairs))
 
+    # ----- Vectorized math path ------------------------------------
+    # Build a stable mid ordering once. Every per-spec / per-category
+    # array below indexes into this order. Iteration order of `set`
+    # is implementation-defined but stable inside a single program
+    # run, which is all we need (no callers depend on the absolute
+    # order — they re-key by mid).
+    mids_list = list(union)
+    n = len(mids_list)
+    if n == 0 or not live_cats:
+        # No work to do — return zero-filled outputs with the union
+        # keys still present so downstream consumers can iterate
+        # over the same candidates regardless of trait outcome.
+        return {mid: 0.0 for mid in mids_list}, {mid: [] for mid in mids_list}
+
+    mid_to_idx = {mid: i for i, mid in enumerate(mids_list)}
+
+    # Per-category arrays: one (specs_arr, cat_arr) entry per live
+    # category. specs_arr[k] is the [n]-shaped score vector for the
+    # k'th spec in the category; cat_arr is the [n]-shaped vector
+    # after applying combine_calls.
+    cat_blocks: list[
+        tuple[
+            "CategoryCallWithEndpoints",
+            CategoryCombineType,
+            list[tuple[GeneratedEndpointSpec, np.ndarray]],
+            np.ndarray,
+        ]
+    ] = []
+    for cc, combine_type, live_pairs in live_cats:
+        spec_arrays: list[tuple[GeneratedEndpointSpec, np.ndarray]] = []
+        for spec, scores in live_pairs:
+            arr = np.zeros(n, dtype=np.float64)
+            # Sparse scatter — only iterate the keys that actually
+            # have a non-default score. Missing mids stay at 0.0,
+            # matching the original `scores.get(mid, 0.0)` semantics.
+            for mid, sc in scores.items():
+                idx = mid_to_idx.get(mid)
+                if idx is not None:
+                    arr[idx] = sc
+            spec_arrays.append((spec, arr))
+
+        if not spec_arrays:
+            # No specs survived; treat as a 0.0 category vector.
+            cat_arr = np.zeros(n, dtype=np.float64)
+        else:
+            stacked = np.stack([arr for _, arr in spec_arrays])
+            if combine_type is CategoryCombineType.SINGLE:
+                if stacked.shape[0] > 1:
+                    logger.warning(
+                        "combine_calls(SINGLE) received %d scores; expected 1. "
+                        "Taking the first deterministically.",
+                        stacked.shape[0],
+                    )
+                cat_arr = stacked[0]
+            elif combine_type is CategoryCombineType.ADDITIVE:
+                cat_arr = np.prod(stacked, axis=0)
+            elif combine_type is CategoryCombineType.ALTERNATIVES:
+                cat_arr = np.max(stacked, axis=0)
+            else:
+                raise ValueError(f"unknown combine_type: {combine_type!r}")
+        cat_blocks.append((cc, combine_type, spec_arrays, cat_arr))
+
+    # Fold across categories using the trait's combine_mode. Empty
+    # cat_blocks already short-circuited above, so we know there is
+    # at least one category here.
+    cat_stack = np.stack([cb[3] for cb in cat_blocks])
+    n_cats = cat_stack.shape[0]
+    if trait.combine_mode is TraitCombineMode.SOLO:
+        if n_cats > 1:
+            logger.warning(
+                "combine_categories(SOLO) received %d scores; expected 1. "
+                "Taking the first deterministically.",
+                n_cats,
+            )
+        trait_arr = cat_stack[0]
+    elif trait.combine_mode is TraitCombineMode.FRAMINGS:
+        trait_arr = np.max(cat_stack, axis=0)
+    elif trait.combine_mode is TraitCombineMode.FACETS:
+        floored = np.maximum(cat_stack, _FACETS_FOLD_FLOOR)
+        product = np.prod(floored, axis=0)
+        trait_arr = product ** (1.0 / n_cats)
+    else:
+        raise ValueError(f"unknown combine_mode: {trait.combine_mode!r}")
+
+    # ----- Dataclass build pass ------------------------------------
+    # Walk the union once to materialize the per-candidate
+    # breakdowns. Allocating CategoryScore + EndpointScore here in
+    # one tight loop is still the dominant cost of the function, but
+    # the per-spec / per-category Python loops above are gone.
     out: dict[int, float] = {}
     cat_out: dict[int, list[CategoryScore]] = {}
-    for mid in union:
-        category_scores: list[float] = []
+    for i, mid in enumerate(mids_list):
         per_cat: list[CategoryScore] = []
-        for cc, combine_type, live_pairs in live_cats:
-            # Extract per-endpoint scores once so we can both surface
-            # them and pass the bare floats into combine_calls.
-            endpoint_pairs = [
-                (spec, scores.get(mid, 0.0)) for spec, scores in live_pairs
-            ]
-            call_scores = [s for _, s in endpoint_pairs]
-            cat_score = combine_calls(combine_type, call_scores)
-            if cat_score is None:
-                # NO_OP is filtered out of live_cats above; this branch
-                # is a safety net if combine_calls grows new None-
-                # returning modes in the future.
-                continue
-            category_scores.append(cat_score)
+        for cc, combine_type, spec_arrays, cat_arr in cat_blocks:
             per_cat.append(
                 CategoryScore(
                     category_name=cc.category.value,
                     combine_type=combine_type.value,
                     expressions=cc.expressions,
                     retrieval_intent=cc.retrieval_intent,
-                    score=cat_score,
+                    score=float(cat_arr[i]),
                     endpoint_scores=[
-                        EndpointScore(route=spec.route.value, score=s)
-                        for spec, s in endpoint_pairs
+                        EndpointScore(route=spec.route.value, score=float(arr[i]))
+                        for spec, arr in spec_arrays
                     ],
                 )
             )
-        out[mid] = combine_categories(trait.combine_mode, category_scores)
+        out[mid] = float(trait_arr[i])
         cat_out[mid] = per_cat
     return out, cat_out
 
@@ -1134,37 +1209,48 @@ def _score_negative_trait(
         else:
             fuzzy_scores.append(scores)
 
-    out: dict[int, float] = {}
-    for movie_id in branch_pool:
-        # Gate: AND across authoritative G calls.
-        if g_a_scores:
-            gate: float | None = 1.0
-            for scores in g_a_scores:
-                gate *= scores.get(movie_id, 0.0)
-        else:
-            gate = None
+    mids_list = list(branch_pool)
+    n = len(mids_list)
+    if n == 0:
+        return {}
+    mid_to_idx = {mid: i for i, mid in enumerate(mids_list)}
 
-        # Fuzzy bin: noisy-OR across evidential G + R calls.
-        # 1 − ∏(1 − s) — independent evidence accumulates; weak signals
-        # reinforce; one strong signal is enough.
-        if fuzzy_scores:
-            inv_product = 1.0
-            for scores in fuzzy_scores:
-                inv_product *= (1.0 - scores.get(movie_id, 0.0))
-            fuzzy: float | None = 1.0 - inv_product
-        else:
-            fuzzy = None
+    def _scatter(score_dict: dict[int, float]) -> np.ndarray:
+        arr = np.zeros(n, dtype=np.float64)
+        for mid, sc in score_dict.items():
+            idx = mid_to_idx.get(mid)
+            if idx is not None:
+                arr[idx] = sc
+        return arr
 
-        if gate is not None and fuzzy is not None:
-            out[movie_id] = gate * fuzzy
-        elif gate is not None:
-            out[movie_id] = gate
-        elif fuzzy is not None:
-            out[movie_id] = fuzzy
-        else:
-            # All calls failed; nothing to penalize on.
-            out[movie_id] = 0.0
-    return out
+    # Gate: AND across authoritative G calls = elementwise product.
+    if g_a_scores:
+        gate_arr: np.ndarray | None = np.ones(n, dtype=np.float64)
+        for sd in g_a_scores:
+            gate_arr = gate_arr * _scatter(sd)
+    else:
+        gate_arr = None
+
+    # Fuzzy bin: noisy-OR across evidential G + R = 1 − ∏(1 − s).
+    if fuzzy_scores:
+        inv_product = np.ones(n, dtype=np.float64)
+        for sd in fuzzy_scores:
+            inv_product = inv_product * (1.0 - _scatter(sd))
+        fuzzy_arr: np.ndarray | None = 1.0 - inv_product
+    else:
+        fuzzy_arr = None
+
+    if gate_arr is not None and fuzzy_arr is not None:
+        result_arr = gate_arr * fuzzy_arr
+    elif gate_arr is not None:
+        result_arr = gate_arr
+    elif fuzzy_arr is not None:
+        result_arr = fuzzy_arr
+    else:
+        # All calls failed; nothing to penalize on.
+        result_arr = np.zeros(n, dtype=np.float64)
+
+    return {mid: float(result_arr[i]) for i, mid in enumerate(mids_list)}
 
 
 # ---------------------------------------------------------------------------
@@ -1255,6 +1341,55 @@ def _finalize_scores(
 
     final.sort(key=lambda mid_score: mid_score[1], reverse=True)
     return final, breakdowns
+
+
+# ---------------------------------------------------------------------------
+# Params identity — cheap structural fingerprint for dedup
+# ---------------------------------------------------------------------------
+
+
+def _params_identity(value) -> object:
+    """Build a hashable structural fingerprint for an endpoint params
+    object.
+
+    Replaces the older `json.dumps(model_dump(mode="json"))` dedup
+    key. We don't need a canonical JSON serialization here — we only
+    need two specs that would produce identical executor input to
+    hash and compare equal. Walking the Pydantic model's
+    `__dict__` directly and folding into nested tuples is roughly
+    an order of magnitude faster than `model_dump` + `json.dumps`
+    for the spec sizes this pipeline produces, and the resulting
+    tuple is hashable / cheap to compare.
+    """
+    # Enum — fold to its raw value so two enum members from the
+    # same class compare equal regardless of identity.
+    if isinstance(value, Enum):
+        return value.value
+    # Pydantic BaseModel — recurse over instance fields. Using
+    # `__dict__` instead of `model_dump` skips Pydantic's
+    # serialization path entirely.
+    if hasattr(value, "model_fields") and hasattr(value, "__dict__"):
+        return tuple(
+            (k, _params_identity(v))
+            for k, v in sorted(value.__dict__.items())
+            if not k.startswith("_")
+        )
+    # Sequence — recurse element-wise. Tuples and lists fold to a
+    # tuple so the result is hashable.
+    if isinstance(value, (list, tuple)):
+        return tuple(_params_identity(v) for v in value)
+    # Set — sort by repr to get a stable order, then fold.
+    if isinstance(value, (set, frozenset)):
+        return tuple(
+            sorted((_params_identity(v) for v in value), key=repr)
+        )
+    # Mapping — recurse on items, sorted by key for stability.
+    if isinstance(value, dict):
+        return tuple(
+            (k, _params_identity(value[k])) for k in sorted(value.keys())
+        )
+    # Primitive (str, int, float, bool, None) — return as-is.
+    return value
 
 
 # ---------------------------------------------------------------------------

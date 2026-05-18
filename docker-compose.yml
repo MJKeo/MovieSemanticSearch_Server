@@ -30,6 +30,10 @@ services:
       image: qdrant/qdrant:latest
       ports:
         - "6333:6333"
+        # gRPC port — required when QDRANT_PREFER_GRPC=1 (default).
+        # gRPC saves ~15-30% per-call vs HTTP for the search shapes
+        # this codebase issues.
+        - "6334:6334"
       volumes:
         - qdrant_data:/qdrant/storage
       restart: unless-stopped

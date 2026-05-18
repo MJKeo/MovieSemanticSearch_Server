@@ -110,7 +110,12 @@ def _build_conninfo() -> str:
 # during FastAPI startup via the lifespan handler.
 pool = AsyncConnectionPool(
     conninfo=_build_conninfo(),
-    min_size=4,           # Keep 4 warm connections for steady-state traffic
+    # min_size raised from 4 → 10 so the steady-state burst of ~10-15
+    # concurrent ops per request (Stage 4 generator/reranker fan-out
+    # + per-branch hydration) does not pay connection-creation latency
+    # on the hot path. The previous value left request slots 5+
+    # paying ~tens-of-ms to spin up a connection mid-request.
+    min_size=10,
     # Sized for the similarity flow's fan-out: the single-anchor lane gather
     # fires up to 11 concurrent ops and the multi-anchor flow has two
     # gather waves of 9 + 6. With two in-flight requests we want to avoid

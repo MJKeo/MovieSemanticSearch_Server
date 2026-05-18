@@ -3247,3 +3247,61 @@ Replace the score-keyed `[movie_id, score]` payloads in both endpoints' final re
 - `/query_search` smoke: each `branch_results` event should contain a `results` array of cards. Verify the order matches the original ranked order by spot-checking the top result against the previous `[movie_id, score]` payload.
 - Edge case: a tmdb_id in the ranked list that's missing from `movie_card` is silently dropped — confirm the response length may be ≤ the original ranked length.
 - Edge case: branch_error path emits `results: []` with branch_error populated.
+
+## Gradio streaming UI for /query_search
+Files: run_gradio_ui.py
+Why: No interactive way to watch the SSE pipeline land — only curl/notebooks. Want to type a query and see branches, traits, and posters appear as each SSE event fires.
+Approach: New top-level script at project root (mirrors `run_search.py` conventions — `sys.path` insert + `load_dotenv`). Thin HTTP client only: manual SSE line-parser over `httpx.AsyncClient.stream()` (read timeout disabled), single `gr.State` reducer keyed by `fetch_id`, `@gr.render` block redraws per-branch `gr.Group`s with `gr.Gallery` of posters. API URL is `MOVIE_SEARCH_API_URL` (default `http://localhost:8000`). Posterless movies use a 1×1 transparent PNG data URI so the gallery doesn't choke. `app.queue()` is mandatory — without it, async-generator handlers only deliver their final yield.
+Design context: SSE event grammar lives in search_v2/streaming_orchestrator.py (`fetches_ready` / `branch_traits` / `branch_results` / `done` / `error`); `MovieCard` wire shape in schemas/api_responses.py.
+Testing notes: Manual end-to-end — boot uvicorn on :8000, run script, check standard-flow / exact-title / similarity queries each render correctly. Branch-error path (kill Redis mid-query) should show inline red error. Empty query short-circuits without re-firing.
+
+## Per-branch streaming progress (branch_stage SSE event)
+Files: search_v2/streaming_orchestrator.py, run_gradio_ui.py
+
+### Intent
+Replace the silent "Fetching…" gap between `branch_traits` and `branch_results` with fine-grained per-branch progress so the UI surfaces what each branch is actually doing (extracting traits → generating endpoint queries → executing → rescoring → hydrating). Also makes per-branch parallelism *visually* obvious: fast branches show their results while slower branches are still mid-stage, instead of every branch appearing to land at once.
+
+### Key Decisions
+- **New SSE event `branch_stage`** with payload `{fetch_id, stage, label}`. `stage` is a stable enum-like key (e.g. `"executing"`, `"rescoring"`); `label` is a human-readable phrase the UI renders verbatim. Stage labels are centralized in `_STAGE_LABELS` so the wire vocabulary stays consistent across emit sites. The event is purely additive — existing consumers ignore it.
+- **Dual emission path:** task-boundary stages (`generating_endpoints` after Step 2, `queries_ready` after Step 3) are direct `yield`s from the orchestrator's own coroutines. Mid-task stages (`rescoring` and `hydrating` inside `_run_stage4_with_implicit_prior`; `hydrating` inside the non-standard wrappers) go through an `asyncio.Queue` populated by worker-level `StageEmitter` callbacks. The merge loop races `asyncio.wait` on real tasks against a single re-armed `queue.get()` waiter, so progress flushes to the wire the instant it's pushed rather than piling up behind a slow task.
+- **No internal changes to `stage_4_execution.py`.** The natural await boundaries inside `_run_stage4_with_implicit_prior` (`_stage4_run_branch` → `_apply_implicit_prior_rerank_for_branch` → `fetch_movie_card_summaries`) already split cleanly into execute / rescore / hydrate phases. Touching the Stage 4 internals was unnecessary and would have been higher-risk.
+- **`_dispatch_stage4` takes a `make_emitter` factory** and emits `"executing"` for each dispatched branch *before* its task starts. Without that, the UI would stay stuck on `"queries_ready"` until the worker's first internal stage emission.
+- **Branch results render independently.** The Stage 4 dispatch gate (auxiliary specs are cross-branch, so Stage 4 has to wait for the slowest Step 3) remains unchanged — but each branch's `branch_results` still fires the instant its own Stage 4 task finishes, and the Gradio UI re-renders on every yield. The perceived "all at once" behavior the user reported was a side-effect of every branch going silent during Stage 4; the per-stage events fix the perception. In the Gradio reducer, `branch_results` now also drops the branch's `stages` entry so the gallery doesn't sit next to a stale progress label.
+- **Initial stages emitted right after `fetches_ready`** so each branch panel starts with a real label ("Extracting traits…" / "Searching by exact title…" / "Resolving similar movies…") instead of the generic "Starting…" fallback.
+
+### Testing Notes
+- Smoke-tested the state reducer in `run_gradio_ui.py`: feeding a synthetic event stream produces correct per-branch stage transitions, terminal `branch_results` drops the stage entry while leaving other branches' stages intact, and status text updates as expected.
+- Manual end-to-end: standard query should advance each branch through 6 stages (extracting → generating → queries_ready → executing → rescoring → hydrating) before its gallery renders. Exact-title and similarity flows should show their two stages (searching → hydrating). The fastest branch's gallery should appear while slower branches are still mid-stage.
+- Cancellation: client disconnect mid-stream still cancels all worker tasks via the existing `finally` block; the progress_waiter task is cancelled alongside them.
+- Watch for queue back-pressure: emissions are `put_nowait` (unbounded queue). Fine in practice — emit cardinality is bounded by stage count × branches, never more than ~30 events per query.
+
+
+## Tighten Step 0 exact_title eligibility against descriptor-shaped queries
+Files: search_v2/step_0.py | Reframed `should_be_searched` rule to require the query-as-typed to resolve to one canonical film (allowed via direct/typo/nickname/sequel/year-marker), explicitly blocked descriptor shapes like "<noun> movies" plural, and added boundary Examples 21–23 ("dog movies", "action movies", "movies similar in tone to Inception") so the model stops fuzzy-matching descriptors like "dog movies" onto the 2022 film "Dog".
+
+## Gradio poster grid: gr.Gallery → raw HTML
+Files: run_gradio_ui.py | Replaced `gr.Gallery` with `gr.HTML` rendering a 6-col CSS grid of `<img>` tags pointing directly at TMDB's CDN. `gr.Gallery` was downloading every poster server-side and re-serving via /file=, and `@gr.render` rebuilds on every SSE event (esp. `branch_stage`) re-paid that cost per poster per yield. Now the browser fetches and caches TMDB URLs natively. `_resolve_poster_url` now returns `None` for missing posters; cells render a dark placeholder box at 2:3 aspect ratio (padding-top hack) so the grid doesn't reflow as images load.
+
+## Per-branch Stage-4 dispatch — drop the cross-branch gate
+Files: search_v2/full_pipeline_orchestrator.py, search_v2/streaming_orchestrator.py, search_v2/stage_4_execution.py
+
+### Intent
+Each standard branch now executes Stage 4 the moment its own Step 3 completes — no waiting for siblings. Previously every standard branch sat on a "queries_ready" plateau until the slowest finished Step 3, because the auxiliary spec computation (`_build_auxiliary_specs` + `_apply_reranker_only_candidate_fallback`) was global across branches. Auxiliary decisions are now per-branch and the gate is gone.
+
+### Key Decisions
+- **Per-branch helpers** in `full_pipeline_orchestrator.py`: `_build_auxiliary_specs(branch)`, `_apply_reranker_only_candidate_fallback(branch)`, `_branch_has_media_type_call(branch)` all take a single `Step2BranchResult`. Added `_compute_branch_auxiliary(branch)` as the convenience entry the streaming + non-streaming paths both use.
+- **Semantic differences from the old global behavior** (intentional):
+  1. *Shorts-exclusion* is now per-branch: a branch with no MEDIA_TYPE call gets shorts-excluded regardless of whether a sibling branch has one. Previously the existence of *any* MEDIA_TYPE call anywhere suppressed shorts-exclusion globally.
+  2. *Reranker-only fallback* is per-branch: a branch whose trait-derived specs are all rerankers always gets its lowest-tier one promoted (or a neutral seed emitted). Previously, such a branch could silently produce zero results if any sibling had a candidate generator.
+- **`execute_branches` signature change**: now takes `auxiliary_specs_per_branch: list[list[GeneratedEndpointSpec]]` parallel to `branches`. Validates length with an explicit check.
+- **`FullPipelineResult.auxiliary_endpoint_specs` → `auxiliary_endpoint_specs_per_branch`** (parallel to `branches`). Breaking change for any caller that inspected the old field; intentional because the old single-list shape no longer represents reality.
+- **Streaming orchestrator simplifications**: removed `_dispatch_stage4`, `_all_standard_branches_done`, the `completed_branches` dict, `stage4_dispatched` flag, `needed_step3` counter, `standard_fetch_ids_ordered`, and the gate check in the merge loop. `_handle_finished_task`'s `_PHASE_STEP3` arm now directly computes the branch's auxiliary, emits `"executing"`, and launches the branch's Stage 4 task right there. Dropped the `queries_ready` stage label — no waiting plateau anymore, so the UI transitions straight from `generating_endpoints` → `executing`.
+
+### Testing Notes
+- Multi-branch wall-clock should drop: fast branches' Stage 4 now starts as soon as their own Step 3 finishes, not after the slowest branch's Step 3.
+- Spot-check a query where one branch has a MEDIA_TYPE call and a sibling doesn't — the sibling should now exclude shorts where it previously could leak them.
+- Spot-check a query that previously had an all-reranker branch alongside a candidate-generator branch — the reranker-only branch should now return results instead of empty.
+- Test suite has assertions on `FullPipelineResult.auxiliary_endpoint_specs` (now `_per_branch`) and on the global-vs-per-branch behavior. Those need updating in a separate pass per .claude/rules/test-boundaries.md — flagging here, not fixing.
+
+## Fix broken keyword reference in central_topic dog-movies example
+Files: search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/central_topic.md | The example referenced `ANIMAL` (no such registry member; real keyword is `ANIMAL_ADVENTURE`) and claimed it as a "slightly broader single-member superset" of dog films, which doesn't hold — `ANIMAL_ADVENTURE` is a narrow adventure sub-form. Rewrote the expected commit to abstain on keyword with `commitment-criteria-fail`, citing both `ANIMAL_ADVENTURE` (narrow sub-form) and `FAMILY` (correlation-only) as walked-and-rejected; semantic plot_analysis body is unchanged.

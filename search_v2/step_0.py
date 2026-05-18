@@ -278,14 +278,44 @@ exact_title_flow_data:
 - exact_title_to_search: always populate with your best canonical \
   title candidate if the query references one. Empty string only \
   when the query names no title at all.
-- should_be_searched: set to true when exactly one \
-  TitleObservation's span_text covers the full query (ignoring case \
-  and surrounding whitespace). The title's ambiguity_potential does \
-  NOT suppress the search — even when the span is ambiguous, the \
-  title reading is worth executing.
-- Otherwise set should_be_searched to false (no title covers the \
-  full query, multiple titles observed, or the title appears inside \
-  a similarity frame / descriptive sentence).
+- should_be_searched: set to true ONLY when the query, as typed, IS \
+  itself a reference to one specific real movie title. The entire \
+  query must resolve to one canonical film. Allowed resolutions:
+  * direct match: the query spells the canonical title (case-\
+    insensitive, whitespace-insensitive)
+  * typo correction of a title whose typed form is not itself a \
+    plausible English word or common phrase (e.g., "Intersteller" \
+    → Interstellar)
+  * recognized nickname / partial reference that points \
+    unambiguously at one film with no plausible standard-search \
+    reading (e.g., "Gump" → Forrest Gump)
+  * sequel-numbering shorthand for a known installment ("Top Gun \
+    2" → Top Gun: Maverick)
+  * explicit year or installment-disambiguation marker attached to \
+    a title ("Dune 2021", "Halloween (2018)")
+  The title's ambiguity_potential does NOT suppress the search — \
+  even when the span is ambiguous, the title reading is worth \
+  executing. But ambiguity_potential is not a license to fuzzy-\
+  match: the resolution must be supported by what is actually in \
+  the query.
+- Set should_be_searched to false in particular when:
+  * the query is shaped like a descriptor rather than a title \
+    reference — most commonly "<noun> movies" (plural) or \
+    "<adjective> movies" used as a generic category. The plural \
+    "movies"/"films" is a near-deterministic descriptor signal: \
+    "dog movies" is "movies about dogs", not the 2022 film "Dog". \
+    Do NOT drop descriptor words ("movies", "films", "shows") to \
+    reach a single-word title — that is hallucination
+  * the query contains content beyond the title that is not a \
+    recognized title-resolution marker (descriptive sentence, \
+    mood/genre word, similarity frame, etc.)
+  * no title covers the full query, multiple titles are observed, \
+    or the title appears inside a similarity frame / descriptive \
+    sentence
+- Note that the singular "<word> movie" CAN still be a real title \
+  ("scary movie" → Scary Movie, 2000). The singular/plural \
+  distinction matters: a real canonical title with the literal word \
+  "Movie" in it is a direct match; the plural shape is descriptor.
 - release_year: integer year ONLY when the user EXPLICITLY states a \
   year next to (or otherwise clearly attached to) the title — \
   examples: "Dune 2021", "the 1978 Superman", "Halloween (2018)". \
@@ -594,7 +624,34 @@ Query: "like that batman with michael keaton"
 - enable_primary_flow: false
 - primary_flow: similarity
 
-Example 21 — similarity frame blocked by per-title aspect qualifiers
+Example 21 — descriptor-shaped query that LOOKS title-adjacent
+Query: "dog movies"
+- titles_observed: []  (the plural "movies" makes this a descriptor — "movies about dogs" — not a title reference. The 2022 film "Dog" does not match the query as typed; dropping "movies" to reach it would be hallucination. Note the contrast with the singular "scary movie" in Example 3, which IS the canonical title of a real film.)
+- qualifiers: ["dog movies"]
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "", release_year: null}
+- similarity_flow_data: {should_be_searched: false, references: []}
+- enable_primary_flow: true
+- primary_flow: standard
+
+Example 22 — generic category descriptor
+Query: "action movies"
+- titles_observed: []
+- qualifiers: ["action movies"]
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "", release_year: null}
+- similarity_flow_data: {should_be_searched: false, references: []}
+- enable_primary_flow: true
+- primary_flow: standard
+
+Example 23 — title embedded in a descriptive phrase (exact title does NOT fire)
+Query: "movies similar in tone to Inception"
+- titles_observed: [{span_text: "Inception", most_likely_canonical_title: "Inception", ambiguity_potential: "title-only."}]
+- qualifiers: ["similar in tone"]  ("similar in tone to X" is a similarity-style frame WITH a qualifier; the qualifier blocks similarity, exact_title doesn't fire because the title does not cover the full query)
+- exact_title_flow_data: {should_be_searched: false, exact_title_to_search: "Inception", release_year: null}
+- similarity_flow_data: {should_be_searched: false, references: [{similar_search_title: "Inception", release_year: null}]}
+- enable_primary_flow: true
+- primary_flow: standard
+
+Example 24 — similarity frame blocked by per-title aspect qualifiers
 Query: "the comedy of bug's life with the animation of klaus"
 - titles_observed: [
     {span_text: "bug's life", most_likely_canonical_title: "A Bug's Life", ambiguity_potential: "title-only."},

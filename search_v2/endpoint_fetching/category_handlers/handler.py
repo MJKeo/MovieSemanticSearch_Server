@@ -60,11 +60,13 @@ from search_v2.endpoint_fetching.trending_query_execution import (
 logger = logging.getLogger(__name__)
 
 
-# Mirrors the live full-pipeline handler-LLM timeout so moving query
-# generation into this module does not change caller-visible latency
-# behavior.
+# Timeout / retry / jitter for the handler-LLM call live one layer
+# below us, inside `generate_llm_response_async`. The constants here
+# remain only because the deterministic-endpoint execution surface
+# (`run_query_execution`) still uses TIMEOUT_SECONDS to bound the
+# Qdrant / Postgres dispatch — that path is not an LLM call and
+# manages its own timeout.
 TIMEOUT_SECONDS = 25.0
-LLM_MAX_ATTEMPTS = 2
 
 _HANDLER_LLM_PROVIDER = LLMProvider.OPENAI
 _HANDLER_LLM_MODEL = "gpt-5.4-mini"
@@ -233,37 +235,28 @@ async def _run_handler_llm(
     )
     response_format = get_output_schema(category)
 
-    for attempt in range(LLM_MAX_ATTEMPTS):
-        try:
-            response, _, _ = await asyncio.wait_for(
-                generate_llm_response_async(
-                    provider=_HANDLER_LLM_PROVIDER,
-                    user_prompt=user_message,
-                    system_prompt=system_prompt,
-                    response_format=response_format,
-                    model=_HANDLER_LLM_MODEL,
-                    **_HANDLER_LLM_KWARGS,
-                ),
-                timeout=TIMEOUT_SECONDS,
-            )
-            return response
-        except Exception as exc:  # noqa: BLE001 - soft-fail by design
-            if attempt < LLM_MAX_ATTEMPTS - 1:
-                logger.warning(
-                    "handler LLM call failed on attempt %d; retrying "
-                    "(category=%s, error=%r)",
-                    attempt + 1,
-                    category.name,
-                    exc,
-                )
-                continue
-            logger.error(
-                "handler LLM call failed on final attempt; returning "
-                "empty specs (category=%s, error=%r)",
-                category.name,
-                exc,
-            )
-    return None
+    try:
+        # Timeout, retry, and jittered backoff are all applied
+        # inside generate_llm_response_async — see
+        # `LLM_PER_ATTEMPT_TIMEOUT_SECONDS` / `LLM_MAX_ATTEMPTS` /
+        # `_LLM_RETRY_BACKOFF_*` constants in generic_methods.py.
+        response, _, _ = await generate_llm_response_async(
+            provider=_HANDLER_LLM_PROVIDER,
+            user_prompt=user_message,
+            system_prompt=system_prompt,
+            response_format=response_format,
+            model=_HANDLER_LLM_MODEL,
+            **_HANDLER_LLM_KWARGS,
+        )
+        return response
+    except Exception as exc:  # noqa: BLE001 — soft-fail by design
+        logger.error(
+            "handler LLM call exhausted retries; returning empty specs "
+            "(category=%s, error=%r)",
+            category.name,
+            exc,
+        )
+        return None
 
 
 def determine_operation_type(

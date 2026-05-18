@@ -285,10 +285,15 @@ def _print_trait(trait: TraitWithEndpoints, indent: str = "") -> None:
 
 
 def _print_auxiliary_specs(result: FullPipelineResult) -> None:
-    # Auxiliary specs are global fetches not attached to any trait.
-    # Today the only one is the default shorts-exclusion MEDIA_TYPE
-    # fetch injected when no trait emitted a MEDIA_TYPE call.
-    if not result.auxiliary_endpoint_specs:
+    # Auxiliary specs are per-branch fetches not attached to any trait.
+    # skip_bypass_steps_0_1=True always yields exactly one branch, so
+    # we read index 0 of auxiliary_endpoint_specs_per_branch directly.
+    aux_specs = (
+        result.auxiliary_endpoint_specs_per_branch[0]
+        if result.auxiliary_endpoint_specs_per_branch
+        else []
+    )
+    if not aux_specs:
         print(
             "AUXILIARY ENDPOINT CALLS (not attached to a trait): "
             "(none — a trait already covers MEDIA_TYPE)"
@@ -296,9 +301,9 @@ def _print_auxiliary_specs(result: FullPipelineResult) -> None:
         return
     print(
         f"AUXILIARY ENDPOINT CALLS (not attached to a trait) — "
-        f"{len(result.auxiliary_endpoint_specs)} call(s):"
+        f"{len(aux_specs)} call(s):"
     )
-    for spec in result.auxiliary_endpoint_specs:
+    for spec in aux_specs:
         _print_endpoint_spec(spec, indent="  ")
 
 
