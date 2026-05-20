@@ -55,6 +55,8 @@ services:
       build: ./api
       ports:
         - "8000:8000"
+      env_file:
+        - .env
       environment:
         POSTGRES_USER: ${POSTGRES_USER}
         POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -71,6 +73,7 @@ services:
         - ./db:/app/db
         - ./implementation:/app/implementation
         - ./schemas:/app/schemas
+        - ./search_v2:/app/search_v2
 
 volumes:
     postgres_data:

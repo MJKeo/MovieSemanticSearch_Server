@@ -43,41 +43,106 @@ class LLMProvider(Enum):
 # ===============================
 #           Clients
 # ===============================
+#
+# Clients are exposed as lazy proxies rather than constructed at import
+# time. Eager construction forced every caller — including the API
+# server at boot and unrelated test files — to have every provider's
+# credentials in scope, even when only one provider was actually used.
+#
+# A simple module-level __getattr__ (PEP 562) is not sufficient because
+# it only fires for *external* attribute access. Bare-name references
+# inside this module's own functions (e.g. `gemini_client.aio.models...`
+# in generate_gemini_response_async) compile to LOAD_GLOBAL, which
+# consults the module __dict__ directly and bypasses __getattr__ — they
+# would raise NameError. Using a proxy object lets bare-name lookups
+# find a real module global while still deferring construction until
+# first attribute access on the client itself.
 
-openai_api_key = os.getenv("OPENAI_API_KEY")
-kimi_api_key = os.environ.get("MOONSHOT_API_KEY")
 
-openai_client = OpenAI(api_key=openai_api_key)
-async_openai_client = AsyncOpenAI(api_key=openai_api_key)
-kimi_client = OpenAI(
-    api_key=kimi_api_key,
-    base_url="https://api.moonshot.ai/v1",
+class _LazyClient:
+    """Proxy that defers construction of an LLM client until first
+    attribute access.
+
+    The proxy itself is cheap to build and is what gets bound to the
+    module global, so LOAD_GLOBAL inside this module's functions
+    always resolves. The wrapped factory runs the first time any
+    attribute is read off the proxy (e.g. `.chat`, `.aio`,
+    `.messages`); the resulting client is cached for the lifetime of
+    the proxy and subsequent attribute access proxies straight
+    through to it.
+    """
+
+    __slots__ = ("_factory", "_instance")
+
+    def __init__(self, factory):
+        self._factory = factory
+        self._instance = None
+
+    def __getattr__(self, name):
+        # __getattr__ fires only when normal lookup misses; the two
+        # slot attributes (`_factory`, `_instance`) are resolved via
+        # the slot descriptors and never reach here, so every "real"
+        # client attribute (e.g. .chat, .aio) routes through this
+        # method.
+        #
+        # Thread-safety: the check-then-set below is not atomic. Safe
+        # under the current single-event-loop deployment (no awaits
+        # in the construction path, so no two coroutines can
+        # interleave inside this method). If this code is ever
+        # invoked from a thread pool or multi-threaded worker model,
+        # wrap the check + factory call in a threading.Lock to avoid
+        # double-construction races.
+        instance = self._instance
+        if instance is None:
+            instance = self._factory()
+            self._instance = instance
+        return getattr(instance, name)
+
+    def __repr__(self):
+        # Show the underlying client type when constructed so the
+        # proxy abstraction does not leak into stack traces / logs.
+        # Does not force construction — keeps repr() side-effect-free.
+        inst = self._instance
+        inner = type(inst).__name__ if inst is not None else "(uninitialized)"
+        return f"<_LazyClient {inner}>"
+
+
+# Env vars are read inside each factory (not at module load), so values
+# picked up by load_dotenv() above are always in scope by the time the
+# factory runs.
+openai_client = _LazyClient(lambda: OpenAI(api_key=os.getenv("OPENAI_API_KEY")))
+async_openai_client = _LazyClient(
+    lambda: AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 )
-async_kimi_client = AsyncOpenAI(
-    api_key=kimi_api_key,
-    base_url="https://api.moonshot.ai/v1",
+kimi_client = _LazyClient(
+    lambda: OpenAI(
+        api_key=os.getenv("MOONSHOT_API_KEY"),
+        base_url="https://api.moonshot.ai/v1",
+    )
 )
-
+async_kimi_client = _LazyClient(
+    lambda: AsyncOpenAI(
+        api_key=os.getenv("MOONSHOT_API_KEY"),
+        base_url="https://api.moonshot.ai/v1",
+    )
+)
 # Gemini — uses Google's native genai SDK
-gemini_api_key = os.getenv("GOOGLE_API_KEY")
-gemini_client = genai.Client(api_key=gemini_api_key)
-
+gemini_client = _LazyClient(lambda: genai.Client(api_key=os.getenv("GOOGLE_API_KEY")))
 # Groq — uses native Groq SDK (async only, matching project pattern)
-groq_api_key = os.getenv("GROQ_API_KEY")
-async_groq_client = AsyncGroq(api_key=groq_api_key)
-
+async_groq_client = _LazyClient(lambda: AsyncGroq(api_key=os.getenv("GROQ_API_KEY")))
 # Alibaba/Qwen — uses OpenAI-compatible routing via DashScope
-alibaba_api_key = os.getenv("ALIBABA_API_KEY")
-async_alibaba_client = AsyncOpenAI(
-    api_key=alibaba_api_key,
-    base_url="https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+async_alibaba_client = _LazyClient(
+    lambda: AsyncOpenAI(
+        api_key=os.getenv("ALIBABA_API_KEY"),
+        base_url="https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+    )
 )
-
-# Anthropic — uses OAuth token (ANTHROPIC_OAUTH_KEY) rather than API key;
-# intended for reference generation and judge calls in the evaluation pipeline,
-# but also available as a generation candidate.
-anthropic_oauth_token = os.getenv("ANTHROPIC_API_KEY")
-async_anthropic_client = AsyncAnthropic(auth_token=anthropic_oauth_token)
+# Anthropic — uses OAuth token (ANTHROPIC_API_KEY) rather than API key;
+# intended for reference generation and judge calls in the evaluation
+# pipeline, but also available as a generation candidate.
+async_anthropic_client = _LazyClient(
+    lambda: AsyncAnthropic(auth_token=os.getenv("ANTHROPIC_API_KEY"))
+)
 
 
 # ===============================
@@ -719,25 +784,33 @@ async def generate_llm_response_async(
     raise last_exc
 
 
-# Module-level singleton client for embeddings with an explicit httpx
-# pool. The prior implementation constructed a fresh AsyncOpenAI per
-# call (citing openai-python #769 about silent hangs) — but that bug
-# was about not closing clients, not about reuse. Each fresh-client
-# call paid a TCP + TLS handshake. With explicit Limits the pool is
-# bounded and keepalive connections are reused across requests.
-_embedding_http_client = httpx.AsyncClient(
-    limits=httpx.Limits(
-        max_connections=100,
-        max_keepalive_connections=20,
-        keepalive_expiry=60.0,
-    ),
-    timeout=httpx.Timeout(10.0, connect=2.0),
-)
-_embedding_client = AsyncOpenAI(
-    api_key=openai_api_key,
-    http_client=_embedding_http_client,
-    max_retries=0,  # We handle retries at the caller level.
-)
+# Embedding client uses a dedicated httpx pool with explicit Limits so
+# keepalive connections are reused across requests rather than paying a
+# TCP + TLS handshake per call. (The prior fresh-per-call implementation
+# was based on a misreading of openai-python #769, which was about
+# not closing clients, not about reuse.)
+#
+# Wrapped in _LazyClient (same pattern as the provider clients above)
+# so importing this module does not require OPENAI_API_KEY to be set —
+# the underlying AsyncOpenAI + httpx pool are built on first attribute
+# access and cached for the lifetime of the proxy.
+def _build_embedding_client() -> AsyncOpenAI:
+    http_client = httpx.AsyncClient(
+        limits=httpx.Limits(
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=60.0,
+        ),
+        timeout=httpx.Timeout(10.0, connect=2.0),
+    )
+    return AsyncOpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        http_client=http_client,
+        max_retries=0,  # We handle retries at the caller level.
+    )
+
+
+_embedding_client = _LazyClient(_build_embedding_client)
 
 
 async def generate_vector_embedding(

@@ -41,6 +41,8 @@ import asyncio
 import json
 import time
 
+from google.genai import types
+
 from implementation.llms.generic_methods import (
     LLMProvider,
     generate_llm_response_async,
@@ -946,16 +948,16 @@ SYSTEM_PROMPT = (
 #                      Executor
 # ===============================================================
 #
-# Model is finalized to Gemini 3 Flash with thinking disabled and a
-# modest temperature. Callers cannot override — this keeps the step
+# Model is finalized to Gemini 3.5 Flash with thinking at minimal and
+# a low temperature. Callers cannot override — this keeps the step
 # reproducible and makes cost/latency predictable end-to-end.
 
 
 _PROVIDER = LLMProvider.GEMINI
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-3.5-flash"
 _MODEL_KWARGS: dict = {
-    "thinking_config": {"thinking_budget": 0},
-    "temperature": 0.35,
+    "thinking_config": types.ThinkingConfig(thinking_level="minimal"),
+    "temperature": 0.15,
 }
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from google.genai import types
 from pydantic import BaseModel
 from qdrant_client import AsyncQdrantClient
 
@@ -68,11 +69,11 @@ logger = logging.getLogger(__name__)
 # manages its own timeout.
 TIMEOUT_SECONDS = 25.0
 
-_HANDLER_LLM_PROVIDER = LLMProvider.OPENAI
-_HANDLER_LLM_MODEL = "gpt-5.4-mini"
+_HANDLER_LLM_PROVIDER = LLMProvider.GEMINI
+_HANDLER_LLM_MODEL = "gemini-3.5-flash"
 _HANDLER_LLM_KWARGS: dict = {
-    "reasoning_effort": "none",
-    "verbosity": "low",
+    "thinking_config": types.ThinkingConfig(thinking_level="minimal"),
+    "temperature": 0.15,
 }
 
 

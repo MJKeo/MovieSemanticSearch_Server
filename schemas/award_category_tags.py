@@ -43,7 +43,7 @@
 
 from enum import Enum
 
-from consolidate_award_categories import consolidate
+from schemas.consolidate_award_categories import consolidate
 
 
 # ---------------------------------------------------------------------------

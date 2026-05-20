@@ -1,6 +1,79 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Unstick the API container + lazy LLM client construction
+Files: api/main.py (unchanged), api/Dockerfile, api/requirements.txt, docker-compose.yml, schemas/consolidate_award_categories.py (moved from repo root), schemas/award_category_tags.py, implementation/llms/generic_methods.py
+
+### Intent
+Get the API container booting again after the search_v2 wiring landed
+in api/main.py. The new import chain (api.main → search_v2 →
+db.vector_scoring → db.vector_search → implementation.llms.generic_methods)
+exposed three latent problems all at once: (a) Docker base image was
+Python 3.11, project requires 3.13; (b) api/requirements.txt was a
+hand-curated subset that drifted from pyproject.toml; (c) generic_methods
+constructed every provider's LLM client eagerly at module import,
+forcing every caller — including the API at boot — to have every
+provider's credentials in scope.
+
+### Key Decisions
+- **Dockerfile bumped to python:3.13-slim** (was 3.11-slim) to match
+  the project's `requires-python = ">=3.13"`. Kept the slim variant
+  rather than switching to the full image — slim is the right default
+  and the few source-build deps can be handled with targeted
+  apt-installs if they ever appear.
+- **api/requirements.txt rewritten as the union of original API deps
+  and pyproject's main dependency list**, with `psycopg2` dropped
+  (codebase grep showed zero imports — leftover from a previous
+  iteration). Kept the hand-maintained shape rather than switching
+  to `uv export` because `uv export` dumped the entire workspace
+  including gradio/chromadb/langchain transitively, which broke the
+  build on python:3.11 via `audioop-lts` (Python ≥3.13 only) and
+  bloated the image. Trade-off accepted: each new API-side `uv add`
+  must be mirrored manually in requirements.txt.
+- **`consolidate_award_categories.py` moved from repo root into
+  `schemas/`** because `schemas/award_category_tags.py` was reaching
+  up to a root-level helper via implicit-cwd-on-sys.path. That works
+  locally but fails inside the container, where only the mounted
+  package dirs are on the path. The import was updated to
+  `from schemas.consolidate_award_categories import consolidate`.
+- **`search_v2` added to the api service volume mounts in
+  docker-compose.yml**, parallel to the existing api/db/implementation/
+  schemas mounts. The orchestrator path now resolves at boot.
+- **`env_file: .env` added to the api service** so all provider keys
+  reach the container. The previous setup interpolated only six vars
+  via `${POSTGRES_USER}` etc.; OPENAI / MOONSHOT / GOOGLE / ANTHROPIC /
+  GROQ / ALIBABA / TMDB were never propagated. The explicit
+  `environment:` block still wins for the host-override vars
+  (POSTGRES_HOST, REDIS_HOST, QDRANT_HOST).
+- **LLM clients converted from eager to lazy construction** via a
+  per-client `_LazyClient` proxy in implementation/llms/generic_methods.py.
+  First attempt used module-level `__getattr__` (PEP 562) but that
+  only fires for *external* attribute access — bare-name references
+  inside this module's own functions compile to LOAD_GLOBAL which
+  bypasses `__getattr__` and raises NameError. The proxy is bound as
+  a real module global so LOAD_GLOBAL resolves; the underlying client
+  is built on first attribute access (`.chat`, `.aio`, `.messages`,
+  ...) and cached for the lifetime of the proxy. No call sites needed
+  to change. `_embedding_client` migrated to the same pattern for
+  consistency.
+
+### Testing Notes
+- All 8 provider clients are now lazy; only the ones actually called
+  will construct, which improves test isolation (tests touching only
+  OpenAI no longer need ANTHROPIC_API_KEY etc. set).
+- `mock.patch("...generic_methods.openai_client.chat.completions.parse")`-
+  style patches still work — patch() walks the dotted path via
+  getattr(), which triggers proxy construction once and then mutates
+  the inner method.
+- Grepped unit_tests/ for `isinstance(*_client, ...)` / `type(*_client)`
+  — no matches, so the proxy not being an `OpenAI` instance won't
+  break type-check assertions.
+- Proxy `__getattr__` is not thread-safe (intentional, documented in
+  code comment) — safe under current single-event-loop deployment;
+  needs a lock if ever invoked from a thread pool.
+- Separate concern flagged for follow-up: `uv remove psycopg2` from
+  pyproject.toml since nothing uses it.
+
 ## V3.4 Bucket-Weaver — multi-source recommendation layer
 Files: search_v2/similar_movies.py, search_improvement_planning/similar_movies_test_tracker.md
 
