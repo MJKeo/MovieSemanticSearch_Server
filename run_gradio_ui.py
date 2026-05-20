@@ -51,7 +51,7 @@ API_BASE_URL = os.environ.get("MOVIE_SEARCH_API_URL", "http://localhost:8000")
 # ranked lists; the UI only needs the top of each to be useful, and
 # capping keeps the @gr.render rebuild cheap (one <img> tag per movie
 # per yield).
-_MAX_RESULTS_PER_BRANCH = 25
+_MAX_RESULTS_PER_BRANCH = 100
 
 # The API returns TMDB poster paths like "/abc123.jpg" — i.e. just the
 # image filename with a leading slash, not a full URL. w500 is the

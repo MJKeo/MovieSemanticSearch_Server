@@ -195,8 +195,8 @@ def _score_from_count(count: int, mode: str, mark: int) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Token-index resolution — mirrors _resolve_names_to_entry_ids in the
-# franchise executor. Per-name tokenize (query stoplist applied) →
+# Token-index resolution — mirrors resolve_franchise_names_to_entry_ids
+# in the franchise executor. Per-name tokenize (query stoplist applied) →
 # single batched posting-list fetch → per-name intersection →
 # across-name union.
 # ---------------------------------------------------------------------------

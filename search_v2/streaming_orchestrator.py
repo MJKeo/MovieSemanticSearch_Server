@@ -67,9 +67,13 @@ from typing import Any
 from db.postgres import fetch_movie_card_summaries
 from schemas.api_responses import MovieCard
 from schemas.step_0_flow_routing import (
+    ActorFlowData,
+    CharacterFranchiseFlowData,
     ExactTitleFlowData,
+    NonCharacterFranchiseFlowData,
     SimilarityFlowData,
     Step0Response,
+    StudioFlowData,
 )
 from schemas.step_1 import Step1Response
 from schemas.step_2 import Trait
@@ -77,7 +81,15 @@ from schemas.step_2 import Trait
 from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec import (
     GeneratedEndpointSpec,
 )
+from search_v2.character_franchise_search import (
+    run_character_franchise_search,
+)
 from search_v2.exact_title_search import run_exact_title_search
+from search_v2.non_character_franchise_search import (
+    run_non_character_franchise_search,
+)
+from search_v2.studio_search import run_studio_search
+from search_v2.actor_search import run_actor_search
 from search_v2.full_pipeline_orchestrator import (
     BranchKind,
     Step2BranchResult,
@@ -103,6 +115,10 @@ logger = logging.getLogger(__name__)
 
 _FETCH_ID_EXACT_TITLE = "exact_title"
 _FETCH_ID_SIMILARITY = "similarity"
+_FETCH_ID_NON_CHARACTER_FRANCHISE = "non_character_franchise"
+_FETCH_ID_CHARACTER_FRANCHISE = "character_franchise"
+_FETCH_ID_STUDIO = "studio"
+_FETCH_ID_ACTOR = "actor"
 
 
 def _standard_fetch_id(kind: BranchKind) -> str:
@@ -263,8 +279,34 @@ async def stream_full_pipeline(
     # ------------------------------------------------------------------
     branch_plan = _plan_step2_branches(step0_response, step1_response, query)
 
-    exact_title_firing = step0_response.exact_title_flow_data.should_be_searched
-    similarity_firing = step0_response.similarity_flow_data.should_be_searched
+    # Map the new mutually-exclusive entity-flow choice back onto the
+    # executors that exist today. Every entity flow now has its own
+    # executor — exact_title, similarity, non_character_franchise, and
+    # character_franchise all dispatch through this orchestrator.
+    exact_title_flow_data: ExactTitleFlowData | None = (
+        step0_response.to_exact_title_flow_data()
+    )
+    similarity_flow_data: SimilarityFlowData | None = (
+        step0_response.to_similarity_flow_data()
+    )
+    non_character_franchise_flow_data: NonCharacterFranchiseFlowData | None = (
+        step0_response.to_non_character_franchise_flow_data()
+    )
+    character_franchise_flow_data: CharacterFranchiseFlowData | None = (
+        step0_response.to_character_franchise_flow_data()
+    )
+    studio_flow_data: StudioFlowData | None = (
+        step0_response.to_studio_flow_data()
+    )
+    actor_flow_data: ActorFlowData | None = (
+        step0_response.to_actor_flow_data()
+    )
+    exact_title_firing = exact_title_flow_data is not None
+    similarity_firing = similarity_flow_data is not None
+    non_character_franchise_firing = non_character_franchise_flow_data is not None
+    character_franchise_firing = character_franchise_flow_data is not None
+    studio_firing = studio_flow_data is not None
+    actor_firing = actor_flow_data is not None
 
     fetches: list[dict[str, Any]] = []
     for kind, branch_query, ui_label in branch_plan:
@@ -277,7 +319,7 @@ async def stream_full_pipeline(
             }
         )
     if exact_title_firing:
-        et = step0_response.exact_title_flow_data
+        et = exact_title_flow_data
         fetches.append(
             {
                 "id": _FETCH_ID_EXACT_TITLE,
@@ -288,7 +330,7 @@ async def stream_full_pipeline(
             }
         )
     if similarity_firing:
-        refs = step0_response.similarity_flow_data.references
+        refs = similarity_flow_data.references
         fetches.append(
             {
                 "id": _FETCH_ID_SIMILARITY,
@@ -301,6 +343,50 @@ async def stream_full_pipeline(
                     }
                     for r in refs
                 ],
+            }
+        )
+    if non_character_franchise_firing:
+        canonical = non_character_franchise_flow_data.canonical_name
+        fetches.append(
+            {
+                "id": _FETCH_ID_NON_CHARACTER_FRANCHISE,
+                "type": "non_character_franchise",
+                "label": canonical,
+                "canonical_name": canonical,
+            }
+        )
+    if character_franchise_firing:
+        canonical = character_franchise_flow_data.canonical_name
+        fetches.append(
+            {
+                "id": _FETCH_ID_CHARACTER_FRANCHISE,
+                "type": "character_franchise",
+                "label": canonical,
+                "canonical_name": canonical,
+            }
+        )
+    if studio_firing:
+        canonical_names = [
+            ref.canonical_name for ref in studio_flow_data.references
+        ]
+        fetches.append(
+            {
+                "id": _FETCH_ID_STUDIO,
+                "type": "studio",
+                "label": _studio_label(canonical_names),
+                "canonical_names": canonical_names,
+            }
+        )
+    if actor_firing:
+        actor_canonical_names = [
+            ref.canonical_name for ref in actor_flow_data.references
+        ]
+        fetches.append(
+            {
+                "id": _FETCH_ID_ACTOR,
+                "type": "actor",
+                "label": _actor_label(actor_canonical_names),
+                "canonical_names": actor_canonical_names,
             }
         )
 
@@ -335,6 +421,22 @@ async def stream_full_pipeline(
             progress_queue.put_nowait(_stage_event(fetch["id"], "searching_title"))
         elif ftype == "similarity":
             progress_queue.put_nowait(_stage_event(fetch["id"], "resolving_anchors"))
+        elif ftype == "non_character_franchise":
+            progress_queue.put_nowait(
+                _stage_event(fetch["id"], "resolving_franchise")
+            )
+        elif ftype == "character_franchise":
+            progress_queue.put_nowait(
+                _stage_event(fetch["id"], "resolving_character_franchise")
+            )
+        elif ftype == "studio":
+            progress_queue.put_nowait(
+                _stage_event(fetch["id"], "resolving_studio")
+            )
+        elif ftype == "actor":
+            progress_queue.put_nowait(
+                _stage_event(fetch["id"], "resolving_actor")
+            )
 
     # ------------------------------------------------------------------
     # State for the merge loop.
@@ -360,7 +462,7 @@ async def stream_full_pipeline(
     if exact_title_firing:
         task = asyncio.create_task(
             _run_exact_title_with_hydration(
-                step0_response.exact_title_flow_data,
+                exact_title_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_EXACT_TITLE),
             )
         )
@@ -371,12 +473,56 @@ async def stream_full_pipeline(
     if similarity_firing:
         task = asyncio.create_task(
             _run_similarity_with_hydration(
-                step0_response.similarity_flow_data,
+                similarity_flow_data,
                 emit_stage=_make_emitter(_FETCH_ID_SIMILARITY),
             )
         )
         task_info[task] = _TaskInfo(
             fetch_id=_FETCH_ID_SIMILARITY,
+            phase=_PHASE_NONSTANDARD,
+        )
+    if non_character_franchise_firing:
+        task = asyncio.create_task(
+            _run_non_character_franchise_with_hydration(
+                non_character_franchise_flow_data,
+                emit_stage=_make_emitter(_FETCH_ID_NON_CHARACTER_FRANCHISE),
+            )
+        )
+        task_info[task] = _TaskInfo(
+            fetch_id=_FETCH_ID_NON_CHARACTER_FRANCHISE,
+            phase=_PHASE_NONSTANDARD,
+        )
+    if character_franchise_firing:
+        task = asyncio.create_task(
+            _run_character_franchise_with_hydration(
+                character_franchise_flow_data,
+                emit_stage=_make_emitter(_FETCH_ID_CHARACTER_FRANCHISE),
+            )
+        )
+        task_info[task] = _TaskInfo(
+            fetch_id=_FETCH_ID_CHARACTER_FRANCHISE,
+            phase=_PHASE_NONSTANDARD,
+        )
+    if studio_firing:
+        task = asyncio.create_task(
+            _run_studio_with_hydration(
+                studio_flow_data,
+                emit_stage=_make_emitter(_FETCH_ID_STUDIO),
+            )
+        )
+        task_info[task] = _TaskInfo(
+            fetch_id=_FETCH_ID_STUDIO,
+            phase=_PHASE_NONSTANDARD,
+        )
+    if actor_firing:
+        task = asyncio.create_task(
+            _run_actor_with_hydration(
+                actor_flow_data,
+                emit_stage=_make_emitter(_FETCH_ID_ACTOR),
+            )
+        )
+        task_info[task] = _TaskInfo(
+            fetch_id=_FETCH_ID_ACTOR,
             phase=_PHASE_NONSTANDARD,
         )
 
@@ -662,6 +808,93 @@ async def _run_exact_title_with_hydration(
     return _FetchOutcome(cards=cards, branch_error=None)
 
 
+async def _run_non_character_franchise_with_hydration(
+    flow_data: NonCharacterFranchiseFlowData,
+    emit_stage: StageEmitter,
+) -> _FetchOutcome:
+    """Run the non-character franchise flow then hydrate the bucketed result.
+
+    The executor returns two ordered buckets (primary then secondary).
+    We concatenate in that order and let fetch_movie_card_summaries
+    preserve the input ordering — primary-by-popularity followed by
+    secondary-by-popularity.
+    """
+    result = await run_non_character_franchise_search(flow_data)
+    emit_stage("hydrating")
+    movie_ids = result.primary_franchise + result.secondary_franchise
+    cards = await fetch_movie_card_summaries(movie_ids)
+    return _FetchOutcome(cards=cards, branch_error=None)
+
+
+async def _run_character_franchise_with_hydration(
+    flow_data: CharacterFranchiseFlowData,
+    emit_stage: StageEmitter,
+) -> _FetchOutcome:
+    """Run the character-franchise flow then hydrate the tiered result.
+
+    The executor returns seven tiers in strict priority order
+    (lineage-mainline, top-billed-appearance, lineage-ancillary,
+    universe, prominent-appearance, relevant-appearance,
+    minor-appearance). Concatenating in tier order yields the final
+    ranked list; fetch_movie_card_summaries preserves input ordering
+    so the tier-then-popularity invariant survives hydration.
+    """
+    result = await run_character_franchise_search(flow_data)
+    emit_stage("hydrating")
+    movie_ids = (
+        result.tier_1_lineage_mainline
+        + result.tier_2_top_billed_appearance
+        + result.tier_3_lineage_ancillary
+        + result.tier_4_universe
+        + result.tier_5_prominent_appearance
+        + result.tier_6_relevant_appearance
+        + result.tier_7_minor_appearance
+    )
+    cards = await fetch_movie_card_summaries(movie_ids)
+    return _FetchOutcome(cards=cards, branch_error=None)
+
+
+async def _run_studio_with_hydration(
+    flow_data: StudioFlowData,
+    emit_stage: StageEmitter,
+) -> _FetchOutcome:
+    """Run the studio flow then hydrate the single popularity-sorted list.
+
+    The executor returns one flat `ranked` list — no tiers, no per-
+    movie score. fetch_movie_card_summaries preserves input ordering,
+    so the popularity-DESC invariant established by run_studio_search
+    survives hydration.
+    """
+    result = await run_studio_search(flow_data)
+    emit_stage("hydrating")
+    cards = await fetch_movie_card_summaries(result.ranked)
+    return _FetchOutcome(cards=cards, branch_error=None)
+
+
+async def _run_actor_with_hydration(
+    flow_data: ActorFlowData,
+    emit_stage: StageEmitter,
+) -> _FetchOutcome:
+    """Run the actor flow then hydrate the bucketed result.
+
+    The executor returns four buckets in strict priority order
+    (lead, major, relevant, minor). Concatenating in bucket order
+    yields the final ranked list; fetch_movie_card_summaries
+    preserves input ordering so the bucket-then-popularity invariant
+    survives hydration.
+    """
+    result = await run_actor_search(flow_data)
+    emit_stage("hydrating")
+    movie_ids = (
+        result.bucket_1_lead
+        + result.bucket_2_major
+        + result.bucket_3_relevant
+        + result.bucket_4_minor
+    )
+    cards = await fetch_movie_card_summaries(movie_ids)
+    return _FetchOutcome(cards=cards, branch_error=None)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -689,6 +922,24 @@ def _similarity_label(references: list) -> str:
         else:
             parts.append(ref.similar_search_title)
     return "Similar to: " + ", ".join(parts) if parts else "Similar to: …"
+
+
+def _studio_label(canonical_names: list[str]) -> str:
+    """Build a UI label like 'A24' or 'A24 + Neon' for the studio fetch."""
+    if not canonical_names:
+        return "Studio"
+    if len(canonical_names) == 1:
+        return canonical_names[0]
+    return " + ".join(canonical_names)
+
+
+def _actor_label(canonical_names: list[str]) -> str:
+    """Build a UI label like 'Tom Hanks' or 'Tom Hanks + Meg Ryan' for the actor fetch."""
+    if not canonical_names:
+        return "Actor"
+    if len(canonical_names) == 1:
+        return canonical_names[0]
+    return " + ".join(canonical_names)
 
 
 # ---------------------------------------------------------------------------

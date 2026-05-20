@@ -40,8 +40,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
-from dataclasses import dataclass
 
 from db.postgres import (
     PEOPLE_POSTING_TABLES,
@@ -68,17 +66,12 @@ from schemas.entity_translation import (
     TitlePatternQuerySpec,
     TitlePatternTarget,
 )
+# Zone primitives (cutoffs + in-zone relative position) live in a
+# shared module so the actor entity-flow bucketer in
+# search_v2.actor_search and the score curves here can't drift on
+# tuning constants. See search_v2.actor_zones for the docstring.
+from search_v2.actor_zones import zone_cutoffs, zone_relative_position
 from search_v2.endpoint_fetching.result_helpers import build_endpoint_result
-
-
-# ---------------------------------------------------------------------------
-# Zone cutoff constants (proposal §Actor Prominence Scoring).
-# Tunable starting points.
-# ---------------------------------------------------------------------------
-
-LEAD_FLOOR: int = 2
-LEAD_SCALE: float = 0.6
-SUPP_SCALE: float = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -102,41 +95,11 @@ def _normalize_forms(forms: list[str]) -> list[str]:
 
 # ---------------------------------------------------------------------------
 # Actor prominence scoring (pure functions — no I/O).
+#
+# Zone cutoffs and the in-zone relative-position helper live in
+# search_v2.actor_zones — they're shared with the actor entity-flow
+# bucketer. The mode-specific score curves below stay here.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class _ZoneCutoffs:
-    """Precomputed zone boundaries for a given cast_size. Billing positions
-    1..lead_cutoff are LEAD; lead_cutoff+1..supp_cutoff are SUPPORTING;
-    the remainder are MINOR."""
-
-    lead_cutoff: int
-    supp_cutoff: int
-
-
-def _zone_cutoffs(cast_size: int) -> _ZoneCutoffs:
-    """Derive zone boundaries using sqrt-scaled growth with floors."""
-    sqrt_n = math.sqrt(cast_size)
-    lead = min(cast_size, max(LEAD_FLOOR, round(LEAD_SCALE * sqrt_n)))
-    supp = min(cast_size, max(lead + 1, round(SUPP_SCALE * sqrt_n)))
-    return _ZoneCutoffs(lead_cutoff=lead, supp_cutoff=supp)
-
-
-def _zone_relative_position(
-    billing_position: int,
-    zone_start: int,
-    zone_end: int,
-) -> float:
-    """Normalize an in-zone billing position to zp ∈ [0, 1].
-
-    zp = 0.0 at the top of the zone, 1.0 at the bottom. A single-member
-    zone collapses to 0.0 so the formula matches the top-of-zone score.
-    """
-    span = zone_end - zone_start
-    if span <= 0:
-        return 0.0
-    return (billing_position - zone_start) / span
 
 
 def _actor_score_default(zone: str, zp: float) -> float:
@@ -199,19 +162,19 @@ def _actor_prominence_score(
     to compute a raw [0, 1] value. No band compression is applied —
     callers always receive raw scores.
     """
-    cutoffs = _zone_cutoffs(cast_size)
+    cutoffs = zone_cutoffs(cast_size)
 
     if billing_position <= cutoffs.lead_cutoff:
         zone = "lead"
-        zp = _zone_relative_position(billing_position, 1, cutoffs.lead_cutoff)
+        zp = zone_relative_position(billing_position, 1, cutoffs.lead_cutoff)
     elif billing_position <= cutoffs.supp_cutoff:
         zone = "supporting"
-        zp = _zone_relative_position(
+        zp = zone_relative_position(
             billing_position, cutoffs.lead_cutoff + 1, cutoffs.supp_cutoff
         )
     else:
         zone = "minor"
-        zp = _zone_relative_position(
+        zp = zone_relative_position(
             billing_position, cutoffs.supp_cutoff + 1, cast_size
         )
 

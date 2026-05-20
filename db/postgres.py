@@ -2035,6 +2035,44 @@ async def fetch_quality_popularity_signals(
     return {row[0]: (row[1], row[2]) for row in rows}
 
 
+async def fetch_lineage_mainline_signals(
+    movie_ids: list[int],
+) -> dict[int, tuple[bool, int]]:
+    """Bulk fetch (is_spinoff, release_format) for the character-franchise mainline-vs-ancillary split.
+
+    Returns a dict keyed by movie_id with `(is_spinoff, release_format)`.
+    `release_format` is the SMALLINT id stored on movie_card
+    (`ReleaseFormat.<member>.release_format_id`). Missing movies are
+    absent from the dict.
+
+    `is_spinoff` is LEFT-JOINed from movie_franchise_metadata and
+    defaults to False when the movie has no franchise metadata row —
+    a movie without any franchise structure cannot be a spinoff of
+    anything, so absence reads as "not a spinoff."
+
+    Used by the character-franchise tier construction to split the
+    lineage match-set into mainline (NOT is_spinoff AND
+    release_format=MOVIE) and ancillary buckets, so very-prominent
+    character appearances outside the lineage can be inserted between
+    them. See search_v2/character_franchise_search.py.
+    """
+    if not movie_ids:
+        return {}
+
+    query = """
+        SELECT mc.movie_id,
+               COALESCE(mfm.is_spinoff, FALSE) AS is_spinoff,
+               mc.release_format
+        FROM public.movie_card mc
+        LEFT JOIN public.movie_franchise_metadata mfm
+          ON mfm.movie_id = mc.movie_id
+        WHERE mc.movie_id = ANY(%s::bigint[])
+    """
+
+    rows = await _execute_read(query, (movie_ids,))
+    return {row[0]: (row[1], row[2]) for row in rows}
+
+
 # =========================================
 #     SIMILAR-MOVIES FLOW READ HELPERS
 # =========================================
@@ -3409,6 +3447,91 @@ async def fetch_franchise_movie_ids(
         lineage_matched = {row[0] for row in rows}
 
     return (lineage_matched, universe_only_matched)
+
+
+async def fetch_non_character_franchise_movies(
+    normalized_canonical_names: list[str],
+    *,
+    limit: int = 100,
+) -> list[tuple[int, int]]:
+    """Resolve a set of franchise canonical names and bucket their movies.
+
+    Single-round-trip lookup used by the non-character franchise executor.
+    Resolves each entry in ``normalized_canonical_names`` against the
+    UNIQUE index on ``lex.franchise_entry.normalized_string``, OR-unions
+    the resulting ``franchise_entry_id`` set, and joins into
+    ``public.movie_card`` via the GIN-indexed entry-id arrays.
+
+    Multi-name input supports query-time alias expansion: when the
+    upstream executor's LLM emits ``["marvel cinematic universe",
+    "marvel"]`` for a single user reference, both forms resolve here and
+    their entry-id sets union into one bucketed result. A movie that
+    matches via multiple entries gets bucket=0 if ANY matching entry
+    sits in its ``lineage_entry_ids`` — the ``bool_or`` aggregate over
+    the JOIN expansion handles that, and ``GROUP BY mc.movie_id``
+    deduplicates rows the JOIN amplified once per matched entry.
+
+    The returned rows are pre-sorted to match the executor's append-after-
+    sort algorithm: bucket 0 (primary / lineage) always precedes bucket 1
+    (secondary / universe-only), and within each bucket the rows are
+    sorted by ``popularity_score`` descending (NULLS LAST), with
+    ``movie_id`` desc as the deterministic tiebreaker. The ``LIMIT`` is
+    therefore bucket-aware — primary movies consume the budget first.
+
+    Args:
+        normalized_canonical_names: Outputs of
+            ``normalize_franchise_string(name)`` — must use the same
+            normalizer that populated
+            ``lex.franchise_entry.normalized_string`` at ingest. Any
+            divergence is a silent retrieval bug. Empty / blank entries
+            are dropped; an all-empty list short-circuits to an empty
+            result.
+        limit: Maximum number of rows to return (primary + secondary
+            combined). Defaults to 100 — enough headroom for the largest
+            real franchises.
+
+    Returns:
+        ``list[(movie_id, bucket)]`` with ``bucket == 0`` for primary
+        (lineage) hits and ``bucket == 1`` for secondary (universe-only)
+        hits. Empty list when no name resolves.
+    """
+    # Drop blanks and dedupe — the same normalized form may appear
+    # multiple times if the upstream LLM emitted near-duplicates that
+    # collapsed under the shared normalizer. Sorting gives deterministic
+    # query text so the plan cache stays warm.
+    cleaned = sorted({n for n in normalized_canonical_names if n})
+    if not cleaned:
+        return []
+
+    # The JOIN amplifies one row per matched franchise_entry. GROUP BY
+    # mc.movie_id collapses that back to one row per movie; bool_or over
+    # the lineage-containment predicate assigns bucket=0 if ANY of the
+    # matched entries lives in this movie's lineage_entry_ids (otherwise
+    # it's universe-only → bucket=1). popularity_score is functionally
+    # dependent on mc.movie_id (PK of movie_card), so listing it in
+    # GROUP BY is just to satisfy the SQL grouping rules — there's no
+    # real grouping on it. Using @> ARRAY[id]::bigint[] (rather than
+    # = ANY(...)) keeps the GIN index on both array columns eligible.
+    query = """
+        SELECT
+            mc.movie_id,
+            CASE
+                WHEN bool_or(
+                    mc.lineage_entry_ids @> ARRAY[fe.franchise_entry_id]::bigint[]
+                ) THEN 0
+                ELSE 1
+            END AS bucket
+        FROM lex.franchise_entry fe
+        JOIN public.movie_card mc
+          ON (mc.lineage_entry_ids @> ARRAY[fe.franchise_entry_id]::bigint[]
+              OR mc.shared_universe_entry_ids @> ARRAY[fe.franchise_entry_id]::bigint[])
+        WHERE fe.normalized_string = ANY(%s::text[])
+        GROUP BY mc.movie_id, mc.popularity_score
+        ORDER BY bucket ASC, mc.popularity_score DESC NULLS LAST, mc.movie_id DESC
+        LIMIT %s
+    """
+    rows = await _execute_read(query, (cleaned, limit))
+    return [(int(row[0]), int(row[1])) for row in rows]
 
 
 # ===============================

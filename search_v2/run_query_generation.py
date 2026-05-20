@@ -40,9 +40,9 @@ from search_v2.endpoint_fetching.category_handlers.generated_endpoint_spec impor
     GeneratedEndpointSpec,
 )
 from search_v2.endpoint_fetching.category_handlers.handler import (
-    _HANDLER_LLM_KWARGS,
-    _HANDLER_LLM_MODEL,
-    _HANDLER_LLM_PROVIDER,
+    HANDLER_LLM_KWARGS,
+    HANDLER_LLM_MODEL,
+    HANDLER_LLM_PROVIDER,
     determine_operation_type,
     run_query_generation,
 )
@@ -153,12 +153,12 @@ async def _run_handler_with_full_output(
     # debug runner is best-effort and surfacing the raw exception is
     # more useful than masking it.
     raw_output, _input_tokens, _output_tokens = await generate_llm_response_async(
-        provider=_HANDLER_LLM_PROVIDER,
+        provider=HANDLER_LLM_PROVIDER,
         user_prompt=user_message,
         system_prompt=system_prompt,
         response_format=response_format,
-        model=_HANDLER_LLM_MODEL,
-        **_HANDLER_LLM_KWARGS,
+        model=HANDLER_LLM_MODEL,
+        **HANDLER_LLM_KWARGS,
     )
 
     # Same extractor + operation_type assignment the production handler

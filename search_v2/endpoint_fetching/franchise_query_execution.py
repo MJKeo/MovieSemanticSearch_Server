@@ -77,10 +77,17 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Token-index resolution — pure Python over a shared batched response.
+#
+# resolve_franchise_names_to_entry_ids is the canonical public helper for
+# turning a list of raw franchise / subgroup surface forms into a set of
+# franchise_entry_ids. It is exported so callers outside this module (e.g.
+# the Step-0 character-franchise entity-flow runner) can share the exact
+# tokenize → batched fetch → per-name intersection → cross-name union
+# pipeline rather than re-deriving it incorrectly.
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_names_to_entry_ids(names: list[str] | None) -> set[int]:
+async def resolve_franchise_names_to_entry_ids(names: list[str] | None) -> set[int]:
     """Resolve a list of franchise / subgroup surface forms to entry ids.
 
     Pipeline per spec §Query-Time Resolution Step 1-3:
@@ -210,10 +217,10 @@ async def execute_franchise_query(
     # same posting-list fetch pattern and the second call would benefit
     # from Postgres connection reuse; the wall-clock difference for the
     # handful of names a typical spec carries is negligible.
-    franchise_name_entry_ids = await _resolve_names_to_entry_ids(
+    franchise_name_entry_ids = await resolve_franchise_names_to_entry_ids(
         spec.franchise_names
     )
-    subgroup_entry_ids = await _resolve_names_to_entry_ids(spec.subgroup_names)
+    subgroup_entry_ids = await resolve_franchise_names_to_entry_ids(spec.subgroup_names)
 
     # Edge-case guard: a textual axis that was *requested* but resolved
     # to an empty entry-id set must short-circuit to an empty result.

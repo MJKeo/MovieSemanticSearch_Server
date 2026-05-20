@@ -386,6 +386,10 @@ ALL_CONCEPT_TAGS: tuple = tuple(
 class SearchFlow(StrEnum):
     EXACT_TITLE = "exact_title"
     SIMILARITY = "similarity"
+    CHARACTER_FRANCHISE = "character_franchise"
+    NON_CHARACTER_FRANCHISE = "non_character_franchise"
+    STUDIO = "studio"
+    ACTOR = "actor"
     STANDARD = "standard"
 
 

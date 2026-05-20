@@ -1,6 +1,167 @@
 # DIFF_CONTEXT
 Active context for uncommitted changes in the current working session.
 
+## Expand character_franchise tiers 5 → 7 (mainline split + top-billed elevation)
+Files: db/postgres.py, search_v2/character_franchise_search.py, search_v2/streaming_orchestrator.py, search_v2/run_step_0.py
+
+### Intent
+Real-data observation on the "batman" query: *Batman v Superman: Dawn
+of Justice* (TMDB tagged in the Superman lineage but with Batman as
+co-lead) was buried at rank ~28 below 54 lineage entries that
+included obscure direct-to-video animated films like *Batman vs
+Teenage Mutant Ninja Turtles*. Mirror: *Joker (2019)* ranked above
+BvS within the prior tier 3 purely because of popularity, even
+though Batman isn't top-billed in Joker.
+
+This change inserts a new bucket between mainline lineage and the
+ancillary lineage tail so very-prominent character appearances
+outside the lineage can outrank obscure franchise entries without
+ever overriding genuine mainline films.
+
+### Key Decisions
+- **Mainline definition: NOT is_spinoff AND release_format = MOVIE.**
+  Verified against real data — splits cleanly: Dark Knight Trilogy +
+  Burton/Schumacher Batman + 1989/1966 → mainline; Under the Red
+  Hood, Batman: Year One, Batman Ninja, the LEGO Batman variants,
+  the 1940s serials → ancillary. Crossovers stay mainline
+  (`is_crossover` ignored) per user decision — they're typically
+  major theatrical releases.
+- **Top-3 by raw billing position (cast-size-blind)** as the new
+  tier 2 cut. Used the raw `billing_position` from
+  `fetch_character_billing_rows` (already fetched, was being thrown
+  away). User-aligned: "is Batman one of the top 3 names in the
+  credits?" is a clearer mental model than the cast-size-relative
+  DEFAULT score for this specific question.
+- **New 7-tier order**: lineage-mainline → top-billed-appearance →
+  lineage-ancillary → universe → prominent-appearance (DEFAULT ≥
+  0.70 AND billing > 3) → relevant-appearance → minor-appearance.
+  The top-billed tier sits between the two lineage halves so a top-
+  billed appearance never outranks "The Dark Knight" but always
+  outranks "Chase Me 2003"-style entries.
+- **One extra Postgres round-trip** for `fetch_lineage_mainline_signals`
+  on the lineage_matched set (typically <100 movies). Runs sequentially
+  after the main `asyncio.gather` because it depends on the franchise
+  fetch's output. Negligible latency hit.
+- **MAX-score + MIN-billing-position dual reduction** in
+  `_fetch_character_scores`. Alias rows for the same movie ("Batman"
+  + "Bruce Wayne") may have different billing positions; we keep
+  both the best DEFAULT score and the best raw position so the new
+  bucketer has both signals available.
+
+### Verification
+Smoke test on "batman" with `limit=200`:
+- Tier 1 (mainline): Dark Knight, Dark Knight Rises, Batman Begins,
+  The Batman (2022), Burton/Schumacher quartet — all the genuinely
+  major theatrical Batman films.
+- Tier 2 (top-billed): **Batman v Superman is now #1**, followed by
+  Justice League, Snyder Cut, The Lego Movie, The Flash, Lego Batman.
+- Tier 3 (ancillary): Under the Red Hood, Dark Knight Returns parts
+  1+2, Batman: Year One, Batman Ninja, LEGO Batman variants — all
+  legitimate Batman lineage entries but spinoffs or non-theatrical.
+- Tier 5 (prominent, billing > 3): **Joker (2019)** correctly demoted
+  here — Joaquin's lead role pushes Batman/Bruce Wayne out of the
+  top 3 of the cast, so it's a "prominent appearance" rather than a
+  "top-billed appearance." This is genuinely better than the prior
+  ranking, where Joker beat BvS purely on popularity.
+- All 7 tiers verified disjoint programmatically.
+
+### Testing Notes
+What still needs coverage: behavior when `fetch_lineage_mainline_signals`
+returns nothing for a movie (defensive default: ancillary); the
+case where Step 0's character has no lineage at all (Joker as a
+referent — every Batman-tagged film becomes irrelevant, and we'd
+expect tier 2 to be the primary surface).
+
+## Implement character_franchise entity-flow search + 5-tier reranking
+Files: search_v2/character_franchise_search.py (new), search_v2/endpoint_fetching/character_franchise_fanout_call.py (new), search_v2/endpoint_fetching/franchise_query_execution.py, search_v2/endpoint_fetching/award_query_execution.py, search_v2/full_pipeline_orchestrator.py, search_v2/streaming_orchestrator.py
+
+### Intent
+Step 0 now routes bare-character-name queries ("Spider-Man", "James
+Bond", "Indiana Jones") into the new CHARACTER_FRANCHISE entity flow,
+but no executor existed. This adds it. The runner returns five
+disjoint tiers (lineage / universe / prominent character / relevant
+character / minor character) so popularity sorts WITHIN tiers, not
+across them — a categorical "is this a Spider-Man movie?" decision
+that prevents Endgame (Spidey in ~8min) from outranking Far From
+Home in the result list.
+
+### Key Decisions
+- **Reuse the existing CHARACTER_FRANCHISE_FANOUT prompt and schema**
+  via a new standalone helper in search_v2/endpoint_fetching/
+  character_franchise_fanout_call.py. The fanout call is one LLM
+  roundtrip that returns BOTH character_forms (cast aliases like
+  "Tony Stark", "Iron Man") AND franchise_forms (franchise name
+  aliases) from one shared referent walk. The prompt is purpose-built
+  for the cross-credit aliasing problem and gives strictly better
+  recall than two independent generator calls. Reuses
+  HANDLER_LLM_PROVIDER/MODEL/KWARGS so model upgrades propagate
+  automatically. Inlines a small XML serializer instead of calling
+  build_user_message to avoid fabricating a CategoryCall.
+- **Bypass the executor layer** (execute_franchise_query,
+  execute_entity_query) and call lower-level fetchers directly
+  (fetch_franchise_movie_ids, fetch_character_billing_rows). The
+  executors collapse the lineage-vs-universe distinction into one
+  [0, 1] score and hard-force CENTRAL prominence mode — we need raw
+  disjoint match sets and raw billing positions so the tier logic
+  can apply DEFAULT-mode prominence with cast-size-relative cutoffs.
+- **DEFAULT-mode prominence with 0.70 / 0.30 thresholds** for the
+  tier 3 sub-buckets (Prominent / Relevant / Minor). DEFAULT (linear
+  ramp across cast) over CENTRAL (saturated top) because the
+  character is NOT the subject of the movie in tier 3 — it's an
+  appearance in someone else's film. Formula `1.0 - (pos-1)/max(1, size-1)`
+  is duplicated from entity_query_execution._character_score_default
+  with a comment requiring lockstep maintenance.
+- **Strict tier-priority dedupe**: lineage > universe > character
+  prominence. A low-prominence lineage cameo outranks a high-
+  prominence character appearance outside the franchise. Defensible
+  because the franchise IS the character — Step 0 has already
+  committed to this framing. Flagged in plans/ for revisit if real
+  query data suggests otherwise.
+- **Critical guard against tokenizer drift**: when franchise_forms
+  is non-empty but resolves to zero entry_ids, short-circuit BEFORE
+  calling fetch_franchise_movie_ids. The helper treats empty
+  franchise_name_entry_ids as "axis inactive" and would silently
+  broaden the match to every movie with any lineage data. Mirrors
+  the guard at franchise_query_execution.py:225-228.
+- **Single-franchise scope only**. Step 0's validator enforces
+  exactly one entity for CHARACTER_FRANCHISE. Multi-franchise round-
+  robin interleaving was discussed and dropped from scope per user
+  decision; recorded in plans/synthetic-sleeping-walrus.md for
+  future revisit.
+- **Renamed `_resolve_names_to_entry_ids` → public** in
+  franchise_query_execution.py so the new runner can reuse the exact
+  tokenize → batched fetch → per-name intersection → cross-name
+  union pipeline rather than duplicating it. Only 2 internal callers
+  and 1 docstring reference needed updating (award_query_execution.py
+  comment).
+
+### Planning Context
+Design discussion in plans/synthetic-sleeping-walrus.md walked through
+the tiering rationale, the executor-bypass decision, and the
+multi-franchise scope cut. Key insight that emerged mid-discussion:
+"universe" for a character query is narrower than initially thought
+— `shared_universe_entry_ids` resolves the literal franchise-name
+text, so "iron man" universe matches don't sweep all MCU films, only
+movies explicitly tagged with the Iron Man universe. This simplified
+the design considerably (no need to gate tier 2 by character presence).
+
+### Testing Notes
+End-to-end smoke test on "Spider-Man" passes: tier 1 = 13 Spider-Man
+lineage films, tier 2 = 7 Sony Spider-Man Universe / Venom films,
+tier 3 = 4 MCU prominent appearances (Endgame, Infinity War, Civil
+War), tier 4 = 3 relevant appearances (Iron Man 2 cameo, Across the
+Spider-Verse — interesting placement suggests the latter isn't
+tagged as Sony Universe in the data). All tiers disjoint by
+construction. Latency ~3-4s for one fanout LLM call + 3 parallelized
+Postgres round trips.
+
+What still needs coverage: behavior on franchise-less characters
+(Joker), characters with no shared universe (James Bond),
+characters where character_forms resolves to zero term_ids,
+character query where Step 0 routes to CHARACTER_FRANCHISE but the
+referent has neither character nor franchise data (should return
+all-empty tiers cleanly).
+
 ## Unstick the API container + lazy LLM client construction
 Files: api/main.py (unchanged), api/Dockerfile, api/requirements.txt, docker-compose.yml, schemas/consolidate_award_categories.py (moved from repo root), schemas/award_category_tags.py, implementation/llms/generic_methods.py
 
@@ -3378,3 +3539,160 @@ Each standard branch now executes Stage 4 the moment its own Step 3 completes �
 
 ## Fix broken keyword reference in central_topic dog-movies example
 Files: search_v2/endpoint_fetching/category_handlers/prompts/categories/few_shot_examples/central_topic.md | The example referenced `ANIMAL` (no such registry member; real keyword is `ANIMAL_ADVENTURE`) and claimed it as a "slightly broader single-member superset" of dog films, which doesn't hold — `ANIMAL_ADVENTURE` is a narrow adventure sub-form. Rewrote the expected commit to abstain on keyword with `commitment-criteria-fail`, citing both `ANIMAL_ADVENTURE` (narrow sub-form) and `FAMILY` (correlation-only) as walked-and-rejected; semantic plot_analysis body is unchanged.
+
+
+## Build non-character franchise executor
+Files: schemas/step_0_flow_routing.py, db/postgres.py, search_v2/non_character_franchise_search.py, search_v2/run_step_0.py, search_v2/streaming_orchestrator.py, search_v2/full_pipeline_orchestrator.py
+
+### Intent
+Wire the `NON_CHARACTER_FRANCHISE` Step 0 flow to a real executor. Previously this flow was treated as a no-op alongside `CHARACTER_FRANCHISE` (the prior Step-0 redesign added the routing but left both flows unimplemented). When Step 0 emits a non-character franchise, the new executor resolves the canonical_name to a `franchise_entry_id` and returns two ordered buckets: primary (movies whose lineage contains the entry) and secondary (universe-only). Each bucket is sorted independently by `movie_card.popularity_score DESC`; secondary always appends after the full primary list, so the least-popular primary movie still precedes the most-popular secondary movie.
+
+### Key Decisions
+- **Separate schema types** (`CharacterFranchiseFlowData`, `NonCharacterFranchiseFlowData`) rather than a shared `FranchiseFlowData`, so the character path can evolve independently once it's built. The character flow stays a no-op for now (scaffolded adapter, no executor).
+- **No per-movie score field on the result** — `NonCharacterFranchiseSearchResult` exposes `primary_franchise` and `secondary_franchise` as two ordered `list[int]` rather than a single `list[tuple[int, float]]`. The bucket-then-popularity order is the relevance signal; downstream consumers walk the lists in order.
+- **Single Postgres round-trip** via a JOIN through `lex.franchise_entry`. The `CASE` expression labels rows with their bucket, `ORDER BY bucket ASC, popularity_score DESC, movie_id DESC` puts primary before secondary, and `LIMIT` is therefore bucket-aware (primary always consumes the budget first). Measured 5–35ms per call in verification.
+- **Normalization via `normalize_franchise_string`** (imported from `implementation/misc/franchise_text`) — the same function that populated `lex.franchise_entry.normalized_string` at ingest. Mismatched normalization would silently miss every known franchise.
+- **Hydration order preservation** in the streaming orchestrator wrapper: `fetch_movie_card_summaries` returns rows in Postgres scan order, so the wrapper rebuilds the `tmdb_id`-keyed dict and replays the input order before returning `_FetchOutcome`. Same pattern works for both buckets concatenated.
+
+### Verification
+End-to-end smoke test on eight queries (marvel, mission impossible, star wars, fast and furious, harry potter, spider man, captain america, batman) via an ad-hoc parallel harness. Non-character results match expectations: Star Wars → 33 primary + 4 secondary (main saga vs Ewoks/Robot Chicken), Mission: Impossible → 8 primary, Harry Potter → 10 primary, Marvel → 1 primary + 47 secondary (MCU is structured as a shared universe with one lineage entry). Character queries correctly route to `CHARACTER_FRANCHISE` and skip. One observed gap: Step 0's canonical_name `"Fast & Furious"` normalizes to `"fast furious"`, which doesn't match the ingested `"the fast and the furious"` entry — an LLM-vs-ingestion vocabulary mismatch worth a follow-up but not an executor bug.
+
+### Testing Notes
+No tests touched per the test-boundary rule. The new public surface area is one executor function, one Postgres helper, two Pydantic flow-data classes, and two `Step0Response` adapter methods — all candidates for unit coverage in a follow-up testing pass. Edge cases to cover: empty normalized name, unknown canonical_name (no franchise_entry match), exact lineage-only franchise (secondary list empty), exact universe-only franchise (Marvel-shaped — primary has 1 documentary row, secondary holds the films).
+
+## Non-character franchise executor: LLM-driven alias expansion
+Files: db/postgres.py, search_v2/non_character_franchise_search.py, search_v2/endpoint_fetching/category_handlers/handler.py, search_v2/run_query_generation.py
+
+### Intent
+The original executor matched the Step 0 `canonical_name` against `lex.franchise_entry.normalized_string` as a single exact-string lookup. This missed cases where Step 0 picked a different canonical form than what ingestion stamped — e.g. `"MCU"` from Step 0 vs `"marvel cinematic universe"` at ingest. The shared franchise tokenizer can't bridge these (the two token sets are disjoint). The fix reuses the existing Step-3 franchise translator (`generate_franchise_query`) purely for its `franchise_names` axis: feed it the canonical_name, get back 1-3 canonical surface forms, OR-union them through the same SQL. Verified: `"MCU"` now resolves to 1+47 results where it previously returned empty.
+
+### Key Decisions
+- **Reuse `generate_franchise_query` over building a dedicated alias-expansion prompt.** The existing prompt is already battle-tested for franchise name canonicalization and emits up to 3 alternate forms. Wasted output tokens on the unused axes (subgroup, lineage_position, structural_flags, launch_scope, prefer_lineage) are explicitly accepted per user direction ("don't overengineer this step, a couple seconds is fine").
+- **Soft-fail to deterministic single-name path** on any LLM failure. The fallback path in `_expand_canonical_names` always returns at least `[canonical_name]`, so a flaky LLM never produces zero results when the deterministic path would have succeeded. `franchise_names=None` from the LLM (legitimate response when the LLM reads the input as structural-only) also falls back to the original name.
+- **DB helper signature flipped to `list[str]`** with `WHERE fe.normalized_string = ANY(%s::text[])`. Bucket assignment becomes `CASE WHEN bool_or(mc.lineage_entry_ids @> ARRAY[fe.franchise_entry_id]::bigint[]) THEN 0 ELSE 1 END` over `GROUP BY mc.movie_id, mc.popularity_score` — a movie is primary if ANY matched entry sits in its lineage. Still a single Postgres round-trip with both GIN indexes active; the JOIN/GROUP BY only adds whatever amplification the LLM's 1-3 alt forms produce.
+- **LLM config promoted to public constants on `handler.py`** (`HANDLER_LLM_PROVIDER` / `HANDLER_LLM_MODEL` / `HANDLER_LLM_KWARGS`, dropped the underscore prefix). The franchise executor imports these so the two callers of `generate_franchise_query` stay in lockstep on model + reasoning settings — if the handler upgrades models, this caller follows automatically. Three call sites updated: handler.py itself, run_query_generation.py (debug runner), non_character_franchise_search.py (new consumer).
+- **Step 0's `NonCharacterFranchiseFlowData` and the executor signature stay unchanged.** Alias expansion is entirely internal to the executor; the three call sites (run_step_0.py, streaming_orchestrator.py, full_pipeline_orchestrator.py) need no changes.
+
+### Verification
+End-to-end on 6 queries with an ad-hoc harness. `"MCU"` → expanded `["marvel cinematic universe"]` → 1 primary + 47 secondary (previously 0+0). `"DCEU"` → `["dc extended universe"]` → 0+15. `"LOTR"` → `["the lord of the rings"]` → 9+2. `"marvel"`, `"star wars"`, `"mission impossible"` unchanged from before. All primary/secondary pairs disjoint. LLM ~1.1-2.8s, total ~3-6s per call (within the user-accepted "a couple seconds" budget).
+
+### Testing Notes
+No tests touched per the test-boundary rule. New surface area: a private `_expand_canonical_names` helper and a changed `fetch_non_character_franchise_movies` signature (single-string → list-of-strings). Edge cases worth covering in a future testing pass: LLM-emits-null-`franchise_names` fallback, all-empty normalized list short-circuit, `bool_or` over multiple JOIN rows (single movie matched via multiple alt entries), NULL `lineage_entry_ids` (`bool_or` returns NULL → CASE falls through to bucket 1).
+
+
+## Add studio + actor entity flows to Step 0 (schema-only, no executors yet)
+Files: schemas/enums.py, schemas/step_0_flow_routing.py, search_v2/step_0.py
+
+### Intent
+Extend Step 0's entity-flow routing to recognize studio and actor queries. Step 0 can now route queries like "Pixar", "Tom Hanks", or "Tom Hanks and Woody Harrelson" into dedicated `STUDIO` / `ACTOR` flows with one or more entities per flow. The orchestrator is deliberately untouched — the new `to_studio_flow_data()` / `to_actor_flow_data()` adapter methods exist but no executor is wired in yet, so the flows route to no-op handlers until real searches land. Scoped per user request ("just update step 0 for now").
+
+### Key Decisions
+- **Mirror the `similarity_to_titles` cardinality** (one-or-more) for both studio and actor, not the single-entity shape used by `specific_title` / `character_franchise` / `non_character_franchise`. Real queries surface "tom hanks and woody harrelson" or "pixar and studio ghibli" as natural conjoined lists, and the schema needs to carry every entity through to the (future) executors.
+- **Separate `StudioFlowData` / `ActorFlowData` types with their own reference wrappers**, mirroring the franchise pattern (`CharacterFranchiseFlowData` / `NonCharacterFranchiseFlowData`). Distinct types so each executor can evolve fields independently (e.g. actor-side prominence mode, studio-side disambiguation) without a shared-class migration.
+- **Homogeneous-list rule taught in the COVERAGE section**: a query mixing kinds (e.g. one actor + one studio) is routed to `none_of_the_above`. Studio/actor flows require all selected entities to share the same kind, matching the executor's downstream assumption that one canonical_name list maps to one entity type.
+- **`actor` is performers only, not crew**: directors / writers / producers / composers are explicitly disqualified in the `most_likely_kind` Field description and fall back to `none_of_the_above`. The actor flow is a billing-side lookup; the broader crew-search path stays inside the Step 2/3 trait pipeline.
+
+### Testing Notes
+- The two new validator branches (cardinality for STUDIO/ACTOR, homogeneous-list rule) need unit coverage in a follow-up testing pass per the test-boundary rule.
+- End-to-end smoke (deferred until executors land): "Pixar" should fire `EntityFlow.STUDIO` with one entity; "Tom Hanks and Woody Harrelson" should fire `EntityFlow.ACTOR` with two entities in surface order; "Tom Hanks movies" should route to `none_of_the_above` (qualifier present).
+- Once the studio / actor executors land, the orchestrator (`full_pipeline_orchestrator.py`, `streaming_orchestrator.py`) will need wiring parallel to the existing franchise dispatch — including a `_non_standard_firing_count` update so spin budget accounts for these new flows.
+
+
+## Wire up studio entity-flow executor (single-tier popularity sort)
+Files: search_v2/studio_search.py, search_v2/run_step_0.py, search_v2/run_step_0_batch.py
+
+### Intent
+The `EntityFlow.STUDIO` Step-0 routing was a no-op (schema + adapters only). This commit lands the executor: a thin wrapper that reuses the Step-3 studio translator (`generate_studio_query`) to convert canonical_names into a `StudioQuerySpec`, runs the spec through `execute_studio_query` in ANY mode, and popularity-sorts the matched movie_ids into a single ranked list.
+
+### Key Decisions
+- **Single tier, pure popularity sort** — no co-production / match-coverage bucketing. The studio executor has no prominence signal (production_company_ids is a flat GIN array with no billing position), brand-vs-freeform doesn't form a tier (LLM picks one path per ref), and the user explicitly declined the count-based bucket idea. Single-tier collapses to "all matches, popularity DESC, NULLS LAST, movie_id DESC tiebreaker" — same within-tier convention the franchise flows use.
+- **One LLM call covers every named studio**, not one per studio. The Step-3 translator prompt already handles "which distinct studios are named" reasoning and emits one StudioRef per studio in the same call, so we synthesize a multi-studio retrieval_intent ("Movies produced by any of X, Y, or Z") rather than fanning out.
+- **Scoring method forced to ANY post-LLM** regardless of what the translator commits. Entity-flow studio queries are bare-list semantics ("Pixar and Aardman" reads as "movies from either"), and forcing ANY is a deterministic guarantee against the LLM picking ALL from our synthesized intent_rewrite.
+- **LLM soft-fail to a deterministic freeform spec**: each canonical_name becomes its own StudioRef with that name as the sole `freeform_names` entry. Brand-registry resolution is the only thing lost — the freeform tokenizer still recovers most production-company strings the user typed verbatim.
+- **Batch runner extended only for studio**, not for every flow. Other entity flows still print routing-only via the batch script; run_step_0.py remains the single-query executor across all flows.
+
+### Verification
+Ran 7 queries through run_step_0_batch.py. All routed correctly:
+- "pixar" → studio flow → 73 results, top tier matches Pixar canon (WALL·E, Up, Finding Nemo, Toy Story).
+- "a24" → studio flow → 84 results, top tier matches A24 canon (Ex Machina, EEAAO, Midsommar, Uncut Gems).
+- "warner bros and universal" → studio flow with 2 entities → 100 results (limit-capped), top tier mixes WB and Universal canon (Dark Knight, Inception, Jurassic Park).
+- "studio ghibli" → studio flow → 28 results, top tier is Ghibli canon (Spirited Away, Howl's, Princess Mononoke).
+- "marvel studios" → studio flow → 52 MCU films (Avengers, GotG, Iron Man).
+- "neon and a24" → studio flow with 2 entities → 99 results, top tier mixes indie-distributor canon (EEAAO from A24, Triangle of Sadness from Neon).
+- "ghibli movies" → none_of_the_above (qualifier "movies") → fire_standard_flow=True. Coverage rule correctly rejects qualifier-laden queries.
+
+Two minor data oddities surfaced but are out-of-scope for this commit:
+- "Ponyo" (Ghibli, Disney-distributed) appears in the Pixar result set at #24 — likely a brand-registry definition issue (Pixar brand including Disney animation distribution credits), not a studio-search bug.
+- "Recess: School's Out" and "Ghost in the Shell 2: Innocence" appear in the Studio Ghibli result set — likely freeform token co-occurrence finding "studio" + "ghibli" in adjacent production-company strings. Worth flagging for a future brand-registry / freeform-DF audit.
+
+### Testing Notes
+No tests touched per the test-boundary rule. New surface area: `run_studio_search(flow_data, *, limit=100) -> StudioSearchResult`, `_translate_studio_query`, `_synthesize_studio_call_inputs`, `_build_fallback_spec`, `_sort_by_popularity`. Edge cases worth covering in a future testing pass: empty references list, LLM fallback path, ANY-mode score forcing, popularity NULL handling.
+
+Orchestrator wiring (`full_pipeline_orchestrator.py`, `streaming_orchestrator.py`) is intentionally deferred — the runner CLIs are sufficient to verify the flow end-to-end, and the orchestrator pattern can be lifted from `non_character_franchise_search` once the actor flow is also ready.
+
+
+## Wire studio flow into both orchestrators + review-feedback cleanups
+Files: search_v2/full_pipeline_orchestrator.py, search_v2/streaming_orchestrator.py, search_v2/popularity_sort.py, search_v2/character_franchise_search.py, search_v2/studio_search.py, search_v2/run_step_0.py, search_v2/run_step_0_batch.py, schemas/step_0_flow_routing.py
+
+### Intent
+Address the code-review findings on the prior studio commit. The biggest gap was that the studio executor was wired only into the runner CLIs — a studio query through the full pipeline or streaming API returned empty results because the orchestrators didn't know about the new entity flow. This commit lands full orchestrator integration alongside several smaller fixes that came out of the same review.
+
+### Key Decisions
+- **`_non_standard_firing_count` now counts studio**, alongside exact_title / similarity / non_character_franchise / character_franchise. Actor is intentionally NOT counted — its executor isn't wired yet, so an actor-flow query falls through to the standard branches (the safer default until the actor executor lands).
+- **`FullPipelineResult` gained `studio_flow_executed` / `studio_result` / `studio_error`** mirroring the franchise field convention. The dispatch block runs `run_studio_search` inline with a soft-fail logger.error block, identical pattern to character/non-character franchise.
+- **Streaming orchestrator gained `_FETCH_ID_STUDIO`, `_run_studio_with_hydration`, `_studio_label`, and a `resolving_studio` opening stage event**. Studio fits the `_PHASE_NONSTANDARD` task lane already used by the franchise flows — no new phase tag needed. The label helper renders as "Pixar" for N=1 or "A24 + Neon" for N≥2 so the UI has a stable string per fetch.
+- **Hoisted `_sort_by_popularity` into `search_v2/popularity_sort.py`** as `sort_movie_ids_by_popularity`. Removed the duplicate from `character_franchise_search.py` (renaming all 7 tier callsites in the same edit, per the no-aliases convention) and from `studio_search.py`. The new module is intentionally tiny — one function, one docstring — so future entity-flow executors can import it without growing the file.
+- **Added homogeneity validator** `_selected_entities_match_flow_kind` on `Step0Response`. Builds a `canonical_name → EntityKind` map from `entity_candidates`, then checks each `selected_entities` entry's kind against `_EXPECTED_KIND_FOR_FLOW[selected_entity_flow]`. SIMILARITY_TO_TITLES maps to SPECIFIC_TITLE (the only flow whose name differs from the underlying candidate kind). NONE_OF_THE_ABOVE skips the check. Entries whose canonical_name has no matching candidate are silently passed over — the validator catches the worst-case kind mismatch without over-constraining LLM canonical-name normalization.
+- **Smaller fixes from review**: redundant `elif limit <= 0` → `else` (with a comment explaining why a plain `ranked[:limit]` slice would mis-handle negative limits); Oxford-comma form in `_synthesize_studio_call_inputs` now branches on N=2 vs N≥3 so a 2-list reads "A24 or Neon" instead of "A24, or Neon"; `run_step_0.py` now prints a `[actor] flow selected; executor not yet wired` line when EntityFlow.ACTOR fires so the absence of a result table is explicit; `run_step_0_batch.py` formatter takes the flow_data object directly instead of pre-extracted canonical_names (no double-build at the call site).
+
+### Verification
+- End-to-end smoke through `run_full_pipeline("pixar")`: `studio_flow_executed=True`, `studio_result.ranked` has 73 entries, top 5 ids match the batch-runner output (WALL·E, Up, Finding Nemo, Toy Story, Monsters Inc.), standard branches do NOT fire (fire_standard_flow=False as expected), total 3.84s.
+- Re-ran the batch runner on 3 representative queries — output identical to the prior run, no regressions from the popularity-sort hoist or the synthesizer refactor.
+- Homogeneity validator tested with 4 cases: valid homogeneous studio flow (passes), mixed studio+actor candidates routed to STUDIO (raises ValidationError), valid similarity_to_titles with SPECIFIC_TITLE candidates (passes), NONE_OF_THE_ABOVE with empty entities (passes).
+
+### Testing Notes
+No tests touched per the test-boundary rule. New / changed surface area worth covering in a future testing pass:
+- `_selected_entities_match_flow_kind` validator (positive + each negative case)
+- `sort_movie_ids_by_popularity` shared util (NULL handling, tiebreaker)
+- `_synthesize_studio_call_inputs` N=1, N=2, N≥3 branches
+- `_non_standard_firing_count` now returning 5 when all five wired flows fire (impossible in practice — entity flows are mutually exclusive — but the counter still has to behave correctly per-flow)
+- `_studio_label` empty / N=1 / N≥2 branches
+
+
+## Actor search executor (4-bucket prominence flow) + orchestrator wiring
+Files: search_v2/actor_zones.py, search_v2/actor_search.py, search_v2/endpoint_fetching/entity_query_execution.py, search_v2/full_pipeline_orchestrator.py, search_v2/streaming_orchestrator.py, search_v2/run_step_0.py, search_v2/run_step_0_batch.py
+
+### Intent
+Land the actor entity flow's real executor. ACTOR was the last Step 0 flow without a wired-in search — queries like "tom hanks and woody harrelson" routed to a no-op print. The new executor returns movies grouped by 4 prominence buckets (lead → major → has-relevance → minor/cameo), with intersection semantics across multiple named actors and weakest-link bucket reduction so a film where Hanks is lead and Harrelson is a cameo lands in the cameo bucket.
+
+### Key Decisions
+- **Sqrt-adaptive zone model for bucketing**, anchored to the existing actor-prominence scoring in `entity_query_execution.py:118-149`. A linear position cutoff ("top 3 = lead") would call billing position 3 a co-lead in an 8-person indie and a supporting role in an 80-person blockbuster; the sqrt model collapses that asymmetry. `lead_cutoff = max(2, round(0.6 * sqrt(n)))`, `supp_cutoff = max(lead+1, round(sqrt(n)))`. Bucket boundaries are: lead zone → 1, supporting zone → 2, minor zone with zp ≤ 0.5 → 3, minor zone with zp > 0.5 → 4. Bucket 4 has no lower floor — even billing position 200/200 lands there. Single-member minor zones collapse to zp=0.0 (lands in bucket 3, not bucket 4 — "the only minor" shouldn't be called a cameo).
+- **Shared zone primitives in a new `search_v2/actor_zones.py`** module rather than importing privates from `entity_query_execution.py`. The constants (`LEAD_FLOOR`, `LEAD_SCALE`, `SUPP_SCALE`) are tuning parameters that must not drift between the score-curve path and the bucketing path. Renamed underscored helpers (`_zone_cutoffs`, `_zone_relative_position`) to public names and re-routed `entity_query_execution.py` to import from there. Pure refactor, behaviorally identical — the same numeric values flow through.
+- **Intersection semantics for multi-actor queries**. "tom hanks and meg ryan" returns only films where both appear. Weakest-link bucket reduction: per movie, the assigned bucket is the MAX bucket number across actors. Hanks lead + Ryan major → film lands in bucket 2. Verified on Sleepless in Seattle and You've Got Mail.
+- **Per-actor multi-credit reduction is MIN bucket** (best billing wins). Handles two scenarios: hyphen variants resolving to multiple term_ids (e.g. "Daniel Day-Lewis"), and alias edges where the same actor has multiple character credits in one film. Mirrors the MAX-score reduction in `entity_query_execution._fetch_actor_scores`.
+- **No LLM call in the executor**. Unlike studio_search (which wraps `generate_studio_query` for freeform-token expansion), actor resolution is purely deterministic: `normalize_string` → `fetch_phrase_term_ids` → `fetch_actor_billing_rows` → bucket. Step 0 has already committed which spans are actor names, so no further expansion is needed.
+- **Empty-resolution short-circuit**: if any named actor fails to resolve, the intersection is empty by definition — return an empty `ActorSearchResult` without firing the popularity fetch.
+- **Bucket-priority trim from lowest first** in `_apply_limit`, cloning the convention from `character_franchise_search._apply_limit`. A bucket-1 movie is never dropped to make room for a bucket-2 movie.
+- **Both orchestrators updated in the same commit**. `_non_standard_firing_count` now counts actor (it was deliberately excluded before "while the executor isn't wired"). `FullPipelineResult` gained `actor_flow_executed/result/error`. Streaming orchestrator gained `_FETCH_ID_ACTOR`, `_run_actor_with_hydration` (concatenates bucket_1+bucket_2+bucket_3+bucket_4 to preserve priority order through `fetch_movie_card_summaries`), `_actor_label`, and a `resolving_actor` opening stage event.
+
+### Verification
+Ran 7 queries through `run_step_0_batch.py`:
+- **"tom hanks"** (single actor): 65 lead + 3 major + 10 relevant + 4 minor. Top lead is Forrest Gump; bucket 4 includes The Simpsons Movie (his Simpsons cameo). Distribution matches expectation.
+- **"tom hanks and meg ryan"**: 2 lead (You've Got Mail, Joe Versus the Volcano), 2 major (Sleepless in Seattle, Ithaca). Bucket 2 placement reflects deeper Ryan billing in those casts.
+- **"daniel day-lewis"** (hyphen variant): 17 lead including There Will Be Blood, Lincoln, Gangs of New York, Phantom Thread. Hyphen variant resolution works.
+- **"samuel l jackson"**: 84 lead + 16 major; bucket 1 has Pulp Fiction, Django, Captain America: Winter Soldier; bucket 2 has The Avengers / Age of Ultron (smaller part in ensembles).
+- **"robert de niro and al pacino"**: bucket 1 returns the four canonical co-starring films (Godfather II, Heat, Irishman, Righteous Kill) + 1 obscure recent (How to Rob a Bank, 2024).
+- **"meryl streep and leonardo dicaprio"**: bucket 1 has exactly the 2 films they share (Don't Look Up, Marvin's Room).
+- **"tom hanks and meryl streep and leonardo dicaprio"** (three-way): empty result — no film has all three.
+
+Orchestrator smoke test via `run_full_pipeline("tom hanks and meg ryan")`: `actor_flow_executed=True`, bucket distribution identical to batch runner output, top lead ID 9489 (You've Got Mail), total 2.11s.
+
+### Testing Notes
+No tests touched per the test-boundary rule. New surface area worth covering in a future testing pass:
+- `actor_zones.zone_cutoffs` at small (n=1, n=4), medium (n=25), and large (n=200) cast sizes
+- `actor_zones.zone_relative_position` single-member-zone collapse to 0.0
+- `actor_search._bucket_for_row` boundary cases (position == lead_cutoff, position == supp_cutoff, position == cast_size)
+- `actor_search._fetch_actor_buckets` empty resolution path (no term_ids)
+- `actor_search.run_actor_search` intersection across 1/2/3 actors + empty-actor short-circuit
+- `actor_search._apply_limit` trim-from-lowest with bucket 1 saturated
+- `entity_query_execution._actor_prominence_score` unchanged behavior after the zone-primitive extraction (regression guard)

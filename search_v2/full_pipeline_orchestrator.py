@@ -80,12 +80,28 @@ from search_v2.stage_4_execution import (
     BranchRankedResults,
     execute_branches,
 )
+from search_v2.character_franchise_search import (
+    CharacterFranchiseSearchResult,
+    run_character_franchise_search,
+)
+from search_v2.non_character_franchise_search import (
+    NonCharacterFranchiseSearchResult,
+    run_non_character_franchise_search,
+)
 from search_v2.similar_movies import (
     SimilarMoviesSearchResult,
     run_similarity_search,
 )
 from search_v2.step_0 import run_step_0
 from search_v2.step_1 import run_step_1
+from search_v2.studio_search import (
+    StudioSearchResult,
+    run_studio_search,
+)
+from search_v2.actor_search import (
+    ActorSearchResult,
+    run_actor_search,
+)
 from search_v2.step_2 import run_step_2
 from search_v2.step_3 import run_step_3
 from search_v2.implicit_expectations import run_implicit_expectations
@@ -208,8 +224,20 @@ class FullPipelineResult:
     step1_error: str | None
     exact_title_flow_executed: bool
     similarity_flow_executed: bool
+    non_character_franchise_flow_executed: bool = False
+    character_franchise_flow_executed: bool = False
+    studio_flow_executed: bool = False
+    actor_flow_executed: bool = False
     similarity_result: SimilarMoviesSearchResult | None = None
     similarity_error: str | None = None
+    non_character_franchise_result: NonCharacterFranchiseSearchResult | None = None
+    non_character_franchise_error: str | None = None
+    character_franchise_result: CharacterFranchiseSearchResult | None = None
+    character_franchise_error: str | None = None
+    studio_result: StudioSearchResult | None = None
+    studio_error: str | None = None
+    actor_result: ActorSearchResult | None = None
+    actor_error: str | None = None
     branches: list[Step2BranchResult] = field(default_factory=list)
     # Per-branch auxiliary endpoint specs — parallel to `branches`.
     # Each inner list is the auxiliary specs that were applied to the
@@ -294,14 +322,27 @@ def _step1_needed(step0: Step0Response) -> bool:
     else means Step 1's output is throw-away work the orchestrator
     can cancel as soon as Step 0 returns.
     """
-    if not step0.enable_primary_flow:
+    if not step0.fire_standard_flow:
         return False
-    non_standard_firing = (
-        int(step0.exact_title_flow_data.should_be_searched)
-        + int(step0.similarity_flow_data.should_be_searched)
-    )
-    budget = 3 - non_standard_firing
+    budget = 3 - _non_standard_firing_count(step0)
     return budget >= 2
+
+
+def _non_standard_firing_count(step0: Step0Response) -> int:
+    """How many non-standard executor flows would run for this step 0 routing.
+
+    Each entity flow with an executor (exact_title, similarity,
+    non_character_franchise, character_franchise, studio, actor)
+    consumes one slot of the standard-flow budget.
+    """
+    return (
+        int(step0.to_exact_title_flow_data() is not None)
+        + int(step0.to_similarity_flow_data() is not None)
+        + int(step0.to_non_character_franchise_flow_data() is not None)
+        + int(step0.to_character_franchise_flow_data() is not None)
+        + int(step0.to_studio_flow_data() is not None)
+        + int(step0.to_actor_flow_data() is not None)
+    )
 
 
 def _plan_step2_branches(
@@ -309,13 +350,10 @@ def _plan_step2_branches(
     step1: Step1Response | None,
     raw_query: str,
 ) -> list[tuple[BranchKind, str, str]]:
-    if not step0.enable_primary_flow:
+    if not step0.fire_standard_flow:
         return []
 
-    non_standard_firing = int(
-        step0.exact_title_flow_data.should_be_searched
-    ) + int(step0.similarity_flow_data.should_be_searched)
-    budget = 3 - non_standard_firing  # 3, 2, or 1.
+    budget = 3 - _non_standard_firing_count(step0)  # 3, 2, or 1.
 
     branches: list[tuple[BranchKind, str, str]] = []
 
@@ -1077,22 +1115,36 @@ async def run_full_pipeline(
         step1_response = None
         step1_error = None
 
-    # Non-standard flows are TODO placeholders today; surface their
-    # routing bits so callers can log what WOULD have run.
-    exact_title_flow_executed = (
-        step0_response.exact_title_flow_data.should_be_searched
+    # Non-standard flow dispatch. exact_title still has no orchestrator-
+    # owned executor call here (the runner / streaming orchestrator drive
+    # it instead); similarity, non_character_franchise,
+    # character_franchise, and studio execute inline.
+    exact_title_flow_data = step0_response.to_exact_title_flow_data()
+    similarity_flow_data = step0_response.to_similarity_flow_data()
+    non_character_franchise_flow_data = (
+        step0_response.to_non_character_franchise_flow_data()
     )
-    similarity_flow_executed = (
-        step0_response.similarity_flow_data.should_be_searched
+    character_franchise_flow_data = (
+        step0_response.to_character_franchise_flow_data()
     )
+    studio_flow_data = step0_response.to_studio_flow_data()
+    actor_flow_data = step0_response.to_actor_flow_data()
+    exact_title_flow_executed = exact_title_flow_data is not None
+    similarity_flow_executed = similarity_flow_data is not None
+    non_character_franchise_flow_executed = (
+        non_character_franchise_flow_data is not None
+    )
+    character_franchise_flow_executed = (
+        character_franchise_flow_data is not None
+    )
+    studio_flow_executed = studio_flow_data is not None
+    actor_flow_executed = actor_flow_data is not None
 
     similarity_result: SimilarMoviesSearchResult | None = None
     similarity_error: str | None = None
-    if similarity_flow_executed:
+    if similarity_flow_data is not None:
         try:
-            similarity_result = await run_similarity_search(
-                step0_response.similarity_flow_data
-            )
+            similarity_result = await run_similarity_search(similarity_flow_data)
         except Exception as exc:  # noqa: BLE001 — non-standard side flow soft-fail
             logger.error(
                 "similarity flow execution failed; continuing standard flow "
@@ -1100,6 +1152,64 @@ async def run_full_pipeline(
                 exc,
             )
             similarity_error = repr(exc)
+
+    non_character_franchise_result: NonCharacterFranchiseSearchResult | None = None
+    non_character_franchise_error: str | None = None
+    if non_character_franchise_flow_data is not None:
+        try:
+            non_character_franchise_result = (
+                await run_non_character_franchise_search(
+                    non_character_franchise_flow_data
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — non-standard side flow soft-fail
+            logger.error(
+                "non_character_franchise flow execution failed; continuing "
+                "standard flow when present (error=%r)",
+                exc,
+            )
+            non_character_franchise_error = repr(exc)
+
+    character_franchise_result: CharacterFranchiseSearchResult | None = None
+    character_franchise_error: str | None = None
+    if character_franchise_flow_data is not None:
+        try:
+            character_franchise_result = await run_character_franchise_search(
+                character_franchise_flow_data
+            )
+        except Exception as exc:  # noqa: BLE001 — non-standard side flow soft-fail
+            logger.error(
+                "character_franchise flow execution failed; continuing "
+                "standard flow when present (error=%r)",
+                exc,
+            )
+            character_franchise_error = repr(exc)
+
+    studio_result: StudioSearchResult | None = None
+    studio_error: str | None = None
+    if studio_flow_data is not None:
+        try:
+            studio_result = await run_studio_search(studio_flow_data)
+        except Exception as exc:  # noqa: BLE001 — non-standard side flow soft-fail
+            logger.error(
+                "studio flow execution failed; continuing standard flow "
+                "when present (error=%r)",
+                exc,
+            )
+            studio_error = repr(exc)
+
+    actor_result: ActorSearchResult | None = None
+    actor_error: str | None = None
+    if actor_flow_data is not None:
+        try:
+            actor_result = await run_actor_search(actor_flow_data)
+        except Exception as exc:  # noqa: BLE001 — non-standard side flow soft-fail
+            logger.error(
+                "actor flow execution failed; continuing standard flow "
+                "when present (error=%r)",
+                exc,
+            )
+            actor_error = repr(exc)
 
     # Standard flow — plan branches per the budget rule and run them
     # in parallel with per-branch error isolation.
@@ -1133,8 +1243,20 @@ async def run_full_pipeline(
         step1_error=step1_error,
         exact_title_flow_executed=exact_title_flow_executed,
         similarity_flow_executed=similarity_flow_executed,
+        non_character_franchise_flow_executed=non_character_franchise_flow_executed,
+        character_franchise_flow_executed=character_franchise_flow_executed,
+        studio_flow_executed=studio_flow_executed,
+        actor_flow_executed=actor_flow_executed,
         similarity_result=similarity_result,
         similarity_error=similarity_error,
+        non_character_franchise_result=non_character_franchise_result,
+        non_character_franchise_error=non_character_franchise_error,
+        character_franchise_result=character_franchise_result,
+        character_franchise_error=character_franchise_error,
+        studio_result=studio_result,
+        studio_error=studio_error,
+        actor_result=actor_result,
+        actor_error=actor_error,
         branches=branches,
         auxiliary_endpoint_specs_per_branch=auxiliary_per_branch,
         branch_results=branch_results,

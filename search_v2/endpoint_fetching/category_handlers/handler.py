@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from google.genai import types
 from pydantic import BaseModel
 from qdrant_client import AsyncQdrantClient
 
@@ -69,11 +68,17 @@ logger = logging.getLogger(__name__)
 # manages its own timeout.
 TIMEOUT_SECONDS = 25.0
 
-_HANDLER_LLM_PROVIDER = LLMProvider.GEMINI
-_HANDLER_LLM_MODEL = "gemini-3.5-flash"
-_HANDLER_LLM_KWARGS: dict = {
-    "thinking_config": types.ThinkingConfig(thinking_level="minimal"),
-    "temperature": 0.15,
+# Exported (no underscore prefix) so other Step-3-translator callers
+# can use the same model + reasoning settings without a copy-paste.
+# Today's other caller is the non-character franchise executor at
+# search_v2/non_character_franchise_search.py, which reuses the
+# franchise translator for alias expansion and must stay in lockstep
+# with handler dispatch on model choice.
+HANDLER_LLM_PROVIDER = LLMProvider.OPENAI
+HANDLER_LLM_MODEL = "gpt-5.4-mini"
+HANDLER_LLM_KWARGS: dict = {
+    "reasoning_effort": "none",
+    "verbosity": "low",
 }
 
 
@@ -242,12 +247,12 @@ async def _run_handler_llm(
         # `LLM_PER_ATTEMPT_TIMEOUT_SECONDS` / `LLM_MAX_ATTEMPTS` /
         # `_LLM_RETRY_BACKOFF_*` constants in generic_methods.py.
         response, _, _ = await generate_llm_response_async(
-            provider=_HANDLER_LLM_PROVIDER,
+            provider=HANDLER_LLM_PROVIDER,
             user_prompt=user_message,
             system_prompt=system_prompt,
             response_format=response_format,
-            model=_HANDLER_LLM_MODEL,
-            **_HANDLER_LLM_KWARGS,
+            model=HANDLER_LLM_MODEL,
+            **HANDLER_LLM_KWARGS,
         )
         return response
     except Exception as exc:  # noqa: BLE001 — soft-fail by design
