@@ -46,8 +46,10 @@
 # Per-trait LLM call. The orchestrator (run_step_3.py) fans out across
 # a query's traits in parallel.
 #
-# Model choice mirrors Step 2: Gemini 3 Flash (no thinking, low
-# temperature). The run function does not accept a model parameter —
+# Model: Gemini 3.5 Flash with `thinking_level="low"` (minimal
+# thinking enabled — distinct from `thinking_budget=0` which
+# disables thinking entirely). Low temperature for routing
+# stability. The run function does not accept a model parameter —
 # provider and model are hard-coded so callers stay simple and
 # behavior is reproducible.
 #
@@ -776,11 +778,24 @@ this-covers / what-this-misses prose. Partial fits and adjacency \
 surface explicitly so the consolidation step that follows has \
 real evidence to reason against.
 
+THE SCHEMA REQUIRES AT LEAST 5 CANDIDATES PER DIMENSION. This \
+floor is deliberate: it forces you to look past the obvious clean \
+fit and surface adjacent categories that prior knowledge might \
+otherwise skip. Expect that some of the 5 will be only weak fits \
+— that is the point. The routing-exploration step that follows is \
+responsible for spotting and discarding the weak fits, and it can \
+only do that job if your what_this_covers / what_this_misses prose \
+honestly describes each candidate. So: surface the candidate, \
+write substantive prose, and trust the next step to prune.
+
 LEAN BROAD HERE. The next step (ROUTING EXPLORATION) is where the \
 candidate set gets pruned to the minimum useful commit. This \
 layer's job is to surface ENOUGH options for that pruning to work \
 honestly — not to pre-commit. When in doubt, surface the candidate \
-and let the consolidation step decide.
+and let the consolidation step decide. The downstream pipeline \
+treats your candidates and dimensions as ROUGH input that the \
+routing step refines; honest exploration here is more valuable \
+than premature commitment.
 
 PROCESS. For each dimension:
 1. Find categories whose description, boundary, or edge_cases \
@@ -841,6 +856,23 @@ and decide which categories actually deserve commits. The candidate \
 analysis was deliberately allowed to be broad — this step is where \
 breadth gets pruned to the minimum useful set, AND where the \
 relationship among surviving categories gets named.
+
+EXPECT FILLER IN THE CANDIDATE SET. The per-dimension candidates \
+list was held to a floor of 5 categories per dimension to force \
+broad exploration. That floor produces some real adjacencies and \
+some filler — candidates with thin what_this_covers prose, or \
+candidates whose what_this_misses openly admits the category does \
+not fit. Treat the upstream dimensions and candidate lists as \
+ROUGH input that this step refines. Your job here is to:
+- Identify the filler (vague coverage, indefensible presence, \
+  candidate that contradicts its own what_this_misses)
+- Discard it without ceremony
+- Commit only the categories that materially help retrieval
+
+A category committed because it was on the list is not a real \
+commit — it's a hedge that pads the call list and dilutes the \
+trait's score sum. Be ruthless. If a candidate doesn't make the \
+cut here, it must not appear in category_calls below.
 
 Write in FORWARD-REASONING shape: "I see X across these dimensions, \
 so I'm leaning toward Y." Not back-rationalization: "My answer is \
@@ -1315,15 +1347,16 @@ SYSTEM_PROMPT = (
 #                      Executor
 # ===============================================================
 #
-# Model is finalized to Gemini 3 Flash with thinking disabled and a
-# low temperature. Callers cannot override — this keeps the step
-# reproducible and makes cost/latency predictable end-to-end.
+# Model is finalized to Gemini 3.5 Flash with minimal thinking
+# enabled (`thinking_level="low"`) and a low temperature. Callers
+# cannot override — this keeps the step reproducible and makes
+# cost/latency predictable end-to-end.
 
 
 _PROVIDER = LLMProvider.GEMINI
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-3.5-flash"
 _MODEL_KWARGS: dict = {
-    "thinking_config": {"thinking_budget": 0},
+    "thinking_config": {"thinking_level": "minimal"},
     "temperature": 0.15,
 }
 
