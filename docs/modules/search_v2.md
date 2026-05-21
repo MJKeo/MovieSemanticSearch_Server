@@ -4,22 +4,36 @@ Multi-step query understanding and search execution pipeline. The
 front half (Steps 0–2) decomposes a natural-language query into
 structured trait atoms; the back half (Stage 3 + Stage 4) routes
 those atoms to typed endpoint LLMs and assembles a ranked candidate
-list.
+list. Standalone entity-flow executors handle exact-title, similarity,
+actor, studio, and character/franchise queries outside the standard
+trait pipeline.
 
 ## What This Module Does
 
 Receives a user query (text), decomposes it through three front-end
 steps (flow routing, spin generation, holistic read) and two
 back-end stages (endpoint execution, assembly/reranking), and
-returns a ranked candidate list.
+returns a ranked candidate list. When Step 0 identifies an entity
+flow (exact title, similarity, actor, studio, character/franchise,
+non-character franchise), the dedicated executor runs in place of
+the standard pipeline.
 
 ## Pipeline Steps
 
 ```
 Step 0 (step_0.py): Flow routing
-  → Step0Response: which of three flows fires
-    (exact_title / similarity / standard) + title payloads
-  → Runs in parallel with Step 1 on the raw query
+  → Step0Response: which of seven entity flows fires
+    (exact_title / similarity_to_titles / character_franchise /
+     non_character_franchise / studio / actor / none_of_the_above)
+    plus an optional standard co-fire
+  → SimilarityFlowData now carries a list[SimilarityReference]
+    (length 1 for single-anchor, length N for multi-anchor frames
+    like "Inception meets Arrival")
+  → ExactTitleFlowData and SimilarityFlowData carry optional
+    release_year (only when user explicitly states it; never inferred)
+  → Similarity, studio, and actor flows are list-shaped (one-or-more
+    entities); exact_title and character/franchise take exactly one entity
+  → Observations-first schema. Runs parallel with Step 1.
 
 Step 1 (step_1.py): Spin generation (standard flow only)
   → Step1Response: two distinct creative spins + UI labels
@@ -28,52 +42,142 @@ Step 1 (step_1.py): Spin generation (standard flow only)
   → Hard commitments preserved verbatim in spin queries
 
 Step 2 (step_2.py): Query analysis (combined holistic read + atomization)
-  → QueryAnalysis.holistic_read — faithful prose read of the query
+  → QueryAnalysis.intent_exploration — faithful intent read (replaces
+    holistic_read; promoted to primary evidence source for role decisions)
   → QueryAnalysis.atoms — per-criterion atoms, each with surface_text,
-    modifying_signals (unified raw-signal list), and evaluative_intent
-    (consolidated 1-2 sentence semantic statement)
-  → Stays descriptive on surface_text + modifying_signals;
-    evaluative_intent is the one place where light inference is permitted
-  → Does NOT commit polarity/salience numbers, category labels, or
-    downstream channel routing
-  → Feeds Stages 3-5 (reconstruction test, literal test, trait
-    commitment) — those stages not yet landed
+    split_exploration (was split_note), standalone_check (was redundancy_note),
+    modifying_signals, and evaluative_intent (faithful restatement,
+    bounded by surface_text + modifying_signals; near-paraphrase is
+    correct when no signals exist)
+  → QueryAnalysis.traits — committed layer on top of atoms; each Trait
+    carries surface_text, evaluative_intent, qualifier_relation,
+    anchor_reference, polarity, commitment_evidence, commitment
+    (required/elevated/neutral/supporting/diminished), contextualized_phrase,
+    relationship_role (INDEPENDENT/POSITIONING_REFERENCE/POSITIONING_QUALIFIER),
+    replaces_axis, axes_replaced_by_siblings
+  → Model hard-coded to Gemini Flash (no thinking, temperature 0.35)
+  → QueryAnalysis.traits is the closed set of explicit user intent Step 3 consumes
 
-Step 3 (step_3.py): Trait decomposition (per-trait LLM call)
-  → TraitDecomposition: target_population + trait_role_analysis +
-    aspects + dimensions + combine_mode + category_calls
-  → One call per committed trait; orchestrator fans out in parallel
-  → Reads relationship_role (PRIMARY closed-enum signal: INDEPENDENT
-    / POSITIONING_REFERENCE / POSITIONING_QUALIFIER) plus the paired
-    axis-bookkeeping fields (replaces_axis, axes_replaced_by_siblings)
-    + qualifier_relation prose. Receives sibling traits' structural
-    fields (no interpretive prose) so positioning references can drop
-    replaced axes without leaking sibling decompositions.
-  → Commits combine_mode (FRAMINGS / FACETS) AFTER candidate analysis
-    and BEFORE category_calls — the mode shapes which categories make
-    sense to commit (FRAMINGS authorizes overlap; FACETS demands
-    complementary axes).
+Step 3 (step_3.py): Trait → category-call decomposition (per-trait LLM call)
+  → TraitDecomposition: trait_restatement (verbatim quotes of
+    contextualized_phrase + evaluative_intent — first field, auto-regressive
+    anchor) + target_population + trait_role_analysis + aspects + dimensions
+    (expression = verbatim copy of one aspect string; routing only, no
+    translation) + category_calls + combine_mode + combine_mode_exploration
+  → combine_mode: SOLO (one category cleanly covers all dims; orchestrator
+    keeps first call, drops extras) / FRAMINGS (alternative homes for one
+    signal; Stage-4 MAX) / FACETS (compound concept; Stage-4 geometric-mean
+    with floor=0.1)
+  → relationship_role (INDEPENDENT / POSITIONING_REFERENCE /
+    POSITIONING_QUALIFIER) is the PRIMARY structural signal; sibling
+    structural fields (no interpretive prose) surface so positioning
+    references can drop replaced axes without leaking sibling decompositions
+  → Step 3 is polarity-agnostic; every call describes presence of the attribute
+  → Siblings list passed to _build_user_prompt so POSITIONING_REFERENCE traits
+    can honor cross-trait scope replacement
 
 Full pipeline orchestrator (full_pipeline_orchestrator.py):
   → run_full_pipeline(query, *, skip_bypass_steps_0_1=False)
   → Steps 0 + 1 in parallel (or skipped); Step 2 per branch;
-    implicit-prior policy per branch runs from Step-2 committed traits
-    in parallel with Step 3 per trait; per-CategoryCall handler-LLM
-    fired immediately as each Step 3 returns (does not wait on sibling
-    traits)
+    implicit-prior policy per branch runs in parallel with Step 3 per trait;
+    per-CategoryCall handler-LLM fired immediately as each Step 3 returns
+    (does not wait on sibling traits)
+  → SOLO combine_mode: orchestrator trims category_calls to [:1] before
+    handler fan-out so dropped categories never reach endpoint generation
+  → Sibling-task context injected into handler user message:
+    <sibling_categories combine_mode="..."> block listing parallel
+    category retrieval_intents (instruction-time, parallel-safe)
   → 25s timeout + 1 retry on every individual LLM call
-  → After Step 3 + handler-LLM, applies the reranker-only candidate
-    fallback (promotes tier-1+ rerankers or emits a NEUTRAL_SEED spec)
-    and the default shorts-exclusion auxiliary, then calls
+  → After Step 3 + handler-LLM, applies reranker-only candidate fallback
+    (promotes tier-1+ rerankers or emits a NEUTRAL_SEED spec) and the
+    default shorts-exclusion auxiliary, then calls
     stage_4_execution.execute_branches to actually fire endpoints and
-    rank candidates per branch. The full orchestrator then applies the
+    rank candidates per branch. The full orchestrator then applies
     implicit-prior multiplicative post-rerank when active.
   → Returns FullPipelineResult: per-branch trait/category/endpoint
-    specs (`branches`) + auxiliary specs + per-branch ranked candidate
-    lists (`branch_results: list[BranchRankedResults]`).
+    specs (branches) + auxiliary specs + per-branch ranked candidate
+    lists (branch_results: list[BranchRankedResults]).
   → Soft-fails per branch / per trait / per CategoryCall / per
     endpoint call; only Step 0 failure is fatal.
 ```
+
+## Entity-Flow Executors (Step 0 fast paths)
+
+### Exact-title search (`exact_title_search.py`)
+Six-tier scoring scheme: 1.0 seed (title+year match), 0.75 lineage
+sibling, 0.625 seed-lineage→candidate-universe, 0.5 title-only
+year-mismatch, 0.25 seed-universe→candidate-universe, 0.125
+seed-universe→candidate-lineage. No LLM call. Year from
+`flow_data.release_year` only — never inferred.
+
+### Similarity search (`similar_movies.py`)
+Standalone "movies like X" flow. Supports single-anchor and
+multi-anchor (Step 0 now routes "Inception meets Arrival" here via
+`list[SimilarityReference]`). Lane-based: shape (Qdrant vectors),
+director (curated 63-entry auteur list, multiplicative-on-shape),
+franchise (5-tier lineage/subgroup/universe), studio (multiplicative),
+source (IDF-weighted), themes (IDF-weighted + compounding bonus),
+cast (N-anchor bucket-with-floor), quality (always-on), format,
+country/language, specific-award. V3.4 Bucket-Weaver assembles top
+10 from 5 named buckets with MMR; franchise-fatigue (≤0.34 ratio)
+and director gap-boost prevent over-clustering.
+
+### Character-franchise search (`character_franchise_search.py`)
+Fires when Step 0 selects `EntityFlow.CHARACTER_FRANCHISE`. Uses
+one `character_franchise_fanout_call` LLM round-trip to expand
+character forms + franchise forms. Seven disjoint tiers: lineage-
+mainline (NOT is_spinoff AND release_format=MOVIE) → top-billed-
+appearance (billing_position ≤ 3, outside lineage) → lineage-
+ancillary → universe → prominent-appearance (DEFAULT ≥ 0.70 AND
+billing > 3) → relevant-appearance → minor-appearance. Within-tier
+sort is by `popularity_score DESC`. Tier 2 sits between the two
+lineage halves so a top-billed appearance never outranks a major
+theatrical Batman but always outranks obscure franchise entries.
+`CHARACTER_FRANCHISE_FANOUT` handler output hard-forces
+`prominence_mode=CENTRAL` and `prefer_lineage=True`; the fanout
+prompt explicitly forbids copying umbrella-universe names into
+`franchise_forms`.
+
+### Non-character franchise search (`non_character_franchise_search.py`)
+Fires when Step 0 selects `EntityFlow.NON_CHARACTER_FRANCHISE`.
+Returns `NonCharacterFranchiseSearchResult` with `primary_franchise`
+(lineage members) and `secondary_franchise` (universe-only), each
+sorted by `popularity_score DESC`. Single Postgres round-trip.
+
+### Studio search (`studio_search.py`)
+Fires when Step 0 selects `EntityFlow.STUDIO`. Translates studio
+names via the Step 3 studio translator (one LLM call, soft-degrades
+to deterministic on failure), runs `execute_studio_query` in ANY
+mode, popularity-sorts matched IDs. Single tier — co-productions not
+separately bucketed.
+
+### Actor search (`actor_search.py`)
+Fires when Step 0 selects `EntityFlow.ACTOR`. No LLM call. Per-actor
+resolution to term_ids via posting lists; multi-actor intersection
+(ALL actors must appear); sqrt-adaptive cast-zone model
+(`actor_zones.py`) assigns billing rows to four prominence buckets
+(lead / supporting / minor top-half / minor bottom-half). Within-
+bucket sort by `popularity_sort.sort_movie_ids_by_popularity`.
+
+### Supporting modules
+- `actor_zones.py` — sqrt-adaptive zone cutoffs and in-zone relative
+  position. Shared between `actor_search.py` and
+  `endpoint_fetching/entity_query_execution.py` so tuning parameters
+  stay synchronized.
+- `popularity_sort.py` — shared popularity-sort helper used by
+  character_franchise_search, studio_search, and actor_search.
+- `auteur_directors.py` — 63-entry curated auteur frozenset, lazily
+  resolved to `lex.lexical_dictionary.string_id` on first call.
+- `production_medium_registry.py` — 6×6 technique-only medium
+  similarity matrix (MEDIUM_SIMILARITY) + `medium_score()` helper.
+- `format_registry.py` — format bucket priority and
+  `FORMAT_CROSS_CATEGORY_MULTIPLIER = 0.35`.
+- `country_language_registry.py` — nation/language OverallKeyword IDs.
+- `award_taxonomy.py` — three-tier specific-award scoring.
+- `similar_studio_registry.py` — production-company similarity data.
+- `run_step_0_batch.py` — batch runner for Step 0 across N queries;
+  writes per-query files to `step_0_results/`. Includes actor and
+  studio search result display.
 
 ## Stage 4 — Execution & Ranking (`stage_4_execution.py`)
 
@@ -97,6 +201,9 @@ Phase A — LLM generation (Steps 0/1/2/3 + handler-LLM, upstream)
 Phase B — Pool definition: positive generators in parallel → union
           → shorts subtraction → neutral-seed only when zero generators
             were attempted pipeline-wide
+          → Post-hoc generator-spec dedup: group by (route, params) →
+            one _dispatch_call per unique group, result broadcast to
+            all shared CallKeys
 Phase C — Reranker pass: positive rerankers in parallel against the
           finalized union (no trait-local scoping)
 Phase D — Per-trait scoring (positive + negative), described below
@@ -120,11 +227,19 @@ The 43-member assignment is locked in `schemas/trait_category.py`:
 27 SINGLE, 11 ADDITIVE, 4 ALTERNATIVES, 1 NO_OP. Rationale per
 category lives in `search_improvement_planning/rescore_overhaul.md`.
 
+Phase D additionally skips categories whose handler emitted zero
+generated_specs before they reach `combine_calls` (prevents an
+abstaining category from zeroing a FACETS-PRODUCT trait).
+
 ### Across-category combine
 
 Branches on the trait's `combine_mode` (committed by Step 3 in
 `schemas.enums.TraitCombineMode`):
 
+- `SOLO` — one category cleanly covers all dimensions; Stage 4
+  passthrough (the category score IS the trait score). Orchestrator
+  already trimmed category_calls to one, so Stage 4 raises a warning
+  if >1 scores arrive.
 - `FRAMINGS` — categories are alternative homes for the same
   underlying thing; matching any one is sufficient evidence of the
   criterion. `trait_score = max(category_score_j)` (NO_OP categories
@@ -133,13 +248,14 @@ Branches on the trait's `combine_mode` (committed by Step 3 in
   commit FRAMINGS.
 - `FACETS` — categories cover different axes of a compound concept;
   ALL facets must fire to a degree for the criterion to be met.
-  `trait_score = ∏ category_score_j` (NO_OP categories skipped).
-  Strict — any 0 zeros the trait. Compound aesthetic / cultural
-  concepts (bro movie, cottagecore, dark gritty) commit FACETS.
+  `trait_score = geomean([max(s, 0.1) for s in scores])` — geometric
+  mean with floor 0.1 per score so a single-zero on a 2-cat trait
+  scores ~0.316 instead of collapsing to zero. Compound aesthetic /
+  cultural concepts (bro movie, cottagecore, dark gritty) commit FACETS.
 
 The fold lives in `combine_categories(combine_mode, category_scores)`
 in `stage_4_execution.py`. Empty `category_scores` returns 0.0 in
-both modes (a trait whose every category went silent contributes
+all modes (a trait whose every category went silent contributes
 nothing). `TraitWithEndpoints.combine_mode` defaults to FRAMINGS so
 failure paths (Step 3 errors) and test mocks land on V3-equivalent
 MAX behavior.
@@ -165,8 +281,6 @@ Traits are classified by the operation_type of their calls:
 (at least one of each), or **pure-reranker** (every call is
 POOL_RERANKER). Rarity weighting only applies to pure-generator
 traits — mixed and pure-reranker traits get `rarity_factor = 1.0`.
-The combine rules above are uniform across all three classes; this
-classification does not gate execution.
 
 ### Implicit-prior post-rerank
 
@@ -177,23 +291,26 @@ per-trait prior-axis evidence, an explicit ordering-axis analysis,
 query specificity / prior room, and final quality/popularity
 `PriorDecision`s.
 
-The full orchestrator applies active priors after Stage 4 base scoring:
+The full orchestrator applies active priors after Stage 4 base scoring.
+**Axis selection**: if `popularity_prior.direction != "none"` and
+`popularity_cap > 0`, use popularity only; otherwise (popularity
+inactive) fall back to quality alone.
 
 ```
-boost = quality_cap * quality_signal + popularity_cap * popularity_signal
+boost = popularity_cap * popularity_signal   (or quality_cap * quality_signal)
 prior_base = positive_total if positive_total > 0 else 1.0
 boosted_score = base_score + prior_base * boost
 ```
 
 Boost caps are `quality: 0 / 0.025 / 0.06 / 0.10` and
 `popularity: 0 / 0.05 / 0.12 / 0.20` for
-`none / light / normal / strong`. Inverse directions use
-the same direction-specific sigmoid scoring as the metadata endpoint
-(`POORLY_RECEIVED` for inverse quality, `NICHE` for inverse
-popularity). Missing reception or popularity data has no effect on
-the boost. The neutral `prior_base = 1.0` fallback lets pure-negative
-queries (for example, "not scary") still use implicit priors for
-ordering without magnifying negative penalties.
+`none / light / normal / strong`. Both signals use the same sigmoid
+curves as the metadata endpoint (`score_reception_prior()` /
+`score_popularity_prior()` wrappers in `metadata_query_execution.py`).
+Missing reception or popularity data has no effect (returns 0.0).
+The neutral `prior_base = 1.0` fallback lets pure-negative queries
+still use implicit priors for ordering without magnifying negative
+penalties.
 
 ### Negative-trait scoring (gate × noisy-OR, three-bin)
 
@@ -208,6 +325,11 @@ whether the category is *authoritative* about the negative concept
 PERSON_CREDIT, NAMED_CHARACTER, RELEASE_DATE, MEDIA_TYPE) versus
 *evidential* (a high-precision but low-recall proxy, e.g.
 KEYWORD-style tags, GENRE, archetypes, TRENDING, CENTRAL_TOPIC).
+
+`CHRONOLOGICAL` is intentionally **excluded** from the authoritative
+set — CHRONOLOGICAL+METADATA routes as POOL_RERANKER for positive
+polarity too (never reaches the G partition), and approximate
+phrasings like "old" / "recent" are better served by the fuzzy OR.
 
 The three bins drive different aggregation shapes:
 
@@ -243,9 +365,8 @@ in `full_pipeline_orchestrator.py` because the orchestrator imports
 from `stage_4_execution` at load time).
 
 Failed calls are *dropped from their bin* rather than counted as
-confirmed-zero — option A from review. A single transient endpoint
-failure can no longer zero out the gate or saturate the noisy-OR.
-Sign is applied at the §9 aggregation layer, not inside the trait.
+confirmed-zero. A single transient endpoint failure can no longer
+zero out the gate or saturate the noisy-OR.
 
 ### Auxiliary specs (NEUTRAL_SEED + shorts exclusion)
 
@@ -253,55 +374,41 @@ Sign is applied at the §9 aggregation layer, not inside the trait.
 the reranker-only fallback's `NEUTRAL_SEED` and the default
 shorts-exclusion `MEDIA_TYPE`. Both are applied during Phase B:
 
-1. **Shorts subtraction** — if a MEDIA_TYPE spec is present and the
-   union is non-empty, fetch the SHORT-format movie IDs and
-   **subtract** them from the union. The MEDIA_TYPE spec is tagged
-   `CANDIDATE_GENERATOR` upstream so its executor returns the SHORT
-   set; Stage 4 uses those IDs as a blocklist, not as a positive
-   contribution.
+1. **Shorts subtraction** — fetch the SHORT-format movie IDs and
+   subtract them from the union (blocklist, not positive contribution).
 2. **Neutral seed** — fires only when **zero positive generators were
-   attempted pipeline-wide** (every positive trait is structurally
-   pure-reranker AND tier-fallback promotion did not promote any).
-   In that case, fetch `db.postgres.fetch_neutral_reranker_seed_ids()`
-   and use the result as the union. Seed scores do not enter trait
-   scoring; quality/popularity contribution is handled by implicit
-   priors at branch aggregation.
+   attempted pipeline-wide**. Fetches `db.postgres.fetch_neutral_reranker_seed_ids()`
+   using the DB-module constants `NEUTRAL_RERANKER_SEED_LIMIT` (2000),
+   `NEUTRAL_RERANKER_SEED_POPULARITY_WEIGHT = 0.8`,
+   `NEUTRAL_RERANKER_SEED_RECEPTION_WEIGHT = 0.2`.
 
-If at least one generator was attempted but the union ended up empty
-(generators returned nothing, or shorts subtraction emptied an
-all-shorts pool), Stage 4 returns empty results — per
-`rescore_overhaul.md`, "if something truly doesn't exist, then it
-doesn't exist." No neutral-seed substitution in that case.
+### Score breakdown and diagnostics
 
-### Rarity bookkeeping
+`BranchRankedResults` carries:
+- `ranked: list[tuple[movie_id, score]]`
+- `score_breakdowns: dict[int, ScoreBreakdown]`
 
-Rarity uses a per-trait union over the trait's positive generator
-calls (only fires for pure-generator traits — see classification
-above):
+`ScoreBreakdown` has `positive_total`, `negative_total`,
+`implicit_prior_boost` (boost fraction applied post-rerank), and
+`trait_contributions: list[TraitContribution]`.
 
-- **Promoted call** (`spec.was_promoted=True`, set by
-  `_apply_reranker_only_candidate_fallback`): only post-elbow 1.0
-  scoring movies count.
-- **Regular finder call**: every matched candidate counts (every key
-  in the call's score map).
-- A trait mixing both unions both sets.
+`TraitContribution` has `surface_text`, `commitment`, `contribution`,
+`trait_score`, `weight`, and `category_scores: list[CategoryScore]`.
 
-### Soft-failure semantics
+`CategoryScore` has `category_name`, `combine_type`, `score`,
+`expressions`, `retrieval_intent`, and `endpoint_scores: list[EndpointScore]`.
 
-`_dispatch_call` returns `dict[int, float] | None`. None ≡ failed
-call. Positive-trait paths fold None into `{}` (the call simply
-doesn't contribute candidates / scores); negative-trait scoring drops
-None calls from both G and R partitions.
+`run_orchestrator.py` renders a four-level tree: result header →
+trait → category (expressions + retrieval_intent + cat_score) →
+endpoint (route + score).
 
 ## Back-End Stages (Stage 3 / Stage 4)
 
-Stage 3 owns endpoint translation + execution. Stage 4 (the new
-`stage_4_execution.py`, not the legacy `stage_4/` directory) owns
-recursive scoring + ranking — see the **Stage 4 — Execution &
-Ranking** section above for the full design.
+Stage 3 owns endpoint translation + execution (10 endpoints).
+Stage 4 (`stage_4_execution.py`) owns recursive scoring + ranking.
 
 ```
-Stage 3 (stage_3/): Endpoint translation + execution (9 endpoints)
+Stage 3 (endpoint_fetching/): Endpoint translation + execution
   ├── entity_query_generation.py + entity_query_execution.py
   ├── metadata_query_generation.py + metadata_query_execution.py
   ├── award_query_generation.py + award_query_execution.py
@@ -309,97 +416,131 @@ Stage 3 (stage_3/): Endpoint translation + execution (9 endpoints)
   ├── keyword_query_generation.py + keyword_query_execution.py
   ├── studio_query_generation.py + studio_query_execution.py
   ├── semantic_query_execution.py
-  ├── trending_query_execution.py     (deterministic, no LLM call)
-  └── media_type_query_execution.py   (closed-enum wrapper + executor in place;
-                                       no _query_generation module — MEDIA_TYPE
-                                       routes deterministically by matching
-                                       Step-3 expressions against the
-                                       non-default ReleaseFormat values, not
-                                       via an LLM handler)
+  ├── trending_query_execution.py    (deterministic, no LLM call)
+  ├── media_type_query_execution.py  (deterministic; MEDIA_TYPE category
+  │                                   routes via deterministic phrase-matcher
+  │                                   in category_handlers/media_type_router.py;
+  │                                   no LLM handler)
+  └── chronological_query_execution.py  (pending wiring; spec flows through
+                                         HandlerResult.preference_specs;
+                                         ChronologicalQuerySpec is a bespoke
+                                         EndpointParameters subclass)
   All executors return EndpointResult (list[ScoredCandidate]).
 
-  stage_3/category_handlers/ — new handler scaffolding for the
-    step-2-routed path. In progress:
+  category_handlers/ — handler scaffolding for the step-3-routed path:
     handler.py, generated_endpoint_spec.py, prompt_builder.py,
-    endpoint_registry.py, schema_factories.py, prompts/
-
-Stage 4 (stage_4/): Assembly & reranking
-  → Flattens expressions → concept-level inclusion/exclusion aggregation
-  → run_stage_4() is the public entry point
+    endpoint_registry.py, schema_factories.py, output_extractor.py,
+    media_type_router.py, prompts/
 ```
+
+`AwardQueryPlan` (award endpoint) supports one or more `AwardSearch`
+entries with `AwardCombineMode` (`any` / `average`); searches run
+concurrently via `asyncio.gather`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `step_0.py` | Flow routing. `run_step_0()` returns `Step0Response`. Narrow classifier: fires one of seven entity flows (specific_title / similarity_to_titles / character_franchise / non_character_franchise / studio / actor / none_of_the_above) plus an optional standard co-fire. Similarity, studio, and actor are list-shaped (one-or-more entities); the rest take exactly one entity or none. Studio and actor flows currently route to no-op handlers — adapter methods (`to_studio_flow_data`, `to_actor_flow_data`) exist but no executor is wired into the orchestrator yet. Observations-first schema. Runs parallel with Step 1. |
-| `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response`. Produces two distinct spins plus UI labels. Always exactly two spins. `distinctness` field requires result-set divergence from both original and sibling. |
-| `step_2.py` | Query analysis — combined Stage 1+2 of the 5-stage trait decomposition. `run_step_2()` returns `QueryAnalysis` (holistic_read + atoms with modifying_signals + evaluative_intent). Model hard-coded to Gemini 3 Flash (no thinking, temperature 0.35). System prompt loads sections this stage applies (atomicity, modifier vs trait, evaluative intent) plus background sections later stages use (carver vs qualifier, polarity, salience, category taxonomy). |
-| `run_step_2.py` | CLI runner for step_2. Prints full JSON response + timing + tokens. Default query exercises role markers, polarity, chronological, and multi-dimension entities. |
-| `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline(query, *, skip_bypass_steps_0_1=False)` runs Steps 0+1 in parallel (or skipped) → Step 2 per branch → Step 3 per trait → per-CategoryCall handler-LLM endpoint-spec generation → reranker-only fallback + auxiliary-spec planning → `stage_4_execution.execute_branches`. Returns `FullPipelineResult` with per-branch specs (`branches`) and ranked candidates (`branch_results`). 25s timeout + 1 retry per LLM call. |
-| `stage_4_execution.py` | Stage 4 execution + ranking. `execute_branches(branches, auxiliary_specs)` returns `list[BranchRankedResults]`. Runs the 5-phase pipeline from `search_improvement_planning/rescore_overhaul.md`: Phase B unions positive generators across all traits, applies shorts subtraction, and falls back to NEUTRAL_SEED only when zero generators were attempted; Phase C reranks the finalized union globally; Phase D scores each trait by composing per-call scores via the category's `combine_type` (SINGLE / ADDITIVE / ALTERNATIVES / NO_OP) and folding across categories via `combine_categories(trait.combine_mode, ...)` — FRAMINGS → MAX (alternative homes for one signal); FACETS → PRODUCT (axes of a compound concept that must compound); Phase E applies commitment × rarity weighting and signs the contributions. Negative-polarity traits keep the existing three-bin gate × fuzzy formula (`gate × fuzzy` where gate = ∏ authoritative-G and fuzzy = noisy-OR over evidential-G ∪ R; would-be partition derived via `determine_operation_type(category, route, POSITIVE)` then split by `_AUTHORITATIVE_NEGATION_CATEGORIES`); negative-trait scoring is unchanged by combine_mode. Per-call soft-fail returns None so failed calls are dropped from their bin instead of zeroing the gate or saturating the noisy-OR. |
-| `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (now includes `combine_mode`). One LLM call per committed Trait. Reads `relationship_role` (closed-enum: INDEPENDENT / POSITIONING_REFERENCE / POSITIONING_QUALIFIER) as the PRIMARY structural signal, with `replaces_axis` + `axes_replaced_by_siblings` driving axis-drop / axis-coverage rules. `qualifier_relation` (with `"n/a"` sentinel) is now the freeform companion to the closed-enum role. Sibling traits' structural fields (surface_text + role + axis bookkeeping; no interpretive prose) are surfaced so positioning references can honor cross-trait scope replacement. |
-| `non_character_franchise_search.py` | Non-character franchise executor. `run_non_character_franchise_search(flow_data)` returns `NonCharacterFranchiseSearchResult` with `primary_franchise` (movies whose `lineage_entry_ids` contains the resolved entry) and `secondary_franchise` (universe-only) — each sorted by `popularity_score DESC`, concatenated primary-first. Single Postgres round-trip via `fetch_non_character_franchise_movies` (JOIN through `lex.franchise_entry.normalized_string`, GIN `@>` on both array columns). No per-movie score field — bucket-then-popularity ordering is the relevance signal. Fires when Step 0 selects `EntityFlow.NON_CHARACTER_FRANCHISE`; `CHARACTER_FRANCHISE` remains a no-op pending its own executor. |
-| `endpoint_fetching/category_handlers/output_extractor.py` | `extract_fired_endpoints(category, output)`: per-bucket extraction of `(EndpointRoute, EndpointParameters)` pairs from a handler-LLM structured output. |
-| `implicit_expectations.py` | Implicit-prior state management (quality/notability priors). |
-| `stage_3/category_handlers/` | Category handler module (scaffolded, prompts in progress). `handler.py` is scoped to a single category — fan-out lives one level up. |
+| `step_0.py` | Flow routing. `run_step_0()` returns `Step0Response`. Routes to one of seven entity flows plus optional standard co-fire. SimilarityFlowData now carries `list[SimilarityReference]`. |
+| `step_1.py` | Spin generation. `run_step_1()` returns `Step1Response`. Always exactly two spins. |
+| `step_2.py` | Query analysis. `run_step_2()` returns `QueryAnalysis` (intent_exploration + atoms + traits). Model hard-coded to Gemini Flash (no thinking, temperature 0.35). |
+| `step_3.py` | Trait decomposition. `run_step_3(trait, siblings=None)` returns `TraitDecomposition` (includes trait_restatement + combine_mode). |
+| `run_step_0.py` | CLI runner for step_0. Conditionally invokes entity-flow executors and prints results. |
+| `run_step_0_batch.py` | Batch runner; writes per-query files to `step_0_results/`. |
+| `run_test_queries.py` | Batch runner for Step 2+3 over test_queries.md queries with asyncio.Semaphore concurrency. |
+| `run_specs.py` | Diagnostic runner: Step 2→3→handler-LLM end-to-end, outputs combine_mode / combine_type / fired endpoints / keyword commits. |
+| `full_pipeline_orchestrator.py` | End-to-end orchestrator. `run_full_pipeline()` runs Steps 0+1→Step 2→Step 3→handler-LLM→Stage 4. |
+| `stage_4_execution.py` | Stage 4 execution + ranking. 5-phase pipeline. |
+| `exact_title_search.py` | Exact-title entity-flow executor. 6-tier scoring. |
+| `similar_movies.py` | Similarity entity-flow executor. V3.4+ lane architecture. |
+| `character_franchise_search.py` | CHARACTER_FRANCHISE entity-flow executor. 7-tier reranking. |
+| `non_character_franchise_search.py` | NON_CHARACTER_FRANCHISE executor. Primary+secondary franchise buckets. |
+| `studio_search.py` | STUDIO entity-flow executor. LLM translation + popularity sort. |
+| `actor_search.py` | ACTOR entity-flow executor. 4-bucket prominence + popularity sort. |
+| `actor_zones.py` | Sqrt-adaptive cast-zone primitives shared between actor_search and entity_query_execution. |
+| `popularity_sort.py` | Shared popularity-sort helper for entity-flow executors. |
+| `implicit_expectations.py` | Implicit-prior state management (quality/popularity priors). |
+| `vague_temporal_vocabulary.py` | Shared vague-time/duration mappings injected into Steps 2/3 and metadata handler. |
 
 ## Step 2 / Query Analysis Design
 
 Step 2 (`search_v2/step_2.py` + `schemas/step_2.py`) combines Stages
-1+2 of a planned 5-stage trait decomposition pipeline into a single
-LLM call:
+1+2 of the trait decomposition pipeline into a single LLM call:
 
-| Stage | Purpose |
+| Layer | Purpose |
 |-------|---------|
-| 1+2 | Query analysis (holistic read + atomization with evaluative intent — single call, landed) |
-| 3 | Reconstruction test |
-| 4 | Literal test (parametric expansion) |
-| 5 | Trait commitment + category grounding |
-
-Stages 3–5 are not yet landed. The full design rationale lives in
-`search_improvement_planning/v3_step_2_rethinking.md`.
+| Atoms | Query analysis (holistic read + atomization with evaluative intent) |
+| Traits | Committed layer: role/polarity/commitment/relationship per atom |
 
 Key design decisions:
-- **Per-criterion evaluative intent**, not a graph of edges. Each
-  atom carries a 1-2 sentence prose statement of what scoring on it
-  actually means once context is integrated. The intent is the
-  load-bearing semantic field downstream consumes.
+- **`intent_exploration` as primary role-evidence source.** Replaces
+  `holistic_read`. Promoted to the first field the LLM generates;
+  feeds all downstream role/relationship decisions as the primary
+  frame rather than one-of-three evidence sources.
+- **Five-level `commitment` axis** (required/elevated/neutral/
+  supporting/diminished). Replaces `role` (carver/qualifier) + `salience`.
+  Explicit signals occupy extremes; structural signals fill inner buckets.
+- **`relationship_role`** (INDEPENDENT / POSITIONING_REFERENCE /
+  POSITIONING_QUALIFIER) plus paired `replaces_axis` /
+  `axes_replaced_by_siblings`. Drives cross-trait scope-replacement
+  at Step 3 without leaking sibling interpretive prose.
+- **Evaluative intent is a faithful restatement** bounded by
+  surface_text + modifying_signals. Near-paraphrase is correct when
+  no signals exist; inference license is restricted to integrating
+  signal effects.
 - **Unified `modifying_signals` list per atom.** Both adjacent
-  qualifiers and cross-criterion modifiers land on the same list —
-  conceptually they're the same thing (something-shaping-this-
-  criterion's-meaning). Each entry is `surface_phrase` (verbatim
-  user text) + `effect` (freeform concise description).
-- **No closed enum on modifier kind, no SHALLOW/DEEP depth, no
-  positional pointers.** All three were experimentally rejected via
-  the 34-query test set: bucket-forcing on `kind`, false-precision
-  on `depth`, count-fragility on `modifier_atom_index`.
-- **Modal vocabulary recommended, not forced.** SOFTENS / HARDENS /
-  FLIPS POLARITY / CONTRASTS still keys downstream parsing for
-  modal cases; non-modal effects use plain-words descriptions.
+  qualifiers and cross-criterion modifiers land on the same list.
+  Each entry is `surface_phrase` (verbatim user text) + `effect`
+  (freeform concise description).
+- **`split_exploration` / `standalone_check`** are pure evidence-
+  gathering fields (no embedded verdict). Commit phase acts on them.
 - **Surface-text discipline preserved.** `surface_text` is exact
-  substring of the query with modifying language stripped; no
-  paraphrase, no expansion of named things.
-- **Inference license confined to `evaluative_intent`.** The other
-  fields stay strictly descriptive.
+  substring of the query with modifying language stripped.
+
+## Step 3 Trait Decomposition Design
+
+Step 3's key discipline rules:
+- **`trait_restatement` is the first output field.** Verbatim quotes
+  of contextualized_phrase + evaluative_intent + role fields. Every
+  downstream Step-3 field must trace clauses to content in those quotes.
+- **`Dimension.expression` = verbatim copy of one aspect string.**
+  The dimension layer routes; it does not re-author. Character-for-
+  character diff equality against the aspects list is the test.
+- **Aspect width preservation.** Aspects must preserve the user's
+  stated constraint at the same granularity — no implicit broadening
+  (widening "winning" to "won or nominated"), narrowing, or invented
+  conditions.
+- **Example-in-expression rule.** Expressions and retrieval_intent
+  contain named entities only when the trait named them; never
+  model-supplied exemplars (no "such as X, Y, or Z" clauses).
+- **Identity-vs-attribute rule.** For POSITIONING_REFERENCE traits,
+  only attribute categories are valid (what the entity is LIKE).
+  Identity categories (PERSON_CREDIT, TITLE_TEXT, STUDIO_BRAND,
+  FRANCHISE_LINEAGE, etc.) are off-limits for qualifiers.
+- **Category-aware decomposition.** Decompose only as deep as distinct
+  categories require; one category covering the trait → one dimension.
 
 ## Category Taxonomy
 
 `schemas/trait_category.py` houses `CategoryName` — the canonical
-43-category vocabulary for grounding trait atoms. Each member carries
-`description`, `boundary`, `edge_cases`, `good_examples`,
-`bad_examples`, `endpoints` tuple, and `HandlerBucket` enum. The full
-taxonomy and split rationale live in
-`search_improvement_planning/query_categories.md`.
+43-category vocabulary. Each member carries `description`, `boundary`,
+`edge_cases`, `good_examples`, `bad_examples`, `endpoints` tuple,
+`HandlerBucket` enum, and `combine_type`. The full taxonomy and split
+rationale live in `search_improvement_planning/query_categories.md`.
 
-Notable taxonomy design choices:
-- Two parametric-expansion categories (Cat 43 "Like media reference"
-  and Cat 45 "Generic catch-all") were removed. Their work now
-  belongs to Step 4 (literal test + parametric resolution). Numbering
-  gaps at 43/45 preserved for cross-reference stability.
-- Cat 6 CHARACTER_FRANCHISE absorbs dual-nature referents (name that
-  is both a character and a franchise). 1:1 trait→category is the
-  global rule; Cat 6 is the only exception via combo orchestration.
+Notable taxonomy changes since ADR-078:
+- `TARGET_AUDIENCE` and `SENSITIVE_CONTENT` flipped to
+  `CategoryCombineType.ALTERNATIVES` (was ADDITIVE) so a single
+  endpoint score suffices rather than requiring KW × META × SEM product.
+- `EMOTIONAL_EXPERIENTIAL`, `SEASONAL_HOLIDAY`, `SPECIFIC_PRAISE_CRITICISM`
+  re-bucketed to `SINGLE_NON_METADATA_ENDPOINT` with semantic-only endpoint
+  (was SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT + KEYWORD).
+- `CENTRAL_TOPIC` and `ELEMENT_PRESENCE` re-bucketed to
+  `SEMANTIC_PREFERRED_DETERMINISTIC_SUPPORT` (was
+  PREFERRED_REPRESENTATION_FALLBACK); keyword fires only when a single
+  member cleanly covers the subject — no ANY-union stitching.
+- `CHRONOLOGICAL` moved to `SINGLE_NON_METADATA_ENDPOINT` with a
+  bespoke `ChronologicalQuerySpec` (direction + is_top_n_active + top_n).
 
 ## Endpoint Contract
 
@@ -410,81 +551,106 @@ All endpoint executors follow the same dual-mode signature:
 
 Failures retry once; second failure returns empty `EndpointResult` (soft failure).
 
+`build_endpoint_coroutine` takes a `GeneratedEndpointSpec` (not
+separate route/wrapper) and applies three pre-dispatch gates:
+1. POOL_RERANKER + falsy restrict → empty result
+2. params is None → log warning + empty result
+3. CANDIDATE_GENERATOR → locally rebind restrict=None
+
 ## Dealbreaker Score Floor
 
-All endpoint executors emit dealbreaker scores in `[0.5, 1.0]`
-("dealbreaker-eligible band") via `compress_to_dealbreaker_floor(raw) = 0.5 + 0.5 * raw`.
-Preference paths keep raw `[0, 1]` scoring. Country-of-origin uses a
-3-bucket position score (1.0 / 0.5 / dropped) rather than exponential
-decay for the dealbreaker path.
+All endpoint executors emit dealbreaker scores in `[0, 1]` (raw, not
+compressed). The old `compress_to_dealbreaker_floor(raw) = 0.5 + 0.5 * raw`
+helper is retained in `result_helpers.py` but is no longer used by
+the semantic or metadata executors.
 
 **Exception: `semantic_query_execution.py` emits raw `[0, 1]` on every
-path** (carver candidate-generator, carver reranker, qualifier
-reranker, qualifier promoted). The dealbreaker compression was dropped
-when the executor was reworked so that `role` drives within-space
-normalization (corpus-calibrated elbow for carver/qualifier-promoted,
-pool-relative rescale for qualifier+restrict) and cross-space
-combination (`max()` for carver, `Σ(w·score)/Σw` for qualifier).
+path** — role is now LLM-committed inside `SemanticParameters.role`
+(`SemanticRetrievalShape.CARVER` / `QUALIFIER`); executor dispatches
+internally. Carver uses equal-vote multi-space scoring with corpus-
+calibrated elbow; qualifier uses weighted-sum with CENTRAL=2.0 /
+SUPPORTING=1.0.
+
+**Metadata executor** (`metadata_query_execution.py`) uses
+threshold-anchored sigmoid curves for popularity and reception scoring.
+Public `score_popularity_prior()` and `score_reception_prior()` wrappers
+allow the implicit-prior post-rerank to use the same curves.
 
 ## Key Patterns
 
 - **Positive-presence invariant**: all step-3 endpoint specs express
   presence of an attribute, not absence. Exclusion direction is
   carried by `ActionRole` / `Polarity` in the category handler layer.
+- **SOLO trim at orchestrator**: if combine_mode=SOLO and LLM emitted
+  >1 category_calls, orchestrator keeps only [:1] before handler fan-out.
+- **Sibling-task context injection**: handler user message includes
+  a `<sibling_categories>` block listing parallel category retrieval_intents.
 - **Concept-level aggregation in Stage 4**: expressions from the same
-  concept contribute one inclusion max and one exclusion max. Prevents
-  a multi-expression concept from dominating.
+  concept contribute one inclusion max and one exclusion max.
 - **Token-index resolution**: franchise and award endpoints resolve
   LLM surface forms via posting-list helpers. Empty resolution →
   empty result, not a broadened query.
-- **Implicit-prior split**: 80/20 popularity/reception when both
-  active (not 50/50). Both axes claim up to `IMPLICIT_PRIOR_CAP=0.25`;
-  single-axis cases claim the full cap.
+- **Implicit-prior split**: popularity-only when active, quality
+  fallback when popularity is inactive (not 50/50 sum).
+- **Shorts promotion**: `ingest_movie.py` forces `release_format=SHORT`
+  when `runtime_minutes <= 40`, regardless of IMDB title-type.
 
 ## Interactions
 
-- `schemas/` — step-0/1/2 schemas, category taxonomy, endpoint
+- `schemas/` — step-0/1/2/3 schemas, category taxonomy, endpoint
   translation schemas, `EndpointResult` / `ScoredCandidate`.
-- `db/postgres.py` — posting-list reads for franchise, award, entity, studio.
-- `db/qdrant.py` — semantic endpoint vector searches.
+- `db/postgres.py` — posting-list reads for franchise, award, entity,
+  studio; materialized views for director strength, franchise
+  confidence, trait IDF; similarity signal rows.
+- `db/qdrant.py` — semantic endpoint vector searches; `query_batch_points`
+  for 8-space shape searches.
 - `db/redis.py` — trending endpoint hash reads.
-- `implementation/llms/generic_methods.py` — shared LLM router for all generator modules.
+- `implementation/llms/generic_methods.py` — shared LLM router for all
+  generator modules. Clients are lazy-constructed via `_LazyClient`
+  proxy (first attribute access triggers build).
 
 ## Gotchas
 
 - **`step_2.py` is NOT the old Stage 2A/2B.** `stage_2a.py` and
-  `stage_2b.py` are deleted. `step_2.py` is the combined Stage 1+2
-  of the new 5-stage pipeline (query analysis: holistic read +
-  atomization + evaluative intent). Any code importing old
-  `Step2AResponse` / `Step2BResponse` will fail.
-- **`schemas/step_2.py` holds `QueryAnalysis`.** Top-level fields
-  are `holistic_read: str` + `atoms: list[Atom]`. Each atom has
-  `surface_text`, `modifying_signals`, `evaluative_intent`, and
-  optional `candidate_internal_split`. The intermediate-design
-  types (`AbsorbedModifier`, `IncomingModification`,
-  `AbsorbedModifierKind`, `ModificationDepth`) and the older
-  single-field `Step2Response` are both deleted; any code
-  importing them will fail.
+  `stage_2b.py` are deleted.
+- **`schemas/step_2.py` holds `QueryAnalysis`.** `holistic_read` has
+  been replaced by `intent_exploration`. The old types
+  (`AbsorbedModifier`, `IncomingModification`, `AbsorbedModifierKind`,
+  `ModificationDepth`, `Step2Response`) are deleted.
+- **`Trait.role` (carver/qualifier) is removed.** It is replaced by
+  `commitment` (five-level) + `relationship_role` (structural triplet).
+  `schemas/enums.py:Role` is retained only for legacy consumers of
+  `semantic_query_execution.py`; the semantic schema now uses
+  `SemanticRetrievalShape` (LLM-committed per call).
 - **Category taxonomy lives in `schemas/trait_category.py`, not
-  `schemas/enums.py`.** `CategoryName` was moved and rebuilt; old
-  import paths will fail. 43 active members (not 32 or 44 or 45).
-- **Semantic dealbreaker scoring uses a top-2000 probe.** `kneed>=0.8`
-  is a required dependency for Kneedle elbow detection.
-- **`stage_4/priors.py` is deleted.** No replacement — priors are
-  out of scope for the V2 runtime orchestrator.
+  `schemas/enums.py`.** 43 active members.
+- **`stage_4/priors.py` is deleted.** Priors live in the orchestrator.
 - **Stage 4 lives in `stage_4_execution.py`, not `stage_4/`.** The
-  legacy `stage_4/` directory's assembly/reranking code is superseded
-  by the 5-phase pipeline described above. Code importing the old
-  `run_stage_4` will fail.
+  legacy `stage_4/` directory is superseded.
 - **Negative-trait `operation_type` is uniformly `POOL_RERANKER`.**
-  `determine_operation_type` short-circuits negative polarity to
-  `POOL_RERANKER` regardless of route, so the spec's
-  `operation_type` does NOT identify which negative-trait calls
-  would have been candidate-generators in positive polarity. Stage 4
-  re-derives the would-be type using `determine_operation_type(category,
-  route, Polarity.POSITIVE)`, then further partitions the would-be
-  generators by `_AUTHORITATIVE_NEGATION_CATEGORIES` to drive the
-  three-bin `gate × fuzzy` formula.
+  Stage 4 re-derives would-be type via
+  `determine_operation_type(category, route, Polarity.POSITIVE)`.
+- **`stage_3/` is deleted.** Active code lives in
+  `search_v2/endpoint_fetching/`. Any import from `search_v2.stage_3`
+  will fail. Only `unit_tests/` still imports from there (untouched
+  per test-boundary rule).
+- **`CarverSemanticEndpointParameters` / `QualifierSemanticEndpointParameters`
+  are deleted.** Replaced by unified `SemanticEndpointParameters` with
+  a `role_exploration` + `role` (`SemanticRetrievalShape`) commit.
+- **`EntityEndpointParameters` union wrapper is deleted.** Each entity
+  category (`PERSON_CREDIT`, `NAMED_CHARACTER`, `TITLE_TEXT`) now
+  emits its narrowed spec directly.
+- **`ChronologicalQuerySpec` uses bespoke `EndpointRoute.CHRONOLOGICAL`.**
+  Executor wiring is pending; specs flow through `preference_specs` but
+  no downstream executor reads them yet.
 - **Stoplist asymmetry for awards**: ingest writes every token; query
   drops `AWARD_QUERY_STOPLIST`. Intentional — lets the droplist be
   revised without re-ingesting.
+- **LLM client construction is lazy.** `_LazyClient` proxy in
+  `generic_methods.py` builds underlying clients on first attribute
+  access. Proxy `__getattr__` is not thread-safe (documented); safe
+  under single-event-loop deployment.
+- **api/requirements.txt must be manually updated** when new deps are
+  added via `uv add`. The API Dockerfile uses requirements.txt rather
+  than `uv export` to avoid transitive bloat. Docker base image is
+  `python:3.13-slim`.
